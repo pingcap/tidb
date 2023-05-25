@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "utils",
+    srcs = ["partition_table.go"],
+    importpath = "github.com/pingcap/tidb/executor/internal/utils",
+    visibility = ["//executor:__subpackages__"],
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_tipb//go-tipb",
+    ],
+)

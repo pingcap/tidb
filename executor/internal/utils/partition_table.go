@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package utils
 
 import (
 	"context"
@@ -22,7 +22,8 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, recursive bool, partitionIDs []int64) error {
+// UpdateExecutorTableID updates executor's TableId attribute
+func UpdateExecutorTableID(ctx context.Context, exec *tipb.Executor, recursive bool, partitionIDs []int64) error {
 	if exec == nil {
 		return nil
 	}
@@ -65,7 +66,7 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, recursive b
 		return errors.Trace(fmt.Errorf("unknown new tipb protocol %d", exec.Tp))
 	}
 	if child != nil && recursive {
-		return updateExecutorTableID(ctx, child, recursive, partitionIDs)
+		return UpdateExecutorTableID(ctx, child, recursive, partitionIDs)
 	}
 	return nil
 }

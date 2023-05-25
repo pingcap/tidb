@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/executor/internal/builder"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -3046,18 +3047,6 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 	return e
 }
 
-func constructDistExec(sctx sessionctx.Context, plans []plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
-	executors := make([]*tipb.Executor, 0, len(plans))
-	for _, p := range plans {
-		execPB, err := p.ToPB(sctx, kv.TiKV)
-		if err != nil {
-			return nil, err
-		}
-		executors = append(executors, execPB)
-	}
-	return executors, nil
-}
-
 // markChildrenUsedCols compares each child with the output schema, and mark
 // each column of the child is used by output or not.
 func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expression.Schema) (childrenUsed [][]bool) {
@@ -3066,32 +3055,6 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 		childrenUsed = append(childrenUsed, used)
 	}
 	return
-}
-
-func constructDistExecForTiFlash(sctx sessionctx.Context, p plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
-	execPB, err := p.ToPB(sctx, kv.TiFlash)
-	return []*tipb.Executor{execPB}, err
-}
-
-func constructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, storeType kv.StoreType) (dagReq *tipb.DAGRequest, err error) {
-	dagReq = &tipb.DAGRequest{}
-	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(ctx.GetSessionVars().Location())
-	sc := ctx.GetSessionVars().StmtCtx
-	if sc.RuntimeStatsColl != nil {
-		collExec := true
-		dagReq.CollectExecutionSummaries = &collExec
-	}
-	dagReq.Flags = sc.PushDownFlags()
-	if storeType == kv.TiFlash {
-		var executors []*tipb.Executor
-		executors, err = constructDistExecForTiFlash(ctx, plans[0])
-		dagReq.RootExecutor = executors[0]
-	} else {
-		dagReq.Executors, err = constructDistExec(ctx, plans)
-	}
-
-	distsql.SetEncodeType(ctx, dagReq)
-	return dagReq, err
 }
 
 func (b *executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool {
@@ -3406,7 +3369,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	if v.StoreType == kv.TiFlash {
 		tablePlans = []plannercore.PhysicalPlan{v.GetTablePlan()}
 	}
-	dagReq, err := constructDAGReq(b.ctx, tablePlans, v.StoreType)
+	dagReq, err := builder.ConstructDAGReq(b.ctx, tablePlans, v.StoreType)
 	if err != nil {
 		return nil, err
 	}
@@ -3721,7 +3684,7 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 }
 
 func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexReader) (*IndexReaderExecutor, error) {
-	dagReq, err := constructDAGReq(b.ctx, v.IndexPlans, kv.TiKV)
+	dagReq, err := builder.ConstructDAGReq(b.ctx, v.IndexPlans, kv.TiKV)
 	if err != nil {
 		return nil, err
 	}
@@ -3853,7 +3816,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 }
 
 func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, val table.Table, err error) {
-	tableReq, err := constructDAGReq(b.ctx, plans, kv.TiKV)
+	tableReq, err := builder.ConstructDAGReq(b.ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -3874,7 +3837,7 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 // If len(ByItems) != 0 means index request should return related columns
 // to sort result rows in TiDB side for parition tables.
 func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
-	indexReq, err := constructDAGReq(ctx, plans, kv.TiKV)
+	indexReq, err := builder.ConstructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, err
 	}
