@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	tidb_util "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -185,7 +186,15 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		}
 
 		if err != nil {
-			logutil.BgLogger().Warn("[ddl-upgrading] pause the job failed", zap.Stringer("job", job), zap.Bool("has job err", len(errs) > 0), zap.Error(err))
+			isCannotPauseDDLJobErr := dbterror.ErrCannotPauseDDLJob.Equal(err)
+			logutil.BgLogger().Warn("[ddl-upgrading] pause the job failed", zap.Stringer("job", job),
+				zap.Bool("isCannotPauseDDLJobErr", isCannotPauseDDLJobErr), zap.Error(err))
+			failpoint.Inject("mockPauseJobOnOneState", func(val failpoint.Value) {
+				job.State = model.JobState(val.(int))
+			})
+			if isCannotPauseDDLJobErr {
+				return true, nil
+			}
 		} else {
 			logutil.BgLogger().Warn("[ddl-upgrading] pause the job successfully", zap.Stringer("job", job))
 		}
@@ -193,7 +202,7 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		return false, nil
 	}
 
-	if job.IsPausedBySystem() && !hasSysDB(job) {
+	if job.IsPausedBySystem() {
 		var errs []error
 		errs, err = ResumeJobsBySystem(sess.Session(), []int64{job.ID})
 		if len(errs) > 0 {

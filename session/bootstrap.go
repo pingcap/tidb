@@ -1173,20 +1173,22 @@ func syncUpgradeState(s Session) {
 			break
 		}
 		isAllFinished := true
+		jobErrStrs := make([]string, 0, len(jobErrs))
 		for _, jobErr := range jobErrs {
 			if dbterror.ErrPausedDDLJob.Equal(jobErr) {
 				continue
 			}
 			isAllFinished = false
+			jobErrStrs = append(jobErrStrs, jobErr.Error())
 		}
 		if isAllFinished {
 			break
 		}
 
 		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Error(err))
+			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
 		}
-		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Error(err))
+		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
 		time.Sleep(interval)
 	}
 	logutil.BgLogger().Info("[upgrading] update global state to upgrading", zap.String("state", syncer.StateUpgrading))

@@ -174,3 +174,15 @@ func check(t *testing.T, record []int64, ids ...int64) {
 		}
 	}
 }
+
+func TestPausedStateJob(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	fpReturn := fmt.Sprint("return(%d)", int(model.JobStateDone))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockPauseJobOnOneState", fpReturn))
+	tk.MustExec("create table pause_tbl(a int)")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockPauseJobOnOneState"))
+}
