@@ -3093,7 +3093,7 @@ func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGr
 	}
 	settings := resourceGroupSettings.Runaway
 	switch typ {
-	case ast.RunawayExecuteElapsed:
+	case ast.RunawayRule:
 		// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
 		dur, err := time.ParseDuration(stringVal)
 		if err != nil {
