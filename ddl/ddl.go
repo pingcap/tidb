@@ -1202,9 +1202,10 @@ func (d *ddl) SetHook(h Callback) {
 
 func (d *ddl) startCleanDeadTableLock() {
 	defer func() {
-		tidbutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 		d.wg.Done()
 	}()
+
+	defer tidbutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()

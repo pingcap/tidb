@@ -124,6 +124,7 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/unusedresult:go_default_library",
                "//build/linter/asciicheck",
                "//build/linter/bodyclose",
+               "//build/linter/deferrecover",
                "//build/linter/durationcheck",
                "//build/linter/exportloopref",
                "//build/linter/forcetypeassert",
