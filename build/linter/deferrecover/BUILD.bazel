@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "recover",
+    name = "deferrecover",
     srcs = ["analyzer.go"],
-    importpath = "github.com/pingcap/tidb/build/linter/recover",
+    importpath = "github.com/pingcap/tidb/build/linter/deferrecover",
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
