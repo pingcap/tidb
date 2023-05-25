@@ -297,4 +297,12 @@ func (s *mockGCSSuite) TestIssue43555() {
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-csv/43555.csv?endpoint=%s'
 		INTO TABLE t (id);`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err, "ERROR 1265 (01000): Data truncated for column 'id' at row 2")
+
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-csv/43555.csv?endpoint=%s'
+		IGNORE INTO TABLE t (id1) SET id='7.1';`, gcsEndpoint))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2", s.tk.Session().LastMessage())
+	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
+		"Warning 1265 Data truncated for column 'id' at row 1",
+		"Warning 1265 Data truncated for column 'id' at row 2"))
 }

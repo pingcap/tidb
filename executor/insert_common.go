@@ -568,10 +568,15 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 	sc := e.ctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 
+	inLoadData := e.ctx.GetSessionVars().StmtCtx.InLoadDataStmt
+
 	for i := 0; i < e.rowLen; i++ {
 		col := e.insertColumns[i].ToInfo()
 		casted, err := table.CastValue(e.ctx, vals[i], col, false, false)
-		if err = e.handleErr(e.insertColumns[i], &vals[i], int(e.rowCount), err); err != nil {
+		if newErr := e.handleErr(e.insertColumns[i], &vals[i], int(e.rowCount), err); newErr != nil {
+			if inLoadData {
+				return nil, newErr
+			}
 			return nil, err
 		}
 
@@ -579,7 +584,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 		row[offset] = casted
 		hasValue[offset] = true
 
-		if e.ctx.GetSessionVars().StmtCtx.InLoadDataStmt {
+		if inLoadData {
 			if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
 				for k := range newWarnings {
 					newWarnings[k].Err = completeLoadErr(col, int(e.rowCount), newWarnings[k].Err)
