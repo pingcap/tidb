@@ -798,6 +798,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildTrace(x)
 	case *ast.InsertStmt:
 		return b.buildInsert(ctx, x)
+	case *ast.ImportIntoStmt:
+		return b.buildImportInto(ctx, x)
 	case *ast.LoadDataStmt:
 		return b.buildLoadData(ctx, x)
 	case *ast.LoadStatsStmt:
@@ -4343,6 +4345,80 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	return p, err
+}
+
+// DetachedOption is a special option in load data statement that need to be handled separately.
+const DetachedOption = "detached"
+
+func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (Plan, error) {
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	var (
+		err      error
+		options  = make([]*LoadDataOpt, 0, len(ld.Options))
+		detached = false
+	)
+	for _, opt := range ld.Options {
+		loadDataOpt := LoadDataOpt{Name: opt.Name}
+		if opt.Value != nil {
+			loadDataOpt.Value, _, err = b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if strings.ToLower(opt.Name) == DetachedOption && opt.Value == nil {
+			detached = true
+		}
+		options = append(options, &loadDataOpt)
+	}
+	p := ImportInto{
+		Path:               ld.Path,
+		Format:             ld.Format,
+		Table:              ld.Table,
+		ColumnAssignments:  ld.ColumnAssignments,
+		ColumnsAndUserVars: ld.ColumnsAndUserVars,
+		Options:            options,
+		Stmt:               ld.Text(),
+	}.Init(b.ctx)
+	user := b.ctx.GetSessionVars().User
+	// IMPORT INTO need full DML privilege of the target table
+	// to support add-index by SQL, we need ALTER privilege
+	var selectErr, updateErr, insertErr, deleteErr, alterErr error
+	if user != nil {
+		selectErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+		updateErr = ErrTableaccessDenied.GenWithStackByArgs("UPDATE", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+		insertErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+		deleteErr = ErrTableaccessDenied.GenWithStackByArgs("DELETE", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+		alterErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, p.Table.Schema.O, p.Table.Name.O, "", selectErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, p.Table.Schema.O, p.Table.Name.O, "", updateErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.O, p.Table.Name.O, "", insertErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.O, p.Table.Name.O, "", deleteErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, p.Table.Schema.O, p.Table.Name.O, "", alterErr)
+	tableInfo := p.Table.TableInfo
+	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
+	if !ok {
+		db := b.ctx.GetSessionVars().CurrentDB
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
+	}
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
+	if err != nil {
+		return nil, err
+	}
+	mockTablePlan.SetSchema(schema)
+	mockTablePlan.names = names
+
+	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
+	if err != nil {
+		return nil, err
+	}
+
+	if detached {
+		p.setSchemaAndNames(expression.NewSchema(&expression.Column{
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}), types.NameSlice{{ColName: model.NewCIStr("Task_ID")}})
+	}
+	return p, nil
 }
 
 func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
