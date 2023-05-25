@@ -262,3 +262,39 @@ func (s *mockGCSSuite) TestDataError() {
 	s.tk.MustQuery("SELECT * FROM t3;").Check(testkit.Rows(
 		"3 100"))
 }
+
+func (s *mockGCSSuite) TestIssue43555() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-csv",
+			Name:       "43555.csv",
+		},
+		Content: []byte("6\n" +
+			"7.1\n"),
+	})
+
+	s.tk.MustExec("CREATE DATABASE load_csv;")
+	s.tk.MustExec("USE load_csv;")
+
+	s.tk.MustExec("CREATE TABLE t (id CHAR(1), id1 INT);")
+	s.tk.MustExec("SET SESSION sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
+
+	err := s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-csv/43555.csv?endpoint=%s'
+		IGNORE INTO TABLE t;`, gcsEndpoint))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 3", s.tk.Session().LastMessage())
+
+	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
+		"Warning 1261 Row 1 doesn't contain data for all columns",
+		"Warning 1261 Row 2 doesn't contain data for all columns",
+		"Warning 1265 Data truncated for column 'id' at row 2"))
+	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows(
+		"6 <nil>",
+		"7 <nil>"))
+
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-csv/43555.csv?endpoint=%s'
+		INTO TABLE t (id);`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err, "ERROR 1265 (01000): Data truncated for column 'id' at row 2")
+}
