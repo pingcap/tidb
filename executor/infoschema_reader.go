@@ -2259,12 +2259,12 @@ func getRemainDurationForAnalyzeStatusHelper(
 			var statsTbl *statistics.Table
 			meta := tb.Meta()
 			if partitionName != "" {
-				statsTbl = statsHandle.GetTableStats(meta)
-				tid = meta.ID
-			} else {
 				pt := meta.GetPartitionInfo()
 				tid = pt.GetPartitionIDByName(partitionName)
 				statsTbl = statsHandle.GetPartitionStats(meta, tid)
+			} else {
+				statsTbl = statsHandle.GetTableStats(meta)
+				tid = meta.ID
 			}
 			if statsTbl != nil && statsTbl.RealtimeCount != 0 {
 				totalCnt = float64(statsTbl.RealtimeCount)
