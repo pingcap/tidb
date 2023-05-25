@@ -2274,8 +2274,6 @@ func getRemainDurationForAnalyzeStatusHelper(
 			totalCnt, _ = internalutil.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
 		}
 		RemainingDuration, percentage = calRemainInfoForAnalyzeStatus(int64(totalCnt), processedRows, duration)
-		return &RemainingDuration, percentage, totalCnt, nil
-
 	}
 	return &RemainingDuration, percentage, totalCnt, nil
 }
