@@ -206,11 +206,22 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 			return errors.Trace(err)
 		}
 
+<<<<<<< HEAD
 		log.Info("snapshot started, restore schedule")
 		if restoreE := restoreFunc(ctx); restoreE != nil {
 			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
 		} else {
 			scheduleRestored = true
+=======
+		if !cfg.SkipPauseGCAndScheduler {
+			log.Info("snapshot started, restore schedule")
+			if restoreE := restoreFunc(ctx); restoreE != nil {
+				log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+			} else {
+				// Clear the restore func, so we won't execute it many times.
+				restoreFunc = nil
+			}
+>>>>>>> 80cf61514e8 (br: ignore restore pd and gc if SkipPauseGCAndScheduler is on (#44181))
 		}
 
 		log.Info("wait async snapshots finish")
