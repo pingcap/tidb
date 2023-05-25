@@ -783,7 +783,7 @@ import (
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 	execElapsedInSec      "EXEC_ELAPSED_IN_SEC"
-	dryRun				  "DRYRUN"
+	dryRun                "DRYRUN"
 	cooldown              "COOLDOWN"
 	watch                 "WATCH"
 	similar               "SIMILAR"
@@ -1802,7 +1802,7 @@ DirectResourceGroupRunawayOption:
 			yylex.AppendError(yylex.Errorf("The EXEC_ELAPSED_IN_SEC option is not a valid duration: %s", err.Error()))
 			return 1
 		}
-		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayExecuteElapsed, StrValue: $5}
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayRule, StrValue: $5}
 	}
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
 	{
@@ -6909,6 +6909,11 @@ NotKeywordToken:
 |	"UNTIL_TS"
 |	"RESTORED_TS"
 |	"FULL_BACKUP_STORAGE"
+|	"EXEC_ELAPSED_IN_SEC"
+|	"DRYRUN"
+|	"COOLDOWN"
+|	"WATCH"
+|	"SIMILAR"
 
 /************************************************************************************
  *
