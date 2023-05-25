@@ -17,7 +17,6 @@ package variable
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/tiflash"
 	"math"
 	"time"
 
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"go.uber.org/atomic"
 )

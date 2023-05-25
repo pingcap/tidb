@@ -17,7 +17,6 @@ package copr
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/tiflash"
 	"io"
 	"strconv"
 	"sync"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"

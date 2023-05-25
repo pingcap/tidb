@@ -16,13 +16,13 @@ package kv
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util/tiflash"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tipb/go-tipb"
 )

@@ -14,18 +14,25 @@
 
 package tiflash
 
+// NodeSelectionPolicy is the policy to select TiFlash nodes.
 type NodeSelectionPolicy int
 
 const (
+	// AllNodes  means using all the available nodes to do analytic computing, regardless of local zone or other zones.
 	AllNodes NodeSelectionPolicy = iota
+	// PriorityLocalZoneNodes means using the nodes in the same zone as the entry TiDB. If not all the tiflash data can be accessed, the query will involve the tiflash nodes from other zones.
 	PriorityLocalZoneNodes
+	// OnlyLocalZoneNodes means using only the nodes in the same zone as the entry TiDB. If not all the tiflash data can be accessed, the query will report an error, and show an error message. Because of the feature of TiFlash remote read, a small number of regions  in other zones is acceptable, but performance will be affected. The threshold is fixed, 3 regions per tiflash node.
 	OnlyLocalZoneNodes
 )
 
 const (
-	AllNodesStr               = "all_nodes"
+	// AllNodesStr is the string value of AllNodes.
+	AllNodesStr = "all_nodes"
+	// PriorityLocalZoneNodesStr is the string value of PriorityLocalZoneNodes.
 	PriorityLocalZoneNodesStr = "priority_local_zone_nodes"
-	OnlyLocalZoneNodesStr     = "only_local_zone_nodes"
+	// OnlyLocalZoneNodesStr is the string value of OnlyLocalZoneNodes.
+	OnlyLocalZoneNodesStr = "only_local_zone_nodes"
 )
 
 // IsPolicyAllNodes return whether the policy is AllNodes.

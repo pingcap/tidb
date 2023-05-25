@@ -18,8 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/util/tiflash"
 	"io"
 	"math"
 	"math/rand"
@@ -35,11 +33,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
@@ -915,7 +915,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 					for i := 0; i < 3 || i < len(regionsInOtherZones); i++ {
 						regionIDErrMsg += fmt.Sprintf("%d, ", regionsInOtherZones[i])
 					}
-					return nil, errors.Errorf("No less than %d region(s) can not be accessed by TiFlash in the zone [%d]: %s...", len(regionsInOtherZones), tidbZone, regionIDErrMsg)
+					return nil, errors.Errorf("no less than %d region(s) can not be accessed by TiFlash in the zone [%s]: %setc", len(regionsInOtherZones), tidbZone, regionIDErrMsg)
 				}
 			}
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
@@ -941,12 +941,12 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			continue
 		}
 		if len(regionsInOtherZones) != 0 {
-			warningMsg := fmt.Sprintf("Total %d region(s) can not be accessed by TiFlash in the zone [%s]:", len(regionsInOtherZones), tidbZone)
+			warningMsg := fmt.Sprintf("total %d region(s) can not be accessed by TiFlash in the zone [%s]:", len(regionsInOtherZones), tidbZone)
 			regionIDErrMsg := ""
 			for i := 0; i < 3 || i < len(regionsInOtherZones); i++ {
 				regionIDErrMsg += fmt.Sprintf("%d, ", regionsInOtherZones[i])
 			}
-			warningMsg += regionIDErrMsg + "..."
+			warningMsg += regionIDErrMsg + "etc"
 			appendWarning(errors.Errorf(warningMsg))
 		}
 
