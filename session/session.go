@@ -2307,26 +2307,25 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	return nil
 }
 
-// querySpecialKeys contains the keys of special query, the special query will be handled by handleFileTransInConn method.
-var querySpecialKeys = []fmt.Stringer{
+// fileTransInConnKeys contains the keys of queries that will be handled by handleFileTransInConn.
+var fileTransInConnKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
 	executor.IndexAdviseVarKey,
 	executor.PlanReplayerLoadVarKey,
 }
 
-func (s *session) hasQuerySpecial() bool {
-	found := false
+func (s *session) hasFileTransInConn() bool {
 	s.mu.RLock()
-	for _, k := range querySpecialKeys {
+	defer s.mu.RUnlock()
+
+	for _, k := range fileTransInConnKeys {
 		v := s.mu.values[k]
 		if v != nil {
-			found = true
-			break
+			return true
 		}
 	}
-	s.mu.RUnlock()
-	return found
+	return false
 }
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
@@ -2397,8 +2396,8 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	err = finishStmt(ctx, se, err, s)
-	if se.hasQuerySpecial() {
-		// The special query will be handled later in handleQuerySpecial,
+	if se.hasFileTransInConn() {
+		// The query will be handled later in handleFileTransInConn,
 		// then should call the ExecStmt.FinishExecuteStmt to finish this statement.
 		se.SetValue(ExecStmtVarKey, s.(*executor.ExecStmt))
 	} else {

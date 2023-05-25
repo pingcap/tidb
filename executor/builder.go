@@ -1008,7 +1008,6 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		baseExecutor:   base,
 		loadDataWorker: worker,
 		FileLocRef:     v.FileLocRef,
-		OnDuplicate:    v.OnDuplicate,
 	}
 }
 

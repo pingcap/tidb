@@ -495,6 +495,7 @@ func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool)
 }
 
 func (s *mockGCSSuite) TestLoadSQLDump() {
+	s.T().Skip("skip due to LOAD DATA does not support FORMAT")
 	s.testLoadSQLDump(importer.LogicalImportMode, false)
 	//s.testLoadSQLDump(importer.PhysicalImportMode, false)
 	//s.testLoadSQLDump(importer.PhysicalImportMode, true)

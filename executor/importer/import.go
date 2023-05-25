@@ -79,7 +79,6 @@ const (
 	addIndexOption      = "add_index"
 	analyzeOption       = "analyze_table"
 	threadOption        = "thread"
-	batchSizeOption     = "batch_size"
 	maxWriteSpeedOption = "max_write_speed"
 	splitFileOption     = "split_file"
 	recordErrorsOption  = "record_errors"
@@ -98,7 +97,6 @@ var (
 		addIndexOption:      true,
 		analyzeOption:       true,
 		threadOption:        true,
-		batchSizeOption:     true,
 		maxWriteSpeedOption: true,
 		splitFileOption:     true,
 		recordErrorsOption:  true,
@@ -163,7 +161,6 @@ type Plan struct {
 	AddIndex          bool
 	Analyze           config.PostOpLevel
 	ThreadCnt         int64
-	BatchSize         int64
 	MaxWriteSpeed     config.ByteSize
 	SplitFile         bool
 	MaxRecordedErrors int64
@@ -243,17 +240,10 @@ func getImportantSysVars(sctx sessionctx.Context) map[string]string {
 	return res
 }
 
-// NewPlan creates a new load data plan.
-func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.Table) (*Plan, error) {
+// NewPlanFromLoadDataPlan creates a import plan from LOAD DATA.
+func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.Table) (*Plan, error) {
 	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))
-	var format string
-	if plan.Format != nil {
-		format = strings.ToLower(*plan.Format)
-	} else {
-		// without FORMAT 'xxx' clause, default to DELIMITED DATA
-		format = LoadDataFormatDelimitedData
-	}
 	charset := plan.Charset
 	if charset == nil {
 		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
@@ -269,23 +259,12 @@ func NewPlan(userSctx sessionctx.Context, plan *plannercore.LoadData, tbl table.
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
 
 	p := &Plan{
-		TableInfo: tbl.Meta(),
-		DBName:    plan.Table.Schema.O,
-		DBID:      plan.Table.DBInfo.ID,
-
+		DBName:      plan.Table.Schema.O,
 		Path:        plan.Path,
-		Format:      format,
+		Format:      LoadDataFormatDelimitedData,
 		Restrictive: restrictive,
 		IgnoreLines: plan.IgnoreLines,
-
-		SQLMode:          userSctx.GetSessionVars().SQLMode,
-		Charset:          charset,
-		ImportantSysVars: getImportantSysVars(userSctx),
-
-		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
-	}
-	if err := p.initOptions(userSctx, plan.Options); err != nil {
-		return nil, err
+		Charset:     charset,
 	}
 	return p, nil
 }
@@ -502,7 +481,6 @@ func (p *Plan) initDefaultOptions() {
 	p.AddIndex = true
 	p.Analyze = config.OpLevelOptional
 	p.ThreadCnt = int64(threadCnt)
-	p.BatchSize = 1000
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
@@ -600,12 +578,6 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		// boolean true will be taken as 1
 		p.ThreadCnt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
 		if err != nil || isNull || p.ThreadCnt <= 0 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-	}
-	if opt, ok := specifiedOptions[batchSizeOption]; ok {
-		p.BatchSize, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull || p.BatchSize < 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
