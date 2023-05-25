@@ -13,7 +13,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -121,13 +120,6 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 			allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)
 			if err != nil {
 				return errors.Trace(err)
-			}
-			numOnlineStore := len(allStores)
-			// in this version, it suppose to have the same number of tikvs between backup cluster and restore cluster
-			if numOnlineStore != numBackupStore {
-				log.Warn("the restore meta contains the number of tikvs inconsist with the resore cluster, retry ...", zap.Int("current stores", len(allStores)), zap.Int("backup stores", numBackupStore))
-				return errors.Annotatef(berrors.ErrRestoreTotalKVMismatch,
-					"number of tikvs mismatch")
 			}
 			return nil
 		},
