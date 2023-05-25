@@ -1553,7 +1553,27 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		cop.keepOrder = true
 		// IndexScan on partition table can't keep order.
 		if ds.tableInfo.GetPartitionInfo() != nil {
+<<<<<<< HEAD
 			return invalidTask, nil
+=======
+			// Add sort items for index scan for merge-sort operation between partitions.
+			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
+			for _, si := range prop.SortItems {
+				byItems = append(byItems, &util.ByItems{
+					Expr: si.Col,
+					Desc: si.Desc,
+				})
+			}
+			cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
+			if !is.Index.Global && cop.tablePlan != nil && ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+				is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
+				is.schema.Append(&expression.Column{
+					RetType:  types.NewFieldType(mysql.TypeLonglong),
+					UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+					ID:       model.ExtraPhysTblID,
+				})
+			}
+>>>>>>> f944c6de1b2 (executor, planner: fix indexLookUp with static pruning (#44139))
 		}
 		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
 			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
@@ -1696,6 +1716,23 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
+}
+
+// NeedExtraOutputCol is designed for check whether need an extra column for
+// pid or physical table id when build indexReq.
+func (is *PhysicalIndexScan) NeedExtraOutputCol() bool {
+	if is.Table.Partition == nil {
+		return false
+	}
+	// has global index, should return pid
+	if is.Index.Global {
+		return true
+	}
+	// has embedded limit, should return physical table id
+	if len(is.ByItems) != 0 && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return true
+	}
+	return false
 }
 
 // SplitSelCondsWithVirtualColumn filter the select conditions which contain virtual column

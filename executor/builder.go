@@ -3843,8 +3843,8 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 	}
 
 	indexReq.OutputOffsets = []uint32{}
-	if len(plans[0].(*plannercore.PhysicalIndexScan).ByItems) != 0 {
-		idxScan := plans[0].(*plannercore.PhysicalIndexScan)
+	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
+	if len(idxScan.ByItems) != 0 {
 		tblInfo := idxScan.Table
 		for _, item := range idxScan.ByItems {
 			c, ok := item.Expr.(*expression.Column)
@@ -3864,6 +3864,11 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 	for i := 0; i < handleLen; i++ {
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
 	}
+
+	if idxScan.NeedExtraOutputCol() {
+		// need add one more column for pid or physical table id
+		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+handleLen))
+	}
 	return indexReq, err
 }
 
@@ -3875,10 +3880,13 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	} else {
 		handleLen = 1
 	}
+<<<<<<< HEAD
 	if is.Index.Global {
 		// Should output pid col.
 		handleLen++
 	}
+=======
+>>>>>>> f944c6de1b2 (executor, planner: fix indexLookUp with static pruning (#44139))
 	indexReq, err := buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
 	if err != nil {
 		return nil, err
