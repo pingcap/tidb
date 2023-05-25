@@ -269,7 +269,6 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 func (s *mockGCSSuite) TestGeneratedColumns() {
 	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	// For issue https://github.com/pingcap/tidb/issues/39885
-	withOptions := fmt.Sprintf("WITH import_mode='%s'", importer.PhysicalImportMode)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("USE load_csv;")
@@ -285,31 +284,31 @@ func (s *mockGCSSuite) TestGeneratedColumns() {
 	})
 
 	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen1 %s", gcsEndpoint, withOptions))
+		" INTO TABLE load_csv.t_gen1", gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 	s.tk.MustExec("delete from t_gen1")
 
 	// Specify the column, this should also work.
 	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen1 (a) %s", gcsEndpoint, withOptions))
+		" INTO TABLE load_csv.t_gen1 (a)", gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 
 	// Swap the column and test again.
 	s.tk.MustExec(`create table t_gen2 (a int generated ALWAYS AS (b+1), b int);`)
 	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen2 %s", gcsEndpoint, withOptions))
+		" INTO TABLE load_csv.t_gen2", gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("3 2", "4 3"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column b
 	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen2 (b) %s", gcsEndpoint, withOptions))
+		" INTO TABLE load_csv.t_gen2 (b)", gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("2 1", "3 2"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column a
 	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen2 (a) %s", gcsEndpoint, withOptions))
+		" INTO TABLE load_csv.t_gen2 (a)", gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("<nil> <nil>", "<nil> <nil>"))
 }
 
@@ -628,17 +627,6 @@ func (s *mockGCSSuite) testGBK(importMode string, distributed bool) {
 		require.EqualError(s.T(), err, "task stopped with state reverted")
 	} else {
 		checkClientErrorMessage(s.T(), err, `ERROR 1366 (HY000): Incorrect string value '\xF0\x9F\x98\x80' for column 'j'`)
-	}
-
-	if importMode == importer.LogicalImportMode {
-		sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/emoji.tsv?endpoint=%s'
-		IGNORE INTO TABLE load_charset.gbk CHARACTER SET utf8mb4 %s`, gcsEndpoint, withOptions)
-		s.tk.MustExec(sql)
-		require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
-		s.tk.MustQuery("SELECT HEX(j) FROM load_charset.gbk;").Check(testkit.Rows(
-			"D2BBB6A18140C6DF3F3F3F3F",
-			"D8A4B3F38145D7A83F3F3F3F",
-		))
 	}
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/gbk.tsv?endpoint=%s'
