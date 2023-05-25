@@ -35,6 +35,17 @@ type GroupingSet []GroupingExprs
 // GroupingExprs indicates one grouping-expressions inside a grouping set.
 type GroupingExprs []Expression
 
+// NewGroupingSets new a grouping sets from a slice of expression.
+func NewGroupingSets(groupCols []Expression) GroupingSets {
+	gss := make(GroupingSets, 0, len(groupCols))
+	for _, gCol := range groupCols {
+		ge := make(GroupingExprs, 0, 1)
+		ge = append(ge, gCol)
+		gss = append(gss, GroupingSet{ge})
+	}
+	return gss
+}
+
 // Merge function will explore the internal grouping expressions and try to find the minimum grouping sets. (prefix merging)
 func (gss GroupingSets) Merge() GroupingSets {
 	// for now, there is precondition that all grouping expressions are columns.
@@ -223,6 +234,8 @@ func (gs GroupingSet) IsEmpty() bool {
 func (gs GroupingSet) AllColIDs() *fd.FastIntSet {
 	res := fd.NewFastIntSet()
 	for _, groupingExprs := range gs {
+		// on the condition that every grouping expression is single column.
+		// eg: group by a, b, c
 		for _, one := range groupingExprs {
 			res.Insert(int(one.(*Column).UniqueID))
 		}
