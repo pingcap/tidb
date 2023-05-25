@@ -41,13 +41,6 @@ func (s *mockGCSSuite) prepareAndUseDB(db string) {
 	s.tk.MustExec("use " + db)
 }
 
-func adjustOptions(options string, distributed bool) string {
-	if distributed {
-		options += ", __distributed=true"
-	}
-	return options
-}
-
 // NOTE: for negative cases, see TestImportIntoPrivilegeNegativeCase in privileges_test.go
 func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 	s.server.CreateObject(fakestorage.Object{
@@ -187,7 +180,6 @@ func (s *mockGCSSuite) TestBasicImportInto() {
 }
 
 func (s *mockGCSSuite) TestInputNull() {
-	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -200,20 +192,19 @@ func (s *mockGCSSuite) TestInputNull() {
 	s.tk.MustExec("drop table if exists t;")
 	// nil input
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
-	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/nil-input.tsv?endpoint=%s'
-		INTO TABLE t with import_mode='physical'`, gcsEndpoint)
+	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/nil-input.tsv?endpoint=%s'
+		WITH fields_terminated_by='\t'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 <nil> 11", "2 test2 22"}...))
 	// set to default on nil
 	s.tk.MustExec("truncate table t")
-	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/nil-input.tsv?endpoint=%s'
-		INTO TABLE t (a,@1,c) set b=COALESCE(@1, 'def') with import_mode='physical'`, gcsEndpoint)
+	loadDataSQL = fmt.Sprintf(`IMPORT INTO t (a,@1,c) set b=COALESCE(@1, 'def')
+		FROM 'gs://test-multi-load/nil-input.tsv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 def 11", "2 test2 22"}...))
 }
 
 func (s *mockGCSSuite) TestIgnoreNLines() {
-	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "skip-rows-1.csv"},
 		Content: []byte(`1,test1,11
@@ -232,42 +223,32 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	s.prepareAndUseDB("load_data")
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
-	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with thread=1, import_mode='physical'`, gcsEndpoint)
+	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
-	s.Equal("Records: 9  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
-	s.Equal(uint64(9), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
-	s.Equal(uint64(0), s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
 		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
 	}...))
 	s.tk.MustExec("truncate table t")
-	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' ignore 1 lines with thread=1, import_mode='physical'`, gcsEndpoint)
+	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
+		with thread=1, skip_rows=1`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
-	s.Equal("Records: 7  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
-	s.Equal(uint64(7), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
-	s.Equal(uint64(0), s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"2 test2 22", "3 test3 33", "4 test4 44",
 		"6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
 	}...))
 	s.tk.MustExec("truncate table t")
-	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' ignore 3 lines with thread=1, import_mode='physical'`, gcsEndpoint)
+	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
+		with thread=1, skip_rows=3`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
-	s.Equal("Records: 3  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
-	s.Equal(uint64(3), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
-	s.Equal(uint64(0), s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"4 test4 44",
 		"8 test8 88", "9 test9 99",
 	}...))
 }
 
-func (s *mockGCSSuite) TestGeneratedColumns() {
-	s.T().Skip("feature will be moved into other statement, temporary skip this")
+func (s *mockGCSSuite) TestGeneratedColumnsAndTSVFile() {
 	// For issue https://github.com/pingcap/tidb/issues/39885
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
@@ -283,37 +264,40 @@ func (s *mockGCSSuite) TestGeneratedColumns() {
 		Content: []byte("1\t2\n2\t3"),
 	})
 
-	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen1", gcsEndpoint))
+	s.tk.MustExec(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1 
+		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 	s.tk.MustExec("delete from t_gen1")
 
 	// Specify the column, this should also work.
-	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen1 (a)", gcsEndpoint))
+	s.tk.MustExec(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a) 
+		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
+	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
+	s.tk.MustExec("delete from t_gen1")
+	s.tk.MustExec(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a,@1) 
+		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 
 	// Swap the column and test again.
 	s.tk.MustExec(`create table t_gen2 (a int generated ALWAYS AS (b+1), b int);`)
-	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen2", gcsEndpoint))
+	s.tk.MustExec(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2 
+		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("3 2", "4 3"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column b
-	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen2 (b)", gcsEndpoint))
+	s.tk.MustExec(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(b) 
+		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("2 1", "3 2"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column a
-	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen2 (a)", gcsEndpoint))
+	s.tk.MustExec(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(a) 
+		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("<nil> <nil>", "<nil> <nil>"))
 }
 
 func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
-	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -326,29 +310,26 @@ func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
 	// mapped column of the missed field default to null
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
-	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/input-cnt-mismatch.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
+	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/input-cnt-mismatch.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 test1 <nil>", "2 test2 22"}...))
 	// mapped column of the missed field has non-null default
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int default 100);")
-	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/input-cnt-mismatch.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
+	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/input-cnt-mismatch.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	// we convert it to null all the time
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 test1 <nil>", "2 test2 22"}...))
 	// mapped column of the missed field set to a variable
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
-	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/input-cnt-mismatch.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' (a,b,@1) set c=COALESCE(@1, 100) with import_mode='physical'`, gcsEndpoint)
+	loadDataSQL = fmt.Sprintf(`IMPORT INTO t(a,b,@1) set c=COALESCE(@1, 100)
+		FROM 'gs://test-multi-load/input-cnt-mismatch.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 test1 100", "2 test2 22"}...))
 }
 
 func (s *mockGCSSuite) TestDeliverBytesRows() {
-	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -369,8 +350,7 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 	bak := importer.MinDeliverBytes
 	importer.MinDeliverBytes = 10
-	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/min-deliver-bytes-rows.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
+	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/min-deliver-bytes-rows.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
@@ -381,8 +361,7 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 	s.tk.MustExec("truncate table t")
 	bakCnt := importer.MinDeliverRowCnt
 	importer.MinDeliverRowCnt = 2
-	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/min-deliver-bytes-rows.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
+	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/min-deliver-bytes-rows.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
@@ -392,14 +371,6 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 }
 
 func (s *mockGCSSuite) TestMultiValueIndex() {
-	s.T().Skip("feature will be moved into other statement, temporary skip this")
-	//s.testMultiValueIndex(importer.PhysicalImportMode, false)
-	//s.testMultiValueIndex(importer.PhysicalImportMode, true)
-}
-
-func (s *mockGCSSuite) testMultiValueIndex(importMode string, distributed bool) {
-	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
-	withOptions = adjustOptions(withOptions, distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec(`CREATE TABLE load_csv.t (
@@ -417,9 +388,8 @@ func (s *mockGCSSuite) testMultiValueIndex(importMode string, distributed bool) 
 2,"[2,3,4]"`),
 	})
 
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load-csv/1.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
-		LINES TERMINATED BY '\n' IGNORE 1 LINES %s;`, gcsEndpoint, withOptions)
+	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-csv/1.csv?endpoint=%s'
+		WITH skip_rows=1;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"1 [1, 2, 3]",
@@ -428,14 +398,6 @@ func (s *mockGCSSuite) testMultiValueIndex(importMode string, distributed bool) 
 }
 
 func (s *mockGCSSuite) TestMixedCompression() {
-	s.T().Skip("feature will be moved into other statement, temporary skip this")
-	//s.testMixedCompression(importer.PhysicalImportMode, false)
-	//s.testMixedCompression(importer.PhysicalImportMode, true)
-}
-
-func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool) {
-	withOptions := fmt.Sprintf("WITH thread=1, import_mode='%s'", importMode)
-	withOptions = adjustOptions(withOptions, distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS multi_load;")
 	s.tk.MustExec("CREATE DATABASE multi_load;")
 	s.tk.MustExec("CREATE TABLE multi_load.t (i INT PRIMARY KEY, s varchar(32));")
@@ -470,8 +432,8 @@ func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool)
 9,test9`),
 	})
 
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/compress.*?endpoint=%s'
-		INTO TABLE multi_load.t fields terminated by ',' %s;`, gcsEndpoint, withOptions)
+	sql := fmt.Sprintf(`IMPORT INTO multi_load.t FROM 'gs://test-multi-load/compress.*?endpoint=%s'
+		WITH thread=1;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"1 test1", "2 test2", "3 test3", "4 test4",
@@ -480,8 +442,8 @@ func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool)
 
 	// with ignore N rows
 	s.tk.MustExec("truncate table multi_load.t")
-	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/compress.*?endpoint=%s'
-		INTO TABLE multi_load.t fields terminated by ',' ignore 3 lines %s;`, gcsEndpoint, withOptions)
+	sql = fmt.Sprintf(`IMPORT INTO multi_load.t FROM 'gs://test-multi-load/compress.*?endpoint=%s'
+		WITH skip_rows=3, thread=1;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"4 test4",
@@ -490,14 +452,6 @@ func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool)
 }
 
 func (s *mockGCSSuite) TestLoadSQLDump() {
-	s.T().Skip("skip due to LOAD DATA does not support FORMAT")
-	//s.testLoadSQLDump(importer.PhysicalImportMode, false)
-	//s.testLoadSQLDump(importer.PhysicalImportMode, true)
-}
-
-func (s *mockGCSSuite) testLoadSQLDump(importMode string, distributed bool) {
-	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
-	withOptions = adjustOptions(withOptions, distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("CREATE TABLE load_csv.t (" +
@@ -511,22 +465,13 @@ func (s *mockGCSSuite) testLoadSQLDump(importMode string, distributed bool) {
 		Content: []byte(`insert into tbl values (1, 'a'), (2, 'b');`),
 	})
 
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load-parquet/p?endpoint=%s'
-		FORMAT 'SQL file' INTO TABLE load_csv.t %s;`, gcsEndpoint, withOptions)
+	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p?endpoint=%s'
+		FORMAT 'SQL';`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"1 a",
 		"2 b",
 	))
-	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
-
-	rows := s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs;").Rows()
-	require.Greater(s.T(), len(rows), 0)
-	jobID := rows[len(rows)-1][0].(string)
-	err := s.tk.ExecToErr("CANCEL LOAD DATA JOB " + jobID)
-	require.ErrorContains(s.T(), err, "The current job status cannot perform the operation. need status running or paused, but got finished")
-	s.tk.MustExec("DROP LOAD DATA JOB " + jobID)
-	s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs WHERE job_id = " + jobID).Check(testkit.Rows())
 }
 
 func (s *mockGCSSuite) TestGBK() {
@@ -796,17 +741,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 }
 
 func (s *mockGCSSuite) TestColumnsAndUserVars() {
-	s.T().Skip("feature will be moved into other statement, temporary skip this")
-	//s.testColumnsAndUserVars(importer.PhysicalImportMode, false)
-	//s.testColumnsAndUserVars(importer.PhysicalImportMode, true)
-}
-
-func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed bool) {
-	withOptions := fmt.Sprintf("WITH thread=2, import_mode='%s'", importMode)
-	withOptions = adjustOptions(withOptions, distributed)
-	if distributed {
-		s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
-	}
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
 	s.tk.MustExec(`CREATE TABLE load_data.cols_and_vars (a INT, b INT, c int);`)
@@ -819,9 +754,8 @@ func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed boo
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "cols_and_vars-2.tsv"},
 		Content:     []byte("6,66,666\n7,77,777\n8,88,888\n9,99,999\n"),
 	})
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/cols_and_vars-*.tsv?endpoint=%s'
-		INTO TABLE load_data.cols_and_vars fields terminated by ','
-		(@V1, @v2, @v3) set a=@V1, b=@V2*10, c=123 %s`, gcsEndpoint, withOptions)
+	sql := fmt.Sprintf(`IMPORT INTO load_data.cols_and_vars (@V1, @v2, @v3) set a=@V1, b=@V2*10, c=123
+		FROM 'gs://test-load/cols_and_vars-*.tsv?endpoint=%s' WITH thread=2`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.cols_and_vars;").Sort().Check(testkit.Rows(
 		"1 110 123",
@@ -834,19 +768,17 @@ func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed boo
 		"8 880 123",
 		"9 990 123",
 	))
-	if distributed {
-		pool := pools.NewResourcePool(func() (pools.Resource, error) {
-			return s.tk.Session(), nil
-		}, 1, 1, time.Second)
-		defer pool.Close()
-		taskManager := storage.NewTaskManager(context.Background(), pool)
-		subtasks, err := taskManager.GetSucceedSubtasksByStep(storage.TestLastTaskID.Load(), loaddata.Import)
-		s.NoError(err)
-		s.Len(subtasks, 1)
-		serverInfo, err := infosync.GetServerInfo()
-		s.NoError(err)
-		for _, st := range subtasks {
-			s.Equal(net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port))), st.SchedulerID)
-		}
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return s.tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	taskManager := storage.NewTaskManager(context.Background(), pool)
+	subtasks, err := taskManager.GetSucceedSubtasksByStep(storage.TestLastTaskID.Load(), loaddata.Import)
+	s.NoError(err)
+	s.Len(subtasks, 1)
+	serverInfo, err := infosync.GetServerInfo()
+	s.NoError(err)
+	for _, st := range subtasks {
+		s.Equal(net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port))), st.SchedulerID)
 	}
 }
