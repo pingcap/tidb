@@ -3807,15 +3807,10 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 			"[    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
 			"[      └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
 
-	var readFromCacheNoPanic bool
-	for i := 0; i < 10; i++ {
+	require.Eventually(t, func() bool {
 		tk.MustQuery("select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows("2"))
-		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
-			readFromCacheNoPanic = true
-			break
-		}
-	}
-	require.True(t, readFromCacheNoPanic)
+		return tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
+	}, 10*time.Second, 500*time.Millisecond)
 
 	tk.MustExec("drop table if exists t31202")
 }
