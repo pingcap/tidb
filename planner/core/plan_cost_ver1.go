@@ -1321,7 +1321,7 @@ func getTableNetFactor(copTaskPlan PhysicalPlan) float64 {
 		return x.SCtx().GetSessionVars().GetNetworkFactor(x.Table)
 	default:
 		if len(x.Children()) == 0 {
-			x.SCtx().GetSessionVars().GetNetworkFactor(nil)
+			return x.SCtx().GetSessionVars().GetNetworkFactor(nil)
 		}
 		return getTableNetFactor(x.Children()[0])
 	}

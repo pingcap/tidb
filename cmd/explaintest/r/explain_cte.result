@@ -60,17 +60,17 @@ CTE_0	2.00	root		Recursive CTE
     └─CTETable_17	1.00	root		Scan on CTE_0
 explain with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte t1, cte t2;
 id	estRows	task	access object	operator info
-HashJoin_25	4.00	root		CARTESIAN inner join
-├─CTEFullScan_28(Build)	2.00	root	CTE:cte AS t2	data:CTE_0
-└─CTEFullScan_27(Probe)	2.00	root	CTE:cte AS t1	data:CTE_0
+HashJoin_34	4.00	root		CARTESIAN inner join
+├─CTEFullScan_37(Build)	2.00	root	CTE:cte AS t2	data:CTE_0
+└─CTEFullScan_36(Probe)	2.00	root	CTE:cte AS t1	data:CTE_0
 CTE_0	2.00	root		Non-Recursive CTE
-└─CTEFullScan_22(Seed Part)	2.00	root	CTE:cte1	data:CTE_1
+└─CTEFullScan_24(Seed Part)	2.00	root	CTE:cte1	data:CTE_1
 CTE_1	2.00	root		Recursive CTE
-├─Projection_16(Seed Part)	1.00	root		1->Column#2
-│ └─TableDual_17	1.00	root		rows:1
-└─Projection_18(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5
-  └─Selection_19	0.80	root		lt(Column#3, 10)
-    └─CTETable_20	1.00	root		Scan on CTE_1
+├─Projection_18(Seed Part)	1.00	root		1->Column#2
+│ └─TableDual_19	1.00	root		rows:1
+└─Projection_20(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5
+  └─Selection_21	0.80	root		lt(Column#3, 10)
+    └─CTETable_22	1.00	root		Scan on CTE_1
 explain with recursive cte1(a) as (select 1 union select a+1 from cte1 where a < 10), cte2(a) as (select c2 from t1 union select a+1 from cte2 where a < 10) select * from cte1, cte2;
 id	estRows	task	access object	operator info
 HashJoin_37	16002.00	root		CARTESIAN inner join
@@ -90,13 +90,13 @@ CTE_1	8001.00	root		Recursive CTE
     └─CTETable_33	10000.00	root		Scan on CTE_1
 explain with q(a,b) as (select * from t1) select /*+ merge(q) no_merge(q1) */ * from q, q q1 where q.a=1 and q1.a=2;
 id	estRows	task	access object	operator info
-HashJoin_15	2.56	root		CARTESIAN inner join
-├─Selection_19(Build)	1.60	root		eq(test.t1.c1, 2)
-│ └─CTEFullScan_20	2.00	root	CTE:q AS q1	data:CTE_0
-└─Selection_17(Probe)	1.60	root		eq(test.t1.c1, 1)
-  └─CTEFullScan_18	2.00	root	CTE:q	data:CTE_0
+HashJoin_24	2.56	root		CARTESIAN inner join
+├─Selection_28(Build)	1.60	root		eq(test.t1.c1, 2)
+│ └─CTEFullScan_29	2.00	root	CTE:q AS q1	data:CTE_0
+└─Selection_26(Probe)	1.60	root		eq(test.t1.c1, 1)
+  └─CTEFullScan_27	2.00	root	CTE:q	data:CTE_0
 CTE_0	2.00	root		Non-Recursive CTE
-└─Batch_Point_Get_12(Seed Part)	2.00	root	table:t1	handle:[1 2], keep order:false, desc:false
+└─Batch_Point_Get_14(Seed Part)	2.00	root	table:t1	handle:[1 2], keep order:false, desc:false
 explain with recursive cte(a,b) as (select 1, concat('a', 1) union select a+1, concat(b, 1) from cte where a < 5) select * from cte;
 id	estRows	task	access object	operator info
 CTEFullScan_17	2.00	root	CTE:cte	data:CTE_0
@@ -404,8 +404,8 @@ CTE_0	50.00	root		Non-Recursive CTE
 └─Union(Seed Part)	50.00	root		
   ├─Projection	25.00	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, Column#73, s->Column#169
   │ └─Selection	25.00	root		or(or(and(1, and(eq(test.date_dim.d_year, 2001), gt(Column#73, 0))), and(1, eq(test.date_dim.d_year, 2002))), 0)
-  │   └─HashAgg	31.25	root		group by:Column#233, Column#234, Column#235, Column#236, Column#237, Column#238, Column#239, Column#240, funcs:sum(Column#224)->Column#73, funcs:firstrow(Column#225)->test.customer.c_customer_id, funcs:firstrow(Column#226)->test.customer.c_first_name, funcs:firstrow(Column#227)->test.customer.c_last_name, funcs:firstrow(Column#228)->test.customer.c_preferred_cust_flag, funcs:firstrow(Column#229)->test.customer.c_birth_country, funcs:firstrow(Column#230)->test.customer.c_login, funcs:firstrow(Column#231)->test.customer.c_email_address, funcs:firstrow(Column#232)->test.date_dim.d_year
-  │     └─Projection	31.25	root		minus(test.store_sales.ss_ext_list_price, test.store_sales.ss_ext_discount_amt)->Column#224, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year
+  │   └─HashAgg	31.25	root		group by:Column#243, Column#244, Column#245, Column#246, Column#247, Column#248, Column#249, Column#250, funcs:sum(Column#234)->Column#73, funcs:firstrow(Column#235)->test.customer.c_customer_id, funcs:firstrow(Column#236)->test.customer.c_first_name, funcs:firstrow(Column#237)->test.customer.c_last_name, funcs:firstrow(Column#238)->test.customer.c_preferred_cust_flag, funcs:firstrow(Column#239)->test.customer.c_birth_country, funcs:firstrow(Column#240)->test.customer.c_login, funcs:firstrow(Column#241)->test.customer.c_email_address, funcs:firstrow(Column#242)->test.date_dim.d_year
+  │     └─Projection	31.25	root		minus(test.store_sales.ss_ext_list_price, test.store_sales.ss_ext_discount_amt)->Column#234, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year
   │       └─Projection	31.25	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.store_sales.ss_ext_discount_amt, test.store_sales.ss_ext_list_price, test.date_dim.d_year
   │         └─IndexJoin	31.25	root		inner join, inner:IndexLookUp, outer key:test.store_sales.ss_customer_sk, inner key:test.customer.c_customer_sk, equal cond:eq(test.store_sales.ss_customer_sk, test.customer.c_customer_sk)
   │           ├─HashJoin(Build)	25.00	root		inner join, equal:[eq(test.date_dim.d_date_sk, test.store_sales.ss_sold_date_sk)]
@@ -420,8 +420,8 @@ CTE_0	50.00	root		Non-Recursive CTE
   │             └─TableRowIDScan(Probe)	25.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
   └─Projection	25.00	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, Column#158, w->Column#169
     └─Selection	25.00	root		or(0, or(and(1, and(eq(test.date_dim.d_year, 2001), gt(Column#158, 0))), and(1, eq(test.date_dim.d_year, 2002))))
-      └─HashAgg	31.25	root		group by:Column#250, Column#251, Column#252, Column#253, Column#254, Column#255, Column#256, Column#257, funcs:sum(Column#241)->Column#158, funcs:firstrow(Column#242)->test.customer.c_customer_id, funcs:firstrow(Column#243)->test.customer.c_first_name, funcs:firstrow(Column#244)->test.customer.c_last_name, funcs:firstrow(Column#245)->test.customer.c_preferred_cust_flag, funcs:firstrow(Column#246)->test.customer.c_birth_country, funcs:firstrow(Column#247)->test.customer.c_login, funcs:firstrow(Column#248)->test.customer.c_email_address, funcs:firstrow(Column#249)->test.date_dim.d_year
-        └─Projection	31.25	root		minus(test.web_sales.ws_ext_list_price, test.web_sales.ws_ext_discount_amt)->Column#241, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year
+      └─HashAgg	31.25	root		group by:Column#260, Column#261, Column#262, Column#263, Column#264, Column#265, Column#266, Column#267, funcs:sum(Column#251)->Column#158, funcs:firstrow(Column#252)->test.customer.c_customer_id, funcs:firstrow(Column#253)->test.customer.c_first_name, funcs:firstrow(Column#254)->test.customer.c_last_name, funcs:firstrow(Column#255)->test.customer.c_preferred_cust_flag, funcs:firstrow(Column#256)->test.customer.c_birth_country, funcs:firstrow(Column#257)->test.customer.c_login, funcs:firstrow(Column#258)->test.customer.c_email_address, funcs:firstrow(Column#259)->test.date_dim.d_year
+        └─Projection	31.25	root		minus(test.web_sales.ws_ext_list_price, test.web_sales.ws_ext_discount_amt)->Column#251, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year
           └─Projection	31.25	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.web_sales.ws_ext_discount_amt, test.web_sales.ws_ext_list_price, test.date_dim.d_year
             └─IndexJoin	31.25	root		inner join, inner:IndexLookUp, outer key:test.web_sales.ws_bill_customer_sk, inner key:test.customer.c_customer_sk, equal cond:eq(test.web_sales.ws_bill_customer_sk, test.customer.c_customer_sk)
               ├─HashJoin(Build)	25.00	root		inner join, equal:[eq(test.date_dim.d_date_sk, test.web_sales.ws_sold_date_sk)]
@@ -468,21 +468,21 @@ drop table if exists tbl;
 create table tbl (id int);
 explain with t1 as (select id from tbl), t2 as (select a.id from t1 a join t1 b on a.id = b.id) select * from t2 where id in (select id from t2);
 id	estRows	task	access object	operator info
-HashJoin_33	8000.00	root		inner join, equal:[eq(test.tbl.id, test.tbl.id)]
-├─HashAgg_37(Build)	5120.00	root		group by:test.tbl.id, funcs:firstrow(test.tbl.id)->test.tbl.id
-│ └─Selection_38	8000.00	root		not(isnull(test.tbl.id))
-│   └─CTEFullScan_39	10000.00	root	CTE:t2	data:CTE_1
-└─Selection_35(Probe)	8000.00	root		not(isnull(test.tbl.id))
-  └─CTEFullScan_36	10000.00	root	CTE:t2	data:CTE_1
+HashJoin_52	8000.00	root		inner join, equal:[eq(test.tbl.id, test.tbl.id)]
+├─HashAgg_56(Build)	5120.00	root		group by:test.tbl.id, funcs:firstrow(test.tbl.id)->test.tbl.id
+│ └─Selection_57	8000.00	root		not(isnull(test.tbl.id))
+│   └─CTEFullScan_58	10000.00	root	CTE:t2	data:CTE_1
+└─Selection_54(Probe)	8000.00	root		not(isnull(test.tbl.id))
+  └─CTEFullScan_55	10000.00	root	CTE:t2	data:CTE_1
 CTE_1	10000.00	root		Non-Recursive CTE
-└─HashJoin_25(Seed Part)	10000.00	root		inner join, equal:[eq(test.tbl.id, test.tbl.id)]
-  ├─Selection_29(Build)	8000.00	root		not(isnull(test.tbl.id))
-  │ └─CTEFullScan_30	10000.00	root	CTE:t1 AS b	data:CTE_0
-  └─Selection_27(Probe)	8000.00	root		not(isnull(test.tbl.id))
-    └─CTEFullScan_28	10000.00	root	CTE:t1 AS a	data:CTE_0
+└─HashJoin_28(Seed Part)	10000.00	root		inner join, equal:[eq(test.tbl.id, test.tbl.id)]
+  ├─Selection_32(Build)	8000.00	root		not(isnull(test.tbl.id))
+  │ └─CTEFullScan_33	10000.00	root	CTE:t1 AS b	data:CTE_0
+  └─Selection_30(Probe)	8000.00	root		not(isnull(test.tbl.id))
+    └─CTEFullScan_31	10000.00	root	CTE:t1 AS a	data:CTE_0
 CTE_0	10000.00	root		Non-Recursive CTE
-└─TableReader_22(Seed Part)	10000.00	root		data:TableFullScan_21
-  └─TableFullScan_21	10000.00	cop[tikv]	table:tbl	keep order:false, stats:pseudo
+└─TableReader_25(Seed Part)	10000.00	root		data:TableFullScan_24
+  └─TableFullScan_24	10000.00	cop[tikv]	table:tbl	keep order:false, stats:pseudo
 drop table if exists t1, t2, t3;
 create table t1 (a int, b int);
 create table t2 (c int, d int);
