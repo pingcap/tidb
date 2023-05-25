@@ -1465,7 +1465,7 @@ func checkCases(
 			nil)
 		require.NoError(t, err)
 
-		err = ld.TestLoad(parser)
+		err = ld.TestLoadLocal(parser)
 		require.NoError(t, err)
 		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), tt.expected)
 		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))

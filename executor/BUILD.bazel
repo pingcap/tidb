@@ -110,7 +110,6 @@ go_library(
         "//ddl/placement",
         "//ddl/schematracker",
         "//distsql",
-        "//disttask/loaddata",
         "//domain",
         "//domain/infosync",
         "//errno",

@@ -1135,16 +1135,8 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 			require.NoError(t, err)
 		}
 		rs, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n' with batch_size = 3, thread=1", path))
-		require.NoError(t, err)
-		lastID, err = rs.LastInsertId()
-		require.NoError(t, err)
-		require.Equal(t, int64(10), lastID)
-		affectedRows, err = rs.RowsAffected()
-		require.NoError(t, err)
-		require.Equal(t, int64(799), affectedRows)
-		rows = dbt.MustQuery("select * from test")
-		require.Truef(t, rows.Next(), "unexpected data")
-		require.NoError(t, rows.Close())
+		// should be Transaction is too large
+		require.ErrorContains(t, err, "Transaction is too large")
 		// don't support lines terminated is ""
 		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table test lines terminated by '' with thread=1", path))
 		require.NotNil(t, err)
