@@ -7350,7 +7350,7 @@
       {
         "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t3.b)]",
+          "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
           "├─TableReader(Build) 9980.01 root partition:all data:Selection",
           "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
@@ -7361,9 +7361,7 @@
         "Result": [
           "1 1"
         ],
-        "Warning": [
-          "Warning 1105 disable dynamic pruning due to t1 has no global stats"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
