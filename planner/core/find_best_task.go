@@ -1695,6 +1695,8 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	}
 }
 
+// NeedExtraOutputCol is designed for check whether need an extra column for
+// pid or physical table id when build indexReq.
 func (is *PhysicalIndexScan) NeedExtraOutputCol() bool {
 	if is.Table.Partition == nil {
 		return false

@@ -3880,7 +3880,7 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
 	}
 
-	// add one more column for tid or physical table id
+	// need add one more column for pid or physical table id or not
 	if idxScan.NeedExtraOutputCol() {
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+handleLen))
 	}
