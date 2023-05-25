@@ -1275,7 +1275,7 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 const fakePhysicalID int64 = -1
 
 // PseudoTable creates a pseudo table statistics.
-func PseudoTable(tblInfo *model.TableInfo) *Table {
+func PseudoTable(tblInfo *model.TableInfo, availableStatsColIDs, availableStatsIdxIDs map[int64]struct{}) *Table {
 	pseudoHistColl := HistColl{
 		RealtimeCount:  PseudoRowCount,
 		PhysicalID:     tblInfo.ID,
@@ -1298,6 +1298,9 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
 				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
 			}
+			if _, ok := availableStatsColIDs[col.ID]; ok {
+				t.Columns[col.ID].PhysicalID = tblInfo.ID
+			}
 		}
 	}
 	for _, idx := range tblInfo.Indices {
@@ -1305,7 +1308,11 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 			t.Indices[idx.ID] = &Index{
 				PhysicalID: fakePhysicalID,
 				Info:       idx,
-				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)}
+				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
+			}
+			if _, ok := availableStatsIdxIDs[idx.ID]; ok {
+				t.Indices[idx.ID].PhysicalID = tblInfo.ID
+			}
 		}
 	}
 	return t

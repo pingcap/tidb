@@ -980,7 +980,7 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo, opts ...TableStatsOpt) 
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...TableStatsOpt) *statistics.Table {
 	var tbl *statistics.Table
 	if h == nil {
-		tbl = statistics.PseudoTable(tblInfo)
+		tbl = statistics.PseudoTable(tblInfo, nil, nil)
 		tbl.PhysicalID = pid
 		return tbl
 	}
@@ -996,7 +996,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 		tbl, ok = statsCache.Get(pid)
 	}
 	if !ok {
-		tbl = statistics.PseudoTable(tblInfo)
+		tbl = statistics.PseudoTable(tblInfo, nil, nil)
 		tbl.PhysicalID = pid
 		h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
 		return tbl

@@ -1761,10 +1761,10 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		Ranges:           ranger.FullRange(),
 		physicalTableID:  physicalID,
 		isPartition:      isPartition,
-		tblColHists:      &(statistics.PseudoTable(tblInfo)).HistColl,
+		tblColHists:      &(statistics.PseudoTable(tblInfo, nil, nil)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
-	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
+	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo, nil, nil)).HistColl}
 	if hasCommonCols {
 		for _, c := range commonInfos {
 			is.Columns = append(is.Columns, c.ColumnInfo)
@@ -1780,7 +1780,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		DBName:          dbName,
 		physicalTableID: physicalID,
 		isPartition:     isPartition,
-		tblColHists:     &(statistics.PseudoTable(tblInfo)).HistColl,
+		tblColHists:     &(statistics.PseudoTable(tblInfo, nil, nil)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	ts.SetSchema(idxColSchema)
 	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
