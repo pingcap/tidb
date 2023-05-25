@@ -35,6 +35,7 @@ type GroupingSet []GroupingExprs
 // GroupingExprs indicates one grouping-expressions inside a grouping set.
 type GroupingExprs []Expression
 
+// NewGroupingSets new a grouping sets from a slice of expression.
 func NewGroupingSets(groupCols []Expression) GroupingSets {
 	gss := make(GroupingSets, 0, len(groupCols))
 	for _, gCol := range groupCols {

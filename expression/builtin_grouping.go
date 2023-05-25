@@ -64,6 +64,7 @@ type BuiltinGroupingImplSig struct {
 	isMetaInited  bool
 }
 
+// SetMetadata will fill grouping function with comparison groupingMarks when rewriting grouping function.
 func (b *BuiltinGroupingImplSig) SetMetadata(mode tipb.GroupingMode, groupingMarks map[uint64]struct{}) error {
 	b.setGroupingMode(mode)
 	b.setMetaGroupingMarks(groupingMarks)
@@ -102,6 +103,7 @@ func (b *BuiltinGroupingImplSig) metadata() proto.Message {
 	return args
 }
 
+// Clone implementing the builtinFunc interface.
 func (b *BuiltinGroupingImplSig) Clone() builtinFunc {
 	newSig := &BuiltinGroupingImplSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
