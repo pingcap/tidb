@@ -2291,7 +2291,7 @@ func calRemainInfoForAnalyzeStatus(totalCnt int64, processedRows int64, duration
 	}
 	i := float64(remainLine) * duration.Seconds() / float64(processedRows)
 	persentage := float64(processedRows) / float64(totalCnt)
-	return time.Duration(i), persentage
+	return time.Duration(i) * time.Second, persentage
 }
 
 // setDataForAnalyzeStatus gets all the analyze jobs.
