@@ -2182,8 +2182,12 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context, isShow bool) (rows [][]
 
 		var remainDurationStr, progressStr, estimatedRowCntStr interface{}
 		if isShow && state == statistics.AnalyzeRunning {
+			startTime, ok := startTime.(types.Time)
+			if !ok {
+				return nil, errors.New("invalid start time")
+			}
 			RemainingDuration, progress, estimatedRowCnt, RemainDurationErr :=
-				getRemainDurationForAnalyzeStatusHelper(sctx, startTime,
+				getRemainDurationForAnalyzeStatusHelper(sctx, &startTime,
 					dbName, tableName, partitionName, processedRows)
 			if RemainDurationErr != nil {
 				logutil.BgLogger().Warn("get remaining duration failed", zap.Error(RemainDurationErr))
@@ -2233,16 +2237,12 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context, isShow bool) (rows [][]
 }
 
 func getRemainDurationForAnalyzeStatusHelper(
-	sctx sessionctx.Context, startTime interface{},
+	sctx sessionctx.Context, startTime *types.Time,
 	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, float64, float64, error) {
 	var RemainingDuration = time.Duration(0)
 	var percentage = 0.0
 	var totalCnt = float64(0)
 	if startTime != nil {
-		startTime, ok := startTime.(types.Time)
-		if !ok {
-			return nil, percentage, totalCnt, errors.New("invalid start time")
-		}
 		start, err := startTime.GoTime(time.UTC)
 		if err != nil {
 			return nil, percentage, totalCnt, err

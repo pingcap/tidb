@@ -2350,7 +2350,8 @@ func TestAnalyzeJob(t *testing.T) {
 		require.Equal(t, connID, rows[0][10])
 
 		executor.StartAnalyzeJob(se, job)
-		rows = tk.MustQuery("show analyze status").Rows()
+		ctx := context.WithValue(context.Background(), executor.AnalyzeProgressTest, nil)
+		rows = tk.MustQueryWithContext(ctx, "show analyze status").Rows()
 		checkTime := func(val interface{}) {
 			str, ok := val.(string)
 			require.True(t, ok)
