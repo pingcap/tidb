@@ -2645,6 +2645,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 
 		var handle kv.Handle
 		var tableRecord *consistency.RecordData
+		var lastTableRecord *consistency.RecordData
 		var indexRecord *consistency.RecordData
 		i := 0
 		j := 0
@@ -2683,6 +2684,9 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			}
 
 			if tableRecord == nil {
+				if lastTableRecord != nil && lastTableRecord.Handle.Equal(indexRecord.Handle) {
+					tableRecord = lastTableRecord
+				}
 				err = ir().ReportAdminCheckInconsistent(context.TODO(), indexRecord.Handle, indexRecord, tableRecord)
 			} else if indexRecord == nil {
 				err = ir().ReportAdminCheckInconsistent(context.TODO(), tableRecord.Handle, indexRecord, tableRecord)
@@ -2692,12 +2696,23 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 				if tableRecord.Handle.Compare(indexRecord.Handle) < 0 {
 					err = ir().ReportAdminCheckInconsistent(context.TODO(), tableRecord.Handle, nil, tableRecord)
 				} else {
-					err = ir().ReportAdminCheckInconsistent(context.TODO(), indexRecord.Handle, indexRecord, nil)
+					if lastTableRecord != nil && lastTableRecord.Handle.Equal(indexRecord.Handle) {
+						err = ir().ReportAdminCheckInconsistent(context.TODO(), indexRecord.Handle, indexRecord, lastTableRecord)
+					} else {
+						err = ir().ReportAdminCheckInconsistent(context.TODO(), indexRecord.Handle, indexRecord, nil)
+					}
 				}
 			}
 			if err != nil {
 				trySaveErr(err)
 				return
+			}
+			i++
+			j++
+			if tableRecord != nil {
+				lastTableRecord = &consistency.RecordData{Handle: tableRecord.Handle, Values: tableRecord.Values}
+			} else {
+				lastTableRecord = nil
 			}
 		}
 	}

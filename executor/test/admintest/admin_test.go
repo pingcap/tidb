@@ -1533,7 +1533,7 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	require.NoError(t, err)
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
-	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 0, index-values:\"handle: 0, values: [KindInt64 0 KindInt64 0]\" != record-values:\"\"")
+	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 0, index-values:\"handle: 0, values: [KindInt64 0]\" != record-values:\"\"")
 	tk.MustExec("set @@tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
@@ -1556,11 +1556,11 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	require.NoError(t, err)
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
-	require.EqualError(t, err, "[executor:8134]data inconsistency in table: admin_test, index: c2, col: c2, handle: \"2\", index-values:\"KindInt64 13\" != record-values:\"KindInt64 12\", compare err:<nil>")
+	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 2, index-values:\"handle: 2, values: [KindInt64 13]\" != record-values:\"handle: 2, values: [KindInt64 12]\"")
 	tk.MustExec("set @@tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
-	require.EqualError(t, err, "[executor:8134]data inconsistency in table: admin_test, index: c2, col: c2, handle: \"?\", index-values:\"?\" != record-values:\"?\", compare err:\"?\"")
+	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
 	tk.MustExec("set @@tidb_redact_log=0;")
 
 	// Table count = index count.
@@ -1575,11 +1575,11 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	require.NoError(t, err)
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
-	require.EqualError(t, err, "[executor:8134]data inconsistency in table: admin_test, index: c2, col: c2, handle: \"10\", index-values:\"KindInt64 19\" != record-values:\"KindInt64 20\", compare err:<nil>")
+	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 2, index-values:\"\" != record-values:\"handle: 2, values: [KindInt64 12]\"")
 	tk.MustExec("set @@tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
-	require.EqualError(t, err, "[executor:8134]data inconsistency in table: admin_test, index: c2, col: c2, handle: \"?\", index-values:\"?\" != record-values:\"?\", compare err:\"?\"")
+	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
 	tk.MustExec("set @@tidb_redact_log=0;")
 
 	// Table count = index count.
@@ -1611,4 +1611,8 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	tk.MustExec("admin check table admin_test")
+}
+
+func TestAdminCheckTableErrorLocate(t *testing.T) {
+
 }
