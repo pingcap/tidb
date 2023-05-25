@@ -22,9 +22,9 @@ import (
 type sharedKeyAzuriteClientBuilder struct {
 }
 
-func (b *sharedKeyAzuriteClientBuilder) GetServiceClient() (azblob.ServiceClient, error) {
+func (b *sharedKeyAzuriteClientBuilder) GetServiceClient() (*azblob.Client, error) {
 	connStr := "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
-	return azblob.NewServiceClientFromConnectionString(connStr, nil)
+	return azblob.NewClientFromConnectionString(connStr, nil)
 }
 
 func (b *sharedKeyAzuriteClientBuilder) GetAccountName() string {
@@ -307,9 +307,9 @@ type fakeClientBuilder struct {
 	Endpoint string
 }
 
-func (b *fakeClientBuilder) GetServiceClient() (azblob.ServiceClient, error) {
+func (b *fakeClientBuilder) GetServiceClient() (*azblob.Client, error) {
 	connStr := fmt.Sprintf("DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=%s/devstoreaccount1;", b.Endpoint)
-	return azblob.NewServiceClientFromConnectionString(connStr, getDefaultClientOptions())
+	return azblob.NewClientFromConnectionString(connStr, getDefaultClientOptions())
 }
 
 func (b *fakeClientBuilder) GetAccountName() string {
