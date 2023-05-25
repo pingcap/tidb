@@ -1695,7 +1695,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	}
 }
 
-func (is *PhysicalIndexScan) NeedExtraCol() bool {
+func (is *PhysicalIndexScan) NeedExtraOutputCol() bool {
 	if is.Table.Partition == nil {
 		return false
 	}
