@@ -135,6 +135,8 @@ const (
 	TypeForeignKeyCascade = "Foreign_Key_Cascade"
 	// TypeImportInto is the type of ImportInto.
 	TypeImportInto = "ImportInto"
+	// TypeSequence is the type of Sequence
+	TypeSequence = "Sequence"
 )
 
 // plan id.
