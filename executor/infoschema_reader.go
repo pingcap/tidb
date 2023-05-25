@@ -2254,23 +2254,28 @@ func getRemainDurationForAnalyzeStatusHelper(
 		if err != nil {
 			return nil, percentage, totalCnt, err
 		}
-		if partitionName != "" {
-			pt := tb.Meta().GetPartitionInfo()
-			tid = pt.GetPartitionIDByName(partitionName)
-		} else {
-			statsTable := statistics.PseudoTable(tb.Meta())
-			if statsTable.RealtimeCount > 0 {
-				totalCnt = float64(statsTable.RealtimeCount)
-				RemainingDuration, percentage = calRemainInfoForAnalyzeStatus(statsTable.RealtimeCount, processedRows, duration)
-				return &RemainingDuration, percentage, totalCnt, nil
+		statsHandle := domain.GetDomain(sctx).StatsHandle()
+		if statsHandle != nil {
+			var statsTbl *statistics.Table
+			meta := tb.Meta()
+			if partitionName != "" {
+				statsTbl = statsHandle.GetTableStats(meta)
+				tid = meta.ID
+			} else {
+				pt := meta.GetPartitionInfo()
+				tid = pt.GetPartitionIDByName(partitionName)
+				statsTbl = statsHandle.GetPartitionStats(meta, tid)
 			}
-			tid = tb.Meta().ID
+			if statsTbl != nil && statsTbl.RealtimeCount != 0 {
+				totalCnt = float64(statsTbl.RealtimeCount)
+			}
 		}
-		if tid > 0 {
+		if tid > 0 && totalCnt == 0 {
 			totalCnt, _ = internalutil.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
-			RemainingDuration, percentage = calRemainInfoForAnalyzeStatus(int64(totalCnt), processedRows, duration)
-			return &RemainingDuration, percentage, totalCnt, nil
 		}
+		RemainingDuration, percentage = calRemainInfoForAnalyzeStatus(int64(totalCnt), processedRows, duration)
+		return &RemainingDuration, percentage, totalCnt, nil
+
 	}
 	return &RemainingDuration, percentage, totalCnt, nil
 }
