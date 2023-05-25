@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 )
@@ -161,6 +163,13 @@ func (s *MockStateSyncer) Init(context.Context) error {
 
 // UpdateGlobalState implements StateSyncer.UpdateGlobalState interface.
 func (s *MockStateSyncer) UpdateGlobalState(_ context.Context, stateInfo *syncer.StateInfo) error {
+	failpoint.Inject("mockUpgradingState", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------------------mockUpgradingState *** job:%v", stateInfo))
+			s.clusterState.Store(stateInfo)
+			failpoint.Return(nil)
+		}
+	})
 	s.globalVerCh <- clientv3.WatchResponse{}
 	s.clusterState.Store(stateInfo)
 	return nil
@@ -173,6 +182,7 @@ func (s *MockStateSyncer) GetGlobalState(context.Context) (*syncer.StateInfo, er
 
 // IsUpgradingState implements StateSyncer.IsUpgradingState interface.
 func (s *MockStateSyncer) IsUpgradingState() bool {
+
 	return s.clusterState.Load().State == syncer.StateUpgrading
 }
 
