@@ -1556,6 +1556,54 @@ func TestLoadDataPrivilege(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 }
 
+// NOTE: for positive case, see TestImportIntoPrivilegePositiveCase in realtikvtest,
+// since IMPORT INTO need real TiKV env to run.
+func TestImportIntoPrivilegeNegativeCase(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExec(`CREATE USER 'test_import_into'@'localhost';`)
+	tk.MustExec(`CREATE TABLE t(a int)`)
+
+	tk.MustExec(`GRANT SELECT on *.* to 'test_import_into'@'localhost'`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	err := tk.ExecToErr("IMPORT INTO t FROM '/file.csv'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExec(`GRANT UPDATE on *.* to 'test_import_into'@'localhost'`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	err = tk.ExecToErr("IMPORT INTO t FROM '/file.csv'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExec(`GRANT INSERT on *.* to 'test_import_into'@'localhost'`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	err = tk.ExecToErr("IMPORT INTO t FROM '/file.csv'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExec(`GRANT DELETE on *.* to 'test_import_into'@'localhost'`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	err = tk.ExecToErr("IMPORT INTO t FROM '/file.csv'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExec(`DROP USER 'test_import_into'@'localhost';`)
+	tk.MustExec(`CREATE USER 'test_import_into'@'localhost';`)
+	tk.MustExec(`GRANT ALTER on *.* to 'test_import_into'@'localhost'`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	err = tk.ExecToErr("IMPORT INTO t FROM '/file.csv'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+}
+
 func TestSelectIntoNoPermissions(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 

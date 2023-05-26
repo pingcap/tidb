@@ -52,6 +52,9 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.LoadDataStmt{}
 	require.False(t, core.Cacheable(stmt, is))
 
+	stmt = &ast.ImportIntoStmt{}
+	require.False(t, core.Cacheable(stmt, is))
+
 	// test SetOprStmt
 	stmt = &ast.SetOprStmt{}
 	require.True(t, core.Cacheable(stmt, is))
