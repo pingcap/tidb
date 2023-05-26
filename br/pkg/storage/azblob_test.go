@@ -339,8 +339,9 @@ func TestDownloadRetry(t *testing.T) {
 	t.Log(server.URL)
 
 	options := &backuppb.AzureBlobStorage{
-		Bucket: "test",
-		Prefix: "a/b/",
+		Bucket:       "test",
+		Prefix:       "a/b/",
+		StorageClass: "Hot",
 	}
 
 	ctx := context.Background()

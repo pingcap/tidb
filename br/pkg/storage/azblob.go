@@ -332,14 +332,19 @@ func (s *AzureBlobStorage) WriteFile(ctx context.Context, name string, data []by
 
 // ReadFile reads a file from Azure Blob Storage.
 func (s *AzureBlobStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
-	var data []byte
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
-	_, err := client.DownloadBuffer(ctx, data, &blob.DownloadBufferOptions{
-		RetryReaderOptionsPerBlock: blob.RetryReaderOptions{
-			MaxRetries: azblobRetryTimes,
-		},
+	resp, err := client.DownloadStream(ctx, nil)
+	if err != nil {
+		return nil, errors.Annotatef(err, "Failed to download azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
+	}
+	body := resp.NewRetryReader(ctx, &blob.RetryReaderOptions{
+		MaxRetries: azblobRetryTimes,
 	})
-	return data, err
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return nil, errors.Annotatef(err, "Failed to read azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
+	}
+	return data, body.Close()
 }
 
 // FileExists checks if a file exists in Azure Blob Storage.
@@ -463,20 +468,24 @@ type azblobObjectReader struct {
 // Read implement the io.Reader interface.
 func (r *azblobObjectReader) Read(p []byte) (n int, err error) {
 	count := int64(len(p))
-	nn, err := r.blobClient.DownloadBuffer(r.ctx, p, &blob.DownloadBufferOptions{
+	resp, err := r.blobClient.DownloadStream(r.ctx, &blob.DownloadStreamOptions{
 		Range: blob.HTTPRange{
 			Offset: r.pos,
 			Count:  count,
 		},
-		RetryReaderOptionsPerBlock: blob.RetryReaderOptions{
-			MaxRetries: azblobRetryTimes,
-		},
 	})
+	if err != nil {
+		return 0, errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d', count='%d'", r.pos, count)
+	}
+	body := resp.NewRetryReader(r.ctx, &blob.RetryReaderOptions{
+		MaxRetries: azblobRetryTimes,
+	})
+	n, err = body.Read(p)
 	if err != nil && err != io.EOF {
 		return 0, errors.Annotatef(err, "Failed to read data from azure blob response, data info: pos='%d', count='%d'", r.pos, count)
 	}
-	r.pos += nn
-	return int(n), nil
+	r.pos += int64(n)
+	return n, body.Close()
 }
 
 // Close implement the io.Closer interface.
