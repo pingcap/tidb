@@ -1272,7 +1272,7 @@ func TestTiDBTiflashNodeSelectionPolicy(t *testing.T) {
 	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashNodeSelectionPolicy, DefTiDBTiflashNodeSelectionPolicy)
 	require.NoError(t, err)
 	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashNodeSelectionPolicy, "random")
-	require.Error(t, fmt.Errorf(""))
+	require.Error(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBTiflashNodeSelectionPolicy)
 	require.NoError(t, err)
 	require.Equal(t, DefTiDBTiflashNodeSelectionPolicy, val)
