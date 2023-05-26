@@ -27,8 +27,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/duplicate"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -285,37 +283,19 @@ func (d *dupDetector) addKeysByChunk(
 		return errors.Trace(err)
 	}
 
-	dataKVs := d.rc.encBuilder.MakeEmptyRows()
-	indexKVs := d.rc.encBuilder.MakeEmptyRows()
-	c := keyspace.CodecV1
-	if d.tr.kvStore != nil {
-		c = d.tr.kvStore.GetCodec()
-	}
-	dataChecksum := verify.NewKVChecksumWithKeyspace(c)
-	indexChecksum := verify.NewKVChecksumWithKeyspace(c)
-
 	for {
 		lastRow := parser.LastRow()
 		lastRow.Row = append(lastRow.Row, extendVals...)
 
-		kvs, err := kvEncoder.Encode(lastRow.Row, lastRow.RowID, colPerm, offset)
+		row, err := kvEncoder.Encode(lastRow.Row, lastRow.RowID, colPerm, offset)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		kvs.ClassifyAndAppend(&dataKVs, dataChecksum, &indexKVs, indexChecksum)
-
-		for _, kvPair := range kv.Rows2KvPairs(dataKVs) {
+		for _, kvPair := range kv.Row2KvPairs(row) {
 			if err := adder.Add(kvPair.Key, kvPair.RowID); err != nil {
 				return err
 			}
 		}
-		for _, kvPair := range kv.Rows2KvPairs(indexKVs) {
-			if err := adder.Add(kvPair.Key, kvPair.RowID); err != nil {
-				return err
-			}
-		}
-		dataKVs.Clear()
-		indexKVs.Clear()
 
 		offset, _ = parser.Pos()
 		if err := parser.ReadRow(); err != nil {

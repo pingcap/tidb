@@ -144,8 +144,8 @@ func (d *Detector) getRangeBounds(ctx context.Context) (startKey, endKey interna
 
 // KeyAdder is used to add keys to the Detector.
 type KeyAdder struct {
-	w   extsort.Writer
-	buf []byte
+	w      extsort.Writer
+	keyBuf []byte
 }
 
 // Add adds a key and its keyID to the KeyAdder.
@@ -154,8 +154,8 @@ type KeyAdder struct {
 // the duplicate key in the original data source.
 func (k *KeyAdder) Add(key, keyID []byte) error {
 	ikey := internalKey{key: key, keyID: keyID}
-	encodedKey := encodeInternalKey(k.buf[:0], ikey)
-	return k.w.Put(encodedKey, nil)
+	k.keyBuf = encodeInternalKey(k.keyBuf[:0], ikey)
+	return k.w.Put(k.keyBuf, nil)
 }
 
 // Flush flushes buffered keys to the detector.
