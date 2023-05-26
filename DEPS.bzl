@@ -1592,8 +1592,8 @@ def go_deps():
         name = "com_github_golang_glog",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golang/glog",
-        sum = "h1:nfP3RFugxnNRyKgeWd4oI1nYvXpxrx8ck8ZrcizshdQ=",
-        version = "v1.0.0",
+        sum = "h1:/d3pCKDPWNnvIWe0vVUpNP32qc8U3PDVxySP/y360qE=",
+        version = "v1.1.0",
     )
     go_repository(
         name = "com_github_golang_groupcache",
@@ -3442,9 +3442,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        replace = "github.com/leavrth/kvproto",
-        sum = "h1:wO3gHI+ZQo67WkZZKVx/DpYojR27bf9E8gKfUl4deAg=",
-        version = "v0.0.0-20230524023357-213fbe849444",
+        sum = "h1:M/PEVPjh9nlldU0+AeAvnxrQ7K9wAa+l8ERH0X5elbI=",
+        version = "v0.0.0-20230526062111-c13fc8b65f75",
     )
     go_repository(
         name = "com_github_pingcap_log",
