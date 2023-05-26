@@ -14,7 +14,12 @@
 
 package mppcoordmanager
 
-import "github.com/pingcap/tidb/kv"
+import (
+	"sync"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
+)
 
 // InstanceMPPCoordinatorManager is a local instance mpp coordinator manager
 var InstanceMPPCoordinatorManager = newMPPCoordinatorManger()
@@ -27,7 +32,32 @@ type CoordinatorUniqueID struct {
 
 // MPPCoordinatorManager manages all mpp coordinator instances
 type MPPCoordinatorManager struct {
+	mu             sync.Mutex
 	coordinatorMap map[CoordinatorUniqueID]*kv.MppCoordinator
+}
+
+// Register is to register mpp coordinator
+func (m *MPPCoordinatorManager) Register(coordID CoordinatorUniqueID, mppCoord *kv.MppCoordinator) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, exists := m.coordinatorMap[coordID]
+	if exists {
+		return errors.Errorf("Already added mpp coordinator: %d %d %d %d", coordID.MPPQueryID.QueryTs, coordID.MPPQueryID.LocalQueryID, coordID.MPPQueryID.ServerID, coordID.GatherId)
+	}
+	m.coordinatorMap[coordID] = mppCoord
+	return nil
+}
+
+// Unregister is to unregister mpp coordinator
+func (m *MPPCoordinatorManager) Unregister(coordID CoordinatorUniqueID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.coordinatorMap, coordID)
+	return nil
+}
+
+func (m *MPPCoordinatorManager) ReportStatus(CoordinatorUniqueID) error {
+	return nil
 }
 
 // newMPPCoordinatorManger is to create a new mpp coordinator manager
