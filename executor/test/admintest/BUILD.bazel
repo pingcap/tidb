@@ -28,6 +28,7 @@ go_test(
         "//testkit/testutil",
         "//types",
         "//util/codec",
+        "//util/logutil",
         "//util/logutil/consistency",
         "//util/mock",
         "@com_github_pingcap_errors//:errors",
