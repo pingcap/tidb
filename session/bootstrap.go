@@ -882,13 +882,15 @@ const (
 	// version 144 turn off `tidb_plan_cache_invalidation_on_fresh_stats`, which is introduced in 7.1-rc,
 	// if it's upgraded from an existing old version cluster.
 	version144 = 144
-	// version 145 add column `step` to `mysql.tidb_background_subtask`
+	// version 145 to only add a version make we know when we support upgrade state.
 	version145 = 145
+	// version 146 add column `step` to `mysql.tidb_background_subtask`
+	version146 = 146
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version145
+var currentBootstrapVersion int64 = version146
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1021,7 +1023,8 @@ var (
 		upgradeToVer142,
 		upgradeToVer143,
 		upgradeToVer144,
-		upgradeToVer145,
+		// We will only use to differentiate versions, so it is skipped here.
+		upgradeToVer146,
 	}
 )
 
@@ -1080,7 +1083,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 }
 
 // SupportUpgradeStateVer is exported for testing.
-var SupportUpgradeStateVer = version144
+var SupportUpgradeStateVer = version145
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
@@ -1185,21 +1188,21 @@ func syncUpgradeState(s Session) {
 		if err == nil && len(jobErrs) == 0 {
 			break
 		}
-		isAllFinished := true
+		jobErrStrs := make([]string, 0, len(jobErrs))
 		for _, jobErr := range jobErrs {
 			if dbterror.ErrPausedDDLJob.Equal(jobErr) {
 				continue
 			}
-			isAllFinished = false
+			jobErrStrs = append(jobErrStrs, jobErr.Error())
 		}
-		if isAllFinished {
+		if err == nil && len(jobErrs) == 0 {
 			break
 		}
 
 		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Error(err))
+			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
 		}
-		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Error(err))
+		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
 		time.Sleep(interval)
 	}
 	logutil.BgLogger().Info("[upgrading] update global state to upgrading", zap.String("state", syncer.StateUpgrading))
@@ -2627,8 +2630,8 @@ func upgradeToVer144(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
 }
 
-func upgradeToVer145(s Session, ver int64) {
-	if ver >= version145 {
+func upgradeToVer146(s Session, ver int64) {
+	if ver >= version146 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)

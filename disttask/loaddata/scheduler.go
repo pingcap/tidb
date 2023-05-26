@@ -64,7 +64,7 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 
 	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
-		Progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
+		Progress: asyncloaddata.NewProgress(false),
 		Job: &asyncloaddata.Job{
 			ID: s.taskMeta.JobID,
 		},
@@ -103,7 +103,7 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 		TableImporter: s.tableImporter,
 		DataEngine:    dataEngine,
 		IndexEngine:   indexEngine,
-		Progress:      asyncloaddata.NewProgress(s.taskMeta.Plan.ImportMode == importer.LogicalImportMode),
+		Progress:      asyncloaddata.NewProgress(false),
 		Checksum:      &verification.KVChecksum{},
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)

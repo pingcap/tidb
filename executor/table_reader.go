@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/executor/internal/builder"
+	internalutil "github.com/pingcap/tidb/executor/internal/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -155,13 +157,13 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInFilter {
 		if e.storeType == kv.TiFlash {
-			execs, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)
+			execs, err := builder.ConstructTreeBasedDistExec(e.ctx, e.tablePlan)
 			if err != nil {
 				return err
 			}
 			e.dagPB.RootExecutor = execs[0]
 		} else {
-			e.dagPB.Executors, err = constructDistExec(e.ctx, e.plans)
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.ctx, e.plans)
 			if err != nil {
 				return err
 			}
@@ -359,7 +361,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
-		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
+		if err := internalutil.UpdateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
 			return nil, err
 		}
 		var builder distsql.RequestBuilder
@@ -401,7 +403,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 			KeyRanges: kvRange,
 		})
 	}
-	if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, pids); err != nil {
+	if err := internalutil.UpdateExecutorTableID(ctx, e.dagPB.RootExecutor, true, pids); err != nil {
 		return nil, err
 	}
 	var builder distsql.RequestBuilder
