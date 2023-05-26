@@ -524,3 +524,16 @@ func TestPhysicalPlanMemoryTrace(t *testing.T) {
 	pp.MPPPartitionCols = append(pp.MPPPartitionCols, &property.MPPPartitionColumn{})
 	require.Greater(t, pp.MemoryUsage(), size)
 }
+
+func TestRemoveOrderbyInSubquery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE `t1` ( `a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL, `c` int(11) DEFAULT NULL);")
+	tk.MustExec("insert into t1 (a,b,c) value(3,4,5);")
+	tk.MustQuery("explain format = 'brief' select * from (select * from t1 order by a) tmp;").Check(
+		testkit.Rows(
+			"TableReader 10000.00 root  data:TableFullScan",
+			"└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+}

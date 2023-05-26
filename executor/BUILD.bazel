@@ -187,6 +187,7 @@ go_library(
         "//util/gcutil",
         "//util/hack",
         "//util/hint",
+        "//util/intest",
         "//util/keydecoder",
         "//util/kvcache",
         "//util/logutil",
