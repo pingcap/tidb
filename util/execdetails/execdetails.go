@@ -51,14 +51,12 @@ type DetailsNeedP90 struct {
 	TimeDetail    util.TimeDetail
 }
 
-// detailsNeedP90StructSize indicates the size of DetailsNeedP90Size, used for memory tracking.
-const detailsNeedP90StructSize = int64(unsafe.Sizeof(DetailsNeedP90{}))
-
-// backoffEmptyMapSzie indicates the size of BackoffSleep and BackoffTimes when the map is empty.
-const backoffEmptyMapSize = 48 * 2
-
-// AvgMemorySizeForDetailsNeedP90 is the avg size of DetailsNeedP90 need.
-const AvgMemorySizeForDetailsNeedP90 = detailsNeedP90StructSize + backoffEmptyMapSize
+// AvgMemorySizeForDetailsNeedP90 is the estimated size of DetailsNeedP90 struct.
+// "48" represents the base memory overhead of a Go map after initialization.
+// Here, the memory overhead of the \`BackoffSleep\` and \`BackoffTimes\` member attributes is recorded.
+// "8" represents the memory overhead of some related slices. For details, see the following function:
+// StatementContext.MergeExecDetails(), basicCopRuntimeStats.Merge(), selectResultRuntimeStats.Merge().
+const AvgMemorySizeForDetailsNeedP90 = int64(unsafe.Sizeof(DetailsNeedP90{})) + 48*2 + 8*4
 
 type stmtExecDetailKeyType struct{}
 
