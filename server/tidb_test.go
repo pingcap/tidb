@@ -2433,10 +2433,10 @@ func TestTopSQLResourceTag(t *testing.T) {
 		reqs []tikvrpc.CmdType
 	}{
 		{"replace into mysql.global_variables (variable_name,variable_value) values ('tidb_enable_1pc', '1')", []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
-		{"select /*+ read_from_storage(tikv[stmtstats.t]) */ bit_xor(crc32(md5(concat(_tidb_rowid, ifnull(a, 0x1))))), ((md5(concat(_tidb_rowid)) - 0) / 1 % 1024), count(*) from stmtstats.t use index() group by ((md5(concat(_tidb_rowid)) - 0) / 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select bit_xor(crc32(md5(concat(_tidb_rowid, ifnull(a, 0x1))))), ((md5(concat(_tidb_rowid)) - 0) / 1 % 1024), count(*) from stmtstats.t use index(idx) group by ((md5(concat(_tidb_rowid)) - 0) / 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select /*+ read_from_storage(tikv[stmtstats.t]) */ bit_xor(crc32(md5(concat(_tidb_rowid, ifnull(a, 0x1))))), ((md5(concat(_tidb_rowid)) - 0) / 1 % 1024), count(*) from stmtstats.t use index() group by ((md5(concat(_tidb_rowid)) - 0) / 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select bit_xor(crc32(md5(concat(_tidb_rowid, ifnull(a, 0x1))))), ((md5(concat(_tidb_rowid)) - 0) / 1 % 1024), count(*) from stmtstats.t use index(idx) group by ((md5(concat(_tidb_rowid)) - 0) / 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[stmtstats.t]) */ bit_xor(crc32(md5(concat(_tidb_rowid, ifnull(a, 0x1))))), ((crc32(md5(concat(_tidb_rowid))) - 0) div 1 % 1024), count(*) from stmtstats.t use index() where 0 = 0 group by ((crc32(md5(concat(_tidb_rowid))) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select bit_xor(crc32(md5(concat(_tidb_rowid, ifnull(a, 0x1))))), ((crc32(md5(concat(_tidb_rowid))) - 0) div 1 % 1024), count(*) from stmtstats.t use index(idx) where 0 = 0 group by ((crc32(md5(concat(_tidb_rowid))) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[stmtstats.t]) */ bit_xor(crc32(md5(concat(_tidb_rowid, ifnull(a, 0x1))))), ((crc32(md5(concat(_tidb_rowid))) - 0) div 1 % 1024), count(*) from stmtstats.t use index() where 0 = 0 group by ((crc32(md5(concat(_tidb_rowid))) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select bit_xor(crc32(md5(concat(_tidb_rowid, ifnull(a, 0x1))))), ((crc32(md5(concat(_tidb_rowid))) - 0) div 1 % 1024), count(*) from stmtstats.t use index(idx) where 0 = 0 group by ((crc32(md5(concat(_tidb_rowid))) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
 	}
 	executeCaseFn := func(execFn func(db *sql.DB)) {
 		dsn := ts.getDSN(func(config *mysql.Config) {
