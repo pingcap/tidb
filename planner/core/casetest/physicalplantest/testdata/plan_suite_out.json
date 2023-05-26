@@ -2171,7 +2171,7 @@
       },
       {
         "SQL": "select * from (select * from t use index() order by b) t left join t t1 on t.a=t1.a limit 10",
-        "Best": "IndexJoin{TableReader(Table(t)->TopN([test.t.b],0,10))->TopN([test.t.b],0,10)->TableReader(Table(t))}(test.t.a,test.t.a)->Limit"
+        "Best": "IndexJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t.a,test.t.a)->Limit"
       },
       {
         "SQL": "select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b",
@@ -2617,11 +2617,11 @@
       },
       {
         "SQL": "select count(*) from (select * from t order by b) t group by b",
-        "Best": "TableReader(Table(t))->Sort->StreamAgg"
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg"
       },
       {
         "SQL": "select count(*), x from (select b as bbb, a + 1 as x from (select * from t order by b) t) t group by bbb",
-        "Best": "TableReader(Table(t))->Sort->Projection->StreamAgg"
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg"
       },
       {
         "SQL": "select sum(a), avg(b + c) from t group by d",
