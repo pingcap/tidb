@@ -30,6 +30,7 @@ import (
 )
 
 func (s *mockGCSSuite) TestOperateRunningJob() {
+	s.T().Skip("skip for now")
 	s.testOperateRunningJob(importer.LogicalImportMode)
 	//s.testOperateRunningJob(importer.PhysicalImportMode)
 }

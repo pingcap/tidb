@@ -42,7 +42,6 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, config.OpLevelOptional, plan.Analyze)
 	require.Equal(t, false, plan.Distributed)
 	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt)
-	require.Equal(t, int64(1000), plan.BatchSize)
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
 	require.Equal(t, false, plan.SplitFile)
 	require.Equal(t, int64(100), plan.MaxRecordedErrors)
@@ -104,10 +103,6 @@ func TestInitOptions(t *testing.T) {
 		{OptionStr: threadOption + "=-100", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: threadOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
-		{OptionStr: batchSizeOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: batchSizeOption + "='11aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: batchSizeOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
-
 		{OptionStr: maxWriteSpeedOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: maxWriteSpeedOption + "='11aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: maxWriteSpeedOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
@@ -159,7 +154,6 @@ func TestInitOptions(t *testing.T) {
 		analyzeOption+"='required', "+
 		distributedOption+"=false, "+
 		threadOption+"='100000', "+
-		batchSizeOption+"=2000, "+
 		maxWriteSpeedOption+"='200mib', "+
 		splitFileOption+"=true, "+
 		recordErrorsOption+"=123, "+
@@ -175,7 +169,6 @@ func TestInitOptions(t *testing.T) {
 	require.False(t, plan.Distributed, sql)
 	require.Equal(t, config.OpLevelRequired, plan.Analyze, sql)
 	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt, sql)
-	require.Equal(t, int64(2000), plan.BatchSize, sql)
 	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
 	require.True(t, plan.SplitFile, sql)
 	require.Equal(t, int64(123), plan.MaxRecordedErrors, sql)
@@ -204,18 +197,14 @@ func TestGetMsgFromBRError(t *testing.T) {
 }
 
 func TestASTArgsFromStmt(t *testing.T) {
-	stmt := "load data infile 'gs://test-load/test.tsv' into table tb(a, é);"
+	stmt := "IMPORT INTO tb (a, é) FROM 'gs://test-load/test.tsv';"
 	stmtNode, err := parser.New().ParseOneStmt(stmt, "latin1", "latin1_bin")
 	require.NoError(t, err)
 	text := stmtNode.Text()
 	require.Equal(t, stmt, text)
 	astArgs, err := ASTArgsFromStmt(text)
 	require.NoError(t, err)
-	loadDataStmt := stmtNode.(*ast.LoadDataStmt)
-	require.Equal(t, astArgs.FileLocRef, loadDataStmt.FileLocRef)
-	require.Equal(t, astArgs.ColumnAssignments, loadDataStmt.ColumnAssignments)
-	require.Equal(t, astArgs.ColumnsAndUserVars, loadDataStmt.ColumnsAndUserVars)
-	require.Equal(t, astArgs.FieldsInfo, loadDataStmt.FieldsInfo)
-	require.Equal(t, astArgs.LinesInfo, loadDataStmt.LinesInfo)
-	require.Equal(t, astArgs.OnDuplicate, loadDataStmt.OnDuplicate)
+	importIntoStmt := stmtNode.(*ast.ImportIntoStmt)
+	require.Equal(t, astArgs.ColumnAssignments, importIntoStmt.ColumnAssignments)
+	require.Equal(t, astArgs.ColumnsAndUserVars, importIntoStmt.ColumnsAndUserVars)
 }

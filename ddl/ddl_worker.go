@@ -977,7 +977,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	failpoint.Inject("mockPanicInRunDDLJob", func(val failpoint.Value) {})
 
 	if job.Type != model.ActionMultiSchemaChange {
-		logutil.Logger(w.logCtx).Debug("[ddl] run DDL job", zap.String("job", job.String()))
+		logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	}
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
