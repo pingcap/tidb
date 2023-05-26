@@ -116,7 +116,7 @@ func OpenDiskSorter(dirname string, opts *DiskSorterOptions) (*DiskSorter, error
 // NewWriter implements the ExternalSorter.NewWriter.
 func (d *DiskSorter) NewWriter(_ context.Context) (Writer, error) {
 	if d.state.Load() > diskSorterStateWriting {
-		return nil, errors.Errorf("diskSorter started sorting, cannot write more data")
+		return nil, errors.Errorf("DiskSorter started sorting, cannot write more data")
 	}
 	return &diskSorterWriter{
 		d:   d,
@@ -163,7 +163,7 @@ func (d *DiskSorter) IsSorted() bool {
 // NewIterator implements the ExternalSorter.NewIterator.
 func (d *DiskSorter) NewIterator(_ context.Context) (Iterator, error) {
 	if d.state.Load() != diskSorterStateSorted {
-		return nil, errors.Errorf("diskSorter is not sorted")
+		return nil, errors.Errorf("DiskSorter is not sorted")
 	}
 	return &diskSorterIterator{iter: d.db.NewIter(nil)}, nil
 }

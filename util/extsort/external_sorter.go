@@ -46,8 +46,10 @@ type ExternalSorter interface {
 }
 
 // Writer is an interface for writing key-value pairs to the external sorter.
+// By default, all methods are not concurrent safe.
 type Writer interface {
-	// Put adds a key-value pair to the writer.
+	// Put adds a key-value pair to the writer. Caller can change the content of
+	// `key` and `value` after calling Put().
 	Put(key, value []byte) error
 	// Flush flushes all buffered key-value pairs to the external sorter.
 	// the writer can be reused after calling Flush().
