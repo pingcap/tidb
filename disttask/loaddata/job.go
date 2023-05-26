@@ -152,7 +152,7 @@ func (*DistImporter) taskKey() string {
 	return fmt.Sprintf("%s/%s", proto.LoadData, uuid.New().String())
 }
 
-func (ti *DistImporter) getTaskMeta(task *proto.Task) (*TaskMeta, error) {
+func (*DistImporter) getTaskMeta(task *proto.Task) (*TaskMeta, error) {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
@@ -162,7 +162,7 @@ func (ti *DistImporter) getTaskMeta(task *proto.Task) (*TaskMeta, error) {
 		return nil, err
 	}
 	if globalTask == nil {
-		return nil, errors.Errorf("cannot find global task with ID %s", task.ID)
+		return nil, errors.Errorf("cannot find global task with ID %d", task.ID)
 	}
 	var taskMeta TaskMeta
 	if err := json.Unmarshal(globalTask.Meta, &taskMeta); err != nil {
