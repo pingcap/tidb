@@ -681,7 +681,7 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	s.tk.MustExec("TRUNCATE TABLE load_test_write_speed.t;")
 	start = time.Now()
 	sql = fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'
-		with max_write_speed=6000`, gcsEndpoint)
+		with max_write_speed='6000'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	durationWithLimit := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
