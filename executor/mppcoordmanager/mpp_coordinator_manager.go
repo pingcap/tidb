@@ -13,7 +13,6 @@
 // limitations under the License.
 
 package mppcoordmanager
-
 import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/util/logutil"

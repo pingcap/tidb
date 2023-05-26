@@ -298,5 +298,5 @@ replace (
 )
 
 replace github.com/pingcap/tipb => github.com/pingcap/tipb v0.0.0-20230607071926-bda24015c2d6
-
 replace github.com/pingcap/kvproto => github.com/yibin87/kvproto v0.0.0-20230613014840-ed581d88e12e
+
