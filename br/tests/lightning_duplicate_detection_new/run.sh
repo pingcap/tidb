@@ -61,7 +61,7 @@ check_contains "count(*): 227"
 # 3. Test error strategy.
 cleanup
 run_lightning --backend local --config "tests/$TEST_NAME/local-error.toml" --log-file "$LOG_FILE" || true
-grep -Fq "duplicate key detected" "$LOG_FILE"
+check_contains "duplicate key detected" "$LOG_FILE"
 
 # 4. Test limit error records.
 cleanup
