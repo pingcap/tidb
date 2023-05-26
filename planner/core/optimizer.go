@@ -83,6 +83,7 @@ const (
 	flagJoinReOrder
 	flagPrunColumnsAgain
 	flagPushDownSequence
+	flagResolveExpand
 )
 
 var optRuleList = []logicalOptRule{
@@ -108,6 +109,7 @@ var optRuleList = []logicalOptRule{
 	&joinReOrderSolver{},
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&pushDownSequenceSolver{},
+	&resolveExpand{},
 }
 
 type logicalOptimizeOp struct {
