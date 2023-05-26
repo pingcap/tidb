@@ -135,8 +135,14 @@ func (e *ImportIntoExec) getJobImporter(param *importer.JobImportParam) (*loadda
 	return loaddata.NewDistImporterCurrNode(param, e.importPlan, e.stmt)
 }
 
-func (*ImportIntoExec) doImport(distImporter *loaddata.DistImporter, task *proto.Task) error {
+func (e *ImportIntoExec) doImport(distImporter *loaddata.DistImporter, task *proto.Task) error {
 	distImporter.ImportTask(task)
 	group := distImporter.Param().Group
-	return group.Wait()
+	err := group.Wait()
+	if !e.controller.Detached {
+		importResult := distImporter.Result(task)
+		userStmtCtx := e.userSctx.GetSessionVars().StmtCtx
+		userStmtCtx.SetMessage(importResult.Msg)
+	}
+	return err
 }

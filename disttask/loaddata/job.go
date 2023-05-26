@@ -45,8 +45,6 @@ type DistImporter struct {
 	instance *infosync.ServerInfo
 }
 
-var _ importer.JobImporter = &DistImporter{}
-
 // NewDistImporter creates a new DistImporter.
 func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt string) (*DistImporter, error) {
 	return &DistImporter{
@@ -93,9 +91,9 @@ func (ti *DistImporter) ImportTask(task *proto.Task) {
 }
 
 // Result implements JobImporter.Result.
-func (ti *DistImporter) Result() importer.JobImportResult {
+func (ti *DistImporter) Result(task *proto.Task) importer.JobImportResult {
 	var result importer.JobImportResult
-	taskMeta, err := ti.getTaskMeta()
+	taskMeta, err := ti.getTaskMeta(task)
 	if err != nil {
 		result.Msg = err.Error()
 		return result
@@ -154,18 +152,17 @@ func (*DistImporter) taskKey() string {
 	return fmt.Sprintf("%s/%s", proto.LoadData, uuid.New().String())
 }
 
-func (ti *DistImporter) getTaskMeta() (*TaskMeta, error) {
+func (ti *DistImporter) getTaskMeta(task *proto.Task) (*TaskMeta, error) {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
 	}
-	taskKey := ti.taskKey()
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	globalTask, err := globalTaskManager.GetGlobalTaskByID(task.ID)
 	if err != nil {
 		return nil, err
 	}
 	if globalTask == nil {
-		return nil, errors.Errorf("cannot find global task with key %s", taskKey)
+		return nil, errors.Errorf("cannot find global task with ID %s", task.ID)
 	}
 	var taskMeta TaskMeta
 	if err := json.Unmarshal(globalTask.Meta, &taskMeta); err != nil {

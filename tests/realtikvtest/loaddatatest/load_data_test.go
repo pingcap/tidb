@@ -226,6 +226,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
 		with thread=1`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
+	s.Equal("Records: 9  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
 		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
@@ -234,6 +235,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
 		with thread=1, skip_rows=1`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
+	s.Equal("Records: 7  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"2 test2 22", "3 test3 33", "4 test4 44",
 		"6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
@@ -242,6 +244,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
 		with thread=1, skip_rows=3`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
+	s.Equal("Records: 3  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"4 test4 44",
 		"8 test8 88", "9 test9 99",
