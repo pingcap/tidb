@@ -860,7 +860,6 @@ type LogicalAggregation struct {
 
 	AggFuncs      []*aggregation.AggFuncDesc
 	GroupByItems  []expression.Expression
-	RollupIndices []int
 
 	// aggHints stores aggregation hint information.
 	aggHints aggHintInfo
