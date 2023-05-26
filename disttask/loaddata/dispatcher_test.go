@@ -59,7 +59,7 @@ func (s *loadDataSuite) TestFlowHandleGetEligibleInstances() {
 	}
 	mockedAllServerInfos := makeFailpointRes(serverInfoMap)
 
-	h := FlowHandle{}
+	h := flowHandle{}
 	gTask := &proto.Task{Meta: []byte("{}")}
 	s.enableFailPoint("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", mockedAllServerInfos)
 	eligibleInstances, err := h.GetEligibleInstances(context.Background(), gTask)

@@ -17,7 +17,6 @@ package loaddata
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -29,10 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-)
-
-var (
-	checkTaskFinishInterval = 300 * time.Millisecond
 )
 
 // DistImporter is a JobImporter for distributed load data.

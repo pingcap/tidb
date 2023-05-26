@@ -103,6 +103,8 @@ const (
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
+
+	DefaultSwitchTiKVModeInterval = 5 * time.Minute
 )
 
 var (
@@ -929,7 +931,7 @@ func NewConfig() *Config {
 			ChecksumTableConcurrency:   defaultChecksumTableConcurrency,
 		},
 		Cron: Cron{
-			SwitchMode:     Duration{Duration: 5 * time.Minute},
+			SwitchMode:     Duration{Duration: DefaultSwitchTiKVModeInterval},
 			LogProgress:    Duration{Duration: 5 * time.Minute},
 			CheckDiskQuota: Duration{Duration: 1 * time.Minute},
 		},

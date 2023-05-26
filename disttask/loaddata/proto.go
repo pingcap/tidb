@@ -27,6 +27,7 @@ import (
 
 // TaskStep of LoadData.
 const (
+	// Import we sort source data and ingest it into TiKV in this step.
 	Import int64 = 1
 )
 
