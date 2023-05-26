@@ -2991,7 +2991,7 @@ func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
 	tk.MustExec("insert into t2 values (1, 1)")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t2 values (2, 1), (3, 3)")
-	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1", "3 3"))
+	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("2 1", "3 3"))
 	err := tk.ExecToErr("commit")
 	require.ErrorContains(t, err, "Duplicate entry '1' for key 't2.i1'")
 	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
@@ -3002,7 +3002,7 @@ func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t2 values (1, 1)")
 	tk2.MustExec("insert into t2 values (2, 1)")
-	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
+	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1"))
 	err = tk.ExecToErr("commit")
 	require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
 }
