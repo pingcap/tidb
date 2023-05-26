@@ -230,7 +230,7 @@ type Controller struct {
 	preInfoGetter       PreImportInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
 	encBuilder          encode.EncodingBuilder
-	tikvModeSwitcher    *local.TiKVModeSwitcher
+	tikvModeSwitcher    local.TiKVModeSwitcher
 
 	keyspaceName string
 }
@@ -1212,6 +1212,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 
 				case <-switchModeChan:
 					// periodically switch to import mode, as requested by TiKV 3.0
+					// TiKV will switch back to normal mode if we didn't call this again within 10 minutes
 					rc.tikvModeSwitcher.ToImportMode(ctx)
 
 				case <-logProgressChan:

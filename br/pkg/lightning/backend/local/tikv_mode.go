@@ -24,32 +24,38 @@ import (
 )
 
 // TiKVModeSwitcher is used to switch TiKV nodes between Import and Normal mode.
-type TiKVModeSwitcher struct {
+type TiKVModeSwitcher interface {
+	// ToImportMode switches all TiKV nodes to Import mode.
+	ToImportMode(ctx context.Context)
+	// ToNormalMode switches all TiKV nodes to Normal mode.
+	ToNormalMode(ctx context.Context)
+}
+
+// TiKVModeSwitcher is used to switch TiKV nodes between Import and Normal mode.
+type switcher struct {
 	tls    *common.TLS
 	pdAddr string
 	logger *zap.Logger
 }
 
 // NewTiKVModeSwitcher creates a new TiKVModeSwitcher.
-func NewTiKVModeSwitcher(tls *common.TLS, pdAddr string, logger *zap.Logger) *TiKVModeSwitcher {
-	return &TiKVModeSwitcher{
+func NewTiKVModeSwitcher(tls *common.TLS, pdAddr string, logger *zap.Logger) TiKVModeSwitcher {
+	return &switcher{
 		tls:    tls,
 		pdAddr: pdAddr,
 		logger: logger,
 	}
 }
 
-// ToImportMode switches all TiKV nodes to Import mode.
-func (rc *TiKVModeSwitcher) ToImportMode(ctx context.Context) {
+func (rc *switcher) ToImportMode(ctx context.Context) {
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import)
 }
 
-// ToNormalMode switches all TiKV nodes to Normal mode.
-func (rc *TiKVModeSwitcher) ToNormalMode(ctx context.Context) {
+func (rc *switcher) ToNormalMode(ctx context.Context) {
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
 }
 
-func (rc *TiKVModeSwitcher) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
+func (rc *switcher) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
 	rc.logger.Info("switch tikv mode", zap.Stringer("mode", mode))
 
 	// It is fine if we miss some stores which did not switch to Import mode,

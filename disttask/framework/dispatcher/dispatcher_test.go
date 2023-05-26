@@ -290,6 +290,9 @@ type NumberExampleHandle struct{}
 
 var _ dispatcher.TaskFlowHandle = (*NumberExampleHandle)(nil)
 
+func (NumberExampleHandle) OnTicker(_ context.Context, _ *proto.Task) {
+}
+
 func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepInit
