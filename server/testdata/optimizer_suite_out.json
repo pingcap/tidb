@@ -28,7 +28,7 @@
             },
             {
               "github.com/pingcap/tidb/planner/core.getStatsTable": {
-                "CountIsZero": false,
+                "CountIsZero": true,
                 "HandleIsNil": false,
                 "InputPhysicalID": 100,
                 "Outdated": false,
@@ -49,7 +49,7 @@
                       "TotColSize": 0
                     }
                   ],
-                  "Count": 10000,
+                  "Count": 0,
                   "Indexes": [
                     {
                       "CMSketchInfo": null,
@@ -72,7 +72,7 @@
                 },
                 "TableName": "t",
                 "TblInfoID": 88,
-                "Uninitialized": true,
+                "Uninitialized": false,
                 "UsePartitionStats": false
               }
             },
@@ -96,7 +96,7 @@
                         "github.com/pingcap/tidb/planner/core.physicalOptimize": [
                           {
                             "github.com/pingcap/tidb/planner/core.getStatsTable": {
-                              "CountIsZero": false,
+                              "CountIsZero": true,
                               "HandleIsNil": false,
                               "InputPhysicalID": 100,
                               "Outdated": false,
@@ -117,7 +117,7 @@
                                     "TotColSize": 0
                                   }
                                 ],
-                                "Count": 10000,
+                                "Count": 0,
                                 "Indexes": [
                                   {
                                     "CMSketchInfo": null,
@@ -140,7 +140,7 @@
                               },
                               "TableName": "t",
                               "TblInfoID": 88,
-                              "Uninitialized": true,
+                              "Uninitialized": false,
                               "UsePartitionStats": false
                             }
                           },
@@ -336,7 +336,7 @@
                     "github.com/pingcap/tidb/planner/core.physicalOptimize": [
                       {
                         "github.com/pingcap/tidb/planner/core.getStatsTable": {
-                          "CountIsZero": false,
+                          "CountIsZero": true,
                           "HandleIsNil": false,
                           "InputPhysicalID": 100,
                           "Outdated": false,
@@ -357,7 +357,7 @@
                                 "TotColSize": 0
                               }
                             ],
-                            "Count": 10000,
+                            "Count": 0,
                             "Indexes": [
                               {
                                 "CMSketchInfo": null,
@@ -380,7 +380,7 @@
                           },
                           "TableName": "t",
                           "TblInfoID": 88,
-                          "Uninitialized": true,
+                          "Uninitialized": false,
                           "UsePartitionStats": false
                         }
                       },
@@ -507,7 +507,7 @@
             },
             {
               "github.com/pingcap/tidb/planner/core.getStatsTable": {
-                "CountIsZero": false,
+                "CountIsZero": true,
                 "HandleIsNil": false,
                 "InputPhysicalID": 100,
                 "Outdated": false,
@@ -528,7 +528,7 @@
                       "TotColSize": 0
                     }
                   ],
-                  "Count": 10000,
+                  "Count": 0,
                   "Indexes": [
                     {
                       "CMSketchInfo": null,
@@ -551,7 +551,7 @@
                 },
                 "TableName": "t",
                 "TblInfoID": 88,
-                "Uninitialized": true,
+                "Uninitialized": false,
                 "UsePartitionStats": false
               }
             },
@@ -575,7 +575,7 @@
                         "github.com/pingcap/tidb/planner/core.physicalOptimize": [
                           {
                             "github.com/pingcap/tidb/planner/core.getStatsTable": {
-                              "CountIsZero": false,
+                              "CountIsZero": true,
                               "HandleIsNil": false,
                               "InputPhysicalID": 100,
                               "Outdated": false,
@@ -596,7 +596,7 @@
                                     "TotColSize": 0
                                   }
                                 ],
-                                "Count": 10000,
+                                "Count": 0,
                                 "Indexes": [
                                   {
                                     "CMSketchInfo": null,
@@ -619,7 +619,7 @@
                               },
                               "TableName": "t",
                               "TblInfoID": 88,
-                              "Uninitialized": true,
+                              "Uninitialized": false,
                               "UsePartitionStats": false
                             }
                           },
