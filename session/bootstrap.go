@@ -406,7 +406,8 @@ const (
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version_seq (table_id, version, seq_no),
-		KEY table_create_time (table_id, create_time, seq_no)
+		KEY table_create_time (table_id, create_time, seq_no),
+    	KEY idx_create_time (create_time)
 	);`
 	// CreateStatsMetaHistory stores the historical meta stats.
 	CreateStatsMetaHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_meta_history (
@@ -417,7 +418,8 @@ const (
     	source varchar(40) NOT NULL,
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version (table_id, version),
-		KEY table_create_time (table_id, create_time)
+		KEY table_create_time (table_id, create_time),
+    	KEY idx_create_time (create_time)
 	);`
 	// CreateAnalyzeJobs stores the analyze jobs.
 	CreateAnalyzeJobs = `CREATE TABLE IF NOT EXISTS mysql.analyze_jobs (
@@ -871,11 +873,13 @@ const (
 	version144 = 144
 	// version 145 to only add a version make we know when we support upgrade state.
 	version145 = 145
+	// version 146 add index for mysql.stats_meta_history and mysql.stats_history.
+	version146 = 146
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version145
+var currentBootstrapVersion int64 = version146
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1009,6 +1013,7 @@ var (
 		upgradeToVer143,
 		upgradeToVer144,
 		// We will only use upgradeToVer145 to differentiate versions, so it is skipped here.
+		upgradeToVer146,
 	}
 )
 
@@ -2612,6 +2617,14 @@ func upgradeToVer144(s Session, ver int64) {
 
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
+}
+
+func upgradeToVer146(s Session, ver int64) {
+	if ver >= version146 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
 }
 
 func writeOOMAction(s Session) {
