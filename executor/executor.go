@@ -2507,7 +2507,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			break
 		}
 		whereKey := fmt.Sprintf("((%s - %d) %% %d)", md5Handle.String(), offset, mod)
-		groupByKey := fmt.Sprintf("(cast((%s - %d) / %d as unsigned) %% %d)", md5Handle.String(), offset, mod, bucketSize)
+		groupByKey := fmt.Sprintf("((%s - %d) div %d %% %d)", md5Handle.String(), offset, mod, bucketSize)
 		if !checkOnce {
 			whereKey = "0"
 		}
