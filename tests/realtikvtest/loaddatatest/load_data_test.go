@@ -26,6 +26,7 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/golang/mock/gomock"
 	"github.com/ngaut/pools"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -904,17 +905,16 @@ func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed boo
 }
 
 func (s *mockGCSSuite) TestImportMode() {
-	withOptions := fmt.Sprintf("WITH thread=2, import_mode='%s'", "physical")
-	withOptions = adjustOptions(withOptions, true)
-
 	var intoImportTime, intoNormalTime time.Time
 	controller := gomock.NewController(s.T())
 	switcher := mocklocal.NewMockTiKVModeSwitcher(controller)
 	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+		log.L().Info("ToImportMode")
 		intoImportTime = time.Now()
 		return nil
 	}).Times(1)
 	switcher.EXPECT().ToNormalMode(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+		log.L().Info("ToNormalMode")
 		intoNormalTime = time.Now()
 		return nil
 	}).Times(1)
@@ -936,25 +936,25 @@ func (s *mockGCSSuite) TestImportMode() {
 
 	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
 	// better start a cluster without TiDB instance.
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/import_mode-*.tsv?endpoint=%s'
-		INTO TABLE load_data.import_mode fields terminated by ',' %s`, gcsEndpoint, withOptions)
+	sql := fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.Greater(intoNormalTime, intoImportTime)
 
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
 	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+		log.L().Info("ToImportMode")
 		intoImportTime = time.Now()
 		return nil
 	}).Times(1)
 	switcher.EXPECT().ToNormalMode(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+		log.L().Info("ToNormalMode")
 		intoNormalTime = time.Now()
 		return nil
 	}).Times(1)
 	s.tk.MustExec("truncate table load_data.import_mode;")
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk", "return(true)")
-	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/import_mode-*.tsv?endpoint=%s'
-		INTO TABLE load_data.import_mode fields terminated by ',' %s`, gcsEndpoint, withOptions)
+	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
 	err := s.tk.ExecToErr(sql)
 	s.Error(err)
 	s.Greater(intoNormalTime, intoImportTime)
