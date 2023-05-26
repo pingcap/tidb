@@ -1051,7 +1051,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnknownOption:                    mysql.Message("Unknown option %s", nil),
 	ErrInvalidOptionVal:                 mysql.Message("Invalid option value for %s", nil),
 	ErrDuplicateOption:                  mysql.Message("Option %s specified more than once", nil),
-	ErrLoadDataUnsupportedOption:        mysql.Message("Unsupported option %s for %s import mode", nil),
+	ErrLoadDataUnsupportedOption:        mysql.Message("Unsupported option %s for %s", nil),
 	ErrLoadDataJobNotFound:              mysql.Message("Job ID %d doesn't exist", nil),
 	ErrLoadDataInvalidOperation:         mysql.Message("The current job status cannot perform the operation. %s", nil),
 	ErrLoadDataLocalUnsupportedOption:   mysql.Message("Unsupported option for LOAD DATA LOCAL INFILE: %s", nil),

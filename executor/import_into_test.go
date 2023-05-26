@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
@@ -128,5 +129,28 @@ func TestImportIntoOptionsNegativeCase(t *testing.T) {
 		sql := fmt.Sprintf(sqlTemplate, c.OptionStr)
 		err := tk.ExecToErr(sql)
 		require.ErrorIs(t, err, c.Err, sql)
+	}
+
+	nonCSVCases := []struct {
+		OptionStr string
+		Err       error
+	}{
+		{OptionStr: "character_set='utf8'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "fields_terminated_by='a'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "fields_enclosed_by='a'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "fields_escaped_by='a'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "fields_defined_null_by='a'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "lines_terminated_by='a'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "skip_rows=1", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "split_file", Err: exeerrors.ErrLoadDataUnsupportedOption},
+	}
+
+	sqlTemplate = "import into t from '/file.csv' format '%s' with %s"
+	for _, c := range nonCSVCases {
+		for _, format := range []string{importer.DataFormatParquet, importer.DataFormatSQL} {
+			sql := fmt.Sprintf(sqlTemplate, format, c.OptionStr)
+			err := tk.ExecToErr(sql)
+			require.ErrorIs(t, err, c.Err, sql)
+		}
 	}
 }

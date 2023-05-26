@@ -107,6 +107,17 @@ var (
 		detachedOption:            false,
 	}
 
+	csvOnlyOptions = map[string]struct{}{
+		characterSetOption:        {},
+		fieldsTerminatedByOption:  {},
+		fieldsEnclosedByOption:    {},
+		fieldsEscapedByOption:     {},
+		fieldsDefinedNullByOption: {},
+		linesTerminatedByOption:   {},
+		skipRowsOption:            {},
+		splitFileOption:           {},
+	}
+
 	// LoadDataReadBlockSize is exposed for test.
 	LoadDataReadBlockSize = int64(config.ReadBlockSize)
 )
@@ -466,6 +477,14 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 			return exeerrors.ErrDuplicateOption.FastGenByArgs(opt.Name)
 		}
 		specifiedOptions[opt.Name] = opt
+	}
+
+	if p.Format != DataFormatCSV {
+		for k := range csvOnlyOptions {
+			if _, ok := specifiedOptions[k]; ok {
+				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
+			}
+		}
 	}
 
 	optAsString := func(opt *plannercore.LoadDataOpt) (string, error) {

@@ -1758,7 +1758,7 @@ Option %s specified more than once
 
 ["executor:8166"]
 error = '''
-Unsupported option %s for %s import mode
+Unsupported option %s for %s
 '''
 
 ["executor:8170"]
