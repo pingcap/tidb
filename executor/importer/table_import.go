@@ -48,6 +48,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// NewTiKVModeSwitcher make it a var, so we can mock it in tests.
+var NewTiKVModeSwitcher = local.NewTiKVModeSwitcher
+
 func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
@@ -74,6 +77,23 @@ func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
 	}
 	e.logger.Info("sort dir prepared", zap.String("path", sortPath))
 	return sortPath, nil
+}
+
+// GetTiKVModeSwitcher creates a new TiKV mode switcher.
+func GetTiKVModeSwitcher(logger *zap.Logger) (local.TiKVModeSwitcher, error) {
+	tidbCfg := tidb.GetGlobalConfig()
+	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+	tls, err := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		hostPort,
+		nil, nil, nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return NewTiKVModeSwitcher(tls, tidbCfg.Path, logger), nil
 }
 
 // NewTableImporter creates a new table importer.
@@ -129,11 +149,9 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		DupeDetectEnabled:       false,
 		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
 		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
-		// todo: we can set it false when we support switch import mode.
-		ShouldCheckWriteStall: true,
-		MaxOpenFiles:          int(util.GenRLimit()),
-		KeyspaceName:          keySpaceName,
-		PausePDSchedulerScope: config.PausePDSchedulerScopeTable,
+		MaxOpenFiles:            int(util.GenRLimit()),
+		KeyspaceName:            keySpaceName,
+		PausePDSchedulerScope:   config.PausePDSchedulerScopeTable,
 	}
 
 	tableMeta := &mydump.MDTableMeta{
@@ -284,7 +302,6 @@ func (ti *TableImporter) importTable(ctx context.Context) (err error) {
 	}()
 	// todo: pause GC if we need duplicate detection
 	// todo: register task to pd?
-	// no need to pause all schedulers, since we can pause them by key range
 	// todo: if add index by sql, drop all index first
 	// todo: tikv enter into import mode
 	if _, err2 := ti.PopulateChunks(ctx); err2 != nil {
@@ -478,9 +495,11 @@ func (ti *TableImporter) preprocessAndImportEngines(ctx context.Context) (err er
 		if err2 != nil {
 			return err2
 		}
-		if err2 = ti.ImportAndCleanup(ctx, dataClosedEngine); err2 != nil {
+		kvCount, err2 := ti.ImportAndCleanup(ctx, dataClosedEngine)
+		if err2 != nil {
 			return err2
 		}
+		ti.Progress.LoadedRowCnt.Add(uint64(kvCount))
 
 		failpoint.Inject("AfterImportDataEngine", nil)
 		failpoint.Inject("SyncAfterImportDataEngine", func() {
@@ -493,7 +512,8 @@ func (ti *TableImporter) preprocessAndImportEngines(ctx context.Context) (err er
 	if err3 != nil {
 		return errors.Trace(err3)
 	}
-	return ti.ImportAndCleanup(ctx, closedIndexEngine)
+	_, err = ti.ImportAndCleanup(ctx, closedIndexEngine)
+	return err
 }
 
 func (ti *TableImporter) preprocessEngine(ctx context.Context, indexEngine *backend.OpenedEngine, engineID int32, chunks []*checkpoints.ChunkCheckpoint) (*backend.ClosedEngine, error) {
@@ -512,17 +532,17 @@ func (ti *TableImporter) preprocessEngine(ctx context.Context, indexEngine *back
 }
 
 // ImportAndCleanup imports the engine and cleanup the engine data.
-func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) error {
+func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
+	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
 	if closedEngine.GetID() != common.IndexEngineID {
 		// todo: change to a finer-grain progress later.
 		// each row is encoded into 1 data key
-		kvCount := ti.backend.GetImportedKVCount(closedEngine.GetUUID())
-		ti.Progress.LoadedRowCnt.Add(uint64(kvCount))
+		kvCount = ti.backend.GetImportedKVCount(closedEngine.GetUUID())
 	}
 	// todo: if we need support checkpoint, engine should not be cleanup if import failed.
 	cleanupErr := closedEngine.Cleanup(ctx)
-	return multierr.Combine(importErr, cleanupErr)
+	return kvCount, multierr.Combine(importErr, cleanupErr)
 }
 
 // Close implements the io.Closer interface.

@@ -616,8 +616,10 @@ func TestForAnalyzeStatus(t *testing.T) {
 	}
 	rows2 := tk.MustQuery("show analyze status where TABLE_NAME='t1'").Sort().Rows()
 	require.Equal(t, len(rows), len(rows2))
-	for i, row2 := range rows2 {
-		require.Equal(t, rows[i], row2)
+	for i, row := range rows {
+		for j, r := range row {
+			require.Equal(t, r, rows2[i][j])
+		}
 	}
 }
 

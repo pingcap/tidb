@@ -15,29 +15,29 @@
 package loaddata
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-)
-
-var (
-	distLoadDataConcurrency = 16
-	checkTaskFinishInterval = 300 * time.Millisecond
 )
 
 // DistImporter is a JobImporter for distributed load data.
 type DistImporter struct {
 	*importer.JobImportParam
-	plan *importer.Plan
-	stmt string
+	plan   *importer.Plan
+	stmt   string
+	logger *zap.Logger
+	// the instance to import data, used for single-node import, nil means import data on all instances.
+	instance *infosync.ServerInfo
 }
 
 var _ importer.JobImporter = &DistImporter{}
@@ -48,6 +48,22 @@ func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt s
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
+		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
+	}, nil
+}
+
+// NewDistImporterCurrNode creates a new DistImporter to import data on current node.
+func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan, stmt string) (*DistImporter, error) {
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return nil, err
+	}
+	return &DistImporter{
+		JobImportParam: param,
+		plan:           plan,
+		stmt:           stmt,
+		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
+		instance:       serverInfo,
 	}, nil
 }
 
@@ -57,17 +73,44 @@ func (ti *DistImporter) Param() *importer.JobImportParam {
 }
 
 // Import implements JobImporter.Import.
-func (ti *DistImporter) Import() {
-	logutil.BgLogger().Info("start distribute load data", zap.Int64("jobID", ti.Job.ID))
+func (*DistImporter) Import() {
+	// todo: remove it
+}
+
+// ImportTask import task.
+func (ti *DistImporter) ImportTask(task *proto.Task) {
+	ti.logger.Info("start distribute load data")
 	ti.Group.Go(func() error {
 		defer close(ti.Done)
-		return ti.doImport(ti.GroupCtx)
+		// task is run using distribute framework, so we only wait for the task to finish.
+		return handle.WaitGlobalTask(ti.GroupCtx, task)
 	})
 }
 
 // Result implements JobImporter.Result.
-func (*DistImporter) Result() importer.JobImportResult {
-	return importer.JobImportResult{}
+func (ti *DistImporter) Result() importer.JobImportResult {
+	var result importer.JobImportResult
+	taskMeta, err := ti.getTaskMeta()
+	if err != nil {
+		result.Msg = err.Error()
+		return result
+	}
+
+	ti.logger.Info("finish distribute load data", zap.Any("task meta", taskMeta))
+	var (
+		numWarnings uint64
+		numRecords  uint64
+		numDeletes  uint64
+		numSkipped  uint64
+	)
+	numRecords = taskMeta.Result.ReadRowCnt
+	// todo: we don't have a strict REPLACE or IGNORE mode in physical mode, so we can't get the numDeletes/numSkipped.
+	// we can have it when there's duplicate detection.
+	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
+	return importer.JobImportResult{
+		Msg:      msg,
+		Affected: taskMeta.Result.ReadRowCnt,
+	}
 }
 
 // Close implements the io.Closer interface.
@@ -75,81 +118,54 @@ func (*DistImporter) Close() error {
 	return nil
 }
 
-func buildDistTask(plan *importer.Plan, jobID int64, stmt string) TaskMeta {
-	return TaskMeta{
-		Plan:  *plan,
-		JobID: jobID,
-		Stmt:  stmt,
+// SubmitTask submits a task to the distribute framework.
+func (ti *DistImporter) SubmitTask() (*proto.Task, error) {
+	var instances []*infosync.ServerInfo
+	if ti.instance != nil {
+		instances = append(instances, ti.instance)
 	}
-}
-
-// submitGlobalTaskAndRun submits a global task and returns a channel that will be closed when the task is done.
-// TODO: move to handle, see https://github.com/pingcap/tidb/pull/43066
-func submitGlobalTaskAndRun(ctx context.Context, taskKey, taskType string, concurrency int, taskMeta []byte) error {
-	globalTaskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
+	task := TaskMeta{
+		Plan:              *ti.plan,
+		JobID:             ti.Job.ID,
+		Stmt:              ti.stmt,
+		EligibleInstances: instances,
 	}
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
-	if err != nil {
-		return err
-	}
-
-	if globalTask == nil {
-		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, concurrency, taskMeta)
-		if err != nil {
-			return err
-		}
-
-		globalTask, err = globalTaskManager.GetGlobalTaskByID(taskID)
-		if err != nil {
-			return err
-		}
-
-		if globalTask == nil {
-			return errors.Errorf("cannot find global task with ID %d", taskID)
-		}
-	}
-
-	ticker := time.NewTicker(checkTaskFinishInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			logutil.BgLogger().Warn("context done", zap.Error(ctx.Err()))
-			return ctx.Err()
-		case <-ticker.C:
-			found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
-			if err != nil {
-				logutil.BgLogger().Info("get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
-				continue
-			}
-
-			if found == nil {
-				return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
-			}
-
-			if found.State == proto.TaskStateSucceed {
-				return nil
-			}
-
-			// TODO: get the original error message.
-			if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled || found.State == proto.TaskStateReverted {
-				return errors.Errorf("task stopped with state %s", found.State)
-			}
-		}
-	}
-}
-
-func (ti *DistImporter) doImport(ctx context.Context) error {
-	task := buildDistTask(ti.plan, ti.Job.ID, ti.stmt)
 	taskMeta, err := json.Marshal(task)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	taskType := proto.LoadData
-	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, ti.Job.ID)
+	globalTask, err := handle.SubmitGlobalTask(ti.taskKey(), proto.LoadData, int(ti.plan.ThreadCnt), taskMeta)
+	if err != nil {
+		return nil, err
+	}
 
-	return submitGlobalTaskAndRun(ctx, taskKey, taskType, distLoadDataConcurrency, taskMeta)
+	// update logger with task id.
+	ti.logger = ti.logger.With(zap.Int64("id", globalTask.ID))
+
+	return globalTask, nil
+}
+
+func (*DistImporter) taskKey() string {
+	// task key is meaningless to IMPORT INTO, so we use a random uuid.
+	return fmt.Sprintf("%s/%s", proto.LoadData, uuid.New().String())
+}
+
+func (ti *DistImporter) getTaskMeta() (*TaskMeta, error) {
+	globalTaskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return nil, err
+	}
+	taskKey := ti.taskKey()
+	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	if err != nil {
+		return nil, err
+	}
+	if globalTask == nil {
+		return nil, errors.Errorf("cannot find global task with key %s", taskKey)
+	}
+	var taskMeta TaskMeta
+	if err := json.Unmarshal(globalTask.Meta, &taskMeta); err != nil {
+		return nil, err
+	}
+	return &taskMeta, nil
 }

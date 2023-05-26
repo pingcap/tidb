@@ -15,10 +15,13 @@
 package api
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"time"
 	"unsafe"
+
+	"github.com/pingcap/errors"
 )
 
 type optionalVal interface {
@@ -156,14 +159,35 @@ type TimerUpdate struct {
 	SchedPolicyType OptionalVal[SchedPolicyType]
 	// SchedPolicyExpr indicates to set the timer's `SchedPolicyExpr` field
 	SchedPolicyExpr OptionalVal[string]
+	// EventStatus indicates the event status
+	EventStatus OptionalVal[SchedEventStatus]
+	// EventID indicates to set the timer event id
+	EventID OptionalVal[string]
+	// EventData indicates to set the timer event data
+	EventData OptionalVal[[]byte]
+	// EventStart indicates the start time of event
+	EventStart OptionalVal[time.Time]
 	// Watermark indicates to set the timer's `Watermark` field
 	Watermark OptionalVal[time.Time]
 	// SummaryData indicates to set the timer's `Summary` field
 	SummaryData OptionalVal[[]byte]
+	// CheckVersion indicates to check the timer's version when update
+	CheckVersion OptionalVal[uint64]
+	// CheckEventID indicates to check the timer's eventID
+	CheckEventID OptionalVal[string]
 }
 
 // Apply applies the update to a timer
-func (u *TimerUpdate) Apply(record *TimerRecord) error {
+func (u *TimerUpdate) Apply(record *TimerRecord) (*TimerRecord, error) {
+	if v, ok := u.CheckVersion.Get(); ok && record.Version != v {
+		return nil, errors.Trace(ErrVersionNotMatch)
+	}
+
+	if v, ok := u.CheckEventID.Get(); ok && record.EventID != v {
+		return nil, errors.Trace(ErrEventIDNotMatch)
+	}
+
+	record = record.Clone()
 	if v, ok := u.Enable.Get(); ok {
 		record.Enable = v
 	}
@@ -176,6 +200,22 @@ func (u *TimerUpdate) Apply(record *TimerRecord) error {
 		record.SchedPolicyExpr = v
 	}
 
+	if v, ok := u.EventStatus.Get(); ok {
+		record.EventStatus = v
+	}
+
+	if v, ok := u.EventID.Get(); ok {
+		record.EventID = v
+	}
+
+	if v, ok := u.EventData.Get(); ok {
+		record.EventData = v
+	}
+
+	if v, ok := u.EventStart.Get(); ok {
+		record.EventStart = v
+	}
+
 	if v, ok := u.Watermark.Get(); ok {
 		record.Watermark = v
 	}
@@ -184,7 +224,7 @@ func (u *TimerUpdate) Apply(record *TimerRecord) error {
 		record.SummaryData = v
 	}
 
-	return nil
+	return record, nil
 }
 
 // FieldsSet returns all fields that has been set exclude excludes
@@ -204,4 +244,158 @@ func (u *TimerUpdate) Clear() {
 		val.Clear()
 		return true
 	})
+}
+
+// Cond is an interface to match a timer record
+type Cond interface {
+	// Match returns whether a record match the condition
+	Match(timer *TimerRecord) bool
+}
+
+// OperatorTp is the operator type of the condition
+type OperatorTp int8
+
+const (
+	// OperatorAnd means 'AND' operator
+	OperatorAnd OperatorTp = iota
+	// OperatorOr means 'OR' operator
+	OperatorOr
+)
+
+// Operator implements Cond
+type Operator struct {
+	// Op indicates the operator type
+	Op OperatorTp
+	// Not indicates whether to apply 'NOT' to the condition
+	Not bool
+	// Children is the children of the operator
+	Children []Cond
+}
+
+// And returns a condition `AND(child1, child2, ...)`
+func And(children ...Cond) *Operator {
+	return &Operator{
+		Op:       OperatorAnd,
+		Children: children,
+	}
+}
+
+// Or returns a condition `OR(child1, child2, ...)`
+func Or(children ...Cond) *Operator {
+	return &Operator{
+		Op:       OperatorOr,
+		Children: children,
+	}
+}
+
+// Not returns a condition `NOT(cond)`
+func Not(cond Cond) *Operator {
+	if c, ok := cond.(*Operator); ok {
+		newCriteria := *c
+		newCriteria.Not = !c.Not
+		return &newCriteria
+	}
+	return &Operator{
+		Op:       OperatorAnd,
+		Not:      true,
+		Children: []Cond{cond},
+	}
+}
+
+// Match will return whether the condition match the timer record
+func (c *Operator) Match(t *TimerRecord) bool {
+	switch c.Op {
+	case OperatorAnd:
+		for _, item := range c.Children {
+			if !item.Match(t) {
+				return c.Not
+			}
+		}
+		return !c.Not
+	case OperatorOr:
+		for _, item := range c.Children {
+			if item.Match(t) {
+				return !c.Not
+			}
+		}
+		return c.Not
+	}
+	return false
+}
+
+// WatchTimerEventType is the type of the watch event
+type WatchTimerEventType int8
+
+const (
+	// WatchTimerEventCreate indicates that a new timer is created
+	WatchTimerEventCreate WatchTimerEventType = 1 << iota
+	// WatchTimerEventUpdate indicates that a timer is updated
+	WatchTimerEventUpdate
+	// WatchTimerEventDelete indicates that a timer is deleted
+	WatchTimerEventDelete
+)
+
+// WatchTimerEvent is the watch event object
+type WatchTimerEvent struct {
+	// Tp indicates the event type
+	Tp WatchTimerEventType
+	// TimerID indicates the timer id for the event
+	TimerID string
+}
+
+// WatchTimerResponse is the response of watch
+type WatchTimerResponse struct {
+	// Events contains all events in the response
+	Events []*WatchTimerEvent
+}
+
+// WatchTimerChan is the chan of the watch timer
+type WatchTimerChan <-chan WatchTimerResponse
+
+// TimerStoreCore is an interface, it contains several core methods of store
+type TimerStoreCore interface {
+	// Create creates a new record. If `record.ID` is empty, an id will be assigned automatically.
+	// The first return value is the final id of the timer.
+	Create(ctx context.Context, record *TimerRecord) (string, error)
+	// List lists the timers that match the condition
+	List(ctx context.Context, cond Cond) ([]*TimerRecord, error)
+	// Update updates a timer
+	Update(ctx context.Context, timerID string, update *TimerUpdate) error
+	// Delete deletes a timer
+	Delete(ctx context.Context, timerID string) (bool, error)
+	// WatchSupported indicates whether watch supported for this store
+	WatchSupported() bool
+	// Watch watches all changes of the store. A chan will be returned to receive `WatchTimerResponse`
+	// The returned chan be closed when the context in the argument is done.
+	Watch(ctx context.Context) WatchTimerChan
+}
+
+// TimerStore extends TimerStoreCore to provide some extra methods for timer operations
+type TimerStore struct {
+	TimerStoreCore
+}
+
+// GetByID gets a timer by ID. If the timer with the specified ID not exists,
+// an error `ErrTimerNotExist` will be returned
+func (s *TimerStore) GetByID(ctx context.Context, timerID string) (record *TimerRecord, err error) {
+	return s.getOneRecord(ctx, &TimerCond{ID: NewOptionalVal(timerID)})
+}
+
+// GetByKey gets a timer by key. If the timer with the specified key not exists in the namespace,
+// an error `ErrTimerNotExist` will be returned
+func (s *TimerStore) GetByKey(ctx context.Context, namespace, key string) (record *TimerRecord, err error) {
+	return s.getOneRecord(ctx, &TimerCond{Namespace: NewOptionalVal(namespace), Key: NewOptionalVal(key)})
+}
+
+func (s *TimerStore) getOneRecord(ctx context.Context, cond Cond) (record *TimerRecord, err error) {
+	records, err := s.List(ctx, cond)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(records) == 0 {
+		return nil, errors.Trace(ErrTimerNotExist)
+	}
+
+	return records[0], nil
 }
