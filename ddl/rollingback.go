@@ -77,14 +77,20 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 	}
 	job.State = model.JobStateRollingback
 	err = completeErr(err, indexInfo)
-	ingest.LitBackCtxMgr.Unregister(job.ID)
+	if ingest.LitBackCtxMgr != nil {
+		ingest.LitBackCtxMgr.Unregister(job.ID)
+	}
 	return ver, errors.Trace(err)
 }
 
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotReorgAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
-	defer ingest.LitBackCtxMgr.Unregister(job.ID)
+	defer func() {
+		if ingest.LitBackCtxMgr != nil {
+			ingest.LitBackCtxMgr.Unregister(job.ID)
+		}
+	}()
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
