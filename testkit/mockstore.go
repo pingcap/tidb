@@ -66,15 +66,21 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	store, err := mockstore.NewMockStore(opts...)
+
 	require.NoError(t, err)
-	dom := bootstrap(t, store, 500*time.Millisecond)
+	dom1 := bootstrap(t, store, 500*time.Millisecond)
+	dom2 := bootstrap(t, store, 500*time.Millisecond)
 	sm := MockSessionManager{}
-	dom.InfoSyncer().SetSessionManager(&sm)
+	sm2 := MockSessionManager{}
+	dom1.InfoSyncer().SetSessionManager(&sm)
+	dom2.InfoSyncer().SetSessionManager(&sm2)
 	t.Cleanup(func() {
 		view.Stop()
+		err := store.Close()
+		require.NoError(t, err)
 		gctuner.GlobalMemoryLimitTuner.Stop()
 	})
-	return schematracker.UnwrapStorage(store), dom
+	return schematracker.UnwrapStorage(store), dom1
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
@@ -82,15 +88,12 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()
-	dom, err := session.BootstrapSession(store)
+	dom, err := session.BootstrapSessionForMPP(store)
 	require.NoError(t, err)
 
 	dom.SetStatsUpdating(true)
-
 	t.Cleanup(func() {
 		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
 		view.Stop()
 		resourcemanager.InstanceResourceManager.Reset()
 	})

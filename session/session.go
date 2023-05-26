@@ -3263,7 +3263,6 @@ func InitMDLVariable(store kv.Storage) error {
 	return err
 }
 
-// BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	cfg := config.GetGlobalConfig()
@@ -3303,6 +3302,239 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
 	ses, err := createSessions(store, 10)
+	if err != nil {
+		return nil, err
+	}
+	ses[0].GetSessionVars().InRestrictedSQL = true
+
+	// get system tz from mysql.tidb
+	tz, err := ses[0].getTableValue(ctx, mysql.TiDBTable, tidbSystemTZ)
+	if err != nil {
+		return nil, err
+	}
+	timeutil.SetSystemTZ(tz)
+
+	// get the flag from `mysql`.`tidb` which indicating if new collations are enabled.
+	newCollationEnabled, err := loadCollationParameter(ctx, ses[0])
+	if err != nil {
+		return nil, err
+	}
+	collate.SetNewCollationEnabledForTest(newCollationEnabled)
+	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
+	rebuildAllPartitionValueMapAndSorted(ses[0])
+
+	dom := domain.GetDomain(ses[0])
+
+	// We should make the load bind-info loop before other loops which has internal SQL.
+	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
+	// LoadBindInfoLoop inits global bind-info handler.
+	err = dom.LoadBindInfoLoop(ses[1], ses[2])
+	if err != nil {
+		return nil, err
+	}
+
+	if !config.GetGlobalConfig().Security.SkipGrantTable {
+		err = dom.LoadPrivilegeLoop(ses[3])
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Rebuild sysvar cache in a loop
+	err = dom.LoadSysVarCacheLoop(ses[4])
+	if err != nil {
+		return nil, err
+	}
+
+	if config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler {
+		// Invalid client-go tiflash_compute store cache if necessary.
+		err = dom.WatchTiFlashComputeNodeChange()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err = extensionimpl.Bootstrap(context.Background(), dom); err != nil {
+		return nil, err
+	}
+
+	if len(cfg.Instance.PluginLoad) > 0 {
+		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	err = executor.LoadExprPushdownBlacklist(ses[5])
+	if err != nil {
+		return nil, err
+	}
+	err = executor.LoadOptRuleBlacklist(ctx, ses[5])
+	if err != nil {
+		return nil, err
+	}
+
+	if dom.GetEtcdClient() != nil {
+		// We only want telemetry data in production-like clusters. When TiDB is deployed over other engines,
+		// for example, unistore engine (used for local tests), we just skip it. Its etcd client is nil.
+		if config.GetGlobalConfig().EnableTelemetry {
+			// There is no way to turn telemetry on with global variable `tidb_enable_telemetry`
+			// when it is disabled in config. See IsTelemetryEnabled function in telemetry/telemetry.go
+			go func() {
+				dom.TelemetryReportLoop(ses[5])
+				dom.TelemetryRotateSubWindowLoop(ses[5])
+			}()
+		}
+	}
+
+	planReplayerWorkerCnt := config.GetGlobalConfig().Performance.PlanReplayerDumpWorkerConcurrency
+	planReplayerWorkersSctx := make([]sessionctx.Context, planReplayerWorkerCnt)
+	pworkerSes, err := createSessions(store, int(planReplayerWorkerCnt))
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < int(planReplayerWorkerCnt); i++ {
+		planReplayerWorkersSctx[i] = pworkerSes[i]
+	}
+	// setup plan replayer handle
+	dom.SetupPlanReplayerHandle(ses[6], planReplayerWorkersSctx)
+	dom.StartPlanReplayerHandle()
+	// setup dumpFileGcChecker
+	dom.SetupDumpFileGCChecker(ses[7])
+	dom.DumpFileGcCheckerLoop()
+	// setup historical stats worker
+	dom.SetupHistoricalStatsWorker(ses[8])
+	dom.StartHistoricalStatsWorker()
+	failToLoadOrParseSQLFile := false // only used for unit test
+	if runBootstrapSQLFile {
+		pm := &privileges.UserPrivileges{
+			Handle: dom.PrivilegeHandle(),
+		}
+		privilege.BindPrivilegeManager(ses[9], pm)
+		if err := doBootstrapSQLFile(ses[9]); err != nil {
+			failToLoadOrParseSQLFile = true
+		}
+	}
+	// A sub context for update table stats, and other contexts for concurrent stats loading.
+	cnt := 1 + concurrency
+	syncStatsCtxs, err := createSessions(store, cnt)
+	if err != nil {
+		return nil, err
+	}
+	subCtxs := make([]sessionctx.Context, cnt)
+	for i := 0; i < cnt; i++ {
+		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
+	}
+
+	// setup extract Handle
+	extractWorkers := 1
+	sctxs, err := createSessions(store, extractWorkers)
+	if err != nil {
+		return nil, err
+	}
+	extractWorkerSctxs := make([]sessionctx.Context, 0)
+	for _, sctx := range sctxs {
+		extractWorkerSctxs = append(extractWorkerSctxs, sctx)
+	}
+	dom.SetupExtractHandle(extractWorkerSctxs)
+
+	// setup init stats loader
+	initStatsCtx, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	if err = dom.LoadAndUpdateStatsLoop(subCtxs, initStatsCtx); err != nil {
+		return nil, err
+	}
+
+	// start TTL job manager after setup stats collector
+	// because TTL could modify a lot of columns, and need to trigger auto analyze
+	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+		if s, ok := s.(*session); ok {
+			return attachStatsCollector(s, dom)
+		}
+		return s
+	}
+	ttlworker.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+		if s, ok := s.(*session); ok {
+			return detachStatsCollector(s)
+		}
+		return s
+	}
+	dom.StartTTLJobManager()
+
+	analyzeCtxs, err := createSessions(store, analyzeConcurrencyQuota)
+	if err != nil {
+		return nil, err
+	}
+	subCtxs2 := make([]sessionctx.Context, analyzeConcurrencyQuota)
+	for i := 0; i < analyzeConcurrencyQuota; i++ {
+		subCtxs2[i] = analyzeCtxs[i]
+	}
+	dom.SetupAnalyzeExec(subCtxs2)
+	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
+
+	if raw, ok := store.(kv.EtcdBackend); ok {
+		err = raw.StartGCWorker()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// This only happens in testing, since the failure of loading or parsing sql file
+	// would panic the bootstrapping.
+	if failToLoadOrParseSQLFile {
+		dom.Close()
+		return nil, err
+	}
+
+	err = dom.InitDistTaskLoop(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return dom, err
+}
+
+// BootstrapSession runs the first time when the TiDB server start.
+func BootstrapSessionForMPP(store kv.Storage) (*domain.Domain, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	cfg := config.GetGlobalConfig()
+	if len(cfg.Instance.PluginLoad) > 0 {
+		err := plugin.Load(context.Background(), plugin.Config{
+			Plugins:   strings.Split(cfg.Instance.PluginLoad, ","),
+			PluginDir: cfg.Instance.PluginDir,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
+	if err != nil {
+		return nil, err
+	}
+	err = InitMDLTable(store)
+	if err != nil {
+		return nil, err
+	}
+	err = InitDDLJobTables(store, meta.BackfillTableVersion)
+	if err != nil {
+		return nil, err
+	}
+	ver := getStoreBootstrapVersion(store)
+	if ver == notBootstrapped {
+		runInBootstrapSession(store, bootstrap)
+	} else if ver < currentBootstrapVersion {
+		runInBootstrapSession(store, upgrade)
+	} else {
+		err = InitMDLVariable(store)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
+	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
+	ses, err := createSessionsForMPP(store, 10)
 	if err != nil {
 		return nil, err
 	}
@@ -3537,10 +3769,28 @@ func createSessions(store kv.Storage, cnt int) ([]*session, error) {
 	return ses, nil
 }
 
+func createSessionsForMPP(store kv.Storage, cnt int) ([]*session, error) {
+	domap.Delete(store)
+	ses := make([]*session, cnt)
+	for i := 0; i < cnt; i++ {
+		se, err := createSessionWithMultipleTiDB(store, i == cnt-1)
+		if err != nil {
+			return nil, err
+		}
+		ses[i] = se
+	}
+
+	return ses, nil
+}
+
 // createSession creates a new session.
 // Please note that such a session is not tracked by the internal session list.
 // This means the min ts reporter is not aware of it and may report a wrong min start ts.
 // In most cases you should use a session pool in domain instead.
+func createSessionWithMultipleTiDB(store kv.Storage, last bool) (*session, error) {
+	return createSessionWithOpt(store, nil)
+}
+
 func createSession(store kv.Storage) (*session, error) {
 	return createSessionWithOpt(store, nil)
 }

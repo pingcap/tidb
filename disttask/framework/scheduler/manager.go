@@ -90,6 +90,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		newPool:              b.newPool,
 		newScheduler:         b.newScheduler,
 	}
+
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelFunc)
 
@@ -101,6 +102,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 
 	for taskType := range subtaskExecutorConstructors {
 		poolSize := subtaskExecutorPoolSize
+		logutil.Logger(m.logCtx).Info("ywq test taskType", zap.String("type", taskType))
 		if opt, ok := subtaskExecutorOptions[taskType]; ok && opt.PoolSize > 0 {
 			poolSize = opt.PoolSize
 		}
@@ -180,6 +182,7 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 // onRunnableTasks handles runnable tasks.
 func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 	tasks = m.filterAlreadyHandlingTasks(tasks)
+
 	for _, task := range tasks {
 		if _, ok := m.subtaskExecutorPools[task.Type]; !ok {
 			logutil.Logger(m.logCtx).Error("unknown task type", zap.String("type", task.Type))

@@ -217,7 +217,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		if cnt > 0 {
 			subTaskErr, err = d.taskMgr.CollectSubTaskError(gTask.ID)
 			if err != nil {
-				logutil.BgLogger().Warn("collate subtask error failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
+				logutil.BgLogger().Warn("collect subtask error failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
 				return false, nil
 			}
 			return false, subTaskErr
@@ -293,6 +293,7 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 	}
 }
 
+// ywq todo read code
 func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) bool {
 	var err error
 	if len(errStr) > 0 {
@@ -426,6 +427,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		return errors.New("no available TiDB node")
 	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
+	// ywq todo select node policy here
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		pos := i % len(serverNodes)

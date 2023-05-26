@@ -1157,6 +1157,8 @@ func (do *Domain) Init(
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli := do.GetPDClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
+	// global variable！！！！
+	logutil.BgLogger().Info("ywq test ddl id", zap.String("ddlid", do.ddl.GetID()), zap.Uint64("serverID", do.ServerID()))
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, do.Store().GetCodec(),
 		skipRegisterToDashboard)
@@ -1363,6 +1365,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
+	logutil.BgLogger().Info("ywq test init dist task loop")
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil)

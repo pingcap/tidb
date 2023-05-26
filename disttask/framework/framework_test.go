@@ -103,7 +103,7 @@ func TestFrameworkStartUp(t *testing.T) {
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testSubtaskExecutor{v: &v}, nil
 	})
-
+	// ywq todo mock multiple domain... with single store?
 	_ = testkit.CreateMockStore(t)
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
