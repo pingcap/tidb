@@ -143,6 +143,7 @@ func (e *ImportIntoExec) doImport(distImporter *loaddata.DistImporter, task *pro
 		importResult := distImporter.Result(task)
 		userStmtCtx := e.userSctx.GetSessionVars().StmtCtx
 		userStmtCtx.SetMessage(importResult.Msg)
+		userStmtCtx.SetAffectedRows(importResult.Affected)
 	}
 	return err
 }

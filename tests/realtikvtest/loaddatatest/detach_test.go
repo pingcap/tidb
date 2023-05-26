@@ -40,8 +40,6 @@ var detachedCases = []detachedCase{
 }
 
 func (s *mockGCSSuite) TestSameBehaviourDetachedOrNot() {
-	withOptions := fmt.Sprintf("WITH thread=1")
-	detachedWithOptions := fmt.Sprintf("WITH DETACHED, thread=1")
 	s.T().Cleanup(func() {
 		executor.TestDetachedTaskFinished.Store(false)
 	})
@@ -62,10 +60,10 @@ func (s *mockGCSSuite) TestSameBehaviourDetachedOrNot() {
 			Content: []byte(ca.physicalModeData),
 		})
 		executor.TestDetachedTaskFinished.Store(false)
-		s.tk.MustExec(fmt.Sprintf(`IMPORT INTO test_detached.t1 FROM 'gs://test-detached/1.txt?endpoint=%s'%s;`,
-			gcsEndpoint, withOptions))
-		rows := s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO test_detached.t2 FROM 'gs://test-detached/1.txt?endpoint=%s'%s;`,
-			gcsEndpoint, detachedWithOptions)).Rows()
+		s.tk.MustExec(fmt.Sprintf(`IMPORT INTO test_detached.t1 FROM 'gs://test-detached/1.txt?endpoint=%s' WITH thread=1;`,
+			gcsEndpoint))
+		rows := s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO test_detached.t2 FROM 'gs://test-detached/1.txt?endpoint=%s' WITH DETACHED, thread=1;`,
+			gcsEndpoint)).Rows()
 		require.Len(s.T(), rows, 1)
 		require.Eventually(s.T(), func() bool {
 			return executor.TestDetachedTaskFinished.Load()

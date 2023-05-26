@@ -227,6 +227,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 		with thread=1`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	s.Equal("Records: 9  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
+	s.Equal(uint64(9), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
 		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
@@ -236,6 +237,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 		with thread=1, skip_rows=1`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	s.Equal("Records: 7  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
+	s.Equal(uint64(7), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"2 test2 22", "3 test3 33", "4 test4 44",
 		"6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
@@ -245,6 +247,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 		with thread=1, skip_rows=3`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
 	s.Equal("Records: 3  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
+	s.Equal(uint64(3), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"4 test4 44",
 		"8 test8 88", "9 test9 99",
@@ -553,7 +556,6 @@ func (s *mockGCSSuite) TestGBK() {
 		WITH character_set='utf8mb4'`, gcsEndpoint)
 	err := s.tk.ExecToErr(sql)
 	// FIXME: handle error
-	//require.EqualError(s.T(), err, "task stopped with state reverted")
 	s.ErrorContains(err, `Incorrect string value '\xF0\x9F\x98\x80' for column 'j'`)
 }
 
