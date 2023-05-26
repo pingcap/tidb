@@ -319,12 +319,11 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 		DBName:    plan.Table.Schema.O,
 		DBID:      plan.Table.DBInfo.ID,
 
-		Path:                 plan.Path,
-		Format:               format,
-		Restrictive:          restrictive,
-		FieldNullDef:         []string{`\N`},
-		NullValueOptEnclosed: true, // it's always true for IMPORT INTO
-		LineFieldsInfo:       lineFieldsInfo,
+		Path:           plan.Path,
+		Format:         format,
+		Restrictive:    restrictive,
+		FieldNullDef:   []string{`\N`},
+		LineFieldsInfo: lineFieldsInfo,
 
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		ImportantSysVars: getImportantSysVars(userSctx),
