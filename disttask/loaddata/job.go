@@ -15,11 +15,10 @@
 package loaddata
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
@@ -29,10 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-)
-
-var (
-	checkTaskFinishInterval = 300 * time.Millisecond
 )
 
 // DistImporter is a JobImporter for distributed load data.
@@ -53,7 +48,7 @@ func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt s
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
-		logger:         logutil.BgLogger().With(zap.String("component", "importer"), zap.Int("id", int(param.Job.ID))),
+		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
 	}, nil
 }
 
@@ -67,8 +62,8 @@ func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
+		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
 		instance:       serverInfo,
-		logger:         logutil.BgLogger().With(zap.String("component", "importer"), zap.Int("id", int(param.Job.ID))),
 	}, nil
 }
 
@@ -78,11 +73,17 @@ func (ti *DistImporter) Param() *importer.JobImportParam {
 }
 
 // Import implements JobImporter.Import.
-func (ti *DistImporter) Import() {
+func (*DistImporter) Import() {
+	// todo: remove it
+}
+
+// ImportTask import task.
+func (ti *DistImporter) ImportTask(task *proto.Task) {
 	ti.logger.Info("start distribute load data")
 	ti.Group.Go(func() error {
 		defer close(ti.Done)
-		return ti.doImport(ti.GroupCtx)
+		// task is run using distribute framework, so we only wait for the task to finish.
+		return handle.WaitGlobalTask(ti.GroupCtx, task)
 	})
 }
 
@@ -117,15 +118,8 @@ func (*DistImporter) Close() error {
 	return nil
 }
 
-func buildDistTask(plan *importer.Plan, jobID int64, stmt string) TaskMeta {
-	return TaskMeta{
-		Plan:  *plan,
-		JobID: jobID,
-		Stmt:  stmt,
-	}
-}
-
-func (ti *DistImporter) doImport(ctx context.Context) error {
+// SubmitTask submits a task to the distribute framework.
+func (ti *DistImporter) SubmitTask() (*proto.Task, error) {
 	var instances []*infosync.ServerInfo
 	if ti.instance != nil {
 		instances = append(instances, ti.instance)
@@ -138,13 +132,22 @@ func (ti *DistImporter) doImport(ctx context.Context) error {
 	}
 	taskMeta, err := json.Marshal(task)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return handle.SubmitAndRunGlobalTask(ctx, ti.taskKey(), proto.LoadData, int(ti.plan.ThreadCnt), taskMeta)
+	globalTask, err := handle.SubmitGlobalTask(ti.taskKey(), proto.LoadData, int(ti.plan.ThreadCnt), taskMeta)
+	if err != nil {
+		return nil, err
+	}
+
+	// update logger with task id.
+	ti.logger = ti.logger.With(zap.Int64("id", globalTask.ID))
+
+	return globalTask, nil
 }
 
-func (ti *DistImporter) taskKey() string {
-	return fmt.Sprintf("ddl/%s/%d", proto.LoadData, ti.Job.ID)
+func (*DistImporter) taskKey() string {
+	// task key is meaningless to IMPORT INTO, so we use a random uuid.
+	return fmt.Sprintf("%s/%s", proto.LoadData, uuid.New().String())
 }
 
 func (ti *DistImporter) getTaskMeta() (*TaskMeta, error) {

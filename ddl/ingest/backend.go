@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -121,6 +122,10 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 	if err != nil {
 		return err
 	}
+
+	failpoint.Inject("mockFinishImportErr", func() {
+		failpoint.Return(fmt.Errorf("mock finish import error"))
+	})
 
 	// Check remote duplicate value for the index.
 	if unique {

@@ -489,8 +489,7 @@
       "dumpling/export/sql_type.go": "please fix it",
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code",
-      "planner/core/flat_plan.go": "planner/core/flat_plan.go", 
-      "planner/core/resolve_indices.go": "planner/core/resolve_indices.go", 
+      "planner/core/resolve_indices.go": "planner/core/resolve_indices.go",
       "planner/core/rule_result_reorder.go": "planner/core/rule_result_reorder.go", 
       "planner/core/rule_join_reorder_dp.go": "planner/core/rule_join_reorder_dp.go", 
       "planner/core/plan_cache_param.go": "planner/core/plan_cache_param.go", 
@@ -525,6 +524,7 @@
       "br/pkg/lightning/": "br/pkg/lightning/",
       "executor/aggregate.go": "executor/aggregate.go",
       "executor/analyze_utils.go": "executor/analyze_utils.go",
+      "executor/internal/": "executor/internal/",
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/backfilling.go": "ddl/backfilling.go",
@@ -1170,6 +1170,13 @@
     }
   },
   "etcdconfig": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      ".*_test.go": "ignore test code",
+      "external/": "no need to vet third party code"
+    }
+  },
+  "deferrecover": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",

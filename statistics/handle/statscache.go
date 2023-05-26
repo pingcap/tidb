@@ -35,7 +35,6 @@ type statsCacheInner interface {
 	FreshMemUsage()
 	Copy() statsCacheInner
 	SetCapacity(int64)
-	EnableQuota() bool
 	// Front returns the front element's owner tableID, only used for test
 	Front() int64
 }
@@ -236,11 +235,6 @@ func (m *mapCache) Copy() statsCacheInner {
 
 // SetCapacity implements statsCacheInner
 func (m *mapCache) SetCapacity(int64) {}
-
-// EnableQuota implements statsCacheInner
-func (m *mapCache) EnableQuota() bool {
-	return false
-}
 
 // Front implements statsCacheInner
 func (m *mapCache) Front() int64 {
