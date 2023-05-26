@@ -979,6 +979,7 @@ func TestDDLJobErrorCount(t *testing.T) {
 	require.NotNil(t, historyJob)
 	require.Equal(t, int64(1), historyJob.ErrorCount)
 	require.True(t, kv.ErrEntryTooLarge.Equal(historyJob.Error))
+	tk.MustQuery("select * from ddl_error_table;").Check(testkit.Rows())
 }
 
 func TestCommitTxnWithIndexChange(t *testing.T) {
