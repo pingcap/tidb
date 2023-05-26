@@ -33,6 +33,9 @@ type testFlowHandle struct{}
 
 var _ dispatcher.TaskFlowHandle = (*testFlowHandle)(nil)
 
+func (*testFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
+}
+
 func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepOne
