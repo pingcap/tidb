@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
+	"time"
 
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -35,17 +37,43 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
-// FlowHandle is the dispatcher for load data.
-type FlowHandle struct{}
+type flowHandle struct {
+	mu sync.RWMutex
+	// the last time we switch TiKV into IMPORT mode, this is a global operation, do it for one task makes
+	// no difference to do it for all tasks. So we do not need to record the switch time for each task.
+	lastSwitchTime atomic.Time
+}
 
-var _ dispatcher.TaskFlowHandle = (*FlowHandle)(nil)
+var _ dispatcher.TaskFlowHandle = (*flowHandle)(nil)
 
-// ProcessNormalFlow implements dispatcher.TaskFlowHandle interface.
-func (*FlowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
+func (h *flowHandle) OnTicker(ctx context.Context, task *proto.Task) {
+	// only switch TiKV mode when task is running and reach the interval
+	if task.State != proto.TaskStateRunning || time.Since(h.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
+		return
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if time.Since(h.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
+		return
+	}
+
+	logger := logutil.BgLogger().With(zap.Int64("task_id", task.ID))
+	switcher, err := importer.GetTiKVModeSwitcher(logger)
+	if err != nil {
+		logger.Warn("get tikv mode switcher failed", zap.Error(err))
+		return
+	}
+	switcher.ToImportMode(ctx)
+	h.lastSwitchTime.Store(time.Now())
+}
+
+func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
 	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
@@ -56,6 +84,7 @@ func (*FlowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Task
 
 	switch gTask.Step {
 	case Import:
+		h.switchTiKV2NormalMode(ctx, logutil.BgLogger())
 		if err := postProcess(ctx, handle, gTask, logger); err != nil {
 			return nil, err
 		}
@@ -90,9 +119,10 @@ func (*FlowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Task
 }
 
 // ProcessErrFlow implements dispatcher.ProcessErrFlow interface.
-func (*FlowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
+func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
 	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
 	logger.Info("process error flow", zap.ByteStrings("error message", receiveErr))
+	h.switchTiKV2NormalMode(ctx, logger)
 	gTask.Error = receiveErr[0]
 
 	errStr := string(receiveErr[0])
@@ -114,8 +144,7 @@ func (*FlowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHan
 	return nil, err
 }
 
-// GetEligibleInstances implements dispatcher.TaskFlowHandle interface.
-func (*FlowHandle) GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*flowHandle) GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -127,10 +156,24 @@ func (*FlowHandle) GetEligibleInstances(ctx context.Context, gTask *proto.Task) 
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 
-// IsRetryableErr implements dispatcher.IsRetryableErr interface.
-func (*FlowHandle) IsRetryableErr(error) bool {
+func (*flowHandle) IsRetryableErr(error) bool {
 	// TODO: check whether the error is retryable.
 	return false
+}
+
+func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logger) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	switcher, err := importer.GetTiKVModeSwitcher(logger)
+	if err != nil {
+		logger.Warn("get tikv mode switcher failed", zap.Error(err))
+		return
+	}
+	switcher.ToNormalMode(ctx)
+
+	// clear it, so next task can switch TiKV mode again.
+	h.lastSwitchTime.Store(time.Time{})
 }
 
 // preProcess does the pre processing for the task.
@@ -378,5 +421,5 @@ func rollback(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Ta
 }
 
 func init() {
-	dispatcher.RegisterTaskFlowHandle(proto.LoadData, &FlowHandle{})
+	dispatcher.RegisterTaskFlowHandle(proto.LoadData, &flowHandle{})
 }
