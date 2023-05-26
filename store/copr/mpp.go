@@ -102,6 +102,7 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 
 	// meta for current task.
 	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
+		GatherId:   req.GatherID,
 		Address:    req.Meta.GetAddress(),
 		MppVersion: req.MppVersion.ToInt64(),
 	}

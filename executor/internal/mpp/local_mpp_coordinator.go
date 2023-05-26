@@ -95,6 +95,7 @@ type localMppCoordinator struct {
 	originalPlan plannercore.PhysicalPlan
 	startTS      uint64
 	mppQueryID   kv.MPPQueryID
+	gatherID     uint64
 
 	mppReqs []*kv.MPPDispatchRequest
 
@@ -120,13 +121,14 @@ type localMppCoordinator struct {
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
-func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, startTS uint64, mppQueryID kv.MPPQueryID, memTracker *memory.Tracker) *localMppCoordinator {
+func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, memTracker *memory.Tracker) *localMppCoordinator {
 	coord := &localMppCoordinator{
 		sessionCtx:   sctx,
 		is:           is,
 		originalPlan: plan,
 		startTS:      startTS,
 		mppQueryID:   mppQueryID,
+		gatherID:     gatherID,
 		memTracker:   memTracker,
 		finishCh:     make(chan struct{}),
 		wgDoneChan:   make(chan struct{}),
@@ -185,6 +187,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			SchemaVar:  c.is.SchemaMetaVersion(),
 			StartTs:    c.startTS,
 			MppQueryID: mppTask.MppQueryID,
+			GatherID:   c.gatherID,
 			MppVersion: mppTask.MppVersion,
 			State:      kv.MppTaskReady,
 		}

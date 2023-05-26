@@ -144,6 +144,7 @@ type MPPDispatchRequest struct {
 	SchemaVar  int64
 	StartTs    uint64
 	MppQueryID MPPQueryID
+	GatherID   uint64
 	ID         int64 // identify a single task
 	MppVersion MppVersion
 	State      MppTaskStates

@@ -92,7 +92,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 }
 
 func (e *MPPGather) buildCoordinator() kv.MppCoordinator {
-	coord := mpp.NewLocalMPPCoordinator(e.ctx, e.is, e.originalPlan, e.startTS, e.mppQueryID, e.memTracker)
+	coord := mpp.NewLocalMPPCoordinator(e.ctx, e.is, e.originalPlan, e.startTS, e.mppQueryID, uint64(e.id), e.memTracker)
 	return coord
 }
 
