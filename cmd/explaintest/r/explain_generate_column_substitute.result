@@ -604,7 +604,7 @@ Sort	12487.50	root		test.t2.c_enum
 └─HashJoin	12487.50	root		inner join, equal:[eq(minus(test.t1.c_int, 1), minus(test.t2.c_int, 1))]
   ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
   │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:expression_index_2(`c_int` - 1)	keep order:false, stats:pseudo
-  └─Projection(Probe)	10000.00	root		test.t2.c_enum, minus(test.t2.c_int, 1), test.t2._tidb_rowid
+  └─Projection(Probe)	10000.00	root		test.t2.c_datetime, test.t2.c_enum, minus(test.t2.c_int, 1), test.t2._tidb_rowid
     └─UnionScan	8000.00	root		not(isnull(minus(test.t2.c_int, 1)))
       └─Selection	8000.00	root		not(isnull(minus(test.t2.c_int, 1)))
         └─TableReader	10000.00	root		data:TableFullScan
