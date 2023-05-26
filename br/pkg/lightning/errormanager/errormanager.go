@@ -96,7 +96,8 @@ const (
 			offset      bigint NOT NULL,
 			error       text NOT NULL,
 			row_id 	    bigint NOT NULL COMMENT 'the row id of the conflicted row',
-			row_data    text NOT NULL COMMENT 'the row data of the conflicted row'
+			row_data    text NOT NULL COMMENT 'the row data of the conflicted row',
+			KEY (task_id, table_name)
 		);
 	`
 
@@ -138,12 +139,13 @@ const (
 
 // ErrorManager records errors during the import process.
 type ErrorManager struct {
-	db                *sql.DB
-	taskID            int64
-	schemaEscaped     string
-	configError       *config.MaxError
-	remainingError    config.MaxError
-	maxErrRecords     *atomic.Int64
+	db             *sql.DB
+	taskID         int64
+	schemaEscaped  string
+	configError    *config.MaxError
+	remainingError config.MaxError
+	maxErrRecords  *atomic.Int64
+	// conflictV1Enabled and conflictV2Enabled are mutually exclusive.
 	conflictV1Enabled bool
 	conflictV2Enabled bool
 	logger            log.Logger

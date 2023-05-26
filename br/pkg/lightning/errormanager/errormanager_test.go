@@ -38,14 +38,14 @@ func TestInit(t *testing.T) {
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRecord
+	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
 	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
 	cfg.App.MaxErrorRecords = 100
 	cfg.App.MaxError.Type.Store(10)
 	cfg.App.TaskInfoSchemaName = "lightning_errors"
 
 	em := New(db, cfg, log.L())
-	require.True(t, em.conflictV1Enabled)
+	require.False(t, em.conflictV1Enabled)
 	require.True(t, em.conflictV2Enabled)
 	require.Equal(t, cfg.App.MaxError.Type.Load(), em.remainingError.Type.Load())
 	require.Equal(t, cfg.App.MaxError.Conflict.Load(), em.remainingError.Conflict.Load())

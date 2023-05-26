@@ -1268,6 +1268,10 @@ func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 		return common.ErrInvalidConfig.
 			GenWithStack("tikv-importer.on-duplicate cannot be used with tikv-importer.incremental-import")
 	}
+	if cfg.TikvImporter.DuplicateResolution != DupeResAlgNone && cfg.TikvImporter.OnDuplicate != "" {
+		return common.ErrInvalidConfig.
+			GenWithStack("tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution")
+	}
 
 	if len(cfg.TikvImporter.SortedKVDir) == 0 {
 		return common.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")

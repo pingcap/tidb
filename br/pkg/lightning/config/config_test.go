@@ -1012,6 +1012,12 @@ func TestAdjustOnDuplicate(t *testing.T) {
 	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
 	cfg.TikvImporter.IncrementalImport = true
 	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.incremental-import")
+
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
+	cfg.TikvImporter.IncrementalImport = false
+	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRemove
+	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution")
 }
 
 func TestAdjustMaxErrorRecords(t *testing.T) {
