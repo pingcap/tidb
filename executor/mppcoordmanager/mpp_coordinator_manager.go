@@ -56,6 +56,7 @@ func (m *MPPCoordinatorManager) Unregister(coordID CoordinatorUniqueID) error {
 	return nil
 }
 
+// ReportStatus reports mpp task execution status to specific coordinator
 func (m *MPPCoordinatorManager) ReportStatus(CoordinatorUniqueID) error {
 	return nil
 }
