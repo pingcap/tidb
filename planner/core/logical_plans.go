@@ -858,8 +858,8 @@ func (p *LogicalProjection) GetUsedCols() (usedCols []*expression.Column) {
 type LogicalAggregation struct {
 	logicalSchemaProducer
 
-	AggFuncs      []*aggregation.AggFuncDesc
-	GroupByItems  []expression.Expression
+	AggFuncs     []*aggregation.AggFuncDesc
+	GroupByItems []expression.Expression
 
 	// aggHints stores aggregation hint information.
 	aggHints aggHintInfo
