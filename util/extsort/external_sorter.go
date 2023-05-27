@@ -56,6 +56,7 @@ type Writer interface {
 	Flush() error
 	// Close flushes all buffered key-value pairs to the external sorter,
 	// and releases all resources held by the writer.
+	// Close can only be called once.
 	Close() error
 }
 
