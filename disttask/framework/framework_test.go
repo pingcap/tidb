@@ -24,11 +24,16 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
-type testFlowHandle struct {
+type testFlowHandle struct{}
+
+var _ dispatcher.TaskFlowHandle = (*testFlowHandle)(nil)
+
+func (*testFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
 func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
@@ -44,6 +49,14 @@ func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHan
 
 func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	return nil, nil
+}
+
+func (*testFlowHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+	return dispatcher.GenerateSchedulerNodes(ctx)
+}
+
+func (*testFlowHandle) IsRetryableErr(error) bool {
+	return true
 }
 
 type testMiniTask struct{}
@@ -66,8 +79,8 @@ func (t *testScheduler) SplitSubtask(_ context.Context, subtask []byte) ([]proto
 	}, nil
 }
 
-func (t *testScheduler) OnSubtaskFinished(_ context.Context, _ []byte) error {
-	return nil
+func (t *testScheduler) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
+	return meta, nil
 }
 
 type testSubtaskExecutor struct {
@@ -85,19 +98,19 @@ func TestFrameworkStartUp(t *testing.T) {
 
 	var v atomic.Int64
 	dispatcher.ClearTaskFlowHandle()
-	dispatcher.RegisterTaskFlowHandle("type1", &testFlowHandle{})
+	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &testFlowHandle{})
 	scheduler.ClearSchedulers()
-	scheduler.RegisterSchedulerConstructor("type1", func(_ []byte, _ int64) (scheduler.Scheduler, error) {
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, func(_ []byte, _ int64) (scheduler.Scheduler, error) {
 		return &testScheduler{}, nil
 	})
-	scheduler.RegisterSubtaskExectorConstructor("type1", func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testSubtaskExecutor{v: &v}, nil
 	})
 
 	_ = testkit.CreateMockStore(t)
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	taskID, err := mgr.AddNewGlobalTask("key1", "type1", 8, nil)
+	taskID, err := mgr.AddNewGlobalTask("key1", proto.TaskTypeExample, 8, nil)
 	require.NoError(t, err)
 	start := time.Now()
 

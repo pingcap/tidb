@@ -24,6 +24,7 @@ go_test(
         "//sessionctx/variable",
         "//sessiontxn",
         "//store/driver/error",
+        "//store/gcworker",
         "//store/mockstore",
         "//tablecodec",
         "//testkit",
@@ -37,6 +38,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//testutils",
+        "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//txnkv/transaction",
     ],
 )

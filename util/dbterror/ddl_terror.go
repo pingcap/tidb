@@ -32,6 +32,8 @@ var (
 	ErrInvalidDDLJob = ClassDDL.NewStd(mysql.ErrInvalidDDLJob)
 	// ErrCancelledDDLJob means the DDL job is cancelled.
 	ErrCancelledDDLJob = ClassDDL.NewStd(mysql.ErrCancelledDDLJob)
+	// ErrPausedDDLJob returns when the DDL job cannot be paused.
+	ErrPausedDDLJob = ClassDDL.NewStd(mysql.ErrPausedDDLJob)
 	// ErrRunMultiSchemaChanges means we run multi schema changes.
 	ErrRunMultiSchemaChanges = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change for %s"), nil))
 	// ErrOperateSameColumn means we change the same columns multiple times in a DDL.
@@ -391,7 +393,11 @@ var (
 	ErrCancelFinishedDDLJob = ClassDDL.NewStd(mysql.ErrCancelFinishedDDLJob)
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
 	ErrCannotCancelDDLJob = ClassDDL.NewStd(mysql.ErrCannotCancelDDLJob)
-	// ErrDDLSetting returns when failing to enable/disable DDL
+	// ErrCannotPauseDDLJob returns when the State is not qualified to be paused.
+	ErrCannotPauseDDLJob = ClassDDL.NewStd(mysql.ErrCannotPauseDDLJob)
+	// ErrCannotResumeDDLJob returns  when the State is not qualified to be resumed.
+	ErrCannotResumeDDLJob = ClassDDL.NewStd(mysql.ErrCannotResumeDDLJob)
+	// ErrDDLSetting returns when failing to enable/disable DDL.
 	ErrDDLSetting = ClassDDL.NewStd(mysql.ErrDDLSetting)
 	// ErrIngestFailed returns when the DDL ingest job is failed.
 	ErrIngestFailed = ClassDDL.NewStd(mysql.ErrIngestFailed)
@@ -437,3 +443,24 @@ var (
 	// ErrNotSupportedYet returns when tidb does not support this feature.
 	ErrNotSupportedYet = ClassDDL.NewStd(mysql.ErrNotSupportedYet)
 )
+
+// ReorgRetryableErrCodes is the error codes that are retryable for reorganization.
+var ReorgRetryableErrCodes = map[uint16]struct{}{
+	mysql.ErrPDServerTimeout:           {},
+	mysql.ErrTiKVServerTimeout:         {},
+	mysql.ErrTiKVServerBusy:            {},
+	mysql.ErrResolveLockTimeout:        {},
+	mysql.ErrRegionUnavailable:         {},
+	mysql.ErrGCTooEarly:                {},
+	mysql.ErrWriteConflict:             {},
+	mysql.ErrTiKVStoreLimit:            {},
+	mysql.ErrTiKVStaleCommand:          {},
+	mysql.ErrTiKVMaxTimestampNotSynced: {},
+	mysql.ErrTiFlashServerTimeout:      {},
+	mysql.ErrTiFlashServerBusy:         {},
+	mysql.ErrInfoSchemaExpired:         {},
+	mysql.ErrInfoSchemaChanged:         {},
+	mysql.ErrWriteConflictInTiDB:       {},
+	mysql.ErrTxnRetryable:              {},
+	mysql.ErrNotOwner:                  {},
+}

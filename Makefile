@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint tazel
+.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint tazel precheck
 
 default: server buildsucc
 
@@ -30,6 +30,8 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 
 # Install the check tools.
 check-setup:tools/bin/revive
+
+precheck: fmt bazel_prepare
 
 check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
 
@@ -171,6 +173,7 @@ enterprise-clear:
 enterprise-docker: init-submodule enterprise-prepare
 	docker build -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile.enterprise .
 
+enterprise-server-build: TIDB_EDITION=Enterprise
 enterprise-server-build:
 ifeq ($(TARGET), "")
 	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o bin/tidb-server tidb-server/main.go
@@ -280,7 +283,7 @@ endif
 bench-daily:
 	go test github.com/pingcap/tidb/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/executor -run TestBenchDaily -bench Ignore --outfile bench_daily.json
-	go test github.com/pingcap/tidb/executor/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/executor/test/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
@@ -360,7 +363,7 @@ mock_s3iface:
 mock_lightning:
 	@mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter,ChunkFlushStatus > br/pkg/mock/backend.go
 	@mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
-	@mockgen -package mocklocal github.com/pingcap/tidb/br/pkg/lightning/backend/local DiskUsage > br/pkg/mock/mocklocal/local.go
+	@mockgen -package mocklocal github.com/pingcap/tidb/br/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher > br/pkg/mock/mocklocal/local.go
 
 # There is no FreeBSD environment for GitHub actions. So cross-compile on Linux
 # but that doesn't work with CGO_ENABLED=1, so disable cgo. The reason to have
@@ -424,6 +427,10 @@ generate_grafana_scripts:
 
 bazel_ci_prepare:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  \
+		--run_under="cd $(CURDIR) && " \
+		 //tools/tazel:tazel
 
 bazel_prepare:
 	bazel run //:gazelle
@@ -458,6 +465,9 @@ bazel_build: bazel_ci_prepare
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=enterprise
+	./bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server -V
 
 bazel_fail_build:  failpoint-enable bazel_ci_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \

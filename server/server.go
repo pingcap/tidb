@@ -36,9 +36,8 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"net/http" //nolint:goimports
-	// For pprof
-	_ "net/http/pprof" // #nosec G108
+	"net/http"         //nolint:goimports
+	_ "net/http/pprof" // #nosec G108 for pprof
 	"os"
 	"os/user"
 	"reflect"
@@ -121,7 +120,8 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive | mysql.ClientDeprecateEOF
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive |
+	mysql.ClientDeprecateEOF | mysql.ClientCompress | mysql.ClientZstdCompressionAlgorithm
 
 // Server is the MySQL protocol server
 type Server struct {
@@ -694,10 +694,24 @@ func (s *Server) onConn(conn *clientConn) {
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 	connType := variable.ConnTypeSocket
+	sslVersion := ""
 	if cc.isUnixSocket {
 		connType = variable.ConnTypeUnixSocket
 	} else if cc.tlsConn != nil {
 		connType = variable.ConnTypeTLS
+		sslVersionNum := cc.tlsConn.ConnectionState().Version
+		switch sslVersionNum {
+		case tls.VersionTLS10:
+			sslVersion = "TLSv1.0"
+		case tls.VersionTLS11:
+			sslVersion = "TLSv1.1"
+		case tls.VersionTLS12:
+			sslVersion = "TLSv1.2"
+		case tls.VersionTLS13:
+			sslVersion = "TLSv1.3"
+		default:
+			sslVersion = fmt.Sprintf("Unknown TLS version: %d", sslVersionNum)
+		}
 	}
 	connInfo := &variable.ConnectionInfo{
 		ConnectionID:      cc.connectionID,
@@ -712,9 +726,11 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		ServerOSLoginUser: osUser,
 		OSVersion:         osVersion,
 		ServerVersion:     mysql.TiDBReleaseVersion,
-		SSLVersion:        "v1.2.0", // for current go version
+		SSLVersion:        sslVersion,
 		PID:               serverPID,
 		DB:                cc.dbname,
+		AuthMethod:        cc.authPlugin,
+		Attributes:        cc.attrs,
 	}
 	return connInfo
 }
@@ -796,7 +812,7 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 }
 
 // Kill implements the SessionManager interface.
-func (s *Server) Kill(connectionID uint64, query bool) {
+func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 	logutil.BgLogger().Info("kill", zap.Uint64("conn", connectionID), zap.Bool("query", query))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
@@ -811,9 +827,9 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	if !query {
 		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
 		// this, it will end the dispatch loop and exit.
-		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
+		conn.setStatus(connStatusWaitShutdown)
 	}
-	killQuery(conn)
+	killQuery(conn, maxExecutionTime)
 }
 
 // UpdateTLSConfig implements the SessionManager interface.
@@ -825,9 +841,13 @@ func (s *Server) getTLSConfig() *tls.Config {
 	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
 
-func killQuery(conn *clientConn) {
+func killQuery(conn *clientConn, maxExecutionTime bool) {
 	sessVars := conn.ctx.GetSessionVars()
-	atomic.StoreUint32(&sessVars.Killed, 1)
+	if maxExecutionTime {
+		atomic.StoreUint32(&sessVars.Killed, 2)
+	} else {
+		atomic.StoreUint32(&sessVars.Killed, 1)
+	}
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
@@ -861,11 +881,11 @@ func (s *Server) KillAllConnections() {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	for _, conn := range s.clients {
-		atomic.StoreInt32(&conn.status, connStatusShutdown)
+		conn.setStatus(connStatusShutdown)
 		if err := conn.closeWithoutLock(); err != nil {
 			terror.Log(err)
 		}
-		killQuery(conn)
+		killQuery(conn, false)
 	}
 
 	s.KillSysProcesses()
@@ -1017,6 +1037,6 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	}
 	s.rwlock.RUnlock()
 	for _, id := range connIDs {
-		s.Kill(id, false)
+		s.Kill(id, false, false)
 	}
 }

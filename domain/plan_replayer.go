@@ -31,7 +31,6 @@ import (
 	domain_metrics "github.com/pingcap/tidb/domain/metrics"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -74,11 +73,12 @@ func parseTime(s string) (time.Time, error) {
 	return time.Unix(0, i), nil
 }
 
-func (p *dumpFileGcChecker) gcDumpFiles(t time.Duration) {
+// GCDumpFiles periodically cleans the outdated files for plan replayer and plan trace.
+func (p *dumpFileGcChecker) GCDumpFiles(gcDurationDefault, gcDurationForCapture time.Duration) {
 	p.Lock()
 	defer p.Unlock()
 	for _, path := range p.paths {
-		p.gcDumpFilesByPath(path, t)
+		p.gcDumpFilesByPath(path, gcDurationDefault, gcDurationForCapture)
 	}
 }
 
@@ -86,7 +86,7 @@ func (p *dumpFileGcChecker) setupSctx(sctx sessionctx.Context) {
 	p.sctx = sctx
 }
 
-func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
+func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationDefault, gcDurationForCapture time.Duration) {
 	files, err := ioutil.ReadDir(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -94,7 +94,8 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 		}
 	}
 
-	gcTime := time.Now().Add(-t)
+	gcTargetTimeDefault := time.Now().Add(-gcDurationDefault)
+	gcTargetTimeForCapture := time.Now().Add(-gcDurationForCapture)
 	for _, f := range files {
 		fileName := f.Name()
 		createTime, err := parseTime(fileName)
@@ -103,7 +104,14 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 			continue
 		}
 		isPlanReplayer := strings.Contains(fileName, "replayer")
-		if !createTime.After(gcTime) {
+		isPlanReplayerCapture := strings.Contains(fileName, "capture")
+		canGC := false
+		if isPlanReplayer && isPlanReplayerCapture {
+			canGC = !createTime.After(gcTargetTimeForCapture)
+		} else {
+			canGC = !createTime.After(gcTargetTimeDefault)
+		}
+		if canGC {
 			err := os.Remove(filepath.Join(path, f.Name()))
 			if err != nil {
 				logutil.BgLogger().Warn("[dumpFileGcChecker] remove file failed", zap.Error(err), zap.String("filename", fileName))
@@ -120,8 +128,8 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 
 func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, token string) {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	exec := sctx.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx1, fmt.Sprintf("delete from mysql.plan_replayer_status where token = %v", token))
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, "delete from mysql.plan_replayer_status where token = %?", token)
 	if err != nil {
 		logutil.BgLogger().Warn("delete mysql.plan_replayer_status record failed", zap.String("token", token), zap.Error(err))
 	}
@@ -384,7 +392,6 @@ func (w *planReplayerTaskDumpWorker) handleTask(task *PlanReplayerDumpTask) {
 	occupy := true
 	handleTask := true
 	defer func() {
-		util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpWorker", nil, false)
 		logutil.BgLogger().Debug("[plan-replayer-capture] handle task",
 			zap.String("sql-digest", sqlDigest),
 			zap.String("plan-digest", planDigest),
@@ -392,6 +399,8 @@ func (w *planReplayerTaskDumpWorker) handleTask(task *PlanReplayerDumpTask) {
 			zap.Bool("occupy", occupy),
 			zap.Bool("handle", handleTask))
 	}()
+	defer util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpWorker", nil, false)
+
 	if task.IsContinuesCapture {
 		if w.status.checkTaskKeyFinishedBefore(task) {
 			check = false
@@ -437,19 +446,6 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 	}
 	task.Zf = file
 	task.FileName = fileName
-	if task.InExecute && len(task.NormalizedSQL) > 0 {
-		p := parser.New()
-		stmts, _, err := p.ParseSQL(task.NormalizedSQL)
-		if err != nil {
-			logutil.BgLogger().Warn("[plan-replayer-capture] parse normalized sql failed",
-				zap.String("sql", task.NormalizedSQL),
-				zap.String("sqlDigest", taskKey.SQLDigest),
-				zap.String("planDigest", taskKey.PlanDigest),
-				zap.Error(err))
-			return false
-		}
-		task.ExecStmts = stmts
-	}
 	err = DumpPlanReplayerInfo(w.ctx, w.sctx, task)
 	if err != nil {
 		logutil.BgLogger().Warn("[plan-replayer-capture] dump task result failed",
@@ -543,9 +539,7 @@ type PlanReplayerDumpTask struct {
 	replayer.PlanReplayerTaskKey
 
 	// tmp variables stored during the query
-	TblStats      map[int64]interface{}
-	InExecute     bool
-	NormalizedSQL string
+	TblStats map[int64]interface{}
 
 	// variables used to dump the plan
 	StartTS         uint64

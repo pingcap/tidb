@@ -34,6 +34,7 @@ type InternalSchedulerImpl struct {
 	taskTable TaskTable
 	pool      Pool
 	wg        sync.WaitGroup
+	subtaskWg sync.WaitGroup
 	logCtx    context.Context
 
 	mu struct {
@@ -71,6 +72,7 @@ func (*InternalSchedulerImpl) Start() {
 // Stop stops the scheduler.
 func (s *InternalSchedulerImpl) Stop() {
 	s.cancel()
+	s.subtaskWg.Wait()
 	s.wg.Wait()
 }
 
@@ -116,7 +118,6 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 
 	minimalTaskCh := make(chan func(), task.Concurrency)
 	defer close(minimalTaskCh)
-	var minimalTaskWg sync.WaitGroup
 
 	err = s.pool.RunWithConcurrency(minimalTaskCh, uint32(task.Concurrency))
 	if err != nil {
@@ -124,59 +125,98 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 		return s.getError()
 	}
 
+	concurrentSubtask := false
+	if opts, ok := schedulerOptions[task.Type]; ok && opts.ConcurrentSubtask {
+		concurrentSubtask = true
+	}
 	for {
+		// check if any error occurs
+		if err := s.getError(); err != nil {
+			return err
+		}
+
 		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending)
 		if err != nil {
 			s.onError(err)
 			break
 		}
 		if subtask == nil {
-			logutil.Logger(s.logCtx).Info("scheduler finished subtasks", zap.Any("step", task.Step))
 			break
 		}
 		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateRunning, "")
 		if err := s.getError(); err != nil {
 			break
 		}
+		s.subtaskWg.Add(1)
+		s.runSubtask(runCtx, scheduler, subtask, task.Step, minimalTaskCh)
+		if !concurrentSubtask {
+			s.subtaskWg.Wait()
+		}
+	}
+	s.subtaskWg.Wait()
+	return s.getError()
+}
 
-		var minimalTasks []proto.MinimalTask
-		minimalTasks, err = scheduler.SplitSubtask(runCtx, subtask.Meta)
-		if err != nil {
-			s.onError(err)
-			if errors.Cause(err) == context.Canceled {
-				s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, "")
-			} else {
-				s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError().Error())
-			}
-			break
+func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask, step int64, minimalTaskCh chan func()) {
+	minimalTasks, err := scheduler.SplitSubtask(ctx, subtask.Meta)
+	if err != nil {
+		s.onError(err)
+		if errors.Cause(err) == context.Canceled {
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, "")
+		} else {
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError().Error())
 		}
-		logutil.Logger(s.logCtx).Info("split subTask", zap.Any("cnt", len(minimalTasks)), zap.Any("subtask_id", subtask.ID))
-		for _, minimalTask := range minimalTasks {
-			minimalTaskWg.Add(1)
-			j := minimalTask
-			minimalTaskCh <- func() {
-				s.runMinimalTask(runCtx, j, task.Type, task.Step)
-				minimalTaskWg.Done()
-			}
-		}
-		minimalTaskWg.Wait()
-		if err := s.getError(); err == nil {
-			if err := scheduler.OnSubtaskFinished(runCtx, subtask.Meta); err != nil {
-				s.onError(err)
-			}
-		}
-		if err := s.getError(); err != nil {
-			if errors.Cause(err) == context.Canceled {
-				s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, "")
-			} else {
-				s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError().Error())
-			}
-			break
-		}
-		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateSucceed, "")
+		s.subtaskWg.Done()
+		return
+	}
+	logutil.Logger(s.logCtx).Info("split subTask", zap.Int("cnt", len(minimalTasks)), zap.Int64("subtask_id", subtask.ID))
+
+	// fast path for ADD INDEX.
+	// ADD INDEX is a special case now, no minimal tasks will be generated.
+	// run it synchronously now.
+	if len(minimalTasks) == 0 {
+		s.onSubtaskFinished(ctx, scheduler, subtask)
+		s.subtaskWg.Done()
+		return
 	}
 
-	return s.getError()
+	var mu sync.Mutex
+	var cnt int
+	for _, minimalTask := range minimalTasks {
+		j := minimalTask
+		minimalTaskCh <- func() {
+			s.runMinimalTask(ctx, j, subtask.Type, step)
+
+			mu.Lock()
+			defer mu.Unlock()
+			cnt++
+			// last minimal task should mark subtask as finished
+			if cnt == len(minimalTasks) {
+				s.onSubtaskFinished(ctx, scheduler, subtask)
+				s.subtaskWg.Done()
+			}
+		}
+	}
+}
+
+func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask) {
+	var subtaskMeta []byte
+	if err := s.getError(); err == nil {
+		if subtaskMeta, err = scheduler.OnSubtaskFinished(ctx, subtask.Meta); err != nil {
+			s.onError(err)
+		}
+	}
+	if err := s.getError(); err != nil {
+		if errors.Cause(err) == context.Canceled {
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, "")
+		} else {
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError().Error())
+		}
+		return
+	}
+	if err := s.taskTable.FinishSubtask(subtask.ID, subtaskMeta); err != nil {
+		s.onError(err)
+	}
 }
 
 func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, minimalTask proto.MinimalTask, tp string, step int64) {
@@ -210,6 +250,25 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler rollback a step", zap.Any("step", task.Step))
+
+	// We should cancel all subtasks before rolling back
+	for {
+		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending, proto.TaskStateRunning)
+		if err != nil {
+			s.onError(err)
+			return s.getError()
+		}
+
+		if subtask == nil {
+			break
+		}
+
+		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, "")
+		if err = s.getError(); err != nil {
+			return err
+		}
+	}
+
 	scheduler, err := createScheduler(task)
 	if err != nil {
 		s.onError(err)

@@ -128,6 +128,8 @@ type Handle struct {
 	serverIDGetter func() uint64
 	// tableLocked used to store locked tables
 	tableLocked []int64
+
+	InitStatsDone chan struct{}
 }
 
 // GetTableLockedAndClearForTest for unit test only
@@ -483,6 +485,7 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 		pool:             pool,
 		sysProcTracker:   tracker,
 		serverIDGetter:   serverIDGetter,
+		InitStatsDone:    make(chan struct{}),
 	}
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
@@ -1007,7 +1010,6 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(statsCache)
-	enableQuota := oldCache.EnableQuota()
 	newCost := newCache.Cost()
 	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
 		h.statsCache.memTracker.Consume(newCost - oldCache.Cost())
@@ -1015,7 +1017,7 @@ func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 		updated = true
 	}
 	h.statsCache.Unlock()
-	if updated && enableQuota {
+	if updated {
 		handle_metrics.CostGauge.Set(float64(newCost))
 	}
 	return

@@ -59,6 +59,7 @@ func TestSetSystemVariable(t *testing.T) {
 		{variable.TiDBMemQuotaQuery, "1024", false},
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", true}, // now global only
+		{variable.TiDBEnableRowLevelChecksum, "1", true},
 	}
 
 	for _, tc := range testCases {
@@ -352,6 +353,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		},
 	}
 	tc.SetPessimisticLockCache([]byte{'a'}, []byte{'a'})
+	tc.FlushStmtPessimisticLockCache()
 
 	tc.AddSavepoint("S1", nil)
 	require.Equal(t, 1, len(tc.Savepoints))
@@ -371,6 +373,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		TableID:  9,
 	}
 	tc.SetPessimisticLockCache([]byte{'b'}, []byte{'b'})
+	tc.FlushStmtPessimisticLockCache()
 
 	tc.AddSavepoint("S2", nil)
 	require.Equal(t, 2, len(tc.Savepoints))
@@ -388,6 +391,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		TableID:  13,
 	}
 	tc.SetPessimisticLockCache([]byte{'c'}, []byte{'c'})
+	tc.FlushStmtPessimisticLockCache()
 
 	tc.AddSavepoint("s2", nil)
 	require.Equal(t, 2, len(tc.Savepoints))

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
+	internalutil "github.com/pingcap/tidb/executor/internal/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -58,7 +60,9 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -120,7 +124,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableClusterInfo:
 			err = e.dataForTiDBClusterInfo(sctx)
 		case infoschema.TableAnalyzeStatus:
-			err = e.setDataForAnalyzeStatus(sctx)
+			err = e.setDataForAnalyzeStatus(ctx, sctx)
 		case infoschema.TableTiDBIndexes:
 			e.setDataFromIndexes(sctx, dbs)
 		case infoschema.TableViews:
@@ -881,13 +885,13 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			}
 		}
 	}
-	i := 1
+	i := 0
 ForColumnsTag:
 	for _, col := range tbl.Columns {
 		if col.Hidden {
 			continue
 		}
-
+		i++
 		ft := &(col.FieldType)
 		if tbl.IsView() {
 			e.viewMu.RLock()
@@ -1021,7 +1025,6 @@ ForColumnsTag:
 			col.GeneratedExprString, // GENERATION_EXPRESSION
 		)
 		e.rows = append(e.rows, record)
-		i++
 	}
 }
 
@@ -2134,16 +2137,17 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 }
 
 // dataForAnalyzeStatusHelper is a helper function which can be used in show_stats.go
-func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, err error) {
+func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context, isShow bool) (rows [][]types.Datum, err error) {
 	const maxAnalyzeJobs = 30
 	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, maxAnalyzeJobs)
+	kctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	chunkRows, _, err := exec.ExecRestrictedSQL(kctx, nil, sql, maxAnalyzeJobs)
 	if err != nil {
 		return nil, err
 	}
 	checker := privilege.GetPrivilegeManager(sctx)
+
 	for _, chunkRow := range chunkRows {
 		dbName := chunkRow.GetString(0)
 		tableName := chunkRow.GetString(1)
@@ -2168,6 +2172,7 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 			}
 			endTime = types.NewTime(types.FromGoTime(t.In(sctx.GetSessionVars().TimeZone)), mysql.TypeDatetime, 0)
 		}
+
 		state := chunkRow.GetEnum(7).String()
 		var failReason interface{}
 		if !chunkRow.IsNull(8) {
@@ -2178,26 +2183,138 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 		if !chunkRow.IsNull(10) {
 			procID = chunkRow.GetUint64(10)
 		}
-		rows = append(rows, types.MakeDatums(
-			dbName,        // TABLE_SCHEMA
-			tableName,     // TABLE_NAME
-			partitionName, // PARTITION_NAME
-			jobInfo,       // JOB_INFO
-			processedRows, // ROW_COUNT
-			startTime,     // START_TIME
-			endTime,       // END_TIME
-			state,         // STATE
-			failReason,    // FAIL_REASON
-			instance,      // INSTANCE
-			procID,        // PROCESS_ID
-		))
+
+		var remainDurationStr, progressStr, estimatedRowCntStr interface{}
+		if isShow && state == statistics.AnalyzeRunning {
+			startTime, ok := startTime.(types.Time)
+			if !ok {
+				return nil, errors.New("invalid start time")
+			}
+			RemainingDuration, progress, estimatedRowCnt, RemainDurationErr :=
+				getRemainDurationForAnalyzeStatusHelper(ctx, sctx, &startTime,
+					dbName, tableName, partitionName, processedRows)
+			if RemainDurationErr != nil {
+				logutil.BgLogger().Warn("get remaining duration failed", zap.Error(RemainDurationErr))
+			}
+			if RemainingDuration != nil {
+				remainDurationStr = execdetails.FormatDuration(*RemainingDuration)
+			}
+			progressStr = progress
+			estimatedRowCntStr = int64(estimatedRowCnt)
+		}
+		var row []types.Datum
+		if isShow {
+			row = types.MakeDatums(
+				dbName,             // TABLE_SCHEMA
+				tableName,          // TABLE_NAME
+				partitionName,      // PARTITION_NAME
+				jobInfo,            // JOB_INFO
+				processedRows,      // ROW_COUNT
+				startTime,          // START_TIME
+				endTime,            // END_TIME
+				state,              // STATE
+				failReason,         // FAIL_REASON
+				instance,           // INSTANCE
+				procID,             // PROCESS_ID
+				remainDurationStr,  // REMAINING_SECONDS
+				progressStr,        // PROGRESS
+				estimatedRowCntStr, // ESTIMATED_TOTAL_ROWS
+			)
+		} else {
+			row = types.MakeDatums(
+				dbName,        // TABLE_SCHEMA
+				tableName,     // TABLE_NAME
+				partitionName, // PARTITION_NAME
+				jobInfo,       // JOB_INFO
+				processedRows, // ROW_COUNT
+				startTime,     // START_TIME
+				endTime,       // END_TIME
+				state,         // STATE
+				failReason,    // FAIL_REASON
+				instance,      // INSTANCE
+				procID,        // PROCESS_ID
+			)
+		}
+		rows = append(rows, row)
 	}
 	return
 }
 
+func getRemainDurationForAnalyzeStatusHelper(
+	ctx context.Context,
+	sctx sessionctx.Context, startTime *types.Time,
+	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, float64, float64, error) {
+	var RemainingDuration = time.Duration(0)
+	var percentage = 0.0
+	var totalCnt = float64(0)
+	if startTime != nil {
+		start, err := startTime.GoTime(time.UTC)
+		if err != nil {
+			return nil, percentage, totalCnt, err
+		}
+		duration := time.Now().UTC().Sub(start)
+		if intest.InTest {
+			if val := ctx.Value(AnalyzeProgressTest); val != nil {
+				RemainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
+				return &RemainingDuration, percentage, totalCnt, nil
+			}
+		}
+		var tid int64
+		is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+		tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+		if err != nil {
+			return nil, percentage, totalCnt, err
+		}
+		statsHandle := domain.GetDomain(sctx).StatsHandle()
+		if statsHandle != nil {
+			var statsTbl *statistics.Table
+			meta := tb.Meta()
+			if partitionName != "" {
+				pt := meta.GetPartitionInfo()
+				tid = pt.GetPartitionIDByName(partitionName)
+				statsTbl = statsHandle.GetPartitionStats(meta, tid)
+			} else {
+				statsTbl = statsHandle.GetTableStats(meta)
+				tid = meta.ID
+			}
+			if statsTbl != nil && statsTbl.RealtimeCount != 0 {
+				totalCnt = float64(statsTbl.RealtimeCount)
+			}
+		}
+		if tid > 0 && totalCnt == 0 {
+			totalCnt, _ = internalutil.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
+		}
+		RemainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
+	}
+	return &RemainingDuration, percentage, totalCnt, nil
+}
+
+func calRemainInfoForAnalyzeStatus(ctx context.Context, totalCnt int64, processedRows int64, duration time.Duration) (time.Duration, float64) {
+	if intest.InTest {
+		if val := ctx.Value(AnalyzeProgressTest); val != nil {
+			totalCnt = 100 // But in final result, it is still 0.
+			processedRows = 10
+			duration = 1 * time.Minute
+		}
+	}
+	if totalCnt == 0 {
+		return 0, 100.0
+	}
+	remainLine := totalCnt - processedRows
+	if processedRows == 0 {
+		processedRows = 1
+	}
+	if duration == 0 {
+		duration = 1 * time.Second
+	}
+	i := float64(remainLine) * duration.Seconds() / float64(processedRows)
+	persentage := float64(processedRows) / float64(totalCnt)
+	return time.Duration(i) * time.Second, persentage
+}
+
 // setDataForAnalyzeStatus gets all the analyze jobs.
-func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) (err error) {
-	e.rows, err = dataForAnalyzeStatusHelper(sctx)
+func (e *memtableRetriever) setDataForAnalyzeStatus(ctx context.Context, sctx sessionctx.Context) (err error) {
+	e.rows, err = dataForAnalyzeStatusHelper(ctx, sctx, false)
 	return
 }
 

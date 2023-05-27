@@ -98,6 +98,9 @@ func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option 
 	inputRows := getCardinality(p.children[0], option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().ProjectionConcurrency())
+	if concurrency == 0 {
+		concurrency = 1 // un-parallel execution
+	}
 
 	projCost := filterCostVer2(option, inputRows, p.Exprs, cpuFactor)
 
@@ -744,6 +747,21 @@ func (p *BatchPointGetPlan) getPlanCostVer2(taskType property.TaskType, option *
 	netFactor := getTaskNetFactorVer2(p, taskType)
 
 	p.planCostVer2 = netCostVer2(option, rows, rowSize, netFactor)
+	p.planCostInit = true
+	return p.planCostVer2, nil
+}
+
+func (p *PhysicalCTE) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCostVer2, nil
+	}
+
+	inputRows := getCardinality(p, option.CostFlag)
+	cpuFactor := getTaskCPUFactorVer2(p, taskType)
+
+	projCost := filterCostVer2(option, inputRows, expression.Column2Exprs(p.schema.Columns), cpuFactor)
+
+	p.planCostVer2 = projCost
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }

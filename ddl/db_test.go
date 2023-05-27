@@ -611,7 +611,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(hook)
 
-	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
+	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
 	require.NoError(t, checkErr)
 	tk.MustQuery("select * from t1 order by c1;").Check(testkit.Rows("2 2 2", "4 4 4", "5 80 80", "10 3 3", "20 20 20", "160 160 160"))
 
@@ -804,7 +804,7 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
 	for _, db := range memOrSysDB {
 		tk.MustExec("use " + db)
-		tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+		tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
 		rows := tk.MustQuery("show tables").Rows()
 		for i := 0; i < len(rows); i++ {
 			sysTables = append(sysTables, rows[i][0].(string))
@@ -974,6 +974,7 @@ func TestDDLJobErrorCount(t *testing.T) {
 	require.NotNil(t, historyJob)
 	require.Equal(t, int64(1), historyJob.ErrorCount)
 	require.True(t, kv.ErrEntryTooLarge.Equal(historyJob.Error))
+	tk.MustQuery("select * from ddl_error_table;").Check(testkit.Rows())
 }
 
 // TestAddIndexFailOnCaseWhenCanExit is used to close #19325.
@@ -990,11 +991,7 @@ func TestAddIndexFailOnCaseWhenCanExit(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values(1, 1)")
-	if variable.EnableDistTask.Load() {
-		tk.MustGetErrMsg("alter table t add index idx(b)", "[ddl:-1]job.ErrCount:0, mock unknown type: ast.whenClause.")
-	} else {
-		tk.MustGetErrMsg("alter table t add index idx(b)", "[ddl:-1]DDL job rollback, error msg: job.ErrCount:1, mock unknown type: ast.whenClause.")
-	}
+	tk.MustGetErrMsg("alter table t add index idx(b)", "[ddl:-1]job.ErrCount:0, mock unknown type: ast.whenClause.")
 	tk.MustExec("drop table if exists t")
 }
 
@@ -1103,16 +1100,19 @@ func TestCancelJobWriteConflict(t *testing.T) {
 	// Test when cancelling cannot be retried and adding index succeeds.
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
-			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
 			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn")) }()
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL", `return(true)`))
-			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL")) }()
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL", `return(true)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL"))
+			}()
+
+			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
 			rs, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
 	}
 	tk1.MustExec("alter table t add index (id)")
-	require.EqualError(t, cancelErr, "mock commit error")
+	require.EqualError(t, cancelErr, "mock failed admin command on ddl jobs")
 
 	// Test when cancelling is retried only once and adding index is cancelled in the end.
 	var jobID int64

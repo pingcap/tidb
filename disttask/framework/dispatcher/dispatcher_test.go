@@ -69,33 +69,32 @@ func TestGetInstance(t *testing.T) {
 	// test no server
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	instanceID, err := dispatcher.GetEligibleInstance(ctx)
-	require.Lenf(t, instanceID, 0, "instanceID:%d", instanceID)
+	_, err := dispatcher.GenerateSchedulerNodes(ctx)
 	require.EqualError(t, err, "not found instance")
 	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, 1)
-	require.Lenf(t, instanceIDs, 0, "instanceID:%d", instanceID)
+	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs when there's no subtask")
 	require.NoError(t, err)
 
 	// test 2 servers
 	// server ids: uuid0, uuid1
 	// subtask instance ids: nil
 	uuids := []string{"ddl_id_1", "ddl_id_2"}
+	serverIDs := []string{"10.123.124.10:32457", "[ABCD:EF01:2345:6789:ABCD:EF01:2345:6789]:65535"}
 	mockedAllServerInfos = map[string]*infosync.ServerInfo{
 		uuids[0]: {
-			ID: uuids[0],
+			ID:   uuids[0],
+			IP:   "10.123.124.10",
+			Port: 32457,
 		},
 		uuids[1]: {
-			ID: uuids[1],
+			ID:   uuids[1],
+			IP:   "ABCD:EF01:2345:6789:ABCD:EF01:2345:6789",
+			Port: 65535,
 		},
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	instanceID, err = dispatcher.GetEligibleInstance(ctx)
-	require.NoError(t, err)
-	if instanceID != uuids[0] && instanceID != uuids[1] {
-		require.FailNowf(t, "expected uuids:%d,%d, actual uuid:%d", uuids[0], uuids[1], instanceID)
-	}
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, 1)
-	require.Lenf(t, instanceIDs, 0, "instanceID:%d", instanceID)
+	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs")
 	require.NoError(t, err)
 
 	// server ids: uuid0, uuid1
@@ -104,26 +103,26 @@ func TestGetInstance(t *testing.T) {
 	subtask := &proto.Subtask{
 		Type:        proto.TaskTypeExample,
 		TaskID:      gTaskID,
-		SchedulerID: uuids[1],
+		SchedulerID: serverIDs[1],
 	}
-	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(gTaskID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
-	require.Equal(t, []string{uuids[1]}, instanceIDs)
+	require.Equal(t, []string{serverIDs[1]}, instanceIDs)
 	// server ids: uuid0, uuid1
 	// subtask instance ids: uuid0, uuid1
 	subtask = &proto.Subtask{
 		Type:        proto.TaskTypeExample,
 		TaskID:      gTaskID,
-		SchedulerID: uuids[0],
+		SchedulerID: serverIDs[0],
 	}
-	err = mgr.AddNewSubTask(gTaskID, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(gTaskID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
-	require.Len(t, instanceIDs, len(uuids))
-	require.ElementsMatch(t, instanceIDs, uuids)
+	require.Len(t, instanceIDs, len(serverIDs))
+	require.ElementsMatch(t, instanceIDs, serverIDs)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo"))
 }
@@ -132,7 +131,7 @@ const (
 	subtaskCnt = 3
 )
 
-func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
+func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	failpoint.Enable("github.com/pingcap/tidb/domain/MockDisableDistTask", "return(true)")
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockDisableDistTask"))
@@ -230,16 +229,24 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		return
 	}
 
-	// Test each task has a subtask failed.
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)")
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
-	}()
-	// Mock a subtask fails.
-	for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, "")
-		require.NoError(t, err)
+	if isCancel {
+		for i := 1; i <= taskCnt; i++ {
+			err = mgr.CancelGlobalTask(int64(i))
+			require.NoError(t, err)
+		}
+	} else {
+		// Test each task has a subtask failed.
+		failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)")
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
+		}()
+		// Mock a subtask fails.
+		for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, "")
+			require.NoError(t, err)
+		}
 	}
+
 	checkGetGTaskState(proto.TaskStateReverting)
 	require.Len(t, tasks, taskCnt)
 	// Mock all subtask reverted.
@@ -254,24 +261,36 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 }
 
 func TestSimpleNormalFlow(t *testing.T) {
-	checkDispatch(t, 1, true)
+	checkDispatch(t, 1, true, false)
 }
 
 func TestSimpleErrFlow(t *testing.T) {
-	checkDispatch(t, 1, false)
+	checkDispatch(t, 1, false, false)
+}
+
+func TestSimpleCancelFlow(t *testing.T) {
+	checkDispatch(t, 1, false, true)
 }
 
 func TestParallelNormalFlow(t *testing.T) {
-	checkDispatch(t, 3, true)
+	checkDispatch(t, 3, true, false)
 }
 
 func TestParallelErrFlow(t *testing.T) {
-	checkDispatch(t, 3, false)
+	checkDispatch(t, 3, false, false)
+}
+
+func TestParallelCancelFlow(t *testing.T) {
+	checkDispatch(t, 3, false, true)
 }
 
 const taskTypeExample = "task_example"
 
-type NumberExampleHandle struct {
+type NumberExampleHandle struct{}
+
+var _ dispatcher.TaskFlowHandle = (*NumberExampleHandle)(nil)
+
+func (NumberExampleHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
 func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
@@ -297,4 +316,12 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
+}
+
+func (NumberExampleHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+	return dispatcher.GenerateSchedulerNodes(ctx)
+}
+
+func (NumberExampleHandle) IsRetryableErr(error) bool {
+	return true
 }

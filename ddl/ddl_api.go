@@ -3310,6 +3310,16 @@ func ResolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 	return validSpecs, nil
 }
 
+func isMultiSchemaChanges(specs []*ast.AlterTableSpec) bool {
+	if len(specs) > 1 {
+		return true
+	}
+	if len(specs) == 1 && len(specs[0].NewColumns) > 1 && specs[0].Tp == ast.AlterTableAddColumns {
+		return true
+	}
+	return false
+}
+
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	validSpecs, err := ResolveAlterTableSpec(sctx, stmt.Specs)
@@ -3332,6 +3342,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		if validSpecs[0].Tp != ast.AlterTableCache && validSpecs[0].Tp != ast.AlterTableNoCache {
 			return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Alter Table")
 		}
+	}
+	if isMultiSchemaChanges(validSpecs) && (sctx.GetSessionVars().EnableRowLevelChecksum || variable.EnableRowLevelChecksum.Load()) {
+		return dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change when row level checksum is enabled")
 	}
 	// set name for anonymous foreign key.
 	maxForeignKeyID := tb.Meta().MaxForeignKeyID
@@ -4219,30 +4232,35 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	var pids []int64
-	if spec.OnAllPartitions {
-		pids = make([]int64, len(meta.GetPartitionInfo().Definitions))
-		for i, def := range meta.GetPartitionInfo().Definitions {
-			pids[i] = def.ID
+	getTruncatedParts := func(pi *model.PartitionInfo) (*model.PartitionInfo, error) {
+		if spec.OnAllPartitions {
+			return pi.Clone(), nil
 		}
-	} else {
+		var defs []model.PartitionDefinition
 		// MySQL allows duplicate partition names in truncate partition
 		// so we filter them out through a hash
-		pidMap := make(map[int64]bool)
+		posMap := make(map[int]bool)
 		for _, name := range spec.PartitionNames {
-			pid, err := tables.FindPartitionByName(meta, name.L)
-			if err != nil {
-				return errors.Trace(err)
+			pos := pi.FindPartitionDefinitionByName(name.L)
+			if pos < 0 {
+				return nil, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(name.L, ident.Name.O))
 			}
-			pidMap[pid] = true
+			if _, ok := posMap[pos]; !ok {
+				defs = append(defs, pi.Definitions[pos])
+				posMap[pos] = true
+			}
 		}
-		// linter makezero does not handle changing pids to zero length,
-		// so create a new var and then assign to pids...
-		newPids := make([]int64, 0, len(pidMap))
-		for pid := range pidMap {
-			newPids = append(newPids, pid)
-		}
-		pids = newPids
+		pi = pi.Clone()
+		pi.Definitions = defs
+		return pi, nil
+	}
+	pi, err := getTruncatedParts(meta.GetPartitionInfo())
+	if err != nil {
+		return err
+	}
+	pids := make([]int64, 0, len(pi.Definitions))
+	for i := range pi.Definitions {
+		pids = append(pids, pi.Definitions[i].ID)
 	}
 
 	job := &model.Job{
@@ -4256,11 +4274,16 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
+	if _, tb, err := d.getSchemaAndTableByIdent(ctx, ident); err == nil {
+		if p, err := getTruncatedParts(tb.Meta().GetPartitionInfo()); err == nil {
+			d.preSplitAndScatter(ctx, tb.Meta(), p)
+		}
+	}
+	return nil
 }
 
 func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
@@ -4907,6 +4930,24 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	return GetModifiableColumnJob(ctx, sctx, is, ident, originalColName, schema, t, spec)
 }
 
+func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName model.CIStr) error {
+	for _, col := range allCols {
+		if col.GeneratedExpr == nil {
+			continue
+		}
+		dependedColNames := FindColumnNamesInExpr(col.GeneratedExpr)
+		for _, name := range dependedColNames {
+			if name.Name.L == oldColName.L {
+				if col.Hidden {
+					return dbterror.ErrDependentByFunctionalIndex.GenWithStackByArgs(oldColName.O)
+				}
+				return dbterror.ErrDependentByGeneratedColumn.GenWithStackByArgs(oldColName.O)
+			}
+		}
+	}
+	return nil
+}
+
 // GetModifiableColumnJob returns a DDL job of model.ActionModifyColumn.
 func GetModifiableColumnJob(
 	ctx context.Context,
@@ -4929,11 +4970,19 @@ func GetModifiableColumnJob(
 	if newColName.L == model.ExtraHandleName.L {
 		return nil, dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
+	errG := checkModifyColumnWithGeneratedColumnsConstraint(t.Cols(), originalColName)
+
 	// If we want to rename the column name, we need to check whether it already exists.
 	if newColName.L != originalColName.L {
 		c := table.FindCol(t.Cols(), newColName.L)
 		if c != nil {
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
+		}
+
+		// And also check the generated columns dependency, if some generated columns
+		// depend on this column, we can't rename the column name.
+		if errG != nil {
+			return nil, errors.Trace(errG)
 		}
 	}
 
@@ -5143,6 +5192,11 @@ func GetModifiableColumnJob(
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(sctx, schema.Name, t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
+	}
+	if errG != nil {
+		// According to issue https://github.com/pingcap/tidb/issues/24321,
+		// changing the type of a column involving generating a column is prohibited.
+		return nil, dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs(errG.Error())
 	}
 
 	if t.Meta().TTLInfo != nil {
@@ -5409,21 +5463,10 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	}
 
 	// Check generated expression.
-	for _, col := range allCols {
-		if col.GeneratedExpr == nil {
-			continue
-		}
-		dependedColNames := FindColumnNamesInExpr(col.GeneratedExpr)
-		for _, name := range dependedColNames {
-			if name.Name.L == oldColName.L {
-				if col.Hidden {
-					return dbterror.ErrDependentByFunctionalIndex.GenWithStackByArgs(oldColName.O)
-				}
-				return dbterror.ErrDependentByGeneratedColumn.GenWithStackByArgs(oldColName.O)
-			}
-		}
+	err = checkModifyColumnWithGeneratedColumnsConstraint(allCols, oldColName)
+	if err != nil {
+		return errors.Trace(err)
 	}
-
 	err = checkDropColumnWithPartitionConstraint(tbl, oldColName)
 	if err != nil {
 		return errors.Trace(err)
@@ -6679,6 +6722,28 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) err
 		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
 }
 
+// addHypoIndexIntoCtx adds this index as a hypo-index into this ctx.
+func (d *ddl) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName model.CIStr, indexInfo *model.IndexInfo) error {
+	sctx := ctx.GetSessionVars()
+	indexName := indexInfo.Name
+
+	if sctx.HypoIndexes == nil {
+		sctx.HypoIndexes = make(map[string]map[string]map[string]*model.IndexInfo)
+	}
+	if sctx.HypoIndexes[schemaName.L] == nil {
+		sctx.HypoIndexes[schemaName.L] = make(map[string]map[string]*model.IndexInfo)
+	}
+	if sctx.HypoIndexes[schemaName.L][tableName.L] == nil {
+		sctx.HypoIndexes[schemaName.L][tableName.L] = make(map[string]*model.IndexInfo)
+	}
+	if _, exist := sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L]; exist {
+		return errors.Trace(errors.Errorf("conflict hypo index name %s", indexName.L))
+	}
+
+	sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L] = indexInfo
+	return nil
+}
+
 func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
@@ -6767,6 +6832,15 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), &indexOption.Comment, dbterror.ErrTooLongIndexComment); err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	if indexOption != nil && indexOption.Tp == model.IndexTypeHypo { // for hypo-index
+		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique, global,
+			indexPartSpecifications, indexOption, model.StatePublic)
+		if err != nil {
+			return err
+		}
+		return d.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
@@ -6998,6 +7072,19 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 	return err
 }
 
+// dropHypoIndexFromCtx drops this hypo-index from this ctx.
+func (d *ddl) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, index model.CIStr) bool {
+	sctx := ctx.GetSessionVars()
+	if sctx.HypoIndexes != nil &&
+		sctx.HypoIndexes[schema.L] != nil &&
+		sctx.HypoIndexes[schema.L][table.L] != nil &&
+		sctx.HypoIndexes[schema.L][table.L][index.L] != nil {
+		delete(sctx.HypoIndexes[schema.L][table.L], index.L)
+		return true
+	}
+	return false
+}
+
 func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) error {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
@@ -7010,6 +7097,11 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Index"))
+	}
+
+	// try hypo-index first
+	if d.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName) {
+		return nil
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)

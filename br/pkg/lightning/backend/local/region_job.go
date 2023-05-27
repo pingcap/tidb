@@ -17,6 +17,7 @@ package local
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -177,6 +178,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
+	kvBatchCount := local.KVWriteBatchCount
 	kvBatchSize := local.KVWriteBatchSize
 	bufferPool := local.bufferPool
 	writeLimiter := local.writeLimiter
@@ -254,7 +256,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 
 	bytesBuf := bufferPool.NewBuffer()
 	defer bytesBuf.Destroy()
-	pairs := make([]*sst.Pair, 0, kvBatchSize)
+	pairs := make([]*sst.Pair, 0, kvBatchCount)
 	count := 0
 	size := int64(0)
 	totalSize := int64(0)
@@ -265,8 +267,6 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	if j.regionSplitSize <= int64(config.SplitRegionSize) {
 		regionMaxSize = j.regionSplitSize * 4 / 3
 	}
-	// Set a lower flush limit to make the speed of write more smooth.
-	flushLimit := int64(writeLimiter.Limit() / 10)
 
 	flushKVs := func() error {
 		for i := range clients {
@@ -278,6 +278,9 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				return annotateErr(err, allPeers[i])
 			}
 		}
+		failpoint.Inject("afterFlushKVs", func() {
+			log.FromContext(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))
+		})
 		return nil
 	}
 
@@ -305,7 +308,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		size += kvSize
 		totalSize += kvSize
 
-		if count >= kvBatchSize || size >= flushLimit {
+		if count >= kvBatchCount || size >= kvBatchSize {
 			if err := flushKVs(); err != nil {
 				return errors.Trace(err)
 			}
@@ -369,11 +372,15 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			region.Id, leaderID)
 	}
 
+	takeTime := time.Since(begin)
 	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", j.region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize),
 		zap.Int64("buf_size", bytesBuf.TotalSize()),
-		zap.Stringer("takeTime", time.Since(begin)))
+		zap.Stringer("takeTime", takeTime))
+	if m, ok := metric.FromContext(ctx); ok {
+		m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessWrite).Observe(takeTime.Seconds())
+	}
 
 	j.writeResult = &tikvWriteResult{
 		sstMeta:           leaderPeerMetas,
@@ -390,7 +397,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 // set job to a proper stage with nil error returned.
 // if any underlying logic has error, ingest will return an error to let caller
 // handle it.
-func (local *Backend) ingest(ctx context.Context, j *regionJob) error {
+func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 	if j.stage != wrote {
 		return nil
 	}
@@ -405,6 +412,15 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) error {
 	if len(j.writeResult.sstMeta) == 0 {
 		j.convertStageTo(ingested)
 		return nil
+	}
+
+	if m, ok := metric.FromContext(ctx); ok {
+		begin := time.Now()
+		defer func() {
+			if err == nil {
+				m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessIngest).Observe(time.Since(begin).Seconds())
+			}
+		}()
 	}
 
 	for retry := 0; retry < maxRetryTimes; retry++ {

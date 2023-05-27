@@ -120,6 +120,7 @@ type stmtEventCase struct {
 	parseError      bool
 	prepareNotFound bool
 	multiQueryCases []stmtEventCase
+	dispatchData    []byte
 }
 
 func TestExtensionStmtEvents(t *testing.T) {
@@ -265,7 +266,7 @@ func TestExtensionStmtEvents(t *testing.T) {
 		},
 		{
 			sql:          "insert into t1 values(1, 10), (2, 20)",
-			redactText:   "insert into `t1` values ( ... ) , ( ... )",
+			redactText:   "insert into `t1` values ( ... )",
 			affectedRows: 2,
 			tables: []stmtctx.TableEntry{
 				{DB: "test", Table: "t1"},
@@ -324,6 +325,17 @@ func TestExtensionStmtEvents(t *testing.T) {
 			sql:        "create placement policy p1 followers=1",
 			redactText: "create placement policy `p1` followers = ?",
 		},
+		{
+			dispatchData: append([]byte{mysql.ComInitDB}, []byte("db1")...),
+			originalText: "use `db1`",
+			redactText:   "use `db1`",
+		},
+		{
+			dispatchData: append([]byte{mysql.ComInitDB}, []byte("noexistdb")...),
+			originalText: "use `noexistdb`",
+			redactText:   "use `noexistdb`",
+			err:          "[schema:1049]Unknown database 'noexistdb'",
+		},
 	}
 
 	for i, c := range cases {
@@ -342,6 +354,8 @@ func TestExtensionStmtEvents(t *testing.T) {
 			}
 		case c.binaryExecute != 0:
 			err = conn.Dispatch(context.Background(), getExecuteBytes(c.binaryExecute, false, true, c.executeParams...))
+		case c.dispatchData != nil:
+			err = conn.Dispatch(context.Background(), c.dispatchData)
 		}
 
 		if c.err != "" {
