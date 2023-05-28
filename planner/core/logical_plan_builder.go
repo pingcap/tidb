@@ -218,9 +218,9 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 
 		// add the newly appended names.
 		if c, ok := expr.(*expression.Column); ok {
-			names = append(names, b.buildExpandFieldName(c, names[p.Schema().ColumnIndex(c)], ""))
+			names = append(names, buildExpandFieldName(c, names[p.Schema().ColumnIndex(c)], ""))
 		} else {
-			names = append(names, b.buildExpandFieldName(expr, nil, ""))
+			names = append(names, buildExpandFieldName(expr, nil, ""))
 		}
 
 		// since we will change the nullability of source col, proj it with a new col id.
@@ -276,7 +276,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	expand.GID = gid
 	expandSchema.Append(gid)
 	expand.GeneratedColNames = append(expand.GeneratedColNames, gid.OrigName)
-	names = append(names, b.buildExpandFieldName(gid, nil, "gid_"))
+	names = append(names, buildExpandFieldName(gid, nil, "gid_"))
 	if hasDuplicateGroupingSet {
 		// the last two col of the schema should be gid & gpos
 		gpos := &expression.Column{
@@ -287,7 +287,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 		expand.GPos = gpos
 		expandSchema.Append(gpos)
 		expand.GeneratedColNames = append(expand.GeneratedColNames, gpos.OrigName)
-		names = append(names, b.buildExpandFieldName(gpos, nil, "gpos_"))
+		names = append(names, buildExpandFieldName(gpos, nil, "gpos_"))
 	}
 	expand.SetChildren(proj)
 	expand.SetSchema(expandSchema)
@@ -1393,7 +1393,7 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context,
 	}
 }
 
-func (b *PlanBuilder) buildExpandFieldName(expr expression.Expression, name *types.FieldName, genName string) *types.FieldName {
+func buildExpandFieldName(expr expression.Expression, name *types.FieldName, genName string) *types.FieldName {
 	_, isCol := expr.(*expression.Column)
 	var origTblName, origColName, dbName, colName, tblName model.CIStr
 	if genName != "" {
