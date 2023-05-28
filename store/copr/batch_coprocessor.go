@@ -840,7 +840,22 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				// Then `splitRegion` will reloads these regions.
 				continue
 			}
-			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store, tikv.LabelFilterNoTiFlashWriteNode)
+			allStores, nonPendingStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store, tikv.LabelFilterNoTiFlashWriteNode)
+			if len(nonPendingStores) == 0 {
+				// If all stores are pending peer:
+				// 1. We need to refresh cache so we can know the newest tiflash replica info, this will make balanceBatchCopTask more accurate.
+				// 2. Use `allStores` as candidate to balanceBatchCopTask, tiflash replica will have to wait replica sync done from tikv.
+				cache.InvalidateCachedRegion(task.region)
+			} else {
+				// If we have peer whose sync has done:
+				// 1. Use `nonPendingStores` to avoid wait replica sync done.
+				// 2. Refresh region cache if still have pending peer.
+				allStores = nonPendingStores
+				if len(allStores) != len(nonPendingStores) {
+					cache.InvalidateCachedRegion(task.region)
+				}
+			}
+			// check region in each store if is peeding
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
 				batchCop.regionInfos = append(batchCop.regionInfos, RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionIndex: task.partitionIndex})
 			} else {
