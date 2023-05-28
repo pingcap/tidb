@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "rawkvtest_test",
+    timeout = "short",
+    srcs = ["sorter_test.go"],
+    flaky = True,
+    deps = [
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//config",
+        "@com_github_tikv_client_go_v2//rawkv",
+    ],
+)
