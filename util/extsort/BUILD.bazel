@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "disk_sorter.go",
         "external_sorter.go",
+        "rawkv_write_sorter.go",
     ],
     importpath = "github.com/pingcap/tidb/util/extsort",
     visibility = ["//visibility:public"],
@@ -12,7 +13,11 @@ go_library(
         "@com_github_cockroachdb_pebble//:pebble",
         "@com_github_cockroachdb_pebble//sstable",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_tikv_client_go_v2//config",
+        "@com_github_tikv_client_go_v2//rawkv",
         "@org_golang_x_exp//slices",
+        "@org_uber_go_atomic//:atomic",
     ],
 )
 
@@ -22,11 +27,14 @@ go_test(
     srcs = [
         "disk_sorter_test.go",
         "external_sorter_test.go",
+        "rawkv_writer_sorter_test.go",
     ],
+    embed = [":extsort"],
     flaky = True,
     deps = [
-        ":extsort",
+        "@com_github_stretchr_testify//mock",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//rawkv",
         "@org_golang_x_exp//slices",
         "@org_golang_x_sync//errgroup",
     ],
