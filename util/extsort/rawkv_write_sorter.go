@@ -120,19 +120,29 @@ func (r *RawKVPutSorter) NewWriter(ctx context.Context) (Writer, error) {
 		return nil, errors.Trace(err)
 	}
 
+	w := newRawKVPutWriter(ctx, cli, r.taskName, r.opts)
+
+	w.wg.Add(1)
+	go w.asyncFlushLoop()
+	return w, nil
+}
+
+func newRawKVPutWriter(
+	ctx context.Context,
+	cli rawKVClient,
+	taskName string,
+	opts *RawKVPutSorterOptions,
+) *rawKVPutWriter {
 	ret := &rawKVPutWriter{
 		ctx:      ctx,
 		cli:      cli,
-		taskName: r.taskName,
-		opts:     r.opts,
+		taskName: taskName,
+		opts:     opts,
 		done:     make(chan struct{}),
 	}
-	ret.kvsBuf.kvs = make([]keyValueWithEnd, r.opts.WriterBufferKeyCount)
-	ret.dataBuf.data = make([]byte, r.opts.WriterBufferSize)
-
-	ret.wg.Add(1)
-	go ret.asyncFlushLoop()
-	return ret, nil
+	ret.kvsBuf.kvs = make([]keyValueWithEnd, opts.WriterBufferKeyCount)
+	ret.dataBuf.data = make([]byte, opts.WriterBufferSize)
+	return ret
 }
 
 type keyValueWithEnd struct {
@@ -142,12 +152,12 @@ type keyValueWithEnd struct {
 
 type rawKVPutWriter struct {
 	ctx      context.Context
-	cli      *rawkv.Client
+	cli      rawKVClient
 	taskName string
 	opts     *RawKVPutSorterOptions
 
 	kvsBuf struct {
-		// kvs is circular buffer
+		// kvs is a circular buffer
 		kvs []keyValueWithEnd
 		// start is inclusive and end is exclusive, which means
 		//   start == end: empty
@@ -167,6 +177,11 @@ type rawKVPutWriter struct {
 	// goroutines: asyncFlushLoop and Put. Put's path must flush all data and
 	// asyncFlushLoop's path try to flush seen data.
 	flushMu sync.Mutex
+}
+
+type rawKVClient interface {
+	BatchPut(ctx context.Context, keys [][]byte, values [][]byte, options ...rawkv.RawOption) error
+	Close() error
 }
 
 func (w *rawKVPutWriter) asyncFlushLoop() {
@@ -313,7 +328,7 @@ func (w *rawKVPutWriter) put(key, value []byte) error {
 		// flush, we can drop the old dataBuf.
 		w.dataBuf.data = make([]byte, keyLen+len(value)+1)
 	}
-	if startOfKey, ok = w.tryAllocate(endOfData, keyLen); !ok {
+	if startOfKey, ok = w.tryAllocate(0, keyLen); !ok {
 		return errors.Trace(errRawKVPutSorterPanic)
 	}
 	if startOfValue, ok = w.tryAllocate(startOfKey+keyLen, len(value)); !ok {
@@ -382,6 +397,7 @@ func (w *rawKVPutWriter) Flush() error {
 	return nil
 }
 
+// Close implements the Writer interface.
 func (w *rawKVPutWriter) Close() error {
 	close(w.done)
 	w.wg.Wait()
@@ -391,28 +407,33 @@ func (w *rawKVPutWriter) Close() error {
 	return errors.Trace(w.cli.Close())
 }
 
+// Sort implements the ExternalSorter interface.
 func (r *RawKVPutSorter) Sort(_ context.Context) error {
 	// TiKV stores data in sorted order, so we don't need to sort it.
 	r.state.Store(rawKVSorterStateSorted)
 	return nil
 }
 
+// IsSorted implements the ExternalSorter interface.
 func (r *RawKVPutSorter) IsSorted() bool {
 	return r.state.Load() == rawKVSorterStateSorted
 }
 
-func (r *RawKVPutSorter) NewIterator(ctx context.Context) (Iterator, error) {
+// NewIterator implements the ExternalSorter interface.
+func (r *RawKVPutSorter) NewIterator(_ context.Context) (Iterator, error) {
 	if r.state.Load() != rawKVSorterStateSorted {
 		return nil, errors.Errorf("RawKVPutSorter is not sorted")
 	}
 	panic("implement me")
 }
 
+// Close implements the ExternalSorter interface.
 func (r *RawKVPutSorter) Close() error {
 	//TODO implement me
 	panic("implement me")
 }
 
+// CloseAndCleanup implements the ExternalSorter interface.
 func (r *RawKVPutSorter) CloseAndCleanup() error {
 	//TODO implement me
 	panic("implement me")
