@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/rawkv"
@@ -157,4 +158,58 @@ func TestFailedToBatchPut(t *testing.T) {
 	cli.AssertExpectations(t)
 
 	// test flush when reach kvs buffer limit
+
+	opts := RawKVPutSorterOptions{
+		WriterBufferSize:     1_000_000,
+		WriterBufferKeyCount: 4,
+		AsyncFlushInterval:   10 * time.Millisecond,
+	}
+	errBatchPut := errors.New("batch put failed")
+	cli.On("BatchPut",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(errBatchPut)
+	w = newRawKVPutWriter(ctx, cli, "task-name", &opts)
+	w.wg.Add(1)
+	go w.asyncFlushLoop()
+
+	for i := byte(0); i < 2; i++ {
+		err = w.Put([]byte{i}, []byte{i})
+		require.NoError(t, err)
+	}
+	// sleep to wait for async flush, and failed async flush will not interrupt
+	// the main logic
+	time.Sleep(time.Millisecond * 50)
+	err = w.Put([]byte{2}, []byte{2})
+	require.NoError(t, err)
+	// the 4th Put will trigger a flush because WriterBufferKeyCount is 4
+	err = w.Put([]byte{3}, []byte{3})
+	require.ErrorIs(t, err, errBatchPut)
+	require.ErrorIs(t, w.Close(), errBatchPut)
+
+	// test flush when reach data buffer limit
+
+	opts = RawKVPutSorterOptions{
+		WriterBufferSize:     40,
+		WriterBufferKeyCount: 128,
+		AsyncFlushInterval:   10 * time.Millisecond,
+	}
+	w = newRawKVPutWriter(ctx, cli, "", &opts)
+	w.wg.Add(1)
+	go w.asyncFlushLoop()
+
+	dummy := make([]byte, 5)
+	for i := byte(0); i < 2; i++ {
+		err = w.Put(dummy, dummy)
+		require.NoError(t, err)
+	}
+
+	// sleep to wait for async flush, and failed async flush will not interrupt
+	// the main logic
+	time.Sleep(time.Millisecond * 50)
+	err = w.Put(dummy, dummy)
+	require.NoError(t, err)
+	// the 4th Put will trigger a flush because WriterBufferSize is 40
+	err = w.Put(dummy, dummy)
+	require.ErrorIs(t, err, errBatchPut)
+	require.ErrorIs(t, w.Close(), errBatchPut)
 }
