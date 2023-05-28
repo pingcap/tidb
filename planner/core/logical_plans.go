@@ -661,6 +661,7 @@ func (p *LogicalExpand) GenLevelProjections() {
 	}
 }
 
+// GenerateGroupingMarks generate the groupingMark for the source column specified in grouping function.
 func (p *LogicalExpand) GenerateGroupingMarks(sourceCol *expression.Column) (resMap map[uint64]struct{}) {
 	if p.GroupingMode == tipb.GroupingMode_ModeBitAnd {
 		resMap = make(map[uint64]struct{}, 1)
