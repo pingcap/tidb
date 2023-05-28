@@ -79,7 +79,7 @@ func (f *FKCheck) AccessObject() AccessObject {
 }
 
 // OperatorInfo implements dataAccesser interface.
-func (f *FKCheck) OperatorInfo(normalized bool) string {
+func (f *FKCheck) OperatorInfo(_ bool) string {
 	if f.FK != nil {
 		return fmt.Sprintf("foreign_key:%s, check_exist", f.FK.Name)
 	}
@@ -116,7 +116,7 @@ func (f *FKCascade) AccessObject() AccessObject {
 }
 
 // OperatorInfo implements dataAccesser interface.
-func (f *FKCascade) OperatorInfo(normalized bool) string {
+func (f *FKCascade) OperatorInfo(_ bool) string {
 	switch f.Tp {
 	case FKCascadeOnDelete:
 		return fmt.Sprintf("foreign_key:%s, on_delete:%s", f.FK.Name, model.ReferOptionType(f.FK.OnDelete).String())
