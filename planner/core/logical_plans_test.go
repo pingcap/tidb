@@ -2199,7 +2199,7 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, builder.currentBlockExpand.distinctSize, 3)
 	require.Equal(t, len(builder.currentBlockExpand.distinctGroupByCol), 2)
 
-	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection|flagResolveExpand, p.(LogicalPlan))
+	_, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection|flagResolveExpand, p.(LogicalPlan))
 	require.NoError(t, err)
 
 	expand := builder.currentBlockExpand
