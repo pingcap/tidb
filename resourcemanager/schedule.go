@@ -25,8 +25,11 @@ import (
 
 func (r *ResourceManager) schedule() {
 	r.poolMap.Iter(func(pool *util.PoolContainer) {
+		if pool.Component == util.DistTask {
+			return
+		}
 		cmd := r.schedulePool(pool)
-		r.exec(pool, cmd)
+		r.Exec(pool, cmd)
 	})
 }
 
@@ -40,13 +43,19 @@ func (r *ResourceManager) schedulePool(pool *util.PoolContainer) scheduler.Comma
 		case scheduler.Hold:
 			continue
 		default:
+			if cmd == scheduler.Downclock {
+				if pool.Pool.Cap() == 1 || pool.Pool.Running() > pool.Pool.Cap() {
+					continue
+				}
+			}
 			return cmd
 		}
 	}
 	return scheduler.Hold
 }
 
-func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command) {
+// Exec is to executor the command from scheduler.
+func (*ResourceManager) Exec(pool *util.PoolContainer, cmd scheduler.Command) {
 	if cmd == scheduler.Hold {
 		return
 	}
@@ -56,15 +65,19 @@ func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command) {
 		case scheduler.Downclock:
 			concurrency := con - 1
 			log.Debug("[resource manager] downclock goroutine pool",
-				zap.Int("origin concurrency", con),
-				zap.Int("concurrency", concurrency),
+				zap.Int32("origin concurrency", con),
+				zap.Int32("concurrency", concurrency),
 				zap.String("name", pool.Pool.Name()))
 			pool.Pool.Tune(concurrency)
 		case scheduler.Overclock:
 			concurrency := con + 1
+			// The maximum increase in concurrency compared to the original amount is limited to MaxOverclockCount.
+			if concurrency > pool.Pool.GetOriginConcurrency()+util.MaxOverclockCount {
+				return
+			}
 			log.Debug("[resource manager] overclock goroutine pool",
-				zap.Int("origin concurrency", con),
-				zap.Int("concurrency", concurrency),
+				zap.Int32("origin concurrency", con),
+				zap.Int32("concurrency", concurrency),
 				zap.String("name", pool.Pool.Name()))
 			pool.Pool.Tune(concurrency)
 		}

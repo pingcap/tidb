@@ -43,136 +43,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-func TestStatsCache(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int)")
-	testKit.MustExec("insert into t values(1, 2)")
-	do := dom
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo)
-	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.False(t, statsTbl.Pseudo)
-	testKit.MustExec("create index idx_t on t(c1)")
-	do.InfoSchema()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	// If index is build, but stats is not updated. statsTbl can also work.
-	require.False(t, statsTbl.Pseudo)
-	// But the added index will not work.
-	require.Nil(t, statsTbl.Indices[int64(1)])
-
-	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.False(t, statsTbl.Pseudo)
-	// If the new schema drop a column, the table stats can still work.
-	testKit.MustExec("alter table t drop column c2")
-	is = do.InfoSchema()
-	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
-	require.NoError(t, err)
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.False(t, statsTbl.Pseudo)
-
-	// If the new schema add a column, the table stats can still work.
-	testKit.MustExec("alter table t add column c10 int")
-	is = do.InfoSchema()
-
-	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
-	require.NoError(t, err)
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.False(t, statsTbl.Pseudo)
-}
-
-func TestStatsCacheMemTracker(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int,c3 int)")
-	testKit.MustExec("insert into t values(1, 2, 3)")
-	do := dom
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.MemoryUsage().TotalMemUsage == 0)
-	require.True(t, statsTbl.Pseudo)
-
-	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-
-	require.False(t, statsTbl.Pseudo)
-	testKit.MustExec("create index idx_t on t(c1)")
-	do.InfoSchema()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-
-	// If index is build, but stats is not updated. statsTbl can also work.
-	require.False(t, statsTbl.Pseudo)
-	// But the added index will not work.
-	require.Nil(t, statsTbl.Indices[int64(1)])
-
-	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-
-	require.False(t, statsTbl.Pseudo)
-
-	// If the new schema drop a column, the table stats can still work.
-	testKit.MustExec("alter table t drop column c2")
-	is = do.InfoSchema()
-	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
-	require.NoError(t, err)
-
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.MemoryUsage().TotalMemUsage > 0)
-	require.False(t, statsTbl.Pseudo)
-
-	// If the new schema add a column, the table stats can still work.
-	testKit.MustExec("alter table t add column c10 int")
-	is = do.InfoSchema()
-
-	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
-	require.NoError(t, err)
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.False(t, statsTbl.Pseudo)
-}
-
-func TestStatsStoreAndLoad(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int)")
-	recordCount := 1000
-	for i := 0; i < recordCount; i++ {
-		testKit.MustExec("insert into t values (?, ?)", i, i+1)
-	}
-	testKit.MustExec("create index idx_t on t(c2)")
-	do := dom
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-
-	testKit.MustExec("analyze table t")
-	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo)
-
-	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
-	require.NoError(t, err)
-	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
-	require.False(t, statsTbl2.Pseudo)
-	require.Equal(t, int64(recordCount), statsTbl2.Count)
-	internal.AssertTableEqual(t, statsTbl1, statsTbl2)
-}
-
 func TestEmptyTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -243,39 +113,39 @@ func TestAvgColLen(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	require.Equal(t, 1.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeChunkFormat(statsTbl.Count))
+	require.Equal(t, 1.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
 
 	// The size of varchar type is LEN + BYTE, here is 1 + 7 = 8
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0-3, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, 8.0-3+8, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, 0.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeListInDisk(statsTbl.Count))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0-3, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, 8.0-3+8, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, 0.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
 	testKit.MustExec("insert into t values(132, '123456789112', 1232.3, '2018-03-07 19:17:29', NULL)")
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.Equal(t, 1.5, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 10.5, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count, false))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, math.Round((10.5-math.Log2(10.5))*100)/100, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeListInDisk(statsTbl.Count))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, math.Round((10.5-math.Log2(10.5))*100)/100+8, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeChunkFormat(statsTbl.Count))
-	require.Equal(t, 0.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeListInDisk(statsTbl.Count))
+	require.Equal(t, 1.5, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 10.5, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, math.Round((10.5-math.Log2(10.5))*100)/100, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, math.Round((10.5-math.Log2(10.5))*100)/100+8, statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(float32(12.3))), statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, 8.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeChunkFormat(statsTbl.RealtimeCount))
+	require.Equal(t, 0.0, statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeListInDisk(statsTbl.RealtimeCount))
 }
 
 func TestDurationToTS(t *testing.T) {
@@ -328,7 +198,7 @@ func TestVersion(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	require.Equal(t, offset+uint64(4), h.LastUpdateVersion())
 	statsTbl1 = h.GetTableStats(tableInfo1)
-	require.Equal(t, int64(1), statsTbl1.Count)
+	require.Equal(t, int64(1), statsTbl1.RealtimeCount)
 
 	testKit.MustExec("insert t2 values(1,2)")
 	testKit.MustExec("analyze table t2")
@@ -337,7 +207,7 @@ func TestVersion(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	require.Equal(t, offset+uint64(4), h.LastUpdateVersion())
 	statsTbl2 = h.GetTableStats(tableInfo2)
-	require.Equal(t, int64(1), statsTbl2.Count)
+	require.Equal(t, int64(1), statsTbl2.RealtimeCount)
 
 	testKit.MustExec("insert t2 values(1,2)")
 	testKit.MustExec("analyze table t2")
@@ -346,7 +216,7 @@ func TestVersion(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	require.Equal(t, offset+uint64(4), h.LastUpdateVersion())
 	statsTbl2 = h.GetTableStats(tableInfo2)
-	require.Equal(t, int64(1), statsTbl2.Count)
+	require.Equal(t, int64(1), statsTbl2.RealtimeCount)
 
 	// We add an index and analyze it, but DDL doesn't load.
 	testKit.MustExec("alter table t2 add column c3 int")
@@ -407,7 +277,6 @@ func TestLoadHist(t *testing.T) {
 		hist.TotColSize = temp
 
 		require.True(t, hist.CMSketch.Equal(newStatsTbl.Columns[id].CMSketch))
-		require.Equal(t, newStatsTbl.Columns[id].Count, hist.Count)
 		require.Equal(t, newStatsTbl.Columns[id].Info, hist.Info)
 	}
 	// Add column c3, we only update c3.
@@ -428,66 +297,6 @@ func TestLoadHist(t *testing.T) {
 	require.Greater(t, newStatsTbl2.Columns[int64(3)].LastUpdateVersion, newStatsTbl2.Columns[int64(1)].LastUpdateVersion)
 }
 
-func TestInitStats(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("set @@session.tidb_analyze_version = 1")
-	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
-	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
-	testKit.MustExec("analyze table t")
-	h := dom.StatsHandle()
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
-	// `Lease` is not 0, so here we just change it.
-	h.SetLease(time.Millisecond)
-
-	h.Clear()
-	require.NoError(t, h.InitStats(is))
-	table0 := h.GetTableStats(tbl.Meta())
-	cols := table0.Columns
-	require.Equal(t, uint8(0x36), cols[1].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x37), cols[2].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x38), cols[3].LastAnalyzePos.GetBytes()[0])
-	h.Clear()
-	require.NoError(t, h.Update(is))
-	table1 := h.GetTableStats(tbl.Meta())
-	internal.AssertTableEqual(t, table0, table1)
-	h.SetLease(0)
-}
-
-func TestInitStatsVer2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version=2")
-	tk.MustExec("create table t(a int, b int, c int, index idx(a), index idxab(a, b))")
-	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (4, 4, 4), (4, 4, 4)")
-	tk.MustExec("analyze table t with 2 topn, 3 buckets")
-	h := dom.StatsHandle()
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
-	// `Lease` is not 0, so here we just change it.
-	h.SetLease(time.Millisecond)
-
-	h.Clear()
-	require.NoError(t, h.InitStats(is))
-	table0 := h.GetTableStats(tbl.Meta())
-	cols := table0.Columns
-	require.Equal(t, uint8(0x33), cols[1].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x33), cols[2].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x33), cols[3].LastAnalyzePos.GetBytes()[0])
-	h.Clear()
-	require.NoError(t, h.Update(is))
-	table1 := h.GetTableStats(tbl.Meta())
-	internal.AssertTableEqual(t, table0, table1)
-	h.SetLease(0)
-}
-
 func TestReloadExtStatsLockRelease(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -503,81 +312,6 @@ func TestReloadExtStatsLockRelease(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/injectExtStatsLoadErr"))
 	// Check the lock is released by `admin reload stats_extended` if error happens.
 	tk.MustExec("analyze table t")
-}
-
-func TestLoadStats(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("set @@session.tidb_analyze_version=1")
-	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
-	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
-
-	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
-	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
-	}()
-	testKit.MustExec("analyze table t")
-
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	h := dom.StatsHandle()
-	stat := h.GetTableStats(tableInfo)
-	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
-	require.Greater(t, hg.Len(), 0)
-	cms := stat.Columns[tableInfo.Columns[0].ID].CMSketch
-	require.Nil(t, cms)
-	hg = stat.Indices[tableInfo.Indices[0].ID].Histogram
-	require.Greater(t, hg.Len(), 0)
-	cms = stat.Indices[tableInfo.Indices[0].ID].CMSketch
-	topN := stat.Indices[tableInfo.Indices[0].ID].TopN
-	require.Greater(t, cms.TotalCount()+topN.TotalCount(), uint64(0))
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	require.Equal(t, 0, hg.Len())
-	cms = stat.Columns[tableInfo.Columns[2].ID].CMSketch
-	require.Nil(t, cms)
-	_, err = stat.ColumnEqualRowCount(testKit.Session(), types.NewIntDatum(1), tableInfo.Columns[2].ID)
-	require.NoError(t, err)
-	require.NoError(t, h.LoadNeededHistograms())
-	stat = h.GetTableStats(tableInfo)
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	require.Greater(t, hg.Len(), 0)
-
-	// assert index LoadNeededHistograms
-	idx := stat.Indices[tableInfo.Indices[0].ID]
-	idx.EvictAllStats()
-	hg = idx.Histogram
-	cms = idx.CMSketch
-	topN = idx.TopN
-	require.Equal(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
-	require.False(t, idx.IsEssentialStatsLoaded())
-	idx.IsInvalid(false)
-	require.NoError(t, h.LoadNeededHistograms())
-	stat = h.GetTableStats(tableInfo)
-	idx = stat.Indices[tableInfo.Indices[0].ID]
-	hg = idx.Histogram
-	cms = idx.CMSketch
-	topN = idx.TopN
-	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
-	require.True(t, idx.IsFullLoad())
-
-	// Following test tests whether the LoadNeededHistograms would panic.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/mockGetStatsReaderFail", `return(true)`))
-	err = h.LoadNeededHistograms()
-	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/mockGetStatsReaderFail"))
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/mockGetStatsReaderPanic", "panic"))
-	err = h.LoadNeededHistograms()
-	require.Error(t, err)
-	require.Regexp(t, ".*getStatsReader panic.*", err.Error())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/mockGetStatsReaderPanic"))
-	err = h.LoadNeededHistograms()
-	require.NoError(t, err)
 }
 
 func TestCorrelation(t *testing.T) {
@@ -1070,7 +804,7 @@ partition by range (a) (
 	tk.MustQuery("select distinct_count, null_count, tot_col_size, correlation=0 from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
 		testkit.Rows("15 1 17 1", "6 1 7 0", "9 0 10 0"))
 	tk.MustQuery("select distinct_count, null_count, tot_col_size, correlation=0 from mysql.stats_histograms where is_index=1 order by table_id asc").Check(
-		testkit.Rows("15 1 0 1", "6 1 6 1", "9 0 10 1"))
+		testkit.Rows("15 1 0 1", "6 1 7 1", "9 0 10 1"))
 
 	tk.MustQuery("show stats_buckets where is_index=0").Check(
 		// db table partition col is_idx bucket_id count repeats lower upper ndv
@@ -1642,14 +1376,14 @@ partition by range (a) (
 	globalStats := h.GetTableStats(tableInfo)
 	// global.count = p0.count(3) + p1.count(4) + p2.count(2)
 	// modify count is 2 because we didn't analyze p1 after the second insert
-	require.Equal(t, int64(9), globalStats.Count)
+	require.Equal(t, int64(9), globalStats.RealtimeCount)
 	require.Equal(t, int64(2), globalStats.ModifyCount)
 
 	tk.MustExec("analyze table t partition p1;")
 	globalStats = h.GetTableStats(tableInfo)
 	// global.count = p0.count(3) + p1.count(4) + p2.count(4)
 	// The value of modify count is 0 now.
-	require.Equal(t, int64(9), globalStats.Count)
+	require.Equal(t, int64(9), globalStats.RealtimeCount)
 	require.Equal(t, int64(0), globalStats.ModifyCount)
 
 	tk.MustExec("alter table t drop partition p2;")
@@ -1657,7 +1391,7 @@ partition by range (a) (
 	tk.MustExec("analyze table t;")
 	globalStats = h.GetTableStats(tableInfo)
 	// global.count = p0.count(3) + p1.count(4)
-	require.Equal(t, int64(7), globalStats.Count)
+	require.Equal(t, int64(7), globalStats.RealtimeCount)
 }
 
 func TestDDLPartition4GlobalStats(t *testing.T) {
@@ -1693,7 +1427,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	globalStats := h.GetTableStats(tableInfo)
-	require.Equal(t, int64(15), globalStats.Count)
+	require.Equal(t, int64(15), globalStats.RealtimeCount)
 
 	tk.MustExec("alter table t drop partition p3, p5;")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
@@ -1703,7 +1437,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.Len(t, result, 5)
 	// The value of global.count will be updated automatically after we drop the table partition.
 	globalStats = h.GetTableStats(tableInfo)
-	require.Equal(t, int64(11), globalStats.Count)
+	require.Equal(t, int64(11), globalStats.RealtimeCount)
 
 	tk.MustExec("alter table t truncate partition p2, p4;")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
@@ -1712,7 +1446,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	// The value of global.count will not be updated automatically when we truncate the table partition.
 	// Because the partition-stats in the partition table which have been truncated has not been updated.
 	globalStats = h.GetTableStats(tableInfo)
-	require.Equal(t, int64(11), globalStats.Count)
+	require.Equal(t, int64(11), globalStats.RealtimeCount)
 
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
@@ -1720,7 +1454,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.Len(t, result, 5)
 	// The result for the globalStats.count will be right now
 	globalStats = h.GetTableStats(tableInfo)
-	require.Equal(t, int64(7), globalStats.Count)
+	require.Equal(t, int64(7), globalStats.RealtimeCount)
 }
 
 func TestMergeGlobalTopN(t *testing.T) {
@@ -3125,31 +2859,6 @@ func TestIssues27147(t *testing.T) {
 	require.Equal(t, nil, err)
 }
 
-func TestColumnCountFromStorage(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	do := dom
-	h := do.StatsHandle()
-	originLease := h.Lease()
-	defer h.SetLease(originLease)
-	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
-	// `Lease` is not 0, so here we just change it.
-	h.SetLease(time.Millisecond)
-	testKit.MustExec("use test")
-	testKit.MustExec("set tidb_analyze_version = 2")
-	testKit.MustExec("create table tt (c int)")
-	testKit.MustExec("insert into tt values(1), (2)")
-	testKit.MustExec("analyze table tt")
-	is := do.InfoSchema()
-	h = do.StatsHandle()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	h.TableStatsFromStorage(tblInfo, tblInfo.ID, false, 0)
-	statsTbl := h.GetTableStats(tblInfo)
-	require.Equal(t, int64(2), statsTbl.Columns[tblInfo.Columns[0].ID].Count)
-}
-
 func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.T) {
 	return func(t *testing.T) {
 		store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -3420,7 +3129,7 @@ func TestStatsLockAndUnlockTable(t *testing.T) {
 
 	tk.MustExec("analyze table test.t")
 	tblStats2 := handle.GetTableStats(tbl.Meta())
-	require.Equal(t, int64(2), tblStats2.Count)
+	require.Equal(t, int64(2), tblStats2.RealtimeCount)
 }
 
 func TestStatsLockAndUnlockTables(t *testing.T) {
@@ -3484,9 +3193,9 @@ func TestStatsLockAndUnlockTables(t *testing.T) {
 
 	tk.MustExec("analyze table test.t1, test.t2")
 	tbl1Stats2 := handle.GetTableStats(tbl1.Meta())
-	require.Equal(t, int64(2), tbl1Stats2.Count)
+	require.Equal(t, int64(2), tbl1Stats2.RealtimeCount)
 	tbl2Stats2 := handle.GetTableStats(tbl2.Meta())
-	require.Equal(t, int64(2), tbl2Stats2.Count)
+	require.Equal(t, int64(2), tbl2Stats2.RealtimeCount)
 }
 
 func TestIssue39336(t *testing.T) {
@@ -3519,4 +3228,88 @@ insert into t1 values
 	rows := tk.MustQuery("show analyze status where job_info like 'merge global stats%'").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "finished", rows[0][7])
+}
+
+func checkAllEvicted(t *testing.T, statsTbl *statistics.Table) {
+	for _, col := range statsTbl.Columns {
+		require.True(t, col.IsAllEvicted())
+	}
+	for _, idx := range statsTbl.Indices {
+		require.True(t, idx.IsAllEvicted())
+	}
+}
+
+func TestInitStatsLite(t *testing.T) {
+	oriVal := config.GetGlobalConfig().Performance.LiteInitStats
+	config.GetGlobalConfig().Performance.LiteInitStats = true
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = oriVal
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idxb(b), key idxc(c))")
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9)")
+
+	h := dom.StatsHandle()
+	// set lease > 0 to trigger on-demand stats load.
+	h.SetLease(time.Millisecond)
+	defer func() {
+		h.SetLease(0)
+	}()
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	colBID := tblInfo.Columns[1].ID
+	colCID := tblInfo.Columns[2].ID
+	idxBID := tblInfo.Indices[0].ID
+	idxCID := tblInfo.Indices[1].ID
+
+	tk.MustExec("analyze table t with 2 topn, 2 buckets")
+	statsTbl0 := h.GetTableStats(tblInfo)
+	checkAllEvicted(t, statsTbl0)
+
+	h.Clear()
+	require.NoError(t, h.InitStatsLite(is))
+	statsTbl1 := h.GetTableStats(tblInfo)
+	checkAllEvicted(t, statsTbl1)
+	internal.AssertTableEqual(t, statsTbl0, statsTbl1)
+
+	// async stats load
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
+	tk.MustExec("explain select * from t where b > 1")
+	require.NoError(t, h.LoadNeededHistograms())
+	statsTbl2 := h.GetTableStats(tblInfo)
+	colBStats1 := statsTbl2.Columns[colBID]
+	require.True(t, colBStats1.IsFullLoad())
+	idxBStats1 := statsTbl2.Indices[idxBID]
+	require.True(t, idxBStats1.IsFullLoad())
+
+	// sync stats load
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
+	tk.MustExec("explain select * from t where c > 1")
+	statsTbl3 := h.GetTableStats(tblInfo)
+	colCStats1 := statsTbl3.Columns[colCID]
+	require.True(t, colCStats1.IsFullLoad())
+	idxCStats1 := statsTbl3.Indices[idxCID]
+	require.True(t, idxCStats1.IsFullLoad())
+
+	// update stats
+	tk.MustExec("analyze table t with 1 topn, 3 buckets")
+	statsTbl4 := h.GetTableStats(tblInfo)
+	colBStats2 := statsTbl4.Columns[colBID]
+	require.True(t, colBStats2.IsFullLoad())
+	require.Greater(t, colBStats2.LastUpdateVersion, colBStats1.LastUpdateVersion)
+	idxBStats2 := statsTbl4.Indices[idxBID]
+	require.True(t, idxBStats2.IsFullLoad())
+	require.Greater(t, idxBStats2.LastUpdateVersion, idxBStats1.LastUpdateVersion)
+	colCStats2 := statsTbl4.Columns[colCID]
+	require.True(t, colCStats2.IsFullLoad())
+	require.Greater(t, colCStats2.LastUpdateVersion, colCStats1.LastUpdateVersion)
+	idxCStats2 := statsTbl4.Indices[idxCID]
+	require.True(t, idxCStats2.IsFullLoad())
+	require.Greater(t, idxCStats2.LastUpdateVersion, idxCStats1.LastUpdateVersion)
 }

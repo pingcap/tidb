@@ -14,6 +14,7 @@ go_library(
     deps = [
         "//util/hack",
         "//util/memory",
+        "@org_golang_x_exp//maps",
     ],
 )
 

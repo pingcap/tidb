@@ -35,7 +35,8 @@ import (
 var (
 	errUnterminatedQuotedField = errors.NewNoStackError("syntax error: unterminated quoted field")
 	errDanglingBackslash       = errors.NewNoStackError("syntax error: no character after backslash")
-	errUnexpectedQuoteField    = errors.NewNoStackError("syntax error: cannot have consecutive fields without separator")
+	errUnexpectedQuoteField    = errors.NewNoStackError(
+		"syntax error: cannot have consecutive fields without separator")
 	// LargestEntryLimit is the max size for reading file to buf
 	LargestEntryLimit int
 )
@@ -137,7 +138,7 @@ func NewCSVParser(
 
 	if len(cfg.StartingBy) > 0 {
 		if strings.Contains(cfg.StartingBy, terminator) {
-			return nil, errors.New("starting-by cannot contain (line) terminator")
+			return nil, errors.Errorf("STARTING BY '%s' cannot contain LINES TERMINATED BY '%s'", cfg.StartingBy, terminator)
 		}
 	}
 

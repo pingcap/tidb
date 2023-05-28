@@ -270,7 +270,9 @@ func TestListColumnsPartitionPrunerRandom(t *testing.T) {
 
 func TestIssue22635(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
@@ -282,19 +284,19 @@ CREATE TABLE t1 (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH( a )
 PARTITIONS 4`)
-	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa").Check(testkit.Rows()) // work fine without any error
+	tk.MustQuery("SELECT (SELECT tt.a FROM t1 tt ORDER BY a ASC LIMIT 1) aa, COUNT(DISTINCT b) FROM t1 GROUP BY aa").Check(testkit.Rows()) // work fine without any error
 
 	tk.MustExec("insert into t1 values (1, 1)")
-	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa").Check(testkit.Rows("1 1"))
+	tk.MustQuery("SELECT (SELECT tt.a FROM t1 tt ORDER BY a ASC LIMIT 1) aa, COUNT(DISTINCT b) FROM t1 GROUP BY aa").Check(testkit.Rows("1 1"))
 
 	tk.MustExec("insert into t1 values (2, 2), (2, 2)")
-	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa").Check(testkit.Rows("1 2"))
+	tk.MustQuery("SELECT (SELECT tt.a FROM t1 tt ORDER BY a ASC LIMIT 1) aa, COUNT(DISTINCT b) FROM t1 GROUP BY aa").Check(testkit.Rows("1 2"))
 
 	tk.MustExec("insert into t1 values (3, 3), (3, 3), (3, 3)")
-	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa").Check(testkit.Rows("1 3"))
+	tk.MustQuery("SELECT (SELECT tt.a FROM t1 tt ORDER BY a ASC LIMIT 1) aa, COUNT(DISTINCT b) FROM t1 GROUP BY aa").Check(testkit.Rows("1 3"))
 
 	tk.MustExec("insert into t1 values (4, 4), (4, 4), (4, 4), (4, 4)")
-	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa").Check(testkit.Rows("4 4"))
+	tk.MustQuery("SELECT (SELECT tt.a FROM t1 tt ORDER BY a DESC LIMIT 1) aa, COUNT(DISTINCT b) FROM t1 GROUP BY aa").Check(testkit.Rows("4 4"))
 }
 
 func TestIssue22898(t *testing.T) {
@@ -450,4 +452,68 @@ func TestIssue33231(t *testing.T) {
 	tk.MustQuery("select /*+ INL_JOIN(t2) */ * from t1, t2 where t1.c_int = t2.c_int and t1.c_str <= t2.c_str and t2.c_int in (6, 7, 6);").
 		Sort().
 		Check(testkit.Rows("6 beautiful curran 6 vigorous rhodes", "7 affectionate curie 7 sweet aryabhata", "7 epic kalam 7 sweet aryabhata"))
+}
+
+func TestIssue43459(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database issue43459")
+	defer tk.MustExec("drop database issue43459")
+	tk.MustExec("use issue43459")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec(`CREATE TABLE test1 (ID varchar(50) NOT NULL,
+		PARTITION_NO int(11) NOT NULL DEFAULT '0',
+		CREATE_TIME datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (ID,PARTITION_NO,CREATE_TIME),
+		KEY index_partition_no (PARTITION_NO)
+		) PARTITION BY RANGE COLUMNS(PARTITION_NO,CREATE_TIME)
+		(PARTITION 2023p1 VALUES LESS THAN (200000,'2023-01-01 00:00:00'),
+		PARTITION 2023p2 VALUES LESS THAN (300000,'2023-01-01 00:00:00')) `)
+	checkFn := func() {
+		tk.MustExec(`insert into test1 values("1", 200000, "2022-12-29 12:00:00"), ("2",200000,"2023-01-01")`)
+		tk.MustExec(`analyze table test1`)
+		tk.MustQuery(`explain select * from test1 where partition_no > 199999`).CheckContain(`partition:all`)
+		tk.MustQuery(`explain select * from test1 where partition_no = 200000`).CheckContain("partition:all")
+		tk.MustQuery(`explain select * from test1 where partition_no >= 200000`).CheckContain("partition:all")
+		tk.MustQuery(`explain select * from test1 where partition_no < 200000`).CheckContain("partition:2023p1")
+		tk.MustQuery(`explain select * from test1 where partition_no <= 200000`).CheckContain("partition:all")
+		tk.MustQuery(`explain select * from test1 where partition_no > 200000`).CheckContain("partition:2023p2")
+	}
+	checkFn()
+	tk.MustQuery(`select * from test1 partition (2023p1)`).Check(testkit.Rows("" +
+		"1 200000 2022-12-29 12:00:00"))
+	tk.MustQuery(`select * from test1 partition (2023p2)`).Check(testkit.Rows("" +
+		"2 200000 2023-01-01 00:00:00"))
+	tk.MustQuery(`select * from test1`).Sort().Check(testkit.Rows(""+
+		"1 200000 2022-12-29 12:00:00",
+		"2 200000 2023-01-01 00:00:00"))
+	tk.MustQuery(`select * from test1 where partition_no = 200000`).Sort().Check(testkit.Rows(""+
+		"1 200000 2022-12-29 12:00:00",
+		"2 200000 2023-01-01 00:00:00"))
+	tk.MustQuery(`select * from test1 where partition_no >= 200000`).Sort().Check(testkit.Rows(""+
+		"1 200000 2022-12-29 12:00:00",
+		"2 200000 2023-01-01 00:00:00"))
+	tk.MustExec(`drop table test1`)
+	tk.MustExec(`CREATE TABLE test1 (ID varchar(50) NOT NULL,
+		PARTITION_NO int(11) NOT NULL DEFAULT '0',
+		CREATE_TIME date NOT NULL DEFAULT CURRENT_DATE,
+		PRIMARY KEY (ID,PARTITION_NO,CREATE_TIME),
+		KEY index_partition_no (PARTITION_NO)
+		) PARTITION BY RANGE COLUMNS(PARTITION_NO,CREATE_TIME)
+		(PARTITION 2023p1 VALUES LESS THAN (200000,'2023-01-01 00:00:00'),
+		PARTITION 2023p2 VALUES LESS THAN (300000,'2023-01-01 00:00:00')) `)
+	checkFn()
+	tk.MustQuery(`select * from test1 partition (2023p1)`).Check(testkit.Rows("" +
+		"1 200000 2022-12-29"))
+	tk.MustQuery(`select * from test1 partition (2023p2)`).Check(testkit.Rows("" +
+		"2 200000 2023-01-01"))
+	tk.MustQuery(`select * from test1`).Sort().Check(testkit.Rows(""+
+		"1 200000 2022-12-29",
+		"2 200000 2023-01-01"))
+	tk.MustQuery(`select * from test1 where partition_no = 200000`).Sort().Check(testkit.Rows(""+
+		"1 200000 2022-12-29",
+		"2 200000 2023-01-01"))
+	tk.MustQuery(`select * from test1 where partition_no >= 200000`).Sort().Check(testkit.Rows(""+
+		"1 200000 2022-12-29",
+		"2 200000 2023-01-01"))
 }

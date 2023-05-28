@@ -85,7 +85,8 @@ type Store struct {
 	State   StoreState `json:"state_name"`
 }
 
-func withTiKVConnection(ctx context.Context, tls *common.TLS, tikvAddr string, action func(import_sstpb.ImportSSTClient) error) error {
+func withTiKVConnection(ctx context.Context, tls *common.TLS, tikvAddr string,
+	action func(import_sstpb.ImportSSTClient) error) error {
 	// Connect to the ImportSST service on the given TiKV node.
 	// The connection is needed for executing `action` and will be tear down
 	// when this function exits.
@@ -145,7 +146,8 @@ func ignoreUnimplementedError(err error, logger log.Logger) error {
 
 // SwitchMode changes the TiKV node at the given address to a particular mode.
 func SwitchMode(ctx context.Context, tls *common.TLS, tikvAddr string, mode import_sstpb.SwitchMode) error {
-	task := log.With(zap.Stringer("mode", mode), zap.String("tikv", tikvAddr)).Begin(zap.DebugLevel, "switch mode")
+	task := log.With(zap.Stringer("mode", mode),
+		zap.String("tikv", tikvAddr)).Begin(zap.DebugLevel, "switch mode")
 	err := withTiKVConnection(ctx, tls, tikvAddr, func(client import_sstpb.ImportSSTClient) error {
 		_, err := client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
 			Mode: mode,
@@ -169,7 +171,8 @@ func Compact(ctx context.Context, tls *common.TLS, tikvAddr string, level int32)
 	return err
 }
 
-var fetchModeRegexp = regexp.MustCompile(`\btikv_config_rocksdb\{cf="default",name="hard_pending_compaction_bytes_limit"\} ([^\n]+)`)
+var fetchModeRegexp = regexp.MustCompile(
+	`\btikv_config_rocksdb\{cf="default",name="hard_pending_compaction_bytes_limit"\} ([^\n]+)`)
 
 // FetchMode obtains the import mode status of the TiKV node.
 func FetchMode(ctx context.Context, tls *common.TLS, tikvAddr string) (import_sstpb.SwitchMode, error) {
@@ -211,6 +214,7 @@ func FetchRemoteDBModelsFromTLS(ctx context.Context, tls *common.TLS) ([]*model.
 	return dbs, nil
 }
 
+// FetchRemoteTableModelsFromTLS obtains the remote table models from the given TLS.
 func FetchRemoteTableModelsFromTLS(ctx context.Context, tls *common.TLS, schema string) ([]*model.TableInfo, error) {
 	var tables []*model.TableInfo
 	err := tls.GetJSON(ctx, "/schema/"+schema, &tables)
@@ -220,7 +224,9 @@ func FetchRemoteTableModelsFromTLS(ctx context.Context, tls *common.TLS, schema 
 	return tables, nil
 }
 
-func CheckPDVersion(ctx context.Context, tls *common.TLS, pdAddr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
+// CheckPDVersion checks the version of PD.
+func CheckPDVersion(ctx context.Context, tls *common.TLS, pdAddr string,
+	requiredMinVersion, requiredMaxVersion semver.Version) error {
 	ver, err := pdutil.FetchPDVersion(ctx, tls, pdAddr)
 	if err != nil {
 		return errors.Trace(err)
@@ -229,7 +235,9 @@ func CheckPDVersion(ctx context.Context, tls *common.TLS, pdAddr string, require
 	return version.CheckVersion("PD", *ver, requiredMinVersion, requiredMaxVersion)
 }
 
-func CheckTiKVVersion(ctx context.Context, tls *common.TLS, pdAddr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
+// CheckTiKVVersion checks the version of TiKV.
+func CheckTiKVVersion(ctx context.Context, tls *common.TLS, pdAddr string,
+	requiredMinVersion, requiredMaxVersion semver.Version) error {
 	return ForAllStores(
 		ctx,
 		tls.WithHost(pdAddr),

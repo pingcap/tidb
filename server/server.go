@@ -36,9 +36,8 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"net/http" //nolint:goimports
-	// For pprof
-	_ "net/http/pprof" // #nosec G108
+	"net/http"         //nolint:goimports
+	_ "net/http/pprof" // #nosec G108 for pprof
 	"os"
 	"os/user"
 	"reflect"
@@ -72,6 +71,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
+	uatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -120,7 +120,8 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive | mysql.ClientDeprecateEOF
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive |
+	mysql.ClientDeprecateEOF | mysql.ClientCompress | mysql.ClientZstdCompressionAlgorithm
 
 // Server is the MySQL protocol server
 type Server struct {
@@ -129,24 +130,28 @@ type Server struct {
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
-	rwlock            sync.RWMutex
 	concurrentLimiter *TokenLimiter
-	clients           map[uint64]*clientConn
-	capability        uint32
-	dom               *domain.Domain
-	globalConnID      util.GlobalConnID
+
+	rwlock  sync.RWMutex
+	clients map[uint64]*clientConn
+
+	capability   uint32
+	dom          *domain.Domain
+	globalConnID util.GlobalConnID
 
 	statusAddr     string
 	statusListener net.Listener
 	statusServer   *http.Server
 	grpcServer     *grpc.Server
-	inShutdownMode bool
+	inShutdownMode *uatomic.Bool
+	health         *uatomic.Bool
 
 	sessionMapMutex     sync.Mutex
 	internalSessions    map[interface{}]struct{}
 	autoIDService       *autoid.Service
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
+	printMDLLogTime     time.Time
 }
 
 // ConnectionCount gets current connection count.
@@ -207,6 +212,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.NewGlobalConnID(0, true),
 		internalSessions:  make(map[interface{}]struct{}, 100),
+		health:            uatomic.NewBool(true),
+		inShutdownMode:    uatomic.NewBool(false),
+		printMDLLogTime:   time.Now(),
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -394,7 +402,7 @@ func (s *Server) Run() error {
 	}
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
-	errChan := make(chan error)
+	errChan := make(chan error, 2)
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
 	err := <-errChan
@@ -414,7 +422,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 		if err != nil {
 			if opErr, ok := err.(*net.OpError); ok {
 				if opErr.Err.Error() == "use of closed network connection" {
-					if s.inShutdownMode {
+					if s.inShutdownMode.Load() {
 						errChan <- nil
 					} else {
 						errChan <- err
@@ -433,6 +441,8 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 			errChan <- err
 			return
 		}
+
+		logutil.BgLogger().Debug("accept new connection success")
 
 		clientConn := s.newConn(conn)
 		if isUnixSocket {
@@ -505,10 +515,8 @@ func (s *Server) checkAuditPlugin(clientConn *clientConn) error {
 }
 
 func (s *Server) startShutdown() {
-	s.rwlock.RLock()
 	logutil.BgLogger().Info("setting tidb-server to report unhealthy (shutting-down)")
-	s.inShutdownMode = true
-	s.rwlock.RUnlock()
+	s.health.Store(false)
 	// give the load balancer a chance to receive a few unhealthy health reports
 	// before acquiring the s.rwlock and blocking connections.
 	waitTime := time.Duration(s.cfg.GracefulWaitBeforeShutdown) * time.Second
@@ -518,12 +526,7 @@ func (s *Server) startShutdown() {
 	}
 }
 
-// Close closes the server.
-func (s *Server) Close() {
-	s.startShutdown()
-	s.rwlock.Lock() // prevent new connections
-	defer s.rwlock.Unlock()
-
+func (s *Server) closeListener() {
 	if s.listener != nil {
 		err := s.listener.Close()
 		terror.Log(errors.Trace(err))
@@ -551,6 +554,34 @@ func (s *Server) Close() {
 	}
 	s.wg.Wait()
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
+}
+
+var gracefulCloseConnectionsTimeout = 15 * time.Second
+
+// Close closes the server.
+func (s *Server) Close() {
+	s.startShutdown()
+	s.rwlock.Lock() // // prevent new connections
+	defer s.rwlock.Unlock()
+	s.inShutdownMode.Store(true)
+	s.closeListener()
+}
+
+func (s *Server) registerConn(conn *clientConn) bool {
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
+	connections := len(s.clients)
+
+	logger := logutil.BgLogger()
+	if s.inShutdownMode.Load() {
+		logger.Info("close connection directly when shutting down")
+		terror.Log(closeConn(conn, connections))
+		return false
+	}
+	s.clients[conn.connectionID] = conn
+	connections = len(s.clients)
+	metrics.ConnGauge.Set(float64(connections))
+	return true
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.
@@ -581,6 +612,7 @@ func (s *Server) onConn(conn *clientConn) {
 	}
 
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
+
 	if err := conn.handshake(ctx); err != nil {
 		conn.onExtensionConnEvent(extension.ConnHandshakeRejected, err)
 		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {
@@ -622,11 +654,10 @@ func (s *Server) onConn(conn *clientConn) {
 		terror.Log(conn.Close())
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
-	s.rwlock.Lock()
-	s.clients[conn.connectionID] = conn
-	connections := len(s.clients)
-	s.rwlock.Unlock()
-	metrics.ConnGauge.Set(float64(connections))
+
+	if !s.registerConn(conn) {
+		return
+	}
 
 	sessionVars := conn.ctx.GetSessionVars()
 	sessionVars.ConnectionInfo = conn.connectInfo()
@@ -663,10 +694,24 @@ func (s *Server) onConn(conn *clientConn) {
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 	connType := variable.ConnTypeSocket
+	sslVersion := ""
 	if cc.isUnixSocket {
 		connType = variable.ConnTypeUnixSocket
 	} else if cc.tlsConn != nil {
 		connType = variable.ConnTypeTLS
+		sslVersionNum := cc.tlsConn.ConnectionState().Version
+		switch sslVersionNum {
+		case tls.VersionTLS10:
+			sslVersion = "TLSv1.0"
+		case tls.VersionTLS11:
+			sslVersion = "TLSv1.1"
+		case tls.VersionTLS12:
+			sslVersion = "TLSv1.2"
+		case tls.VersionTLS13:
+			sslVersion = "TLSv1.3"
+		default:
+			sslVersion = fmt.Sprintf("Unknown TLS version: %d", sslVersionNum)
+		}
 	}
 	connInfo := &variable.ConnectionInfo{
 		ConnectionID:      cc.connectionID,
@@ -681,9 +726,11 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		ServerOSLoginUser: osUser,
 		OSVersion:         osVersion,
 		ServerVersion:     mysql.TiDBReleaseVersion,
-		SSLVersion:        "v1.2.0", // for current go version
+		SSLVersion:        sslVersion,
 		PID:               serverPID,
 		DB:                cc.dbname,
+		AuthMethod:        cc.authPlugin,
+		Attributes:        cc.attrs,
 	}
 	return connInfo
 }
@@ -765,8 +812,8 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 }
 
 // Kill implements the SessionManager interface.
-func (s *Server) Kill(connectionID uint64, query bool) {
-	logutil.BgLogger().Info("kill", zap.Uint64("connID", connectionID), zap.Bool("query", query))
+func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
+	logutil.BgLogger().Info("kill", zap.Uint64("conn", connectionID), zap.Bool("query", query))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
 	s.rwlock.RLock()
@@ -780,9 +827,9 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	if !query {
 		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
 		// this, it will end the dispatch loop and exit.
-		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
+		conn.setStatus(connStatusWaitShutdown)
 	}
-	killConn(conn)
+	killQuery(conn, maxExecutionTime)
 }
 
 // UpdateTLSConfig implements the SessionManager interface.
@@ -794,9 +841,13 @@ func (s *Server) getTLSConfig() *tls.Config {
 	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
 
-func killConn(conn *clientConn) {
+func killQuery(conn *clientConn, maxExecutionTime bool) {
 	sessVars := conn.ctx.GetSessionVars()
-	atomic.StoreUint32(&sessVars.Killed, 1)
+	if maxExecutionTime {
+		atomic.StoreUint32(&sessVars.Killed, 2)
+	} else {
+		atomic.StoreUint32(&sessVars.Killed, 1)
+	}
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
@@ -822,84 +873,65 @@ func (s *Server) KillSysProcesses() {
 	}
 }
 
-// KillAllConnections kills all connections when server is not gracefully shutdown.
+// KillAllConnections implements the SessionManager interface.
+// KillAllConnections kills all connections.
 func (s *Server) KillAllConnections() {
 	logutil.BgLogger().Info("[server] kill all connections.")
 
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	for _, conn := range s.clients {
-		atomic.StoreInt32(&conn.status, connStatusShutdown)
+		conn.setStatus(connStatusShutdown)
 		if err := conn.closeWithoutLock(); err != nil {
 			terror.Log(err)
 		}
-		killConn(conn)
+		killQuery(conn, false)
 	}
 
 	s.KillSysProcesses()
 }
 
-var gracefulCloseConnectionsTimeout = 15 * time.Second
+// DrainClients drain all connections in drainWait.
+// After drainWait duration, we kill all connections still not quit explicitly and wait for cancelWait.
+func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration) {
+	logger := logutil.BgLogger()
+	logger.Info("start drain clients")
 
-// TryGracefulDown will try to gracefully close all connection first with timeout. if timeout, will close all connection directly.
-func (s *Server) TryGracefulDown() {
-	ctx, cancel := context.WithTimeout(context.Background(), gracefulCloseConnectionsTimeout)
-	defer cancel()
-	done := make(chan struct{})
+	conns := make(map[uint64]*clientConn)
+
+	s.rwlock.Lock()
+	for k, v := range s.clients {
+		conns[k] = v
+	}
+	s.rwlock.Unlock()
+
+	allDone := make(chan struct{})
+	quitWaitingForConns := make(chan struct{})
+	defer close(quitWaitingForConns)
 	go func() {
-		s.GracefulDown(ctx, done)
+		defer close(allDone)
+		for _, conn := range conns {
+			select {
+			case <-conn.quit:
+			case <-quitWaitingForConns:
+				return
+			}
+		}
 	}()
+
 	select {
-	case <-ctx.Done():
-		s.KillAllConnections()
-	case <-done:
-		return
+	case <-allDone:
+		logger.Info("all sessions quit in drain wait time")
+	case <-time.After(drainWait):
+		logger.Info("timeout waiting all sessions quit")
 	}
-}
 
-// GracefulDown waits all clients to close.
-func (s *Server) GracefulDown(ctx context.Context, done chan struct{}) {
-	logutil.Logger(ctx).Info("[server] graceful shutdown.")
-	metrics.ServerEventCounter.WithLabelValues(metrics.EventGracefulDown).Inc()
+	s.KillAllConnections()
 
-	count := s.ConnectionCount()
-	for i := 0; count > 0; i++ {
-		s.kickIdleConnection()
-
-		count = s.ConnectionCount()
-		if count == 0 {
-			break
-		}
-		// Print information for every 30s.
-		if i%30 == 0 {
-			logutil.Logger(ctx).Info("graceful shutdown...", zap.Int("conn count", count))
-		}
-		ticker := time.After(time.Second)
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker:
-		}
-	}
-	close(done)
-}
-
-func (s *Server) kickIdleConnection() {
-	var conns []*clientConn
-	s.rwlock.RLock()
-	for _, cc := range s.clients {
-		if cc.ShutdownOrNotify() {
-			// Shutdowned conn will be closed by us, and notified conn will exist themselves.
-			conns = append(conns, cc)
-		}
-	}
-	s.rwlock.RUnlock()
-
-	for _, cc := range conns {
-		err := cc.Close()
-		if err != nil {
-			logutil.BgLogger().Error("close connection", zap.Error(err))
-		}
+	select {
+	case <-allDone:
+	case <-time.After(cancelWait):
+		logger.Warn("some sessions do not quit in cancel wait time")
 	}
 }
 
@@ -971,9 +1003,15 @@ func setSystemTimeZoneVariable() {
 func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
+
+	printLog := false
+	if time.Since(s.printMDLLogTime) > 10*time.Second {
+		printLog = true
+		s.printMDLLogTime = time.Now()
+	}
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
-			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids)
+			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids, printLog)
 		}
 	}
 }
@@ -999,40 +1037,6 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	}
 	s.rwlock.RUnlock()
 	for _, id := range connIDs {
-		s.Kill(id, false)
+		s.Kill(id, false, false)
 	}
-}
-
-// GetMinStartTS implements SessionManager interface.
-func (s *Server) GetMinStartTS(lowerBound uint64) (ts uint64) {
-	// sys processes
-	if s.dom != nil {
-		for _, pi := range s.dom.SysProcTracker().GetSysProcessList() {
-			if thisTS := pi.GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
-				ts = thisTS
-			}
-		}
-	}
-	// user sessions
-	func() {
-		s.rwlock.RLock()
-		defer s.rwlock.RUnlock()
-		for _, client := range s.clients {
-			if thisTS := client.ctx.ShowProcess().GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
-				ts = thisTS
-			}
-		}
-	}()
-	// internal sessions
-	func() {
-		s.sessionMapMutex.Lock()
-		defer s.sessionMapMutex.Unlock()
-		analyzeProcID := util.GetAutoAnalyzeProcID(s.ServerID)
-		for se := range s.internalSessions {
-			if thisTS, processInfoID := session.GetStartTSFromSession(se); processInfoID != analyzeProcID && thisTS > lowerBound && (thisTS < ts || ts == 0) {
-				ts = thisTS
-			}
-		}
-	}()
-	return
 }

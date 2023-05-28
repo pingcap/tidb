@@ -11,9 +11,12 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -140,7 +143,8 @@ var (
 )
 
 // pdHTTPRequest defines the interface to send a request to pd and return the result in bytes.
-type pdHTTPRequest func(ctx context.Context, addr string, prefix string, cli *http.Client, method string, body io.Reader) ([]byte, error)
+type pdHTTPRequest func(ctx context.Context, addr string, prefix string,
+	cli *http.Client, method string, body io.Reader) ([]byte, error)
 
 // pdRequest is a func to send an HTTP to pd and return the result bytes.
 func pdRequest(
@@ -164,22 +168,39 @@ func pdRequestWithCode(
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	resp, err := cli.Do(req)
-	if err != nil {
-		return 0, nil, errors.Trace(err)
-	}
+	var resp *http.Response
 	count := 0
 	for {
+		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
-		if count > pdRequestRetryTime || resp.StatusCode < 500 {
+		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
+			if failType, ok := v.(int); ok && count <= pdRequestRetryTime-1 {
+				resp = nil
+				switch failType {
+				case 0:
+					err = &net.OpError{
+						Op:  "read",
+						Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+					}
+				default:
+					err = &url.Error{
+						Op:  "read",
+						Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+					}
+				}
+			}
+		})
+		if count > pdRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
+			(err != nil && !common.IsRetryableError(err)) {
 			break
 		}
-		_ = resp.Body.Close()
-		time.Sleep(pdRequestRetryInterval())
-		resp, err = cli.Do(req)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+		if resp != nil {
+			_ = resp.Body.Close()
 		}
+		time.Sleep(pdRequestRetryInterval())
+	}
+	if err != nil {
+		return 0, nil, errors.Trace(err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -187,7 +208,8 @@ func pdRequestWithCode(
 
 	if resp.StatusCode != http.StatusOK {
 		res, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, nil, errors.Annotatef(berrors.ErrPDInvalidResponse, "[%d] %s %s", resp.StatusCode, res, reqURL)
+		return resp.StatusCode, nil, errors.Annotatef(berrors.ErrPDInvalidResponse,
+			"[%d] %s %s", resp.StatusCode, res, reqURL)
 	}
 
 	r, err := io.ReadAll(resp.Body)
@@ -254,7 +276,8 @@ func NewPdController(
 		}
 	}
 	if failure != nil {
-		return nil, errors.Annotatef(berrors.ErrPDUpdateFailed, "pd address (%s) not available, please check network", pdAddrs)
+		return nil, errors.Annotatef(berrors.ErrPDUpdateFailed,
+			"pd address (%s) not available, error is %s, please check network", pdAddrs, failure)
 	}
 
 	version := parseVersion(versionBytes)
@@ -406,7 +429,8 @@ func (p *PdController) getStoreInfoWith(
 	return nil, errors.Trace(err)
 }
 
-func (p *PdController) doPauseSchedulers(ctx context.Context, schedulers []string, post pdHTTPRequest) ([]string, error) {
+func (p *PdController) doPauseSchedulers(ctx context.Context,
+	schedulers []string, post pdHTTPRequest) ([]string, error) {
 	// pause this scheduler with 300 seconds
 	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(pauseTimeout.Seconds())})
 	if err != nil {
@@ -604,7 +628,8 @@ func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interf
 	return p.doUpdatePDScheduleConfig(ctx, cfg, post, prefix)
 }
 
-func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig, configsNeedRestore map[string]pauseConfigGenerator) error {
+func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig,
+	configsNeedRestore map[string]pauseConfigGenerator) error {
 	if err := pd.ResumeSchedulers(ctx, clusterCfg.Schedulers); err != nil {
 		return errors.Annotate(err, "fail to add PD schedulers")
 	}
@@ -637,7 +662,8 @@ func (p *PdController) MakeUndoFunctionByConfig(config ClusterConfig) UndoFunc {
 }
 
 // GenRestoreSchedulerFunc gen restore func
-func (p *PdController) GenRestoreSchedulerFunc(config ClusterConfig, configsNeedRestore map[string]pauseConfigGenerator) UndoFunc {
+func (p *PdController) GenRestoreSchedulerFunc(config ClusterConfig,
+	configsNeedRestore map[string]pauseConfigGenerator) UndoFunc {
 	// todo: we only need config names, not a map[string]pauseConfigGenerator
 	restore := func(ctx context.Context) error {
 		return restoreSchedulers(ctx, p, config, configsNeedRestore)
@@ -657,6 +683,22 @@ func (p *PdController) RemoveSchedulers(ctx context.Context) (undo UndoFunc, err
 
 	undo = p.MakeUndoFunctionByConfig(ClusterConfig{Schedulers: origin.Schedulers, ScheduleCfg: origin.ScheduleCfg})
 	return undo, errors.Trace(err)
+}
+
+// RemoveSchedulersWithConfig removes the schedulers that may slow down BR speed.
+func (p *PdController) RemoveSchedulersWithConfig(
+	ctx context.Context,
+) (undo UndoFunc, config *ClusterConfig, err error) {
+	undo = Nop
+
+	origin, _, err1 := p.RemoveSchedulersWithOrigin(ctx)
+	if err1 != nil {
+		err = err1
+		return
+	}
+
+	undo = p.MakeUndoFunctionByConfig(ClusterConfig{Schedulers: origin.Schedulers, ScheduleCfg: origin.ScheduleCfg})
+	return undo, &origin, errors.Trace(err)
 }
 
 // RemoveAllPDSchedulers pause pd scheduler during the snapshot backup and restore
@@ -697,15 +739,18 @@ func (p *PdController) RemoveAllPDSchedulers(ctx context.Context) (undo UndoFunc
 }
 
 // RemoveSchedulersWithOrigin pause and remove br related schedule configs and return the origin and modified configs
-func (p *PdController) RemoveSchedulersWithOrigin(ctx context.Context) (origin ClusterConfig, modified ClusterConfig, err error) {
+func (p *PdController) RemoveSchedulersWithOrigin(ctx context.Context) (origin ClusterConfig,
+	modified ClusterConfig, err error) {
 	return p.RemoveSchedulersWithConfigGenerator(ctx, expectPDCfgGenerators)
 }
 
 // RemoveSchedulersWithConfigGenerator pause scheduler with custom config generator
-func (p *PdController) RemoveSchedulersWithConfigGenerator(ctx context.Context, pdConfigGenerators map[string]pauseConfigGenerator) (
+func (p *PdController) RemoveSchedulersWithConfigGenerator(ctx context.Context,
+	pdConfigGenerators map[string]pauseConfigGenerator) (
 	origin ClusterConfig, modified ClusterConfig, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("PdController.RemoveSchedulers", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("PdController.RemoveSchedulers",
+			opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -965,11 +1010,13 @@ func (p *PdController) DeleteRegionLabelRule(ctx context.Context, ruleID string)
 // PauseSchedulersByKeyRange will pause schedulers for regions in the specific key range.
 // This function will spawn a goroutine to keep pausing schedulers periodically until the context is done.
 // The return done channel is used to notify the caller that the background goroutine is exited.
-func (p *PdController) PauseSchedulersByKeyRange(ctx context.Context, startKey, endKey []byte) (done <-chan struct{}, err error) {
+func (p *PdController) PauseSchedulersByKeyRange(ctx context.Context,
+	startKey, endKey []byte) (done <-chan struct{}, err error) {
 	return p.pauseSchedulerByKeyRangeWithTTL(ctx, startKey, endKey, pauseTimeout)
 }
 
-func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context, startKey, endKey []byte, ttl time.Duration) (_done <-chan struct{}, err error) {
+func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context,
+	startKey, endKey []byte, ttl time.Duration) (_done <-chan struct{}, err error) {
 	rule := LabelRule{
 		ID: uuid.New().String(),
 		Labels: []RegionLabel{{
@@ -1003,7 +1050,8 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context, star
 					if berrors.IsContextCanceled(err) {
 						break loop
 					}
-					log.Warn("pause scheduler by key range failed, ignore it and wait next time pause", zap.Error(err))
+					log.Warn("pause scheduler by key range failed, ignore it and wait next time pause",
+						zap.Error(err))
 				}
 			case <-ctx.Done():
 				break loop

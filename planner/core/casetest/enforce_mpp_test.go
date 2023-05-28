@@ -549,3 +549,100 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
 }
+
+// Test null-aware semi join push down for MPP mode
+func TestMPPNullAwareSemiJoinPushDown(t *testing.T) {
+	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+
+	// test table
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("create table s(a int, b int, c int)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("alter table s set tiflash replica 1")
+
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tb = external.GetTableByName(t, tk, "test", "s")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	enforceMPPSuiteData := GetEnforceMPPSuiteData()
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+			tk.MustExec(tt)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
+func TestMPPSharedCTEScan(t *testing.T) {
+	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+
+	// test table
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("create table s(a int, b int, c int)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("alter table s set tiflash replica 1")
+
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tb = external.GetTableByName(t, tk, "test", "s")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+
+	tk.MustExec("set @@tidb_enforce_mpp='on'")
+	tk.MustExec("set @@tidb_opt_enable_mpp_shared_cte_execution='on'")
+
+	enforceMPPSuiteData := GetEnforceMPPSuiteData()
+	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}

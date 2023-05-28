@@ -8,6 +8,7 @@ go_test(
         "session_test.go",
     ],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//config",
@@ -32,6 +33,7 @@ go_test(
         "//testkit",
         "//testkit/testmain",
         "//testkit/testsetup",
+        "//testkit/testutil",
         "//types",
         "//util",
         "//util/memory",

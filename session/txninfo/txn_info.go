@@ -47,38 +47,48 @@ const (
 	TxnStateCounter
 )
 
-var txnDurationHistogramForState [][]prometheus.Observer = [][]prometheus.Observer{
-	{
-		metrics.TxnDurationHistogram.WithLabelValues("idle", "false"),
-		metrics.TxnDurationHistogram.WithLabelValues("idle", "true"),
-	},
-	{
-		metrics.TxnDurationHistogram.WithLabelValues("executing_sql", "false"),
-		metrics.TxnDurationHistogram.WithLabelValues("executing_sql", "true"),
-	},
-	{
-		metrics.TxnDurationHistogram.WithLabelValues("acquiring_lock", "false"),
-		metrics.TxnDurationHistogram.WithLabelValues("acquiring_lock", "true"),
-	},
-	{
-		metrics.TxnDurationHistogram.WithLabelValues("committing", "false"),
-		metrics.TxnDurationHistogram.WithLabelValues("committing", "true"),
-	},
-	{
-		metrics.TxnDurationHistogram.WithLabelValues("rolling_back", "false"),
-		metrics.TxnDurationHistogram.WithLabelValues("rolling_back", "true"),
-	},
-}
-
-var txnStatusEnteringCounterForState []prometheus.Counter = []prometheus.Counter{
-	metrics.TxnStatusEnteringCounter.WithLabelValues("idle"),
-	metrics.TxnStatusEnteringCounter.WithLabelValues("executing_sql"),
-	metrics.TxnStatusEnteringCounter.WithLabelValues("acquiring_lock"),
-	metrics.TxnStatusEnteringCounter.WithLabelValues("committing"),
-	metrics.TxnStatusEnteringCounter.WithLabelValues("rolling_back"),
-}
+var (
+	txnDurationHistogramForState     [][]prometheus.Observer
+	txnStatusEnteringCounterForState []prometheus.Counter
+)
 
 func init() {
+	InitMetricsVars()
+}
+
+// InitMetricsVars init transaction metrics vars.
+func InitMetricsVars() {
+	txnDurationHistogramForState = [][]prometheus.Observer{
+		{
+			metrics.TxnDurationHistogram.WithLabelValues("idle", "false"),
+			metrics.TxnDurationHistogram.WithLabelValues("idle", "true"),
+		},
+		{
+			metrics.TxnDurationHistogram.WithLabelValues("executing_sql", "false"),
+			metrics.TxnDurationHistogram.WithLabelValues("executing_sql", "true"),
+		},
+		{
+			metrics.TxnDurationHistogram.WithLabelValues("acquiring_lock", "false"),
+			metrics.TxnDurationHistogram.WithLabelValues("acquiring_lock", "true"),
+		},
+		{
+			metrics.TxnDurationHistogram.WithLabelValues("committing", "false"),
+			metrics.TxnDurationHistogram.WithLabelValues("committing", "true"),
+		},
+		{
+			metrics.TxnDurationHistogram.WithLabelValues("rolling_back", "false"),
+			metrics.TxnDurationHistogram.WithLabelValues("rolling_back", "true"),
+		},
+	}
+
+	txnStatusEnteringCounterForState = []prometheus.Counter{
+		metrics.TxnStatusEnteringCounter.WithLabelValues("idle"),
+		metrics.TxnStatusEnteringCounter.WithLabelValues("executing_sql"),
+		metrics.TxnStatusEnteringCounter.WithLabelValues("acquiring_lock"),
+		metrics.TxnStatusEnteringCounter.WithLabelValues("committing"),
+		metrics.TxnStatusEnteringCounter.WithLabelValues("rolling_back"),
+	}
+
 	if len(txnDurationHistogramForState) != int(TxnStateCounter) {
 		panic("len(txnDurationHistogramForState) != TxnStateCounter")
 	}
@@ -234,7 +244,7 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 		first := true
 		for tblID := range relatedTableIDs {
 			if !first {
-				str.Write([]byte(","))
+				str.WriteString(",")
 			} else {
 				first = false
 			}

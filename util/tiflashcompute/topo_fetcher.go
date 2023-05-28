@@ -117,6 +117,9 @@ func getAutoScalerType(typ string) int {
 func InitGlobalTopoFetcher(typ string, addr string, clusterID string, isFixedPool bool) (err error) {
 	logutil.BgLogger().Info("init globalTopoFetcher", zap.Any("type", typ), zap.Any("addr", addr),
 		zap.Any("clusterID", clusterID), zap.Any("isFixedPool", isFixedPool))
+	if clusterID == "" || addr == "" {
+		return errors.Errorf("ClusterID(%s) or AutoScaler(%s) addr is empty", clusterID, addr)
+	}
 
 	ft := getAutoScalerType(typ)
 	switch ft {

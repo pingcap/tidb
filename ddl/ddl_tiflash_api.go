@@ -24,7 +24,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -223,7 +224,7 @@ var (
 	// PollTiFlashBackoffMinTick is the min tick before we try to update TiFlash replica availability for one table.
 	PollTiFlashBackoffMinTick TiFlashTick = 1
 	// PollTiFlashBackoffCapacity is the cache size of backoff struct.
-	PollTiFlashBackoffCapacity int = 1000
+	PollTiFlashBackoffCapacity = 1000
 	// PollTiFlashBackoffRate is growth rate of exponential backoff threshold.
 	PollTiFlashBackoffRate TiFlashTick = 1.5
 	// RefreshProgressMaxTableCount is the max count of table to refresh progress after available each poll.
@@ -263,9 +264,8 @@ func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
 	if !ok {
 		return "", errors.New("Error json")
 	}
-	port := int(port64)
 
-	addr := fmt.Sprintf("%v:%v", host, port)
+	addr := net.JoinHostPort(host, strconv.FormatUint(uint64(port64), 10))
 	return addr, nil
 }
 
@@ -294,11 +294,11 @@ func LoadTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplic
 
 // UpdateTiFlashHTTPAddress report TiFlash's StatusAddress's port to Pd's etcd.
 func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
-	addrAndPort := strings.Split(store.Store.StatusAddress, ":")
-	if len(addrAndPort) < 2 {
-		return errors.New("Can't get TiFlash Address from PD")
+	host, _, err := net.SplitHostPort(store.Store.StatusAddress)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	httpAddr, err := getTiflashHTTPAddr(addrAndPort[0], store.Store.StatusAddress)
+	httpAddr, err := getTiflashHTTPAddr(host, store.Store.StatusAddress)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -584,7 +584,7 @@ func (d *ddl) PollTiFlashRoutine() {
 				}
 			}
 
-			sctx, err := d.sessPool.get()
+			sctx, err := d.sessPool.Get()
 			if err == nil {
 				if d.ownerManager.IsOwner() {
 					err := d.refreshTiFlashTicker(sctx, pollTiflashContext)
@@ -599,10 +599,10 @@ func (d *ddl) PollTiFlashRoutine() {
 				} else {
 					infosync.CleanTiFlashProgressCache()
 				}
-				d.sessPool.put(sctx)
+				d.sessPool.Put(sctx)
 			} else {
 				if sctx != nil {
-					d.sessPool.put(sctx)
+					d.sessPool.Put(sctx)
 				}
 				logutil.BgLogger().Error("failed to get session for pollTiFlashReplicaStatus", zap.Error(err))
 			}

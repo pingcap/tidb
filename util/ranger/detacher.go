@@ -589,7 +589,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		if len(points[offset]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
-				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: some parameters may be overwritten"))
+				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("some parameters may be overwritten"))
 			}
 			return nil, nil, nil, nil, true
 		}
@@ -613,7 +613,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		} else if len(points[i]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
-				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: some parameters may be overwritten"))
+				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("some parameters may be overwritten"))
 			}
 			return nil, nil, nil, nil, true
 		} else {
@@ -627,7 +627,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			}
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
 				// `a=@x and a=@y` --> `a=@x if @x==@y`
-				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: some parameters may be overwritten"))
+				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("some parameters may be overwritten"))
 			}
 		}
 	}

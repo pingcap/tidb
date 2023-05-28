@@ -160,6 +160,12 @@ type TableWithRange struct {
 	Range []rtree.Range
 }
 
+type TableIDWithFiles struct {
+	TableID int64
+
+	Files []*backuppb.File
+}
+
 // Exhaust drains all remaining errors in the channel, into a slice of errors.
 func Exhaust(ec <-chan error) []error {
 	out := make([]error, 0, len(ec))
@@ -198,7 +204,7 @@ type TiKVRestorer interface {
 		isRawKv bool) error
 	// RestoreSSTFiles import the files to the TiKV.
 	RestoreSSTFiles(ctx context.Context,
-		files []*backuppb.File,
+		tableIDWithFiles []TableIDWithFiles,
 		rewriteRules *RewriteRules,
 		updateCh glue.Progress) error
 }
@@ -381,7 +387,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 			eg.Go(func() error {
 				e := b.client.RestoreSSTFiles(ectx, files, r.result.RewriteRules, b.updateCh)
 				if e != nil {
-					log.Error("restore batch meet error", logutil.ShortError(e), logutil.Files(files))
+					log.Error("restore batch meet error", logutil.ShortError(e), zapTableIDWithFiles(files))
 					r.done()
 					return e
 				}

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -43,9 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
-
-var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
-var planCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("cache_miss")
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
@@ -126,6 +122,20 @@ type ChecksumTable struct {
 
 // CancelDDLJobs represents a cancel DDL jobs plan.
 type CancelDDLJobs struct {
+	baseSchemaProducer
+
+	JobIDs []int64
+}
+
+// PauseDDLJobs indicates a plan to pause the Running DDL Jobs.
+type PauseDDLJobs struct {
+	baseSchemaProducer
+
+	JobIDs []int64
+}
+
+// ResumeDDLJobs indicates a plan to resume the Paused DDL Jobs.
+type ResumeDDLJobs struct {
 	baseSchemaProducer
 
 	JobIDs []int64
@@ -554,18 +564,40 @@ type LoadData struct {
 	FileLocRef  ast.FileLocRefTp
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
-	Format      string
+	Format      *string
 	Table       *ast.TableName
+	Charset     *string
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
-	NullInfo    *ast.NullDefinedBy
-	IgnoreLines uint64
+	IgnoreLines *uint64
 
 	ColumnAssignments  []*ast.Assignment
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	Options            []*LoadDataOpt
 
 	GenCols InsertGeneratedColumns
+}
+
+// LoadDataOpt represents load data option.
+type LoadDataOpt struct {
+	Name  string
+	Value expression.Expression
+}
+
+// ImportInto represents a ingest into plan.
+type ImportInto struct {
+	baseSchemaProducer
+
+	Table              *ast.TableName
+	ColumnAssignments  []*ast.Assignment
+	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	Path               string
+	Format             *string
+	Options            []*LoadDataOpt
+
+	GenCols InsertGeneratedColumns
+	Stmt    string
 }
 
 // LoadStats represents a load stats plan.
@@ -587,13 +619,6 @@ type UnlockStats struct {
 	baseSchemaProducer
 
 	Tables []*ast.TableName
-}
-
-// PlanChangeCapture represents a plan change capture stmt
-type PlanChangeCapture struct {
-	baseSchemaProducer
-	Begin string
-	End   string
 }
 
 // PlanReplayer represents a plan replayer plan.
@@ -618,7 +643,7 @@ type IndexAdvise struct {
 	Path        string
 	MaxMinutes  uint64
 	MaxIndexNum *ast.MaxIndexNumClause
-	LinesInfo   *ast.LinesClause
+	LineFieldsInfo
 }
 
 // SplitRegion represents a split regions plan.
@@ -664,6 +689,51 @@ type SelectInto struct {
 
 	TargetPlan Plan
 	IntoOpt    *ast.SelectIntoOption
+	LineFieldsInfo
+}
+
+// LineFieldsInfo used in load-data/select-into/index-advise stmt.
+type LineFieldsInfo struct {
+	FieldsTerminatedBy string
+	FieldsEnclosedBy   string // length always <= 1, see parser.y
+	FieldsEscapedBy    string // length always <= 1, see parser.y
+	FieldsOptEnclosed  bool
+	LinesStartingBy    string
+	LinesTerminatedBy  string
+}
+
+// NewLineFieldsInfo new LineFieldsInfo from FIELDS/LINES info.
+func NewLineFieldsInfo(fieldsInfo *ast.FieldsClause, linesInfo *ast.LinesClause) LineFieldsInfo {
+	e := LineFieldsInfo{
+		FieldsTerminatedBy: "\t",
+		FieldsEnclosedBy:   "",
+		FieldsEscapedBy:    "\\",
+		FieldsOptEnclosed:  false,
+		LinesStartingBy:    "",
+		LinesTerminatedBy:  "\n",
+	}
+
+	if fieldsInfo != nil {
+		if fieldsInfo.Terminated != nil {
+			e.FieldsTerminatedBy = *fieldsInfo.Terminated
+		}
+		if fieldsInfo.Enclosed != nil {
+			e.FieldsEnclosedBy = *fieldsInfo.Enclosed
+		}
+		if fieldsInfo.Escaped != nil {
+			e.FieldsEscapedBy = *fieldsInfo.Escaped
+		}
+		e.FieldsOptEnclosed = fieldsInfo.OptEnclosed
+	}
+	if linesInfo != nil {
+		if linesInfo.Starting != nil {
+			e.LinesStartingBy = *linesInfo.Starting
+		}
+		if linesInfo.Terminated != nil {
+			e.LinesTerminatedBy = *linesInfo.Terminated
+		}
+	}
+	return e
 }
 
 // ExplainInfoForEncode store explain info for JSON encode
@@ -744,7 +814,7 @@ func (e *Explain) prepareSchema() error {
 		e.Format = types.ExplainFormatROW
 	}
 	switch {
-	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief) && (!e.Analyze && e.RuntimeStatsColl == nil):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose:
 		if e.Analyze || e.RuntimeStatsColl != nil {
@@ -760,7 +830,7 @@ func (e *Explain) prepareSchema() error {
 		} else {
 			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "task", "access object", "operator info"}
 		}
-	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief) && (e.Analyze || e.RuntimeStatsColl != nil):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
@@ -842,7 +912,7 @@ func (e *Explain) RenderResult() error {
 	}
 
 	switch strings.ToLower(e.Format) {
-	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace:
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
 		if e.Rows == nil || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
 			e.explainFlatPlanInRowFormat(flat)
@@ -1328,7 +1398,10 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx), nil
 	case *PhysicalTableReader:
-		tableScan := v.TablePlans[0].(*PhysicalTableScan)
+		tableScan, ok := v.TablePlans[0].(*PhysicalTableScan)
+		if !ok {
+			return false, nil
+		}
 		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPointNonNullable(ctx)
 		if !isPointRange {
 			return false, nil

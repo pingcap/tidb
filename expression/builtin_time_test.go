@@ -1321,7 +1321,7 @@ func TestCurrentDate(t *testing.T) {
 
 func TestCurrentTime(t *testing.T) {
 	ctx := createContext(t)
-	tfStr := "15:04:05"
+	tfStr := time.TimeOnly
 
 	last := time.Now()
 	fc := funcs[ast.CurrentTime]
@@ -1487,10 +1487,10 @@ func TestStrToDate(t *testing.T) {
 func TestFromDays(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 	tests := []struct {
 		day    int64
@@ -1768,7 +1768,7 @@ func TestTimestampDiff(t *testing.T) {
 		require.Equal(t, test.expect, d.GetInt64())
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	sc.IgnoreZeroInDate = true
 	resetStmtContext(ctx)
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
@@ -2661,10 +2661,10 @@ func TestTimeToSec(t *testing.T) {
 func TestSecToTime(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 
 	fc := funcs[ast.SecToTime]

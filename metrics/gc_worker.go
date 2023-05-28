@@ -21,7 +21,18 @@ import (
 
 // Metrics for the GC worker.
 var (
-	GCWorkerCounter = prometheus.NewCounterVec(
+	GCWorkerCounter                        *prometheus.CounterVec
+	GCHistogram                            *prometheus.HistogramVec
+	GCConfigGauge                          *prometheus.GaugeVec
+	GCJobFailureCounter                    *prometheus.CounterVec
+	GCActionRegionResultCounter            *prometheus.CounterVec
+	GCRegionTooManyLocksCounter            prometheus.Counter
+	GCUnsafeDestroyRangeFailuresCounterVec *prometheus.CounterVec
+)
+
+// InitGCWorkerMetrics initializes GC worker metrics.
+func InitGCWorkerMetrics() {
+	GCWorkerCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -29,7 +40,7 @@ var (
 			Help:      "Counter of gc worker actions.",
 		}, []string{"type"})
 
-	GCHistogram = prometheus.NewHistogramVec(
+	GCHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -38,7 +49,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 20), // 1s ~ 6days
 		}, []string{"stage"})
 
-	GCConfigGauge = prometheus.NewGaugeVec(
+	GCConfigGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -46,7 +57,7 @@ var (
 			Help:      "Gauge of GC configs.",
 		}, []string{"type"})
 
-	GCJobFailureCounter = prometheus.NewCounterVec(
+	GCJobFailureCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -54,7 +65,7 @@ var (
 			Help:      "Counter of gc job failure.",
 		}, []string{"type"})
 
-	GCActionRegionResultCounter = prometheus.NewCounterVec(
+	GCActionRegionResultCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -62,16 +73,14 @@ var (
 			Help:      "Counter of gc action result on region level.",
 		}, []string{"type"})
 
-	GCRegionTooManyLocksCounter = prometheus.NewCounter(
+	GCRegionTooManyLocksCounter = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "gc_region_too_many_locks",
 			Help:      "Counter of gc scan lock request more than once in the same region.",
 		})
-
-	GCUnsafeDestroyRangeFailuresCounterVec *prometheus.CounterVec
-)
+}
 
 func init() {
 	GCUnsafeDestroyRangeFailuresCounterVec = metrics.TiKVUnsafeDestroyRangeFailuresCounterVec

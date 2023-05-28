@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 
 	"github.com/gogo/protobuf/proto"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/util/zeropool"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -285,23 +285,19 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 
 var (
 	defaultChunkSize = 1024
-	selPool          = sync.Pool{
-		New: func() interface{} {
-			return make([]int, defaultChunkSize)
-		},
-	}
-	zeroPool = sync.Pool{
-		New: func() interface{} {
-			return make([]int8, defaultChunkSize)
-		},
-	}
+	selPool          = zeropool.New[[]int](func() []int {
+		return make([]int, defaultChunkSize)
+	})
+	zeroPool = zeropool.New[[]int8](func() []int8 {
+		return make([]int8, defaultChunkSize)
+	})
 )
 
 func allocSelSlice(n int) []int {
 	if n > defaultChunkSize {
 		return make([]int, n)
 	}
-	return selPool.Get().([]int)
+	return selPool.Get()
 }
 
 func deallocateSelSlice(sel []int) {
@@ -314,7 +310,7 @@ func allocZeroSlice(n int) []int8 {
 	if n > defaultChunkSize {
 		return make([]int8, n)
 	}
-	return zeroPool.Get().([]int8)
+	return zeroPool.Get()
 }
 
 func deallocateZeroSlice(isZero []int8) {
@@ -816,7 +812,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: %v affects null check"))
+		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("%v affects null check"))
 	}
 	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
@@ -983,11 +979,11 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	// Resolve virtual generated column.
 	mockSchema := NewSchema(columns...)
 	// Ignore redundant warning here.
-	save := ctx.GetSessionVars().StmtCtx.IgnoreTruncate
+	save := ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Load()
 	defer func() {
-		ctx.GetSessionVars().StmtCtx.IgnoreTruncate = save
+		ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(save)
 	}()
-	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
 	for i, col := range colInfos {
 		if col.IsGenerated() && !col.GeneratedStored {
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
@@ -1139,7 +1135,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case
 		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or, ast.RightShift, ast.LeftShift,
-		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Strcmp,
+		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Ilike, ast.Strcmp,
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
 		ast.If, ast.Ifnull, ast.Case,
 		ast.Concat, ast.ConcatWS,
@@ -1346,9 +1342,14 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 // DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
 var DefaultExprPushDownBlacklist *atomic.Value
 
+// ExprPushDownBlackListReloadTimeStamp is used to record the last time when the push-down black list is reloaded.
+// This is for plan cache, when the push-down black list is updated, we invalid all cached plans to avoid error.
+var ExprPushDownBlackListReloadTimeStamp *atomic.Int64
+
 func init() {
 	DefaultExprPushDownBlacklist = new(atomic.Value)
 	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
+	ExprPushDownBlackListReloadTimeStamp = new(atomic.Int64)
 }
 
 func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {

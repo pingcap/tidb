@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
@@ -234,8 +235,8 @@ func TestAutoCommitRespectsReadOnly(t *testing.T) {
 	var wg sync.WaitGroup
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
-	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk1.MustExec("create table test.auto_commit_test (a int)")
 	wg.Add(1)
@@ -849,11 +850,11 @@ func TestSkipWithGrant(t *testing.T) {
 	save2 := privileges.SkipWithGrant
 
 	privileges.SkipWithGrant = false
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz")))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz"), nil))
 
 	privileges.SkipWithGrant = true
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: `%`}, []byte("yyy"), []byte("zzz")))
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, []byte(""), []byte("")))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: `%`}, []byte("yyy"), []byte("zzz"), nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, []byte(""), []byte(""), nil))
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("create role r_1")
@@ -1232,7 +1233,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		err := tk.QueryToErr(sql)
 		require.Error(t, err)
-		require.Regexp(t, "Out Of Memory Quota.*", err)
+		require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err)
 	}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockWaitMax", `return(true)`))
@@ -1279,7 +1280,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
 		err = tk.QueryToErr(testcase.sql)
 		require.Error(t, err)
-		require.Regexp(t, "Out Of Memory Quota.*", err)
+		require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err)
 		se.Close()
 	}
 }
@@ -1715,14 +1716,14 @@ func TestGrantViewRelated(t *testing.T) {
 	tkRoot.MustExec("use test")
 	tkUser.MustExec("use test")
 
-	tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	tkRoot.MustExec("create table if not exists t (a int)")
 	tkRoot.MustExec("create view v_version29 as select * from t")
 	tkRoot.MustExec("create user 'u_version29'@'%'")
 	tkRoot.MustExec("grant select on t to u_version29@'%'")
 
-	tkUser.Session().Auth(&auth.UserIdentity{Username: "u_version29", Hostname: "localhost", CurrentUser: true, AuthUsername: "u_version29", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tkUser.Session().Auth(&auth.UserIdentity{Username: "u_version29", Hostname: "localhost", CurrentUser: true, AuthUsername: "u_version29", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
 	require.Error(t, tkUser.ExecToErr("select * from test.v_version29;"))
@@ -1796,7 +1797,7 @@ func TestUpdatePrivilege(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"}, []byte(""), []byte("")))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"}, []byte(""), []byte(""), nil))
 
 	tk1.MustMatchErrMsg("update t2 set id = 666 where id = 1;", "privilege check.*")
 
@@ -1810,7 +1811,7 @@ func TestUpdatePrivilege(t *testing.T) {
 	tk.MustExec("create table tb_wehub_server (id int, active_count int, used_count int)")
 	tk.MustExec("create user 'weperk'")
 	tk.MustExec("grant all privileges on weperk.* to 'weperk'@'%'")
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "weperk", Hostname: "%"}, []byte(""), []byte("")))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "weperk", Hostname: "%"}, []byte(""), []byte(""), nil))
 	tk1.MustExec("use weperk")
 	tk1.MustExec("update tb_wehub_server a set a.active_count=a.active_count+1,a.used_count=a.used_count+1 where id=1")
 
@@ -1846,7 +1847,7 @@ and s.b !='xx';`)
 	tk.MustExec("insert into tp.record (id,name,age) values (1,'john',18),(2,'lary',19),(3,'lily',18)")
 	tk.MustExec("create table ap.record( id int,name varchar(128),age int)")
 	tk.MustExec("insert into ap.record(id) values(1)")
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"}, []byte(""), []byte("")))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"}, []byte(""), []byte(""), nil))
 	tk1.MustExec("update ap.record t inner join tp.record tt on t.id=tt.id  set t.name=tt.name")
 }
 
@@ -1983,11 +1984,11 @@ func TestCastTimeToDate(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set time_zone = '-8:00'")
 	date := time.Now().In(time.FixedZone("", -8*int(time.Hour/time.Second)))
-	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format("2006-01-02")))
+	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format(time.DateOnly)))
 
 	tk.MustExec("set time_zone = '+08:00'")
 	date = time.Now().In(time.FixedZone("", 8*int(time.Hour/time.Second)))
-	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format("2006-01-02")))
+	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format(time.DateOnly)))
 }
 
 func TestSetGlobalTZ(t *testing.T) {
@@ -3436,7 +3437,7 @@ func TestSessionAuth(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")))
+	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte(""), nil))
 }
 
 func TestLastInsertID(t *testing.T) {
@@ -3535,4 +3536,69 @@ func TestIndexMergeRuntimeStats(t *testing.T) {
 	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableExplain)
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a").Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
+}
+
+func TestHandleAssertionFailureForPartitionedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	se.SetConnectionID(1)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a, b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+	failpoint.Enable("github.com/pingcap/tidb/table/tables/addRecordForceAssertExist", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb/table/tables/addRecordForceAssertExist")
+
+	ctx, hook := testutil.WithLogHook(context.TODO(), t, "table")
+	_, err := tk.ExecWithContext(ctx, "insert into t values (1, 1, 1)")
+	require.ErrorContains(t, err, "assertion")
+	hook.CheckLogCount(t, 0)
+}
+
+func TestRandomBinary(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	allBytes := [][]byte{
+		{4, 0, 0, 0, 0, 0, 0, 4, '2'},
+		{4, 0, 0, 0, 0, 0, 0, 4, '.'},
+		{4, 0, 0, 0, 0, 0, 0, 4, '*'},
+		{4, 0, 0, 0, 0, 0, 0, 4, '('},
+		{4, 0, 0, 0, 0, 0, 0, 4, '\''},
+		{4, 0, 0, 0, 0, 0, 0, 4, '!'},
+		{4, 0, 0, 0, 0, 0, 0, 4, 29},
+		{4, 0, 0, 0, 0, 0, 0, 4, 28},
+		{4, 0, 0, 0, 0, 0, 0, 4, 23},
+		{4, 0, 0, 0, 0, 0, 0, 4, 16},
+	}
+	sql := "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values "
+	var val string
+	for i, bytes := range allBytes {
+		if i == 0 {
+			val += sqlexec.MustEscapeSQL("(874, 0, 1, %?, 3)", bytes)
+		} else {
+			val += sqlexec.MustEscapeSQL(",(874, 0, 1, %?, 3)", bytes)
+		}
+	}
+	sql += val
+	tk.MustExec("set sql_mode = 'NO_BACKSLASH_ESCAPES';")
+	_, err := tk.Session().ExecuteInternal(ctx, sql)
+	require.NoError(t, err)
+}
+
+func TestSQLModeOp(t *testing.T) {
+	s := mysql.ModeNoBackslashEscapes | mysql.ModeOnlyFullGroupBy
+	d := mysql.DelSQLMode(s, mysql.ModeANSIQuotes)
+	require.Equal(t, s, d)
+
+	d = mysql.DelSQLMode(s, mysql.ModeNoBackslashEscapes)
+	require.Equal(t, mysql.ModeOnlyFullGroupBy, d)
+
+	s = mysql.ModeNoBackslashEscapes | mysql.ModeOnlyFullGroupBy
+	a := mysql.SetSQLMode(s, mysql.ModeOnlyFullGroupBy)
+	require.Equal(t, s, a)
+
+	a = mysql.SetSQLMode(s, mysql.ModeAllowInvalidDates)
+	require.Equal(t, mysql.ModeNoBackslashEscapes|mysql.ModeOnlyFullGroupBy|mysql.ModeAllowInvalidDates, a)
 }

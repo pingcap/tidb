@@ -114,15 +114,20 @@ func TestResourceGroup(t *testing.T) {
 
 	// test the independent policy ID allocation.
 	m := meta.NewMeta(txn)
+	groups, err := m.ListResourceGroups()
+	require.NoError(t, err)
+	require.Equal(t, len(groups), 1)
+	require.Equal(t, groups[0], meta.DefaultGroupMeta4Test())
 
+	groupID := int64(2)
 	checkResourceGroup := func(ru uint64) {
-		rg, err := m.GetResourceGroup(1)
+		rg, err := m.GetResourceGroup(groupID)
 		require.NoError(t, err)
 		require.Equal(t, rg.RURate, ru)
 	}
 
 	rg := &model.ResourceGroupInfo{
-		ID:   1,
+		ID:   groupID,
 		Name: model.NewCIStr("aa"),
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate: 100,
@@ -131,12 +136,16 @@ func TestResourceGroup(t *testing.T) {
 	require.NoError(t, m.AddResourceGroup(rg))
 	checkResourceGroup(100)
 
+	groups, err = m.ListResourceGroups()
+	require.NoError(t, err)
+	require.Equal(t, len(groups), 2)
+
 	rg.RURate = 200
 	require.NoError(t, m.UpdateResourceGroup(rg))
 	checkResourceGroup(200)
 
-	m.DropResourceGroup(1)
-	_, err = m.GetResourceGroup(1)
+	m.DropResourceGroup(groupID)
+	_, err = m.GetResourceGroup(groupID)
 	require.Error(t, err)
 }
 
@@ -309,6 +318,20 @@ func TestMeta(t *testing.T) {
 	tables, err := m.ListTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo, tbInfo2}, tables)
+	{
+		idx := 0
+		err := m.IterTables(1, func(info *model.TableInfo) error {
+			require.Less(t, idx, 2)
+			if idx == 0 {
+				require.Equal(t, tbInfo, info)
+				idx += 1
+			} else {
+				require.Equal(t, tbInfo2, info)
+			}
+			return nil
+		})
+		require.NoError(t, err)
+	}
 	// Generate an auto id.
 	n, err = m.GetAutoIDAccessors(1, 2).RowID().Inc(10)
 	require.NoError(t, err)
@@ -330,7 +353,16 @@ func TestMeta(t *testing.T) {
 	tables, err = m.ListTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo}, tables)
-
+	{
+		idx := 0
+		err := m.IterTables(1, func(info *model.TableInfo) error {
+			require.Less(t, idx, 1)
+			require.Equal(t, tbInfo, info)
+			idx += 1
+			return nil
+		})
+		require.NoError(t, err)
+	}
 	// Test case for drop a table without delete auto id key-value entry.
 	tid := int64(100)
 	tbInfo100 := &model.TableInfo{

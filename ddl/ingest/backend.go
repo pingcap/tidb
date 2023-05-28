@@ -16,34 +16,104 @@ package ingest
 
 import (
 	"context"
+	"fmt"
+	"time"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tikv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
-// BackendContext store a backend info for add index reorg task.
-type BackendContext struct {
+// BackendCtx is the backend context for add index reorg task.
+type BackendCtx interface {
+	Register(jobID, indexID int64, schemaName, tableName string) (Engine, error)
+	Unregister(jobID, indexID int64)
+
+	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
+	FinishImport(indexID int64, unique bool, tbl table.Table) error
+	ResetWorkers(jobID, indexID int64)
+	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
+	Done() bool
+	SetDone()
+
+	AttachCheckpointManager(*CheckpointManager)
+	GetCheckpointManager() *CheckpointManager
+}
+
+// FlushMode is used to control how to flush.
+type FlushMode byte
+
+const (
+	// FlushModeAuto means flush when the memory table size reaches the threshold.
+	FlushModeAuto FlushMode = iota
+	// FlushModeForceLocal means flush all data to local storage.
+	FlushModeForceLocal
+	// FlushModeForceLocalAndCheckDiskQuota means flush all data to local storage and check disk quota.
+	FlushModeForceLocalAndCheckDiskQuota
+	// FlushModeForceGlobal means import all data in local storage to global storage.
+	FlushModeForceGlobal
+)
+
+// litBackendCtx store a backend info for add index reorg task.
+type litBackendCtx struct {
+	generic.SyncMap[int64, *engineInfo]
+	MemRoot  MemRoot
+	DiskRoot DiskRoot
 	jobID    int64
-	backend  *backend.Backend
+	backend  *local.Backend
 	ctx      context.Context
 	cfg      *lightning.Config
-	EngMgr   engineManager
 	sysVars  map[string]string
 	diskRoot DiskRoot
 	done     bool
+
+	timeOfLastFlush atomicutil.Time
+	updateInterval  time.Duration
+	checkpointMgr   *CheckpointManager
+	etcdClient      *clientv3.Client
+}
+
+// CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
+func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
+	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.BgLogger()})
+	// backend must be a local backend.
+	// todo: when we can separate local backend completely from tidb backend, will remove this cast.
+	//nolint:forcetypeassert
+	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
+	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+		SysVars: bc.sysVars,
+		IndexID: indexID,
+	})
+	if err != nil {
+		logutil.BgLogger().Error(LitInfoRemoteDupCheck, zap.Error(err),
+			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
+		return err
+	} else if hasDupe {
+		logutil.BgLogger().Error(LitErrRemoteDupExistErr,
+			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
+		return tikv.ErrKeyExists
+	}
+	return nil
 }
 
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
 // removes the engine from the backend context.
-func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Table) error {
-	ei, exist := bc.EngMgr.Load(indexID)
+func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Table) error {
+	ei, exist := bc.Load(indexID)
 	if !exist {
 		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
@@ -53,9 +123,18 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 		return err
 	}
 
+	failpoint.Inject("mockFinishImportErr", func() {
+		failpoint.Return(fmt.Errorf("mock finish import error"))
+	})
+
 	// Check remote duplicate value for the index.
 	if unique {
-		hasDupe, err := bc.backend.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &kv.SessionOptions{
+		errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.BgLogger()})
+		// backend must be a local backend.
+		// todo: when we can separate local backend completely from tidb backend, will remove this cast.
+		//nolint:forcetypeassert
+		dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
+		hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: bc.sysVars,
 			IndexID: ei.indexID,
@@ -73,49 +152,112 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 	return nil
 }
 
-const importThreshold = 0.85
+func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {
+	mu := concurrency.NewMutex(se, key)
+	err := mu.Lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return mu, nil
+}
 
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
-func (bc *BackendContext) Flush(indexID int64) error {
-	ei, exist := bc.EngMgr.Load(indexID)
+func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error) {
+	ei, exist := bc.Load(indexID)
 	if !exist {
 		logutil.BgLogger().Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
-		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
+		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
-	err := bc.diskRoot.UpdateUsageAndQuota()
+	shouldFlush, shouldImport := bc.ShouldSync(mode)
+	if !shouldFlush {
+		return false, false, nil
+	}
+	if !ei.flushing.CompareAndSwap(false, true) {
+		return false, false, nil
+	}
+	defer ei.flushing.Store(false)
+	ei.flushLock.Lock()
+	defer ei.flushLock.Unlock()
+
+	err = ei.Flush()
 	if err != nil {
-		logutil.BgLogger().Error(LitErrUpdateDiskStats, zap.Int64("index ID", indexID))
-		return err
+		return false, false, err
+	}
+	bc.timeOfLastFlush.Store(time.Now())
+
+	if !shouldImport {
+		return true, false, nil
 	}
 
-	if bc.diskRoot.CurrentUsage() >= uint64(importThreshold*float64(bc.diskRoot.MaxQuota())) {
-		// TODO: it should be changed according checkpoint solution.
-		// Flush writer cached data into local disk for engine first.
-		err := ei.Flush()
+	// Use distributed lock if run in distributed mode).
+	if bc.etcdClient != nil {
+		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
+		se, _ := concurrency.NewSession(bc.etcdClient)
+		mu, err := acquireLock(bc.ctx, se, distLockKey)
 		if err != nil {
-			return err
+			return true, false, err
 		}
-		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
-			zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),
-			zap.Uint64("max disk quota", bc.diskRoot.MaxQuota()))
-		err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
-		if err != nil {
-			logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
-				zap.Error(err), zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),
-				zap.Uint64("max disk quota", bc.diskRoot.MaxQuota()))
-			return err
-		}
+		logutil.BgLogger().Info("[ddl] acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
+		defer func() {
+			err = mu.Unlock(bc.ctx)
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl] release distributed flush lock error", zap.Error(err), zap.Int64("jobID", bc.jobID))
+			} else {
+				logutil.BgLogger().Info("[ddl] release distributed flush lock success", zap.Int64("jobID", bc.jobID))
+			}
+			err = se.Close()
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl] close session error", zap.Error(err))
+			}
+		}()
 	}
-	return nil
+
+	logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
+		zap.String("usage info", bc.diskRoot.UsageInfo()))
+	err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
+	if err != nil {
+		logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
+			zap.String("usage info", bc.diskRoot.UsageInfo()))
+		return true, false, err
+	}
+	return true, true, nil
+}
+
+func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImport bool) {
+	if mode == FlushModeForceGlobal {
+		return true, true
+	}
+	if mode == FlushModeForceLocal {
+		return true, false
+	}
+	bc.diskRoot.UpdateUsage()
+	shouldImport = bc.diskRoot.ShouldImport()
+	if mode == FlushModeForceLocalAndCheckDiskQuota {
+		shouldFlush = true
+	} else {
+		shouldFlush = shouldImport ||
+			time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
+	}
+	return shouldFlush, shouldImport
 }
 
 // Done returns true if the lightning backfill is done.
-func (bc *BackendContext) Done() bool {
+func (bc *litBackendCtx) Done() bool {
 	return bc.done
 }
 
 // SetDone sets the done flag.
-func (bc *BackendContext) SetDone() {
+func (bc *litBackendCtx) SetDone() {
 	bc.done = true
+}
+
+// AttachCheckpointManager attaches a checkpoint manager to the backend context.
+func (bc *litBackendCtx) AttachCheckpointManager(mgr *CheckpointManager) {
+	bc.checkpointMgr = mgr
+}
+
+// GetCheckpointManager returns the checkpoint manager attached to the backend context.
+func (bc *litBackendCtx) GetCheckpointManager() *CheckpointManager {
+	return bc.checkpointMgr
 }

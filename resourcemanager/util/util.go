@@ -25,17 +25,18 @@ var (
 	MinSchedulerInterval = atomic.NewDuration(200 * time.Millisecond)
 
 	// MaxOverclockCount is the maximum number of overclock goroutine.
-	MaxOverclockCount = 1
+	MaxOverclockCount = int32(1)
 )
 
 // GoroutinePool is a pool interface
 type GoroutinePool interface {
 	ReleaseAndWait()
-	Tune(size int)
+	Tune(size int32)
 	LastTunerTs() time.Time
-	Cap() int
-	Running() int
+	Cap() int32
+	Running() int32
 	Name() string
+	GetOriginConcurrency() int32
 }
 
 // PoolContainer is a pool container
@@ -52,4 +53,6 @@ const (
 	UNKNOWN Component = iota
 	// DDL is for ddl component
 	DDL
+	// DistTask is for disttask component.
+	DistTask
 )

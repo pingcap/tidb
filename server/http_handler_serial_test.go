@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
@@ -554,6 +555,7 @@ func TestGetSchemaStorage(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int, e char(5), index idx(e))")
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
+	time.Sleep(5 * time.Second)
 	h.FlushStats()
 
 	resp, err := ts.fetchStatus("/schema_storage/test")
@@ -632,8 +634,8 @@ func TestTTL(t *testing.T) {
 		require.Fail(t, "timeout for waiting job finished")
 	}
 
-	doTrigger := func() (map[string]interface{}, error) {
-		resp, err := ts.postStatus("/test/ttl/trigger/test_ttl/t1", "application/json", nil)
+	doTrigger := func(db, tb string) (map[string]interface{}, error) {
+		resp, err := ts.postStatus(fmt.Sprintf("/test/ttl/trigger/%s/%s", db, tb), "application/json", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -645,19 +647,23 @@ func TestTTL(t *testing.T) {
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
 
+		if resp.StatusCode != 200 {
+			return nil, errors.Errorf("http status: %s, %s", resp.Status, body)
+		}
+
 		var obj map[string]interface{}
 		require.NoError(t, json.Unmarshal(body, &obj))
 		return obj, nil
 	}
 
 	expectedJobCnt := 1
-	obj, err := doTrigger()
+	obj, err := doTrigger("test_ttl", "t1")
 	require.NoError(t, err)
 	if err != nil {
 		// if error returns, may be a job is running, we should skip it and have a next try when it stopped
 		require.Equal(t, expectedJobCnt, getJobCnt(""))
 		waitAllJobsFinish()
-		obj, err = doTrigger()
+		obj, err = doTrigger("test_ttl", "t1")
 		require.NoError(t, err)
 		expectedJobCnt++
 	}
@@ -665,4 +671,9 @@ func TestTTL(t *testing.T) {
 	_, ok := obj["table_result"]
 	require.True(t, ok)
 	require.Equal(t, expectedJobCnt, getJobCnt(""))
+
+	// error case, table not exist
+	obj, err = doTrigger("test_ttl", "t2")
+	require.Nil(t, obj)
+	require.EqualError(t, err, "http status: 400 Bad Request, table test_ttl.t2 not exists")
 }

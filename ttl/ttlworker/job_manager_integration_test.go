@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -112,7 +113,7 @@ func TestParallelLockNewJob(t *testing.T) {
 }
 
 func TestFinishJob(t *testing.T) {
-	timeFormat := "2006-01-02 15:04:05"
+	timeFormat := time.DateTime
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
@@ -657,8 +658,133 @@ func TestJobMetrics(t *testing.T) {
 	require.Equal(t, "manager-1", tableStatus.CurrentJobOwnerID)
 	require.Equal(t, cache.JobStatusRunning, tableStatus.CurrentJobStatus)
 
-	m.ReportMetrics()
+	m.ReportMetrics(se)
 	out := &dto.Metric{}
 	require.NoError(t, metrics.RunningJobsCnt.Write(out))
 	require.Equal(t, float64(1), out.GetGauge().GetValue())
+}
+
+func TestDelayMetrics(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	// disable ttl job to make test stable
+	tk.MustExec("set @@global.tidb_ttl_job_enable=0")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(t timestamp) TTL=`t`+interval 1 day TTL_JOB_INTERVAL='1h'")
+	tk.MustExec("create table t2(t timestamp) TTL=`t`+interval 1 day TTL_JOB_INTERVAL='1h'")
+	tk.MustExec("create table t3(t timestamp) TTL=`t`+interval 1 day TTL_JOB_INTERVAL='1h'")
+	tk.MustExec("create table t4(t timestamp) TTL=`t`+interval 1 day TTL_JOB_INTERVAL='2h'")
+	tk.MustExec("create table t5(t timestamp) TTL=`t`+interval 1 day TTL_JOB_INTERVAL='2h'")
+	tk.MustExec("create table tx(t timestamp)")
+	rows := tk.MustQuery("select table_name, tidb_table_id, cast(unix_timestamp(create_time) as signed) from information_schema.tables where TABLE_SCHEMA='test'").Rows()
+	tableInfos := make(map[string]struct {
+		id         int64
+		createTime time.Time
+	})
+	for _, row := range rows {
+		name := row[0].(string)
+		id, err := strconv.ParseInt(row[1].(string), 10, 64)
+		require.NoError(t, err)
+		ts, err := strconv.ParseInt(row[2].(string), 10, 64)
+		require.NoError(t, err)
+		tableInfos[name] = struct {
+			id         int64
+			createTime time.Time
+		}{id: id, createTime: time.Unix(ts, 0)}
+	}
+
+	now := time.Unix(time.Now().Add(time.Minute).Unix(), 0)
+
+	insertHistory := func(tblName string, jobStart time.Time, running bool, err bool) {
+		tblInfo, ok := tableInfos[tblName]
+		require.True(t, ok)
+		status := "finished"
+		if running {
+			status = "running"
+		}
+
+		summaryText := `{"total_rows":100,"success_rows":100,"error_rows":0,"total_scan_task":1,"scheduled_scan_task":1,"finished_scan_task":1}`
+		if err {
+			summaryText = `{"scan_task_err": "err1", "total_rows":100,"success_rows":100,"error_rows":0,"total_scan_task":1,"scheduled_scan_task":1,"finished_scan_task":1}`
+		}
+
+		tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb_ttl_job_history (
+				job_id,
+				table_id,
+				parent_table_id,
+				table_schema,
+				table_name,
+				partition_name,
+				create_time,
+				finish_time,
+				ttl_expire,
+				summary_text,
+				expired_rows,
+				deleted_rows,
+				error_delete_rows,
+				status
+			)
+		VALUES
+			(
+			 	'%s', %d, %d, 'test', '%s', '',
+			 	from_unixtime(%d),
+			 	from_unixtime(%d),
+			 	from_unixtime(%d),
+			 	'%s', 100, 100, 0, '%s'
+		)`,
+			uuid.NewString(), tblInfo.id, tblInfo.id, tblName,
+			jobStart.Unix(),
+			jobStart.Unix()+int64(time.Minute.Seconds()),
+			jobStart.Unix()-int64(time.Hour.Seconds()),
+			summaryText,
+			status,
+		))
+	}
+
+	var emptyTime time.Time
+	checkRecord := func(records map[int64]*metrics.DelayMetricsRecord, name string, jobStartTime time.Time) {
+		info, ok := tableInfos[name]
+		require.True(t, ok)
+		record, ok := records[info.id]
+		require.True(t, ok)
+		require.Equal(t, jobStartTime, record.LastJobTime)
+
+		absoluteDelay := now.Sub(jobStartTime)
+		if jobStartTime == emptyTime {
+			absoluteDelay = now.Sub(info.createTime)
+		}
+		require.Equal(t, absoluteDelay, record.AbsoluteDelay)
+
+		relativeDelay := absoluteDelay - time.Hour
+		if jobStartTime == emptyTime {
+			relativeDelay = absoluteDelay
+		} else if name == "t4" {
+			relativeDelay = absoluteDelay - 2*time.Hour
+		}
+
+		if relativeDelay < 0 {
+			relativeDelay = 0
+		}
+
+		require.Equal(t, relativeDelay, record.ScheduleRelativeDelay)
+	}
+
+	insertHistory("t1", now, false, false)
+	insertHistory("t1", now.Add(-time.Hour), false, false)
+	insertHistory("t2", now.Add(-time.Hour), false, false)
+	insertHistory("t2", now.Add(-2*time.Hour), false, false)
+	insertHistory("t3", now.Add(-3*time.Hour), false, false)
+	insertHistory("t3", now.Add(-time.Hour), true, false)
+	insertHistory("t4", now.Add(-3*time.Hour), false, false)
+	insertHistory("t4", now.Add(-time.Hour), false, true)
+
+	se := session.NewSession(tk.Session(), tk.Session(), func(s session.Session) {})
+	records, err := ttlworker.GetDelayMetricRecords(context.Background(), se, now)
+	require.NoError(t, err)
+	require.Equal(t, 5, len(records))
+	checkRecord(records, "t1", now)
+	checkRecord(records, "t2", now.Add(-time.Hour))
+	checkRecord(records, "t3", now.Add(-3*time.Hour))
+	checkRecord(records, "t4", now.Add(-3*time.Hour))
+	checkRecord(records, "t5", emptyTime)
 }

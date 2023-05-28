@@ -1514,7 +1514,10 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
-			err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.BlockEncryptionMode, testCase.aesModes)
+			if testCase.aesModes == "" {
+				testCase.aesModes = "aes-128-ecb"
+			}
+			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
 			require.NoError(t, err)
 			if funcName == ast.CurrentUser || funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
@@ -1527,7 +1530,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 			}
 			if funcName == ast.GetParam {
 				testTime := time.Now()
-				ctx.GetSessionVars().PreparedParams = []types.Datum{
+				ctx.GetSessionVars().PlanCacheParams.Append(
 					types.NewIntDatum(1),
 					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
 					types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
@@ -1539,8 +1542,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 					types.NewFloat64Datum(2.1),
 					types.NewUintDatum(100),
 					types.NewMysqlBitDatum([]byte{1}),
-					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
-				}
+					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}))
 			}
 			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
@@ -1731,6 +1733,9 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
+			if testCase.aesModes == "" {
+				testCase.aesModes = "aes-128-ecb"
+			}
 			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
 			if err != nil {
 				panic(err)
@@ -1746,7 +1751,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 			}
 			if funcName == ast.GetParam {
 				testTime := time.Now()
-				ctx.GetSessionVars().PreparedParams = []types.Datum{
+				ctx.GetSessionVars().PlanCacheParams.Append(
 					types.NewIntDatum(1),
 					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
 					types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
@@ -1758,8 +1763,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					types.NewFloat64Datum(2.1),
 					types.NewUintDatum(100),
 					types.NewMysqlBitDatum([]byte{1}),
-					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
-				}
+					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}))
 			}
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
