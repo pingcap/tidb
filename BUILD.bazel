@@ -1,4 +1,3 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 load("@bazel_gazelle//:def.bzl", "gazelle")
 
 # gazelle:proto disable_global
@@ -15,15 +14,4 @@ package(default_visibility = ["//visibility:public"])
 xcode_version(
     name = "xcode_version",
     version = "10.0",
-)
-
-go_library(
-    name = "tidb_lib",
-    srcs = ["test.go"],
-    importpath = "github.com/pingcap/tidb",
-)
-
-go_binary(
-    name = "tidb",
-    embed = [":tidb_lib"],
 )
