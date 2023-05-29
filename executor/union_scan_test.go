@@ -760,5 +760,4 @@ func TestUnionScanDuplicateRecord(t *testing.T) {
 	tk.MustExec(`insert into t values (2,'{"zipcode": [2,3]}')`) // MySQL returns error here, so following query result in MySQL is [1 {"zipcode": [1, 2]}].
 	tk.MustQuery("select * from t").Check(testkit.Rows(`2 {"zipcode": [2, 3]}`))
 	tk.MustGetDBError("commit", kv.ErrKeyExists)
-
 }
