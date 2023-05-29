@@ -2047,7 +2047,7 @@ func TestCheckIndex(t *testing.T) {
 	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "admin check index t c")
 	require.Error(t, err)
-	require.Equal(t, "[admin:8223]data inconsistency in table: t, index: c, handle: 3, index-values:\"handle: 3, values: [KindInt64 30 KindInt64 3]\" != record-values:\"\"", err.Error())
+	require.Equal(t, "[admin:8223]data inconsistency in table: t, index: c, handle: 3, index-values:\"handle: 3, values: [KindInt64 30]\" != record-values:\"\"", err.Error())
 
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
@@ -2060,7 +2060,7 @@ func TestCheckIndex(t *testing.T) {
 	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "admin check index t c")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "table count 3 != index(c) count 4")
+	require.EqualError(t, err, "[admin:8223]data inconsistency in table: t, index: c, handle: 3, index-values:\"handle: 3, values: [KindInt64 30]\" != record-values:\"\"")
 
 	// set data to:
 	// index     data (handle, data): (1, 10), (4, 40)
@@ -2075,8 +2075,7 @@ func TestCheckIndex(t *testing.T) {
 	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "admin check index t c")
 	require.Error(t, err)
-	//nolint:revive,all_revive
-	require.Contains(t, err.Error(), "table count 3 != index(c) count 2")
+	require.EqualError(t, err, "[admin:8223]data inconsistency in table: t, index: c, handle: 2, index-values:\"\" != record-values:\"handle: 2, values: [KindInt64 20]\"")
 
 	// TODO: pass the case below：
 	// set data to:
