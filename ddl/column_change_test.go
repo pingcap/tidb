@@ -23,7 +23,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/ddl/internal/callback"
+=======
+	"github.com/pingcap/tidb/ddl/util/callback"
+	"github.com/pingcap/tidb/errno"
+>>>>>>> 65959f3e910 (ddl: fix a bug that upgrade the node when there is a paused job. (#44231))
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"

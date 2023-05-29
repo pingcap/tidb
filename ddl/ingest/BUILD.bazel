@@ -64,7 +64,15 @@ go_test(
     shard_count = 11,
     deps = [
         "//config",
+<<<<<<< HEAD
         "//ddl/internal/session",
+=======
+        "//ddl",
+        "//ddl/internal/session",
+        "//ddl/testutil",
+        "//ddl/util/callback",
+        "//domain",
+>>>>>>> 65959f3e910 (ddl: fix a bug that upgrade the node when there is a paused job. (#44231))
         "//errno",
         "//kv",
         "//sessionctx",
