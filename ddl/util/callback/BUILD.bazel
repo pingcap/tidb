@@ -4,7 +4,7 @@ go_library(
     name = "callback",
     srcs = ["callback.go"],
     importpath = "github.com/pingcap/tidb/ddl/util/callback",
-    visibility = ["//ddl:__subpackages__"],
+    visibility = ["//visibility:public"],
     deps = [
         "//ddl",
         "//infoschema",
