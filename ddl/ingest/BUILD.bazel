@@ -68,7 +68,6 @@ go_test(
     deps = [
         "//config",
         "//ddl",
-        "//ddl/internal/callback",
         "//ddl/internal/session",
         "//ddl/testutil",
         "//domain",
