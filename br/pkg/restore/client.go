@@ -1822,6 +1822,7 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 				progress, err := infosync.CalculateTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, tiFlashStores)
 				if err != nil {
 					log.Warn("failed to get tiflash replica progress, wait for next retry", zap.Error(err))
+					time.Sleep(time.Second)
 					continue
 				}
 				// check until progress is 1
