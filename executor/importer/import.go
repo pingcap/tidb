@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"math"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -54,6 +55,7 @@ import (
 	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"k8s.io/utils/strings/slices"
 )
 
 const (
@@ -775,17 +777,39 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
 	}
-	path := strings.Trim(u.Path, "/")
-	u.Path = ""
+
+	var fileNameKey string
+	if storage.IsLocal(u) {
+		// LOAD DATA don't support server file.
+		if !e.InImportInto {
+			return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.Path)
+		}
+
+		if !filepath.IsAbs(e.Path) {
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("file location should be absolute path when import from server disk")
+		}
+		if !slices.Contains([]string{".csv", ".sql", ".parquet"}, strings.ToLower(filepath.Ext(e.Path))) {
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("the file suffix is not supported when import from server disk")
+		}
+		dir := filepath.Dir(e.Path)
+		_, err := os.Stat(dir)
+		if err != nil {
+			// permission denied / file not exist error, etc.
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
+		}
+
+		fileNameKey = filepath.Base(e.Path)
+		u.Path = dir
+	} else {
+		fileNameKey = strings.Trim(u.Path, "/")
+		u.Path = ""
+	}
 	b, err2 := storage.ParseBackendFromURL(u, nil)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(GetMsgFromBRError(err2))
 	}
-	if b.GetLocal() != nil {
-		return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.Path)
-	}
 	// try to find pattern error in advance
-	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
+	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(fileNameKey), "")
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
 	}
@@ -801,13 +825,13 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	var totalSize int64
 	dataFiles := []*mydump.SourceFileMeta{}
-	idx := strings.IndexByte(path, '*')
-	// simple path when the INFILE represent one file
+	idx := strings.IndexByte(fileNameKey, '*')
+	// simple path when the path represent one file
 	sourceType := e.getSourceType()
 	if idx == -1 {
-		fileReader, err2 := s.Open(ctx, path)
+		fileReader, err2 := s.Open(ctx, fileNameKey)
 		if err2 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the file location is correct")
 		}
 		defer func() {
 			terror.Log(fileReader.Close())
@@ -816,9 +840,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
 		}
-		compressTp := mydump.ParseCompressionOnFileExtension(path)
+		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		dataFiles = append(dataFiles, &mydump.SourceFileMeta{
-			Path:        path,
+			Path:        fileNameKey,
 			FileSize:    size,
 			Compression: compressTp,
 			Type:        sourceType,
@@ -828,9 +852,14 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		})
 		totalSize = size
 	} else {
-		commonPrefix := path[:idx]
+		var commonPrefix string
+		if !storage.IsLocal(u) {
+			// for local directory, we're walking the parent directory,
+			// so we don't have a common prefix as cloud storage do.
+			commonPrefix = fileNameKey[:idx]
+		}
 		// we only support '*', in order to reuse glob library manually escape the path
-		escapedPath := stringutil.EscapeGlobExceptAsterisk(path)
+		escapedPath := stringutil.EscapeGlobExceptAsterisk(fileNameKey)
 		err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix},
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
