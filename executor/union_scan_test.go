@@ -751,4 +751,14 @@ func TestUnionScanDuplicateRecord(t *testing.T) {
 	tk.MustExec("insert into t values (2,1)") // MySQL returns error here, so following query result in MySQL is empty.
 	tk.MustQuery("select * from t where pk > 1").Check(testkit.Rows("2 1"))
 	tk.MustGetDBError("commit", kv.ErrAssertionFailed)
+
+	// case-8: duplicate unique multi-value index in insert.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (pk int key, val JSON,UNIQUE INDEX zips( (CAST(val->'$.zipcode' AS UNSIGNED ARRAY))))")
+	tk.MustExec(`insert into t values (1,'{"zipcode": [1,2]}')`)
+	tk.MustExec("begin optimistic")
+	tk.MustExec(`insert into t values (2,'{"zipcode": [2,3]}')`) // MySQL returns error here, so following query result in MySQL is [1 {"zipcode": [1, 2]}].
+	tk.MustQuery("select * from t").Check(testkit.Rows(`2 {"zipcode": [2, 3]}`))
+	tk.MustGetDBError("commit", kv.ErrKeyExists)
+
 }
