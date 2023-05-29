@@ -70,6 +70,7 @@ go_test(
         "//ddl",
         "//ddl/internal/session",
         "//ddl/testutil",
+        "//ddl/util/callback",
         "//domain",
         "//errno",
         "//kv",
