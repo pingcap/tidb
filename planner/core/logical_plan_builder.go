@@ -4889,7 +4889,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				idxCols[i] = ds.TblCols[idxCol.Offset]
 			}
 			uniqueIndexCols = append(uniqueIndexCols, UniqueIndexCols{
-				IdxInfo: idx,
+				IdxInfo: idxInfo,
 				Columns: idxCols,
 			})
 		}

@@ -49,7 +49,7 @@ type UnionScanExec struct {
 	// belowHandleCols is the handle's position of the below scan plan.
 	belowHandleCols plannercore.HandleCols
 	// uniqueIndexCols is the unique index's columns position info of the below scan plan.
-	uniqueIndexCols []plannercore.UniqueIndexCols
+	uniqueIndexCols []UniqueIndexCols
 
 	addedRows           [][]types.Datum
 	cursor4AddRows      int
@@ -280,7 +280,6 @@ func (us *UnionScanExec) isSnapshotRowConflictWithMemBufRow(row chunk.Row) (bool
 		// commit, but for simplicity, we don't handle it here.
 		return true, nil
 	}
-
 	// Check conflict by unique index.
 	stmtCtx := us.ctx.GetSessionVars().StmtCtx
 	for _, idxCols := range us.uniqueIndexCols {
@@ -348,4 +347,19 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 		}
 	}
 	return us.belowHandleCols.Compare(a, b, us.collators)
+}
+
+// UniqueIndexCols contains the unique index info and the columns of the index.
+type UniqueIndexCols struct {
+	IdxInfo table.Index
+	Columns []*expression.Column
+}
+
+// FetchIndexValues fetches index values from the row.
+func (c *UniqueIndexCols) FetchIndexValues(row chunk.Row) []types.Datum {
+	datumBuf := make([]types.Datum, 0, len(c.Columns))
+	for _, col := range c.Columns {
+		datumBuf = append(datumBuf, row.GetDatum(col.Index, col.RetType))
+	}
+	return datumBuf
 }

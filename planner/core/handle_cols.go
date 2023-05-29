@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -331,7 +330,7 @@ func GetCommonHandleDatum(cols HandleCols, row chunk.Row) []types.Datum {
 
 // UniqueIndexCols contains the unique index info and the columns of the index.
 type UniqueIndexCols struct {
-	IdxInfo table.Index
+	IdxInfo *model.IndexInfo
 	Columns []*expression.Column
 }
 
@@ -347,15 +346,6 @@ func (c *UniqueIndexCols) ResolveIndices(schema *expression.Schema) error {
 		c.Columns[i] = newCol.(*expression.Column)
 	}
 	return nil
-}
-
-// FetchIndexValues fetches index values from the row.
-func (c *UniqueIndexCols) FetchIndexValues(row chunk.Row) []types.Datum {
-	datumBuf := make([]types.Datum, 0, len(c.Columns))
-	for _, col := range c.Columns {
-		datumBuf = append(datumBuf, row.GetDatum(col.Index, col.RetType))
-	}
-	return datumBuf
 }
 
 // MemoryUsage return the memory usage

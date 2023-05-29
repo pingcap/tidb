@@ -1320,7 +1320,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), reader)}
 	// Get the handle column index of the below Plan.
 	us.belowHandleCols = v.HandleCols
-	us.uniqueIndexCols = v.UniqueIndexCols
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
 
 	// If the push-downed condition contains virtual column, we may build a selection upon reader
@@ -1387,6 +1386,18 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
 		return originReader
+	}
+	tableInfo := us.table.Meta()
+	physicalTableID := tableInfo.ID
+	if physicalTable, ok := us.table.(table.PhysicalTable); ok {
+		physicalTableID = physicalTable.GetPhysicalID()
+	}
+	us.uniqueIndexCols = make([]UniqueIndexCols, len(v.UniqueIndexCols))
+	for i, idxCols := range v.UniqueIndexCols {
+		us.uniqueIndexCols[i] = UniqueIndexCols{
+			IdxInfo: tables.NewIndex(physicalTableID, tableInfo, idxCols.IdxInfo),
+			Columns: idxCols.Columns,
+		}
 	}
 	return us
 }

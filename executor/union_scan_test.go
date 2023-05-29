@@ -640,13 +640,13 @@ func TestUnionScanIssue24195(t *testing.T) {
 	tk1.MustExec("begin;")
 	tk1.MustExec("update t set c1=reverse(c1) where c1='tag';")
 	go func() {
+		defer func() { ch <- struct{}{} }()
 		tk2.MustExec("begin")
 		tk2.MustExec("insert into t values('dress',40,'d'),('tag', 10, 't');")
 		tk2.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "tag 10 t"))
 		tk2.MustQuery("select * from t use index(primary) order by c1,c2 for update;").Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
 		tk2.MustExec("commit")
 		tk2.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
-		ch <- struct{}{}
 	}()
 	time.Sleep(time.Second * 2)
 	tk1.MustExec("commit")
@@ -661,13 +661,37 @@ func TestUnionScanIssue24195(t *testing.T) {
 	tk1.MustExec("update t set c1=reverse(c1) where c1='tag';")
 	tk1.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "gat 10 t"))
 	go func() {
+		defer func() { ch <- struct{}{} }()
 		tk2.MustExec("begin")
 		tk2.MustExec("insert into t values('dress',40,'d'),('tag', 10, 't');")
 		tk2.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "tag 10 t"))
 		tk2.MustQuery("select * from t use index(primary) order by c1,c2 for update;").Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
 		tk2.MustExec("commit")
 		tk2.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
-		ch <- struct{}{}
+	}()
+	time.Sleep(time.Second * 2)
+	tk1.MustExec("commit")
+	<-ch
+
+	// case-5: query return duplicate primary key which is non-clustered partition table.
+	tk1.MustExec("set @@tidb_enable_clustered_index = 0;")
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec("create table t (c1 int, c2 int, primary key (c1) nonclustered) partition by hash(c1) partitions 4;")
+	tk1.MustExec("insert into t values (1, 1);")
+	tk1.MustExec("begin;")
+	tk1.MustExec("update t set c1=2 where c1=1;")
+	go func() {
+		defer func() { ch <- struct{}{} }()
+		tk2.MustExec("begin")
+		tk2.MustExec("insert into t values (1, 2);")
+		tk2.MustQuery("select * from t use index(primary)").Check(testkit.Rows("1 2"))
+		tk2.MustQuery("select c2 from t use index(primary);").Check(testkit.Rows("2"))
+		tk2.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+		tk2.MustQuery("select * from t use index(primary);").Check(testkit.Rows("1 2"))
+		tk2.MustQuery("select c2 from t use index(primary);").Check(testkit.Rows("2"))
+		tk2.MustQuery("select * from t use index(primary) order by c1,c2 for update;").Check(testkit.Rows("1 2", "2 1"))
+		tk2.MustExec("commit")
+		tk2.MustQuery("select * from t use index(primary) order by c1,c2;").Check(testkit.Rows("1 2", "2 1"))
 	}()
 	time.Sleep(time.Second * 2)
 	tk1.MustExec("commit")
