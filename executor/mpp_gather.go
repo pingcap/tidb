@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/executor/mppcoordmanager"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -81,6 +82,7 @@ func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 // If any task fails, it would cancel the rest tasks.
 func (e *MPPGather) Open(ctx context.Context) (err error) {
 	coord := e.buildCoordinator()
+	mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherId: uint64(e.id)}, coord)
 	resp, err := coord.Execute(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -111,8 +113,13 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // Close and release the used resources.
 func (e *MPPGather) Close() error {
+	var err error
 	if e.respIter != nil {
-		return e.respIter.Close()
+		err = e.respIter.Close()
 	}
+	if err != nil {
+		return err
+	}
+	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherId: uint64(e.id)})
 	return nil
 }

@@ -199,6 +199,7 @@ func (c *MPPClient) CancelMPPTasks(param kv.CancelMPPTasksParam) {
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
 	wrappedReq.StoreTp = getEndPointType(kv.TiFlash)
 
+	// TODO: move it to local_mpp_coordinator file
 	usedStoreAddrs := make(map[string]bool)
 	for _, task := range reqs {
 		// get the store address of running tasks

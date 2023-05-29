@@ -287,7 +287,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, 
 	return e
 }
 
-// Executor is the physical implementation of a algebra operator.
+// Executor is the physical implementation of an algebra operator.
 //
 // In TiDB, all algebra operators are implemented as iterators, i.e., they
 // support a simple Open-Next-Close protocol. See this paper for more details:

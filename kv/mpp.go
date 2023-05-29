@@ -139,6 +139,7 @@ type MPPDispatchRequest struct {
 	Data    []byte      // data encodes the dag coprocessor request.
 	Meta    MPPTaskMeta // mpp store is the location of tiflash store.
 	IsRoot  bool        // root task returns data to tidb directly.
+	ReceivedReport bool	// if received ReportStatus from mpp task
 	Timeout uint64      // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
 	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
 	SchemaVar  int64
@@ -192,12 +193,18 @@ type MPPClient interface {
 	GetMPPStoreCount() (int, error)
 }
 
+type MCStatusInfo struct {
+	Request 	*mpp.ReportStatusRequest
+}
+
 // MppCoordinator describes the basic api for executing mpp physical plan.
 type MppCoordinator interface {
 	// Execute generates and executes mpp tasks for mpp physical plan.
 	Execute(ctx context.Context) (Response, error)
 	// Next returns next data
 	Next(ctx context.Context) (ResultSubset, error)
+	// ReportStatus report task execution info to coordinator
+	ReportStatus(info MCStatusInfo) error
 	// Close and release the used resources.
 	Close() error
 }

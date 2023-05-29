@@ -15,6 +15,9 @@
 package mppcoordmanager
 
 import (
+	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -33,11 +36,12 @@ type CoordinatorUniqueID struct {
 // MPPCoordinatorManager manages all mpp coordinator instances
 type MPPCoordinatorManager struct {
 	mu             sync.Mutex
-	coordinatorMap map[CoordinatorUniqueID]*kv.MppCoordinator
+	coordinatorMap map[CoordinatorUniqueID]kv.MppCoordinator
 }
 
 // Register is to register mpp coordinator
-func (m *MPPCoordinatorManager) Register(coordID CoordinatorUniqueID, mppCoord *kv.MppCoordinator) error {
+// TODO: add metric to track coordinator counter
+func (m *MPPCoordinatorManager) Register(coordID CoordinatorUniqueID, mppCoord kv.MppCoordinator) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	_, exists := m.coordinatorMap[coordID]
@@ -45,6 +49,7 @@ func (m *MPPCoordinatorManager) Register(coordID CoordinatorUniqueID, mppCoord *
 		return errors.Errorf("Already added mpp coordinator: %d %d %d %d", coordID.MPPQueryID.QueryTs, coordID.MPPQueryID.LocalQueryID, coordID.MPPQueryID.ServerID, coordID.GatherId)
 	}
 	m.coordinatorMap[coordID] = mppCoord
+	logutil.BgLogger().Info("Register track mpp coordinator instances", zap.Int("CoordCounter", len(m.coordinatorMap)))
 	return nil
 }
 
@@ -53,15 +58,36 @@ func (m *MPPCoordinatorManager) Unregister(coordID CoordinatorUniqueID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.coordinatorMap, coordID)
+	logutil.BgLogger().Info("Unregister track mpp coordinator instances", zap.Int("CoordCounter", len(m.coordinatorMap)))
 	return nil
 }
 
 // ReportStatus reports mpp task execution status to specific coordinator
-func (m *MPPCoordinatorManager) ReportStatus(CoordinatorUniqueID) error {
+func (m *MPPCoordinatorManager) ReportStatus(request *mpp.ReportStatusRequest) *mpp.ReportStatusResponse {
+	mppQueryID := kv.MPPQueryID{
+		QueryTs: request.Meta.QueryTs,
+		LocalQueryID: request.Meta.LocalQueryId,
+		ServerID: request.Meta.ServerId,
+	}
+	coordID := CoordinatorUniqueID{
+		MPPQueryID: mppQueryID,
+		GatherId: request.Meta.GatherId,
+	}
+	m.mu.Lock()
+	coord, exists := m.coordinatorMap[coordID]
+	m.mu.Unlock()
+	if !exists {
+		//return mpp.ReportStatusResponse{Error: {-1, "sdf", request.Meta.MppVersion}}
+		return nil
+	}
+	err := coord.ReportStatus(kv.MCStatusInfo{Request: request})
+	if err  == nil {
+		return nil
+	}
 	return nil
 }
 
 // newMPPCoordinatorManger is to create a new mpp coordinator manager
 func newMPPCoordinatorManger() *MPPCoordinatorManager {
-	return &MPPCoordinatorManager{}
+	return &MPPCoordinatorManager{coordinatorMap: make(map[CoordinatorUniqueID]kv.MppCoordinator)}
 }

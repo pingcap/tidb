@@ -114,6 +114,10 @@ type localMppCoordinator struct {
 
 	needTriggerFallback        bool
 	enableCollectExecutionInfo bool
+	firstErrMsg	string
+	reqMap	map[int64]*kv.MPPDispatchRequest
+	reportedReqCount int
+	usedRRU	float64
 
 	mu sync.Mutex
 
@@ -134,6 +138,8 @@ func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, p
 		wgDoneChan:   make(chan struct{}),
 		respChan:     make(chan *mppResponse),
 		vars:         sctx.GetSessionVars().KVVars,
+		reqMap: make(map[int64]*kv.MPPDispatchRequest),
+		reportedReqCount: 0,
 	}
 	return coord
 }
@@ -191,6 +197,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			MppVersion: mppTask.MppVersion,
 			State:      kv.MppTaskReady,
 		}
+		c.reqMap[req.ID] = req
 		c.mppReqs = append(c.mppReqs, req)
 	}
 	return nil
@@ -451,6 +458,33 @@ func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMet
 	}
 }
 
+func (c *localMppCoordinator) ReportStatus(info kv.MCStatusInfo) error {
+	taskID := info.Request.Meta.TaskId
+	var errMsg string
+	if info.Request.Error != nil {
+		errMsg = info.Request.Error.Msg
+	}
+	// TODO: check if add a new mutex
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	req, exists := c.reqMap[taskID]
+	if !exists {
+		return errors.Errorf("ReportStatus received missing taskID: %s", taskID)
+	}
+	if len(c.firstErrMsg) == 0 && len(errMsg) > 0 {
+		c.firstErrMsg = errMsg
+	}
+
+	// update resource consumption and report counter
+	if req.ReceivedReport {
+		return errors.Errorf("ReportStatus already received taskID: %s", taskID)
+	}
+	c.reportedReqCount++
+	rc := info.Request.ResourceConsumption
+	c.usedRRU += rc.RRU
+	return nil
+}
+
 // Close and release the used resources.
 // TODO: Test the case that user cancels the query.
 func (c *localMppCoordinator) Close() error {
@@ -459,12 +493,19 @@ func (c *localMppCoordinator) Close() error {
 	}
 	c.cancelFunc()
 	<-c.wgDoneChan
+	// wait until all ReportStatus received
 	return nil
 }
 
 func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
 	if response.Error != nil {
-		err = errors.Errorf("other error for mpp stream: %s", response.Error.Msg)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if len(c.firstErrMsg) > 0 {
+			err = errors.Errorf("other error for mpp stream: %s", c.firstErrMsg)
+		} else {
+			err = errors.Errorf("other error for mpp stream: %s", response.Error.Msg)
+		}
 		logutil.BgLogger().Warn("other error",
 			zap.Uint64("txnStartTS", req.StartTs),
 			zap.String("storeAddr", req.Meta.GetAddress()),
