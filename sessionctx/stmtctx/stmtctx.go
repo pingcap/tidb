@@ -226,6 +226,7 @@ type StatementContext struct {
 
 		execDetails    execdetails.ExecDetails
 		allExecDetails []*execdetails.DetailsNeedP90
+		detailsSummary execdetails.DetailsNeedP90Summary
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
@@ -974,6 +975,7 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.warnings = nil
 	sc.mu.execDetails = execdetails.ExecDetails{}
 	sc.mu.allExecDetails = make([]*execdetails.DetailsNeedP90, 0, 4)
+	sc.mu.detailsSummary.Reset()
 }
 
 // ResetForRetry resets the changed states during execution.
@@ -1122,57 +1124,26 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
 	d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
 
-	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.DetailsNeedP90) bool {
-		return i.TimeDetail.ProcessTime < j.TimeDetail.ProcessTime
-	})
-	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].TimeDetail.ProcessTime
-	d.MaxProcessTime = sc.mu.allExecDetails[n-1].TimeDetail.ProcessTime
-	d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
+	d.P90ProcessTime = time.Duration((sc.mu.detailsSummary.TdForProcessTime.Quantile(0.9)))
+	d.MaxProcessTime = sc.mu.detailsSummary.MaxProcessTime
+	d.MaxProcessAddress = sc.mu.detailsSummary.MaxProcessAddress
 
-	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.DetailsNeedP90) bool {
-		return i.TimeDetail.WaitTime < j.TimeDetail.WaitTime
-	})
-	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].TimeDetail.WaitTime
-	d.MaxWaitTime = sc.mu.allExecDetails[n-1].TimeDetail.WaitTime
-	d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
+	d.P90WaitTime = time.Duration((sc.mu.detailsSummary.TdForWaitTime.Quantile(0.9)))
+	d.MaxWaitTime = sc.mu.detailsSummary.MaxWaitTime
+	d.MaxWaitAddress = sc.mu.detailsSummary.MaxWaitAddress
 
-	// calculate backoff details
-	type backoffItem struct {
-		callee    string
-		sleepTime time.Duration
-		times     int
-	}
-	backoffInfo := make(map[string][]backoffItem)
-	for _, ed := range sc.mu.allExecDetails {
-		for backoff := range ed.BackoffTimes {
-			backoffInfo[backoff] = append(backoffInfo[backoff], backoffItem{
-				callee:    ed.CalleeAddress,
-				sleepTime: ed.BackoffSleep[backoff],
-				times:     ed.BackoffTimes[backoff],
-			})
-		}
-	}
-	for backoff, items := range backoffInfo {
-		if len(items) == 0 {
+	for backoff, items := range sc.mu.detailsSummary.BackoffInfo {
+		if items == nil {
 			continue
 		}
-		slices.SortFunc(items, func(i, j backoffItem) bool {
-			return i.sleepTime < j.sleepTime
-		})
-		n := len(items)
-		d.MaxBackoffAddress[backoff] = items[n-1].callee
-		d.MaxBackoffTime[backoff] = items[n-1].sleepTime
-		d.P90BackoffTime[backoff] = items[n*9/10].sleepTime
+		n := items.ReqTimes
+		d.MaxBackoffAddress[backoff] = items.MaxBackoffAddress
+		d.MaxBackoffTime[backoff] = items.MaxBackoffTime
+		d.P90BackoffTime[backoff] = time.Duration(items.TdForBackoffTime.Quantile(0.9))
 
-		var totalTime time.Duration
-		totalTimes := 0
-		for _, it := range items {
-			totalTime += it.sleepTime
-			totalTimes += it.times
-		}
-		d.AvgBackoffTime[backoff] = totalTime / time.Duration(n)
-		d.TotBackoffTime[backoff] = totalTime
-		d.TotBackoffTimes[backoff] = totalTimes
+		d.AvgBackoffTime[backoff] = items.TotBackoffTime / time.Duration(n)
+		d.TotBackoffTime[backoff] = items.TotBackoffTime
+		d.TotBackoffTimes[backoff] = items.TotBackoffTimes
 	}
 	return d
 }

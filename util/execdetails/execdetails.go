@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/influxdata/tdigest"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -48,6 +49,68 @@ type DetailsNeedP90 struct {
 	BackoffTimes  map[string]int
 	CalleeAddress string
 	TimeDetail    util.TimeDetail
+}
+
+type DetailsNeedP90BackoffSummery struct {
+	ReqTimes          int
+	MaxBackoffTime    time.Duration
+	MaxBackoffAddress string
+	TdForBackoffTime  *tdigest.TDigest
+	TotBackoffTime    time.Duration
+	TotBackoffTimes   int
+}
+
+type DetailsNeedP90Summary struct {
+	MaxProcessTime    time.Duration
+	MaxProcessAddress string
+	TdForProcessTime  *tdigest.TDigest
+
+	MaxWaitTime    time.Duration
+	MaxWaitAddress string
+	TdForWaitTime  *tdigest.TDigest
+
+	BackoffInfo map[string]*DetailsNeedP90BackoffSummery
+}
+
+func (d *DetailsNeedP90Summary) Reset() {
+	d.MaxProcessTime = 0
+	d.MaxProcessAddress = ""
+	d.MaxWaitTime = 0
+	d.MaxWaitAddress = ""
+	d.TdForProcessTime = tdigest.New()
+	d.TdForWaitTime = tdigest.New()
+}
+
+func (d *DetailsNeedP90Summary) Merge(detail *DetailsNeedP90) {
+	if d.MaxProcessTime < detail.TimeDetail.ProcessTime {
+		d.MaxProcessTime = detail.TimeDetail.ProcessTime
+		d.MaxProcessAddress = detail.CalleeAddress
+	}
+	d.TdForProcessTime.Add(float64(detail.TimeDetail.ProcessTime.Nanoseconds()), 1)
+	if d.MaxWaitTime < detail.TimeDetail.WaitTime {
+		d.MaxWaitTime = detail.TimeDetail.WaitTime
+		d.MaxWaitAddress = detail.CalleeAddress
+	}
+	d.TdForProcessTime.Add(float64(detail.TimeDetail.ProcessTime.Nanoseconds()), 1)
+
+	var info *DetailsNeedP90BackoffSummery
+	var ok bool
+	for backoff, timeItem := range detail.BackoffTimes {
+		if info, ok = d.BackoffInfo[backoff]; !ok {
+			d.BackoffInfo[backoff] = &DetailsNeedP90BackoffSummery{TdForBackoffTime: tdigest.New()}
+			info = d.BackoffInfo[backoff]
+		}
+		sleepItem := detail.BackoffSleep[backoff]
+		info.ReqTimes += 1
+		info.TotBackoffTime += sleepItem
+		info.TotBackoffTimes += timeItem
+
+		if info.MaxBackoffTime < sleepItem {
+			info.MaxBackoffTime = sleepItem
+			info.MaxBackoffAddress = detail.CalleeAddress
+		}
+		info.TdForBackoffTime.Add(float64(sleepItem.Nanoseconds()), 1)
+	}
 }
 
 type stmtExecDetailKeyType struct{}
