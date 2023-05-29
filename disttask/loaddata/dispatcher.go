@@ -85,7 +85,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	switch gTask.Step {
 	case Import:
 		h.switchTiKV2NormalMode(ctx, logutil.BgLogger())
-		if err := postProcess(ctx, handle, gTask, logger); err != nil {
+		if err := postProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
 			return nil, err
 		}
 		gTask.State = proto.TaskStateSucceed
@@ -93,7 +93,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	default:
 	}
 
-	if err := preProcess(ctx, handle, gTask, logger); err != nil {
+	if err := preProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
 		return nil, err
 	}
 
@@ -177,12 +177,7 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 }
 
 // preProcess does the pre processing for the task.
-func preProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, logger *zap.Logger) error {
-	taskMeta := &TaskMeta{}
-	err := json.Unmarshal(gTask.Meta, taskMeta)
-	if err != nil {
-		return err
-	}
+func preProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) error {
 	logger.Info("pre process", zap.Any("task_meta", taskMeta))
 	if err := dropTableIndexes(ctx, handle, taskMeta, logger); err != nil {
 		return err
@@ -191,13 +186,7 @@ func preProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.
 }
 
 // postProcess does the post processing for the task.
-func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, logger *zap.Logger) (err error) {
-	taskMeta := &TaskMeta{}
-	err = json.Unmarshal(gTask.Meta, taskMeta)
-	if err != nil {
-		return err
-	}
-
+func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) (err error) {
 	// create table indexes even if the post process is failed.
 	defer func() {
 		err2 := createTableIndexes(ctx, handle, taskMeta, logger)

@@ -27,7 +27,6 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
-	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -51,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
@@ -1759,51 +1757,6 @@ func (rc *Controller) registerTaskToPD(ctx context.Context) (undo func(), _ erro
 		return nil, errors.Trace(err)
 	}
 	return undo, nil
-}
-
-func (rc *Controller) dropAllIndexes(ctx context.Context) error {
-	for _, dbInfo := range rc.dbInfos {
-		for _, tblInfo := range dbInfo.Tables {
-			if err := rc.dropTableIndexes(ctx, tblInfo); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (rc *Controller) dropTableIndexes(ctx context.Context, tblInfo *checkpoints.TidbTableInfo) error {
-	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
-	logger := log.FromContext(ctx).With(zap.String("table", tableName))
-
-	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo.Core)
-	for _, idxInfo := range dropIndexes {
-		sqlStr := common.BuildDropIndexSQL(tableName, idxInfo)
-
-		logger.Info("drop index", zap.String("sql", sqlStr))
-		exec := common.SQLWithRetry{
-			DB:     rc.db,
-			Logger: logger,
-		}
-
-		if err := exec.Exec(ctx, "drop index", sqlStr); err != nil {
-			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
-				switch merr.Number {
-				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
-					remainIndexes = append(remainIndexes, idxInfo)
-					logger.Info("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
-					continue
-				}
-			}
-			return common.ErrDropIndexFailed.Wrap(err).GenWithStackByArgs(common.EscapeIdentifier(idxInfo.Name.O), tableName)
-		}
-	}
-	if len(remainIndexes) < len(tblInfo.Core.Indices) {
-		// Must clone (*model.TableInfo) before modifying it, since it may be referenced in other place.
-		tblInfo.Core = tblInfo.Core.Clone()
-		tblInfo.Core.Indices = remainIndexes
-	}
-	return nil
 }
 
 func addExtendDataForCheckpoint(

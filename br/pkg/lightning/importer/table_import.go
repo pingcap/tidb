@@ -1273,36 +1273,10 @@ func (tr *TableImporter) dropIndexes(ctx context.Context, db *sql.DB) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tr.tableName))
 
 	tblInfo := tr.tableInfo
-
-	var remainIndexes []*model.IndexInfo
-	cols := tblInfo.Core.Columns
-loop:
-	for _, idxInfo := range tblInfo.Core.Indices {
-		if idxInfo.State != model.StatePublic {
-			remainIndexes = append(remainIndexes, idxInfo)
-			continue
-		}
-		// Primary key is a cluster index.
-		if idxInfo.Primary && tblInfo.Core.HasClusteredIndex() {
-			remainIndexes = append(remainIndexes, idxInfo)
-			continue
-		}
-		// Skip index that contains auto-increment column.
-		// Because auto colum must be defined as a key.
-		for _, idxCol := range idxInfo.Columns {
-			flag := cols[idxCol.Offset].GetFlag()
-			if mysql.HasAutoIncrementFlag(flag) {
-				remainIndexes = append(remainIndexes, idxInfo)
-				continue loop
-			}
-		}
-
-		var sqlStr string
-		if idxInfo.Primary {
-			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tr.tableName)
-		} else {
-			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tr.tableName, common.EscapeIdentifier(idxInfo.Name.O))
-		}
+	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
+	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo.Core)
+	for _, idxInfo := range dropIndexes {
+		sqlStr := common.BuildDropIndexSQL(tableName, idxInfo)
 
 		logger.Info("drop index", zap.String("sql", sqlStr))
 
@@ -1316,7 +1290,7 @@ loop:
 				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
 					remainIndexes = append(remainIndexes, idxInfo)
 					logger.Info("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
-					continue loop
+					continue
 				}
 			}
 			return common.ErrDropIndexFailed.Wrap(err).GenWithStackByArgs(common.EscapeIdentifier(idxInfo.Name.O), tr.tableName)
