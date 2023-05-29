@@ -614,6 +614,7 @@ var tokenMap = map[string]int{
 	"QUARTER":                  quarter,
 	"QUERIES":                  queries,
 	"QUERY":                    query,
+	"QUERY_LIMIT":              queryLimit,
 	"QUICK":                    quick,
 	"RANGE":                    rangeKwd,
 	"RATE_LIMIT":               rateLimit,
