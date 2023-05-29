@@ -678,7 +678,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	}
 
 	scheduler.RegisterSchedulerConstructor("backfill",
-		func(taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
 			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
 		})
 
@@ -1201,9 +1201,10 @@ func (d *ddl) SetHook(h Callback) {
 
 func (d *ddl) startCleanDeadTableLock() {
 	defer func() {
-		tidbutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 		d.wg.Done()
 	}()
+
+	defer tidbutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()

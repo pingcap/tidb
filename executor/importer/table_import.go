@@ -48,6 +48,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// NewTiKVModeSwitcher make it a var, so we can mock it in tests.
+var NewTiKVModeSwitcher = local.NewTiKVModeSwitcher
+
 func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
@@ -76,8 +79,25 @@ func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
 	return sortPath, nil
 }
 
+// GetTiKVModeSwitcher creates a new TiKV mode switcher.
+func GetTiKVModeSwitcher(logger *zap.Logger) (local.TiKVModeSwitcher, error) {
+	tidbCfg := tidb.GetGlobalConfig()
+	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+	tls, err := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		hostPort,
+		nil, nil, nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return NewTiKVModeSwitcher(tls, tidbCfg.Path, logger), nil
+}
+
 // NewTableImporter creates a new table importer.
-func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableImporter, err error) {
+func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -85,7 +105,8 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
-	dir, err := prepareSortDir(e, param.Job.ID)
+	// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
+	dir, err := prepareSortDir(e, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -129,11 +150,9 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		DupeDetectEnabled:       false,
 		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
 		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
-		// todo: we can set it false when we support switch import mode.
-		ShouldCheckWriteStall: true,
-		MaxOpenFiles:          int(util.GenRLimit()),
-		KeyspaceName:          keySpaceName,
-		PausePDSchedulerScope: config.PausePDSchedulerScopeTable,
+		MaxOpenFiles:            int(util.GenRLimit()),
+		KeyspaceName:            keySpaceName,
+		PausePDSchedulerScope:   config.PausePDSchedulerScopeTable,
 	}
 
 	tableMeta := &mydump.MDTableMeta{
@@ -284,7 +303,6 @@ func (ti *TableImporter) importTable(ctx context.Context) (err error) {
 	}()
 	// todo: pause GC if we need duplicate detection
 	// todo: register task to pd?
-	// no need to pause all schedulers, since we can pause them by key range
 	// todo: if add index by sql, drop all index first
 	// todo: tikv enter into import mode
 	if _, err2 := ti.PopulateChunks(ctx); err2 != nil {
