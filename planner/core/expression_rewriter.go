@@ -1053,7 +1053,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		noDecorrelate = false
 	}
 
-	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
+	if er.sctx.GetSessionVars().StmtCtx.StmtType == "Prepare" || er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin, noDecorrelate)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
