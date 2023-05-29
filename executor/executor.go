@@ -80,6 +80,7 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -2371,11 +2372,12 @@ type checkIndexWorker struct {
 }
 
 type groupByChecksum struct {
+	bucket   uint64
 	checksum uint64
 	count    int64
 }
 
-func getCheckSum(se sessionctx.Context, sql string) (map[uint64]groupByChecksum, error) {
+func getCheckSum(se sessionctx.Context, sql string) ([]groupByChecksum, error) {
 	ctx := kv.WithInternalSourceType(context.TODO(), kv.InternalTxnAdmin)
 	rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
@@ -2391,9 +2393,9 @@ func getCheckSum(se sessionctx.Context, sql string) (map[uint64]groupByChecksum,
 	if err != nil {
 		return nil, err
 	}
-	checksums := make(map[uint64]groupByChecksum, len(rows))
+	checksums := make([]groupByChecksum, 0, len(rows))
 	for _, row := range rows {
-		checksums[row.GetUint64(1)] = groupByChecksum{checksum: row.GetUint64(0), count: row.GetInt64(2)}
+		checksums = append(checksums, groupByChecksum{bucket: row.GetUint64(1), checksum: row.GetUint64(0), count: row.GetInt64(2)})
 	}
 	return checksums, nil
 }
@@ -2516,43 +2518,58 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		// compute table side checksum.
 		sql := fmt.Sprintf("select /*+ read_from_storage(tikv[%s.%s]) */ bit_xor(%s), %s, count(*) from %s.%s use index() where %s = 0 group by %s", w.e.dbName, w.e.table.Meta().Name, md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, whereKey, groupByKey)
 		logutil.BgLogger().Info("check table index on table side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
-		tableCheckSumMap, err := getCheckSum(se, sql)
+		tableChecksum, err := getCheckSum(se, sql)
 		if err != nil {
 			trySaveErr(err)
 			return
 		}
+		slices.SortFunc(tableChecksum, func(i, j groupByChecksum) bool {
+			return i.bucket < j.bucket
+		})
 
 		// compute index side checksum.
 		sql = fmt.Sprintf("select bit_xor(%s), %s, count(*) from %s.%s use index(%s) where %s = 0 group by %s", md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, whereKey, groupByKey)
 		logutil.BgLogger().Info("check table index on index side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
-		indexCheckSumMap, err := getCheckSum(se, sql)
+		indexChecksum, err := getCheckSum(se, sql)
 		if err != nil {
 			trySaveErr(err)
 			return
 		}
+		slices.SortFunc(indexChecksum, func(i, j groupByChecksum) bool {
+			return i.bucket < j.bucket
+		})
 
 		currentOffset := 0
 
 		// Every checksum in table side should be the same as the index side.
-		for bucket, tableCheckSum := range tableCheckSumMap {
-			if indexCheckSum, ok := indexCheckSumMap[bucket]; !ok || tableCheckSum.checksum != indexCheckSum.checksum {
-				currentOffset = int(bucket)
-				tableRowCntToCheck = tableCheckSum.count
+		i := 0
+		j := 0
+		for i < len(tableChecksum) && j < len(indexChecksum) {
+			if tableChecksum[i].bucket != indexChecksum[j].bucket || tableChecksum[i].checksum != indexChecksum[j].checksum {
+				if tableChecksum[i].bucket <= indexChecksum[j].bucket {
+					currentOffset = int(tableChecksum[i].bucket)
+					tableRowCntToCheck = tableChecksum[i].count
+				} else {
+					currentOffset = int(indexChecksum[j].bucket)
+					tableRowCntToCheck = indexChecksum[j].count
+				}
 				meetError = true
 				break
 			}
+			i++
+			j++
 		}
 
-		if !meetError && len(indexCheckSumMap) > len(tableCheckSumMap) {
-			// Every checksum in index side should be the same as the index side.
-			for bucket, indexCheckSum := range indexCheckSumMap {
-				if _, ok := tableCheckSumMap[bucket]; !ok {
-					currentOffset = int(bucket)
-					tableRowCntToCheck = indexCheckSum.count
-					meetError = true
-					break
-				}
-			}
+		if !meetError && i < len(tableChecksum) {
+			// Table side has fewer buckets.
+			currentOffset = i
+			tableRowCntToCheck = indexChecksum[i].count
+			meetError = true
+		} else if !meetError && j < len(indexChecksum) {
+			// Index side has fewer buckets.
+			currentOffset = j
+			tableRowCntToCheck = tableChecksum[j].count
+			meetError = true
 		}
 
 		if !meetError {
