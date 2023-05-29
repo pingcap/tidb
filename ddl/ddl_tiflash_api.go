@@ -24,7 +24,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -262,9 +263,8 @@ func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
 	if !ok {
 		return "", errors.New("Error json")
 	}
-	port := int(port64)
 
-	addr := fmt.Sprintf("%v:%v", host, port)
+	addr := net.JoinHostPort(host, strconv.FormatUint(uint64(port64), 10))
 	return addr, nil
 }
 
@@ -293,11 +293,11 @@ func LoadTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplic
 
 // UpdateTiFlashHTTPAddress report TiFlash's StatusAddress's port to Pd's etcd.
 func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
-	addrAndPort := strings.Split(store.Store.StatusAddress, ":")
-	if len(addrAndPort) < 2 {
-		return errors.New("Can't get TiFlash Address from PD")
+	host, _, err := net.SplitHostPort(store.Store.StatusAddress)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	httpAddr, err := getTiflashHTTPAddr(addrAndPort[0], store.Store.StatusAddress)
+	httpAddr, err := getTiflashHTTPAddr(host, store.Store.StatusAddress)
 	if err != nil {
 		return errors.Trace(err)
 	}

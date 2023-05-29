@@ -1493,7 +1493,7 @@ SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication p
 
 ["executor:1819"]
 error = '''
-Your password does not satisfy the current policy requirements
+Your password does not satisfy the current policy requirements (%s)
 '''
 
 ["executor:1827"]

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -646,7 +647,7 @@ func (is *InfoSyncer) StoreTopologyInfo(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	str := string(hack.String(infoBuf))
-	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, is.info.IP, is.info.Port)
+	key := fmt.Sprintf("%s/%s/info", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
 	// Note: no lease is required here.
 	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, str)
 	if err != nil {
@@ -798,7 +799,7 @@ func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, 
 	if is.etcdCli == nil {
 		return nil
 	}
-	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s:%d", TopologyInformationPath, is.info.IP, is.info.Port)
+	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
 	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
 	if err != nil {
 		return err
@@ -813,7 +814,7 @@ func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, is.info.IP, is.info.Port)
+	key := fmt.Sprintf("%s/%s/ttl", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key,
 		fmt.Sprintf("%v", time.Now().UnixNano()),
 		clientv3.WithLease(is.topologySession.Lease()))
@@ -884,7 +885,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		res = fmt.Sprintf("http://%s:%v", prometheus.IP, prometheus.Port)
+		res = fmt.Sprintf("http://%s", net.JoinHostPort(prometheus.IP, strconv.Itoa(prometheus.Port)))
 	}
 	is.prometheusAddr = res
 	is.modifyTime = time.Now()
@@ -1171,17 +1172,20 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 		return errors.Trace(err)
 	}
 	ctx := context.Background()
+	rules := make([]*placement.TiFlashRule, 0, len(*definitions))
+	pids := make([]int64, 0, len(*definitions))
 	for _, p := range *definitions {
 		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("tableID", tableID), zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
 		ruleNew := MakeNewRule(p.ID, count, *locationLabels)
-		if e := is.tiflashReplicaManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+		rules = append(rules, ruleNew)
+		pids = append(pids, p.ID)
+	}
+	if e := is.tiflashReplicaManager.SetPlacementRuleBatch(ctx, rules); e != nil {
+		return errors.Trace(e)
+	}
+	if accel {
+		if e := is.tiflashReplicaManager.PostAccelerateScheduleBatch(ctx, pids); e != nil {
 			return errors.Trace(e)
-		}
-		if accel {
-			e := is.tiflashReplicaManager.PostAccelerateSchedule(ctx, p.ID)
-			if e != nil {
-				return errors.Trace(e)
-			}
 		}
 	}
 	return nil

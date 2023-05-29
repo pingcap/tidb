@@ -700,15 +700,10 @@ func (ts *SessionExtendedInfoSchema) HasTemporaryTable() bool {
 	return ts.LocalTemporaryTables != nil && ts.LocalTemporaryTables.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
 }
 
-// AttachMDLTableInfoSchema attach MDL related table information schema to is
-func AttachMDLTableInfoSchema(is InfoSchema) InfoSchema {
-	mdlTables := NewSessionTables()
-	if iss, ok := is.(*SessionExtendedInfoSchema); ok {
-		iss.MdlTables = mdlTables
-		return iss
-	}
+// DetachTemporaryTableInfoSchema returns a new SessionExtendedInfoSchema without temporary tables
+func (ts *SessionExtendedInfoSchema) DetachTemporaryTableInfoSchema() *SessionExtendedInfoSchema {
 	return &SessionExtendedInfoSchema{
-		InfoSchema: is,
-		MdlTables:  mdlTables,
+		InfoSchema: ts.InfoSchema,
+		MdlTables:  ts.MdlTables,
 	}
 }
