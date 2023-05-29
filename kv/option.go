@@ -197,6 +197,8 @@ const (
 	InternalLoadData = "LoadData"
 	// InternalDistTask is the type of distributed task.
 	InternalDistTask = "DistTask"
+	// InternalTimer internal timer
+	InternalTimer = "Timer"
 )
 
 // The bitmap:
