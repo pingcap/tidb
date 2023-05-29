@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/extsort"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
