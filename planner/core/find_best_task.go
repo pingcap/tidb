@@ -2259,7 +2259,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		}
 		// when it comes to here, it means a valid mpp task can be generated, while it is mocked from TiFlash cop task type.
 		// just return invalidTask to avoid generating TiFlash cop task since mpp path enumeration is feasible in next turn.
-		if originPropTaskType != prop.TaskTp {
+		if !task.invalid() && originPropTaskType != prop.TaskTp {
 			return invalidTask, nil
 		}
 		return task, nil
