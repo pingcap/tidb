@@ -10,17 +10,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/Jeffail/gabs/v2 v2.5.1
 	github.com/Shopify/sarama v1.29.0
-<<<<<<< HEAD
-	github.com/aws/aws-sdk-go v1.35.3
-	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
-=======
-	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
-	github.com/apache/skywalking-eyes v0.4.0
-	github.com/ashanbrown/makezero v1.1.1
-	github.com/aws/aws-sdk-go v1.44.48
-	github.com/bazelbuild/buildtools v0.0.0-20230317132445-9c3c1fc0106e
 	github.com/blacktear23/go-proxyprotocol v1.0.6
->>>>>>> 8aa7ae292bc (*: Update go-proxyprotocol version to fix some corner case (#43189))
 	github.com/carlmjohnson/flagext v0.21.0
 	github.com/cheggaaa/pb/v3 v3.0.8
 	github.com/cheynewallace/tabby v1.1.1
@@ -105,7 +95,10 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-require github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
+require (
+	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
+	github.com/aws/aws-sdk-go v1.30.19
+)
 
 require (
 	cloud.google.com/go v0.100.2 // indirect
