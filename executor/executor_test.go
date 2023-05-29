@@ -6105,3 +6105,365 @@ func TestIsFastPlan(t *testing.T) {
 		require.Equal(t, ca.isFastPlan, ok)
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestCountDistinctJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(j JSON)")
+	tk.MustExec("insert into t values('2010')")
+	tk.MustExec("insert into t values('2011')")
+	tk.MustExec("insert into t values('2012')")
+	tk.MustExec("insert into t values('2010.000')")
+	tk.MustExec("insert into t values(cast(? as JSON))", uint64(math.MaxUint64))
+	tk.MustExec("insert into t values(cast(? as JSON))", float64(math.MaxUint64))
+
+	tk.MustQuery("select count(distinct j) from t").Check(testkit.Rows("5"))
+}
+
+func TestHashJoinJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int(11), j JSON, d DOUBLE)")
+	tk.MustExec("insert into t values(0, '2010', 2010)")
+	tk.MustExec("insert into t values(1, '2011', 2011)")
+	tk.MustExec("insert into t values(2, '2012', 2012)")
+	tk.MustExec("insert into t values(3, cast(? as JSON), ?)", uint64(math.MaxUint64), float64(math.MaxUint64))
+
+	tk.MustQuery("select /*+inl_hash_join(t2)*/ t1.id, t2.id from t t1 join t t2 on t1.j = t2.d;").Check(testkit.Rows("0 0", "1 1", "2 2"))
+}
+
+func TestBinaryStrNumericOperator(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test normal warnings.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varbinary(10))")
+	tk.MustExec("insert into t values ('123.12')")
+	tk.MustQuery("select 1+a from t").Check(testkit.Rows(
+		"124.12"))
+	tk.MustQuery("select a-1 from t").Check(testkit.Rows(
+		"122.12"))
+	tk.MustQuery("select -10*a from t").Check(testkit.Rows(
+		"-1231.2"))
+	tk.MustQuery("select a/-2 from t").Check(testkit.Rows(
+		"-61.56"))
+	// there should be no warning.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func TestTableLockPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create user 'testuser'@'localhost'")
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil))
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
+	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't'")
+	tk.MustExec("REVOKE ALL ON test.* FROM 'testuser'@'localhost'")
+	tk.MustExec("GRANT SELECT ON test.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
+	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
+	tk2.MustExec("LOCK TABLE test.t WRITE")
+
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t2(a int)")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test2'")
+	tk.MustExec("GRANT LOCK TABLES ON test2.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't2'")
+	tk.MustExec("GRANT SELECT ON test2.* to 'testuser'@'localhost'")
+	tk2.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
+	tk.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
+}
+
+func TestGlobalMemoryControl2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_server_memory_limit = 1 << 30")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
+	}
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tk0.MustExec("use test")
+	tk0.MustExec("create table t(a int)")
+	tk0.MustExec("insert into t select 1")
+	for i := 1; i <= 8; i++ {
+		tk0.MustExec("insert into t select * from t") // 256 Lines
+	}
+
+	var test []int
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		time.Sleep(100 * time.Millisecond) // Make sure the sql is running.
+		test = make([]int, 128<<20)        // Keep 1GB HeapInuse
+		wg.Done()
+	}()
+	sql := "select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a;" // Need 500MB
+	require.True(t, strings.Contains(tk0.QueryToErr(sql).Error(), memory.PanicMemoryExceedWarnMsg))
+	require.Equal(t, tk0.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
+	wg.Wait()
+	test[0] = 0
+	runtime.GC()
+}
+
+func TestCompileOutOfMemoryQuota(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Test for issue: https://github.com/pingcap/tidb/issues/38322
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create table t1(a int, c int, index idx(a))")
+	tk.MustExec("set tidb_mem_quota_query=10")
+	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg)
+}
+
+func TestSignalCheckpointForSort(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/SignalCheckpointForSort", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/SignalCheckpointForSort"))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/chunk/SignalCheckpointForSort", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/chunk/SignalCheckpointForSort"))
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("set tidb_mem_quota_query = 100000000")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", i))
+	}
+	tk.Session().GetSessionVars().ConnectionID = 123456
+
+	err := tk.QueryToErr("select * from t order by a")
+	require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg)
+}
+
+func TestSessionRootTrackerDetach(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create table t1(a int, c int, index idx(a))")
+	tk.MustExec("set tidb_mem_quota_query=10")
+	tk.MustContainErrMsg("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a", memory.PanicMemoryExceedWarnMsg)
+	tk.MustExec("set tidb_mem_quota_query=1000")
+	rs, err := tk.Exec("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.NoError(t, err)
+	require.NotNil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
+	err = rs.Close()
+	require.NoError(t, err)
+	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
+}
+
+func TestIssue39211(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists s;")
+
+	tk.MustExec("CREATE TABLE `t` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL);")
+	tk.MustExec("CREATE TABLE `s` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL);")
+	tk.MustExec("insert into t values(1,1),(2,2);")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+
+	tk.MustExec("insert into s values(3,3),(4,4),(1,null),(2,null),(null,null);")
+	tk.MustExec("insert into s select * from s;")
+	tk.MustExec("insert into s select * from s;")
+	tk.MustExec("insert into s select * from s;")
+	tk.MustExec("insert into s select * from s;")
+	tk.MustExec("insert into s select * from s;")
+
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
+	tk.MustExec("set @@tidb_enable_null_aware_anti_join=true;")
+	tk.MustQuery("select * from t where (a,b) not in (select a, b from s);").Check(testkit.Rows())
+}
+
+func TestPlanReplayerDumpTPCDS(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table catalog_sales
+(
+    cs_sold_date_sk           int                       ,
+    cs_sold_time_sk           int                       ,
+    cs_ship_date_sk           int                       ,
+    cs_bill_customer_sk       int                       ,
+    cs_bill_cdemo_sk          int                       ,
+    cs_bill_hdemo_sk          int                       ,
+    cs_bill_addr_sk           int                       ,
+    cs_ship_customer_sk       int                       ,
+    cs_ship_cdemo_sk          int                       ,
+    cs_ship_hdemo_sk          int                       ,
+    cs_ship_addr_sk           int                       ,
+    cs_call_center_sk         int                       ,
+    cs_catalog_page_sk        int                       ,
+    cs_ship_mode_sk           int                       ,
+    cs_warehouse_sk           int                       ,
+    cs_item_sk                int               not null,
+    cs_promo_sk               int                       ,
+    cs_order_number           int               not null,
+    cs_quantity               int                       ,
+    cs_wholesale_cost         decimal(7,2)                  ,
+    cs_list_price             decimal(7,2)                  ,
+    cs_sales_price            decimal(7,2)                  ,
+    cs_ext_discount_amt       decimal(7,2)                  ,
+    cs_ext_sales_price        decimal(7,2)                  ,
+    cs_ext_wholesale_cost     decimal(7,2)                  ,
+    cs_ext_list_price         decimal(7,2)                  ,
+    cs_ext_tax                decimal(7,2)                  ,
+    cs_coupon_amt             decimal(7,2)                  ,
+    cs_ext_ship_cost          decimal(7,2)                  ,
+    cs_net_paid               decimal(7,2)                  ,
+    cs_net_paid_inc_tax       decimal(7,2)                  ,
+    cs_net_paid_inc_ship      decimal(7,2)                  ,
+    cs_net_paid_inc_ship_tax  decimal(7,2)                  ,
+    cs_net_profit             decimal(7,2)                  ,
+    primary key (cs_item_sk, cs_order_number)
+);`)
+	tk.MustExec(`create table store_sales
+(
+    ss_sold_date_sk           int                       ,
+    ss_sold_time_sk           int                       ,
+    ss_item_sk                int               not null,
+    ss_customer_sk            int                       ,
+    ss_cdemo_sk               int                       ,
+    ss_hdemo_sk               int                       ,
+    ss_addr_sk                int                       ,
+    ss_store_sk               int                       ,
+    ss_promo_sk               int                       ,
+    ss_ticket_number          int               not null,
+    ss_quantity               int                       ,
+    ss_wholesale_cost         decimal(7,2)                  ,
+    ss_list_price             decimal(7,2)                  ,
+    ss_sales_price            decimal(7,2)                  ,
+    ss_ext_discount_amt       decimal(7,2)                  ,
+    ss_ext_sales_price        decimal(7,2)                  ,
+    ss_ext_wholesale_cost     decimal(7,2)                  ,
+    ss_ext_list_price         decimal(7,2)                  ,
+    ss_ext_tax                decimal(7,2)                  ,
+    ss_coupon_amt             decimal(7,2)                  ,
+    ss_net_paid               decimal(7,2)                  ,
+    ss_net_paid_inc_tax       decimal(7,2)                  ,
+    ss_net_profit             decimal(7,2)                  ,
+    primary key (ss_item_sk, ss_ticket_number)
+);`)
+	tk.MustExec(`create table date_dim
+(
+    d_date_sk                 int               not null,
+    d_date_id                 char(16)              not null,
+    d_date                    date                          ,
+    d_month_seq               int                       ,
+    d_week_seq                int                       ,
+    d_quarter_seq             int                       ,
+    d_year                    int                       ,
+    d_dow                     int                       ,
+    d_moy                     int                       ,
+    d_dom                     int                       ,
+    d_qoy                     int                       ,
+    d_fy_year                 int                       ,
+    d_fy_quarter_seq          int                       ,
+    d_fy_week_seq             int                       ,
+    d_day_name                char(9)                       ,
+    d_quarter_name            char(6)                       ,
+    d_holiday                 char(1)                       ,
+    d_weekend                 char(1)                       ,
+    d_following_holiday       char(1)                       ,
+    d_first_dom               int                       ,
+    d_last_dom                int                       ,
+    d_same_day_ly             int                       ,
+    d_same_day_lq             int                       ,
+    d_current_day             char(1)                       ,
+    d_current_week            char(1)                       ,
+    d_current_month           char(1)                       ,
+    d_current_quarter         char(1)                       ,
+    d_current_year            char(1)                       ,
+    primary key (d_date_sk)
+);`)
+	tk.MustQuery(`plan replayer dump explain with ssci as (
+select ss_customer_sk customer_sk
+      ,ss_item_sk item_sk
+from store_sales,date_dim
+where ss_sold_date_sk = d_date_sk
+  and d_month_seq between 1212 and 1212 + 11
+group by ss_customer_sk
+        ,ss_item_sk),
+csci as(
+ select cs_bill_customer_sk customer_sk
+      ,cs_item_sk item_sk
+from catalog_sales,date_dim
+where cs_sold_date_sk = d_date_sk
+  and d_month_seq between 1212 and 1212 + 11
+group by cs_bill_customer_sk
+        ,cs_item_sk)
+ select  sum(case when ssci.customer_sk is not null and csci.customer_sk is null then 1 else 0 end) store_only
+      ,sum(case when ssci.customer_sk is null and csci.customer_sk is not null then 1 else 0 end) catalog_only
+      ,sum(case when ssci.customer_sk is not null and csci.customer_sk is not null then 1 else 0 end) store_and_catalog
+from ssci left join csci on (ssci.customer_sk=csci.customer_sk
+                               and ssci.item_sk = csci.item_sk)
+UNION
+ select  sum(case when ssci.customer_sk is not null and csci.customer_sk is null then 1 else 0 end) store_only
+      ,sum(case when ssci.customer_sk is null and csci.customer_sk is not null then 1 else 0 end) catalog_only
+      ,sum(case when ssci.customer_sk is not null and csci.customer_sk is not null then 1 else 0 end) store_and_catalog
+from ssci right join csci on (ssci.customer_sk=csci.customer_sk
+                               and ssci.item_sk = csci.item_sk)
+limit 100;`)
+}
+
+func TestProcessInfoOfSubQuery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int, j int);")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tk.MustQuery("select 1, (select sleep(count(1) + 2) from t);")
+		wg.Done()
+	}()
+	time.Sleep(time.Second)
+	tk2.MustQuery("select 1 from information_schema.processlist where TxnStart != '' and info like 'select%sleep% from t%'").Check(testkit.Rows("1"))
+	wg.Wait()
+}
+>>>>>>> 4714df8a83d (executor: fix issue of can not get the TxnStart if the SQL has a non-related subquery (#44232))

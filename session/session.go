@@ -1444,6 +1444,27 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
+<<<<<<< HEAD
+=======
+// UpdateProcessInfo updates the session's process info for the running statement.
+func (s *session) UpdateProcessInfo() {
+	pi := s.ShowProcess()
+	if pi == nil || pi.CurTxnStartTS != 0 {
+		return
+	}
+	// Update the current transaction start timestamp.
+	pi.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
+}
+
+func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
+	return util.OOMAlarmVariablesInfo{
+		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
+		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
+		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
+	}
+}
+
+>>>>>>> 4714df8a83d (executor: fix issue of can not get the TxnStart if the SQL has a non-related subquery (#44232))
 func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
 	s.diskFullOpt = level
 }
