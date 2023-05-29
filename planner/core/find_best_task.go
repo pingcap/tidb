@@ -2179,6 +2179,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			}
 		}
 	}
+
+	originPropTaskType := prop.TaskTp
+	if ts.StoreType == kv.TiFlash && prop.TaskTp != property.MppTaskType {
+		// this prop case want to generate tiflash cop task, so change it mppTaskType to detect whether it works.
+		prop.TaskTp = property.MppTaskType
+	}
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
 	isDisaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash
@@ -2186,12 +2192,24 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	canMppConvertToRootForDisaggregatedTiFlash := isDisaggregatedTiFlashPath && prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed()
 	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash {
 		if ts.KeepOrder {
+			// coming here it means an invalid mpp task will be generated, while it is mocked from TiFlash cop task,
+			// so we should restore the origin TiFlash cop task type, and go through cop task type building.
+			if originPropTaskType != prop.TaskTp {
+				prop.TaskTp = originPropTaskType
+				goto CopStart
+			}
 			return invalidTask, nil
 		}
 		if prop.MPPPartitionTp != property.AnyType || (ts.isPartition && !isDisaggregatedTiFlash) {
 			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
 			// But in disaggregated tiflash mode, we enable using mpp for static pruning partition table, because cop and batchCop is deprecated.
 			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
+			if originPropTaskType != prop.TaskTp {
+				// coming here it means an invalid mpp task will be generated, while it is mocked from TiFlash cop task,
+				// so we should restore the origin TiFlash cop task type, and go through cop task type building.
+				prop.TaskTp = originPropTaskType
+				goto CopStart
+			}
 			return invalidTask, nil
 		}
 		var hasVirtualColumn bool
@@ -2203,6 +2221,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			}
 		}
 		if hasVirtualColumn && !canMppConvertToRootForDisaggregatedTiFlash {
+			// coming here it means an invalid mpp task will be generated, while it is mocked from TiFlash cop task,
+			// so we should restore the origin TiFlash cop task type, and go through cop task type building.
+			if originPropTaskType != prop.TaskTp {
+				prop.TaskTp = originPropTaskType
+				goto CopStart
+			}
 			return invalidTask, nil
 		}
 		mppTask := &mppTask{
@@ -2233,8 +2257,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				task = task.convertToRootTask(ds.ctx)
 			}
 		}
+		// when it comes to here, it means a valid mpp task can be generated, while it is mocked from TiFlash cop task type.
+		// just return invalidTask to avoid generating TiFlash cop task since mpp path enumeration is feasible in next turn.
+		if originPropTaskType != prop.TaskTp {
+			return invalidTask, nil
+		}
 		return task, nil
 	}
+CopStart:
 	if isDisaggregatedTiFlashPath {
 		// prop.TaskTp is cop related, just return invalidTask.
 		return invalidTask, nil
