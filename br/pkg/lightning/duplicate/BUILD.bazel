@@ -30,7 +30,7 @@ go_test(
     ],
     embed = [":duplicate"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         "//br/pkg/lightning/log",
         "//util/extsort",

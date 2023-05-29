@@ -1,0 +1,5 @@
+[lightning]
+max-error-records = 1000
+
+[tikv-importer]
+on-duplicate = "ignore"

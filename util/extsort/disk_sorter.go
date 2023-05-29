@@ -133,6 +133,7 @@ func (d *DiskSorter) Sort(ctx context.Context) error {
 	if err := d.doSort(ctx); err != nil {
 		return errors.Trace(err)
 	}
+	// TODO: Persist the state to disk.
 	d.state.Store(diskSorterStateSorted)
 	return nil
 }
@@ -149,8 +150,8 @@ func (d *DiskSorter) doSort(_ context.Context) error {
 		return errors.Trace(err)
 	}
 
-	// Compact treats end as an exclusive bound,
-	// it doesn't matter since correctness is not affected.
+	// TODO: It seems compact doesn't run in parallel.
+	//  We can use multiple compactions to speed up.
 	err := d.db.Compact(nil, end)
 	return errors.Trace(err)
 }

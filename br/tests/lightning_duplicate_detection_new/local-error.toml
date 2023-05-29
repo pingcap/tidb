@@ -1,0 +1,2 @@
+[tikv-importer]
+on-duplicate = "error"

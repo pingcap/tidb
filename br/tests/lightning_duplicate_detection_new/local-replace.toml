@@ -1,0 +1,8 @@
+[lightning]
+max-error-records = 1000
+
+[checkpoint]
+driver = "mysql"
+
+[tikv-importer]
+on-duplicate = "replace"
