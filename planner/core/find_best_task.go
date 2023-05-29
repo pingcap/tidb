@@ -2181,7 +2181,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}
 
 	originPropTaskType := prop.TaskTp
-	if ts.StoreType == kv.TiFlash && prop.TaskTp != property.MppTaskType {
+	if ts.StoreType == kv.TiFlash && prop.TaskTp != property.MppTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed() {
 		// this prop case want to generate tiflash cop task, so change it mppTaskType to detect whether it works.
 		prop.TaskTp = property.MppTaskType
 	}
