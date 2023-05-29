@@ -4159,20 +4159,22 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 }
 
 // goTimeToMysqlUnixTimestamp converts go time into MySQL's Unix timestamp.
-// MySQL's Unix timestamp ranges in int32. Values out of range should be rewritten to 0.
+// MySQL's Unix timestamp ranges from '1970-01-01 00:00:01.000000' UTC to '3001-01-18 23:59:59.999999' UTC. Values out of range should be rewritten to 0.
 // https://dev.mysql.com/doc/refman/8.0/en/date-and-time-functions.html#function_unix-timestamp
 func goTimeToMysqlUnixTimestamp(t time.Time, decimal int) (*types.MyDecimal, error) {
-	nanoSeconds := t.UnixNano()
-	// Prior to MySQL 8.0.28, the valid range of argument values is the same as for the TIMESTAMP data type:
+	microSeconds := t.UnixMicro()
+	// Prior to MySQL 8.0.28 (or any 32-bit platform), the valid range of argument values is the same as for the TIMESTAMP data type:
 	// '1970-01-01 00:00:01.000000' UTC to '2038-01-19 03:14:07.999999' UTC.
-	// This is also the case in MySQL 8.0.28 and later for 32-bit platforms.
-	if nanoSeconds < 1e9 || (nanoSeconds/1e3) >= (math.MaxInt32+1)*1e6 {
+	// After 8.0.28, the range has been extended to '1970-01-01 00:00:01.000000' UTC to '3001-01-18 23:59:59.999999' UTC
+	// The magic value of '3001-01-18 23:59:59.999999' comes from the maximum supported timestamp on windows. Though TiDB
+	// doesn't support windows, this value is used here to keep the compatibility with MySQL
+	if microSeconds < 1e6 || microSeconds > 32536771199999999 {
 		return new(types.MyDecimal), nil
 	}
 	dec := new(types.MyDecimal)
 	// Here we don't use float to prevent precision lose.
-	dec.FromInt(nanoSeconds)
-	err := dec.Shift(-9)
+	dec.FromUint(uint64(microSeconds))
+	err := dec.Shift(-6)
 	if err != nil {
 		return nil, err
 	}
