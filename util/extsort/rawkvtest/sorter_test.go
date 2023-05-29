@@ -31,6 +31,7 @@ var (
 )
 
 func TestPlayground(t *testing.T) {
+	t.Skip("skip playground test")
 	ctx := context.Background()
 	cli, err := rawkv.NewClient(ctx, strings.Split(*PdAddr, ","), config.Security{})
 	require.NoError(t, err)

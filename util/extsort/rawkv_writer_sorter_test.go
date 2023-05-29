@@ -213,3 +213,7 @@ func TestFailedToBatchPut(t *testing.T) {
 	require.ErrorIs(t, err, errBatchPut)
 	require.ErrorIs(t, w.Close(), errBatchPut)
 }
+
+func TestGrowDataBuf(t *testing.T) {
+
+}

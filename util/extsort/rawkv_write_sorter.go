@@ -428,13 +428,13 @@ func (r *RawKVPutSorter) NewIterator(_ context.Context) (Iterator, error) {
 }
 
 // Close implements the ExternalSorter interface.
-func (_ *RawKVPutSorter) Close() error {
+func (*RawKVPutSorter) Close() error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // CloseAndCleanup implements the ExternalSorter interface.
-func (_ *RawKVPutSorter) CloseAndCleanup() error {
+func (*RawKVPutSorter) CloseAndCleanup() error {
 	//TODO implement me
 	panic("implement me")
 }
