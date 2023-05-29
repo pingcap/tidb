@@ -90,7 +90,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	//	if err != nil {
 	//		return nil, err
 	//	}
-	subtaskMetas, err := generateSubtaskMetas(ctx, taskMeta)
+	subtaskMetas, err := generateSubtaskMetas(ctx, gTask.ID, taskMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -147,14 +147,14 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 	h.lastSwitchTime.Store(time.Time{})
 }
 
-// postProcess does the post processing for the task.
+// postProcess does the post-processing for the task.
 func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, logger *zap.Logger) error {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
 		return err
 	}
-	tableImporter, err := buildTableImporter(ctx, taskMeta)
+	tableImporter, err := buildTableImporter(ctx, gTask.ID, taskMeta)
 	if err != nil {
 		return err
 	}
@@ -218,7 +218,7 @@ func updateMeta(gTask *proto.Task, taskMeta *TaskMeta) error {
 	return nil
 }
 
-func buildTableImporter(ctx context.Context, taskMeta *TaskMeta) (*importer.TableImporter, error) {
+func buildTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
@@ -240,14 +240,12 @@ func buildTableImporter(ctx context.Context, taskMeta *TaskMeta) (*importer.Tabl
 	return importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
 		Progress: asyncloaddata.NewProgress(false),
-		Job: &asyncloaddata.Job{
-			ID: taskMeta.JobID,
-		},
-	}, controller)
+		Job:      &asyncloaddata.Job{},
+	}, controller, taskID)
 }
 
-func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {
-	tableImporter, err := buildTableImporter(ctx, taskMeta)
+func generateSubtaskMetas(ctx context.Context, taskID int64, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {
+	tableImporter, err := buildTableImporter(ctx, taskID, taskMeta)
 	if err != nil {
 		return nil, err
 	}

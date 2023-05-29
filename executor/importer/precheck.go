@@ -30,23 +30,21 @@ import (
 // CheckRequirements checks the requirements for load data.
 func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec.SQLExecutor) error {
 	collector := newPreCheckCollector()
-	if e.ImportMode == PhysicalImportMode {
-		// todo: maybe we can reuse checker in lightning
-		sql := fmt.Sprintf("SELECT 1 FROM %s USE INDEX() LIMIT 1", common.UniqueTable(e.DBName, e.Table.Meta().Name.L))
-		rs, err := conn.ExecuteInternal(ctx, sql)
-		if err != nil {
-			return err
-		}
-		defer terror.Call(rs.Close)
-		rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-		if err != nil {
-			return err
-		}
-		if len(rows) > 0 {
-			collector.fail(precheck.CheckTargetTableEmpty, "target table is not empty")
-		} else {
-			collector.pass(precheck.CheckTargetTableEmpty)
-		}
+	// todo: maybe we can reuse checker in lightning
+	sql := fmt.Sprintf("SELECT 1 FROM %s USE INDEX() LIMIT 1", common.UniqueTable(e.DBName, e.Table.Meta().Name.L))
+	rs, err := conn.ExecuteInternal(ctx, sql)
+	if err != nil {
+		return err
+	}
+	defer terror.Call(rs.Close)
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return err
+	}
+	if len(rows) > 0 {
+		collector.fail(precheck.CheckTargetTableEmpty, "target table is not empty")
+	} else {
+		collector.pass(precheck.CheckTargetTableEmpty)
 	}
 	if !collector.success() {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("\n" + collector.output())

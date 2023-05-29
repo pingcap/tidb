@@ -23,7 +23,7 @@ type schedulerRegisterOptions struct {
 }
 
 // Constructor is the constructor of Scheduler.
-type Constructor func(taskMeta []byte, step int64) (Scheduler, error)
+type Constructor func(taskID int64, taskMeta []byte, step int64) (Scheduler, error)
 
 // RegisterOption is the register option of Scheduler.
 type RegisterOption func(opts *schedulerRegisterOptions)

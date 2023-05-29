@@ -94,7 +94,7 @@ func (s *mockGCSSuite) simpleShowLoadDataJobs(importMode string) {
 
 	resultMessage := "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
 	withOptions := "WITH thread=1, DETACHED"
-	if importMode == importer.PhysicalImportMode {
+	if importMode == "physical" {
 		withOptions = "WITH thread=1, DETACHED, import_mode='PHYSICAL'"
 	}
 
@@ -129,8 +129,8 @@ func (s *mockGCSSuite) simpleShowLoadDataJobs(importMode string) {
 
 func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	s.T().Skip("WITH detached is removed in LOAD DATA")
-	//s.simpleShowLoadDataJobs(importer.PhysicalImportMode)
-	s.simpleShowLoadDataJobs(importer.LogicalImportMode)
+	//s.simpleShowLoadDataJobs("physical)
+	s.simpleShowLoadDataJobs("logical")
 
 	user := &auth.UserIdentity{
 		AuthUsername: "test-load-2",
@@ -221,8 +221,8 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 
 func (s *mockGCSSuite) TestInternalStatus() {
 	s.T().Skip("WITH detached is removed in LOAD DATA")
-	s.testInternalStatus(importer.LogicalImportMode)
-	//s.testInternalStatus(importer.PhysicalImportMode)
+	s.testInternalStatus("logical")
+	//s.testInternalStatus("physical)
 }
 
 func (s *mockGCSSuite) testInternalStatus(importMode string) {
@@ -258,7 +258,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	withOptions := "WITH thread=1, DETACHED, batch_size=1"
 	progressAfterFirstBatch := `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":1}`
 	progressAfterAll := `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
-	if importMode == importer.PhysicalImportMode {
+	if importMode == "physical" {
 		withOptions = fmt.Sprintf("WITH thread=1, DETACHED, import_mode='%s'", importMode)
 		progressAfterFirstBatch = `{"SourceFileSize":2,"ReadRowCnt":1,"EncodeFileSize":1,"LoadedRowCnt":1}`
 		progressAfterAll = `{"SourceFileSize":2,"ReadRowCnt":2,"EncodeFileSize":2,"LoadedRowCnt":2}`
@@ -432,7 +432,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SaveLastLoadDataJobID", `return`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SyncAfterCreateLoadDataJob", `return`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SyncAfterStartJob", `return`)
-	if importMode == importer.LogicalImportMode {
+	if importMode == "logical" {
 		s.enableFailpoint("github.com/pingcap/tidb/executor/SyncAfterCommitOneTask", `return`)
 	} else {
 		s.enableFailpoint("github.com/pingcap/tidb/executor/importer/SyncAfterImportDataEngine", `return`)
