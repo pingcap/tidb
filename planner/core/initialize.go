@@ -547,7 +547,7 @@ func (p *BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsIn
 						break
 					}
 				}
-				pid, err := GetPhysID(p.TblInfo, p.PartitionExpr, d)
+				pid, err := GetPhysID(p.TblInfo, p.PartitionExpr, p.PartitionColPos, d)
 				if err != nil {
 					hasErr = true
 					break
@@ -556,7 +556,7 @@ func (p *BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsIn
 			}
 		} else {
 			for _, idxVals := range p.IndexValues {
-				pid, err := GetPhysID(p.TblInfo, p.PartitionExpr, idxVals[p.PartitionColPos])
+				pid, err := GetPhysID(p.TblInfo, p.PartitionExpr, p.PartitionColPos, idxVals[p.PartitionColPos])
 				if err != nil {
 					hasErr = true
 					break

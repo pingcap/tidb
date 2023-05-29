@@ -174,8 +174,10 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			origIdx := setIndexesState(ret, pi.DDLState)
 			defer unsetIndexesState(ret, origIdx)
 			if pi.NewTableID != 0 {
+				// REMOVE PARTITIONING or PARTITION BY
 				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.AddingDefinitions)
 			} else {
+				// REORGANIZE PARTITION
 				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.AddingDefinitions)
 			}
 			if err != nil {

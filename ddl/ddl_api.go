@@ -4260,8 +4260,7 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 		clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
 		clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
 	default:
-		// TODO: FIXME!!!
-		panic("REMOVE ME TODO FIXME")
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("partition type")
 	}
 	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
 		return errors.Trace(err)

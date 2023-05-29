@@ -2313,12 +2313,10 @@ func getReorgPartitionInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, []st
 	if tblInfo.Partition != nil {
 		addingDefs = tblInfo.Partition.AddingDefinitions
 		droppingDefs = tblInfo.Partition.DroppingDefinitions
-		if partInfo.DDLType != model.PartitionTypeNone {
-			tblInfo.Partition.NewTableID = partInfo.NewTableID
-			tblInfo.Partition.DDLType = partInfo.Type
-			tblInfo.Partition.DDLExpr = partInfo.Expr
-			tblInfo.Partition.DDLColumns = partInfo.Columns
-		}
+		tblInfo.Partition.NewTableID = partInfo.NewTableID
+		tblInfo.Partition.DDLType = partInfo.Type
+		tblInfo.Partition.DDLExpr = partInfo.Expr
+		tblInfo.Partition.DDLColumns = partInfo.Columns
 	} else {
 		tblInfo.Partition = getPartitionInfoTypeNone()
 		tblInfo.Partition.NewTableID = partInfo.NewTableID
@@ -2554,7 +2552,8 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// From now on, use the new partitioning, but keep the Adding and Dropping for double write
 		tblInfo.Partition.Definitions = newDefs
 		tblInfo.Partition.Num = uint64(len(newDefs))
-		if job.Type == model.ActionAlterTablePartitioning {
+		if job.Type == model.ActionAlterTablePartitioning ||
+			job.Type == model.ActionRemovePartitioning {
 			tblInfo.Partition.Type, tblInfo.Partition.DDLType = tblInfo.Partition.DDLType, tblInfo.Partition.Type
 			tblInfo.Partition.Expr, tblInfo.Partition.DDLExpr = tblInfo.Partition.DDLExpr, tblInfo.Partition.Expr
 			tblInfo.Partition.Columns, tblInfo.Partition.DDLColumns = tblInfo.Partition.DDLColumns, tblInfo.Partition.Columns
