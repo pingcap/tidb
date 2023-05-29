@@ -2347,6 +2347,7 @@ type FastCheckTableExec struct {
 	err        error
 	hasError   *atomic.Bool
 	wg         sync.WaitGroup
+	contextCtx context.Context
 }
 
 // Open implements the Executor Open interface.
@@ -2356,6 +2357,7 @@ func (e *FastCheckTableExec) Open(ctx context.Context) error {
 	}
 
 	e.done = false
+	e.contextCtx = ctx
 	return nil
 }
 
@@ -2369,6 +2371,7 @@ type checkIndexWorker struct {
 	table      table.Table
 	indexInfos []*model.IndexInfo
 	e          *FastCheckTableExec
+	ctx        context.Context
 }
 
 type groupByChecksum struct {
@@ -2377,8 +2380,8 @@ type groupByChecksum struct {
 	count    int64
 }
 
-func getCheckSum(se sessionctx.Context, sql string) ([]groupByChecksum, error) {
-	ctx := kv.WithInternalSourceType(context.TODO(), kv.InternalTxnAdmin)
+func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]groupByChecksum, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
 	rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return nil, err
@@ -2406,7 +2409,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	idxInfo := w.indexInfos[task.indexOffset]
 	bucketSize := int(CheckTableFastBucketSize.Load())
 
-	ctx := kv.WithInternalSourceType(context.TODO(), kv.InternalTxnAdmin)
+	ctx := kv.WithInternalSourceType(w.e.contextCtx, kv.InternalTxnAdmin)
 
 	trySaveErr := func(err error) {
 		if setNewErr := w.e.hasError.CompareAndSwap(false, true); setNewErr {
@@ -2494,6 +2497,20 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	lookupCheckThreshold := int64(100)
 	checkOnce := false
 
+	if w.e.ctx.GetSessionVars().SnapshotTS != 0 {
+		_, err = se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "set @@tidb_snapshot = %?", w.e.ctx.GetSessionVars().SnapshotTS)
+		if err != nil {
+			trySaveErr(err)
+			return
+		}
+		defer func() {
+			_, err = se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "set @@tidb_snapshot = ''")
+			if err != nil {
+				trySaveErr(err)
+				return
+			}
+		}()
+	}
 	_, err = se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
 	if err != nil {
 		trySaveErr(err)
@@ -2518,7 +2535,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		// compute table side checksum.
 		sql := fmt.Sprintf("select /*+ read_from_storage(tikv[%s.%s]) */ bit_xor(%s), %s, count(*) from %s.%s use index() where %s = 0 group by %s", w.e.dbName, w.e.table.Meta().Name, md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, whereKey, groupByKey)
 		logutil.BgLogger().Info("check table index on table side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
-		tableChecksum, err := getCheckSum(se, sql)
+		tableChecksum, err := getCheckSum(w.e.contextCtx, se, sql)
 		if err != nil {
 			trySaveErr(err)
 			return
@@ -2530,7 +2547,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		// compute index side checksum.
 		sql = fmt.Sprintf("select bit_xor(%s), %s, count(*) from %s.%s use index(%s) where %s = 0 group by %s", md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, whereKey, groupByKey)
 		logutil.BgLogger().Info("check table index on index side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
-		indexChecksum, err := getCheckSum(se, sql)
+		indexChecksum, err := getCheckSum(w.e.contextCtx, se, sql)
 		if err != nil {
 			trySaveErr(err)
 			return
@@ -2543,32 +2560,30 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 
 		// Every checksum in table side should be the same as the index side.
 		i := 0
-		j := 0
-		for i < len(tableChecksum) && j < len(indexChecksum) {
-			if tableChecksum[i].bucket != indexChecksum[j].bucket || tableChecksum[i].checksum != indexChecksum[j].checksum {
-				if tableChecksum[i].bucket <= indexChecksum[j].bucket {
+		for i < len(tableChecksum) && i < len(indexChecksum) {
+			if tableChecksum[i].bucket != indexChecksum[i].bucket || tableChecksum[i].checksum != indexChecksum[i].checksum {
+				if tableChecksum[i].bucket <= indexChecksum[i].bucket {
 					currentOffset = int(tableChecksum[i].bucket)
 					tableRowCntToCheck = tableChecksum[i].count
 				} else {
-					currentOffset = int(indexChecksum[j].bucket)
-					tableRowCntToCheck = indexChecksum[j].count
+					currentOffset = int(indexChecksum[i].bucket)
+					tableRowCntToCheck = indexChecksum[i].count
 				}
 				meetError = true
 				break
 			}
 			i++
-			j++
 		}
 
-		if !meetError && i < len(tableChecksum) {
+		if !meetError && i < len(indexChecksum) && i == len(tableChecksum) {
 			// Table side has fewer buckets.
-			currentOffset = i
+			currentOffset = int(indexChecksum[i].bucket)
 			tableRowCntToCheck = indexChecksum[i].count
 			meetError = true
-		} else if !meetError && j < len(indexChecksum) {
+		} else if !meetError && i < len(tableChecksum) && i == len(indexChecksum) {
 			// Index side has fewer buckets.
-			currentOffset = j
-			tableRowCntToCheck = tableChecksum[j].count
+			currentOffset = int(tableChecksum[i].bucket)
+			tableRowCntToCheck = tableChecksum[i].count
 			meetError = true
 		}
 
@@ -2714,19 +2729,19 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 				if lastTableRecord != nil && lastTableRecord.Handle.Equal(indexRecord.Handle) {
 					tableRecord = lastTableRecord
 				}
-				err = ir().ReportAdminCheckInconsistent(context.TODO(), indexRecord.Handle, indexRecord, tableRecord)
+				err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, tableRecord)
 			} else if indexRecord == nil {
-				err = ir().ReportAdminCheckInconsistent(context.TODO(), tableRecord.Handle, indexRecord, tableRecord)
+				err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, tableRecord.Handle, indexRecord, tableRecord)
 			} else if tableRecord.Handle.Equal(indexRecord.Handle) && getCheckSum(tblRow[i]) != getCheckSum(idxRow[j]) {
-				err = ir().ReportAdminCheckInconsistent(context.TODO(), tableRecord.Handle, indexRecord, tableRecord)
+				err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, tableRecord.Handle, indexRecord, tableRecord)
 			} else if !tableRecord.Handle.Equal(indexRecord.Handle) {
 				if tableRecord.Handle.Compare(indexRecord.Handle) < 0 {
-					err = ir().ReportAdminCheckInconsistent(context.TODO(), tableRecord.Handle, nil, tableRecord)
+					err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, tableRecord.Handle, nil, tableRecord)
 				} else {
 					if lastTableRecord != nil && lastTableRecord.Handle.Equal(indexRecord.Handle) {
-						err = ir().ReportAdminCheckInconsistent(context.TODO(), indexRecord.Handle, indexRecord, lastTableRecord)
+						err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, lastTableRecord)
 					} else {
-						err = ir().ReportAdminCheckInconsistent(context.TODO(), indexRecord.Handle, indexRecord, nil)
+						err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, nil)
 					}
 				}
 			}

@@ -1240,7 +1240,7 @@ func TestCheckFailReport(t *testing.T) {
 
 		ctx, hook := testutil.WithLogHook(tk.ctx, t, "inconsistency")
 		tk.MustGetErrMsg(ctx, "admin check table admin_test",
-			"[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"handle: 1, values: [KindString 100 KindInt64 1]\" != record-values:\"\"")
+			"[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"handle: 1, values: [KindString 100]\" != record-values:\"\"")
 		hook.CheckLogCount(t, 1)
 		logEntry := hook.Logs[0]
 		logEntry.CheckMsg(t, "admin check found data inconsistency")
@@ -1284,7 +1284,7 @@ func TestCheckFailReport(t *testing.T) {
 
 		ctx, hook := testutil.WithLogHook(tk.ctx, t, "inconsistency")
 		tk.MustGetErrMsg(ctx, "admin check table admin_test",
-			"[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"handle: 1, values: [KindInt64 10 KindInt64 1]\" != record-values:\"\"")
+			"[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"handle: 1, values: [KindInt64 10]\" != record-values:\"\"")
 		hook.CheckLogCount(t, 1)
 		logEntry := hook.Logs[0]
 		logEntry.CheckMsg(t, "admin check found data inconsistency")
@@ -1327,8 +1327,7 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
 		ctx, hook := testutil.WithLogHook(tk.ctx, t, "inconsistency")
-		tk.MustGetErrMsg(ctx, "admin check table admin_test",
-			"[executor:8134]data inconsistency in table: admin_test, index: uk1, col: c2, handle: \"1\", index-values:\"KindInt64 20\" != record-values:\"KindInt64 10\", compare err:<nil>")
+		tk.MustGetErrMsg(ctx, "admin check table admin_test", "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"handle: 1, values: [KindInt64 20]\" != record-values:\"handle: 1, values: [KindInt64 10]\"")
 		hook.CheckLogCount(t, 1)
 		logEntry := hook.Logs[0]
 		logEntry.CheckMsg(t, "admin check found data inconsistency")
@@ -1336,7 +1335,6 @@ func TestCheckFailReport(t *testing.T) {
 			zap.String("table_name", "admin_test"),
 			zap.String("index_name", "uk1"),
 			zap.Stringer("row_id", kv.IntHandle(1)),
-			zap.String("col", "c2"),
 		)
 		logEntry.CheckFieldNotEmpty(t, "row_mvcc")
 		logEntry.CheckFieldNotEmpty(t, "index_mvcc")
@@ -1355,7 +1353,7 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, txn.Commit(tk.ctx))
 		ctx, hook := testutil.WithLogHook(tk.ctx, t, "inconsistency")
 		tk.MustGetErrMsg(ctx, "admin check table admin_test",
-			"[executor:8134]data inconsistency in table: admin_test, index: k2, col: c3, handle: \"1\", index-values:\"KindString 200\" != record-values:\"KindString 100\", compare err:<nil>")
+			"[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"handle: 1, values: [KindString 200]\" != record-values:\"handle: 1, values: [KindString 100]\"")
 		hook.CheckLogCount(t, 1)
 		logEntry := hook.Logs[0]
 		logEntry.CheckMsg(t, "admin check found data inconsistency")
@@ -1363,7 +1361,6 @@ func TestCheckFailReport(t *testing.T) {
 			zap.String("table_name", "admin_test"),
 			zap.String("index_name", "k2"),
 			zap.Stringer("row_id", kv.IntHandle(1)),
-			zap.String("col", "c3"),
 		)
 		logEntry.CheckFieldNotEmpty(t, "row_mvcc")
 		logEntry.CheckFieldNotEmpty(t, "index_mvcc")
@@ -1396,7 +1393,7 @@ func TestCheckFailReport(t *testing.T) {
 		tk.MustExec(ctx, "set @@tidb_enable_chunk_rpc = off")
 
 		tk.MustGetErrMsg(ctx, "admin check table admin_test",
-			`[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 282574488403969, index-values:"handle: 282574488403969, values: [KindInt64 282578800083201 KindInt64 282574488403969]" != record-values:""`)
+			`[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 282574488403969, index-values:"handle: 282574488403969, values: [KindInt64 282578800083201]" != record-values:""`)
 		hook.CheckLogCount(t, 1)
 		logEntry := hook.Logs[0]
 		logEntry.CheckMsg(t, "admin check found data inconsistency")
