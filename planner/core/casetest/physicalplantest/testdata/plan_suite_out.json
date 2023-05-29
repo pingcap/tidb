@@ -1464,9 +1464,9 @@
       {
         "SQL": "explain select * from t1, t2 where t1.a=t2.b",
         "Plan": [
-          "TableReader_34 1.00 root  MppVersion: 1, data:ExchangeSender_33",
-          "└─ExchangeSender_33 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_32 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]",
+          "TableReader_32 1.00 root  MppVersion: 1, data:ExchangeSender_31",
+          "└─ExchangeSender_31 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_30 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]",
           "    ├─ExchangeReceiver_15(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_14 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection_13 1.00 mpp[tiflash]  not(isnull(test.t1.a))",
@@ -1484,9 +1484,9 @@
       {
         "SQL": "explain select * from t1, t2 where t1.a=t2.b",
         "Plan": [
-          "TableReader_36 1.00 root  MppVersion: 1, data:ExchangeSender_35",
-          "└─ExchangeSender_35 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_34 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]",
+          "TableReader_34 1.00 root  MppVersion: 1, data:ExchangeSender_33",
+          "└─ExchangeSender_33 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_32 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]",
           "    ├─ExchangeReceiver_15(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_14 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.a, collate: binary]",
           "    │   └─Selection_13 1.00 mpp[tiflash]  not(isnull(test.t1.a))",
@@ -1506,9 +1506,9 @@
       {
         "SQL": "explain select * from t1, t2 where t1.a=t2.b",
         "Plan": [
-          "TableReader_34 1.00 root  MppVersion: 1, data:ExchangeSender_33",
-          "└─ExchangeSender_33 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_32 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]",
+          "TableReader_32 1.00 root  MppVersion: 1, data:ExchangeSender_31",
+          "└─ExchangeSender_31 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_30 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.b)]",
           "    ├─ExchangeReceiver_15(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_14 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection_13 1.00 mpp[tiflash]  not(isnull(test.t1.a))",
