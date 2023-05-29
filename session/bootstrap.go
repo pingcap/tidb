@@ -1203,7 +1203,7 @@ func syncUpgradeState(s Session) {
 			}
 			jobErrStrs = append(jobErrStrs, jobErr.Error())
 		}
-		if err == nil && len(jobErrs) == 0 {
+		if err == nil && len(jobErrStrs) == 0 {
 			break
 		}
 
