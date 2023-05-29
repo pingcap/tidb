@@ -288,6 +288,7 @@ type SubJob struct {
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
 	SnapshotVer uint64          `json:"snapshot_ver"`
+	RealStartTS uint64          `json:"real_start_ts"`
 	Revertible  bool            `json:"revertible"`
 	State       JobState        `json:"state"`
 	RowCount    int64           `json:"row_count"`
@@ -334,7 +335,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 		RawArgs:         sub.RawArgs,
 		SchemaState:     sub.SchemaState,
 		SnapshotVer:     sub.SnapshotVer,
-		RealStartTS:     parentJob.RealStartTS,
+		RealStartTS:     sub.RealStartTS,
 		StartTS:         parentJob.StartTS,
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
@@ -355,6 +356,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
 	sub.SchemaState = proxyJob.SchemaState
 	sub.SnapshotVer = proxyJob.SnapshotVer
+	sub.RealStartTS = proxyJob.RealStartTS
 	sub.Args = proxyJob.Args
 	sub.State = proxyJob.State
 	sub.Warning = proxyJob.Warning
