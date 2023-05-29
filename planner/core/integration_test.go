@@ -4538,18 +4538,18 @@ func TestLeastGretestStringPushDownToTiFlash(t *testing.T) {
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
-		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"TableReader_8", "root", "MppVersion: 1, data:ExchangeSender_7"},
+		{"└─ExchangeSender_7", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "least(test.t.a, test.t.b)->Column#4"},
-		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+		{"    └─TableFullScan_6", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select least(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 	rows = [][]interface{}{
-		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
-		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"TableReader_8", "root", "MppVersion: 1, data:ExchangeSender_7"},
+		{"└─ExchangeSender_7", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "greatest(test.t.a, test.t.b)->Column#4"},
-		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+		{"    └─TableFullScan_6", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select greatest(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
