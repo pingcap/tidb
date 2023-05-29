@@ -280,6 +280,15 @@ func TestIndexJoinPenaltyCost(t *testing.T) {
 	require.Greater(t, cost3, cost2)
 }
 
+func TestIssue44025(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int, b int, c int, d int, index ia(a), index ibc(b,c))`)
+	tk.MustExec(`set @@tidb_cost_model_version=1`)
+	tk.MustUseIndex(`select * from t where a between 1 and 5 and b != 200 and c = 20 limit 100000`, `ia(a)`)
+}
+
 func BenchmarkGetPlanCost(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)

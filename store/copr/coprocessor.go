@@ -264,10 +264,11 @@ type copTask struct {
 	pagingSize    uint64
 	pagingTaskIdx uint32
 
-	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
-	requestSource  util.RequestSource
-	RowCountHint   int // used for extra concurrency of small tasks, -1 for unknown row count
-	batchTaskList  map[uint64]*batchedCopTask
+	partitionIndex   int64 // used by balanceBatchCopTask in PartitionTableScan
+	requestSource    util.RequestSource
+	RowCountHint     int // used for extra concurrency of small tasks, -1 for unknown row count
+	batchTaskList    map[uint64]*batchedCopTask
+	meetLockFallback bool
 }
 
 type batchedCopTask struct {
@@ -1024,8 +1025,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.kvclient.Stats == nil {
 		worker.kvclient.Stats = make(map[tikvrpc.CmdType]*tikv.RPCRuntimeStats)
 	}
+	// set ReadReplicaScope and TxnScope so that req.IsStaleRead will be true when it's a global scope stale read.
 	req.ReadReplicaScope = worker.req.ReadReplicaScope
-	if worker.req.IsStaleness {
+	req.TxnScope = worker.req.TxnScope
+	if task.meetLockFallback {
+		req.DisableStaleReadMeetLock()
+	} else if worker.req.IsStaleness {
 		req.EnableStaleRead()
 	}
 	staleRead := req.GetStaleRead()
@@ -1175,6 +1180,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if err := worker.handleLockErr(bo, lockErr, task); err != nil {
 			return nil, err
 		}
+		task.meetLockFallback = true
 		return worker.handleBatchRemainsOnErr(bo, rpcCtx, []*copTask{task}, resp.pbResp.BatchResponses, task, ch)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
@@ -1323,6 +1329,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			if err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
 				return nil, err
 			}
+			task.meetLockFallback = true
 			remainTasks = append(remainTasks, task)
 			continue
 		}
