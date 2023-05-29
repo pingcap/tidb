@@ -31,7 +31,7 @@ var (
 	// ExecPhaseDuration records the duration of each execution phase.
 	ExecPhaseDuration *prometheus.SummaryVec
 
-	// OnGoingTxnDurationHistogram records the duration of ongoing transactions.
+	// OngoingTxnDurationHistogram records the duration of ongoing transactions.
 	OngoingTxnDurationHistogram prometheus.Histogram
 )
 

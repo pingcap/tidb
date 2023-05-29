@@ -58,22 +58,21 @@ func (eqh *Handle) Run() {
 		case <-ticker.C:
 			processInfo := sm.ShowProcessList()
 			for _, info := range processInfo {
-				if len(info.Info) == 0 && info.CurTxnStartTS == 0 {
-					continue
-				}
-
-				costTime := time.Since(info.Time)
-				if time.Since(info.ExpensiveLogTime) > 60*time.Second && costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
-					msg := "expensive_query"
-					if len(info.Info) == 0 {
-						msg = "expensive_txn"
+				if info.CurTxnStartTS != 0 {
+					txnCostTime := time.Since(info.CurTxnCreateTime)
+					if time.Since(info.ExpensiveTxnLogTime) > 60*time.Second && txnCostTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
+						metrics.OngoingTxnDurationHistogram.Observe(txnCostTime.Seconds())
+						logExpensiveQuery(txnCostTime, info, "expensive_txn")
+						info.ExpensiveTxnLogTime = time.Now()
 					}
-					metrics.OngoingTxnDurationHistogram.Observe(costTime.Seconds())
-					logExpensiveQuery(costTime, info, msg)
-					info.ExpensiveLogTime = time.Now()
 				}
 				if len(info.Info) == 0 {
 					continue
+				}
+				costTime := time.Since(info.Time)
+				if time.Since(info.ExpensiveLogTime) > 60*time.Second && costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
+					logExpensiveQuery(costTime, info, "expensive_query")
+					info.ExpensiveLogTime = time.Now()
 				}
 				if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
 					logutil.BgLogger().Warn("execution timeout, kill it", zap.Duration("costTime", costTime),

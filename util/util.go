@@ -28,7 +28,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -164,10 +163,7 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	}
 	logFields = append(logFields, zap.Uint64("txn_start_ts", info.CurTxnStartTS))
 	if memTracker := info.MemTracker; memTracker != nil {
-		maxConsumed := memTracker.MaxConsumed()
-		if maxConsumed > 0 {
-			logFields = append(logFields, zap.String("mem_max", fmt.Sprintf("%d Bytes (%v)", maxConsumed, memTracker.FormatBytes(maxConsumed))))
-		}
+		logFields = append(logFields, zap.String("mem_max", fmt.Sprintf("%d Bytes (%v)", memTracker.MaxConsumed(), memTracker.FormatBytes(memTracker.MaxConsumed()))))
 	}
 
 	const logSQLLen = 1024 * 8
@@ -181,11 +177,7 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	if len(sql) > logSQLLen && needTruncateSQL {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
-	if len(sql) > 0 {
-		logFields = append(logFields, zap.String("sql", sql))
-	} else {
-		logFields = append(logFields, zap.String("cmd", mysql.Command2Str[info.Command]))
-	}
+	logFields = append(logFields, zap.String("sql", sql))
 	return logFields
 }
 

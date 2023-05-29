@@ -43,6 +43,7 @@ type OOMAlarmVariablesInfo struct {
 type ProcessInfo struct {
 	Time                  time.Time
 	ExpensiveLogTime      time.Time
+	ExpensiveTxnLogTime   time.Time
 	Plan                  interface{}
 	StmtCtx               *stmtctx.StatementContext
 	RefCountOfStmtCtx     *stmtctx.ReferenceCount
@@ -61,6 +62,7 @@ type ProcessInfo struct {
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
 	ID                    uint64
 	CurTxnStartTS         uint64
+	CurTxnCreateTime      time.Time
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
 	MaxExecutionTime uint64
