@@ -108,7 +108,7 @@ func NewLoadDataWorker(
 	plan *plannercore.LoadData,
 	tbl table.Table,
 ) (w *LoadDataWorker, err error) {
-	importPlan, err := importer.NewPlanFromLoadDataPlan(userSctx, plan, tbl)
+	importPlan, err := importer.NewPlanFromLoadDataPlan(userSctx, plan)
 	if err != nil {
 		return nil, err
 	}
