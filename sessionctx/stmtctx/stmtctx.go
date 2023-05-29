@@ -1237,7 +1237,9 @@ func (sc *StatementContext) ClearRuntimeInfo() {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.mu.allExecDetails = nil
-	sc.RuntimeStatsColl = nil
+	if sc.RuntimeStatsColl != nil {
+		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(sc.RuntimeStatsColl)
+	}
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.
