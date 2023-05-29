@@ -116,7 +116,7 @@ func (f *FKCascade) AccessObject() AccessObject {
 }
 
 // OperatorInfo implements dataAccesser interface.
-func (f *FKCascade) OperatorInfo(_ bool) string {
+func (f *FKCascade) OperatorInfo(bool) string {
 	switch f.Tp {
 	case FKCascadeOnDelete:
 		return fmt.Sprintf("foreign_key:%s, on_delete:%s", f.FK.Name, model.ReferOptionType(f.FK.OnDelete).String())
