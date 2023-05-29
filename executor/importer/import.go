@@ -153,6 +153,7 @@ type Plan struct {
 	// this is not used in IMPORT INTO
 	NullValueOptEnclosed bool
 	// LinesStartingBy is not used in IMPORT INTO
+	// FieldsOptEnclosed is not used in either IMPORT INTO or LOAD DATA
 	plannercore.LineFieldsInfo
 	IgnoreLines uint64
 
@@ -307,7 +308,6 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 		FieldsTerminatedBy: `,`,
 		FieldsEnclosedBy:   `"`,
 		FieldsEscapedBy:    `\`,
-		FieldsOptEnclosed:  false,
 		LinesStartingBy:    ``,
 		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
 		// But user cannot set this to empty explicitly.
