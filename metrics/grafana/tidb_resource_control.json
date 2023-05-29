@@ -821,7 +821,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "resource_manager_resource_unit_available{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
+          "expr": "resource_manager_resource_unit_available_ru{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
