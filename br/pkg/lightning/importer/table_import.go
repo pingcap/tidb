@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +47,8 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/extsort"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -63,6 +66,9 @@ type TableImporter struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 	kvStore   tidbkv.Storage
+
+	// dupIgnoreRows tracks the rowIDs of rows that are duplicated and should be ignored.
+	dupIgnoreRows extsort.ExternalSorter
 
 	ignoreColumns map[string]struct{}
 }
@@ -190,7 +196,55 @@ func (tr *TableImporter) importTable(
 		}
 	}
 
-	// 2. Restore engines (if still needed)
+	// 2. Do duplicate detection if needed
+	if isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.OnDuplicate != "" {
+		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
+		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+".dupdetect")
+		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+".dupresult")
+
+		dupIgnoreRows, err := extsort.OpenDiskSorter(resultDir, &extsort.DiskSorterOptions{
+			Concurrency: rc.cfg.App.RegionConcurrency,
+		})
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		tr.dupIgnoreRows = dupIgnoreRows
+
+		if cp.Status < checkpoints.CheckpointStatusDupDetected {
+			d := &dupDetector{
+				tr:     tr,
+				rc:     rc,
+				cp:     cp,
+				logger: tr.logger,
+			}
+			err := d.run(ctx, workingDir, dupIgnoreRows)
+			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusDupDetected)
+			if err := firstErr(err, saveCpErr); err != nil {
+				return false, errors.Trace(err)
+			}
+		}
+
+		if !dupIgnoreRows.IsSorted() {
+			if err := dupIgnoreRows.Sort(ctx); err != nil {
+				return false, errors.Trace(err)
+			}
+		}
+
+		failpoint.Inject("FailAfterDuplicateDetection", func() {
+			panic("forcing failure after duplicate detection")
+		})
+	}
+
+	// 3. Drop indexes if add-index-by-sql is enabled
+	if cp.Status < checkpoints.CheckpointStatusIndexDropped && isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.AddIndexBySQL {
+		err := tr.dropIndexes(ctx, rc.db)
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexDropped)
+		if err := firstErr(err, saveCpErr); err != nil {
+			return false, errors.Trace(err)
+		}
+	}
+
+	// 4. Restore engines (if still needed)
 	err := tr.importEngines(ctx, rc, cp)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -201,13 +255,16 @@ func (tr *TableImporter) importTable(
 		return false, errors.Trace(err)
 	}
 
-	// 3. Post-process. With the last parameter set to false, we can allow delay analyze execute latter
+	// 5. Post-process. With the last parameter set to false, we can allow delay analyze execute latter
 	return tr.postProcess(ctx, rc, cp, false /* force-analyze */, metaMgr)
 }
 
 // Close implements the Importer interface.
 func (tr *TableImporter) Close() {
 	tr.encTable = nil
+	if tr.dupIgnoreRows != nil {
+		_ = tr.dupIgnoreRows.Close()
+	}
 	tr.logger.Info("restore done")
 }
 
@@ -689,7 +746,7 @@ ChunkLoop:
 			setError(err)
 			break
 		}
-		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
+		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo.Core)
 		if err != nil {
 			setError(err)
 			break
@@ -1211,6 +1268,74 @@ func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB) error {
 	err := exec.Exec(ctx, "analyze table", "ANALYZE TABLE "+tr.tableName)
 	task.End(zap.ErrorLevel, err)
 	return err
+}
+
+func (tr *TableImporter) dropIndexes(ctx context.Context, db *sql.DB) error {
+	logger := log.FromContext(ctx).With(zap.String("table", tr.tableName))
+
+	tblInfo := tr.tableInfo
+
+	var remainIndexes []*model.IndexInfo
+	cols := tblInfo.Core.Columns
+loop:
+	for _, idxInfo := range tblInfo.Core.Indices {
+		if idxInfo.State != model.StatePublic {
+			remainIndexes = append(remainIndexes, idxInfo)
+			continue
+		}
+		// Primary key is a cluster index.
+		if idxInfo.Primary && tblInfo.Core.HasClusteredIndex() {
+			remainIndexes = append(remainIndexes, idxInfo)
+			continue
+		}
+		// Skip index that contains auto-increment column.
+		// Because auto colum must be defined as a key.
+		for _, idxCol := range idxInfo.Columns {
+			flag := cols[idxCol.Offset].GetFlag()
+			if mysql.HasAutoIncrementFlag(flag) {
+				remainIndexes = append(remainIndexes, idxInfo)
+				continue loop
+			}
+		}
+
+		var sqlStr string
+		if idxInfo.Primary {
+			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tr.tableName)
+		} else {
+			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tr.tableName, common.EscapeIdentifier(idxInfo.Name.O))
+		}
+
+		logger.Info("drop index", zap.String("sql", sqlStr))
+
+		s := common.SQLWithRetry{
+			DB:     db,
+			Logger: logger,
+		}
+		if err := s.Exec(ctx, "drop index", sqlStr); err != nil {
+			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
+				switch merr.Number {
+				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
+					remainIndexes = append(remainIndexes, idxInfo)
+					logger.Info("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
+					continue loop
+				}
+			}
+			return common.ErrDropIndexFailed.Wrap(err).GenWithStackByArgs(common.EscapeIdentifier(idxInfo.Name.O), tr.tableName)
+		}
+	}
+	if len(remainIndexes) < len(tblInfo.Core.Indices) {
+		// Must clone (*model.TableInfo) before modifying it, since it may be referenced in other place.
+		tblInfo.Core = tblInfo.Core.Clone()
+		tblInfo.Core.Indices = remainIndexes
+
+		// Rebuild encTable.
+		encTable, err := tables.TableFromMeta(tr.alloc, tblInfo.Core)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tr.encTable = encTable
+	}
+	return nil
 }
 
 func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr error) {

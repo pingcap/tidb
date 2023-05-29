@@ -1548,13 +1548,6 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			return errors.Trace(err)
 		}
 		defer undo()
-
-		// Drop all secondary indexes before restore.
-		if rc.cfg.TikvImporter.AddIndexBySQL {
-			if err := rc.dropAllIndexes(ctx); err != nil {
-				return err
-			}
-		}
 	}
 
 	type task struct {
