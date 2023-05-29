@@ -1,0 +1,5 @@
+[lightning]
+max-error-records = 50
+
+[tikv-importer]
+on-duplicate = "replace"

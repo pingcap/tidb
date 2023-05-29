@@ -15,8 +15,8 @@
 package importer
 
 import (
+	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"time"
 
@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/extsort"
 	"go.uber.org/zap"
 )
 
@@ -56,13 +57,31 @@ func newChunkProcessor(
 	chunk *checkpoints.ChunkCheckpoint,
 	ioWorkers *worker.Pool,
 	store storage.ExternalStorage,
-	tableInfo *checkpoints.TidbTableInfo,
+	tableInfo *model.TableInfo,
 ) (*chunkProcessor, error) {
-	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
+	parser, err := openParser(ctx, cfg, chunk, ioWorkers, store, tableInfo)
+	if err != nil {
+		return nil, err
+	}
+	return &chunkProcessor{
+		parser: parser,
+		index:  index,
+		chunk:  chunk,
+	}, nil
+}
 
+func openParser(
+	ctx context.Context,
+	cfg *config.Config,
+	chunk *checkpoints.ChunkCheckpoint,
+	ioWorkers *worker.Pool,
+	store storage.ExternalStorage,
+	tblInfo *model.TableInfo,
+) (mydump.Parser, error) {
+	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	var parser mydump.Parser
@@ -76,38 +95,36 @@ func newChunkProcessor(
 		}
 		parser, err = mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
 		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	default:
-		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String()))
+		return nil, errors.Errorf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String())
 	}
 
 	if chunk.FileMeta.Compression == mydump.CompressionNone {
 		if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
-			return nil, errors.Trace(err)
+			_ = parser.Close()
+			return nil, err
 		}
 	} else {
 		if err = mydump.ReadUntil(parser, chunk.Chunk.Offset); err != nil {
-			return nil, errors.Trace(err)
+			_ = parser.Close()
+			return nil, err
 		}
 		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
 	}
 	if len(chunk.ColumnPermutation) > 0 {
-		parser.SetColumns(getColumnNames(tableInfo.Core, chunk.ColumnPermutation))
+		parser.SetColumns(getColumnNames(tblInfo, chunk.ColumnPermutation))
 	}
 
-	return &chunkProcessor{
-		parser: parser,
-		index:  index,
-		chunk:  chunk,
-	}, nil
+	return parser, nil
 }
 
 func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
@@ -249,6 +266,18 @@ func (cr *chunkProcessor) encodeLoop(
 		err = err1
 		return
 	}
+
+	var dupIgnoreRowsIter extsort.Iterator
+	if t.dupIgnoreRows != nil {
+		dupIgnoreRowsIter, err = t.dupIgnoreRows.NewIterator(ctx)
+		if err != nil {
+			return 0, 0, err
+		}
+		defer func() {
+			_ = dupIgnoreRowsIter.Close()
+		}()
+	}
+
 	for !reachEOF {
 		if err = pauser.Wait(ctx); err != nil {
 			return
@@ -308,6 +337,10 @@ func (cr *chunkProcessor) encodeLoop(
 						}
 					}
 					initializedColumns = true
+
+					if dupIgnoreRowsIter != nil {
+						dupIgnoreRowsIter.Seek(common.EncodeIntRowID(lastRow.RowID))
+					}
 				}
 			case io.EOF:
 				reachEOF = true
@@ -320,6 +353,41 @@ func (cr *chunkProcessor) encodeLoop(
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
 			lastRow.Row = append(lastRow.Row, extendVals...)
+
+			// Skip duplicated rows.
+			if dupIgnoreRowsIter != nil {
+				rowIDKey := common.EncodeIntRowID(lastRow.RowID)
+				isDupIgnored := false
+			dupDetectLoop:
+				for dupIgnoreRowsIter.Valid() {
+					switch bytes.Compare(rowIDKey, dupIgnoreRowsIter.UnsafeKey()) {
+					case 0:
+						isDupIgnored = true
+						break dupDetectLoop
+					case 1:
+						dupIgnoreRowsIter.Next()
+					case -1:
+						break dupDetectLoop
+					}
+				}
+				if dupIgnoreRowsIter.Error() != nil {
+					err = dupIgnoreRowsIter.Error()
+					return
+				}
+				if isDupIgnored {
+					cr.parser.RecycleRow(lastRow)
+					curOffset = newOffset
+
+					rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
+					// TODO: fill error message
+					err = rc.errorMgr.RecordConflictErrorV2(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, "", lastRow.RowID, rowText)
+					if err != nil {
+						return 0, 0, err
+					}
+					continue
+				}
+			}
+
 			// sql -> kv
 			kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
 			encodeDur += time.Since(encodeDurStart)
