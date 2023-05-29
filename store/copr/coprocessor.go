@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,7 +62,7 @@ import (
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
 	copBuildTaskMaxBackoff = 5000
-	copNextMaxBackoff      = 20000
+	CopNextMaxBackoff      = 20000
 	CopSmallTaskRow        = 32 // 32 is the initial batch size of TiKV
 	smallTaskSigma         = 0.5
 	smallConcPerCore       = 20
@@ -576,7 +577,7 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 			continue
 		}
 
-		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
+		addr := net.JoinHostPort(ser.IP, strconv.FormatUint(uint64(ser.StatusPort), 10))
 		tasks = append(tasks, &copTask{
 			ranges:       ranges,
 			respChan:     make(chan *copResponse, 2),
@@ -1078,7 +1079,7 @@ func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, ta
 	if ok {
 		return bo
 	}
-	newbo := backoff.NewBackofferWithVars(ctx, copNextMaxBackoff, worker.vars)
+	newbo := backoff.NewBackofferWithVars(ctx, CopNextMaxBackoff, worker.vars)
 	backoffermap[task.region.GetID()] = newbo
 	return newbo
 }

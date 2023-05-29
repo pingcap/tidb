@@ -1521,7 +1521,12 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 
 	p := parserPool.Get().(*parser.Parser)
 	defer parserPool.Put(p)
-	p.SetSQLMode(s.sessionVars.SQLMode)
+
+	sqlMode := s.sessionVars.SQLMode
+	if s.isInternal() {
+		sqlMode = mysql.DelSQLMode(sqlMode, mysql.ModeNoBackslashEscapes)
+	}
+	p.SetSQLMode(sqlMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
@@ -2137,6 +2142,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		plannercore.DebugTraceReceivedCommand(s, cmdByte, stmtNode)
 	}
 
+	if err := s.validateStatementInTxn(stmtNode); err != nil {
+		return nil, err
+	}
+
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
 		return nil, err
 	}
@@ -2168,7 +2177,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
-	// session resource-group might be changed by query hint, ensure the resoure it back when
+	// session resource-group might be changed by query hint, ensure restore it back when
 	// the execution finished.
 	if s.GetSessionVars().ResourceGroupName != originalResourceGroup {
 		defer func() {
@@ -2256,6 +2265,14 @@ func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.Stm
 	return sessiontxn.GetTxnManager(s).OnStmtStart(ctx, node)
 }
 
+func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
+	vars := s.GetSessionVars()
+	if _, ok := stmtNode.(*ast.ImportIntoStmt); ok && vars.InTxn() {
+		return errors.New("cannot run IMPORT INTO in explicit transaction")
+	}
+	return nil
+}
+
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
 	vars := s.GetSessionVars()
 	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead || vars.InRestrictedSQL {
@@ -2290,26 +2307,25 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	return nil
 }
 
-// querySpecialKeys contains the keys of special query, the special query will handled by handleQuerySpecial method.
-var querySpecialKeys = []fmt.Stringer{
+// fileTransInConnKeys contains the keys of queries that will be handled by handleFileTransInConn.
+var fileTransInConnKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
 	executor.IndexAdviseVarKey,
 	executor.PlanReplayerLoadVarKey,
 }
 
-func (s *session) hasQuerySpecial() bool {
-	found := false
+func (s *session) hasFileTransInConn() bool {
 	s.mu.RLock()
-	for _, k := range querySpecialKeys {
+	defer s.mu.RUnlock()
+
+	for _, k := range fileTransInConnKeys {
 		v := s.mu.values[k]
 		if v != nil {
-			found = true
-			break
+			return true
 		}
 	}
-	s.mu.RUnlock()
-	return found
+	return false
 }
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
@@ -2380,8 +2396,8 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	err = finishStmt(ctx, se, err, s)
-	if se.hasQuerySpecial() {
-		// The special query will be handled later in handleQuerySpecial,
+	if se.hasFileTransInConn() {
+		// The query will be handled later in handleFileTransInConn,
 		// then should call the ExecStmt.FinishExecuteStmt to finish this statement.
 		se.SetValue(ExecStmtVarKey, s.(*executor.ExecStmt))
 	} else {

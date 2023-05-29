@@ -24,11 +24,16 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
-type testFlowHandle struct {
+type testFlowHandle struct{}
+
+var _ dispatcher.TaskFlowHandle = (*testFlowHandle)(nil)
+
+func (*testFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
 func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
@@ -44,6 +49,14 @@ func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHan
 
 func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	return nil, nil
+}
+
+func (*testFlowHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+	return dispatcher.GenerateSchedulerNodes(ctx)
+}
+
+func (*testFlowHandle) IsRetryableErr(error) bool {
+	return true
 }
 
 type testMiniTask struct{}
@@ -66,8 +79,8 @@ func (t *testScheduler) SplitSubtask(_ context.Context, subtask []byte) ([]proto
 	}, nil
 }
 
-func (t *testScheduler) OnSubtaskFinished(_ context.Context, _ []byte) error {
-	return nil
+func (t *testScheduler) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
+	return meta, nil
 }
 
 type testSubtaskExecutor struct {

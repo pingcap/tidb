@@ -443,3 +443,24 @@ var (
 	// ErrNotSupportedYet returns when tidb does not support this feature.
 	ErrNotSupportedYet = ClassDDL.NewStd(mysql.ErrNotSupportedYet)
 )
+
+// ReorgRetryableErrCodes is the error codes that are retryable for reorganization.
+var ReorgRetryableErrCodes = map[uint16]struct{}{
+	mysql.ErrPDServerTimeout:           {},
+	mysql.ErrTiKVServerTimeout:         {},
+	mysql.ErrTiKVServerBusy:            {},
+	mysql.ErrResolveLockTimeout:        {},
+	mysql.ErrRegionUnavailable:         {},
+	mysql.ErrGCTooEarly:                {},
+	mysql.ErrWriteConflict:             {},
+	mysql.ErrTiKVStoreLimit:            {},
+	mysql.ErrTiKVStaleCommand:          {},
+	mysql.ErrTiKVMaxTimestampNotSynced: {},
+	mysql.ErrTiFlashServerTimeout:      {},
+	mysql.ErrTiFlashServerBusy:         {},
+	mysql.ErrInfoSchemaExpired:         {},
+	mysql.ErrInfoSchemaChanged:         {},
+	mysql.ErrWriteConflictInTiDB:       {},
+	mysql.ErrTxnRetryable:              {},
+	mysql.ErrNotOwner:                  {},
+}

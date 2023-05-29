@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -75,12 +76,21 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 		return ver, errors.Trace(err1)
 	}
 	job.State = model.JobStateRollingback
+	err = completeErr(err, indexInfo)
+	if ingest.LitBackCtxMgr != nil {
+		ingest.LitBackCtxMgr.Unregister(job.ID)
+	}
 	return ver, errors.Trace(err)
 }
 
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotReorgAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
+	defer func() {
+		if ingest.LitBackCtxMgr != nil {
+			ingest.LitBackCtxMgr.Unregister(job.ID)
+		}
+	}()
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -371,8 +381,6 @@ func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 }
 
 func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
-	job.State = model.JobStatePaused
-
 	if needNotifyAndStopReorgWorker(job) {
 		logutil.Logger(w.logCtx).Info("[DDL] pausing the DDL job", zap.String("job", job.String()))
 		d.notifyReorgWorkerJobStateChange(job)

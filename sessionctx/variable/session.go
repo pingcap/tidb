@@ -75,6 +75,10 @@ var (
 	enableAdaptiveReplicaRead uint32 = 1
 )
 
+// ConnStatusShutdown indicates that the connection status is closed by server.
+// This code is put here because of package imports, and this value is the original server.connStatusShutdown.
+const ConnStatusShutdown int32 = 2
+
 // SetEnableAdaptiveReplicaRead set `enableAdaptiveReplicaRead` with given value.
 // return true if the value is changed.
 func SetEnableAdaptiveReplicaRead(enabled bool) bool {
@@ -1052,6 +1056,9 @@ type SessionVars struct {
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
 
+	// ConnectionStatus indicates current connection status.
+	ConnectionStatus int32
+
 	// ConnectionInfo indicates current connection info used by current session.
 	ConnectionInfo *ConnectionInfo
 
@@ -1468,8 +1475,14 @@ type SessionVars struct {
 	// use the ExpectedCnt to adjust the estimated row count for index scan.
 	OptOrderingIdxSelThresh float64
 
+	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
+	EnableMPPSharedCTEExecution bool
+
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
+
+	// HypoIndexes are for the Index Advisor.
+	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1790,11 +1803,13 @@ type ConnectionInfo struct {
 	SSLVersion        string
 	PID               int
 	DB                string
+	AuthMethod        string
+	Attributes        map[string]string
 }
 
 const (
 	// ConnTypeSocket indicates socket without TLS.
-	ConnTypeSocket string = "Socket"
+	ConnTypeSocket string = "TCP"
 	// ConnTypeUnixSocket indicates Unix Socket.
 	ConnTypeUnixSocket string = "UnixSocket"
 	// ConnTypeTLS indicates socket with TLS.

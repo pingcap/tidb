@@ -3050,11 +3050,11 @@ func TestSelectIgnoreTemporaryTableInView(t *testing.T) {
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("create table t2 (c int, d int)")
-	tk.MustExec("create view v1 as select * from t1 order by a")
-	tk.MustExec("create view v2 as select * from ((select * from t1) union (select * from t2)) as tt order by a, b")
-	tk.MustExec("create view v3 as select * from v1 order by a")
-	tk.MustExec("create view v4 as select * from t1, t2 where t1.a = t2.c order by a, b")
-	tk.MustExec("create view v5 as select * from (select * from t1) as t1 order by a")
+	tk.MustExec("create view v1 as select * from t1 order by a limit 5")
+	tk.MustExec("create view v2 as select * from ((select * from t1) union (select * from t2)) as tt order by a, b limit 5")
+	tk.MustExec("create view v3 as select * from v1 order by a limit 5")
+	tk.MustExec("create view v4 as select * from t1, t2 where t1.a = t2.c order by a, b limit 5")
+	tk.MustExec("create view v5 as select * from (select * from t1) as t1 order by a limit 5")
 
 	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
 	tk.MustExec("insert into t2 values (3, 5), (6, 7)")
@@ -3807,15 +3807,10 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 			"[    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
 			"[      └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
 
-	var readFromCacheNoPanic bool
-	for i := 0; i < 10; i++ {
+	require.Eventually(t, func() bool {
 		tk.MustQuery("select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows("2"))
-		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
-			readFromCacheNoPanic = true
-			break
-		}
-	}
-	require.True(t, readFromCacheNoPanic)
+		return tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
+	}, 10*time.Second, 500*time.Millisecond)
 
 	tk.MustExec("drop table if exists t31202")
 }

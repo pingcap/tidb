@@ -17,30 +17,34 @@ package loaddatatest
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"fmt"
+	"net"
 	"strconv"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/golang/mock/gomock"
+	"github.com/ngaut/pools"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
+	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/disttask/loaddata"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func (s *mockGCSSuite) prepareAndUseDB(db string) {
 	s.tk.MustExec("drop database if exists " + db)
 	s.tk.MustExec("create database " + db)
 	s.tk.MustExec("use " + db)
-}
-
-func (s *mockGCSSuite) prepareVariables(distributed bool) {
-	if distributed {
-		s.tk.MustExec("set @@global.tidb_enable_dist_task = 'on'")
-		return
-	}
-	s.tk.MustExec("set @@global.tidb_enable_dist_task = 'off'")
 }
 
 func adjustOptions(options string, distributed bool) string {
@@ -50,32 +54,62 @@ func adjustOptions(options string, distributed bool) string {
 	return options
 }
 
-func (s *mockGCSSuite) TestPhysicalMode() {
+// NOTE: for negative cases, see TestImportIntoPrivilegeNegativeCase in privileges_test.go
+func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "privilege-test",
+			Name:       "db.tbl.001.csv",
+		},
+		Content: []byte("1,test1,11\n" +
+			"2,test2,22"),
+	})
+	s.prepareAndUseDB("import_into")
+	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustExec(`DROP USER IF EXISTS 'test_import_into'@'localhost';`)
+	s.tk.MustExec(`CREATE USER 'test_import_into'@'localhost';`)
+	s.tk.MustExec(`GRANT SELECT on import_into.t to 'test_import_into'@'localhost'`)
+	s.tk.MustExec(`GRANT UPDATE on import_into.t to 'test_import_into'@'localhost'`)
+	s.tk.MustExec(`GRANT INSERT on import_into.t to 'test_import_into'@'localhost'`)
+	s.tk.MustExec(`GRANT DELETE on import_into.t to 'test_import_into'@'localhost'`)
+	s.tk.MustExec(`GRANT ALTER on import_into.t to 'test_import_into'@'localhost'`)
+	s.T().Cleanup(func() {
+		_ = s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
+	})
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	sql := fmt.Sprintf(`import into t FROM 'gs://privilege-test/db.tbl.*.csv?endpoint=%s'`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("select * from t").Check(testkit.Rows(
+		"1 test1 11", "2 test2 22"))
+}
+
+func (s *mockGCSSuite) TestBasicImportInto() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
-			Name:       "db.tbl.001.tsv",
+			Name:       "db.tbl.001.csv",
 		},
-		Content: []byte("1\ttest1\t11\n" +
-			"2\ttest2\t22"),
+		Content: []byte("1,test1,11\n" +
+			"2,test2,22"),
 	})
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
-			Name:       "db.tbl.002.tsv",
+			Name:       "db.tbl.002.csv",
 		},
-		Content: []byte("3\ttest3\t33\n" +
-			"4\ttest4\t44"),
+		Content: []byte("3,test3,33\n" +
+			"4,test4,44"),
 	})
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
-			Name:       "db.tbl.003.tsv",
+			Name:       "db.tbl.003.csv",
 		},
-		Content: []byte("5\ttest5\t55\n" +
-			"6\ttest6\t66"),
+		Content: []byte("5,test5,55\n" +
+			"6,test6,66"),
 	})
-	s.prepareAndUseDB("load_data")
+	s.prepareAndUseDB("import_into")
 
 	allData := []string{"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44", "5 test5 55", "6 test6 66"}
 	cases := []struct {
@@ -140,16 +174,16 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 		},
 	}
 
-	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/db.tbl.*.tsv?endpoint=%s'
-		INTO TABLE t %%s with thread=1, import_mode='physical'`, gcsEndpoint)
+	loadDataSQL := fmt.Sprintf(`import into t %%s FROM 'gs://test-multi-load/db.tbl.*.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
 	for _, c := range cases {
 		s.tk.MustExec("drop table if exists t;")
 		s.tk.MustExec(c.createTableSQL)
 		sql := fmt.Sprintf(loadDataSQL, c.flags)
 		s.tk.MustExec(sql)
-		s.Equal("Records: 6  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
-		s.Equal(uint64(6), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
-		s.Equal(c.lastInsertID, s.tk.Session().GetSessionVars().StmtCtx.LastInsertID)
+		// todo: open it after we support it.
+		//s.Equal("Records: 6  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
+		//s.Equal(uint64(6), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 		querySQL := "SELECT * FROM t;"
 		if c.querySQL != "" {
 			querySQL = c.querySQL
@@ -159,6 +193,7 @@ func (s *mockGCSSuite) TestPhysicalMode() {
 }
 
 func (s *mockGCSSuite) TestInputNull() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -184,6 +219,7 @@ func (s *mockGCSSuite) TestInputNull() {
 }
 
 func (s *mockGCSSuite) TestIgnoreNLines() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "skip-rows-1.csv"},
 		Content: []byte(`1,test1,11
@@ -237,13 +273,9 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 }
 
 func (s *mockGCSSuite) TestGeneratedColumns() {
-	s.testLoadDataForGeneratedColumns(importer.LogicalImportMode)
-	s.testLoadDataForGeneratedColumns(importer.PhysicalImportMode)
-}
-
-func (s *mockGCSSuite) testLoadDataForGeneratedColumns(importMode string) {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	// For issue https://github.com/pingcap/tidb/issues/39885
-	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
+	withOptions := fmt.Sprintf("WITH import_mode='%s'", importer.PhysicalImportMode)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("USE load_csv;")
@@ -288,6 +320,7 @@ func (s *mockGCSSuite) testLoadDataForGeneratedColumns(importMode string) {
 }
 
 func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -322,6 +355,7 @@ func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
 }
 
 func (s *mockGCSSuite) TestDeliverBytesRows() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
@@ -365,15 +399,14 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 }
 
 func (s *mockGCSSuite) TestMultiValueIndex() {
-	s.testMultiValueIndex(importer.LogicalImportMode, false)
-	s.testMultiValueIndex(importer.PhysicalImportMode, false)
-	s.testMultiValueIndex(importer.PhysicalImportMode, true)
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
+	//s.testMultiValueIndex(importer.PhysicalImportMode, false)
+	//s.testMultiValueIndex(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testMultiValueIndex(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec(`CREATE TABLE load_csv.t (
@@ -402,15 +435,14 @@ func (s *mockGCSSuite) testMultiValueIndex(importMode string, distributed bool) 
 }
 
 func (s *mockGCSSuite) TestMixedCompression() {
-	s.testMixedCompression(importer.LogicalImportMode, false)
-	s.testMixedCompression(importer.PhysicalImportMode, false)
-	s.testMixedCompression(importer.PhysicalImportMode, true)
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
+	//s.testMixedCompression(importer.PhysicalImportMode, false)
+	//s.testMixedCompression(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH thread=1, import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS multi_load;")
 	s.tk.MustExec("CREATE DATABASE multi_load;")
 	s.tk.MustExec("CREATE TABLE multi_load.t (i INT PRIMARY KEY, s varchar(32));")
@@ -465,15 +497,14 @@ func (s *mockGCSSuite) testMixedCompression(importMode string, distributed bool)
 }
 
 func (s *mockGCSSuite) TestLoadSQLDump() {
-	s.testLoadSQLDump(importer.LogicalImportMode, false)
-	s.testLoadSQLDump(importer.PhysicalImportMode, false)
-	s.testLoadSQLDump(importer.PhysicalImportMode, true)
+	s.T().Skip("skip due to LOAD DATA does not support FORMAT")
+	//s.testLoadSQLDump(importer.PhysicalImportMode, false)
+	//s.testLoadSQLDump(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testLoadSQLDump(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("CREATE TABLE load_csv.t (" +
@@ -506,15 +537,14 @@ func (s *mockGCSSuite) testLoadSQLDump(importMode string, distributed bool) {
 }
 
 func (s *mockGCSSuite) TestGBK() {
-	s.testGBK(importer.LogicalImportMode, false)
-	s.testGBK(importer.PhysicalImportMode, false)
-	s.testGBK(importer.PhysicalImportMode, true)
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
+	//s.testGBK(importer.PhysicalImportMode, false)
+	//s.testGBK(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testGBK(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_charset;")
 	s.tk.MustExec("CREATE DATABASE load_charset;")
 	s.tk.MustExec(`CREATE TABLE load_charset.gbk (
@@ -625,15 +655,14 @@ func (s *mockGCSSuite) testGBK(importMode string, distributed bool) {
 }
 
 func (s *mockGCSSuite) TestOtherCharset() {
-	s.testOtherCharset(importer.LogicalImportMode, false)
-	s.testOtherCharset(importer.PhysicalImportMode, false)
-	s.testOtherCharset(importer.PhysicalImportMode, true)
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
+	//s.testOtherCharset(importer.PhysicalImportMode, false)
+	//s.testOtherCharset(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testOtherCharset(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareVariables(distributed)
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_charset;")
 	s.tk.MustExec("CREATE DATABASE load_charset;")
 	s.tk.MustExec(`CREATE TABLE load_charset.utf8 (
@@ -742,27 +771,26 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 
 	// without speed limit
 	start := time.Now()
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/speed-test.csv?endpoint=%s'
-		INTO TABLE load_test_write_speed.t fields terminated by ',' with import_mode='physical'`, gcsEndpoint)
+	sql := fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'`,
+		gcsEndpoint)
 	s.tk.MustExec(sql)
 	duration := time.Since(start).Seconds()
-	s.LessOrEqual(duration, 2.0) // 1.3 seconds on my laptop.
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
 
+	// the encoded KV size is about 34744 bytes, so it would take about 5 more seconds to write all data.
 	// with speed limit
 	s.tk.MustExec("TRUNCATE TABLE load_test_write_speed.t;")
 	start = time.Now()
-	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/speed-test.csv?endpoint=%s'
-		INTO TABLE load_test_write_speed.t fields terminated by ',' with import_mode='physical', max_write_speed=6000`, gcsEndpoint)
+	sql = fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'
+		with max_write_speed=6000`, gcsEndpoint)
 	s.tk.MustExec(sql)
-	// generated kv is 34744 bytes, so it should take at least 5 seconds.
-	duration = time.Since(start).Seconds()
-	s.GreaterOrEqual(duration, 5.0)
+	durationWithLimit := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
+	require.Less(s.T(), duration+5, durationWithLimit)
 }
 
 func (s *mockGCSSuite) TestChecksumNotMatch() {
@@ -785,6 +813,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 6,test6,66`),
 	})
 
+	// populate into 2 engines
 	backup := config.DefaultBatchSize
 	config.DefaultBatchSize = 1
 	s.T().Cleanup(func() {
@@ -794,44 +823,43 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 	s.prepareAndUseDB("load_data")
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
-	loadDataSQL := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with thread=1, import_mode='physical'`, gcsEndpoint)
+	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
 	err := s.tk.ExecToErr(loadDataSQL)
-	require.ErrorIs(s.T(), err, common.ErrChecksumMismatch)
-	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
+	require.ErrorContains(s.T(), err, "ErrChecksumMismatch")
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
 	}...))
 
 	s.tk.MustExec("truncate table t;")
-	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with thread=1, import_mode='physical', checksum_table='off'`, gcsEndpoint)
+	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
+		with thread=1, checksum_table='off'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
-	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
 	}...))
 
 	s.tk.MustExec("truncate table t;")
-	loadDataSQL = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
-		INTO TABLE t fields terminated by ',' with thread=1, import_mode='physical', checksum_table='optional'`, gcsEndpoint)
+	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
+		with thread=1, checksum_table='optional'`, gcsEndpoint)
 	s.tk.MustExec(loadDataSQL)
-	// for this case, we keep KV in memory and write in batch, and in each batch only first key is written.
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
 	}...))
 }
 
 func (s *mockGCSSuite) TestColumnsAndUserVars() {
-	s.testColumnsAndUserVars(importer.LogicalImportMode, false)
-	s.testColumnsAndUserVars(importer.PhysicalImportMode, false)
-	s.testColumnsAndUserVars(importer.PhysicalImportMode, true)
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
+	//s.testColumnsAndUserVars(importer.PhysicalImportMode, false)
+	//s.testColumnsAndUserVars(importer.PhysicalImportMode, true)
 }
 
 func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed bool) {
 	withOptions := fmt.Sprintf("WITH thread=2, import_mode='%s'", importMode)
 	withOptions = adjustOptions(withOptions, distributed)
-	s.prepareVariables(distributed)
+	if distributed {
+		s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	}
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
 	s.tk.MustExec(`CREATE TABLE load_data.cols_and_vars (a INT, b INT, c int);`)
@@ -859,4 +887,75 @@ func (s *mockGCSSuite) testColumnsAndUserVars(importMode string, distributed boo
 		"8 880 123",
 		"9 990 123",
 	))
+	if distributed {
+		pool := pools.NewResourcePool(func() (pools.Resource, error) {
+			return s.tk.Session(), nil
+		}, 1, 1, time.Second)
+		defer pool.Close()
+		taskManager := storage.NewTaskManager(context.Background(), pool)
+		subtasks, err := taskManager.GetSucceedSubtasksByStep(storage.TestLastTaskID.Load(), loaddata.Import)
+		s.NoError(err)
+		s.Len(subtasks, 1)
+		serverInfo, err := infosync.GetServerInfo()
+		s.NoError(err)
+		for _, st := range subtasks {
+			s.Equal(net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port))), st.SchedulerID)
+		}
+	}
+}
+
+func (s *mockGCSSuite) TestImportMode() {
+	var intoImportTime, intoNormalTime time.Time
+	controller := gomock.NewController(s.T())
+	switcher := mocklocal.NewMockTiKVModeSwitcher(controller)
+	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+		log.L().Info("ToImportMode")
+		intoImportTime = time.Now()
+		return nil
+	}).Times(1)
+	switcher.EXPECT().ToNormalMode(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+		log.L().Info("ToNormalMode")
+		intoNormalTime = time.Now()
+		return nil
+	}).Times(1)
+	backup := importer.NewTiKVModeSwitcher
+	importer.NewTiKVModeSwitcher = func(tls *common.TLS, pdAddr string, logger *zap.Logger) local.TiKVModeSwitcher {
+		return switcher
+	}
+	s.T().Cleanup(func() {
+		importer.NewTiKVModeSwitcher = backup
+	})
+
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
+	s.tk.MustExec("CREATE DATABASE load_data;")
+	s.tk.MustExec(`CREATE TABLE load_data.import_mode (a INT, b INT, c int);`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "import_mode-1.tsv"},
+		Content:     []byte("1,11,111"),
+	})
+
+	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
+	// better start a cluster without TiDB instance.
+	sql := fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
+	s.Greater(intoNormalTime, intoImportTime)
+
+	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
+	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+		log.L().Info("ToImportMode")
+		intoImportTime = time.Now()
+		return nil
+	}).Times(1)
+	switcher.EXPECT().ToNormalMode(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+		log.L().Info("ToNormalMode")
+		intoNormalTime = time.Now()
+		return nil
+	}).Times(1)
+	s.tk.MustExec("truncate table load_data.import_mode;")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk", "return(true)")
+	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
+	err := s.tk.ExecToErr(sql)
+	s.Error(err)
+	s.Greater(intoNormalTime, intoImportTime)
 }

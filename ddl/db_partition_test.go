@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -400,12 +401,54 @@ func TestCreateTableWithHashPartition(t *testing.T) {
                                        PARTITION p0 VALUES LESS THAN (100),
                                        PARTITION p1 VALUES LESS THAN (200),
                                        PARTITION p2 VALUES LESS THAN MAXVALUE)`)
-	tk.MustGetErrCode("select * from t_sub partition (p0)", errno.ErrPartitionClauseOnNonpartitioned)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using RANGE partitioning"))
+	tk.MustQuery("select * from t_sub partition (p0)").Check(testkit.Rows())
+	tk.MustQuery("show create table t_sub").Check(testkit.Rows("" +
+		"t_sub CREATE TABLE `t_sub` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(128) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (200),\n" +
+		" PARTITION `p2` VALUES LESS THAN (MAXVALUE))"))
 
 	// Fix create partition table using extract() function as partition key.
 	tk.MustExec("create table t2 (a date, b datetime) partition by hash (EXTRACT(YEAR_MONTH FROM a)) partitions 7")
 	tk.MustExec("create table t3 (a int, b int) partition by hash(ceiling(a-b)) partitions 10")
 	tk.MustExec("create table t4 (a int, b int) partition by hash(floor(a-b)) partitions 10")
+}
+
+func TestSubPartitioning(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int) partition by range (a) subpartition by hash (a) subpartitions 2 (partition pMax values less than (maxvalue))`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using RANGE partitioning"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int) partition by list (a) subpartition by key (a) subpartitions 2 (partition pMax values in (1,3,4))`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using LIST partitioning"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `pMax` VALUES IN (1,3,4))"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustGetErrMsg(`create table t (a int) partition by hash (a) partitions 2 subpartition by key (a) subpartitions 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
+	tk.MustGetErrMsg(`create table t (a int) partition by key (a) partitions 2 subpartition by hash (a) subpartitions 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
+
+	tk.MustGetErrMsg(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY HASH(col1) PARTITIONS 4 SUBPARTITION BY HASH(col3) SUBPARTITIONS 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
+	tk.MustGetErrMsg(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY KEY(col1) PARTITIONS 4 SUBPARTITION BY KEY(col3) SUBPARTITIONS 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
 }
 
 func TestCreateTableWithRangeColumnPartition(t *testing.T) {
@@ -1535,6 +1578,39 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 a"))
 	tk.MustExec(`alter table t truncate partition p0`)
 	tk.MustQuery("select * from t").Check(testkit.Rows())
+}
+
+func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`CREATE TABLE t1 (id int, c varchar(128), key c(c)) partition by range (id) (
+		partition p0 values less than (10), 
+		partition p1 values less than MAXVALUE)`)
+	re := tk.MustQuery("show table t1 regions")
+	rows := re.Rows()
+	require.Len(t, rows, 2)
+	tk.MustExec(`alter table t1 truncate partition p0`)
+	re = tk.MustQuery("show table t1 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 2)
+
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec(`CREATE TABLE t2(id bigint(20) NOT NULL AUTO_INCREMENT, PRIMARY KEY (id) NONCLUSTERED) SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 PARTITION BY RANGE (id) (
+		PARTITION p1 VALUES LESS THAN (10),
+		PARTITION p2 VALUES LESS THAN (20),
+		PARTITION p3 VALUES LESS THAN (MAXVALUE))`)
+	re = tk.MustQuery("show table t2 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 24)
+	tk.MustExec(`alter table t2 truncate partition p3`)
+	re = tk.MustQuery("show table t2 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 24)
 }
 
 func TestCreateTableWithKeyPartition(t *testing.T) {
@@ -4313,6 +4389,92 @@ func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
 	err = tk.ExecToErr("alter table t1 add partition (partition p3 values less than (300));")
 	require.Error(t, err)
 	require.Equal(t, "[ddl:-1]DDL job rollback, error msg: [ddl] add partition wait for tiflash replica to complete", err.Error())
+}
+
+func TestReorgPartitionTiFlash(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "ReorgPartTiFlash"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
+		` partition by list columns (a) ` +
+		`(partition p0 values in (10,11,45),` +
+		` partition p1 values in (20,1,23,56),` +
+		` partition p2 values in (12,34,9))`)
+	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
+
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		require.NoError(t, err)
+	}()
+
+	tk.MustExec(`alter table t set tiflash replica 1`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`a`)\n" +
+		"(PARTITION `p0` VALUES IN (10,11,45),\n" +
+		" PARTITION `p1` VALUES IN (20,1,23,56),\n" +
+		" PARTITION `p2` VALUES IN (12,34,9))"))
+
+	tbl := external.GetTableByName(t, tk, schemaName, "t")
+	p := tbl.GetPartitionedTable()
+	for _, pid := range p.GetAllPartitionIDs() {
+		require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
+	}
+	// Reload
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	p = tbl.GetPartitionedTable()
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.True(t, tbl.Meta().TiFlashReplica.Available)
+	pids := p.GetAllPartitionIDs()
+	sort.Slice(pids, func(i, j int) bool { return pids[i] < pids[j] })
+	availablePids := tbl.Meta().TiFlashReplica.AvailablePartitionIDs
+	sort.Slice(availablePids, func(i, j int) bool { return availablePids[i] < availablePids[j] })
+	require.Equal(t, pids, availablePids)
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplicaOK", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplicaOK")
+		require.NoError(t, err)
+	}()
+	tk.MustExec(`alter table t reorganize partition p1, p2 into (partition p1 values in (34,2,23), partition p2 values in (12,56,9),partition p3 values in (1,8,19))`)
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(`a`)\n" +
+		"(PARTITION `p0` VALUES IN (10,11,45),\n" +
+		" PARTITION `p1` VALUES IN (34,2,23),\n" +
+		" PARTITION `p2` VALUES IN (12,56,9),\n" +
+		" PARTITION `p3` VALUES IN (1,8,19))"))
+
+	// TODO: Check how to properly test TiFlash, since this will just change the actual configuration
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	p = tbl.GetPartitionedTable()
+	for _, pid := range p.GetAllPartitionIDs() {
+		require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
+	}
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	p = tbl.GetPartitionedTable()
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.True(t, tbl.Meta().TiFlashReplica.Available)
+	for _, pid := range p.GetAllPartitionIDs() {
+		require.True(t, tbl.Meta().TiFlashReplica.IsPartitionAvailable(pid))
+	}
 }
 
 func TestDuplicatePartitionNames(t *testing.T) {

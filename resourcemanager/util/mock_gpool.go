@@ -18,12 +18,14 @@ import "time"
 
 // MockGPool is only for test
 type MockGPool struct {
-	name string
+	name              string
+	concurrency       int32
+	originConcurrency int32
 }
 
 // NewMockGPool is only for test
-func NewMockGPool(name string) *MockGPool {
-	return &MockGPool{name: name}
+func NewMockGPool(name string, concurrency int32) *MockGPool {
+	return &MockGPool{name: name, concurrency: concurrency, originConcurrency: concurrency}
 }
 
 // ReleaseAndWait is only for test
@@ -32,8 +34,8 @@ func (*MockGPool) ReleaseAndWait() {
 }
 
 // Tune is only for test
-func (*MockGPool) Tune(_ int32) {
-	panic("implement me")
+func (m *MockGPool) Tune(concurrency int32) {
+	m.concurrency = concurrency
 }
 
 // LastTunerTs is only for test
@@ -62,8 +64,8 @@ func (*MockGPool) MaxPASS() uint64 {
 }
 
 // Cap is only for test
-func (*MockGPool) Cap() int32 {
-	panic("implement me")
+func (m *MockGPool) Cap() int32 {
+	return m.concurrency
 }
 
 // LongRTT is to represent the baseline latency by tracking a measurement of the long term, less volatile RTT.
@@ -94,4 +96,9 @@ func (*MockGPool) Running() int32 {
 // Name is only for test
 func (m *MockGPool) Name() string {
 	return m.name
+}
+
+// GetOriginConcurrency is only for test
+func (m *MockGPool) GetOriginConcurrency() int32 {
+	return m.originConcurrency
 }

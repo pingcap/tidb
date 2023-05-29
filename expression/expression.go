@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 
 	"github.com/gogo/protobuf/proto"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/util/zeropool"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -285,23 +285,19 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 
 var (
 	defaultChunkSize = 1024
-	selPool          = sync.Pool{
-		New: func() interface{} {
-			return make([]int, defaultChunkSize)
-		},
-	}
-	zeroPool = sync.Pool{
-		New: func() interface{} {
-			return make([]int8, defaultChunkSize)
-		},
-	}
+	selPool          = zeropool.New[[]int](func() []int {
+		return make([]int, defaultChunkSize)
+	})
+	zeroPool = zeropool.New[[]int8](func() []int8 {
+		return make([]int8, defaultChunkSize)
+	})
 )
 
 func allocSelSlice(n int) []int {
 	if n > defaultChunkSize {
 		return make([]int, n)
 	}
-	return selPool.Get().([]int)
+	return selPool.Get()
 }
 
 func deallocateSelSlice(sel []int) {
@@ -314,7 +310,7 @@ func allocZeroSlice(n int) []int8 {
 	if n > defaultChunkSize {
 		return make([]int8, n)
 	}
-	return zeroPool.Get().([]int8)
+	return zeroPool.Get()
 }
 
 func deallocateZeroSlice(isZero []int8) {

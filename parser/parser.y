@@ -576,6 +576,7 @@ import (
 	rowCount              "ROW_COUNT"
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
+	hypo                  "HYPO"
 	san                   "SAN"
 	savepoint             "SAVEPOINT"
 	second                "SECOND"
@@ -977,6 +978,7 @@ import (
 	InsertIntoStmt             "INSERT INTO statement"
 	CallStmt                   "CALL statement"
 	IndexAdviseStmt            "INDEX ADVISE statement"
+	ImportIntoStmt             "IMPORT INTO statement"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
@@ -3140,8 +3142,8 @@ ColumnDef:
 	ColumnName Type ColumnOptionListOpt
 	{
 		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: $2.(*types.FieldType), Options: $3.([]*ast.ColumnOption)}
-		if !colDef.Validate() {
-			yylex.AppendError(yylex.Errorf("Invalid column definition"))
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
 			return 1
 		}
 		$$ = colDef
@@ -3154,8 +3156,8 @@ ColumnDef:
 		options = append(options, $3.([]*ast.ColumnOption)...)
 		tp.AddFlag(mysql.UnsignedFlag)
 		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: tp, Options: options}
-		if !colDef.Validate() {
-			yylex.AppendError(yylex.Errorf("Invalid column definition"))
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
 			return 1
 		}
 		$$ = colDef
@@ -6273,6 +6275,10 @@ IndexTypeName:
 	{
 		$$ = model.IndexTypeRtree
 	}
+|	"HYPO"
+	{
+		$$ = model.IndexTypeHypo
+	}
 
 IndexInvisible:
 	"VISIBLE"
@@ -6547,6 +6553,7 @@ UnReservedKeyword:
 |	"VALIDATION"
 |	"WITHOUT"
 |	"RTREE"
+|	"HYPO"
 |	"EXCHANGE"
 |	"COLUMN_FORMAT"
 |	"REPAIR"
@@ -11707,6 +11714,7 @@ Statement:
 |	GrantProxyStmt
 |	GrantRoleStmt
 |	CallStmt
+|	ImportIntoStmt
 |	InsertIntoStmt
 |	IndexAdviseStmt
 |	KillStmt
@@ -14251,6 +14259,19 @@ LoadDataOption:
 |	identifier "=" SignedLiteral
 	{
 		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1), Value: $3.(ast.ExprNode)}
+	}
+
+ImportIntoStmt:
+	"IMPORT" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt "FROM" stringLit FormatOpt LoadDataOptionListOpt
+	{
+		$$ = &ast.ImportIntoStmt{
+			Table:              $3.(*ast.TableName),
+			ColumnsAndUserVars: $4.([]*ast.ColumnNameOrUserVar),
+			ColumnAssignments:  $5.([]*ast.Assignment),
+			Path:               $7,
+			Format:             $8.(*string),
+			Options:            $9.([]*ast.LoadDataOpt),
+		}
 	}
 
 /*********************************************************************
