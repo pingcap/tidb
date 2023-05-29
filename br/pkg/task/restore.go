@@ -924,12 +924,19 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		batchSize = v.(int)
 	})
 
+	// Split/Scatter + Download/Ingest
+	progressLen := int64(rangeSize + len(files))
+	if cfg.Checksum {
+		progressLen += int64(len(tables))
+	}
+	if cfg.WaitTiflashReady {
+		progressLen += int64(len(tables))
+	}
 	// Redirect to log if there is no log file to avoid unreadable output.
 	updateCh := g.StartProgress(
 		ctx,
 		cmdName,
-		// Split/Scatter + Download/Ingest + Checksum
-		int64(rangeSize+len(files)+len(tables)),
+		progressLen,
 		!cfg.LogProgress)
 	defer updateCh.Close()
 	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency)
@@ -956,7 +963,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// pipeline wait Tiflash synced
 	if cfg.WaitTiflashReady {
-		postHandleCh = client.GoWaitTiFlashReady(ctx, postHandleCh, errCh)
+		postHandleCh = client.GoWaitTiFlashReady(ctx, postHandleCh, updateCh, errCh)
 	}
 
 	finish = dropToBlackhole(ctx, postHandleCh, errCh)

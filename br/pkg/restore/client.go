@@ -1790,7 +1790,7 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 	return outCh
 }
 
-func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) chan *CreatedTable {
+func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTable, updateCh glue.Progress, errCh chan<- error) chan *CreatedTable {
 	log.Info("Start to wait tiflash replica sync")
 	outCh := DefaultOutputTableChan()
 	workers := utils.NewWorkerPool(4, "WaitForTiflashReady")
@@ -1812,6 +1812,7 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 			log.Info("table has no tiflash replica",
 				zap.Stringer("table", tbl.OldTable.Info.Name),
 				zap.Stringer("db", tbl.OldTable.DB.Name))
+			updateCh.Inc()
 			return nil
 		}
 		if rc.dom != nil {
@@ -1841,6 +1842,7 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 			// unreachable, current we have initial domain in mgr.
 			log.Fatal("unreachable, domain is nil")
 		}
+		updateCh.Inc()
 		return nil
 	}, func() {
 		log.Info("all tiflash replica synced")
