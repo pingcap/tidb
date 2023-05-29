@@ -316,6 +316,7 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 	}
 
 	p := &Plan{
+		TableInfo:        tbl.Meta(),
 		DesiredTableInfo: tbl.Meta(),
 		DBName:           plan.Table.Schema.O,
 		DBID:             plan.Table.DBInfo.ID,
