@@ -60,7 +60,7 @@
     ]
   },
   {
-    "name": "TestCompIndexMultiColDNF3",
+    "name": "TestComplexCondForConsiderDNFPath",
     "cases": [
       "select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and c > 2",
       "select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and d > 2"

@@ -1000,7 +1000,7 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 	}
 }
 
-func TestCompIndexMultiColDNF3(t *testing.T) {
+func TestComplexCondForConsiderDNFPath(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
@@ -2591,8 +2591,4 @@ create table t(
 		got := fmt.Sprintf("%v", res.Ranges)
 		require.Equal(t, tt.resultStr, got, fmt.Sprintf("different for expr %s", tt.exprStr))
 	}
-}
-
-func TestConsiderDNFPath(t *testing.T) {
-
 }
