@@ -61,9 +61,18 @@ go_test(
     ],
     embed = [":ingest"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 11,
     deps = [
         "//config",
+=======
+    race = "on",
+    shard_count = 13,
+    deps = [
+        "//config",
+        "//ddl",
+        "//ddl/internal/callback",
+>>>>>>> f13419846cf (ddl/ingest: unregister backend after job cancelled (#44206))
         "//ddl/internal/session",
         "//errno",
         "//kv",
