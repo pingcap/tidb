@@ -8,8 +8,8 @@ go_test(
     race = "on",
     shard_count = 5,
     deps = [
-        "//ddl/internal/callback",
         "//ddl/resourcegroup",
+        "//ddl/util/callback",
         "//domain",
         "//domain/infosync",
         "//errno",
