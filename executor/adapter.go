@@ -83,6 +83,7 @@ var (
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte, uint64)
+	UpdateProcessInfo()
 }
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
