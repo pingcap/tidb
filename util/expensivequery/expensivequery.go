@@ -61,14 +61,16 @@ func (eqh *Handle) Run() {
 			for _, info := range processInfo {
 				if info.CurTxnStartTS != 0 {
 					txnCostTime := time.Since(info.CurTxnCreateTime)
-					if time.Since(info.ExpensiveTxnLogTime) > 10*time.Minute && txnCostTime >= time.Second*time.Duration(txnThreshold) && log.GetLevel() <= zapcore.WarnLevel {
+					if txnCostTime >= time.Second*time.Duration(txnThreshold) {
 						if info.StmtCtx.InRestrictedSQL {
 							metrics.OngoingTxnDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(txnCostTime.Seconds())
 						} else {
 							metrics.OngoingTxnDurationHistogram.WithLabelValues(metrics.LblGeneral).Observe(txnCostTime.Seconds())
 						}
-						logExpensiveQuery(txnCostTime, info, "expensive_txn")
-						info.ExpensiveTxnLogTime = time.Now()
+						if time.Since(info.ExpensiveTxnLogTime) > 10*time.Minute && log.GetLevel() <= zapcore.WarnLevel {
+							logExpensiveQuery(txnCostTime, info, "expensive_txn")
+							info.ExpensiveTxnLogTime = time.Now()
+						}
 					}
 				}
 				if len(info.Info) == 0 {
