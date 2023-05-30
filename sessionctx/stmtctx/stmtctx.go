@@ -1305,9 +1305,6 @@ func (sc *StatementContext) ClearRuntimeInfo() {
 	defer sc.mu.Unlock()
 	sc.mu.allExecDetails = nil
 	sc.mu.detailsSummary = execdetails.P90Summary{}
-	if sc.RuntimeStatsColl != nil {
-		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(sc.RuntimeStatsColl)
-	}
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.
