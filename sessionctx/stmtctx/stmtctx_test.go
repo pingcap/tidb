@@ -192,7 +192,7 @@ func TestMarshalSQLWarn(t *testing.T) {
 
 func TestApproxRuntimeInfo(t *testing.T) {
 	var n = rand.Intn(19000) + 1000
-	ctx := new(stmtctx.StatementContext)
+	var valRange = rand.Int31n(10000) + 1000
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
 	details := []*execdetails.ExecDetails{}
 	for i := 0; i < n; i++ {
@@ -202,22 +202,34 @@ func TestApproxRuntimeInfo(t *testing.T) {
 				BackoffSleep:  make(map[string]time.Duration),
 				BackoffTimes:  make(map[string]int),
 				TimeDetail: util.TimeDetail{
-					ProcessTime: time.Second * time.Duration(rand.Int31n(10000)),
-					WaitTime:    time.Millisecond * time.Duration(rand.Int31n(10000)),
+					ProcessTime: time.Second * time.Duration(rand.Int31n(valRange)),
+					WaitTime:    time.Millisecond * time.Duration(rand.Int31n(valRange)),
 				},
 			},
 		}
 		details = append(details, d)
 		for _, backoff := range backoffs {
-			d.BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(rand.Int31n(10000))
-			d.BackoffTimes[backoff] = rand.Intn(10000)
+			d.BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(rand.Int31n(valRange))
+			d.BackoffTimes[backoff] = rand.Intn(int(valRange))
 		}
-		ctx.MergeExecDetails(d, nil)
+	}
+
+	// Make CalleeAddress for each max value is deterministic.
+	details[rand.Intn(n)].DetailsNeedP90.TimeDetail.ProcessTime = time.Second * time.Duration(valRange)
+	details[rand.Intn(n)].DetailsNeedP90.TimeDetail.WaitTime = time.Millisecond * time.Duration(valRange)
+	for _, backoff := range backoffs {
+		details[rand.Intn(n)].BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(valRange)
+	}
+
+	ctx := new(stmtctx.StatementContext)
+	for i := 0; i < n; i++ {
+		ctx.MergeExecDetails(details[i], nil)
 	}
 	d1 := ctx.CopTasksDetails()
-
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessionctx/stmtctx/MustAllDetails", "return(true)"))
-	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessionctx/stmtctx/MustAllDetails"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessionctx/stmtctx/MustAllDetails"))
+	}()
 	ctx2 := new(stmtctx.StatementContext)
 	for i := 0; i < n; i++ {
 		ctx2.MergeExecDetails(details[i], nil)
@@ -226,12 +238,11 @@ func TestApproxRuntimeInfo(t *testing.T) {
 
 	require.Equal(t, d1.NumCopTasks, d2.NumCopTasks)
 	require.Equal(t, d1.AvgProcessTime, d2.AvgProcessTime)
-	require.Equal(t, d1.P90ProcessTime, d2.P90ProcessTime)
-	require.InEpsilon(t, d1.P90ProcessTime.Nanoseconds(), d2.P90ProcessTime.Nanoseconds(), 0.1)
+	require.InEpsilon(t, d1.P90ProcessTime.Nanoseconds(), d2.P90ProcessTime.Nanoseconds(), 0.05)
 	require.Equal(t, d1.MaxProcessTime, d2.MaxProcessTime)
 	require.Equal(t, d1.MaxProcessAddress, d2.MaxProcessAddress)
 	require.Equal(t, d1.AvgWaitTime, d2.AvgWaitTime)
-	require.InEpsilon(t, d1.P90WaitTime.Nanoseconds(), d2.P90WaitTime.Nanoseconds(), 0.1)
+	require.InEpsilon(t, d1.P90WaitTime.Nanoseconds(), d2.P90WaitTime.Nanoseconds(), 0.05)
 	require.Equal(t, d1.MaxWaitTime, d2.MaxWaitTime)
 	require.Equal(t, d1.MaxWaitAddress, d2.MaxWaitAddress)
 	fields := d2.ToZapFields()
