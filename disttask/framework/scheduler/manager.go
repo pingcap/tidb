@@ -72,6 +72,7 @@ type Manager struct {
 		handlingTasks map[int64]context.CancelFunc
 	}
 	id           string
+	ddlID        string
 	wg           sync.WaitGroup
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -81,12 +82,13 @@ type Manager struct {
 }
 
 // BuildManager builds a Manager.
-func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
+func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable TaskTable, ddlID string) (*Manager, error) {
 	m := &Manager{
 		id:                   id,
+		ddlID:                ddlID,
 		taskTable:            taskTable,
 		subtaskExecutorPools: make(map[string]Pool),
-		logCtx:               logutil.WithKeyValue(context.Background(), "dist_task_manager", id),
+		logCtx:               logutil.WithKeyValue(context.Background(), "dist_task_manager", ddlID),
 		newPool:              b.newPool,
 		newScheduler:         b.newScheduler,
 	}

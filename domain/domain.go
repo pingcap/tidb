@@ -1386,7 +1386,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
 		return errors.New(errMsg)
 	}
-	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), taskManager)
+	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, serverID, taskManager, do.ddl.GetID())
 	if err != nil {
 		return err
 	}
