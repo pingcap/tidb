@@ -998,6 +998,10 @@ ForColumnsTag:
 				}
 			}
 		}
+		colType := ft.GetType()
+		if colType == mysql.TypeVarString {
+			colType = mysql.TypeVarchar
+		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
 			schema.Name.O,         // TABLE_SCHEMA
@@ -1006,7 +1010,7 @@ ForColumnsTag:
 			i,                     // ORDINAL_POSITION
 			columnDefault,         // COLUMN_DEFAULT
 			columnDesc.Null,       // IS_NULLABLE
-			types.TypeToStr(ft.GetType(), ft.GetCharset()), // DATA_TYPE
+			types.TypeToStr(colType, ft.GetCharset()), // DATA_TYPE
 			charMaxLen,           // CHARACTER_MAXIMUM_LENGTH
 			charOctLen,           // CHARACTER_OCTET_LENGTH
 			numericPrecision,     // NUMERIC_PRECISION
