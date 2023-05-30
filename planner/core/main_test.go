@@ -35,7 +35,7 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
 	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
 	testDataMap.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
-	
+
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
 	opts := []goleak.Option{
