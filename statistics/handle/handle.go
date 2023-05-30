@@ -297,6 +297,7 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 			logutil.BgLogger().Error("[stats] error occurred when update mysql.stats_meta", zap.Error(err))
 			return "", err
 		}
+		TableRowStatsCache.Invalidate(tid)
 
 		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
 		if err != nil {
@@ -323,6 +324,7 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 			logutil.BgLogger().Error("[stats] error occurred when update mysql.stats_meta", zap.Error(err))
 			return "", err
 		}
+		TableRowStatsCache.Invalidate(tid)
 
 		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
 		if err != nil {
@@ -1439,6 +1441,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 		}
 		statsVer = version
 	}
+	TableRowStatsCache.Invalidate(tableID)
 	// 2. Save histograms.
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
@@ -1556,6 +1559,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
 		_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+		TableRowStatsCache.Invalidate(tableID)
 	} else {
 		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %?", version, tableID)
 	}
@@ -1633,6 +1637,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 	version := txn.StartTS()
 	_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
 	statsVer = version
+	TableRowStatsCache.Invalidate(tableID)
 	return err
 }
 
