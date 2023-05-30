@@ -202,7 +202,7 @@ func (rf *RuntimeFilter) Clone() *RuntimeFilter {
 
 // RuntimeFilterListToPB convert runtime filter list to PB list
 func RuntimeFilterListToPB(runtimeFilterList []*RuntimeFilter, sc *stmtctx.StatementContext, client kv.Client) ([]*tipb.RuntimeFilter, error) {
-	var result []*tipb.RuntimeFilter
+	result := make([]*tipb.RuntimeFilter, 0, len(runtimeFilterList))
 	for _, runtimeFilter := range runtimeFilterList {
 		rfPB, err := runtimeFilter.ToPB(sc, client)
 		if err != nil {
@@ -216,7 +216,7 @@ func RuntimeFilterListToPB(runtimeFilterList []*RuntimeFilter, sc *stmtctx.State
 // ToPB convert runtime filter to PB
 func (rf *RuntimeFilter) ToPB(sc *stmtctx.StatementContext, client kv.Client) (*tipb.RuntimeFilter, error) {
 	pc := expression.NewPBConverter(client, sc)
-	var srcExprListPB []*tipb.Expr
+	srcExprListPB := make([]*tipb.Expr, 0, len(rf.srcExprList))
 	for _, srcExpr := range rf.srcExprList {
 		srcExprPB := pc.ExprToPB(srcExpr)
 		if srcExprPB == nil {
@@ -224,7 +224,7 @@ func (rf *RuntimeFilter) ToPB(sc *stmtctx.StatementContext, client kv.Client) (*
 		}
 		srcExprListPB = append(srcExprListPB, srcExprPB)
 	}
-	var targetExprListPB []*tipb.Expr
+	targetExprListPB := make([]*tipb.Expr, 0, len(rf.targetExprList))
 	for _, targetExpr := range rf.targetExprList {
 		targetExprPB := pc.ExprToPB(targetExpr)
 		if targetExprPB == nil {

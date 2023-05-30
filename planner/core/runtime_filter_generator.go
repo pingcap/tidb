@@ -121,8 +121,7 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 				cacheBuildNodeIDToRFMode[runtimeFilter.buildNode.id] = rfMode
 			}
 			// todo support global RF
-			switch rfMode {
-			case variable.RFGlobal:
+			if rfMode == variable.RFGlobal {
 				logutil.BgLogger().Debug("Now we don't support global RF. Remove it",
 					zap.Int("BuildNodeId", runtimeFilter.buildNode.id),
 					zap.Int("TargetNodeId", physicalTableScan.id))
@@ -157,7 +156,7 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 	// filter predicate selectivity, A scan node does not need many RFs, and the same column does not need many RFs
 }
 
-func (generator *RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) bool {
+func (_ *RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) bool {
 	if hashJoinPlan.RightIsBuildSide() {
 		// case1: build side is on the right
 		if hashJoinPlan.JoinType == LeftOuterJoin || hashJoinPlan.JoinType == AntiSemiJoin ||
@@ -179,7 +178,7 @@ func (generator *RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalH
 	return true
 }
 
-func (generator *RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFunction,
+func (_ *RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFunction,
 	rightIsBuildSide bool) bool {
 	// exclude null safe equal predicate
 	if eqPredicate.FuncName.L == ast.NullEQ {
