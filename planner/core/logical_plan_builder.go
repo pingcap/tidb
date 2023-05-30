@@ -4451,8 +4451,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				tblStats := h.GetTableStats(tableInfo)
 				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
 				globalStatsReady := tblStats.IsInitialized()
+				allowDynamicWithoutStats := false
+				fixValue, ok := b.ctx.GetSessionVars().GetOptimizerFixControlValue(variable.TiDBOptFixControl44262)
+				if ok && variable.TiDBOptOn(fixValue) {
+					allowDynamicWithoutStats = true
+				}
+
 				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
-				usePartitionProcessor := !isDynamicEnabled || !globalStatsReady
+				usePartitionProcessor := !isDynamicEnabled || (!globalStatsReady && !allowDynamicWithoutStats)
 
 				failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
 					if val.(bool) {

@@ -1325,6 +1325,87 @@ type SessionVars struct {
 
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	EnableINLJoinInnerMultiPattern bool
+<<<<<<< HEAD
+=======
+
+	// Enable late materialization: push down some selection condition to tablescan.
+	EnableLateMaterialization bool
+
+	// EnableRowLevelChecksum indicates whether row level checksum is enabled.
+	EnableRowLevelChecksum bool
+
+	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
+	// Only for disaggregated-tiflash mode.
+	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
+
+	// SlowTxnThreshold is the threshold of slow transaction logs
+	SlowTxnThreshold uint64
+
+	// LoadBasedReplicaReadThreshold is the threshold for the estimated wait duration of a store.
+	// If exceeding the threshold, try other stores using replica read.
+	LoadBasedReplicaReadThreshold time.Duration
+
+	// OptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
+	// If there exists an index whose estimated selectivity is smaller than this threshold, the optimizer won't
+	// use the ExpectedCnt to adjust the estimated row count for index scan.
+	OptOrderingIdxSelThresh float64
+
+	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
+	EnableMPPSharedCTEExecution bool
+
+	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
+	OptimizerFixControl map[uint64]string
+
+	// HypoIndexes are for the Index Advisor.
+	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+}
+
+var (
+	// variables below are for the optimizer fix control.
+
+	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
+	TiDBOptFixControl44262 uint64 = 44262
+)
+
+// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
+	if s.OptimizerFixControl == nil {
+		return "", false
+	}
+	value, exist = s.OptimizerFixControl[key]
+	return
+}
+
+// planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
+// in order to control the used memory
+const planReplayerSessionFinishedTaskKeyLen = 128
+
+// AddPlanReplayerFinishedTaskKey record finished task key in session
+func (s *SessionVars) AddPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) {
+	if len(s.PlanReplayerFinishedTaskKey) >= planReplayerSessionFinishedTaskKeyLen {
+		s.initializePlanReplayerFinishedTaskKey()
+	}
+	s.PlanReplayerFinishedTaskKey[key] = struct{}{}
+}
+
+func (s *SessionVars) initializePlanReplayerFinishedTaskKey() {
+	s.PlanReplayerFinishedTaskKey = make(map[replayer.PlanReplayerTaskKey]struct{}, planReplayerSessionFinishedTaskKeyLen)
+}
+
+// CheckPlanReplayerFinishedTaskKey check whether the key exists
+func (s *SessionVars) CheckPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) bool {
+	if s.PlanReplayerFinishedTaskKey == nil {
+		s.initializePlanReplayerFinishedTaskKey()
+		return false
+	}
+	_, ok := s.PlanReplayerFinishedTaskKey[key]
+	return ok
+}
+
+// IsPlanReplayerCaptureEnabled indicates whether capture or continues capture enabled
+func (s *SessionVars) IsPlanReplayerCaptureEnabled() bool {
+	return s.EnablePlanReplayerCapture || s.EnablePlanReplayedContinuesCapture
+>>>>>>> ff996e7068d (planner: allow to use dynamic mode to access partitioning tables without global-stats (#44264))
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
