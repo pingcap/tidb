@@ -16,7 +16,6 @@ package staleread
 
 import (
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -280,7 +279,7 @@ func parseAndValidateAsOf(ctx context.Context, sctx sessionctx.Context, asOf *as
 		return 0, nil
 	}
 
-	ts, err := CalculateAsOfTsExpr(sctx, asOf.TsExpr)
+	ts, err := CalculateAsOfTsExpr(ctx, sctx, asOf.TsExpr)
 	if err != nil {
 		return 0, err
 	}
