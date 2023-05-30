@@ -252,8 +252,8 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas
 		if err2 != nil {
 			return nil, err2
 		}
-		if err = controller.InitDataFiles(ctx); err != nil {
-			return nil, err
+		if err2 = controller.InitDataFiles(ctx); err2 != nil {
+			return nil, err2
 		}
 
 		engineCheckpoints, err2 := controller.PopulateChunks(ctx)

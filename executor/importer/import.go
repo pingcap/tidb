@@ -788,6 +788,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if !filepath.IsAbs(e.Path) {
 			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("file location should be absolute path when import from server disk")
 		}
+		// we add this check for security, we don't want user import any sensitive system files,
+		// most of which is readable text file and don't have a suffix, such as /etc/passwd
 		if !slices.Contains([]string{".csv", ".sql", ".parquet"}, strings.ToLower(filepath.Ext(e.Path))) {
 			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("the file suffix is not supported when import from server disk")
 		}
