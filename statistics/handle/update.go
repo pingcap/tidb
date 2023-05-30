@@ -585,6 +585,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 				_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
 					"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS, id, delta.Count, delta.Delta)
 			}
+			TableRowStatsCache.Invalidate(id)
 		}
 		statsVer = startTS
 		return errors.Trace(err)
