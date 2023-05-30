@@ -351,12 +351,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 
 		return false, cc.flush(ctx)
 	}
-<<<<<<< HEAD
-	defer terror.Call(rs.Close)
 	retryable, err := cc.writeResultset(ctx, rs, true, cc.ctx.Status(), 0)
-=======
-	retryable, err := cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), 0)
->>>>>>> d41793e9691 (server: fix memtracker leak with cursor (#44257))
 	if err != nil {
 		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
