@@ -1023,6 +1023,13 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "SA4006": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "SA4009": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
