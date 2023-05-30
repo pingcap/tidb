@@ -1023,12 +1023,10 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
-  "SA4006": {
+  "SA4004": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
-      "util/table-router/router_test.go": "util/table-router/router_test.go",
-      ".*_test.go": "ignore test code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
