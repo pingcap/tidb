@@ -19,10 +19,8 @@ import (
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -74,12 +72,4 @@ func (s *mockGCSSuite) enableFailpoint(path, term string) {
 	s.T().Cleanup(func() {
 		_ = failpoint.Disable(path)
 	})
-}
-
-func checkClientErrorMessage(t *testing.T, err error, msg string) {
-	require.Error(t, err)
-	cause := errors.Cause(err)
-	terr, ok := cause.(*errors.Error)
-	require.True(t, ok, "%T", cause)
-	require.Contains(t, terror.ToSQLError(terr).Error(), msg)
 }

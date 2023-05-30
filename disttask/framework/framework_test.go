@@ -33,6 +33,9 @@ type testFlowHandle struct{}
 
 var _ dispatcher.TaskFlowHandle = (*testFlowHandle)(nil)
 
+func (*testFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
+}
+
 func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepOne
@@ -97,7 +100,7 @@ func TestFrameworkStartUp(t *testing.T) {
 	dispatcher.ClearTaskFlowHandle()
 	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &testFlowHandle{})
 	scheduler.ClearSchedulers()
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, func(_ []byte, _ int64) (scheduler.Scheduler, error) {
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, func(_ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
 		return &testScheduler{}, nil
 	})
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {

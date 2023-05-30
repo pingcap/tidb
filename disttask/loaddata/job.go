@@ -17,7 +17,6 @@ package loaddata
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -31,10 +30,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	checkTaskFinishInterval = 300 * time.Millisecond
-)
-
 // DistImporter is a JobImporter for distributed load data.
 type DistImporter struct {
 	*importer.JobImportParam
@@ -44,8 +39,6 @@ type DistImporter struct {
 	// the instance to import data, used for single-node import, nil means import data on all instances.
 	instance *infosync.ServerInfo
 }
-
-var _ importer.JobImporter = &DistImporter{}
 
 // NewDistImporter creates a new DistImporter.
 func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt string) (*DistImporter, error) {
@@ -93,9 +86,9 @@ func (ti *DistImporter) ImportTask(task *proto.Task) {
 }
 
 // Result implements JobImporter.Result.
-func (ti *DistImporter) Result() importer.JobImportResult {
+func (ti *DistImporter) Result(task *proto.Task) importer.JobImportResult {
 	var result importer.JobImportResult
-	taskMeta, err := ti.getTaskMeta()
+	taskMeta, err := ti.getTaskMeta(task)
 	if err != nil {
 		result.Msg = err.Error()
 		return result
@@ -131,7 +124,6 @@ func (ti *DistImporter) SubmitTask() (*proto.Task, error) {
 	}
 	task := TaskMeta{
 		Plan:              *ti.plan,
-		JobID:             ti.Job.ID,
 		Stmt:              ti.stmt,
 		EligibleInstances: instances,
 	}
@@ -155,18 +147,17 @@ func (*DistImporter) taskKey() string {
 	return fmt.Sprintf("%s/%s", proto.LoadData, uuid.New().String())
 }
 
-func (ti *DistImporter) getTaskMeta() (*TaskMeta, error) {
+func (*DistImporter) getTaskMeta(task *proto.Task) (*TaskMeta, error) {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
 	}
-	taskKey := ti.taskKey()
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	globalTask, err := globalTaskManager.GetGlobalTaskByID(task.ID)
 	if err != nil {
 		return nil, err
 	}
 	if globalTask == nil {
-		return nil, errors.Errorf("cannot find global task with key %s", taskKey)
+		return nil, errors.Errorf("cannot find global task with ID %d", task.ID)
 	}
 	var taskMeta TaskMeta
 	if err := json.Unmarshal(globalTask.Meta, &taskMeta); err != nil {

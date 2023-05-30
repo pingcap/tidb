@@ -787,7 +787,7 @@ import (
 	cooldown              "COOLDOWN"
 	watch                 "WATCH"
 	similar               "SIMILAR"
-
+    queryLimit            "QUERY_LIMIT"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -1453,7 +1453,6 @@ import (
 	ResourceGroupRunawayActionOption       "Resource group runaway action option"
 	ResourceGroupRunawayWatchOption        "Resource group runaway watch option"
 	ResourceGroupRunawayOptionList         "Anomymous or direct resource group runaway option list"
-	ResourceGroupRunawayOption			   "Optional runaway settings"
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
@@ -1738,15 +1737,6 @@ ResourceGroupPriorityOption:
 		$$ = uint64(16)
 	}
 
-ResourceGroupRunawayOption:
-	{
-		$$ = []*ast.ResourceGroupRunawayOption{}
-	}
-|	ResourceGroupRunawayOptionList
-	{
-		$$ =  $1.([]*ast.ResourceGroupRunawayOption)
-	}
-
 ResourceGroupRunawayOptionList:
 	DirectResourceGroupRunawayOption
 	{
@@ -1796,27 +1786,27 @@ ResourceGroupRunawayActionOption:
 	}
 
 DirectResourceGroupRunawayOption:
-	"QUERY" "LIMIT" "EXEC_ELAPSED_IN_SEC" EqOpt stringLit
+	"EXEC_ELAPSED_IN_SEC" EqOpt stringLit
 	{
-		_, err := time.ParseDuration($5)
+		_, err := time.ParseDuration($3)
 		if err != nil {
 			yylex.AppendError(yylex.Errorf("The EXEC_ELAPSED_IN_SEC option is not a valid duration: %s", err.Error()))
 			return 1
 		}
-		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayRule, StrValue: $5}
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayRule, StrValue: $3}
 	}
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
 	{
 		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayAction, IntValue: $3.(int32)}
 	}
-|	"WATCH" ResourceGroupRunawayWatchOption "DURATION" EqOpt stringLit
+|	"WATCH" EqOpt ResourceGroupRunawayWatchOption "DURATION" EqOpt stringLit
 	{
-		_, err := time.ParseDuration($5)
+		_, err := time.ParseDuration($6)
 		if err != nil {
 			yylex.AppendError(yylex.Errorf("The WATCH DURATION option is not a valid duration: %s", err.Error()))
 			return 1
 		}
-		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayWatch, StrValue: $5, IntValue: $2.(int32)}
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayWatch, StrValue: $6, IntValue: $3.(int32)}
 	}
 
 DirectResourceGroupOption:
@@ -1831,6 +1821,10 @@ DirectResourceGroupOption:
 |	"BURSTABLE"
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
+	}
+|	"QUERY_LIMIT" EqOpt '(' ResourceGroupRunawayOptionList ')'
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: $4.([]*ast.ResourceGroupRunawayOption)}
 	}
 
 PlacementOptionList:
@@ -6915,6 +6909,7 @@ NotKeywordToken:
 |	"COOLDOWN"
 |	"WATCH"
 |	"SIMILAR"
+|	"QUERY_LIMIT"
 
 /************************************************************************************
  *
@@ -14556,24 +14551,22 @@ DropPolicyStmt:
 	}
 
 CreateResourceGroupStmt:
-	"CREATE" "RESOURCE" "GROUP" IfNotExists ResourceGroupName ResourceGroupOptionList ResourceGroupRunawayOption
+	"CREATE" "RESOURCE" "GROUP" IfNotExists ResourceGroupName ResourceGroupOptionList
 	{
 		$$ = &ast.CreateResourceGroupStmt{
 			IfNotExists:             $4.(bool),
 			ResourceGroupName:       model.NewCIStr($5),
 			ResourceGroupOptionList: $6.([]*ast.ResourceGroupOption),
-			ResourceGroupRunawayOptionList: $7.([]*ast.ResourceGroupRunawayOption),
 		}
 	}
 
 AlterResourceGroupStmt:
-	"ALTER" "RESOURCE" "GROUP" IfExists ResourceGroupName ResourceGroupOptionList ResourceGroupRunawayOption
+	"ALTER" "RESOURCE" "GROUP" IfExists ResourceGroupName ResourceGroupOptionList
 	{
 		$$ = &ast.AlterResourceGroupStmt{
 			IfExists:                $4.(bool),
 			ResourceGroupName:       model.NewCIStr($5),
 			ResourceGroupOptionList: $6.([]*ast.ResourceGroupOption),
-			ResourceGroupRunawayOptionList: $7.([]*ast.ResourceGroupRunawayOption),
 		}
 	}
 

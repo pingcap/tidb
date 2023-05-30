@@ -1579,10 +1579,9 @@ func (n *CreatePlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 type CreateResourceGroupStmt struct {
 	ddlNode
 
-	IfNotExists                    bool
-	ResourceGroupName              model.CIStr
-	ResourceGroupOptionList        []*ResourceGroupOption
-	ResourceGroupRunawayOptionList []*ResourceGroupRunawayOption
+	IfNotExists             bool
+	ResourceGroupName       model.CIStr
+	ResourceGroupOptionList []*ResourceGroupOption
 }
 
 // Restore implements Node interface.
@@ -1595,12 +1594,6 @@ func (n *CreateResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteName(n.ResourceGroupName.O)
 	for i, option := range n.ResourceGroupOptionList {
-		ctx.WritePlain(" ")
-		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing CreateResourceGroupStmt Option: [%v]", i)
-		}
-	}
-	for i, option := range n.ResourceGroupRunawayOptionList {
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while splicing CreateResourceGroupStmt Option: [%v]", i)
@@ -2117,10 +2110,11 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 
 // ResourceGroupOption is used for parsing resource group option.
 type ResourceGroupOption struct {
-	Tp        ResourceUnitType
-	StrValue  string
-	UintValue uint64
-	BoolValue bool
+	Tp                             ResourceUnitType
+	StrValue                       string
+	UintValue                      uint64
+	BoolValue                      bool
+	ResourceGroupRunawayOptionList []*ResourceGroupRunawayOption
 }
 
 type ResourceUnitType int
@@ -2136,6 +2130,7 @@ const (
 
 	// Options
 	ResourceBurstableOpiton
+	ResourceGroupRunaway
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
@@ -2163,6 +2158,19 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 		case ResourceBurstableOpiton:
 			ctx.WriteKeyWord("BURSTABLE")
+		case ResourceGroupRunaway:
+			if len(n.ResourceGroupRunawayOptionList) > 0 {
+				ctx.WritePlain("QUERY_LIMIT=(")
+				for i, option := range n.ResourceGroupRunawayOptionList {
+					if i > 0 {
+						ctx.WritePlain(" ")
+					}
+					if err := option.Restore(ctx); err != nil {
+						return errors.Annotatef(err, "An error occurred while splicing CreateResourceGroupStmt Option: [%v]", i)
+					}
+				}
+				ctx.WritePlain(")")
+			}
 		default:
 			return errors.Errorf("invalid ResourceGroupOption: %d", n.Tp)
 		}
@@ -2191,7 +2199,7 @@ func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 	fn := func() error {
 		switch n.Tp {
 		case RunawayRule:
-			ctx.WriteKeyWord("QUERY LIMIT EXEC_ELAPSED_IN_SEC ")
+			ctx.WriteKeyWord("EXEC_ELAPSED_IN_SEC ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
 		case RunawayAction:
