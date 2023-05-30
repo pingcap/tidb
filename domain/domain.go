@@ -1309,6 +1309,14 @@ func (do *Domain) GetEtcdClient() *clientv3.Client {
 	return do.etcdClient
 }
 
+// GetPDClient returns the PD client.
+func (do *Domain) GetPDClient() pd.Client {
+	if store, ok := do.store.(kv.StorageWithPD); ok {
+		return store.GetPDClient()
+	}
+	return nil
+}
+
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
