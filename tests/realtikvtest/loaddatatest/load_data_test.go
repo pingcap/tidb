@@ -96,14 +96,14 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 
 	sem.Disable()
 	// requires FILE for server file
-	importFromServerSql := fmt.Sprintf("IMPORT INTO t FROM '%s'", filePath)
-	s.True(terror.ErrorEqual(s.tk.ExecToErr(importFromServerSql), core.ErrSpecificAccessDenied))
+	importFromServerSQL := fmt.Sprintf("IMPORT INTO t FROM '%s'", filePath)
+	s.True(terror.ErrorEqual(s.tk.ExecToErr(importFromServerSQL), core.ErrSpecificAccessDenied))
 
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	s.tk.MustExec(`GRANT FILE on *.* to 'test_import_into'@'localhost'`)
 	s.tk.MustExec("truncate table t")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
-	s.tk.MustExec(importFromServerSql)
+	s.tk.MustExec(importFromServerSQL)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
 }
 

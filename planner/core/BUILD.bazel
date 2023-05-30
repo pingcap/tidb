@@ -80,6 +80,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//bindinfo",
+        "//br/pkg/storage",
         "//config",
         "//distsql",
         "//domain",
@@ -127,6 +128,7 @@ go_library(
         "//util/codec",
         "//util/collate",
         "//util/dbterror",
+        "//util/dbterror/exeerrors",
         "//util/disjointset",
         "//util/domainutil",
         "//util/execdetails",
