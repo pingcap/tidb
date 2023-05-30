@@ -43,7 +43,7 @@ func TestSchedulerRun(t *testing.T) {
 	err := scheduler.Run(runCtx, &proto.Task{Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
 
-	RegisterSchedulerConstructor(tp, func(task []byte, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, func(_ int64, task []byte, step int64) (Scheduler, error) {
 		return mockScheduler, nil
 	})
 
@@ -119,20 +119,15 @@ func TestSchedulerRun(t *testing.T) {
 	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateRunning).Return(nil).Once()
 	mockScheduler.On("SplitSubtask", mock.Anything, mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}}, nil).Once()
 	mockSubtaskExecutor.On("Run", mock.Anything).Return(nil).Once()
-	mockScheduler.On("OnSubtaskFinished", mock.Anything, mock.Anything).Return(nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateSucceed).Return(nil).Once()
+	mockScheduler.On("OnSubtaskFinished", mock.Anything, mock.Anything).Return([]byte(""), nil).Once()
+	mockSubtaskTable.On("FinishSubtask", int64(1), mock.Anything).Return(nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(nil, nil).Once()
 	mockScheduler.On("CleanupSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	err = scheduler.Run(runCtx, &proto.Task{Type: tp, ID: taskID, Concurrency: concurrency})
 	require.NoError(t, err)
 
-	mockSubtaskTable.AssertExpectations(t)
-	mockScheduler.AssertExpectations(t)
-	mockSubtaskExecutor.AssertExpectations(t)
-	mockPool.AssertExpectations(t)
-
 	// 9. run subtask concurrently
-	RegisterSchedulerConstructor(tp, func(task []byte, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, func(_ int64, task []byte, step int64) (Scheduler, error) {
 		return mockScheduler, nil
 	}, WithConcurrentSubtask())
 	mockScheduler.On("InitSubtaskExecEnv", mock.Anything).Return(nil).Once()
@@ -141,15 +136,15 @@ func TestSchedulerRun(t *testing.T) {
 	mockSubtaskTable.On("UpdateSubtaskStateAndError", int64(1), proto.TaskStateRunning).Return(nil).Once()
 	mockScheduler.On("SplitSubtask", mock.Anything, mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}}, nil).Once()
 	mockSubtaskExecutor.On("Run", mock.Anything).Return(nil).Once()
-	mockScheduler.On("OnSubtaskFinished", mock.Anything, mock.Anything).Return(nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskStateAndError", int64(1), proto.TaskStateSucceed).Return(nil).Once()
+	mockScheduler.On("OnSubtaskFinished", mock.Anything, mock.Anything).Return([]byte(""), nil).Once()
+	mockSubtaskTable.On("FinishSubtask", int64(1), mock.Anything).Return(nil).Once()
 
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 2, Type: tp}, nil).Once()
 	mockSubtaskTable.On("UpdateSubtaskStateAndError", int64(2), proto.TaskStateRunning).Return(nil).Once()
 	mockScheduler.On("SplitSubtask", mock.Anything, mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}}, nil).Once()
 	mockSubtaskExecutor.On("Run", mock.Anything).Return(nil).Once()
-	mockScheduler.On("OnSubtaskFinished", mock.Anything, mock.Anything).Return(nil).Once()
-	mockSubtaskTable.On("UpdateSubtaskStateAndError", int64(2), proto.TaskStateSucceed).Return(nil).Once()
+	mockScheduler.On("OnSubtaskFinished", mock.Anything, mock.Anything).Return([]byte(""), nil).Once()
+	mockSubtaskTable.On("FinishSubtask", int64(2), mock.Anything).Return(nil).Once()
 
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(nil, nil).Once()
 	mockScheduler.On("CleanupSubtaskExecEnv", mock.Anything).Return(nil).Once()
@@ -202,7 +197,7 @@ func TestSchedulerRollback(t *testing.T) {
 	err := scheduler.Rollback(runCtx, &proto.Task{ID: 1, Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
 
-	RegisterSchedulerConstructor(tp, func(task []byte, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, func(_ int64, task []byte, step int64) (Scheduler, error) {
 		return mockScheduler, nil
 	})
 
@@ -269,7 +264,7 @@ func TestScheduler(t *testing.T) {
 	mockScheduler := &MockScheduler{}
 	mockSubtaskExecutor := &MockSubtaskExecutor{}
 
-	RegisterSchedulerConstructor(tp, func(task []byte, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, func(_ int64, task []byte, step int64) (Scheduler, error) {
 		return mockScheduler, nil
 	})
 	RegisterSubtaskExectorConstructor(tp, func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {

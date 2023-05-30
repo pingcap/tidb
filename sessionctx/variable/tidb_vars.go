@@ -864,6 +864,8 @@ const (
 	// TiDBOptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
 	TiDBOptOrderingIdxSelThresh = "tidb_opt_ordering_index_selectivity_threshold"
 
+	// TiDBOptEnableMPPSharedCTEExecution indicates whehter the optimizer try to build shared CTE scan during MPP execution.
+	TiDBOptEnableMPPSharedCTEExecution = "tidb_opt_enable_mpp_shared_cte_execution"
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
 )
@@ -1011,8 +1013,8 @@ const (
 	AuthenticationLDAPSASLBindBaseDN = "authentication_ldap_sasl_bind_base_dn"
 	// AuthenticationLDAPSASLBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
 	AuthenticationLDAPSASLBindRootDN = "authentication_ldap_sasl_bind_root_dn"
-	// AuthenticationLDAPSASLBindRootPW defines the password of the user to login the LDAP server and perform search.
-	AuthenticationLDAPSASLBindRootPW = "authentication_ldap_sasl_bind_root_pw"
+	// AuthenticationLDAPSASLBindRootPWD defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSASLBindRootPWD = "authentication_ldap_sasl_bind_root_pwd"
 	// AuthenticationLDAPSASLInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
 	AuthenticationLDAPSASLInitPoolSize = "authentication_ldap_sasl_init_pool_size"
 	// AuthenticationLDAPSASLMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
@@ -1035,8 +1037,8 @@ const (
 	AuthenticationLDAPSimpleBindBaseDN = "authentication_ldap_simple_bind_base_dn"
 	// AuthenticationLDAPSimpleBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
 	AuthenticationLDAPSimpleBindRootDN = "authentication_ldap_simple_bind_root_dn"
-	// AuthenticationLDAPSimpleBindRootPW defines the password of the user to login the LDAP server and perform search.
-	AuthenticationLDAPSimpleBindRootPW = "authentication_ldap_simple_bind_root_pw"
+	// AuthenticationLDAPSimpleBindRootPWD defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSimpleBindRootPWD = "authentication_ldap_simple_bind_root_pwd"
 	// AuthenticationLDAPSimpleInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
 	AuthenticationLDAPSimpleInitPoolSize = "authentication_ldap_simple_init_pool_size"
 	// AuthenticationLDAPSimpleMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
@@ -1219,7 +1221,7 @@ const (
 	DefTiDBIgnorePreparedCacheCloseStmt            = false
 	DefTiDBBatchPendingTiFlashCount                = 4000
 	DefRCReadCheckTS                               = false
-	DefTiDBRemoveOrderbyInSubquery                 = false
+	DefTiDBRemoveOrderbyInSubquery                 = true
 	DefTiDBSkewDistinctAgg                         = false
 	DefTiDB3StageDistinctAgg                       = true
 	DefTiDB3StageMultiDistinctAgg                  = false
@@ -1262,7 +1264,7 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableNonPreparedPlanCache              = false
+	DefTiDBEnableNonPreparedPlanCache              = true
 	DefTiDBEnableNonPreparedPlanCacheForDML        = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
@@ -1320,6 +1322,7 @@ const (
 	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
 	DefTiDBOptEnableLateMaterialization               = true
 	DefTiDBOptOrderingIdxSelThresh                    = 0.0
+	DefTiDBOptEnableMPPSharedCTEExecution             = false
 	DefTiDBPlanCacheInvalidationOnFreshStats          = true
 	DefTiDBEnableRowLevelChecksum                     = false
 	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"

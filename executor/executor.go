@@ -313,6 +313,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	sessVars := base.ctx.GetSessionVars()
+	if atomic.LoadUint32(&sessVars.Killed) == 2 {
+		return exeerrors.ErrMaxExecTimeExceeded
+	}
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
 		return exeerrors.ErrQueryInterrupted
 	}
@@ -329,6 +332,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		return err
 	}
 	// recheck whether the session/query is killed during the Next()
+	if atomic.LoadUint32(&sessVars.Killed) == 2 {
+		err = exeerrors.ErrMaxExecTimeExceeded
+	}
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
 		err = exeerrors.ErrQueryInterrupted
 	}
@@ -622,9 +628,18 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			req.AppendInt64(5, job.SchemaID)
 			req.AppendInt64(6, job.TableID)
 			req.AppendInt64(7, subJob.RowCount)
-			req.AppendNull(8)
-			req.AppendNull(9)
-			req.AppendNull(10)
+			req.AppendTime(8, createTime)
+			if subJob.RealStartTS > 0 {
+				realStartTS := ts2Time(subJob.RealStartTS, e.TZLoc)
+				req.AppendTime(9, realStartTS)
+			} else {
+				req.AppendNull(9)
+			}
+			if finishTS > 0 {
+				req.AppendTime(10, finishTime)
+			} else {
+				req.AppendNull(10)
+			}
 			req.AppendString(11, subJob.State.String())
 		}
 	}
@@ -1562,6 +1577,11 @@ func init() {
 		defer terror.Call(exec.Close)
 		if err != nil {
 			return nil, err
+		}
+		if pi, ok := sctx.(processinfoSetter); ok {
+			// Before executing the sub-query, we need update the processinfo to make the progress bar more accurate.
+			// because the sub-query may take a long time.
+			pi.UpdateProcessInfo()
 		}
 		chk := tryNewCacheChunk(exec)
 		err = Next(ctx, exec, chk)

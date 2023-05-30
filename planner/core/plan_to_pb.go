@@ -331,6 +331,21 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 		encodedTask = append(encodedTask, encodedStr)
 	}
 
+	encodedUpstreamCTETask := make([]*tipb.EncodedBytesSlice, 0, len(e.TargetCTEReaderTasks))
+	for _, cteRTasks := range e.TargetCTEReaderTasks {
+		encodedTasksForOneCTEReader := &tipb.EncodedBytesSlice{
+			EncodedTasks: make([][]byte, 0, len(cteRTasks)),
+		}
+		for _, task := range cteRTasks {
+			encodedStr, err := task.ToPB().Marshal()
+			if err != nil {
+				return nil, err
+			}
+			encodedTasksForOneCTEReader.EncodedTasks = append(encodedTasksForOneCTEReader.EncodedTasks, encodedStr)
+		}
+		encodedUpstreamCTETask = append(encodedUpstreamCTETask, encodedTasksForOneCTEReader)
+	}
+
 	hashCols := make([]expression.Expression, 0, len(e.HashCols))
 	hashColTypes := make([]*tipb.FieldType, 0, len(e.HashCols))
 	for _, col := range e.HashCols {
@@ -355,13 +370,14 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 		return nil, errors.Trace(err)
 	}
 	ecExec := &tipb.ExchangeSender{
-		Tp:              e.ExchangeType,
-		EncodedTaskMeta: encodedTask,
-		PartitionKeys:   hashColPb,
-		Child:           child,
-		Types:           hashColTypes,
-		AllFieldTypes:   allFieldTypes,
-		Compression:     e.CompressionMode.ToTipbCompressionMode(),
+		Tp:                  e.ExchangeType,
+		EncodedTaskMeta:     encodedTask,
+		PartitionKeys:       hashColPb,
+		Child:               child,
+		Types:               hashColTypes,
+		AllFieldTypes:       allFieldTypes,
+		Compression:         e.CompressionMode.ToTipbCompressionMode(),
+		UpstreamCteTaskMeta: encodedUpstreamCTETask,
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
@@ -396,6 +412,11 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, _ kv.StoreType) 
 	ecExec := &tipb.ExchangeReceiver{
 		EncodedTaskMeta: encodedTask,
 		FieldTypes:      fieldTypes,
+	}
+	if e.IsCTEReader {
+		encodedTaskShallowCopy := make([][]byte, len(e.Tasks))
+		copy(encodedTaskShallowCopy, encodedTask)
+		ecExec.OriginalCtePrdocuerTaskMeta = encodedTaskShallowCopy
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{

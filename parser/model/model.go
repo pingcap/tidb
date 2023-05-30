@@ -1312,6 +1312,17 @@ func (pi *PartitionInfo) FindPartitionDefinitionByName(partitionDefinitionName s
 	return -1
 }
 
+// GetPartitionIDByName gets the partition ID by name.
+func (pi *PartitionInfo) GetPartitionIDByName(partitionDefinitionName string) int64 {
+	lowConstrName := strings.ToLower(partitionDefinitionName)
+	for _, definition := range pi.Definitions {
+		if definition.Name.L == lowConstrName {
+			return definition.ID
+		}
+	}
+	return -1
+}
+
 // IndexColumn provides index column info.
 type IndexColumn struct {
 	Name   CIStr `json:"name"`   // Index name
@@ -1364,6 +1375,8 @@ func (t IndexType) String() string {
 		return "HASH"
 	case IndexTypeRtree:
 		return "RTREE"
+	case IndexTypeHypo:
+		return "HYPO"
 	default:
 		return ""
 	}
@@ -1375,6 +1388,7 @@ const (
 	IndexTypeBtree
 	IndexTypeHash
 	IndexTypeRtree
+	IndexTypeHypo
 )
 
 // IndexInfo provides meta data describing a DB index.
