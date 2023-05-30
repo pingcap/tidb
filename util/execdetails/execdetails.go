@@ -51,7 +51,8 @@ type DetailsNeedP90 struct {
 	TimeDetail    util.TimeDetail
 }
 
-type DetailsNeedP90BackoffSummery struct {
+// P90BackoffSummery contains execution detail information which need calculate P90.
+type P90BackoffSummery struct {
 	ReqTimes          int
 	MaxBackoffTime    time.Duration
 	MaxBackoffAddress string
@@ -60,7 +61,10 @@ type DetailsNeedP90BackoffSummery struct {
 	TotBackoffTimes   int
 }
 
-type DetailsNeedP90Summary struct {
+// P90Summary contains execution detail information which need calculate P90.
+type P90Summary struct {
+	NumCopTasks int
+
 	MaxProcessTime    time.Duration
 	MaxProcessAddress string
 	TdForProcessTime  *tdigest.TDigest
@@ -69,19 +73,27 @@ type DetailsNeedP90Summary struct {
 	MaxWaitAddress string
 	TdForWaitTime  *tdigest.TDigest
 
-	BackoffInfo map[string]*DetailsNeedP90BackoffSummery
+	BackoffInfo map[string]*P90BackoffSummery
 }
 
-func (d *DetailsNeedP90Summary) Reset() {
+// Resets resets all fields in DetailsNeedP90Summary.
+func (d *P90Summary) Reset() {
+	d.NumCopTasks = 0
 	d.MaxProcessTime = 0
 	d.MaxProcessAddress = ""
 	d.MaxWaitTime = 0
 	d.MaxWaitAddress = ""
 	d.TdForProcessTime = tdigest.New()
 	d.TdForWaitTime = tdigest.New()
+	d.BackoffInfo = make(map[string]*P90BackoffSummery)
 }
 
-func (d *DetailsNeedP90Summary) Merge(detail *DetailsNeedP90) {
+// Merge merges two DetailsNeedP90Summary.
+func (d *P90Summary) Merge(detail *DetailsNeedP90) {
+	if d.TdForProcessTime == nil {
+		d.Reset()
+	}
+	d.NumCopTasks++
 	if d.MaxProcessTime < detail.TimeDetail.ProcessTime {
 		d.MaxProcessTime = detail.TimeDetail.ProcessTime
 		d.MaxProcessAddress = detail.CalleeAddress
@@ -93,11 +105,11 @@ func (d *DetailsNeedP90Summary) Merge(detail *DetailsNeedP90) {
 	}
 	d.TdForProcessTime.Add(float64(detail.TimeDetail.ProcessTime.Nanoseconds()), 1)
 
-	var info *DetailsNeedP90BackoffSummery
+	var info *P90BackoffSummery
 	var ok bool
 	for backoff, timeItem := range detail.BackoffTimes {
 		if info, ok = d.BackoffInfo[backoff]; !ok {
-			d.BackoffInfo[backoff] = &DetailsNeedP90BackoffSummery{TdForBackoffTime: tdigest.New()}
+			d.BackoffInfo[backoff] = &P90BackoffSummery{TdForBackoffTime: tdigest.New()}
 			info = d.BackoffInfo[backoff]
 		}
 		sleepItem := detail.BackoffSleep[backoff]

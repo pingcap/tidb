@@ -226,7 +226,7 @@ type StatementContext struct {
 
 		execDetails    execdetails.ExecDetails
 		allExecDetails []*execdetails.DetailsNeedP90
-		detailsSummary execdetails.DetailsNeedP90Summary
+		detailsSummary execdetails.P90Summary
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
@@ -999,13 +999,23 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.RequestCount++
 		sc.MergeScanDetail(details.ScanDetail)
 		sc.MergeTimeDetail(details.TimeDetail)
-		sc.mu.allExecDetails = append(sc.mu.allExecDetails,
-			&execdetails.DetailsNeedP90{
-				BackoffSleep:  details.BackoffSleep,
-				BackoffTimes:  details.BackoffTimes,
-				CalleeAddress: details.CalleeAddress,
-				TimeDetail:    details.TimeDetail,
-			})
+		detail := &execdetails.DetailsNeedP90{
+			BackoffSleep:  details.BackoffSleep,
+			BackoffTimes:  details.BackoffTimes,
+			CalleeAddress: details.CalleeAddress,
+			TimeDetail:    details.TimeDetail,
+		}
+		if sc.mu.detailsSummary.NumCopTasks > 0 {
+			sc.mu.detailsSummary.Merge(detail)
+		} else {
+			sc.mu.allExecDetails = append(sc.mu.allExecDetails, detail)
+			if len(sc.mu.allExecDetails) >= 1000 {
+				for _, detail := range sc.mu.allExecDetails {
+					sc.mu.detailsSummary.Merge(detail)
+				}
+				sc.mu.allExecDetails = nil
+			}
+		}
 	}
 	if commitDetails != nil {
 		if sc.mu.execDetails.CommitDetail == nil {
@@ -1108,7 +1118,14 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	n := len(sc.mu.allExecDetails)
+	if sc.mu.detailsSummary.NumCopTasks > 0 {
+		return sc.approxCopTasksDetails()
+	}
+	return sc.accurateCopTasksDetails()
+}
+
+func (sc *StatementContext) approxCopTasksDetails() *CopTasksDetails {
+	n := sc.mu.detailsSummary.NumCopTasks
 	d := &CopTasksDetails{
 		NumCopTasks:       n,
 		MaxBackoffTime:    make(map[string]time.Duration),
@@ -1117,9 +1134,6 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 		TotBackoffTime:    make(map[string]time.Duration),
 		TotBackoffTimes:   make(map[string]int),
 		MaxBackoffAddress: make(map[string]string),
-	}
-	if n == 0 {
-		return d
 	}
 	d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
 	d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
@@ -1144,6 +1158,78 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 		d.AvgBackoffTime[backoff] = items.TotBackoffTime / time.Duration(n)
 		d.TotBackoffTime[backoff] = items.TotBackoffTime
 		d.TotBackoffTimes[backoff] = items.TotBackoffTimes
+	}
+	return d
+}
+
+func (sc *StatementContext) accurateCopTasksDetails() *CopTasksDetails {
+	n := len(sc.mu.allExecDetails)
+	d := &CopTasksDetails{
+		NumCopTasks:       n,
+		MaxBackoffTime:    make(map[string]time.Duration),
+		AvgBackoffTime:    make(map[string]time.Duration),
+		P90BackoffTime:    make(map[string]time.Duration),
+		TotBackoffTime:    make(map[string]time.Duration),
+		TotBackoffTimes:   make(map[string]int),
+		MaxBackoffAddress: make(map[string]string),
+	}
+	if n == 0 {
+		return d
+	}
+	d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
+	d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
+
+	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.DetailsNeedP90) bool {
+		return i.TimeDetail.ProcessTime < j.TimeDetail.ProcessTime
+	})
+	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].TimeDetail.ProcessTime
+	d.MaxProcessTime = sc.mu.allExecDetails[n-1].TimeDetail.ProcessTime
+	d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
+
+	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.DetailsNeedP90) bool {
+		return i.TimeDetail.WaitTime < j.TimeDetail.WaitTime
+	})
+	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].TimeDetail.WaitTime
+	d.MaxWaitTime = sc.mu.allExecDetails[n-1].TimeDetail.WaitTime
+	d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
+
+	// calculate backoff details
+	type backoffItem struct {
+		callee    string
+		sleepTime time.Duration
+		times     int
+	}
+	backoffInfo := make(map[string][]backoffItem)
+	for _, ed := range sc.mu.allExecDetails {
+		for backoff := range ed.BackoffTimes {
+			backoffInfo[backoff] = append(backoffInfo[backoff], backoffItem{
+				callee:    ed.CalleeAddress,
+				sleepTime: ed.BackoffSleep[backoff],
+				times:     ed.BackoffTimes[backoff],
+			})
+		}
+	}
+	for backoff, items := range backoffInfo {
+		if len(items) == 0 {
+			continue
+		}
+		slices.SortFunc(items, func(i, j backoffItem) bool {
+			return i.sleepTime < j.sleepTime
+		})
+		n := len(items)
+		d.MaxBackoffAddress[backoff] = items[n-1].callee
+		d.MaxBackoffTime[backoff] = items[n-1].sleepTime
+		d.P90BackoffTime[backoff] = items[n*9/10].sleepTime
+
+		var totalTime time.Duration
+		totalTimes := 0
+		for _, it := range items {
+			totalTime += it.sleepTime
+			totalTimes += it.times
+		}
+		d.AvgBackoffTime[backoff] = totalTime / time.Duration(n)
+		d.TotBackoffTime[backoff] = totalTime
+		d.TotBackoffTimes[backoff] = totalTimes
 	}
 	return d
 }
