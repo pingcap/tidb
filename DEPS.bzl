@@ -1592,8 +1592,8 @@ def go_deps():
         name = "com_github_golang_glog",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golang/glog",
-        sum = "h1:/d3pCKDPWNnvIWe0vVUpNP32qc8U3PDVxySP/y360qE=",
-        version = "v1.1.0",
+        sum = "h1:jxpi2eWoU84wbX9iIEyAeeoac3FLuifZpY9tcNUD9kw=",
+        version = "v1.1.1",
     )
     go_repository(
         name = "com_github_golang_groupcache",
@@ -3442,8 +3442,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:M/PEVPjh9nlldU0+AeAvnxrQ7K9wAa+l8ERH0X5elbI=",
-        version = "v0.0.0-20230526062111-c13fc8b65f75",
+        sum = "h1:q+w2cGyo2+NUP+4KkpsKWKUq0Ai0gnGWYbgjEI4Xaoo=",
+        version = "v0.0.0-20230530080810-3ee4c2b9d5b2",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -5983,9 +5983,24 @@ def go_deps():
         name = "org_golang_google_genproto",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/genproto",
-        sum = "h1:KpwkzHKEF7B9Zxg18WzOa7djJ+Ha5DzthMyZYQfEn2A=",
-        version = "v0.0.0-20230410155749-daa745c078e1",
+        sum = "h1:Ao9GzfUMPH3zjVfzXG5rlWlk+Q8MXWKwWpwVQE1MXfw=",
+        version = "v0.0.0-20230526203410-71b5a4ffd15e",
     )
+    go_repository(
+        name = "org_golang_google_genproto_googleapis_api",
+        build_file_proto_mode = "disable",
+        importpath = "google.golang.org/genproto/googleapis/api",
+        sum = "h1:AZX1ra8YbFMSb7+1pI8S9v4rrgRR7jU1FmuFSSjTVcQ=",
+        version = "v0.0.0-20230526203410-71b5a4ffd15e",
+    )
+    go_repository(
+        name = "org_golang_google_genproto_googleapis_rpc",
+        build_file_proto_mode = "disable",
+        importpath = "google.golang.org/genproto/googleapis/rpc",
+        sum = "h1:0nDDozoAU19Qb2HwhXadU8OcsiO/09cnTqhUtq2MEOM=",
+        version = "v0.0.0-20230525234030-28d5490b6b19",
+    )
+
     go_repository(
         name = "org_golang_google_grpc",
         build_file_proto_mode = "disable_global",

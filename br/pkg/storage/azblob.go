@@ -324,6 +324,7 @@ func (s *AzureBlobStorage) withPrefix(name string) string {
 func (s *AzureBlobStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	options := &blockblob.UploadBufferOptions{}
+	// the encryption scope and the access tier can not be both in the HTTP headers
 	if len(s.options.EncryptionScope) > 0 {
 		options.CPKScopeInfo = &blob.CPKScopeInfo{
 			EncryptionScope: &s.options.EncryptionScope,
@@ -580,8 +581,11 @@ func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
 
 func (u *azblobUploader) Close(ctx context.Context) error {
 	options := &blockblob.CommitBlockListOptions{}
+	// the encryption scope and the access tier can not be both in the HTTP headers
 	if len(u.encryptionScope) > 0 {
-		options.CPKScopeInfo.EncryptionScope = &u.encryptionScope
+		options.CPKScopeInfo = &blob.CPKScopeInfo{
+			EncryptionScope: &u.encryptionScope,
+		}
 	} else if len(u.accessTier) > 0 {
 		options.Tier = &u.accessTier
 	}
