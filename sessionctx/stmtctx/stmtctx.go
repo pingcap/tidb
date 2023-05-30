@@ -1286,6 +1286,20 @@ func (sc *StatementContext) DetachMemDiskTracker() {
 	}
 }
 
+// ClearRuntimeInfo clears the runtime info.
+func (sc *StatementContext) ClearRuntimeInfo() {
+	if sc == nil {
+		return
+	}
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.mu.allExecDetails = nil
+	sc.mu.detailsSummary = execdetails.P90Summary{}
+	if sc.RuntimeStatsColl != nil {
+		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(sc.RuntimeStatsColl)
+	}
+}
+
 // CopTasksDetails collects some useful information of cop-tasks during execution.
 type CopTasksDetails struct {
 	NumCopTasks int

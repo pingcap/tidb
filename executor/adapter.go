@@ -742,6 +742,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// `rs.Close` in `handleStmt`
 		if handled && sc != nil && rs == nil {
 			sc.DetachMemDiskTracker()
+			sc.ClearRuntimeInfo()
 		}
 	}()
 
@@ -1416,6 +1417,7 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
+	a.Ctx.GetSessionVars().StmtCtx.ClearRuntimeInfo()
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
