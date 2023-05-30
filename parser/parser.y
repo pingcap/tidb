@@ -787,7 +787,7 @@ import (
 	cooldown              "COOLDOWN"
 	watch                 "WATCH"
 	similar               "SIMILAR"
-    queryLimit            "QUERY_LIMIT"
+	queryLimit            "QUERY_LIMIT"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -1745,7 +1745,8 @@ ResourceGroupRunawayOptionList:
 |	ResourceGroupRunawayOptionList DirectResourceGroupRunawayOption
 	{
 		if $1.([]*ast.ResourceGroupRunawayOption)[0].Tp == $2.(*ast.ResourceGroupRunawayOption).Tp ||
-			(len($1.([]*ast.ResourceGroupRunawayOption)) > 1 && $1.([]*ast.ResourceGroupRunawayOption)[1].Tp == $2.(*ast.ResourceGroupRunawayOption).Tp) {
+			(len($1.([]*ast.ResourceGroupRunawayOption)) > 1 && $1.([]*ast.ResourceGroupRunawayOption)[1].Tp == $2.(*ast.ResourceGroupRunawayOption).Tp) ||
+			(len($1.([]*ast.ResourceGroupRunawayOption)) > 2 && $1.([]*ast.ResourceGroupRunawayOption)[2].Tp == $2.(*ast.ResourceGroupRunawayOption).Tp) {
 			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
 			return 1
 		}
@@ -1754,7 +1755,8 @@ ResourceGroupRunawayOptionList:
 |	ResourceGroupRunawayOptionList ',' DirectResourceGroupRunawayOption
 	{
 		if $1.([]*ast.ResourceGroupRunawayOption)[0].Tp == $3.(*ast.ResourceGroupRunawayOption).Tp ||
-			(len($1.([]*ast.ResourceGroupRunawayOption)) > 1 && $1.([]*ast.ResourceGroupRunawayOption)[1].Tp == $3.(*ast.ResourceGroupRunawayOption).Tp) {
+			(len($1.([]*ast.ResourceGroupRunawayOption)) > 1 && $1.([]*ast.ResourceGroupRunawayOption)[1].Tp == $3.(*ast.ResourceGroupRunawayOption).Tp) ||
+			(len($1.([]*ast.ResourceGroupRunawayOption)) > 2 && $1.([]*ast.ResourceGroupRunawayOption)[2].Tp == $3.(*ast.ResourceGroupRunawayOption).Tp) {
 			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
 			return 1
 		}
