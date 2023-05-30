@@ -3058,28 +3058,35 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 }
 
 // SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
-func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, typ ast.ResourceUnitType, stringVal string, uintVal uint64, boolValue bool) error {
-	switch typ {
+func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupOption) error {
+	switch opt.Tp {
 	case ast.ResourceRURate:
-		resourceGroupSettings.RURate = uintVal
+		resourceGroupSettings.RURate = opt.UintValue
 	case ast.ResourcePriority:
-		resourceGroupSettings.Priority = uintVal
+		resourceGroupSettings.Priority = opt.UintValue
 	case ast.ResourceUnitCPU:
-		resourceGroupSettings.CPULimiter = stringVal
+		resourceGroupSettings.CPULimiter = opt.StrValue
 	case ast.ResourceUnitIOReadBandwidth:
-		resourceGroupSettings.IOReadBandwidth = stringVal
+		resourceGroupSettings.IOReadBandwidth = opt.StrValue
 	case ast.ResourceUnitIOWriteBandwidth:
-		resourceGroupSettings.IOWriteBandwidth = stringVal
+		resourceGroupSettings.IOWriteBandwidth = opt.StrValue
 	case ast.ResourceBurstableOpiton:
 		// Some about BurstLimit(b):
 		//   - If b == 0, that means the limiter is unlimited capacity. default use in resource controller (burst with a rate within a unlimited capacity).
 		//   - If b < 0, that means the limiter is unlimited capacity and fillrate(r) is ignored, can be seen as r == Inf (burst with a inf rate within a unlimited capacity).
 		//   - If b > 0, that means the limiter is limited capacity. (current not used).
 		limit := int64(0)
-		if boolValue {
+		if opt.BoolValue {
 			limit = -1
 		}
 		resourceGroupSettings.BurstLimit = limit
+	case ast.ResourceGroupRunaway:
+		for _, opt := range opt.ResourceGroupRunawayOptionList {
+			err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue)
+			if err != nil {
+				return err
+			}
+		}
 	default:
 		return errors.Trace(errors.New("unknown resource unit type"))
 	}
@@ -8022,7 +8029,7 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
 	groupInfo := &model.ResourceGroupInfo{Name: groupName, ResourceGroupSettings: &model.ResourceGroupSettings{}}
-	groupInfo, err = buildResourceGroup(groupInfo, stmt.ResourceGroupOptionList, stmt.ResourceGroupRunawayOptionList)
+	groupInfo, err = buildResourceGroup(groupInfo, stmt.ResourceGroupOptionList)
 	if err != nil {
 		return err
 	}
@@ -8104,16 +8111,10 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 	return err
 }
 
-func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption, runawayOptions []*ast.ResourceGroupRunawayOption) (*model.ResourceGroupInfo, error) {
+func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
 	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
 	for _, opt := range options {
-		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue, opt.BoolValue)
-		if err != nil {
-			return nil, err
-		}
-	}
-	for _, opt := range runawayOptions {
-		err := SetDirectResourceGroupRunawayOption(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue)
+		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -8136,7 +8137,7 @@ func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResource
 		}
 		return err
 	}
-	newGroupInfo, err := buildResourceGroup(group, stmt.ResourceGroupOptionList, stmt.ResourceGroupRunawayOptionList)
+	newGroupInfo, err := buildResourceGroup(group, stmt.ResourceGroupOptionList)
 	if err != nil {
 		return errors.Trace(err)
 	}
