@@ -16,6 +16,7 @@ package expression
 
 import (
 	"context"
+	"go.uber.org/zap"
 	"math"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -163,6 +165,8 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 		staleTSO, err := ctx.GetSessionVars().StmtCtx.GetStaleTSO()
 		if staleTSO != 0 && err == nil {
 			return oracle.GetTimeFromTS(staleTSO), nil
+		} else if err != nil {
+			logutil.BgLogger().Error("get stale tso failed", zap.Error(err))
 		}
 	}
 

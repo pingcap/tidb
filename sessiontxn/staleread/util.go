@@ -36,6 +36,8 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx sessionctx.Context, tsExpr as
 			return uint64(val.(int)), nil
 		})
 		// this function accepts a context, but we don't need it when there is a valid cached ts.
+		// in most cases, the stale read ts can be calculated from `cached ts + time since cache - staleness`,
+		// this can be more accurate than `time.Now() - staleness`, because TiDB's local time can drift.
 		return sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
 	})
 	tsVal, err := expression.EvalAstExpr(sctx, tsExpr)
