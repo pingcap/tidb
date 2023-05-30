@@ -132,19 +132,19 @@ type calibrateResourceExec struct {
 	done         bool
 }
 
-func (e *calibrateResourceExec) parseCalibrateDuration() (startTime time.Time, endTime time.Time, err error) {
+func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (startTime time.Time, endTime time.Time, err error) {
 	var dur time.Duration
 	var ts uint64
 	for _, op := range e.optionList {
 		switch op.Tp {
 		case ast.CalibrateStartTime:
-			ts, err = staleread.CalculateAsOfTsExpr(e.ctx, op.Ts)
+			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, op.Ts)
 			if err != nil {
 				return
 			}
 			startTime = oracle.GetTimeFromTS(ts)
 		case ast.CalibrateEndTime:
-			ts, err = staleread.CalculateAsOfTsExpr(e.ctx, op.Ts)
+			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, op.Ts)
 			if err != nil {
 				return
 			}
@@ -197,7 +197,7 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 }
 
 func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
-	startTs, endTs, err := e.parseCalibrateDuration()
+	startTs, endTs, err := e.parseCalibrateDuration(ctx)
 	if err != nil {
 		return err
 	}
