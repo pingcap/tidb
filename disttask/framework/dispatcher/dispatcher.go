@@ -435,10 +435,12 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	// ywq todo select node policy here
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
-		pos := i % len(serverNodes)
-		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
+		pos := i%len(serverNodes) + 1 // ywq test todo since the first servernode is dummy
+		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port, serverNodes[pos].ID)
+		logutil.BgLogger().Info("ywq test", zap.String("instanceID", instanceID), zap.Int("pos", pos))
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
+
 	return d.updateTask(gTask, gTask.State, subTasks, retrySQLTimes)
 }
 
@@ -475,17 +477,17 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 	}
 	ids := make([]string, 0, len(schedulerIDs))
 	for _, id := range schedulerIDs {
-		if ok := matchServerInfo(serverInfos, id); ok {
+		if ok := matchServerInfo(serverInfos, id, d.id); ok {
 			ids = append(ids, id)
 		}
 	}
 	return ids, nil
 }
 
-func matchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string) bool {
+func matchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string, id string) bool {
 	logutil.BgLogger().Info("ywq test server num: %+v", zap.Int("serverinfonum:", len(serverInfos)))
 	for _, serverInfo := range serverInfos {
-		serverID := disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port)
+		serverID := disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port, id)
 		if serverID == schedulerID {
 			return true
 		}

@@ -39,7 +39,7 @@ func TestSchedulerRun(t *testing.T) {
 
 	// 1. no scheduler constructor
 	schedulerRegisterErr := errors.Errorf("constructor of scheduler for type %s not found", tp)
-	scheduler := NewInternalScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
+	scheduler := NewInternalScheduler(ctx, "id", "test", 1, mockSubtaskTable, mockPool)
 	err := scheduler.Run(runCtx, &proto.Task{Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
 
@@ -192,7 +192,7 @@ func TestSchedulerRollback(t *testing.T) {
 
 	// 1. no scheduler constructor
 	schedulerRegisterErr := errors.Errorf("constructor of scheduler for type %s not found", tp)
-	scheduler := NewInternalScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
+	scheduler := NewInternalScheduler(ctx, "id", "test1", 1, mockSubtaskTable, mockPool)
 	mockSubtaskTable.On("GetSubtaskInStates", "id", int64(1), []interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(nil, nil).Once()
 	err := scheduler.Rollback(runCtx, &proto.Task{ID: 1, Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
@@ -271,7 +271,7 @@ func TestScheduler(t *testing.T) {
 		return mockSubtaskExecutor, nil
 	})
 
-	scheduler := NewInternalScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
+	scheduler := NewInternalScheduler(ctx, "id", "test1", 1, mockSubtaskTable, mockPool)
 	scheduler.Start()
 	defer scheduler.Stop()
 

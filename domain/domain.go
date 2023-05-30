@@ -1373,7 +1373,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
-	logutil.BgLogger().Info("ywq test init dist task loop")
+	logutil.BgLogger().Info("ywq test init dist task loop", zap.String("ddlid", do.DDL().GetID()))
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil)
@@ -1407,12 +1407,12 @@ func generateSubtaskExecID(ctx context.Context, ID string) string {
 		return ""
 	}
 	if serverNode, ok := serverInfos[ID]; ok {
-		return disttaskutil.GenerateExecID(serverNode.IP, serverNode.Port)
+		return disttaskutil.GenerateExecID(serverNode.IP, serverNode.Port, ID)
 	}
 	return ""
 }
 
-var distDispatched = false
+var distDispatchTime = 0
 
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
 	schedulerManager.Start()
@@ -1428,17 +1428,18 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if dispatch != nil {
 			return
 		}
-		if distDispatched {
+		logutil.BgLogger().Info("ywq test", zap.Int("distdispatchtime", distDispatchTime))
+		if distDispatchTime != 1 { // the last server as the ddl owner...
+			distDispatchTime++
 			return
 		}
-
+		distDispatchTime++
 		newDispatch, err := dispatcher.NewDispatcher(ctx, taskManager, do.DDL().GetID())
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return
 		}
 		dispatch = newDispatch
-		distDispatched = true
 		dispatch.Start()
 		logutil.BgLogger().Info("a new dist task dispatcher started for current node becomes the DDL owner", zap.String("id", do.ddl.GetID()))
 	}

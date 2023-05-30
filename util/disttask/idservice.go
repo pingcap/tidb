@@ -22,7 +22,7 @@ import (
 // GenerateExecID used to generate IP:port as exec_id value
 // This function is used by distributed task execution to generate serverID string to
 // correlated one subtask to on TiDB node to be executed.
-func GenerateExecID(ip string, port uint) string {
+func GenerateExecID(ip string, port uint, id string) string {
 	portstring := fmt.Sprintf("%d", port)
-	return net.JoinHostPort(ip, portstring)
+	return net.JoinHostPort(ip, portstring) + id
 }

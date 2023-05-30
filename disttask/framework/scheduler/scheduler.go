@@ -30,6 +30,7 @@ type InternalSchedulerImpl struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	id        string
+	ddlID     string
 	taskID    int64
 	taskTable TaskTable
 	pool      Pool
@@ -46,10 +47,11 @@ type InternalSchedulerImpl struct {
 }
 
 // NewInternalScheduler creates a new InternalScheduler.
-func NewInternalScheduler(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
-	logPrefix := fmt.Sprintf("id: %s, task_id: %d", id, taskID)
+func NewInternalScheduler(ctx context.Context, id string, ddlID string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
+	logPrefix := fmt.Sprintf("ddlid: %s, task_id: %d", ddlID, taskID)
 	schedulerImpl := &InternalSchedulerImpl{
 		id:        id,
+		ddlID:     ddlID,
 		taskID:    taskID,
 		taskTable: taskTable,
 		pool:      pool,
