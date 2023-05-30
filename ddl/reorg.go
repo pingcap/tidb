@@ -460,7 +460,7 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 
 	if dc.isReorgPaused(jobID) {
 		logutil.BgLogger().Warn("[ddl] job paused by user", zap.String("ID", dc.uuid))
-		return dbterror.ErrPausedDDLJob
+		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(jobID)
 	}
 
 	// If isDistReorg is true, we needn't check if it is owner.
