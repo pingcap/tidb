@@ -16208,7 +16208,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.10",
+          "pluginVersion": "7.4.2",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -16218,7 +16218,6 @@
           "steppedLine": false,
           "targets": [
             {
-              "exemplar": true,
               "expr": "histogram_quantile(0.99, sum(rate(tidb_executor_ongoing_txn_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
               "format": "time_series",
               "interval": "",
