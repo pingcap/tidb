@@ -107,6 +107,16 @@ func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	options.SASToken, err = flags.GetString(azblobSASToken)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	options.EncryptionScope, err = flags.GetString(azblobEncryptionScope)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
