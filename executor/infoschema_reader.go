@@ -3284,7 +3284,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			}
 			runawayAction = fmt.Sprintf("%s=%s", "ACTION", model.RunawayActionValueToName(int32(setting.Action)))
 			if setting.Watch != nil {
-				dur := time.Duration(setting.Watch.LastDurationMs) * time.Millisecond
+				dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
 				runawayWatch = fmt.Sprintf("%s=%s[%s]", "WATCH", model.RunawayWatchValueToName(int32(setting.Watch.Type)), dur.String())
 				queryLimit = fmt.Sprintf("%s, %s, %s", runawayRule, runawayAction, runawayWatch)
 			} else {
