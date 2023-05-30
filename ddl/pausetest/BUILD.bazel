@@ -24,5 +24,6 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
     ],
 )
