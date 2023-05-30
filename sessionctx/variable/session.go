@@ -1325,6 +1325,9 @@ type SessionVars struct {
 
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	EnableINLJoinInnerMultiPattern bool
+
+	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
+	OptimizerFixControl map[uint64]string
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
