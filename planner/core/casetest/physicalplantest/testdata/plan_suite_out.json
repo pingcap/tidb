@@ -8328,11 +8328,11 @@
           "└─TableReader 1.00 root  MppVersion: 1, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#20",
-          "      └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.e)], runtime filter:0[IN] <- test.t.a",
+          "      └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.e)]",
           "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-          "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo, runtime filter:0[IN] -> test.t.e"
+          "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
