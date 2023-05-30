@@ -29,33 +29,41 @@ var (
 	checkTaskFinishInterval = 300 * time.Millisecond
 )
 
-// SubmitAndRunGlobalTask submits a global task wait the task is done.
-func SubmitAndRunGlobalTask(ctx context.Context, taskKey, taskType string, concurrency int, taskMeta []byte) error {
+// SubmitGlobalTask submits a global task.
+func SubmitGlobalTask(taskKey, taskType string, concurrency int, taskMeta []byte) (*proto.Task, error) {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if globalTask == nil {
 		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, concurrency, taskMeta)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		globalTask, err = globalTaskManager.GetGlobalTaskByID(taskID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		if globalTask == nil {
-			return errors.Errorf("cannot find global task with ID %d", taskID)
+			return nil, errors.Errorf("cannot find global task with ID %d", taskID)
 		}
 	}
+	return globalTask, nil
+}
 
+// WaitGlobalTask waits for a global task to finish.
+func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
+	globalTaskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
 	ticker := time.NewTicker(checkTaskFinishInterval)
 	defer ticker.Stop()
 
@@ -84,6 +92,15 @@ func SubmitAndRunGlobalTask(ctx context.Context, taskKey, taskType string, concu
 			}
 		}
 	}
+}
+
+// SubmitAndRunGlobalTask submits a global task and wait for it to finish.
+func SubmitAndRunGlobalTask(ctx context.Context, taskKey, taskType string, concurrency int, taskMeta []byte) error {
+	globalTask, err := SubmitGlobalTask(taskKey, taskType, concurrency, taskMeta)
+	if err != nil {
+		return err
+	}
+	return WaitGlobalTask(ctx, globalTask)
 }
 
 // CancelGlobalTask cancels a global task.

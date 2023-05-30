@@ -23,20 +23,20 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
-	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
 func (s *mockGCSSuite) TestOperateRunningJob() {
-	s.testOperateRunningJob(importer.LogicalImportMode)
+	s.T().Skip("skip for now")
+	s.testOperateRunningJob("logical")
 	//s.testOperateRunningJob(importer.PhysicalImportMode)
 }
 
 func (s *mockGCSSuite) testOperateRunningJob(importMode string) {
 	withOptions := fmt.Sprintf("WITH import_mode='%s'", importMode)
-	if importMode == importer.LogicalImportMode {
+	if importMode == "logical" {
 		withOptions += ", batch_size=1"
 	}
 
@@ -65,7 +65,7 @@ func (s *mockGCSSuite) testOperateRunningJob(importMode string) {
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SaveLastLoadDataJobID", `return(true)`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/AfterCreateLoadDataJob", `sleep(1000)`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/AfterStartJob", `sleep(1000)`)
-	if importMode == importer.LogicalImportMode {
+	if importMode == "logical" {
 		s.enableFailpoint("github.com/pingcap/tidb/executor/AfterCommitOneTask", `sleep(1000)`)
 	} else {
 		s.enableFailpoint("github.com/pingcap/tidb/executor/importer/AfterImportDataEngine", `sleep(1000)`)

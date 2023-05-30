@@ -419,7 +419,8 @@ const (
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version_seq (table_id, version, seq_no),
-		KEY table_create_time (table_id, create_time, seq_no)
+		KEY table_create_time (table_id, create_time, seq_no),
+    	KEY idx_create_time (create_time)
 	);`
 	// CreateStatsMetaHistory stores the historical meta stats.
 	CreateStatsMetaHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_meta_history (
@@ -430,7 +431,8 @@ const (
     	source varchar(40) NOT NULL,
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version (table_id, version),
-		KEY table_create_time (table_id, create_time)
+		KEY table_create_time (table_id, create_time),
+    	KEY idx_create_time (create_time)
 	);`
 	// CreateAnalyzeJobs stores the analyze jobs.
 	CreateAnalyzeJobs = `CREATE TABLE IF NOT EXISTS mysql.analyze_jobs (
@@ -882,13 +884,20 @@ const (
 	// version 144 turn off `tidb_plan_cache_invalidation_on_fresh_stats`, which is introduced in 7.1-rc,
 	// if it's upgraded from an existing old version cluster.
 	version144 = 144
-	// version 145 add column `step` to `mysql.tidb_background_subtask`
+	// version 145 to only add a version make we know when we support upgrade state.
 	version145 = 145
+	// version 146 add index for mysql.stats_meta_history and mysql.stats_history.
+	version146 = 146
+	// ...
+	// [version147, version166] is the version range reserved for patches of 7.1.x
+	// ...
+	// version 167 add column `step` to `mysql.tidb_background_subtask`
+	version167 = 167
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version145
+var currentBootstrapVersion int64 = version167
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1021,7 +1030,9 @@ var (
 		upgradeToVer142,
 		upgradeToVer143,
 		upgradeToVer144,
-		upgradeToVer145,
+		// We will only use Ver145 to differentiate versions, so it is skipped here.
+		upgradeToVer146,
+		upgradeToVer167,
 	}
 )
 
@@ -1080,7 +1091,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 }
 
 // SupportUpgradeStateVer is exported for testing.
-var SupportUpgradeStateVer = version144
+var SupportUpgradeStateVer = version145
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
@@ -1185,21 +1196,21 @@ func syncUpgradeState(s Session) {
 		if err == nil && len(jobErrs) == 0 {
 			break
 		}
-		isAllFinished := true
+		jobErrStrs := make([]string, 0, len(jobErrs))
 		for _, jobErr := range jobErrs {
 			if dbterror.ErrPausedDDLJob.Equal(jobErr) {
 				continue
 			}
-			isAllFinished = false
+			jobErrStrs = append(jobErrStrs, jobErr.Error())
 		}
-		if isAllFinished {
+		if err == nil && len(jobErrStrs) == 0 {
 			break
 		}
 
 		if i == retryTimes-1 {
-			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Error(err))
+			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
 		}
-		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Error(err))
+		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
 		time.Sleep(interval)
 	}
 	logutil.BgLogger().Info("[upgrading] update global state to upgrading", zap.String("state", syncer.StateUpgrading))
@@ -2627,8 +2638,16 @@ func upgradeToVer144(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
 }
 
-func upgradeToVer145(s Session, ver int64) {
-	if ver >= version145 {
+func upgradeToVer146(s Session, ver int64) {
+	if ver >= version146 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer167(s Session, ver int64) {
+	if ver >= version167 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)

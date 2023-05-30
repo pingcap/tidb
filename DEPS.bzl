@@ -3421,8 +3421,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:eHtwHgPzzm8aIZ4x8o7zg1b23cjUl0AikW+SDLpqf3E=",
-        version = "v0.0.0-20230426023724-d90a321b46be",
+        sum = "h1:iAIjJVgrPuXjpAiMDcJvz4Y4Qf4KypiCsqy3UVzU6FQ=",
+        version = "v0.0.0-20230523065550-8b641fa69bf3",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -3450,8 +3450,8 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sum = "h1:ltplM2dLXcIAwlleA5v4gke6m6ZeHpvUA3qYX9dCC18=",
-        version = "v0.0.0-20230427024529-aed92caf20b9",
+        sum = "h1:ZVehx2Mand1frpxzJud7FUOonbLZeXXQpEsNdjnEAJA=",
+        version = "v0.0.0-20230516140330-b3e432c40cb3",
     )
     go_repository(
         name = "com_github_pkg_browser",
@@ -3545,15 +3545,15 @@ def go_deps():
         name = "com_github_prometheus_common",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/common",
-        sum = "h1:iq+BVjvYLei5f27wiuNiB1DN6DYQkp1c8Bx0Vykh5us=",
-        version = "v0.43.0",
+        sum = "h1:+5BrQJwiBB9xsMygAB3TNvpQKOwlkc25LbISbrdOOfY=",
+        version = "v0.44.0",
     )
     go_repository(
         name = "com_github_prometheus_procfs",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/procfs",
-        sum = "h1:wzCHvIvM5SxWqYvwgVL7yJY8Lz3PKn49KQtpgMYJfhI=",
-        version = "v0.9.0",
+        sum = "h1:UkG7GPYkO4UZyLnyXjaWYcgOSONqwdBqFUT95ugmt6I=",
+        version = "v0.10.0",
     )
     go_repository(
         name = "com_github_prometheus_prometheus",
@@ -4180,8 +4180,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:Xu3sf5rKIqlkLzGjTs5IED6l6soJgZHHEyj5mapc42I=",
-        version = "v2.0.8-0.20230512034316-adb48afeef3e",
+        sum = "h1:3w2pCPywuFJYY5gt39BIY3n0QEhK3R4FsAlKmLtfieY=",
+        version = "v2.0.8-0.20230526055553-11121c6913c9",
     )
     go_repository(
         name = "com_github_tikv_pd",
