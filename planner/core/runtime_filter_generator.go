@@ -156,7 +156,7 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 	// filter predicate selectivity, A scan node does not need many RFs, and the same column does not need many RFs
 }
 
-func (_ *RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) bool {
+func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) bool {
 	if hashJoinPlan.RightIsBuildSide() {
 		// case1: build side is on the right
 		if hashJoinPlan.JoinType == LeftOuterJoin || hashJoinPlan.JoinType == AntiSemiJoin ||
@@ -178,7 +178,7 @@ func (_ *RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin)
 	return true
 }
 
-func (_ *RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFunction,
+func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFunction,
 	rightIsBuildSide bool) bool {
 	// exclude null safe equal predicate
 	if eqPredicate.FuncName.L == ast.NullEQ {
