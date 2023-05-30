@@ -177,7 +177,11 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 	if len(options.AccountName) > 0 && len(options.AccessSig) > 0 {
 		serviceURL := options.Endpoint
 		if len(serviceURL) == 0 {
-			serviceURL = fmt.Sprintf("https://%s.blob.core.windows.net/?%s", options.AccountName, options.AccessSig)
+			if strings.HasPrefix(options.AccessSig, "?") {
+				serviceURL = fmt.Sprintf("https://%s.blob.core.windows.net/%s", options.AccountName, options.AccessSig)
+			} else {
+				serviceURL = fmt.Sprintf("https://%s.blob.core.windows.net/?%s", options.AccountName, options.AccessSig)
+			}
 		}
 		return &sasClientBuilder{
 			options.AccountName,
@@ -281,11 +285,13 @@ func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb
 	}
 
 	containerClient := serviceClient.ServiceClient().NewContainerClient(options.Bucket)
-	_, err = containerClient.Create(ctx, nil)
-	if err != nil {
-		if !bloberror.HasCode(err, bloberror.ContainerAlreadyExists) {
-			return nil, errors.Annotate(err, "Failed to create the container")
-		}
+	if _, err = containerClient.GetProperties(ctx, &container.GetPropertiesOptions{}); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if len(options.EncryptionScope) > 0 && len(options.StorageClass) > 0 {
+		return nil, errors.Errorf("Set Blob Tier cannot be used with customer-provided keys. " +
+			"Please don't supply the access-tier when use encryption-scope.")
 	}
 
 	// parse storage access-tier
@@ -317,11 +323,13 @@ func (s *AzureBlobStorage) withPrefix(name string) string {
 // WriteFile writes a file to Azure Blob Storage.
 func (s *AzureBlobStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
-	options := &blockblob.UploadBufferOptions{AccessTier: &s.accessTier}
+	options := &blockblob.UploadBufferOptions{}
 	if len(s.options.EncryptionScope) > 0 {
 		options.CPKScopeInfo = &blob.CPKScopeInfo{
 			EncryptionScope: &s.options.EncryptionScope,
 		}
+	} else if len(s.accessTier) > 0 {
+		options.AccessTier = &s.accessTier
 	}
 	_, err := client.UploadBuffer(ctx, data, options)
 	if err != nil {
@@ -571,9 +579,11 @@ func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
 }
 
 func (u *azblobUploader) Close(ctx context.Context) error {
-	options := &blockblob.CommitBlockListOptions{Tier: &u.accessTier}
+	options := &blockblob.CommitBlockListOptions{}
 	if len(u.encryptionScope) > 0 {
 		options.CPKScopeInfo.EncryptionScope = &u.encryptionScope
+	} else if len(u.accessTier) > 0 {
+		options.Tier = &u.accessTier
 	}
 	_, err := u.blobClient.CommitBlockList(ctx, u.blockIDList, options)
 	return errors.Trace(err)
