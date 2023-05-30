@@ -736,6 +736,16 @@ func TestViewColumns(t *testing.T) {
 			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
 			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
 	}
+
+	// For issue 43264
+	tk.MustExec(`CREATE TABLE User (
+    id INT PRIMARY KEY,
+    first_name VARCHAR(255) NOT NULL,
+    last_name VARCHAR(255) NULL
+);`)
+	tk.MustExec(`CREATE VIEW Schwuser AS SELECT u.id, CONCAT(u.first_name, ' ', u.last_name) AS name FROM User u;`)
+	tk.MustQuery(`select DATA_TYPE from information_schema.columns where TABLE_NAME = 'Schwuser' and column_name = 'name';`).Check(
+		testkit.Rows("varchar"))
 }
 
 func TestConstraintCheckForOptimisticUntouched(t *testing.T) {
