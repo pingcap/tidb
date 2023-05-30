@@ -32,7 +32,7 @@ var (
 	ExecPhaseDuration *prometheus.SummaryVec
 
 	// OngoingTxnDurationHistogram records the duration of ongoing transactions.
-	OngoingTxnDurationHistogram prometheus.Histogram
+	OngoingTxnDurationHistogram *prometheus.HistogramVec
 )
 
 // InitExecutorMetrics initializes excutor metrics.
@@ -70,12 +70,12 @@ func InitExecutorMetrics() {
 			Help:      "Summary of each execution phase duration.",
 		}, []string{LblPhase, LblInternal})
 
-	OngoingTxnDurationHistogram = NewHistogram(
+	OngoingTxnDurationHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
 			Name:      "ongoing_txn_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of ongoing transactions.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 18), // 1s ~ 36hours
-		})
+			Buckets:   prometheus.ExponentialBuckets(60, 2, 15), // 60s ~ 273hours
+		}, []string{LblType})
 }

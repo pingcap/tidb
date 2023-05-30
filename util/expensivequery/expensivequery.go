@@ -48,6 +48,7 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
+	txnThreshold := atomic.LoadUint64(&variable.ExpensiveTxnTimeThreshold)
 	// use 100ms as tickInterval temply, may use given interval or use defined variable later
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
@@ -60,8 +61,12 @@ func (eqh *Handle) Run() {
 			for _, info := range processInfo {
 				if info.CurTxnStartTS != 0 {
 					txnCostTime := time.Since(info.CurTxnCreateTime)
-					if time.Since(info.ExpensiveTxnLogTime) > 60*time.Second && txnCostTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
-						metrics.OngoingTxnDurationHistogram.Observe(txnCostTime.Seconds())
+					if time.Since(info.ExpensiveTxnLogTime) > 10*time.Minute && txnCostTime >= time.Second*time.Duration(txnThreshold) && log.GetLevel() <= zapcore.WarnLevel {
+						if info.StmtCtx.InRestrictedSQL {
+							metrics.OngoingTxnDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(txnCostTime.Seconds())
+						} else {
+							metrics.OngoingTxnDurationHistogram.WithLabelValues(metrics.LblGeneral).Observe(txnCostTime.Seconds())
+						}
 						logExpensiveQuery(txnCostTime, info, "expensive_txn")
 						info.ExpensiveTxnLogTime = time.Now()
 					}
@@ -89,6 +94,7 @@ func (eqh *Handle) Run() {
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
+			txnThreshold = atomic.LoadUint64(&variable.ExpensiveTxnTimeThreshold)
 		case <-eqh.exitCh:
 			return
 		}

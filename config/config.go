@@ -86,6 +86,8 @@ const (
 	DefDDLSlowOprThreshold = 300
 	// DefExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	DefExpensiveQueryTimeThreshold = 60
+	// DefExpensiveTxnTimeThreshold indicates the time threshold of expensive txn.
+	DefExpensiveTxnTimeThreshold = 600
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 	DefMemoryUsageAlarmRatio = 0.8
 	// DefTempDir is the default temporary directory path for TiDB.
@@ -504,6 +506,8 @@ type Instance struct {
 	DDLSlowOprThreshold uint32 `toml:"ddl_slow_threshold" json:"ddl_slow_threshold"`
 	// ExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	ExpensiveQueryTimeThreshold uint64 `toml:"tidb_expensive_query_time_threshold" json:"tidb_expensive_query_time_threshold"`
+	// ExpensiveTxnTimeThreshold indicates the time threshold of expensive transaction.
+	ExpensiveTxnTimeThreshold uint64 `toml:"tidb_expensive_txn_time_threshold" json:"tidb_expensive_txn_time_threshold"`
 	// StmtSummaryEnablePersistent indicates whether to enable file persistence for stmtsummary.
 	StmtSummaryEnablePersistent bool `toml:"tidb_stmt_summary_enable_persistent" json:"tidb_stmt_summary_enable_persistent"`
 	// StmtSummaryFilename indicates the file name written by stmtsummary
@@ -928,6 +932,7 @@ var defaultConf = Config{
 		EnablePProfSQLCPU:           false,
 		DDLSlowOprThreshold:         DefDDLSlowOprThreshold,
 		ExpensiveQueryTimeThreshold: DefExpensiveQueryTimeThreshold,
+		ExpensiveTxnTimeThreshold:   DefExpensiveTxnTimeThreshold,
 		StmtSummaryEnablePersistent: false,
 		StmtSummaryFilename:         "tidb-statements.log",
 		StmtSummaryFileMaxDays:      3,
