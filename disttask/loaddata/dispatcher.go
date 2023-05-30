@@ -154,10 +154,11 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 	if err != nil {
 		return err
 	}
-	controller, err := buildController(ctx, taskMeta)
+	controller, err := buildController(taskMeta)
 	if err != nil {
 		return err
 	}
+	// no need and should not call controller.InitDataFiles, files might not exist on this instance.
 
 	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
 	if err != nil {
@@ -212,7 +213,7 @@ func updateMeta(gTask *proto.Task, taskMeta *TaskMeta) error {
 	return nil
 }
 
-func buildController(ctx context.Context, taskMeta *TaskMeta) (*importer.LoadDataController, error) {
+func buildController(taskMeta *TaskMeta) (*importer.LoadDataController, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
@@ -225,9 +226,6 @@ func buildController(ctx context.Context, taskMeta *TaskMeta) (*importer.LoadDat
 	}
 	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl, astArgs)
 	if err != nil {
-		return nil, err
-	}
-	if err = controller.InitDataFiles(ctx); err != nil {
 		return nil, err
 	}
 	return controller, nil
@@ -250,9 +248,12 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas
 	if len(taskMeta.ChunkMap) > 0 {
 		chunkMap = taskMeta.ChunkMap
 	} else {
-		controller, err2 := buildController(ctx, taskMeta)
+		controller, err2 := buildController(taskMeta)
 		if err2 != nil {
 			return nil, err2
+		}
+		if err = controller.InitDataFiles(ctx); err != nil {
+			return nil, err
 		}
 
 		engineCheckpoints, err2 := controller.PopulateChunks(ctx)
