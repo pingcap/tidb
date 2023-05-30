@@ -280,7 +280,7 @@ func parseAndValidateAsOf(ctx context.Context, sctx sessionctx.Context, asOf *as
 		return 0, nil
 	}
 
-	ts, err := CalculateAsOfTsExpr(sctx, asOf.TsExpr)
+	ts, err := CalculateAsOfTsExpr(ctx, sctx, asOf.TsExpr)
 	if err != nil {
 		return 0, err
 	}

@@ -407,6 +407,12 @@ type StatementContext struct {
 	TiFlashEngineRemovedDueToStrictSQLMode bool
 	// CanonicalHashCode try to get the canonical hash code from expression.
 	CanonicalHashCode bool
+	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
+	StaleTSOProvider struct {
+		sync.Mutex
+		value *uint64
+		eval  func() (uint64, error)
+	}
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -1305,6 +1311,32 @@ func (sc *StatementContext) ClearRuntimeInfo() {
 	defer sc.mu.Unlock()
 	sc.mu.allExecDetails = nil
 	sc.mu.detailsSummary = execdetails.P90Summary{}
+}
+
+// SetStaleTSOProvider sets the stale TSO provider.
+func (sc *StatementContext) SetStaleTSOProvider(eval func() (uint64, error)) {
+	sc.StaleTSOProvider.Lock()
+	defer sc.StaleTSOProvider.Unlock()
+	sc.StaleTSOProvider.value = nil
+	sc.StaleTSOProvider.eval = eval
+}
+
+// GetStaleTSO returns the TSO for stale-read usage which calculate from PD's last response.
+func (sc *StatementContext) GetStaleTSO() (uint64, error) {
+	sc.StaleTSOProvider.Lock()
+	defer sc.StaleTSOProvider.Unlock()
+	if sc.StaleTSOProvider.value != nil {
+		return *sc.StaleTSOProvider.value, nil
+	}
+	if sc.StaleTSOProvider.eval == nil {
+		return 0, nil
+	}
+	tso, err := sc.StaleTSOProvider.eval()
+	if err != nil {
+		return 0, err
+	}
+	sc.StaleTSOProvider.value = &tso
+	return tso, nil
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.
