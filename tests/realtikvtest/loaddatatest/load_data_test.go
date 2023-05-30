@@ -886,6 +886,11 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 	))
 
 	// encode error, rollback
+	backup := config.DefaultBatchSize
+	config.DefaultBatchSize = 1
+	s.T().Cleanup(func() {
+		config.DefaultBatchSize = backup
+	})
 	s.tk.MustExec("truncate table load_data.add_index")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
@@ -903,6 +908,7 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 			"  KEY `c_1` (`c`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+	config.DefaultBatchSize = backup
 
 	// checksum error
 	s.server.CreateObject(fakestorage.Object{

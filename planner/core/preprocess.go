@@ -1912,6 +1912,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 	return tbl, nil
 }
 
+// skipLockMDL returns true if the preprocessor should skip the lock of MDL.
 func (p *preprocessor) skipLockMDL() bool {
+	// skip lock mdl for IMPORT INTO statement,
+	// because it's a batch process and will do both DML and DDL.
 	return p.flag&inImportInto > 0
 }

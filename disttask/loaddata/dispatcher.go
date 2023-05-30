@@ -118,7 +118,6 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	return metaBytes, nil
 }
 
-// ProcessErrFlow implements dispatcher.ProcessErrFlow interface.
 func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
 	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
 	logger.Info("process error flow", zap.ByteStrings("error message", receiveErr))
