@@ -284,7 +284,6 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
 
-		// TODO: should we do this if dbterror.ErrPausedDDLJob ???
 		d.removeReorgCtx(job.ID)
 
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
