@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/logutil"
@@ -155,16 +154,10 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 	if err != nil {
 		return err
 	}
-	tableImporter, err := buildTableImporter(ctx, gTask.ID, taskMeta)
+	controller, err := buildController(ctx, taskMeta)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		err2 := tableImporter.Close()
-		if err == nil {
-			err = err2
-		}
-	}()
 
 	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
 	if err != nil {
@@ -181,7 +174,7 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 	}
 
 	logger.Info("post process", zap.Any("task_meta", taskMeta), zap.Any("subtask_metas", subtaskMetas))
-	if err := verifyChecksum(ctx, tableImporter, subtaskMetas, logger); err != nil {
+	if err := verifyChecksum(ctx, controller, subtaskMetas, logger); err != nil {
 		return err
 	}
 
@@ -189,8 +182,8 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 	return updateMeta(gTask, taskMeta)
 }
 
-func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, subtaskMetas []*SubtaskMeta, logger *zap.Logger) error {
-	if tableImporter.Checksum == config.OpLevelOff {
+func verifyChecksum(ctx context.Context, controller *importer.LoadDataController, subtaskMetas []*SubtaskMeta, logger *zap.Logger) error {
+	if controller.Checksum == config.OpLevelOff {
 		return nil
 	}
 	var localChecksum verify.KVChecksum
@@ -199,7 +192,7 @@ func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, 
 		localChecksum.Add(&checksum)
 	}
 	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
-	return tableImporter.VerifyChecksum(ctx, localChecksum)
+	return controller.VerifyChecksum(ctx, localChecksum)
 }
 
 func updateResult(taskMeta *TaskMeta, subtaskMetas []*SubtaskMeta, logger *zap.Logger) {
@@ -238,18 +231,6 @@ func buildController(ctx context.Context, taskMeta *TaskMeta) (*importer.LoadDat
 		return nil, err
 	}
 	return controller, nil
-}
-
-func buildTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*importer.TableImporter, error) {
-	controller, err := buildController(ctx, taskMeta)
-	if err != nil {
-		return nil, err
-	}
-	return importer.NewTableImporter(&importer.JobImportParam{
-		GroupCtx: ctx,
-		Progress: asyncloaddata.NewProgress(false),
-		Job:      &asyncloaddata.Job{},
-	}, controller, taskID)
 }
 
 // todo: converting back and forth, we should unify struct and remove this function later.

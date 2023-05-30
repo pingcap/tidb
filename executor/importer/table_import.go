@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -94,7 +95,7 @@ func GetTiKVModeSwitcher(logger *zap.Logger) (local.TiKVModeSwitcher, error) {
 	return NewTiKVModeSwitcher(tls, tidbCfg.Path, logger), nil
 }
 
-func getCachedKVStore(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {
+func getCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {
 	// Disable GC because TiDB enables GC already.
 	keySpaceName := tidb.GetGlobalKeyspaceName()
 	// the kv store we get is a cached store, so we can't close it.
@@ -132,7 +133,8 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		return nil, err
 	}
 
-	kvStore, err := getCachedKVStore(tidbCfg.Path, tls)
+	// no need to close kvStore, since it's a cached store.
+	kvStore, err := getCachedKVStoreFrom(tidbCfg.Path, tls)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -245,26 +247,55 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEnc
 }
 
 // VerifyChecksum verify the checksum of the table.
-func (ti *TableImporter) VerifyChecksum(ctx context.Context, localChecksum verify.KVChecksum) (err error) {
-	task := log.BeginTask(ti.logger, "verify checksum")
+func (e *LoadDataController) VerifyChecksum(ctx context.Context, localChecksum verify.KVChecksum) (err error) {
+	task := log.BeginTask(e.logger, "verify checksum")
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
-	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), uint(ti.DistSQLScanConcurrency))
-	remoteChecksum, err2 := manager.Checksum(ctx, ti.tableInfo)
+	tidbCfg := tidb.GetGlobalConfig()
+	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+	tls, err2 := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		hostPort,
+		nil, nil, nil,
+	)
+	if err2 != nil {
+		return errors.Trace(err2)
+	}
+
+	// no need to close kvStore, since it's a cached store.
+	kvStore, err2 := getCachedKVStoreFrom(tidbCfg.Path, tls)
+	if err2 != nil {
+		return errors.Trace(err2)
+	}
+	pdCli, err2 := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tls.ToPDSecurityOption())
+	if err2 != nil {
+		return errors.Trace(err2)
+	}
+	defer pdCli.Close()
+
+	tableInfo := &checkpoints.TidbTableInfo{
+		ID:   e.Table.Meta().ID,
+		Name: e.Table.Meta().Name.O,
+		Core: e.Table.Meta(),
+	}
+	manager := local.NewTiKVChecksumManager(kvStore.GetClient(), pdCli, uint(e.DistSQLScanConcurrency))
+	remoteChecksum, err2 := manager.Checksum(ctx, tableInfo)
 	if err2 != nil {
 		return err2
 	}
 	if remoteChecksum.IsEqual(&localChecksum) {
-		ti.logger.Info("checksum pass", zap.Object("local", &localChecksum))
+		e.logger.Info("checksum pass", zap.Object("local", &localChecksum))
 	} else {
 		err3 := common.ErrChecksumMismatch.GenWithStackByArgs(
 			remoteChecksum.Checksum, localChecksum.Sum(),
 			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
 			remoteChecksum.TotalBytes, localChecksum.SumSize(),
 		)
-		if ti.Checksum == config.OpLevelOptional {
-			ti.logger.Warn("verify checksum failed, but checksum is optional, will skip it", log.ShortError(err3))
+		if e.Checksum == config.OpLevelOptional {
+			e.logger.Warn("verify checksum failed, but checksum is optional, will skip it", log.ShortError(err3))
 			err3 = nil
 		}
 		return err3
@@ -335,20 +366,21 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 	if common.TableHasAutoID(e.Table.Meta()) {
 		tidbCfg := tidb.GetGlobalConfig()
 		hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
-		tls, err := common.NewTLS(
+		tls, err4 := common.NewTLS(
 			tidbCfg.Security.ClusterSSLCA,
 			tidbCfg.Security.ClusterSSLCert,
 			tidbCfg.Security.ClusterSSLKey,
 			hostPort,
 			nil, nil, nil,
 		)
-		if err != nil {
-			return nil, err
+		if err4 != nil {
+			return nil, err4
 		}
 
-		kvStore, err := getCachedKVStore(tidbCfg.Path, tls)
-		if err != nil {
-			return nil, errors.Trace(err)
+		// no need to close kvStore, since it's a cached store.
+		kvStore, err4 := getCachedKVStoreFrom(tidbCfg.Path, tls)
+		if err4 != nil {
+			return nil, errors.Trace(err4)
 		}
 		if err3 := common.RebaseGlobalAutoID(ctx, 0, kvStore, e.DBID, e.Table.Meta()); err3 != nil {
 			return nil, errors.Trace(err3)
