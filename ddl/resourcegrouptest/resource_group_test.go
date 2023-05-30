@@ -61,9 +61,9 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("set global tidb_enable_resource_control = 'on'")
 
 	// test default resource group.
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED MEDIUM YES <nil> <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED MEDIUM YES <nil>"))
 	tk.MustExec("alter resource group `default` RU_PER_SEC=1000 PRIORITY=LOW")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW NO <nil> <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW NO <nil>"))
 	tk.MustContainErrMsg("drop resource group `default`", "can't drop reserved resource group")
 
 	tk.MustExec("create resource group x RU_PER_SEC=1000")
@@ -95,7 +95,7 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustGetErrCode("create resource group x RU_PER_SEC=1000 ", mysql.ErrResourceGroupExists)
 
-	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY LIMIT EXEC_ELAPSED_IN_SEC='15s' ACTION COOLDOWN WATCH SIMILAR DURATION '10m'")
+	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC='15s' ACTION COOLDOWN WATCH SIMILAR DURATION '10m')")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Equal(uint64(2000), g.RURate)
 	re.Equal(int64(-1), g.BurstLimit)
@@ -104,7 +104,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	re.Equal(int32(model.WatchSimilar), g.Runaway.WatchType)
 	re.Equal(uint64(time.Minute*10/time.Millisecond), g.Runaway.WatchDurationMs)
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM YES EXEC_ELAPSED_IN_SEC=15s COOLDOWN SIMILAR 10m0s"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM YES EXEC_ELAPSED_IN_SEC=15s, ACTION=COOLDOWN, WATCH=SIMILAR[10m0s]"))
 
 	tk.MustExec("drop resource group x")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
@@ -125,7 +125,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
-	tk.MustExec("alter resource group y BURSTABLE RU_PER_SEC=5000 QUERY LIMIT EXEC_ELAPSED_IN_SEC='15s' ACTION KILL")
+	tk.MustExec("alter resource group y BURSTABLE RU_PER_SEC=5000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC='15s' ACTION KILL)")
 	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
 		re.Equal(true, groupInfo.ID != 0)
 		re.Equal("y", groupInfo.Name.L)
@@ -138,7 +138,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 5000 MEDIUM YES EXEC_ELAPSED_IN_SEC=15s KILL <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 5000 MEDIUM YES EXEC_ELAPSED_IN_SEC=15s, ACTION=KILL"))
 	tk.MustExec("drop resource group y")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	re.Nil(g)
@@ -151,39 +151,44 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustContainErrMsg("create resource group x  ru_per_sec=1000, burstable, burstable", "Dupliated options specified")
 	tk.MustGetErrCode("create resource group x  burstable, ru_per_sec=1000, burstable", mysql.ErrParse)
 	tk.MustContainErrMsg("create resource group x burstable, ru_per_sec=1000, burstable", "Dupliated options specified")
-	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 burstable action kill action cooldown", "Dupliated options specified")
-	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 action kill", "invalid exec elapsed time")
-	tk.MustGetErrCode("create resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC='15s' action kil", mysql.ErrParse)
-	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC='15s'", "unknown resource group runaway action")
+	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 burstable QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC='15s' action kill action cooldown)", "Dupliated options specified")
+	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC='15s') QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC='15s')", "Dupliated options specified")
+	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY_LIMIT=(action kill)", "invalid exec elapsed time")
+	tk.MustGetErrCode("create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC='15s' action kil)", mysql.ErrParse)
+	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC='15s')", "unknown resource group runaway action")
 	tk.MustGetErrCode("create resource group x ru_per_sec=1000 EXEC_ELAPSED_IN_SEC='15s' action kill", mysql.ErrParse)
-	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY LIMIT EXEC_ELAPSED_IN_SEC='15d' action kill", "unknown unit \"d\"")
+	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC='15d' action kill)", "unknown unit \"d\"")
 	groups, err := infosync.ListResourceGroups(context.TODO())
 	re.Equal(1, len(groups))
 	re.NoError(err)
 
 	// Check information schema table information_schema.resource_groups
 	tk.MustExec("create resource group x RU_PER_SEC=1000 PRIORITY=LOW")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 LOW NO <nil> <nil> <nil>"))
-	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY LIMIT EXEC_ELAPSED_IN_SEC='15s' action kill")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM YES EXEC_ELAPSED_IN_SEC=15s KILL <nil>"))
-	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=2000 PRIORITY=MEDIUM BURSTABLE QUERY LIMIT EXEC_ELAPSED_IN_SEC=\"15s\" ACTION=KILL"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 LOW NO <nil>"))
+	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC='15s' action kill)")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM YES EXEC_ELAPSED_IN_SEC=15s, ACTION=KILL"))
+	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=2000 PRIORITY=MEDIUM BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC=\"15s\" ACTION=KILL)"))
+	tk.MustExec("CREATE RESOURCE GROUP `x_new` RU_PER_SEC=2000 PRIORITY=MEDIUM BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC=\"15s\" ACTION=KILL)")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x_new'").Check(testkit.Rows("x_new 2000 MEDIUM YES EXEC_ELAPSED_IN_SEC=15s, ACTION=KILL"))
 	tk.MustExec("alter resource group x BURSTABLE RU_PER_SEC=3000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 3000 MEDIUM YES <nil> <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 3000 MEDIUM YES <nil>"))
 	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=3000 PRIORITY=MEDIUM BURSTABLE"))
 
-	tk.MustExec("create resource group y BURSTABLE RU_PER_SEC=2000 QUERY LIMIT EXEC_ELAPSED_IN_SEC='1s' action COOLDOWN WATCH EXACT duration '1h'")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 2000 MEDIUM YES EXEC_ELAPSED_IN_SEC=1s COOLDOWN EXACT 1h0m0s"))
-	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=2000 PRIORITY=MEDIUM BURSTABLE QUERY LIMIT EXEC_ELAPSED_IN_SEC=\"1s\" ACTION=COOLDOWN WATCH EXACT DURATION=\"1h0m0s\""))
+	tk.MustExec("create resource group y BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC='1s' action COOLDOWN WATCH EXACT duration '1h')")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 2000 MEDIUM YES EXEC_ELAPSED_IN_SEC=1s, ACTION=COOLDOWN, WATCH=EXACT[1h0m0s]"))
+	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=2000 PRIORITY=MEDIUM BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC=\"1s\" ACTION=COOLDOWN WATCH EXACT DURATION=\"1h0m0s\")"))
+	tk.MustExec("CREATE RESOURCE GROUP `y_new` RU_PER_SEC=2000 PRIORITY=MEDIUM BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC=\"1s\" ACTION=COOLDOWN WATCH EXACT DURATION=\"1h0m0s\")")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y_new'").Check(testkit.Rows("y_new 2000 MEDIUM YES EXEC_ELAPSED_IN_SEC=1s, ACTION=COOLDOWN, WATCH=EXACT[1h0m0s]"))
 
 	tk.MustExec("alter resource group y RU_PER_SEC=4000 BURSTABLE")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 MEDIUM YES <nil> <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 MEDIUM YES <nil>"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000 PRIORITY=MEDIUM BURSTABLE"))
 
 	tk.MustExec("alter resource group y RU_PER_SEC=4000 PRIORITY=HIGH BURSTABLE")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 HIGH YES <nil> <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 HIGH YES <nil>"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000 PRIORITY=HIGH BURSTABLE"))
 
-	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("5"))
 	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
 	tk.MustContainErrMsg("create user usr_fail resource group nil_group", "Unknown resource group 'nil_group'")
 	tk.MustExec("create user user2")

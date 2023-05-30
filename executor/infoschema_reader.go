@@ -3424,7 +3424,6 @@ const (
 	burstableStr      = "YES"
 	burstdisableStr   = "NO"
 	unlimitedFillRate = "UNLIMITED"
-	execElapsedTime   = "EXEC_ELAPSED_IN_SEC"
 )
 
 func (e *memtableRetriever) setDataFromResourceGroups() error {
@@ -3442,17 +3441,21 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 		if !isDefaultInReservedSetting {
 			fillrate = strconv.FormatUint(group.RUSettings.RU.Settings.FillRate, 10)
 		}
-		// transfer runaway settings
-		runawayRule, runawayAction, runawayWatch := "", "", ""
+		// convert runaway settings
+		queryLimit := ""
 		if setting := group.RunawaySettings; setting != nil {
+			runawayRule, runawayAction, runawayWatch := "", "", ""
 			if setting.Rule != nil {
 				dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
-				runawayRule = fmt.Sprintf("%s=%s", execElapsedTime, dur.String())
+				runawayRule = fmt.Sprintf("%s=%s", "EXEC_ELAPSED_IN_SEC", dur.String())
 			}
-			runawayAction = model.RunawayActionValueToName(int32(setting.Action))
+			runawayAction = fmt.Sprintf("%s=%s", "ACTION", model.RunawayActionValueToName(int32(setting.Action)))
 			if setting.Watch != nil {
 				dur := time.Duration(setting.Watch.LastDurationMs) * time.Millisecond
-				runawayWatch = fmt.Sprintf("%s %s", model.RunawayWatchValueToName(int32(setting.Watch.Type)), dur.String())
+				runawayWatch = fmt.Sprintf("%s=%s[%s]", "WATCH", model.RunawayWatchValueToName(int32(setting.Watch.Type)), dur.String())
+				queryLimit = fmt.Sprintf("%s, %s, %s", runawayRule, runawayAction, runawayWatch)
+			} else {
+				queryLimit = fmt.Sprintf("%s, %s", runawayRule, runawayAction)
 			}
 		}
 		switch group.Mode {
@@ -3465,26 +3468,16 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 				fillrate,
 				priority,
 				burstable,
-				runawayRule,
-				runawayAction,
-				runawayWatch,
+				queryLimit,
 			)
-			if len(runawayRule) == 0 {
+			if len(queryLimit) == 0 {
 				row[4].SetNull()
-			}
-			if len(runawayAction) == 0 {
-				row[5].SetNull()
-			}
-			if len(runawayWatch) == 0 {
-				row[6].SetNull()
 			}
 			rows = append(rows, row)
 		default:
 			//mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
 				group.Name,
-				nil,
-				nil,
 				nil,
 				nil,
 				nil,
