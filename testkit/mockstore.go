@@ -70,10 +70,12 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	require.NoError(t, err)
 	dom1 := bootstrap(t, store, 500*time.Millisecond)
 	dom2 := bootstrap(t, store, 500*time.Millisecond)
+	// ywq todo should let dom2 not ddl owner
 	sm := MockSessionManager{}
-	sm2 := MockSessionManager{}
+	// sm2 := MockSessionManager{}
+	// ywq todo consider sm
 	dom1.InfoSyncer().SetSessionManager(&sm)
-	dom2.InfoSyncer().SetSessionManager(&sm2)
+	dom2.InfoSyncer().SetSessionManager(&sm)
 	t.Cleanup(func() {
 		view.Stop()
 		err := store.Close()

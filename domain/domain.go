@@ -1008,6 +1008,7 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
+	logutil.BgLogger().Info("ywq test new domain")
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
 		store:               store,
@@ -1159,11 +1160,18 @@ func (do *Domain) Init(
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	// global variable！！！！
 	logutil.BgLogger().Info("ywq test ddl id", zap.String("ddlid", do.ddl.GetID()), zap.Uint64("serverID", do.ServerID()))
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
-		do.etcdClient, do.unprefixedEtcdCli, pdCli, do.Store().GetCodec(),
-		skipRegisterToDashboard)
-	if err != nil {
-		return err
+	// ywq todo must here...
+	if infosync.InfoSyncerInited() {
+		logutil.BgLogger().Info("ywq test info syncinited", zap.String("ddlid", do.ddl.GetID()), zap.Uint64("serverID", do.ServerID()))
+		do.info = infosync.GetGlobalInfoSyncerForTest()
+		infosync.AddServerInfo(do.ddl.GetID(), do.ServerID)
+	} else {
+		do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
+			do.etcdClient, do.unprefixedEtcdCli, pdCli, do.Store().GetCodec(),
+			skipRegisterToDashboard)
+		if err != nil {
+			return err
+		}
 	}
 	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdCli)
 	err = do.ddl.SchemaSyncer().Init(ctx)
@@ -1378,7 +1386,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
 		return errors.New(errMsg)
 	}
-	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, serverID, taskManager)
+	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), taskManager)
 	if err != nil {
 		return err
 	}
@@ -1404,6 +1412,8 @@ func generateSubtaskExecID(ctx context.Context, ID string) string {
 	return ""
 }
 
+var distDispatched = false
+
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
 	schedulerManager.Start()
 	logutil.BgLogger().Info("dist task scheduler started")
@@ -1418,22 +1428,26 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if dispatch != nil {
 			return
 		}
+		if distDispatched {
+			return
+		}
 
-		newDispatch, err := dispatcher.NewDispatcher(ctx, taskManager)
+		newDispatch, err := dispatcher.NewDispatcher(ctx, taskManager, do.DDL().GetID())
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return
 		}
 		dispatch = newDispatch
+		distDispatched = true
 		dispatch.Start()
-		logutil.BgLogger().Info("a new dist task dispatcher started for current node becomes the DDL owner")
+		logutil.BgLogger().Info("a new dist task dispatcher started for current node becomes the DDL owner", zap.String("id", do.ddl.GetID()))
 	}
 	stopDispatchIfNeeded := func() {
 		if dispatch != nil {
 			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore")
 			dispatch.Stop()
 			dispatch = nil
-			logutil.BgLogger().Info("dist task dispatcher stopped")
+			logutil.BgLogger().Info("dist task dispatcher stopped", zap.String("id", do.ddl.GetID()))
 		}
 	}
 

@@ -105,11 +105,12 @@ type InfoSyncer struct {
 	// It must be used when the etcd path isn't needed to separate by keyspace.
 	// See keyspace RFC: https://github.com/pingcap/tidb/pull/39685
 	unprefixedEtcdCli *clientv3.Client
-	info              *ServerInfo
-	serverInfoPath    string
-	minStartTS        uint64
-	minStartTSPath    string
-	managerMu         struct {
+	infos             []*ServerInfo
+	// ywq tood refactor
+	serverInfoPath string
+	minStartTS     uint64
+	minStartTSPath string
+	managerMu      struct {
 		mu sync.RWMutex
 		util2.SessionManager
 	}
@@ -201,10 +202,11 @@ func GlobalInfoSyncerInit(
 	is := &InfoSyncer{
 		etcdCli:           etcdCli,
 		unprefixedEtcdCli: unprefixedEtcdCli,
-		info:              getServerInfo(id, serverIDGetter),
+		infos:             make([]*ServerInfo, 0),
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
+	is.infos = append(is.infos, getServerInfo(id, serverIDGetter))
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
 		return nil, err
@@ -216,6 +218,31 @@ func GlobalInfoSyncerInit(
 	is.resourceGroupManager = initResourceGroupManager(pdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
+}
+
+func InfoSyncerInited() bool {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return false
+	}
+	return is != nil
+}
+
+func AddServerInfo(id string, serverIDGetter func() uint64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	is.infos = append(is.infos, getServerInfo(id, serverIDGetter))
+	return nil
+}
+
+func GetGlobalInfoSyncerForTest() *InfoSyncer {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil
+	}
+	return is
 }
 
 // Init creates a new etcd session and stores server info to etcd.
@@ -350,7 +377,7 @@ func GetServerInfo() (*ServerInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return is.info, nil
+	return is.infos[0], nil
 }
 
 // GetServerInfoByID gets specified server static information from etcd.
@@ -362,9 +389,10 @@ func GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
 	return is.getServerInfoByID(ctx, id)
 }
 
+// ywq todo change here
 func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
-	if is.etcdCli == nil || id == is.info.ID {
-		return is.info, nil
+	if is.etcdCli == nil || id == is.infos[0].ID {
+		return is.infos[0], nil
 	}
 	key := fmt.Sprintf("%s/%s", ServerInformationPath, id)
 	infoMap, err := getInfo(ctx, is.etcdCli, key, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
@@ -680,7 +708,10 @@ func PutRuleBundlesWithDefaultRetry(ctx context.Context, bundles []*placement.Bu
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
-		allInfo[is.info.ID] = getServerInfo(is.info.ID, is.info.ServerIDGetter)
+		// ywq todo change it
+		for _, info := range is.infos {
+			allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter)
+		}
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
@@ -695,7 +726,7 @@ func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	infoBuf, err := is.info.Marshal()
+	infoBuf, err := is.infos[0].Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -734,13 +765,13 @@ func (is *InfoSyncer) getTopologyInfo() TopologyInfo {
 	return TopologyInfo{
 		ServerVersionInfo: ServerVersionInfo{
 			Version: mysql.TiDBReleaseVersion,
-			GitHash: is.info.ServerVersionInfo.GitHash,
+			GitHash: is.infos[0].ServerVersionInfo.GitHash,
 		},
-		IP:             is.info.IP,
-		StatusPort:     is.info.StatusPort,
+		IP:             is.infos[0].IP,
+		StatusPort:     is.infos[0].StatusPort,
 		DeployPath:     dir,
-		StartTimestamp: is.info.StartTimestamp,
-		Labels:         is.info.Labels,
+		StartTimestamp: is.infos[0].StartTimestamp,
+		Labels:         is.infos[0].Labels,
 	}
 }
 
@@ -755,7 +786,7 @@ func (is *InfoSyncer) StoreTopologyInfo(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	str := string(hack.String(infoBuf))
-	key := fmt.Sprintf("%s/%s/info", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
+	key := fmt.Sprintf("%s/%s/info", TopologyInformationPath, net.JoinHostPort(is.infos[0].IP, strconv.Itoa(int(is.infos[0].Port))))
 	// Note: no lease is required here.
 	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, str)
 	if err != nil {
@@ -895,7 +926,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	}
 	is.session = session
 	binloginfo.RegisterStatusListener(func(status binloginfo.BinlogStatus) error {
-		is.info.BinlogStatus = status.String()
+		is.infos[0].BinlogStatus = status.String()
 		err := is.StoreServerInfo(ctx)
 		return errors.Trace(err)
 	})
@@ -907,7 +938,7 @@ func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, 
 	if is.etcdCli == nil {
 		return nil
 	}
-	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
+	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s", TopologyInformationPath, net.JoinHostPort(is.infos[0].IP, strconv.Itoa(int(is.infos[0].Port))))
 	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
 	if err != nil {
 		return err
@@ -922,7 +953,7 @@ func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	key := fmt.Sprintf("%s/%s/ttl", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
+	key := fmt.Sprintf("%s/%s/ttl", TopologyInformationPath, net.JoinHostPort(is.infos[0].IP, strconv.Itoa(int(is.infos[0].Port))))
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key,
 		fmt.Sprintf("%v", time.Now().UnixNano()),
 		clientv3.WithLease(is.topologySession.Lease()))

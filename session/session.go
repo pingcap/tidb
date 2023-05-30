@@ -3648,6 +3648,7 @@ func BootstrapSessionForMPP(store kv.Storage) (*domain.Domain, error) {
 			failToLoadOrParseSQLFile = true
 		}
 	}
+	// ywq todo check here
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
 	cnt := 1 + concurrency
 	syncStatsCtxs, err := createSessions(store, cnt)
@@ -3661,6 +3662,7 @@ func BootstrapSessionForMPP(store kv.Storage) (*domain.Domain, error) {
 
 	// setup extract Handle
 	extractWorkers := 1
+	// ywq todo check here...
 	sctxs, err := createSessions(store, extractWorkers)
 	if err != nil {
 		return nil, err
@@ -3672,6 +3674,7 @@ func BootstrapSessionForMPP(store kv.Storage) (*domain.Domain, error) {
 	dom.SetupExtractHandle(extractWorkerSctxs)
 
 	// setup init stats loader
+	// ywq todo check here
 	initStatsCtx, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -3696,6 +3699,7 @@ func BootstrapSessionForMPP(store kv.Storage) (*domain.Domain, error) {
 	}
 	dom.StartTTLJobManager()
 
+	// ywq todo check here..
 	analyzeCtxs, err := createSessions(store, analyzeConcurrencyQuota)
 	if err != nil {
 		return nil, err
@@ -3770,10 +3774,11 @@ func createSessions(store kv.Storage, cnt int) ([]*session, error) {
 }
 
 func createSessionsForMPP(store kv.Storage, cnt int) ([]*session, error) {
+	// Then we can create new dom
 	domap.Delete(store)
 	ses := make([]*session, cnt)
 	for i := 0; i < cnt; i++ {
-		se, err := createSessionWithMultipleTiDB(store, i == cnt-1)
+		se, err := createSessionWithMultipleTiDB(store)
 		if err != nil {
 			return nil, err
 		}
@@ -3787,7 +3792,7 @@ func createSessionsForMPP(store kv.Storage, cnt int) ([]*session, error) {
 // Please note that such a session is not tracked by the internal session list.
 // This means the min ts reporter is not aware of it and may report a wrong min start ts.
 // In most cases you should use a session pool in domain instead.
-func createSessionWithMultipleTiDB(store kv.Storage, last bool) (*session, error) {
+func createSessionWithMultipleTiDB(store kv.Storage) (*session, error) {
 	return createSessionWithOpt(store, nil)
 }
 

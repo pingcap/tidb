@@ -105,13 +105,15 @@ type dispatcher struct {
 		taskIDs map[int64]struct{}
 	}
 	detectPendingGTaskCh chan *proto.Task
+	id                   string
 }
 
 // NewDispatcher creates a dispatcher struct.
-func NewDispatcher(ctx context.Context, taskTable *storage.TaskManager) (Dispatch, error) {
+func NewDispatcher(ctx context.Context, taskTable *storage.TaskManager, id string) (Dispatch, error) {
 	dispatcher := &dispatcher{
 		taskMgr:              taskTable,
 		detectPendingGTaskCh: make(chan *proto.Task, DefaultDispatchConcurrency),
+		id:                   id,
 	}
 	pool, err := spool.NewPool("dispatch_pool", int32(DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
@@ -229,7 +231,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 			return false, nil
 		}
 		if cnt > 0 {
-			logutil.BgLogger().Info("check task, subtasks aren't finished", zap.Int64("task ID", gTask.ID), zap.Int64("cnt", cnt))
+			logutil.BgLogger().Info("check task, subtasks aren't finished", zap.Int64("task ID", gTask.ID), zap.Int64("cnt", cnt), zap.String("id", d.id))
 			return false, nil
 		}
 		return true, nil
@@ -327,6 +329,7 @@ func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTask
 	for i := 0; i < retryTimes; i++ {
 		err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(gTask, newSubTasks, gTaskState == proto.TaskStateReverting)
 		if err == nil {
+			logutil.BgLogger().Info("ywq test update global task and add sub tasks success")
 			break
 		}
 		if i%10 == 0 {
@@ -420,6 +423,8 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 
 	// Generate all available TiDB nodes for this global tasks.
 	serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask)
+	logutil.BgLogger().Warn("server nodes", zap.Int("node num", len(serverNodes)))
+
 	if err1 != nil {
 		return err1
 	}
@@ -478,6 +483,7 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 }
 
 func matchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string) bool {
+	logutil.BgLogger().Info("ywq test server num: %+v", zap.Int("serverinfonum:", len(serverInfos)))
 	for _, serverInfo := range serverInfos {
 		serverID := disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port)
 		if serverID == schedulerID {
