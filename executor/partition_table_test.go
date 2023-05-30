@@ -3911,3 +3911,48 @@ from
 		`  └─Selection_18 0.80 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)`,
 		`    └─TableRangeScan_17 0.80 cop[tikv] table:c range: decided by [eq(test39999.c.txt_account_id, test39999.t.txn_account_id) eq(test39999.c.serial_id, test39999.t.serial_id) eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false`))
 }
+
+func TestPartitionOnMissing(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create schema OnMissing")
+	tk.MustExec("use OnMissing")
+	tk.MustExec(`set global tidb_partition_prune_mode='dynamic'`)
+	tk.MustExec(`set session tidb_partition_prune_mode='dynamic'`)
+
+	tk.MustExec(`CREATE TABLE tt1 (
+		id INT NOT NULL,
+		listid INT,
+		name varchar(10)
+	)
+	PARTITION BY LIST (listid) (
+		PARTITION p1 VALUES IN (1),
+		PARTITION p2 VALUES IN (2),
+		PARTITION p3 VALUES IN (3),
+		PARTITION p4 VALUES IN (4)
+	)`)
+
+	tk.MustExec(`CREATE TABLE tt2 (
+		id INT NOT NULL,
+		listid INT
+	)`)
+
+	tk.MustExec(`create index idx_listid on tt1(id,listid)`)
+	tk.MustExec(`create index idx_listid on tt2(listid)`)
+
+	tk.MustExec(`insert into tt1 values(1,1,1)`)
+	tk.MustExec(`insert into tt1 values(2,2,2)`)
+	tk.MustExec(`insert into tt1 values(3,3,3)`)
+	tk.MustExec(`insert into tt1 values(4,4,4)`)
+	tk.MustExec(`insert into tt2 values(1,1)`)
+	tk.MustExec(`insert into tt2 values(2,2)`)
+	tk.MustExec(`insert into tt2 values(3,3)`)
+	tk.MustExec(`insert into tt2 values(4,4)`)
+	tk.MustExec(`insert into tt2 values(5,5)`)
+
+	tk.MustExec(`analyze table tt1`)
+	tk.MustExec(`analyze table tt2`)
+
+	tk.MustQuery(`select /*+ inl_join(tt1)*/ count(*) from tt2
+		left join tt1 on tt1.listid=tt2.listid and tt1.id=tt2.id`).Check(testkit.Rows("5"))
+}
