@@ -1022,7 +1022,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	lColumns, rColumns := lsc.Columns, rsc.Columns
 	lNames, rNames := leftPlan.OutputNames().Shallow(), rightPlan.OutputNames().Shallow()
 	if joinTp == ast.RightJoin {
-		//leftPlan, rightPlan = rightPlan, leftPlan
+		leftPlan, rightPlan = rightPlan, leftPlan
 		lNames, rNames = rNames, lNames
 		lColumns, rColumns = rsc.Columns, lsc.Columns
 	}
@@ -7186,9 +7186,9 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 		// 1. Handle the WITH clause if exists.
 		if x.With != nil {
 			l := len(b.outerCTEs)
+			sw := x.With
 			defer func() {
 				b.outerCTEs = b.outerCTEs[:l]
-				sw := x.With
 				x.With = sw
 			}()
 			_, err := b.buildWith(ctx, x.With)
