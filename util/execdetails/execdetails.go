@@ -76,7 +76,7 @@ type P90Summary struct {
 	BackoffInfo map[string]*P90BackoffSummery
 }
 
-// Resets resets all fields in DetailsNeedP90Summary.
+// Reset resets all fields in DetailsNeedP90Summary.
 func (d *P90Summary) Reset() {
 	d.NumCopTasks = 0
 	d.MaxProcessTime = 0
@@ -113,7 +113,7 @@ func (d *P90Summary) Merge(detail *DetailsNeedP90) {
 			info = d.BackoffInfo[backoff]
 		}
 		sleepItem := detail.BackoffSleep[backoff]
-		info.ReqTimes += 1
+		info.ReqTimes++
 		info.TotBackoffTime += sleepItem
 		info.TotBackoffTimes += timeItem
 
