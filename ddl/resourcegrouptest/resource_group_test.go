@@ -22,8 +22,8 @@ import (
 
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	mysql "github.com/pingcap/tidb/errno"
