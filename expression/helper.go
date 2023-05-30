@@ -16,7 +16,6 @@ package expression
 
 import (
 	"context"
-	"go.uber.org/zap"
 	"math"
 	"strings"
 	"time"
@@ -30,6 +29,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 func boolToInt64(v bool) int64 {
