@@ -62,6 +62,7 @@ STATICHECK_ANALYZERS = [
     "SA3000",
     "SA3001",
     "SA4009",
+    "SA4018",
     "SA5000",
     "SA5001",
     "SA5002",
