@@ -26,7 +26,7 @@ import (
 )
 
 //go:embed test.parquet
-var content []byte
+var parquetContent []byte
 
 func (s *mockGCSSuite) TestDetachedLoadParquet() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
@@ -42,7 +42,7 @@ func (s *mockGCSSuite) TestDetachedLoadParquet() {
 			BucketName: "test-load-parquet",
 			Name:       "p",
 		},
-		Content: content,
+		Content: parquetContent,
 	})
 
 	s.T().Cleanup(func() { executor.TestDetachedTaskFinished.Store(false) })

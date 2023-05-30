@@ -276,7 +276,6 @@ func TestIsLocal(t *testing.T) {
 		{"local", args{"/tmp/file"}, true, ""},
 		{"local", args{"local:///tmp/file"}, true, ""},
 		{"local", args{"file:///tmp/file"}, true, ""},
-		{"local", args{"file://localhost/tmp/file"}, false, ""},
 		{"local", args{"s3://bucket/tmp/file"}, false, ""},
 	}
 	for _, tt := range tests {

@@ -218,9 +218,5 @@ func IsLocalPath(p string) (bool, error) {
 
 // IsLocal returns true if the URL is a local file path.
 func IsLocal(u *url.URL) bool {
-	// we don't support file://127.0.0.1/path/to/file type of URL now.
-	if u.Host != "" {
-		return false
-	}
 	return u.Scheme == "local" || u.Scheme == "file" || u.Scheme == ""
 }

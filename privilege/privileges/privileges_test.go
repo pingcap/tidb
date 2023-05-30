@@ -1567,9 +1567,15 @@ func TestImportIntoPrivilegeNegativeCase(t *testing.T) {
 	tk.MustExec(`CREATE USER 'test_import_into'@'localhost';`)
 	tk.MustExec(`CREATE TABLE t(a int)`)
 
-	tk.MustExec(`GRANT SELECT on *.* to 'test_import_into'@'localhost'`)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
 	err := tk.ExecToErr("IMPORT INTO t FROM '/file.csv'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExec(`GRANT SELECT on *.* to 'test_import_into'@'localhost'`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	err = tk.ExecToErr("IMPORT INTO t FROM '/file.csv'")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 
@@ -1595,9 +1601,17 @@ func TestImportIntoPrivilegeNegativeCase(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExec(`GRANT ALTER on *.* to 'test_import_into'@'localhost'`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	err = tk.ExecToErr("IMPORT INTO t FROM '/file.csv'")
+	require.Error(t, err)
+	// require FILE privilege to import from server file.
+	require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`DROP USER 'test_import_into'@'localhost';`)
 	tk.MustExec(`CREATE USER 'test_import_into'@'localhost';`)
-	tk.MustExec(`GRANT ALTER on *.* to 'test_import_into'@'localhost'`)
+	tk.MustExec(`GRANT FILE on *.* to 'test_import_into'@'localhost'`)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
 	err = tk.ExecToErr("IMPORT INTO t FROM '/file.csv'")
 	require.Error(t, err)

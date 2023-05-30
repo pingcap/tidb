@@ -254,7 +254,7 @@ func buildTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (
 
 // todo: converting back and forth, we should unify struct and remove this function later.
 func toChunkMap(engineCheckpoints map[int32]*checkpoints.EngineCheckpoint) map[int32][]Chunk {
-	var chunkMap map[int32][]Chunk
+	chunkMap := make(map[int32][]Chunk, len(engineCheckpoints))
 	for id, ecp := range engineCheckpoints {
 		chunkMap[id] = make([]Chunk, 0, len(ecp.Chunks))
 		for _, chunkCheckpoint := range ecp.Chunks {

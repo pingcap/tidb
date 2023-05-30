@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"path"
 	"strconv"
 	"time"
 
@@ -36,7 +38,10 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -49,14 +54,17 @@ func (s *mockGCSSuite) prepareAndUseDB(db string) {
 
 // NOTE: for negative cases, see TestImportIntoPrivilegeNegativeCase in privileges_test.go
 func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
+	content := []byte("1,test1,11\n2,test2,22")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "privilege-test",
 			Name:       "db.tbl.001.csv",
 		},
-		Content: []byte("1,test1,11\n" +
-			"2,test2,22"),
+		Content: content,
 	})
+	tempDir := s.T().TempDir()
+	filePath := path.Join(tempDir, "file.csv")
+	s.NoError(os.WriteFile(filePath, content, 0644))
 	s.prepareAndUseDB("import_into")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
@@ -71,10 +79,32 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 		_ = s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
 	})
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	// enough for gs storage
 	sql := fmt.Sprintf(`import into t FROM 'gs://privilege-test/db.tbl.*.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustExec(sql)
-	s.tk.MustQuery("select * from t").Check(testkit.Rows(
-		"1 test1 11", "2 test2 22"))
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
+	// works even SEM enabled
+	sem.Enable()
+	s.T().Cleanup(func() {
+		sem.Disable()
+	})
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustExec("truncate table t")
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
+
+	sem.Disable()
+	// requires FILE for server file
+	importFromServerSql := fmt.Sprintf("IMPORT INTO t FROM '%s'", filePath)
+	s.True(terror.ErrorEqual(s.tk.ExecToErr(importFromServerSql), core.ErrSpecificAccessDenied))
+
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustExec(`GRANT FILE on *.* to 'test_import_into'@'localhost'`)
+	s.tk.MustExec("truncate table t")
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustExec(importFromServerSql)
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
 }
 
 func (s *mockGCSSuite) TestBasicImportInto() {

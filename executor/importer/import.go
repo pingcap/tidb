@@ -858,9 +858,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			// so we don't have a common prefix as cloud storage do.
 			commonPrefix = fileNameKey[:idx]
 		}
+		// when import from server disk, all entries in parent directory should have READ
+		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
 		escapedPath := stringutil.EscapeGlobExceptAsterisk(fileNameKey)
-		err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix},
+		err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
 				//nolint: errcheck
@@ -880,7 +882,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				return nil
 			})
 		if err != nil {
-			return err
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err), "failed to walk dir")
 		}
 	}
 

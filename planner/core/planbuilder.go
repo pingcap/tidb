@@ -4367,7 +4367,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	}
 
 	if importFromServer && sem.IsEnabled() {
-		return nil, exeerrors.ErrNotSupportedWithSem.GenWithStackByArgs("import server local file using IMPORT INTO")
+		return nil, exeerrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
 	}
 
 	for _, opt := range ld.Options {
