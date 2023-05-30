@@ -4358,7 +4358,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		err              error
 		options          = make([]*LoadDataOpt, 0, len(ld.Options))
 		detached         = false
-		importFromServer = false
+		importFromServer bool
 	)
 
 	importFromServer, err = storage.IsLocalPath(ld.Path)
