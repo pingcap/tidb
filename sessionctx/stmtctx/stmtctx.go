@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -988,6 +989,8 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.TaskID = AllocateTaskID()
 }
 
+const maxDetailsNumsForOneQuery = 1000
+
 // MergeExecDetails merges a single region execution details into self, used to print
 // the information in slow query log.
 func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *util.CommitDetails) {
@@ -1005,11 +1008,18 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 			CalleeAddress: details.CalleeAddress,
 			TimeDetail:    details.TimeDetail,
 		}
+
+		failpoint.Inject("MustAllDetails", func(val failpoint.Value) {
+			if val.(bool) {
+				sc.mu.allExecDetails = append(sc.mu.allExecDetails, detail)
+				failpoint.Return()
+			}
+		})
 		if sc.mu.detailsSummary.NumCopTasks > 0 {
 			sc.mu.detailsSummary.Merge(detail)
 		} else {
 			sc.mu.allExecDetails = append(sc.mu.allExecDetails, detail)
-			if len(sc.mu.allExecDetails) >= 1000 {
+			if len(sc.mu.allExecDetails) >= maxDetailsNumsForOneQuery {
 				for _, detail := range sc.mu.allExecDetails {
 					sc.mu.detailsSummary.Merge(detail)
 				}

@@ -51,7 +51,7 @@ type DetailsNeedP90 struct {
 	TimeDetail    util.TimeDetail
 }
 
-// P90BackoffSummery contains execution detail information which need calculate P90.
+// P90BackoffSummery contains execution summary for a backoff type.
 type P90BackoffSummery struct {
 	ReqTimes          int
 	MaxBackoffTime    time.Duration
@@ -61,7 +61,7 @@ type P90BackoffSummery struct {
 	TotBackoffTimes   int
 }
 
-// P90Summary contains execution detail information which need calculate P90.
+// P90Summary contains execution summary for cop tasks.
 type P90Summary struct {
 	NumCopTasks int
 
@@ -88,7 +88,7 @@ func (d *P90Summary) Reset() {
 	d.BackoffInfo = make(map[string]*P90BackoffSummery)
 }
 
-// Merge merges two DetailsNeedP90Summary.
+// Merge merges DetailsNeedP90 into P90Summary.
 func (d *P90Summary) Merge(detail *DetailsNeedP90) {
 	if d.TdForProcessTime == nil {
 		d.Reset()
@@ -103,7 +103,7 @@ func (d *P90Summary) Merge(detail *DetailsNeedP90) {
 		d.MaxWaitTime = detail.TimeDetail.WaitTime
 		d.MaxWaitAddress = detail.CalleeAddress
 	}
-	d.TdForProcessTime.Add(float64(detail.TimeDetail.ProcessTime.Nanoseconds()), 1)
+	d.TdForWaitTime.Add(float64(detail.TimeDetail.WaitTime.Nanoseconds()), 1)
 
 	var info *P90BackoffSummery
 	var ok bool

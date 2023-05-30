@@ -18,10 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -186,4 +188,60 @@ func TestMarshalSQLWarn(t *testing.T) {
 	require.NoError(t, err)
 	tk.Session().GetSessionVars().StmtCtx.SetWarnings(newWarns)
 	tk.MustQuery("show warnings").Check(rows)
+}
+
+func TestApproxRuntimeInfo(t *testing.T) {
+	var n = rand.Intn(19000) + 1000
+	ctx := new(stmtctx.StatementContext)
+	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
+	details := []*execdetails.ExecDetails{}
+	for i := 0; i < n; i++ {
+		d := &execdetails.ExecDetails{
+			DetailsNeedP90: execdetails.DetailsNeedP90{
+				CalleeAddress: fmt.Sprintf("%v", i+1),
+				BackoffSleep:  make(map[string]time.Duration),
+				BackoffTimes:  make(map[string]int),
+				TimeDetail: util.TimeDetail{
+					ProcessTime: time.Second * time.Duration(rand.Int31n(10000)),
+					WaitTime:    time.Millisecond * time.Duration(rand.Int31n(10000)),
+				},
+			},
+		}
+		details = append(details, d)
+		for _, backoff := range backoffs {
+			d.BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(rand.Int31n(10000))
+			d.BackoffTimes[backoff] = rand.Intn(10000)
+		}
+		ctx.MergeExecDetails(d, nil)
+	}
+	d1 := ctx.CopTasksDetails()
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessionctx/stmtctx/MustAllDetails", "return(true)"))
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessionctx/stmtctx/MustAllDetails"))
+	ctx2 := new(stmtctx.StatementContext)
+	for i := 0; i < n; i++ {
+		ctx2.MergeExecDetails(details[i], nil)
+	}
+	d2 := ctx2.CopTasksDetails()
+
+	require.Equal(t, d1.NumCopTasks, d2.NumCopTasks)
+	require.Equal(t, d1.AvgProcessTime, d2.AvgProcessTime)
+	require.Equal(t, d1.P90ProcessTime, d2.P90ProcessTime)
+	require.InEpsilon(t, d1.P90ProcessTime.Nanoseconds(), d2.P90ProcessTime.Nanoseconds(), 0.1)
+	require.Equal(t, d1.MaxProcessTime, d2.MaxProcessTime)
+	require.Equal(t, d1.MaxProcessAddress, d2.MaxProcessAddress)
+	require.Equal(t, d1.AvgWaitTime, d2.AvgWaitTime)
+	require.InEpsilon(t, d1.P90WaitTime.Nanoseconds(), d2.P90WaitTime.Nanoseconds(), 0.1)
+	require.Equal(t, d1.MaxWaitTime, d2.MaxWaitTime)
+	require.Equal(t, d1.MaxWaitAddress, d2.MaxWaitAddress)
+	fields := d2.ToZapFields()
+	require.Equal(t, 9, len(fields))
+	for _, backoff := range backoffs {
+		require.Equal(t, d1.MaxBackoffAddress[backoff], d2.MaxBackoffAddress[backoff])
+		require.Equal(t, d1.MaxBackoffTime[backoff], d2.MaxBackoffTime[backoff])
+		require.InEpsilon(t, d1.P90BackoffTime[backoff], d2.P90BackoffTime[backoff], 0.1)
+		require.Equal(t, d1.AvgBackoffTime[backoff], d2.AvgBackoffTime[backoff])
+		require.Equal(t, d1.TotBackoffTimes[backoff], d2.TotBackoffTimes[backoff])
+		require.Equal(t, d1.TotBackoffTime[backoff], d2.TotBackoffTime[backoff])
+	}
 }
