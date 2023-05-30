@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/expression"
@@ -371,4 +372,56 @@ func TestCursorWithParams(t *testing.T) {
 		appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt1.ID())),
 		0x0, 0x1, 0x0, 0x0,
 	)))
+}
+
+func TestCursorDetachMemTracker(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	appendUint32 := binary.LittleEndian.AppendUint32
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id_1 int, id_2 int)")
+	tk.MustExec("insert into t values (1, 1), (1, 2)")
+	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
+	defer tk.MustExec("set global tidb_mem_oom_action= DEFAULT")
+	// TODO: find whether it's expected to have one child at the beginning
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
+
+	// execute a normal statement, it'll success
+	stmt, _, _, err := c.Context().Prepare("select count(id_2) from t")
+	require.NoError(t, err)
+
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+	maxConsumed := tk.Session().GetSessionVars().MemTracker.MaxConsumed()
+
+	// testkit also uses `PREPARE` related calls to run statement with arguments.
+	// format the SQL to avoid the interference from testkit.
+	tk.MustExec(fmt.Sprintf("set tidb_mem_quota_query=%d", maxConsumed/2))
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
+	// This query should exceed the memory limitation during `openExecutor`
+	require.Error(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
+
+	// The next query should succeed
+	tk.MustExec(fmt.Sprintf("set tidb_mem_quota_query=%d", maxConsumed+1))
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
+	// This query should succeed
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
 }
