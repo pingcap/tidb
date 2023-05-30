@@ -51,7 +51,7 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		if options.Runaway.WatchDurationMs > 0 {
 			runaway.Watch = &rmpb.RunawayWatch{}
 			runaway.Watch.Type = rmpb.RunawayWatchType(options.Runaway.WatchType)
-			runaway.Watch.LastDurationMs = options.Runaway.WatchDurationMs
+			runaway.Watch.LastingDurationMs = options.Runaway.WatchDurationMs
 		}
 		group.RunawaySettings = runaway
 	}
