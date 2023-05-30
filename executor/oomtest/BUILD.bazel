@@ -6,10 +6,6 @@ go_test(
     srcs = ["oom_test.go"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD:executor/oomtest/BUILD.bazel
-=======
-    shard_count = 5,
->>>>>>> cb175516d20 (executor: ignore non-found partitions in inner joins (#43763)):executor/test/partitiontest/BUILD.bazel
     deps = [
         "//testkit",
         "//testkit/testsetup",
