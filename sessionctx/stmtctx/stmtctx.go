@@ -995,8 +995,6 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.TaskID = AllocateTaskID()
 }
 
-const maxDetailsNumsForOneQuery = 1000
-
 // MergeExecDetails merges a single region execution details into self, used to print
 // the information in slow query log.
 func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *util.CommitDetails) {
@@ -1025,7 +1023,7 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 			sc.mu.detailsSummary.Merge(detail)
 		} else {
 			sc.mu.allExecDetails = append(sc.mu.allExecDetails, detail)
-			if len(sc.mu.allExecDetails) >= maxDetailsNumsForOneQuery {
+			if len(sc.mu.allExecDetails) >= execdetails.MaxDetailsNumsForOneQuery {
 				for _, detail := range sc.mu.allExecDetails {
 					sc.mu.detailsSummary.Merge(detail)
 				}

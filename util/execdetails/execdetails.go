@@ -76,6 +76,9 @@ type P90Summary struct {
 	BackoffInfo map[string]*P90BackoffSummary
 }
 
+// MaxDetailNumsForP90 is the max number of details to keep for P90 for one query.
+const MaxDetailsNumsForOneQuery = 1000
+
 // Reset resets all fields in DetailsNeedP90Summary.
 func (d *P90Summary) Reset() {
 	d.NumCopTasks = 0
@@ -402,7 +405,87 @@ type basicCopRuntimeStats struct {
 	BasicRuntimeStats
 	threads    int32
 	totalTasks int32
-	procTimes  []time.Duration
+	procTimes  Percentile[time.Duration]
+}
+
+type Percentile[valueType time.Duration | int64] struct {
+	values []valueType
+	minVal valueType
+	maxVal valueType
+	sumVal float64
+	dt     *tdigest.TDigest
+	size   int
+}
+
+func (p *Percentile[valueType]) Add(value valueType) {
+	p.sumVal += float64(value)
+	p.size++
+	if p.dt == nil && len(p.values) == 0 {
+		p.minVal = value
+		p.maxVal = value
+	} else {
+		if value < p.minVal {
+			p.minVal = value
+		}
+		if value > p.maxVal {
+			p.maxVal = value
+		}
+	}
+	if p.dt == nil {
+		p.values = append(p.values, value)
+		if len(p.values) >= MaxDetailsNumsForOneQuery {
+			p.dt = tdigest.New()
+			for _, v := range p.values {
+				p.dt.Add((float64)(v), 1)
+			}
+			p.values = nil
+		}
+		return
+	}
+	p.dt.Add((float64)(value), 1)
+}
+
+func (p *Percentile[valueType]) GetPercentile(f float64) valueType {
+	if p.dt == nil {
+		return p.values[int(float64(len(p.values))*f)]
+	}
+	return valueType(p.dt.Quantile(f))
+}
+
+func (p *Percentile[valueType]) GetMax() valueType {
+	return p.maxVal
+}
+
+func (p *Percentile[valueType]) GetMin() valueType {
+	return p.minVal
+}
+
+func (p *Percentile[valueType]) MergePercentile(p2 *Percentile[valueType]) {
+	if p2.dt == nil {
+		for _, v := range p2.values {
+			p.Add(v)
+		}
+		return
+	}
+	p.sumVal += p2.sumVal
+	p.size += p2.size
+	if p.dt == nil {
+		p.dt = p2.dt
+		for _, v := range p.values {
+			p.dt.Add((float64)(v), 1)
+		}
+		p.values = nil
+		return
+	}
+	p.dt.AddCentroidList(p2.dt.Centroids())
+}
+
+func (p *Percentile[valueType]) Size() int {
+	return p.size
+}
+
+func (p *Percentile[valueType]) Sum() float64 {
+	return p.sumVal
 }
 
 // String implements the RuntimeStats interface.
@@ -439,10 +522,10 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 	e.rows.Add(tmp.rows.Load())
 	e.threads += tmp.threads
 	e.totalTasks += tmp.totalTasks
-	if len(tmp.procTimes) > 0 {
-		e.procTimes = append(e.procTimes, tmp.procTimes...)
+	if tmp.procTimes.Size() == 0 {
+		e.procTimes.Add(time.Duration(tmp.consume.Load()))
 	} else {
-		e.procTimes = append(e.procTimes, time.Duration(tmp.consume.Load()))
+		e.procTimes.MergePercentile(&tmp.procTimes)
 	}
 	e.tiflashScanContext.Merge(tmp.tiflashScanContext)
 }
@@ -506,11 +589,10 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 }
 
 // MergeBasicStats traverses basicCopRuntimeStats in the CopRuntimeStats and collects some useful information.
-func (crs *CopRuntimeStats) MergeBasicStats() (procTimes []time.Duration, totalTime time.Duration, totalTasks, totalLoops, totalThreads int32, totalTiFlashScanContext TiFlashScanContext) {
-	procTimes = make([]time.Duration, 0, 32)
+func (crs *CopRuntimeStats) MergeBasicStats() (procTimes Percentile[time.Duration], totalTime time.Duration, totalTasks, totalLoops, totalThreads int32, totalTiFlashScanContext TiFlashScanContext) {
 	totalTiFlashScanContext = TiFlashScanContext{}
 	for _, instanceStats := range crs.stats {
-		procTimes = append(procTimes, instanceStats.procTimes...)
+		procTimes.MergePercentile(&instanceStats.procTimes)
 		totalTime += time.Duration(instanceStats.consume.Load())
 		totalLoops += instanceStats.loop.Load()
 		totalThreads += instanceStats.threads
@@ -531,7 +613,7 @@ func (crs *CopRuntimeStats) String() string {
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
-		buf.WriteString(fmt.Sprintf("%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(procTimes[0]), totalLoops))
+		buf.WriteString(fmt.Sprintf("%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(procTimes.values[0]), totalLoops))
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
 			if !totalTiFlashScanContext.Empty() {
@@ -541,11 +623,9 @@ func (crs *CopRuntimeStats) String() string {
 			buf.WriteString("}")
 		}
 	} else {
-		n := len(procTimes)
-		slices.Sort(procTimes)
 		buf.WriteString(fmt.Sprintf("%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
-			crs.storeType, FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]), FormatDuration(avgTime),
-			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalLoops, totalTasks))
+			crs.storeType, FormatDuration(procTimes.GetMax()), FormatDuration(procTimes.GetMin()), FormatDuration(avgTime),
+			FormatDuration(procTimes.GetPercentile(0.8)), FormatDuration(procTimes.GetPercentile(0.95)), totalLoops, totalTasks))
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
 			if !totalTiFlashScanContext.Empty() {
