@@ -481,14 +481,14 @@ func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client) {
 	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), sql, "delete-mdl-info")
 	if err != nil {
-		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Error(err))
+		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Int64("job id", jobID), zap.Error(err))
 		return
 	}
 	if ec != nil {
 		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)
 		_, err = ec.Delete(context.Background(), path, clientv3.WithPrefix())
 		if err != nil {
-			logutil.BgLogger().Warn("[ddl] delete versions failed", zap.Any("job id", jobID), zap.Error(err))
+			logutil.BgLogger().Warn("[ddl] delete versions failed", zap.Int64("job id", jobID), zap.Error(err))
 		}
 	}
 }
