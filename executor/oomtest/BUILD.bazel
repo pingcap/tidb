@@ -6,7 +6,7 @@ go_test(
     srcs = ["oom_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 4,
+    shard_count = 3,
     deps = [
         "//testkit",
         "//testkit/testsetup",
