@@ -1594,6 +1594,9 @@ func (n *CreateResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteName(n.ResourceGroupName.O)
 	for i, option := range n.ResourceGroupOptionList {
+		if i > 0 {
+			ctx.WritePlain(",")
+		}
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while splicing CreateResourceGroupStmt Option: [%v]", i)
@@ -4533,6 +4536,9 @@ func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteName(n.ResourceGroupName.O)
 	for i, option := range n.ResourceGroupOptionList {
+		if i > 0 {
+			ctx.WritePlain(",")
+		}
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while splicing AlterResourceGroupStmt Options: [%v]", i)
