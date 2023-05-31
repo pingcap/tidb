@@ -1737,7 +1737,7 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
 		}()
-		err := b.buildWith(ctx, setOpr.With)
+		_, err := b.buildWith(ctx, setOpr.With)
 		if err != nil {
 			return nil, err
 		}
@@ -2727,7 +2727,7 @@ func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err er
 		defer func() {
 			r.b.outerCTEs = r.b.outerCTEs[:l]
 		}()
-		err := r.b.buildWith(r.ctx, sel.With)
+		_, err := r.b.buildWith(r.ctx, sel.With)
 		if err != nil {
 			return err
 		}
@@ -4020,12 +4020,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
+	var currentLayerCTEs []*cteInfo
 	if sel.With != nil {
 		l := len(b.outerCTEs)
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
 		}()
-		err = b.buildWith(ctx, sel.With)
+		currentLayerCTEs, err = b.buildWith(ctx, sel.With)
 		if err != nil {
 			return nil, err
 		}
@@ -4246,10 +4247,44 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 		proj.names = p.OutputNames()[:oldLen]
 		proj.SetSchema(schema)
-		return proj, nil
+		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
 	}
 
-	return p, nil
+	return b.tryToBuildSequence(currentLayerCTEs, p), nil
+}
+
+func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p LogicalPlan) LogicalPlan {
+	if !b.ctx.GetSessionVars().EnableMPPSharedCTEExecution {
+		return p
+	}
+	for i := len(ctes) - 1; i >= 0; i-- {
+		if !ctes[i].nonRecursive {
+			return p
+		}
+		if ctes[i].isInline || ctes[i].cteClass == nil {
+			ctes = append(ctes[:i], ctes[i+1:]...)
+		}
+	}
+	if len(ctes) == 0 {
+		return p
+	}
+	lctes := make([]LogicalPlan, 0, len(ctes)+1)
+	for _, cte := range ctes {
+		lcte := LogicalCTE{
+			cte:               cte.cteClass,
+			cteAsName:         cte.def.Name,
+			cteName:           cte.def.Name,
+			seedStat:          cte.seedStat,
+			onlyUsedAsStorage: true,
+		}.Init(b.ctx, b.getSelectOffset())
+		lcte.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
+		lctes = append(lctes, lcte)
+	}
+	b.optFlag |= flagPushDownSequence
+	seq := LogicalSequence{}.Init(b.ctx, b.getSelectOffset())
+	seq.SetChildren(append(lctes, p)...)
+	seq.SetOutputNames(p.OutputNames().Shallow())
+	return seq
 }
 
 func (b *PlanBuilder) buildTableDual() *LogicalTableDual {
@@ -4549,8 +4584,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				tblStats := h.GetTableStats(tableInfo)
 				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
 				globalStatsReady := tblStats.IsInitialized()
+				allowDynamicWithoutStats := false
+				fixValue, ok := b.ctx.GetSessionVars().GetOptimizerFixControlValue(variable.TiDBOptFixControl44262)
+				if ok && variable.TiDBOptOn(fixValue) {
+					allowDynamicWithoutStats = true
+				}
+
 				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
-				usePartitionProcessor := !isDynamicEnabled || !globalStatsReady
+				usePartitionProcessor := !isDynamicEnabled || (!globalStatsReady && !allowDynamicWithoutStats)
 
 				failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
 					if val.(bool) {
@@ -5508,7 +5549,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
 		}()
-		err := b.buildWith(ctx, update.With)
+		_, err := b.buildWith(ctx, update.With)
 		if err != nil {
 			return nil, err
 		}
@@ -5915,7 +5956,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
 		}()
-		err := b.buildWith(ctx, ds.With)
+		_, err := b.buildWith(ctx, ds.With)
 		if err != nil {
 			return nil, err
 		}
@@ -7150,7 +7191,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 				b.outerCTEs = b.outerCTEs[:l]
 				x.With = sw
 			}()
-			err := b.buildWith(ctx, x.With)
+			_, err := b.buildWith(ctx, x.With)
 			if err != nil {
 				return err
 			}
@@ -7348,15 +7389,16 @@ func (b *PlanBuilder) genCTETableNameForError() string {
 	return name
 }
 
-func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
+func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) ([]*cteInfo, error) {
 	// Check CTE name must be unique.
 	nameMap := make(map[string]struct{})
 	for _, cte := range w.CTEs {
 		if _, ok := nameMap[cte.Name.L]; ok {
-			return ErrNonUniqTable
+			return nil, ErrNonUniqTable
 		}
 		nameMap[cte.Name.L] = struct{}{}
 	}
+	ctes := make([]*cteInfo, 0, len(w.CTEs))
 	for _, cte := range w.CTEs {
 		b.outerCTEs = append(b.outerCTEs, &cteInfo{def: cte, nonRecursive: !w.IsRecursive, isBuilding: true, storageID: b.allocIDForCTEStorage, seedStat: &property.StatsInfo{}})
 		b.allocIDForCTEStorage++
@@ -7371,15 +7413,16 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 		}
 		_, err := b.buildCte(ctx, cte, w.IsRecursive)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		b.outerCTEs[len(b.outerCTEs)-1].optFlag = b.optFlag
 		b.outerCTEs[len(b.outerCTEs)-1].isBuilding = false
 		b.optFlag = saveFlag
 		// each cte (select statement) will generate a handle map, pop it out here.
 		b.handleHelper.popMap()
+		ctes = append(ctes, b.outerCTEs[len(b.outerCTEs)-1])
 	}
-	return nil
+	return ctes, nil
 }
 
 func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed LogicalPlan, recur LogicalPlan) (LogicalPlan, error) {

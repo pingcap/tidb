@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl_test
+package pausetest
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -23,23 +24,19 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
-type testPauseAndResumeJob struct {
-	sql         string
-	ok          bool
-	jobState    interface{} // model.SchemaState | []model.SchemaState
-	onJobBefore bool
-	onJobUpdate bool
-	prepareSQL  []string
-}
+const dbTestLease = 600 * time.Millisecond
 
 type TestTableUser struct {
 	id          int64
@@ -104,6 +101,15 @@ func (tu *TestTableUser) generateAttributes() (err error) {
 func (tu *TestTableUser) insertStmt() string {
 	return fmt.Sprintf("INSERT INTO t_user(user, name, age, province, city, phone, created_time, updated_time) VALUES ('%s', '%s', %d, '%s', '%s', '%s', '%s', '%s')",
 		tu.user, tu.name, tu.age, tu.province, tu.city, tu.phone, tu.createdTime, tu.updatedTime)
+}
+
+type testPauseAndResumeJob struct {
+	sql         string
+	ok          bool
+	jobState    interface{} // model.SchemaState | []model.SchemaState
+	onJobBefore bool
+	onJobUpdate bool
+	prepareSQL  []string
 }
 
 var allPauseJobTestCase = []testPauseAndResumeJob{
@@ -211,7 +217,7 @@ func TestPauseAndResumeMain(t *testing.T) {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`)
 
 	idx := 0
-	rowCount := 100000
+	rowCount := 1000
 	tu := &TestTableUser{}
 	for idx < rowCount {
 		_ = tu.generateAttributes()
@@ -226,10 +232,6 @@ func TestPauseAndResumeMain(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockBackfillSlow", "return"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillSlow"))
-	}()
 
 	hook := &callback.TestDDLCallback{Do: dom}
 	i := atomicutil.NewInt64(0)
@@ -240,7 +242,7 @@ func TestPauseAndResumeMain(t *testing.T) {
 	cancelWhenReorgNotStart := atomicutil.NewBool(false)
 	commandHook := func(job *model.Job) {
 		logger.Info("allPauseJobTestCase commandHook: " + job.String())
-		if testMatchCancelState(t, job, allPauseJobTestCase[i.Load()].jobState, allPauseJobTestCase[i.Load()].sql) && !isPaused.Load() {
+		if testutil.TestMatchCancelState(t, job, allPauseJobTestCase[i.Load()].jobState, allPauseJobTestCase[i.Load()].sql) && !isPaused.Load() {
 			logger.Info("allPauseJobTestCase commandHook: pass the check")
 			if !pauseWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				logger.Info("allPauseJobTestCase commandHook: reorg, return")
@@ -298,4 +300,194 @@ func TestPauseAndResumeMain(t *testing.T) {
 
 		// TODO: should add some check on Job during reorganization
 	}
+}
+
+func TestPauseJobWriteConflict(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+
+	tk1.MustExec("create table t(id int)")
+
+	var jobID int64
+	var pauseErr error
+	var pauseRS []sqlexec.RecordSet
+	hook := &callback.TestDDLCallback{Do: dom}
+	d := dom.DDL()
+	originalHook := d.GetHook()
+	d.SetHook(hook)
+	defer d.SetHook(originalHook)
+
+	// Test when pause cannot be retried and adding index succeeds.
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL", `return(true)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFailedCommandOnConcurencyDDL"))
+			}()
+
+			jobID = job.ID
+			stmt := fmt.Sprintf("admin pause ddl jobs %d", jobID)
+			pauseRS, pauseErr = tk2.Session().Execute(context.Background(), stmt)
+		}
+	}
+	tk1.MustExec("alter table t add index (id)")
+	require.EqualError(t, pauseErr, "mock failed admin command on ddl jobs")
+
+	var cancelRS []sqlexec.RecordSet
+	var cancelErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			jobID = job.ID
+			stmt := fmt.Sprintf("admin pause ddl jobs %d", jobID)
+			pauseRS, pauseErr = tk2.Session().Execute(context.Background(), stmt)
+
+			time.Sleep(5 * time.Second)
+			stmt = fmt.Sprintf("admin cancel ddl jobs %d", jobID)
+			cancelRS, cancelErr = tk2.Session().Execute(context.Background(), stmt)
+		}
+	}
+	tk1.MustGetErrCode("alter table t add index (id)", errno.ErrCancelledDDLJob)
+	require.NoError(t, pauseErr)
+	require.NoError(t, cancelErr)
+	result := tk2.ResultSetToResultWithCtx(context.Background(), pauseRS[0], "pause ddl job successfully")
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+	result = tk2.ResultSetToResultWithCtx(context.Background(), cancelRS[0], "cancel ddl job successfully")
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+}
+
+func TestPauseJobNegative(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(id int)")
+
+	d := dom.DDL()
+
+	var jobID int64
+	var pauseErr error
+	var jobErrs []error
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
+	d.SetHook(hook)
+	// Test when pause cannot be retried and adding index succeeds.
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
+			job.SchemaState == model.StateWriteReorganization {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockCommitFailedOnDDLCommand", `return(true)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockCommitFailedOnDDLCommand"))
+			}()
+			jobID = job.ID
+			jobErrs, pauseErr = ddl.PauseJobs(tk2.Session(), []int64{jobID})
+		}
+	}
+	tk1.MustExec("alter table t add index (id)")
+	require.EqualError(t, pauseErr, "mock commit failed on admin command on ddl jobs")
+	require.Len(t, jobErrs, 1)
+}
+
+func TestResumeJobPositive(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+
+	tk := testkit.NewTestKit(t, store)
+	tkCommand := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE if not exists t_user (
+        id int(11) NOT NULL AUTO_INCREMENT,
+        user varchar(128) NOT NULL,
+        name varchar(128) NOT NULL,
+        age int(11) NOT NULL,
+        province varchar(32) NOT NULL DEFAULT '',
+        city varchar(32) NOT NULL DEFAULT '',
+        phone varchar(16) NOT NULL DEFAULT '',
+        created_time datetime NOT NULL,
+        updated_time datetime NOT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`)
+
+	idx := 0
+	rowCount := 1000
+	tu := &TestTableUser{}
+	for idx < rowCount {
+		_ = tu.generateAttributes()
+		tk.MustExec(tu.insertStmt())
+
+		idx += 1
+	}
+
+	logger := logutil.BgLogger()
+	ddl.ReorgWaitTimeout = 10 * time.Millisecond
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 2")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	d := dom.DDL()
+
+	var jobID int64 = 0
+	var pauseErr error
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
+	d.SetHook(hook)
+
+	var pauseRS []sqlexec.RecordSet
+	var resumeRS []sqlexec.RecordSet
+	var resumeErr error
+	isPaused := false
+	// Test when pause cannot be retried and adding index succeeds.
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		logger.Info("OnJobRunAfterExported, before pause,", zap.Int("Job Type:", int(job.Type)),
+			zap.Int("Job State:", int(job.State)), zap.Int("Job Schema State:", int(job.SchemaState)))
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
+			job.SchemaState == model.StateWriteReorganization {
+			logger.Info("Paused by hook.OnGetJobAfterExported")
+			jobID = job.ID
+			stmt := fmt.Sprintf("admin pause ddl jobs %d", jobID)
+			pauseRS, pauseErr = tkCommand.Session().Execute(context.Background(), stmt)
+
+			isPaused = true
+		}
+	}
+
+	hook.OnGetJobBeforeExported = func(jobType string) {
+		if isPaused {
+			resumeFunc := func() {
+				time.Sleep(1 * time.Second)
+				// Only the 'OnGetJobBeforeExported' hook works for `resume`, but we can't get the job and its state in
+				// that hook. And it would be better to resume the job after 5s here, other than waiting in
+				// 'OnGetJobBeforeExported' since we should know that the job has been paused.
+				logger.Info("Resumed by hook.OnGetJobBeforeExported")
+				stmt := fmt.Sprintf("admin resume ddl jobs %d", jobID)
+				resumeRS, resumeErr = tkCommand.Session().Execute(context.Background(), stmt)
+			}
+
+			go resumeFunc()
+			isPaused = false
+		}
+	}
+
+	logger.Info("Main routing: create index...")
+	tk.MustExec("alter table t_user add index (name)")
+	logger.Info("Main routing: create index finished.")
+
+	require.NoError(t, pauseErr)
+	result := tkCommand.ResultSetToResultWithCtx(context.Background(), pauseRS[0], "pause ddl job successfully")
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+
+	require.NoError(t, resumeErr)
+	result = tkCommand.ResultSetToResultWithCtx(context.Background(), resumeRS[0], "resume ddl job successfully")
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+
+	logger.Info("TestResumeJobPositive finished.")
 }

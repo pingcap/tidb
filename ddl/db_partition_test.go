@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -401,12 +401,54 @@ func TestCreateTableWithHashPartition(t *testing.T) {
                                        PARTITION p0 VALUES LESS THAN (100),
                                        PARTITION p1 VALUES LESS THAN (200),
                                        PARTITION p2 VALUES LESS THAN MAXVALUE)`)
-	tk.MustGetErrCode("select * from t_sub partition (p0)", errno.ErrPartitionClauseOnNonpartitioned)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using RANGE partitioning"))
+	tk.MustQuery("select * from t_sub partition (p0)").Check(testkit.Rows())
+	tk.MustQuery("show create table t_sub").Check(testkit.Rows("" +
+		"t_sub CREATE TABLE `t_sub` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(128) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (200),\n" +
+		" PARTITION `p2` VALUES LESS THAN (MAXVALUE))"))
 
 	// Fix create partition table using extract() function as partition key.
 	tk.MustExec("create table t2 (a date, b datetime) partition by hash (EXTRACT(YEAR_MONTH FROM a)) partitions 7")
 	tk.MustExec("create table t3 (a int, b int) partition by hash(ceiling(a-b)) partitions 10")
 	tk.MustExec("create table t4 (a int, b int) partition by hash(floor(a-b)) partitions 10")
+}
+
+func TestSubPartitioning(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int) partition by range (a) subpartition by hash (a) subpartitions 2 (partition pMax values less than (maxvalue))`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using RANGE partitioning"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int) partition by list (a) subpartition by key (a) subpartitions 2 (partition pMax values in (1,3,4))`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using LIST partitioning"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `pMax` VALUES IN (1,3,4))"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustGetErrMsg(`create table t (a int) partition by hash (a) partitions 2 subpartition by key (a) subpartitions 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
+	tk.MustGetErrMsg(`create table t (a int) partition by key (a) partitions 2 subpartition by hash (a) subpartitions 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
+
+	tk.MustGetErrMsg(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY HASH(col1) PARTITIONS 4 SUBPARTITION BY HASH(col3) SUBPARTITIONS 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
+	tk.MustGetErrMsg(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY KEY(col1) PARTITIONS 4 SUBPARTITION BY KEY(col3) SUBPARTITIONS 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
 }
 
 func TestCreateTableWithRangeColumnPartition(t *testing.T) {
@@ -1547,7 +1589,7 @@ func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec(`CREATE TABLE t1 (id int, c varchar(128), key c(c)) partition by range (id) (
-		partition p0 values less than (10), 
+		partition p0 values less than (10),
 		partition p1 values less than MAXVALUE)`)
 	re := tk.MustQuery("show table t1 regions")
 	rows := re.Rows()

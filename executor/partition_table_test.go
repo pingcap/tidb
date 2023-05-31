@@ -536,6 +536,11 @@ func TestOrderByAndLimit(t *testing.T) {
 
 	// test indexLookUp with order property pushed down.
 	for i := 0; i < 100; i++ {
+		if i%2 == 0 {
+			tk.MustExec("set tidb_partition_prune_mode = `static-only`")
+		} else {
+			tk.MustExec("set tidb_partition_prune_mode = `dynamic-only`")
+		}
 		// explain select * from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select * from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
 		x := rand.Intn(1099)
@@ -553,9 +558,11 @@ func TestOrderByAndLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "IndexLookUp"))
 		require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "Limit"))
 		require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "IndexLookUp"))
-		require.False(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // fully pushed
-		require.False(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
-		require.False(t, tk.HasPlan(queryListPartitionWithLimitHint, "TopN"))
+		if i%2 != 0 {
+			require.False(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // fully pushed
+			require.False(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
+			require.False(t, tk.HasPlan(queryListPartitionWithLimitHint, "TopN"))
+		}
 		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
 		tk.MustQuery(queryRangePartitionWithLimitHint).Sort().Check(regularResult)
 		tk.MustQuery(queryHashPartitionWithLimitHint).Sort().Check(regularResult)
@@ -564,6 +571,11 @@ func TestOrderByAndLimit(t *testing.T) {
 
 	// test indexLookUp with order property pushed down.
 	for i := 0; i < 100; i++ {
+		if i%2 == 0 {
+			tk.MustExec("set tidb_partition_prune_mode = `static-only`")
+		} else {
+			tk.MustExec("set tidb_partition_prune_mode = `dynamic-only`")
+		}
 		// explain select * from t where b > {y}  use index(idx_b) order by b limit {x}; // check if IndexLookUp is used
 		// select * from t where b > {y} use index(idx_b) order by b limit {x}; // it can return the correct result
 		x := rand.Intn(1999)
@@ -579,14 +591,18 @@ func TestOrderByAndLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "IndexLookUp"))
 		require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "Limit"))
 		require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "IndexLookUp"))
-		require.False(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // fully pushed
-		require.False(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
-		require.False(t, tk.HasPlan(queryListPartitionWithLimitHint, "TopN"))
+		if i%2 != 0 {
+			require.False(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // fully pushed
+			require.False(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
+			require.False(t, tk.HasPlan(queryListPartitionWithLimitHint, "TopN"))
+		}
 		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
 		tk.MustQuery(queryRangePartitionWithLimitHint).Sort().Check(regularResult)
 		tk.MustQuery(queryHashPartitionWithLimitHint).Sort().Check(regularResult)
 		tk.MustQuery(queryListPartitionWithLimitHint).Sort().Check(regularResult)
 	}
+
+	tk.MustExec("set tidb_partition_prune_mode = default")
 
 	// test tableReader
 	for i := 0; i < 100; i++ {
@@ -803,6 +819,71 @@ func TestOrderByOnUnsignedPk(t *testing.T) {
 	tk.MustExec("insert into tunsigned_hash values(25), (9279808998424041135)")
 	tk.MustQuery("select min(a) from tunsigned_hash").Check(testkit.Rows("25"))
 	tk.MustQuery("select max(a) from tunsigned_hash").Check(testkit.Rows("9279808998424041135"))
+}
+
+func TestOrderByOnHandle(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/44266
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for i := 0; i < 2; i++ {
+		// indexLookUp + _tidb_rowid
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("CREATE TABLE `t`(" +
+			"`a` int(11) NOT NULL," +
+			"`b` int(11) DEFAULT NULL," +
+			"`c` int(11) DEFAULT NULL," +
+			"KEY `idx_b` (`b`)) PARTITION BY HASH (`a`) PARTITIONS 2;")
+		tk.MustExec("insert into t values (2,-1,3), (3,2,2), (1,1,1);")
+		if i == 1 {
+			tk.MustExec("analyze table t")
+		}
+		tk.MustQuery("select * from t use index(idx_b) order by b, _tidb_rowid limit 10;").Check(testkit.Rows("2 -1 3", "1 1 1", "3 2 2"))
+
+		// indexLookUp + pkIsHandle
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("CREATE TABLE `t`(" +
+			"`a` int(11) NOT NULL," +
+			"`b` int(11) DEFAULT NULL," +
+			"`c` int(11) DEFAULT NULL," +
+			"primary key(`a`)," +
+			"KEY `idx_b` (`b`)) PARTITION BY HASH (`a`) PARTITIONS 2;")
+		tk.MustExec("insert into t values (2,-1,3), (3,2,2), (1,1,1);")
+		if i == 1 {
+			tk.MustExec("analyze table t")
+		}
+		tk.MustQuery("select * from t use index(idx_b) order by b, a limit 10;").Check(testkit.Rows("2 -1 3", "1 1 1", "3 2 2"))
+
+		// indexMerge + _tidb_rowid
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("CREATE TABLE `t`(" +
+			"`a` int(11) NOT NULL," +
+			"`b` int(11) DEFAULT NULL," +
+			"`c` int(11) DEFAULT NULL," +
+			"KEY `idx_b` (`b`)," +
+			"KEY `idx_c` (`c`)) PARTITION BY HASH (`a`) PARTITIONS 2;")
+		tk.MustExec("insert into t values (2,-1,3), (3,2,2), (1,1,1);")
+		if i == 1 {
+			tk.MustExec("analyze table t")
+		}
+		tk.MustQuery("select * from t use index(idx_b, idx_c) where b = 1 or c = 2 order by _tidb_rowid limit 10;").Check(testkit.Rows("3 2 2", "1 1 1"))
+
+		// indexMerge + pkIsHandle
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("CREATE TABLE `t`(" +
+			"`a` int(11) NOT NULL," +
+			"`b` int(11) DEFAULT NULL," +
+			"`c` int(11) DEFAULT NULL," +
+			"KEY `idx_b` (`b`)," +
+			"KEY `idx_c` (`c`)," +
+			"PRIMARY KEY (`a`)) PARTITION BY HASH (`a`) PARTITIONS 2;")
+		tk.MustExec("insert into t values (2,-1,3), (3,2,2), (1,1,1);")
+		if i == 1 {
+			tk.MustExec("analyze table t")
+		}
+		tk.MustQuery("select * from t use index(idx_b, idx_c) where b = 1 or c = 2 order by a limit 10;").Check(testkit.Rows("1 1 1", "3 2 2"))
+	}
 }
 
 func TestBatchGetandPointGetwithHashPartition(t *testing.T) {

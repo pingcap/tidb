@@ -58,7 +58,7 @@ var (
 	_ LogicalPlan = &LogicalWindow{}
 )
 
-// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
+// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
 type JoinType int
 
 const (
@@ -1705,6 +1705,7 @@ type LogicalLimit struct {
 	Offset      uint64
 	Count       uint64
 	limitHints  limitHintInfo
+	IsPartial   bool
 }
 
 // GetPartitionBy returns partition by fields
@@ -2037,6 +2038,8 @@ type LogicalCTE struct {
 	cteName        model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
+
+	onlyUsedAsStorage bool
 }
 
 // LogicalCTETable is for CTE table
@@ -2058,4 +2061,23 @@ func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 		corCols = append(corCols, ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
 	}
 	return corCols
+}
+
+// LogicalSequence is used to mark the CTE producer in the main query tree.
+// Its last child is main query. The previous children are cte producers.
+// And there might be dependencies between the CTE producers:
+//
+//	Suppose that the sequence has 4 children, naming c0, c1, c2, c3.
+//	From the definition, c3 is the main query. c0, c1, c2 are CTE producers.
+//	It's possible that c1 references c0, c2 references c1 and c2.
+//	But it's no possible that c0 references c1 or c2.
+//
+// We use this property to do complex optimizations for CTEs.
+type LogicalSequence struct {
+	baseLogicalPlan
+}
+
+// Schema returns its last child(which is the main query plan)'s schema.
+func (p *LogicalSequence) Schema() *expression.Schema {
+	return p.children[len(p.children)-1].Schema()
 }

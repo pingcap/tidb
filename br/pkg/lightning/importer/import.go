@@ -27,11 +27,9 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
-	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -52,12 +50,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -231,6 +227,7 @@ type Controller struct {
 	preInfoGetter       PreImportInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
 	encBuilder          encode.EncodingBuilder
+	tikvModeSwitcher    local.TiKVModeSwitcher
 
 	keyspaceName string
 }
@@ -458,6 +455,7 @@ func NewImportControllerWithPauser(
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
 		encBuilder:          encodingBuilder,
+		tikvModeSwitcher:    local.NewTiKVModeSwitcher(tls, cfg.TiDB.PdAddr, log.FromContext(ctx).Logger),
 
 		keyspaceName: p.KeyspaceName,
 	}
@@ -1171,12 +1169,12 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 
 	var switchModeChan <-chan time.Time
 	// tidb backend don't need to switch tikv to import mode
-	if rc.cfg.TikvImporter.Backend != config.BackendTiDB && rc.cfg.Cron.SwitchMode.Duration > 0 {
+	if isLocalBackend(rc.cfg) && rc.cfg.Cron.SwitchMode.Duration > 0 {
 		switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 		cancelFuncs = append(cancelFuncs, func(bool) { switchModeTicker.Stop() })
 		cancelFuncs = append(cancelFuncs, func(do bool) {
 			if do {
-				rc.switchToNormalMode(ctx)
+				rc.tikvModeSwitcher.ToNormalMode(ctx)
 			}
 		})
 		switchModeChan = switchModeTicker.C
@@ -1196,8 +1194,8 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					f()
 				}
 			}()
-			if rc.cfg.Cron.SwitchMode.Duration > 0 {
-				rc.switchToImportMode(ctx)
+			if rc.cfg.Cron.SwitchMode.Duration > 0 && isLocalBackend(rc.cfg) {
+				rc.tikvModeSwitcher.ToImportMode(ctx)
 			}
 			start := time.Now()
 			for {
@@ -1211,7 +1209,8 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 
 				case <-switchModeChan:
 					// periodically switch to import mode, as requested by TiKV 3.0
-					rc.switchToImportMode(ctx)
+					// TiKV will switch back to normal mode if we didn't call this again within 10 minutes
+					rc.tikvModeSwitcher.ToImportMode(ctx)
 
 				case <-logProgressChan:
 					metrics, ok := metric.FromContext(ctx)
@@ -1547,13 +1546,6 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			return errors.Trace(err)
 		}
 		defer undo()
-
-		// Drop all secondary indexes before restore.
-		if rc.cfg.TikvImporter.AddIndexBySQL {
-			if err := rc.dropAllIndexes(ctx); err != nil {
-				return err
-			}
-		}
 	}
 
 	type task struct {
@@ -1767,77 +1759,6 @@ func (rc *Controller) registerTaskToPD(ctx context.Context) (undo func(), _ erro
 	return undo, nil
 }
 
-func (rc *Controller) dropAllIndexes(ctx context.Context) error {
-	for _, dbInfo := range rc.dbInfos {
-		for _, tblInfo := range dbInfo.Tables {
-			if err := rc.dropTableIndexes(ctx, tblInfo); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (rc *Controller) dropTableIndexes(ctx context.Context, tblInfo *checkpoints.TidbTableInfo) error {
-	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
-	logger := log.FromContext(ctx).With(zap.String("table", tableName))
-
-	var remainIndexes []*model.IndexInfo
-	cols := tblInfo.Core.Columns
-loop:
-	for _, idxInfo := range tblInfo.Core.Indices {
-		if idxInfo.State != model.StatePublic {
-			remainIndexes = append(remainIndexes, idxInfo)
-			continue
-		}
-		// Primary key is a cluster index.
-		if idxInfo.Primary && tblInfo.Core.HasClusteredIndex() {
-			remainIndexes = append(remainIndexes, idxInfo)
-			continue
-		}
-		// Skip index that contains auto-increment column.
-		// Because auto colum must be defined as a key.
-		for _, idxCol := range idxInfo.Columns {
-			flag := cols[idxCol.Offset].GetFlag()
-			if mysql.HasAutoIncrementFlag(flag) {
-				remainIndexes = append(remainIndexes, idxInfo)
-				continue loop
-			}
-		}
-
-		var sqlStr string
-		if idxInfo.Primary {
-			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tableName)
-		} else {
-			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tableName, common.EscapeIdentifier(idxInfo.Name.O))
-		}
-
-		logger.Info("drop index", zap.String("sql", sqlStr))
-		exec := common.SQLWithRetry{
-			DB:     rc.db,
-			Logger: logger,
-		}
-
-		if err := exec.Exec(ctx, "drop index", sqlStr); err != nil {
-			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
-				switch merr.Number {
-				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
-					remainIndexes = append(remainIndexes, idxInfo)
-					logger.Info("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
-					continue loop
-				}
-			}
-			return common.ErrDropIndexFailed.Wrap(err).GenWithStackByArgs(common.EscapeIdentifier(idxInfo.Name.O), tableName)
-		}
-	}
-	if len(remainIndexes) < len(tblInfo.Core.Indices) {
-		// Must clone (*model.TableInfo) before modifying it, since it may be referenced in other place.
-		tblInfo.Core = tblInfo.Core.Clone()
-		tblInfo.Core.Indices = remainIndexes
-	}
-	return nil
-}
-
 func addExtendDataForCheckpoint(
 	ctx context.Context,
 	cfg *config.Config,
@@ -1916,45 +1837,6 @@ func (rc *Controller) doCompact(ctx context.Context, level int32) error {
 		tikv.StoreStateDisconnected,
 		func(c context.Context, store *tikv.Store) error {
 			return tikv.Compact(c, tls, store.Address, level)
-		},
-	)
-}
-
-func (rc *Controller) switchToImportMode(ctx context.Context) {
-	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import)
-}
-
-func (rc *Controller) switchToNormalMode(ctx context.Context) {
-	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
-}
-
-func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
-	// // tidb backend don't need to switch tikv to import mode
-	if isTiDBBackend(rc.cfg) {
-		return
-	}
-
-	log.FromContext(ctx).Info("switch import mode", zap.Stringer("mode", mode))
-
-	// It is fine if we miss some stores which did not switch to Import mode,
-	// since we're running it periodically, so we exclude disconnected stores.
-	// But it is essential all stores be switched back to Normal mode to allow
-	// normal operation.
-	var minState tikv.StoreState
-	if mode == sstpb.SwitchMode_Import {
-		minState = tikv.StoreStateOffline
-	} else {
-		minState = tikv.StoreStateDisconnected
-	}
-	tls := rc.tls.WithHost(rc.cfg.TiDB.PdAddr)
-	// we ignore switch mode failure since it is not fatal.
-	// no need log the error, it is done in kv.SwitchMode already.
-	_ = tikv.ForAllStores(
-		ctx,
-		tls,
-		minState,
-		func(c context.Context, store *tikv.Store) error {
-			return tikv.SwitchMode(c, tls, store.Address, mode)
 		},
 	)
 }

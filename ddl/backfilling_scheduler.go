@@ -298,7 +298,7 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	b.backendCtx = bc
 	mgr := bc.GetCheckpointManager()
 	if mgr != nil {
-		mgr.Reset(b.tbl.GetPhysicalID())
+		mgr.Reset(b.tbl.GetPhysicalID(), b.reorgInfo.StartKey, b.reorgInfo.EndKey)
 		b.checkpointMgr = mgr
 	}
 	copReqSenderPool, err := b.createCopReqSenderPool()
@@ -331,6 +331,7 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		b.writerPool.ReleaseAndWait()
 	}
 	if b.checkpointMgr != nil {
+		b.checkpointMgr.Sync()
 		// Get the latest status after all workers are closed so that the result is more accurate.
 		cnt, nextKey := b.checkpointMgr.Status()
 		b.resultCh <- &backfillResult{

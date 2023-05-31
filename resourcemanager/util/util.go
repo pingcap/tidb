@@ -25,7 +25,7 @@ var (
 	MinSchedulerInterval = atomic.NewDuration(200 * time.Millisecond)
 
 	// MaxOverclockCount is the maximum number of overclock goroutine.
-	MaxOverclockCount = 1
+	MaxOverclockCount = int32(1)
 )
 
 // GoroutinePool is a pool interface
@@ -36,6 +36,7 @@ type GoroutinePool interface {
 	Cap() int32
 	Running() int32
 	Name() string
+	GetOriginConcurrency() int32
 }
 
 // PoolContainer is a pool container

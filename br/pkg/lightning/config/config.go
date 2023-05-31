@@ -39,6 +39,7 @@ import (
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/mathutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	router "github.com/pingcap/tidb/util/table-router"
 	"go.uber.org/atomic"
@@ -70,7 +71,10 @@ const (
 	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint
 	ErrorOnDup = "error"
 
-	KVWriteBatchSize        = 32768
+	KVWriteBatchCount = 32768
+	// KVWriteBatchSize batch size when write to TiKV.
+	// this is the default value of linux send buffer size(net.ipv4.tcp_wmem) too.
+	KVWriteBatchSize        = 16 * units.KiB
 	DefaultRangeConcurrency = 16
 
 	defaultDistSQLScanConcurrency     = 15
@@ -79,10 +83,13 @@ const (
 	defaultChecksumTableConcurrency   = 2
 	DefaultTableConcurrency           = 6
 	defaultIndexConcurrency           = 2
+	DefaultRegionCheckBackoffLimit    = 1800
+	DefaultRegionSplitBatchSize       = 4096
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName     = "lightning_metadata"
 	defaultTaskInfoSchemaName = "lightning_task_info"
+	defaultMaxErrorRecords    = 100
 
 	// autoDiskQuotaLocalReservedSpeed is the estimated size increase per
 	// millisecond per write thread the local backend may gain on all engines.
@@ -98,6 +105,8 @@ const (
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
+
+	DefaultSwitchTiKVModeInterval = 5 * time.Minute
 )
 
 var (
@@ -197,6 +206,7 @@ type Lightning struct {
 	MetaSchemaName    string `toml:"meta-schema-name" json:"meta-schema-name"`
 
 	MaxError           MaxError `toml:"max-error" json:"max-error"`
+	MaxErrorRecords    int64    `toml:"max-error-records" json:"max-error-records"`
 	TaskInfoSchemaName string   `toml:"task-info-schema-name" json:"task-info-schema-name"`
 }
 
@@ -738,21 +748,25 @@ type FileRouteRule struct {
 // TikvImporter is the config for tikv-importer.
 type TikvImporter struct {
 	// Deprecated: only used to keep the compatibility.
-	Addr                string                       `toml:"addr" json:"addr"`
-	Backend             string                       `toml:"backend" json:"backend"`
-	OnDuplicate         string                       `toml:"on-duplicate" json:"on-duplicate"`
-	MaxKVPairs          int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
-	SendKVPairs         int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
-	CompressKVPairs     CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
-	RegionSplitSize     ByteSize                     `toml:"region-split-size" json:"region-split-size"`
-	RegionSplitKeys     int                          `toml:"region-split-keys" json:"region-split-keys"`
-	SortedKVDir         string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
-	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
-	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
-	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
-	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
-	KeyspaceName        string                       `toml:"keyspace-name" json:"keyspace-name"`
-	AddIndexBySQL       bool                         `toml:"add-index-by-sql" json:"add-index-by-sql"`
+	Addr                    string                       `toml:"addr" json:"addr"`
+	Backend                 string                       `toml:"backend" json:"backend"`
+	OnDuplicate             string                       `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs              int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	SendKVPairs             int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	SendKVSize              ByteSize                     `toml:"send-kv-size" json:"send-kv-size"`
+	CompressKVPairs         CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
+	RegionSplitSize         ByteSize                     `toml:"region-split-size" json:"region-split-size"`
+	RegionSplitKeys         int                          `toml:"region-split-keys" json:"region-split-keys"`
+	RegionSplitBatchSize    int                          `toml:"region-split-batch-size" json:"region-split-batch-size"`
+	RegionSplitConcurrency  int                          `toml:"region-split-concurrency" json:"region-split-concurrency"`
+	RegionCheckBackoffLimit int                          `toml:"region-check-backoff-limit" json:"region-check-backoff-limit"`
+	SortedKVDir             string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	DiskQuota               ByteSize                     `toml:"disk-quota" json:"disk-quota"`
+	RangeConcurrency        int                          `toml:"range-concurrency" json:"range-concurrency"`
+	DuplicateResolution     DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	IncrementalImport       bool                         `toml:"incremental-import" json:"incremental-import"`
+	KeyspaceName            string                       `toml:"keyspace-name" json:"keyspace-name"`
+	AddIndexBySQL           bool                         `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -900,7 +914,6 @@ func NewConfig() *Config {
 			IOConcurrency:     5,
 			CheckRequirements: true,
 			MaxError: MaxError{
-				Charset:  *atomic.NewInt64(math.MaxInt64),
 				Conflict: *atomic.NewInt64(math.MaxInt64),
 			},
 			TaskInfoSchemaName: defaultTaskInfoSchemaName,
@@ -920,7 +933,7 @@ func NewConfig() *Config {
 			ChecksumTableConcurrency:   defaultChecksumTableConcurrency,
 		},
 		Cron: Cron{
-			SwitchMode:     Duration{Duration: 5 * time.Minute},
+			SwitchMode:     Duration{Duration: DefaultSwitchTiKVModeInterval},
 			LogProgress:    Duration{Duration: 5 * time.Minute},
 			CheckDiskQuota: Duration{Duration: 1 * time.Minute},
 		},
@@ -944,14 +957,17 @@ func NewConfig() *Config {
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
-			Backend:               "",
-			OnDuplicate:           ReplaceOnDup,
-			MaxKVPairs:            4096,
-			SendKVPairs:           KVWriteBatchSize,
-			RegionSplitSize:       0,
-			DiskQuota:             ByteSize(math.MaxInt64),
-			DuplicateResolution:   DupeResAlgNone,
-			PausePDSchedulerScope: PausePDSchedulerScopeTable,
+			Backend:                 "",
+			MaxKVPairs:              4096,
+			SendKVPairs:             KVWriteBatchCount,
+			SendKVSize:              KVWriteBatchSize,
+			RegionSplitSize:         0,
+			RegionSplitBatchSize:    DefaultRegionSplitBatchSize,
+			RegionSplitConcurrency:  runtime.GOMAXPROCS(0),
+			RegionCheckBackoffLimit: DefaultRegionCheckBackoffLimit,
+			DiskQuota:               ByteSize(math.MaxInt64),
+			DuplicateResolution:     DupeResAlgNone,
+			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
@@ -1181,41 +1197,47 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 		cfg.PostRestore.Checksum = OpLevelOff
 		cfg.PostRestore.Analyze = OpLevelOff
 		cfg.PostRestore.Compact = false
+		if cfg.TikvImporter.OnDuplicate == "" {
+			cfg.TikvImporter.OnDuplicate = ReplaceOnDup
+		}
+		cfg.TikvImporter.DuplicateResolution = DupeResAlgNone
 	case BackendLocal:
+		if cfg.TikvImporter.RegionSplitBatchSize <= 0 {
+			return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack("`tikv-importer.region-split-batch-size` got %d, should be larger than 0", cfg.TikvImporter.RegionSplitBatchSize)
+		}
+		if cfg.TikvImporter.RegionSplitConcurrency <= 0 {
+			return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack("`tikv-importer.region-split-concurrency` got %d, should be larger than 0", cfg.TikvImporter.RegionSplitConcurrency)
+		}
 		// RegionConcurrency > NumCPU is meaningless.
 		cpuCount := runtime.NumCPU()
 		if cfg.App.RegionConcurrency > cpuCount {
 			cfg.App.RegionConcurrency = cpuCount
 		}
 		cfg.DefaultVarsForImporterAndLocalBackend()
+		if err := cfg.CheckAndAdjustForLocalBackend(); err != nil {
+			return mustHaveInternalConnections, err
+		}
 	default:
 		return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack("unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
 	}
 
-	// TODO calculate these from the machine's free memory.
-	if cfg.TikvImporter.EngineMemCacheSize == 0 {
-		cfg.TikvImporter.EngineMemCacheSize = DefaultEngineMemCacheSize
-	}
-	if cfg.TikvImporter.LocalWriterMemCacheSize == 0 {
-		cfg.TikvImporter.LocalWriterMemCacheSize = DefaultLocalWriterMemCacheSize
+	if cfg.App.MaxErrorRecords == 0 {
+		maxErr := cfg.App.MaxError
+		// Compatible with the old behavior that records all syntax,charset,type errors.
+		maxAccepted := mathutil.Max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
+		if maxAccepted > defaultMaxErrorRecords {
+			cfg.App.MaxErrorRecords = maxAccepted
+		} else {
+			cfg.App.MaxErrorRecords = defaultMaxErrorRecords
+		}
 	}
 
-	if cfg.TikvImporter.Backend == BackendLocal {
-		if err := cfg.CheckAndAdjustForLocalBackend(); err != nil {
-			return mustHaveInternalConnections, err
-		}
-	} else {
-		cfg.TikvImporter.DuplicateResolution = DupeResAlgNone
-	}
-
-	if cfg.TikvImporter.Backend == BackendTiDB {
-		cfg.TikvImporter.OnDuplicate = strings.ToLower(cfg.TikvImporter.OnDuplicate)
-		switch cfg.TikvImporter.OnDuplicate {
-		case ReplaceOnDup, IgnoreOnDup, ErrorOnDup:
-		default:
-			return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack(
-				"unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
-		}
+	cfg.TikvImporter.OnDuplicate = strings.ToLower(cfg.TikvImporter.OnDuplicate)
+	switch cfg.TikvImporter.OnDuplicate {
+	case ReplaceOnDup, IgnoreOnDup, ErrorOnDup, "":
+	default:
+		return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack(
+			"unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
 	}
 
 	var err error
@@ -1232,9 +1254,25 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 
 // CheckAndAdjustForLocalBackend checks and adjusts the configurations for local backend.
 func (cfg *Config) CheckAndAdjustForLocalBackend() error {
+	if cfg.TikvImporter.EngineMemCacheSize == 0 {
+		cfg.TikvImporter.EngineMemCacheSize = DefaultEngineMemCacheSize
+	}
+	if cfg.TikvImporter.LocalWriterMemCacheSize == 0 {
+		cfg.TikvImporter.LocalWriterMemCacheSize = DefaultLocalWriterMemCacheSize
+	}
+
 	if cfg.TikvImporter.IncrementalImport && cfg.TikvImporter.AddIndexBySQL {
 		return common.ErrInvalidConfig.
 			GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
+	}
+
+	if cfg.TikvImporter.IncrementalImport && cfg.TikvImporter.OnDuplicate != "" {
+		return common.ErrInvalidConfig.
+			GenWithStack("tikv-importer.on-duplicate cannot be used with tikv-importer.incremental-import")
+	}
+	if cfg.TikvImporter.DuplicateResolution != DupeResAlgNone && cfg.TikvImporter.OnDuplicate != "" {
+		return common.ErrInvalidConfig.
+			GenWithStack("tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution")
 	}
 
 	if len(cfg.TikvImporter.SortedKVDir) == 0 {
