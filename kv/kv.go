@@ -579,6 +579,8 @@ type Request struct {
 	// StoreBusyThreshold is the threshold for the store to return ServerIsBusy
 	StoreBusyThreshold time.Duration
 
+	RunawayChecker *RunawayChecker
+
 	// ConnID stores the session connection id.
 	ConnID uint64
 }

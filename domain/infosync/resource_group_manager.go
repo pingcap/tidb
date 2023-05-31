@@ -24,14 +24,14 @@ import (
 	pd "github.com/tikv/pd/client"
 )
 
-type mockResourceGroupManager struct {
+type mockResourceManagerClient struct {
 	sync.RWMutex
 	groups map[string]*rmpb.ResourceGroup
 }
 
-// NewMockResourceGroupManager return a mock ResourceManagerClient for test usage.
-func NewMockResourceGroupManager() pd.ResourceManagerClient {
-	mockMgr := &mockResourceGroupManager{
+// NewMockResourceManagerClient return a mock ResourceManagerClient for test usage.
+func NewMockResourceManagerClient() pd.ResourceManagerClient {
+	mockMgr := &mockResourceManagerClient{
 		groups: make(map[string]*rmpb.ResourceGroup),
 	}
 	mockMgr.groups["default"] = &rmpb.ResourceGroup{
@@ -50,9 +50,9 @@ func NewMockResourceGroupManager() pd.ResourceManagerClient {
 	return mockMgr
 }
 
-var _ pd.ResourceManagerClient = (*mockResourceGroupManager)(nil)
+var _ pd.ResourceManagerClient = (*mockResourceManagerClient)(nil)
 
-func (m *mockResourceGroupManager) ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
+func (m *mockResourceManagerClient) ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
 	m.RLock()
 	defer m.RUnlock()
 	groups := make([]*rmpb.ResourceGroup, 0, len(m.groups))
@@ -62,7 +62,7 @@ func (m *mockResourceGroupManager) ListResourceGroups(ctx context.Context) ([]*r
 	return groups, nil
 }
 
-func (m *mockResourceGroupManager) GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, error) {
+func (m *mockResourceManagerClient) GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, error) {
 	m.RLock()
 	defer m.RUnlock()
 	group, ok := m.groups[name]
@@ -72,7 +72,7 @@ func (m *mockResourceGroupManager) GetResourceGroup(ctx context.Context, name st
 	return group, nil
 }
 
-func (m *mockResourceGroupManager) AddResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
+func (m *mockResourceManagerClient) AddResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
 	m.Lock()
 	defer m.Unlock()
 	if _, ok := m.groups[group.Name]; ok {
@@ -82,24 +82,24 @@ func (m *mockResourceGroupManager) AddResourceGroup(ctx context.Context, group *
 	return "Success!", nil
 }
 
-func (m *mockResourceGroupManager) ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
+func (m *mockResourceManagerClient) ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
 	m.Lock()
 	defer m.Unlock()
 	m.groups[group.Name] = group
 	return "Success!", nil
 }
 
-func (m *mockResourceGroupManager) DeleteResourceGroup(ctx context.Context, name string) (string, error) {
+func (m *mockResourceManagerClient) DeleteResourceGroup(ctx context.Context, name string) (string, error) {
 	m.Lock()
 	defer m.Unlock()
 	delete(m.groups, name)
 	return "Success!", nil
 }
 
-func (m *mockResourceGroupManager) AcquireTokenBuckets(ctx context.Context, request *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
+func (m *mockResourceManagerClient) AcquireTokenBuckets(ctx context.Context, request *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
 	return nil, nil
 }
 
-func (m *mockResourceGroupManager) WatchResourceGroup(ctx context.Context, revision int64) (chan []*rmpb.ResourceGroup, error) {
+func (m *mockResourceManagerClient) WatchResourceGroup(ctx context.Context, revision int64) (chan []*rmpb.ResourceGroup, error) {
 	return nil, nil
 }

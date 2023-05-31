@@ -121,7 +121,7 @@ type InfoSyncer struct {
 	placementManager      PlacementManager
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
-	resourceGroupManager  pd.ResourceManagerClient
+	resourceManagerClient  pd.ResourceManagerClient
 }
 
 // ServerInfo is server static information.
@@ -213,7 +213,7 @@ func GlobalInfoSyncerInit(
 	is.placementManager = initPlacementManager(etcdCli)
 	is.scheduleManager = initScheduleManager(etcdCli)
 	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli, codec)
-	is.resourceGroupManager = initResourceGroupManager(pdCli)
+	is.resourceManagerClient = initResourceManagerClient(pdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -258,10 +258,10 @@ func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
 	return &PDPlacementManager{etcdCli: etcdCli}
 }
 
-func initResourceGroupManager(pdCli pd.Client) (cli pd.ResourceManagerClient) {
+func initResourceManagerClient(pdCli pd.Client) (cli pd.ResourceManagerClient) {
 	cli = pdCli
 	if pdCli == nil {
-		cli = NewMockResourceGroupManager()
+		cli = NewMockResourceManagerClient()
 	}
 	failpoint.Inject("managerAlreadyCreateSomeGroups", func(val failpoint.Value) {
 		if val.(bool) {
@@ -629,7 +629,7 @@ func GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, er
 		return nil, err
 	}
 
-	return is.resourceGroupManager.GetResourceGroup(ctx, name)
+	return is.resourceManagerClient.GetResourceGroup(ctx, name)
 }
 
 // ListResourceGroups is used to get all resource groups from resource manager.
@@ -639,7 +639,7 @@ func ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
 		return nil, err
 	}
 
-	return is.resourceGroupManager.ListResourceGroups(ctx)
+	return is.resourceManagerClient.ListResourceGroups(ctx)
 }
 
 // AddResourceGroup is used to create one specific resource group to resource manager.
@@ -648,7 +648,7 @@ func AddResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
 	if err != nil {
 		return err
 	}
-	_, err = is.resourceGroupManager.AddResourceGroup(ctx, group)
+	_, err = is.resourceManagerClient.AddResourceGroup(ctx, group)
 	return err
 }
 
@@ -658,7 +658,7 @@ func ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
 	if err != nil {
 		return err
 	}
-	_, err = is.resourceGroupManager.ModifyResourceGroup(ctx, group)
+	_, err = is.resourceManagerClient.ModifyResourceGroup(ctx, group)
 	return err
 }
 
@@ -668,7 +668,7 @@ func DeleteResourceGroup(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	_, err = is.resourceGroupManager.DeleteResourceGroup(ctx, name)
+	_, err = is.resourceManagerClient.DeleteResourceGroup(ctx, name)
 	return err
 }
 
@@ -1343,6 +1343,14 @@ func GetEtcdClient() *clientv3.Client {
 		return nil
 	}
 	return is.etcdCli
+}
+
+func GetresourceManagerClient() pd.ResourceManagerClient {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil
+	}
+	return is.resourceManagerClient
 }
 
 // GetPDScheduleConfig gets the schedule information from pd

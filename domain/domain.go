@@ -141,6 +141,7 @@ type Domain struct {
 	// It must be used when the etcd path isn't needed to separate by keyspace.
 	// See keyspace RFC: https://github.com/pingcap/tidb/pull/39685
 	unprefixedEtcdCli       *clientv3.Client
+	runawayManager 			*util2.RunawayManager
 	sysVarCache             sysVarCache // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
 	expensiveQueryHandle    *expensivequery.Handle
@@ -1903,6 +1904,14 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 		}
 		do.planReplayerHandle.planReplayerTaskDumpHandle.workers = append(do.planReplayerHandle.planReplayerTaskDumpHandle.workers, worker)
 	}
+}
+
+func (do *Domain) SetRunawayManager(runawayManager *runaway.RunawayManager) {
+	do.runawayManager = runawayManager
+}
+
+func (do *Domain) RunawayManager() *runaway.RunawayManager {
+	return do.runawayManager
 }
 
 // SetupHistoricalStatsWorker setups worker
