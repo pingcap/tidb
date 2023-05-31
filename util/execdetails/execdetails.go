@@ -76,7 +76,7 @@ type P90Summary struct {
 	BackoffInfo map[string]*P90BackoffSummary
 }
 
-// MaxDetailNumsForP90 is the max number of details to keep for P90 for one query.
+// MaxDetailsNumsForOneQuery is the max number of details to keep for P90 for one query.
 const MaxDetailsNumsForOneQuery = 1000
 
 // Reset resets all fields in DetailsNeedP90Summary.
@@ -408,16 +408,21 @@ type basicCopRuntimeStats struct {
 	procTimes  Percentile[time.Duration]
 }
 
+// Percentile is a struct to calculate the percentile of a series of values.
 type Percentile[valueType time.Duration | int64] struct {
-	values []valueType
+	values   []valueType
+	size     int
+	isSorted bool
+
 	minVal valueType
 	maxVal valueType
 	sumVal float64
 	dt     *tdigest.TDigest
-	size   int
 }
 
+// Add adds a value to calculate the percentile.
 func (p *Percentile[valueType]) Add(value valueType) {
+	p.isSorted = false
 	p.sumVal += float64(value)
 	p.size++
 	if p.dt == nil && len(p.values) == 0 {
@@ -445,22 +450,31 @@ func (p *Percentile[valueType]) Add(value valueType) {
 	p.dt.Add((float64)(value), 1)
 }
 
+// GetPercentile returns the percentile `f` of the values.
 func (p *Percentile[valueType]) GetPercentile(f float64) valueType {
 	if p.dt == nil {
+		if !p.isSorted {
+			p.isSorted = true
+			slices.Sort[valueType](p.values)
+		}
 		return p.values[int(float64(len(p.values))*f)]
 	}
 	return valueType(p.dt.Quantile(f))
 }
 
+// GetMax returns the max value.
 func (p *Percentile[valueType]) GetMax() valueType {
 	return p.maxVal
 }
 
+// GetMin returns the min value.
 func (p *Percentile[valueType]) GetMin() valueType {
 	return p.minVal
 }
 
+// MergePercentile merges two Percentile.
 func (p *Percentile[valueType]) MergePercentile(p2 *Percentile[valueType]) {
+	p.isSorted = false
 	if p2.dt == nil {
 		for _, v := range p2.values {
 			p.Add(v)
@@ -480,10 +494,12 @@ func (p *Percentile[valueType]) MergePercentile(p2 *Percentile[valueType]) {
 	p.dt.AddCentroidList(p2.dt.Centroids())
 }
 
+// Size returns the size of the values.
 func (p *Percentile[valueType]) Size() int {
 	return p.size
 }
 
+// Sum returns the sum of the values.
 func (p *Percentile[valueType]) Sum() float64 {
 	return p.sumVal
 }
