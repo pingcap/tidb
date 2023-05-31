@@ -1594,6 +1594,9 @@ func (n *CreateResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteName(n.ResourceGroupName.O)
 	for i, option := range n.ResourceGroupOptionList {
+		if i > 0 {
+			ctx.WritePlain(",")
+		}
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while splicing CreateResourceGroupStmt Option: [%v]", i)
@@ -2160,7 +2163,8 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("BURSTABLE")
 		case ResourceGroupRunaway:
 			if len(n.ResourceGroupRunawayOptionList) > 0 {
-				ctx.WritePlain("QUERY_LIMIT=(")
+				ctx.WriteKeyWord("QUERY_LIMIT")
+				ctx.WritePlain(" = (")
 				for i, option := range n.ResourceGroupRunawayOptionList {
 					if i > 0 {
 						ctx.WritePlain(" ")
@@ -2204,10 +2208,12 @@ func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 		case RunawayAction:
 			ctx.WriteKeyWord("ACTION ")
+			ctx.WritePlain("= ")
 			ctx.WriteKeyWord(model.RunawayActionValueToName(n.IntValue))
 		case RunawayWatch:
 			ctx.WriteKeyWord("WATCH ")
-			ctx.WriteKeyWord(model.RunawayWatchValueToName(n.IntValue))
+			ctx.WritePlain("= ")
+			ctx.WriteKeyWord(model.RunawayWatchType(n.IntValue).String())
 			ctx.WritePlain(" ")
 			ctx.WriteKeyWord("DURATION ")
 			ctx.WritePlain("= ")
@@ -4531,15 +4537,12 @@ func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteName(n.ResourceGroupName.O)
 	for i, option := range n.ResourceGroupOptionList {
+		if i > 0 {
+			ctx.WritePlain(",")
+		}
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while splicing AlterResourceGroupStmt Options: [%v]", i)
-		}
-	}
-	for i, option := range n.ResourceGroupRunawayOptionList {
-		ctx.WritePlain(" ")
-		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing AlterResourceGroupStmt TableOption: [%v]", i)
 		}
 	}
 	return nil

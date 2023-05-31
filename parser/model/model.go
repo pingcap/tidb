@@ -1874,8 +1874,8 @@ const (
 )
 
 // RunawayWatchValueToName converts the runaway watch value to corresponding name
-func RunawayWatchValueToName(value int32) string {
-	switch RunawayWatchType(value) {
+func (t RunawayWatchType) String() string {
+	switch t {
 	case WatchExact:
 		return "EXACT"
 	case WatchSimilar:
