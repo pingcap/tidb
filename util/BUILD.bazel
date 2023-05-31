@@ -8,6 +8,7 @@ go_library(
         "errors.go",
         "etcd.go",
         "gogc.go",
+        "id_generator.go",
         "misc.go",
         "prefix_helper.go",
         "printer.go",
