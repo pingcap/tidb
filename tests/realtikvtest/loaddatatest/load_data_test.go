@@ -21,16 +21,20 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/golang/mock/gomock"
 	"github.com/ngaut/pools"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -38,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -848,4 +854,90 @@ func (s *mockGCSSuite) TestImportMode() {
 	err := s.tk.ExecToErr(sql)
 	s.Error(err)
 	s.Greater(intoNormalTime, intoImportTime)
+}
+
+func (s *mockGCSSuite) TestRegisterTask() {
+	var registerTime, unregisterTime time.Time
+	var taskID atomic.String
+	controller := gomock.NewController(s.T())
+	taskRegister := mock.NewMockTaskRegister(controller)
+	mockedRegister := func(ctx context.Context) error {
+		log.L().Info("register task", zap.String("task_id", taskID.Load()))
+		registerTime = time.Now()
+		return nil
+	}
+	mockedClose := func(ctx context.Context) error {
+		log.L().Info("unregister task", zap.String("task_id", taskID.Load()))
+		unregisterTime = time.Now()
+		return nil
+	}
+	taskRegister.EXPECT().RegisterTaskOnce(gomock.Any()).DoAndReturn(mockedRegister).Times(1)
+	taskRegister.EXPECT().Close(gomock.Any()).DoAndReturn(mockedClose).Times(1)
+	backup := loaddata.NewTaskRegisterWithTTL
+	loaddata.NewTaskRegisterWithTTL = func(_ *clientv3.Client, _ time.Duration, _ utils.RegisterTaskType, name string) utils.TaskRegister {
+		// we use taskID as the task name
+		taskID.Store(name)
+		return taskRegister
+	}
+	s.T().Cleanup(func() {
+		loaddata.NewTaskRegisterWithTTL = backup
+	})
+
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
+	s.tk.MustExec("CREATE DATABASE load_data;")
+	s.tk.MustExec(`CREATE TABLE load_data.register_task (a INT, b INT, c int);`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "register_task-1.tsv"},
+		Content:     []byte("1,11,111"),
+	})
+
+	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
+	// better start a cluster without TiDB instance.
+	sql := fmt.Sprintf(`IMPORT INTO load_data.register_task FROM 'gs://test-load/register_task-*.tsv?endpoint=%s'`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM load_data.register_task;").Sort().Check(testkit.Rows("1 11 111"))
+	s.Greater(unregisterTime, registerTime)
+
+	// on error, we should also unregister the task
+	registerTime, unregisterTime = time.Time{}, time.Time{}
+	taskRegister.EXPECT().RegisterTaskOnce(gomock.Any()).DoAndReturn(mockedRegister).Times(1)
+	taskRegister.EXPECT().Close(gomock.Any()).DoAndReturn(mockedClose).Times(1)
+	s.tk.MustExec("truncate table load_data.register_task;")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk", "return(true)")
+	err := s.tk.ExecToErr(sql)
+	s.Error(err)
+	s.Greater(unregisterTime, registerTime)
+
+	loaddata.NewTaskRegisterWithTTL = backup
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk"))
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/syncBeforeSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.tk.MustExec(sql)
+	}()
+	// wait for the task to be registered
+	<-loaddata.TestSyncChan
+	client, err := importer.GetEtcdClient()
+	s.NoError(err)
+	s.T().Cleanup(func() {
+		_ = client.Close()
+	})
+	etcdKey := fmt.Sprintf("/tidb/brie/import/import-into/%d", storage.TestLastTaskID.Load())
+	s.Eventually(func() bool {
+		resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+		s.NoError(err2)
+		return len(resp.Kvs) == 1
+	}, 5*time.Second, 300*time.Millisecond)
+	// continue the execution
+	loaddata.TestSyncChan <- struct{}{}
+	wg.Wait()
+	s.tk.MustQuery("SELECT * FROM load_data.register_task;").Sort().Check(testkit.Rows("1 11 111"))
+
+	// the task should be unregistered
+	resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+	s.NoError(err2)
+	s.Len(resp.Kvs, 0)
 }
