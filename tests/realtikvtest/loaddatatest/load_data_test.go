@@ -908,6 +908,9 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 			"  KEY `c_1` (`c`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+	s.tk.MustQuery("SELECT COUNT(1) FROM load_data.add_index;").Sort().Check(testkit.Rows(
+		"0",
+	))
 	config.DefaultBatchSize = backup
 
 	// checksum error
