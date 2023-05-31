@@ -3108,9 +3108,9 @@ func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGr
 		}
 		settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
 	case ast.RunawayAction:
-		settings.Action = intVal
+		settings.Action = model.RunawayActionType(intVal)
 	case ast.RunawayWatch:
-		settings.WatchType = intVal
+		settings.WatchType = model.RunawayWatchType(intVal)
 		dur, err := time.ParseDuration(stringVal)
 		if err != nil {
 			return err

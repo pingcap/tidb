@@ -3751,17 +3751,6 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED_IN_SEC '10s' ACTION DRYRUN ACTION KILL)", false, ""},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED_IN_SEC '10s' ACTION COOLDOWN WATCH EXACT)", false, ""},
 
-		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC '10s' ACTION DRYRUN)", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC = '10s' ACTION DRYRUN)"},
-		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC '10m' ACTION COOLDOWN)", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC = '10m' ACTION COOLDOWN)"},
-		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=( ACTION KILL EXEC_ELAPSED_IN_SEC '10m')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY_LIMIT=(ACTION KILL EXEC_ELAPSED_IN_SEC = '10m')"},
-		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC '10s' WATCH SIMILAR DURATION '10m' ACTION COOLDOWN)", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC = '10s' WATCH SIMILAR DURATION = '10m' ACTION COOLDOWN)"},
-		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC '10s' ACTION COOLDOWN WATCH EXACT DURATION '10m')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC = '10s' ACTION COOLDOWN WATCH EXACT DURATION = '10m')"},
-		// This case is expected in parser test but not in actual ddl job.
-		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC '10s')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC = '10s')"},
-		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT EXEC_ELAPSED_IN_SEC '10s'", false, ""},
-		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC '10s' ACTION DRYRUN ACTION KILL)", false, ""},
-		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC '10s' ACTION COOLDOWN WATCH EXACT)", false, ""},
-
 		{"drop resource group x;", true, "DROP RESOURCE GROUP `x`"},
 		{"drop resource group if exists x;", true, "DROP RESOURCE GROUP IF EXISTS `x`"},
 		{"drop resource group x,y", false, ""},

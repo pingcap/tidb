@@ -2209,7 +2209,7 @@ func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 		case RunawayAction:
 			ctx.WriteKeyWord("ACTION ")
 			ctx.WritePlain("= ")
-			ctx.WriteKeyWord(model.RunawayActionValueToName(n.IntValue))
+			ctx.WriteKeyWord(model.RunawayActionType(n.IntValue).String())
 		case RunawayWatch:
 			ctx.WriteKeyWord("WATCH ")
 			ctx.WritePlain("= ")
