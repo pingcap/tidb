@@ -821,6 +821,71 @@ func TestOrderByOnUnsignedPk(t *testing.T) {
 	tk.MustQuery("select max(a) from tunsigned_hash").Check(testkit.Rows("9279808998424041135"))
 }
 
+func TestOrderByOnHandle(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/44266
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for i := 0; i < 2; i++ {
+		// indexLookUp + _tidb_rowid
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("CREATE TABLE `t`(" +
+			"`a` int(11) NOT NULL," +
+			"`b` int(11) DEFAULT NULL," +
+			"`c` int(11) DEFAULT NULL," +
+			"KEY `idx_b` (`b`)) PARTITION BY HASH (`a`) PARTITIONS 2;")
+		tk.MustExec("insert into t values (2,-1,3), (3,2,2), (1,1,1);")
+		if i == 1 {
+			tk.MustExec("analyze table t")
+		}
+		tk.MustQuery("select * from t use index(idx_b) order by b, _tidb_rowid limit 10;").Check(testkit.Rows("2 -1 3", "1 1 1", "3 2 2"))
+
+		// indexLookUp + pkIsHandle
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("CREATE TABLE `t`(" +
+			"`a` int(11) NOT NULL," +
+			"`b` int(11) DEFAULT NULL," +
+			"`c` int(11) DEFAULT NULL," +
+			"primary key(`a`)," +
+			"KEY `idx_b` (`b`)) PARTITION BY HASH (`a`) PARTITIONS 2;")
+		tk.MustExec("insert into t values (2,-1,3), (3,2,2), (1,1,1);")
+		if i == 1 {
+			tk.MustExec("analyze table t")
+		}
+		tk.MustQuery("select * from t use index(idx_b) order by b, a limit 10;").Check(testkit.Rows("2 -1 3", "1 1 1", "3 2 2"))
+
+		// indexMerge + _tidb_rowid
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("CREATE TABLE `t`(" +
+			"`a` int(11) NOT NULL," +
+			"`b` int(11) DEFAULT NULL," +
+			"`c` int(11) DEFAULT NULL," +
+			"KEY `idx_b` (`b`)," +
+			"KEY `idx_c` (`c`)) PARTITION BY HASH (`a`) PARTITIONS 2;")
+		tk.MustExec("insert into t values (2,-1,3), (3,2,2), (1,1,1);")
+		if i == 1 {
+			tk.MustExec("analyze table t")
+		}
+		tk.MustQuery("select * from t use index(idx_b, idx_c) where b = 1 or c = 2 order by _tidb_rowid limit 10;").Check(testkit.Rows("3 2 2", "1 1 1"))
+
+		// indexMerge + pkIsHandle
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("CREATE TABLE `t`(" +
+			"`a` int(11) NOT NULL," +
+			"`b` int(11) DEFAULT NULL," +
+			"`c` int(11) DEFAULT NULL," +
+			"KEY `idx_b` (`b`)," +
+			"KEY `idx_c` (`c`)," +
+			"PRIMARY KEY (`a`)) PARTITION BY HASH (`a`) PARTITIONS 2;")
+		tk.MustExec("insert into t values (2,-1,3), (3,2,2), (1,1,1);")
+		if i == 1 {
+			tk.MustExec("analyze table t")
+		}
+		tk.MustQuery("select * from t use index(idx_b, idx_c) where b = 1 or c = 2 order by a limit 10;").Check(testkit.Rows("1 1 1", "3 2 2"))
+	}
+}
+
 func TestBatchGetandPointGetwithHashPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

@@ -82,6 +82,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		if err != nil {
 			return errors.Trace(err)
 		}
+		TableRowStatsCache.Invalidate(physicalID)
 	}
 	tbl, ok := h.getTableByPhysicalID(is, physicalID)
 	if !ok {
