@@ -1110,8 +1110,6 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	return v, true
 }
 
-<<<<<<< HEAD
-=======
 func hasCTEConsumerInSubPlan(p LogicalPlan) bool {
 	if _, ok := p.(*LogicalCTE); ok {
 		return true
@@ -1124,20 +1122,6 @@ func hasCTEConsumerInSubPlan(p LogicalPlan) bool {
 	return false
 }
 
-func initConstantRepertoire(c *expression.Constant) {
-	c.SetRepertoire(expression.ASCII)
-	if c.GetType().EvalType() == types.ETString {
-		for _, b := range c.Value.GetBytes() {
-			// if any character in constant is not ascii, set the repertoire to UNICODE.
-			if b >= 0x80 {
-				c.SetRepertoire(expression.UNICODE)
-				break
-			}
-		}
-	}
-}
-
->>>>>>> d82ed59e497 (planner: wrong execution when CTE meet non-correlated subquery (#44054))
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
 	if er.err != nil {
