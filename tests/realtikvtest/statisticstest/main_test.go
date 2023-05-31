@@ -26,7 +26,6 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 
