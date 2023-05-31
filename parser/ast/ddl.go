@@ -4521,10 +4521,9 @@ func (n *AlterPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 type AlterResourceGroupStmt struct {
 	ddlNode
 
-	ResourceGroupName              model.CIStr
-	IfExists                       bool
-	ResourceGroupOptionList        []*ResourceGroupOption
-	ResourceGroupRunawayOptionList []*ResourceGroupRunawayOption
+	ResourceGroupName       model.CIStr
+	IfExists                bool
+	ResourceGroupOptionList []*ResourceGroupOption
 }
 
 func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
@@ -4537,12 +4536,6 @@ func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while splicing AlterResourceGroupStmt Options: [%v]", i)
-		}
-	}
-	for i, option := range n.ResourceGroupRunawayOptionList {
-		ctx.WritePlain(" ")
-		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing AlterResourceGroupStmt TableOption: [%v]", i)
 		}
 	}
 	return nil
