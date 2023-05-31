@@ -7,10 +7,7 @@ go_test(
         "mdl_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-=======
     shard_count = 32,
->>>>>>> cde395dc597 (ddl, domain: fix a bug which causes MDL blocking (#43781))
     deps = [
         "//config",
         "//ddl",
