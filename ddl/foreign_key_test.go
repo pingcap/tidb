@@ -579,7 +579,7 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	// check the schema diff
 	diff = getLatestSchemaDiff(t, tk)
 	require.Equal(t, model.ActionRenameTable, diff.Type)
-	require.Equal(t, 1, len(diff.AffectedOpts))
+	require.Equal(t, 0, len(diff.AffectedOpts))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test2"),

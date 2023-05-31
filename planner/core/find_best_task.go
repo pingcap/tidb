@@ -321,7 +321,38 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 	case *rootTask:
 		taskType = property.RootTaskType
 	case *copTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
+		cop := t.(*copTask)
+		if cop.indexPlan != nil && cop.tablePlan != nil { // handle IndexLookup specially
+			taskType = property.CopMultiReadTaskType
+			// keep compatible with the old cost interface, for CopMultiReadTask, the cost is idxCost + tblCost.
+			if !cop.indexPlanFinished { // only consider index cost in this case
+				idxCost, err := getPlanCost(cop.indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+				return idxCost, false, err
+			}
+			// consider both sides
+			idxCost, err := getPlanCost(cop.indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+			if err != nil {
+				return 0, false, err
+			}
+			tblCost, err := getPlanCost(cop.tablePlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+			if err != nil {
+				return 0, false, err
+			}
+			return idxCost + tblCost, false, nil
+		}
+
 		taskType = property.CopSingleReadTaskType
+
+		// TiFlash can run cop task as well, check whether this cop task will run on TiKV or TiFlash.
+		if cop.tablePlan != nil {
+			leafNode := cop.tablePlan
+			for len(leafNode.Children()) > 0 {
+				leafNode = leafNode.Children()[0]
+			}
+			if tblScan, isScan := leafNode.(*PhysicalTableScan); isScan && tblScan.StoreType == kv.TiFlash {
+				taskType = property.MppTaskType
+			}
+		}
 	case *mppTask:
 		taskType = property.MppTaskType
 	default:
@@ -1454,6 +1485,14 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
+	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
+	if prop.IsSortItemEmpty() && candidate.path.ForceKeepOrder {
+		return invalidTask, nil
+	}
+	// If we don't need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
+	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
+		return invalidTask, nil
+	}
 	path := candidate.path
 	is := ds.getOriginalPhysicalIndexScan(prop, path, candidate.isMatchProp, candidate.path.IsSingleScan)
 	cop := &copTask{
@@ -1991,6 +2030,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
+	}
+	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
+	if prop.IsSortItemEmpty() && candidate.path.ForceKeepOrder {
+		return invalidTask, nil
+	}
+	// If we don't need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
+	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
 		return invalidTask, nil
 	}
 	ts, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)

@@ -1379,6 +1379,12 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 			// our cost estimation is not reliable.
 			hasUseOrForce = true
 			path.Forced = true
+			if hint.HintType == ast.HintOrderIndex {
+				path.ForceKeepOrder = true
+			}
+			if hint.HintType == ast.HintNoOrderIndex {
+				path.ForceNoKeepOrder = true
+			}
 			available = append(available, path)
 		}
 	}
@@ -3355,7 +3361,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.BeginStmt:
 		readTS := b.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
 		if raw.AsOf != nil {
-			startTS, err := staleread.CalculateAsOfTsExpr(b.ctx, raw.AsOf.TsExpr)
+			startTS, err := staleread.CalculateAsOfTsExpr(ctx, b.ctx, raw.AsOf.TsExpr)
 			if err != nil {
 				return nil, err
 			}
