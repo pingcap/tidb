@@ -648,12 +648,11 @@ func GetDBVersion(ctx context.Context, db QueryExecutor) (string, error) {
 	defer result.Close()
 
 	var version sql.NullString
-	for result.Next() {
+	if result.Next() {
 		err := result.Scan(&version)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		break
 	}
 
 	if version.Valid {
