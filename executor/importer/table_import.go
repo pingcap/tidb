@@ -627,8 +627,8 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 			if err := ti.backend.UnsafeImportAndReset(
 				ctx,
 				engine,
-				int64(ti.regionSplitSize)*int64(config.MaxSplitRegionSizeRatio),
-				int64(ti.regionSplitKeys)*int64(config.MaxSplitRegionSizeRatio),
+				ti.regionSplitSize*int64(config.MaxSplitRegionSizeRatio),
+				ti.regionSplitKeys*int64(config.MaxSplitRegionSizeRatio),
 			); err != nil {
 				importErr = multierr.Append(importErr, err)
 			}
