@@ -51,8 +51,8 @@ type DetailsNeedP90 struct {
 	TimeDetail    util.TimeDetail
 }
 
-// P90BackoffSummery contains execution summary for a backoff type.
-type P90BackoffSummery struct {
+// P90BackoffSummary contains execution summary for a backoff type.
+type P90BackoffSummary struct {
 	ReqTimes          int
 	MaxBackoffTime    time.Duration
 	MaxBackoffAddress string
@@ -73,7 +73,7 @@ type P90Summary struct {
 	MaxWaitAddress string
 	TdForWaitTime  *tdigest.TDigest
 
-	BackoffInfo map[string]*P90BackoffSummery
+	BackoffInfo map[string]*P90BackoffSummary
 }
 
 // Reset resets all fields in DetailsNeedP90Summary.
@@ -85,7 +85,7 @@ func (d *P90Summary) Reset() {
 	d.MaxWaitAddress = ""
 	d.TdForProcessTime = tdigest.New()
 	d.TdForWaitTime = tdigest.New()
-	d.BackoffInfo = make(map[string]*P90BackoffSummery)
+	d.BackoffInfo = make(map[string]*P90BackoffSummary)
 }
 
 // Merge merges DetailsNeedP90 into P90Summary.
@@ -105,11 +105,11 @@ func (d *P90Summary) Merge(detail *DetailsNeedP90) {
 	}
 	d.TdForWaitTime.Add(float64(detail.TimeDetail.WaitTime.Nanoseconds()), 1)
 
-	var info *P90BackoffSummery
+	var info *P90BackoffSummary
 	var ok bool
 	for backoff, timeItem := range detail.BackoffTimes {
 		if info, ok = d.BackoffInfo[backoff]; !ok {
-			d.BackoffInfo[backoff] = &P90BackoffSummery{TdForBackoffTime: tdigest.New()}
+			d.BackoffInfo[backoff] = &P90BackoffSummary{TdForBackoffTime: tdigest.New()}
 			info = d.BackoffInfo[backoff]
 		}
 		sleepItem := detail.BackoffSleep[backoff]
