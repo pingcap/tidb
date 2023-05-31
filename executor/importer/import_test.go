@@ -115,7 +115,6 @@ func TestAdjustOptions(t *testing.T) {
 		MaxWriteSpeed: 10,
 	}
 	plan.adjustOptions()
-	require.Equal(t, minDiskQuota, plan.DiskQuota)
 	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
 }

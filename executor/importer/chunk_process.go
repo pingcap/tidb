@@ -17,6 +17,7 @@ package importer
 import (
 	"context"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/docker/go-units"
@@ -102,12 +103,13 @@ func (b *deliverKVBatch) add(kvs *kv.Pairs) {
 
 // chunkProcessor process data chunk, it encodes and writes KV to local disk.
 type chunkProcessor struct {
-	parser      mydump.Parser
-	chunkInfo   *checkpoints.ChunkCheckpoint
-	logger      *zap.Logger
-	kvsCh       chan []deliveredRow
-	dataWriter  backend.EngineWriter
-	indexWriter backend.EngineWriter
+	parser        mydump.Parser
+	chunkInfo     *checkpoints.ChunkCheckpoint
+	logger        *zap.Logger
+	kvsCh         chan []deliveredRow
+	diskQuotaLock *sync.RWMutex
+	dataWriter    backend.EngineWriter
+	indexWriter   backend.EngineWriter
 
 	encoder     kvEncoder
 	kvCodec     tikv.Codec
@@ -245,7 +247,9 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 		}
 
 		err := func() error {
-			// todo: disk quota related code from lightning, removed temporary
+			p.diskQuotaLock.RLock()
+			defer p.diskQuotaLock.RUnlock()
+
 			if err := p.dataWriter.AppendRows(ctx, nil, &kvBatch.dataKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to data engine failed", log.ShortError(err))
