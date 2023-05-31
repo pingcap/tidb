@@ -322,7 +322,7 @@ func TestDownloadRetry(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Log(r.URL)
 		if strings.Contains(r.URL.String(), "restype=container") {
-			w.WriteHeader(201)
+			w.WriteHeader(200)
 			return
 		}
 		lock.Lock()
