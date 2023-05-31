@@ -2160,7 +2160,8 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("BURSTABLE")
 		case ResourceGroupRunaway:
 			if len(n.ResourceGroupRunawayOptionList) > 0 {
-				ctx.WritePlain("QUERY_LIMIT=(")
+				ctx.WriteKeyWord("QUERY_LIMIT")
+				ctx.WritePlain(" = (")
 				for i, option := range n.ResourceGroupRunawayOptionList {
 					if i > 0 {
 						ctx.WritePlain(" ")
@@ -2204,10 +2205,12 @@ func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 		case RunawayAction:
 			ctx.WriteKeyWord("ACTION ")
+			ctx.WritePlain("= ")
 			ctx.WriteKeyWord(model.RunawayActionValueToName(n.IntValue))
 		case RunawayWatch:
 			ctx.WriteKeyWord("WATCH ")
-			ctx.WriteKeyWord(model.RunawayWatchValueToName(n.IntValue))
+			ctx.WritePlain("= ")
+			ctx.WriteKeyWord(model.RunawayWatchType(n.IntValue).String())
 			ctx.WritePlain(" ")
 			ctx.WriteKeyWord("DURATION ")
 			ctx.WritePlain("= ")
