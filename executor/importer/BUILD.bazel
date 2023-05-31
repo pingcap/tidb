@@ -69,18 +69,14 @@ go_library(
 go_test(
     name = "importer_test",
     timeout = "short",
-    srcs = [
-        "import_test.go",
-        "precheck_test.go",
-    ],
+    srcs = ["import_test.go"],
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 5,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/config",
-        "//br/pkg/lightning/precheck",
         "//expression",
         "//parser",
         "//parser/ast",
