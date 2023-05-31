@@ -3843,15 +3843,9 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 	}
 
 	indexReq.OutputOffsets = []uint32{}
-<<<<<<< HEAD
-	if len(plans[0].(*plannercore.PhysicalIndexScan).ByItems) != 0 {
-		idxScan := plans[0].(*plannercore.PhysicalIndexScan)
-		tblInfo := idxScan.Table
-=======
 	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
 	if len(idxScan.ByItems) != 0 {
 		schema := idxScan.Schema()
->>>>>>> 3a489e4fb38 (executor: found column by idxScan.schema instead of idxScan.Table (#44283))
 		for _, item := range idxScan.ByItems {
 			c, ok := item.Expr.(*expression.Column)
 			if !ok {
