@@ -273,6 +273,9 @@ func TestIsLocal(t *testing.T) {
 	}{
 		{"local", args{":"}, false, "missing protocol scheme"},
 		{"local", args{"~/tmp/file"}, true, ""},
+		{"local", args{"."}, true, ""},
+		{"local", args{".."}, true, ""},
+		{"local", args{"./tmp/file"}, true, ""},
 		{"local", args{"/tmp/file"}, true, ""},
 		{"local", args{"local:///tmp/file"}, true, ""},
 		{"local", args{"file:///tmp/file"}, true, ""},

@@ -70,6 +70,7 @@ func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan
 
 // NewDistImporterServerFile creates a new DistImporter to import given files on current node.
 // we also run import on current node.
+// todo: merge all 3 ctor into one.
 func NewDistImporterServerFile(param *importer.JobImportParam, plan *importer.Plan, stmt string, ecp map[int32]*checkpoints.EngineCheckpoint) (*DistImporter, error) {
 	distImporter, err := NewDistImporterCurrNode(param, plan, stmt)
 	if err != nil {
