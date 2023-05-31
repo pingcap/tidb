@@ -34,12 +34,14 @@ import (
 	"github.com/pingcap/tidb/testkit/testenv"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 var testKitIDGenerator atomic.Uint64
@@ -68,6 +70,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 	tk.RefreshSession()
 
 	dom, _ := session.GetDomain(store)
+	logutil.BgLogger().Info("ywq test", zap.String("ddl id", dom.DDL().GetID()))
 	sm := dom.InfoSyncer().GetSessionManager()
 	if sm != nil {
 		mockSm, ok := sm.(*MockSessionManager)

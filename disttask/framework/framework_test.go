@@ -104,7 +104,18 @@ func TestFrameworkStartUp(t *testing.T) {
 		return &testSubtaskExecutor{v: &v}, nil
 	})
 	// ywq todo mock multiple domain... with single store?
-	_ = testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(pk int primary key, a json, unique index idx((cast(a as signed array))))")
+	tk.MustExec("insert into t1 values (1, '[1,2,2]')")
+	tk.MustExec("insert into t1 values (3, '[3,3,4]')")
+	tk.MustExec("select * from t1")
+
+	tk.MustExec("create table tt (a varchar(10));")
+	tk.MustExec("insert into tt values ('111'),('10000');")
+	tk.MustExec("alter table tt change a a varchar(5);")
+
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	taskID, err := mgr.AddNewGlobalTask("key1", proto.TaskTypeExample, 8, nil)

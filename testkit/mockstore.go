@@ -45,6 +45,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		require.NoError(t, err)
 
 		var dom *domain.Domain
+		// ywq todo here
 		dom, err = session.BootstrapSession(store)
 		t.Cleanup(func() {
 			dom.Close()
@@ -82,7 +83,7 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 		require.NoError(t, err)
 		gctuner.GlobalMemoryLimitTuner.Stop()
 	})
-	return schematracker.UnwrapStorage(store), dom1
+	return schematracker.UnwrapStorage(store), dom2
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
