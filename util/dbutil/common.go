@@ -606,7 +606,7 @@ func GetTidbLatestTSO(ctx context.Context, db QueryExecutor) (int64, error) {
 	}
 	defer rows.Close()
 
-	for rows.Next() {
+	if rows.Next() {
 		fields, err1 := ScanRow(rows)
 		if err1 != nil {
 			return 0, errors.Trace(err1)
