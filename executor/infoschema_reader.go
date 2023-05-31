@@ -2127,7 +2127,7 @@ func calRemainInfoForAnalyzeStatus(ctx context.Context, totalCnt int64, processe
 
 // setDataForAnalyzeStatus gets all the analyze jobs.
 func (e *memtableRetriever) setDataForAnalyzeStatus(ctx context.Context, sctx sessionctx.Context) (err error) {
-	e.rows, err = dataForAnalyzeStatusHelper(ctx, sctx, false)
+	e.rows, err = dataForAnalyzeStatusHelper(ctx, sctx)
 	return
 }
 
