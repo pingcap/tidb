@@ -167,9 +167,20 @@ func TestRunning(t *testing.T) {
 		tk.MustExec("commit;")
 		ch <- struct{}{}
 	}()
-	time.Sleep(100 * time.Millisecond)
-	info := tk.Session().TxnInfo()
-	require.Equal(t, txninfo.TxnRunning, info.State)
+	state := make(chan txninfo.TxnRunningState)
+	go func(state chan txninfo.TxnRunningState) {
+		for {
+			select {
+			case <-time.After(time.Microsecond):
+				info := tk.Session().TxnInfo()
+				if info != nil && info.State == txninfo.TxnRunning {
+					state <- txninfo.TxnRunning
+					return
+				}
+			}
+		}
+	}(state)
+	require.Equal(t, txninfo.TxnRunning, <-state)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockStmtSlow"))
 	<-ch
 }
@@ -221,8 +232,20 @@ func TestCommitting(t *testing.T) {
 		tk2.MustExec("commit;")
 		ch <- struct{}{}
 	}()
-	time.Sleep(100 * time.Millisecond)
-	require.Equal(t, txninfo.TxnCommitting, tk2.Session().TxnInfo().State)
+	state := make(chan txninfo.TxnRunningState)
+	go func(state chan txninfo.TxnRunningState) {
+		for {
+			select {
+			case <-time.After(time.Microsecond):
+				info := tk2.Session().TxnInfo()
+				if info != nil && info.State == txninfo.TxnCommitting {
+					state <- txninfo.TxnCommitting
+					return
+				}
+			}
+		}
+	}(state)
+	require.Equal(t, txninfo.TxnCommitting, <-state)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit"))
 	tk1.MustExec("commit;")
 	<-ch
@@ -243,9 +266,21 @@ func TestRollbackTxnState(t *testing.T) {
 		tk.MustExec("rollback;")
 		ch <- struct{}{}
 	}()
-	time.Sleep(100 * time.Millisecond)
+	state := make(chan txninfo.TxnRunningState)
+	go func(state chan txninfo.TxnRunningState) {
+		for {
+			select {
+			case <-time.After(time.Microsecond):
+				info := tk.Session().TxnInfo()
+				if info != nil && info.State == txninfo.TxnRollingBack {
+					state <- txninfo.TxnRollingBack
+					return
+				}
+			}
+		}
+	}(state)
+	require.Equal(t, txninfo.TxnRollingBack, <-state)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockSlowRollback"))
-	require.Equal(t, txninfo.TxnRollingBack, tk.Session().TxnInfo().State)
 	<-ch
 }
 
