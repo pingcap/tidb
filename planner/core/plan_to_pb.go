@@ -238,6 +238,13 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 		tsExec.PushedDownFilterConditions = conditions
 	}
 
+	var err error
+	tsExec.RuntimeFilterList, err = RuntimeFilterListToPB(p.runtimeFilterList, ctx.GetSessionVars().StmtCtx, ctx.GetClient())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tsExec.MaxWaitTimeMs = int32(p.maxWaitTimeMs)
+
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
@@ -250,7 +257,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 			telemetry.CurrentTiflashTableScanWithFastScanCount.Inc()
 		}
 	}
-	err := tables.SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
+	err = tables.SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorID}, err
 }
 
@@ -271,9 +278,17 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx sessionctx.Contex
 		ptsExec.PushedDownFilterConditions = conditions
 	}
 
+	// set runtime filter
+	var err error
+	ptsExec.RuntimeFilterList, err = RuntimeFilterListToPB(p.runtimeFilterList, ctx.GetSessionVars().StmtCtx, ctx.GetClient())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ptsExec.MaxWaitTimeMs = int32(p.maxWaitTimeMs)
+
 	ptsExec.Desc = p.Desc
 	executorID := p.ExplainID().String()
-	err := tables.SetPBColumnsDefaultValue(ctx, ptsExec.Columns, p.Columns)
+	err = tables.SetPBColumnsDefaultValue(ctx, ptsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypePartitionTableScan, PartitionTableScan: ptsExec, ExecutorId: &executorID}, err
 }
 
@@ -577,6 +592,12 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 		probeFiledTypes = append(probeFiledTypes, ty)
 		buildFiledTypes = append(buildFiledTypes, ty)
 	}
+
+	// runtime filter
+	rfListPB, err := RuntimeFilterListToPB(p.runtimeFilterList, sc, client)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	join := &tipb.Join{
 		JoinType:                pbJoinType,
 		JoinExecType:            tipb.JoinExecType_TypeHashJoin,
@@ -591,6 +612,7 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 		OtherEqConditionsFromIn: otherEqConditions,
 		Children:                []*tipb.Executor{lChildren, rChildren},
 		IsNullAwareSemiJoin:     &isNullAwareSemiJoin,
+		RuntimeFilterList:       rfListPB,
 	}
 
 	executorID := p.ExplainID().String()

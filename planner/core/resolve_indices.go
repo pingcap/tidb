@@ -654,6 +654,11 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *PhysicalTableScan) ResolveIndices() (err error) {
+	return p.physicalSchemaProducer.ResolveIndices()
+}
+
+// ResolveIndices implements Plan interface.
 func (p *Update) ResolveIndices() (err error) {
 	err = p.baseSchemaProducer.ResolveIndices()
 	if err != nil {

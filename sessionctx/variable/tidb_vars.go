@@ -1039,6 +1039,10 @@ const (
 	AuthenticationLDAPSimpleInitPoolSize = "authentication_ldap_simple_init_pool_size"
 	// AuthenticationLDAPSimpleMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
 	AuthenticationLDAPSimpleMaxPoolSize = "authentication_ldap_simple_max_pool_size"
+	// TiDBRuntimeFilterTypeName the value of is string, a runtime filter type list split by ",", such as: "IN,MIN_MAX"
+	TiDBRuntimeFilterTypeName = "tidb_runtime_filter_type"
+	// TiDBRuntimeFilterModeName the mode of runtime filter, such as "OFF", "LOCAL"
+	TiDBRuntimeFilterModeName = "tidb_runtime_filter_mode"
 )
 
 // TiDB intentional limits
@@ -1331,6 +1335,8 @@ const (
 	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
 	DefAuthenticationLDAPSimpleInitPoolSize           = 10
 	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
+	DefRuntimeFilterType                              = "IN"
+	DefRuntimeFilterMode                              = "OFF"
 )
 
 // Process global variables.
