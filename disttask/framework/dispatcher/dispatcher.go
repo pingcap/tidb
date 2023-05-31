@@ -422,7 +422,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	}
 
 	// Generate all available TiDB nodes for this global tasks.
-	serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask)
+	serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask) //ywq todo get servernodes fail 多了一个 domain 不知从何而来。。。
 	logutil.BgLogger().Warn("server nodes", zap.Int("node num", len(serverNodes)))
 
 	if err1 != nil {
@@ -435,7 +435,17 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	// ywq todo select node policy here
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
-		pos := i%len(serverNodes) + 1 // ywq test todo since the first servernode is dummy
+		// pos := i % len(serverNodes) // ywq test todo since the first servernode is dummy
+		var pos int
+		if i == 1 {
+			pos = 1
+		}
+		if i == 2 {
+			pos = 2
+		}
+		if i == 0 {
+			pos = 1
+		}
 		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port, serverNodes[pos].ID)
 		logutil.BgLogger().Info("ywq test", zap.String("instanceID", instanceID), zap.Int("pos", pos))
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))

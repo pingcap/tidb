@@ -39,6 +39,7 @@ func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHan
 		return [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
+			[]byte("task3"),
 		}, nil
 	}
 	return nil, nil
@@ -103,18 +104,9 @@ func TestFrameworkStartUp(t *testing.T) {
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testSubtaskExecutor{v: &v}, nil
 	})
-	// ywq todo mock multiple domain... with single store?
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1(pk int primary key, a json, unique index idx((cast(a as signed array))))")
-	tk.MustExec("insert into t1 values (1, '[1,2,2]')")
-	tk.MustExec("insert into t1 values (3, '[3,3,4]')")
-	tk.MustExec("select * from t1")
 
-	tk.MustExec("create table tt (a varchar(10));")
-	tk.MustExec("insert into tt values ('111'),('10000');")
-	tk.MustExec("alter table tt change a a varchar(5);")
+	test_context := testkit.CreateMockStore4DistExecution(t, 2)
+	test_context.InitOwner()
 
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
@@ -138,5 +130,26 @@ func TestFrameworkStartUp(t *testing.T) {
 	}
 
 	require.Equal(t, proto.TaskStateSucceed, task.State)
-	require.Equal(t, int64(6), v.Load())
+	require.Equal(t, int64(9), v.Load())
+
+	test_context.SetOwner(1) // bug can't set owner right
+
+	v.Store(0)
+
+	taskID, err = mgr.AddNewGlobalTask("key2", proto.TaskTypeExample, 8, nil)
+	require.NoError(t, err)
+	start = time.Now()
+	for {
+		if time.Since(start) > 2*time.Minute {
+			require.FailNow(t, "timeout")
+		}
+
+		time.Sleep(time.Second)
+		task, err = mgr.GetGlobalTaskByID(taskID)
+		require.NoError(t, err)
+		require.NotNil(t, task)
+		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning {
+			break
+		}
+	}
 }

@@ -1162,6 +1162,7 @@ func (do *Domain) Init(
 	logutil.BgLogger().Info("ywq test ddl id", zap.String("ddlid", do.ddl.GetID()), zap.Uint64("serverID", do.ServerID()))
 	// ywq todo must here...
 	if infosync.InfoSyncerInited() {
+		// ywq todo refinement, handle info sync and serverinfo
 		logutil.BgLogger().Info("ywq test info syncinited", zap.String("ddlid", do.ddl.GetID()), zap.Uint64("serverID", do.ServerID()))
 		do.info = infosync.GetGlobalInfoSyncerForTest()
 		infosync.AddServerInfo(do.ddl.GetID(), do.ServerID)
@@ -1412,8 +1413,6 @@ func generateSubtaskExecID(ctx context.Context, ID string) string {
 	return ""
 }
 
-var distDispatchTime = 0
-
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
 	schedulerManager.Start()
 	logutil.BgLogger().Info("dist task scheduler started")
@@ -1428,12 +1427,6 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if dispatch != nil {
 			return
 		}
-		logutil.BgLogger().Info("ywq test", zap.Int("distdispatchtime", distDispatchTime))
-		if distDispatchTime != 1 { // the last server as the ddl owner...
-			distDispatchTime++
-			return
-		}
-		distDispatchTime++
 		newDispatch, err := dispatcher.NewDispatcher(ctx, taskManager, do.DDL().GetID())
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))

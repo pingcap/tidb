@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -45,7 +46,6 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		require.NoError(t, err)
 
 		var dom *domain.Domain
-		// ywq todo here
 		dom, err = session.BootstrapSession(store)
 		t.Cleanup(func() {
 			dom.Close()
@@ -64,6 +64,53 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 	return store
 }
 
+type DistExecutionTestContext struct {
+	store   kv.Storage
+	domains []*domain.Domain
+}
+
+func (d *DistExecutionTestContext) InitOwner() error {
+	return d.domains[len(d.domains)-1].DDL().OwnerManager().CampaignOwner()
+}
+
+func (d *DistExecutionTestContext) SetOwner(idx int) error {
+	if idx >= len(d.domains) {
+		return errors.New("server idx out of bound")
+	}
+	for _, dom := range d.domains {
+		dom.DDL().OwnerManager().RetireOwner()
+	}
+	d.domains[idx].DDL().OwnerManager().CampaignOwner()
+	return nil
+}
+
+// consider tk how to know who is the ddl owner...
+func CreateMockStore4DistExecution(t testing.TB, serverNum int) *DistExecutionTestContext {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	gctuner.GlobalMemoryLimitTuner.Stop()
+	domains := make([]*domain.Domain, 0, serverNum)
+	// ywq todo set infosyncer
+	// ywq todo set ddl owner to be the last domain
+	sm := MockSessionManager{}
+
+	for i := 0; i < serverNum; i++ {
+		domains = append(domains, bootstrap(t, store, 500*time.Millisecond))
+		domains[i].InfoSyncer().SetSessionManager(&sm)
+	}
+	t.Cleanup(func() {
+		err := store.Close()
+		require.NoError(t, err)
+		gctuner.GlobalMemoryLimitTuner.Stop()
+	})
+	return &DistExecutionTestContext{schematracker.UnwrapStorage(store), domains}
+}
+
+func AddDomain4DistExecution(t testing.TB, store kv.Storage, dom *domain.Domain) {
+	dom1 := bootstrap(t, store, 500*time.Millisecond)
+	dom1.InfoSyncer().SetSessionManager(dom.InfoSyncer().GetSessionManager())
+}
+
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	store, err := mockstore.NewMockStore(opts...)
@@ -73,7 +120,6 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	dom2 := bootstrap(t, store, 500*time.Millisecond)
 	// ywq todo should let dom2 not ddl owner
 	sm := MockSessionManager{}
-	// sm2 := MockSessionManager{}
 	// ywq todo consider sm
 	dom1.InfoSyncer().SetSessionManager(&sm)
 	dom2.InfoSyncer().SetSessionManager(&sm)
