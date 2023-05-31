@@ -64,6 +64,7 @@ const (
 	// and add isImportingAtomic with this value. In other state, we directly store with the state value.
 	// so this must always the last value of this enum.
 	importMutexStateReadLock
+	importMutexStateOpen
 )
 
 // engineMeta contains some field that is necessary to continue the engine restore/import process.

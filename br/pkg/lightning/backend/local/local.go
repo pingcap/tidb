@@ -895,6 +895,8 @@ func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig,
 		logger:             log.FromContext(ctx),
 	})
 	engine := e.(*Engine)
+	engine.lock(importMutexStateOpen)
+	defer engine.unlock()
 	engine.db = db
 	engine.sstIngester = dbSSTIngester{e: engine}
 	if err = engine.loadEngineMeta(); err != nil {
