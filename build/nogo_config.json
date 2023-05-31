@@ -1027,6 +1027,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
+      "util/dbutil": "ignore util/dbutil",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
