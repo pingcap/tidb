@@ -48,6 +48,8 @@ func (tp RegisterTaskType) String() string {
 
 // The key format should be {RegisterImportTaskPrefix}/{RegisterTaskType}/{taskName}
 const (
+	// RegisterImportTaskPrefix is the prefix of the key for task register
+	// todo: remove "/import" suffix, it's confusing to have a key like "/tidb/brie/import/restore/restore-xxx"
 	RegisterImportTaskPrefix = "/tidb/brie/import"
 
 	RegisterRetryInternal  = 10 * time.Second
