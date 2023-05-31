@@ -2181,26 +2181,24 @@
       {
         "SQL": "with cte as (with cte as (select 1) select * from cte) select * from cte a, cte b; -- inline inner cte, cannot be inlined outer cte",
         "Plan": [
-          "HashJoin 0.64 root  CARTESIAN inner join",
-          "├─CTEFullScan(Build) 0.80 root CTE:cte AS b data:CTE_0",
-          "└─CTEFullScan(Probe) 0.80 root CTE:cte AS a data:CTE_0",
-          "CTE_0 0.80 root  Non-Recursive CTE",
-          "└─Selection(Seed Part) 0.80 root  1",
-          "  └─Projection 1.00 root  1->Column#3",
-          "    └─TableDual 1.00 root  rows:1"
+          "HashJoin 1.00 root  CARTESIAN inner join",
+          "├─CTEFullScan(Build) 1.00 root CTE:cte AS b data:CTE_0",
+          "└─CTEFullScan(Probe) 1.00 root CTE:cte AS a data:CTE_0",
+          "CTE_0 1.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 1.00 root  1->Column#3",
+          "  └─TableDual 1.00 root  rows:1"
         ],
         "Warning": null
       },
       {
         "SQL": "with cte1 as (select 1), cte2 as (with cte3 as (select * from cte1) select * from cte3) select * from cte1, cte2; -- inline cte2, cte3, cannot be inlined cte1",
         "Plan": [
-          "HashJoin 0.64 root  CARTESIAN inner join",
-          "├─CTEFullScan(Build) 0.80 root CTE:cte1 data:CTE_0",
-          "└─CTEFullScan(Probe) 0.80 root CTE:cte1 data:CTE_0",
-          "CTE_0 0.80 root  Non-Recursive CTE",
-          "└─Selection(Seed Part) 0.80 root  1",
-          "  └─Projection 1.00 root  1->Column#1",
-          "    └─TableDual 1.00 root  rows:1"
+          "HashJoin 1.00 root  CARTESIAN inner join",
+          "├─CTEFullScan(Build) 1.00 root CTE:cte1 data:CTE_0",
+          "└─CTEFullScan(Probe) 1.00 root CTE:cte1 data:CTE_0",
+          "CTE_0 1.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 1.00 root  1->Column#1",
+          "  └─TableDual 1.00 root  rows:1"
         ],
         "Warning": null
       },
@@ -2215,13 +2213,12 @@
       {
         "SQL": "with cte1 as (select 1), cte2 as (select * from cte1) select * from cte2 a, cte2 b; -- inline cte1, cannot be inlined cte2",
         "Plan": [
-          "HashJoin 0.64 root  CARTESIAN inner join",
-          "├─CTEFullScan(Build) 0.80 root CTE:cte2 AS b data:CTE_1",
-          "└─CTEFullScan(Probe) 0.80 root CTE:cte2 AS a data:CTE_1",
-          "CTE_1 0.80 root  Non-Recursive CTE",
-          "└─Selection(Seed Part) 0.80 root  1",
-          "  └─Projection 1.00 root  1->Column#3",
-          "    └─TableDual 1.00 root  rows:1"
+          "HashJoin 1.00 root  CARTESIAN inner join",
+          "├─CTEFullScan(Build) 1.00 root CTE:cte2 AS b data:CTE_1",
+          "└─CTEFullScan(Probe) 1.00 root CTE:cte2 AS a data:CTE_1",
+          "CTE_1 1.00 root  Non-Recursive CTE",
+          "└─Projection(Seed Part) 1.00 root  1->Column#3",
+          "  └─TableDual 1.00 root  rows:1"
         ],
         "Warning": null
       },
