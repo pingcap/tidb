@@ -48,10 +48,7 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
 		return err
 	}
-	if err := e.checkCDCPiTRTasks(ctx); err != nil {
-		return err
-	}
-	return nil
+	return e.checkCDCPiTRTasks(ctx)
 }
 
 func (e *LoadDataController) checkTableEmpty(ctx context.Context, conn sqlexec.SQLExecutor) error {
