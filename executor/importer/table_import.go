@@ -53,6 +53,7 @@ import (
 var NewTiKVModeSwitcher = local.NewTiKVModeSwitcher
 
 var (
+	// CheckDiskQuotaInterval is the default time interval to check disk quota.
 	CheckDiskQuotaInterval = time.Minute
 )
 
