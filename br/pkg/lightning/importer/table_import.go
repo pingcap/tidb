@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/extsort"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
@@ -214,13 +215,7 @@ func (tr *TableImporter) importTable(
 		tr.dupIgnoreRows = dupIgnoreRows
 
 		if cp.Status < checkpoints.CheckpointStatusDupDetected {
-			d := &dupDetector{
-				tr:     tr,
-				rc:     rc,
-				cp:     cp,
-				logger: tr.logger,
-			}
-			err := d.run(ctx, workingDir, dupIgnoreRows)
+			err := tr.preDeduplicate(ctx, rc, cp, workingDir)
 			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusDupDetected)
 			if err := firstErr(err, saveCpErr); err != nil {
 				return false, errors.Trace(err)
@@ -1678,4 +1673,88 @@ func getDDLJobIDByQuery(ctx context.Context, db *sql.DB, wantQuery string) (int6
 		}
 	}
 	return 0, errors.Trace(rows.Err())
+}
+
+func (tr *TableImporter) preDeduplicate(
+	ctx context.Context,
+	rc *Controller,
+	cp *checkpoints.TableCheckpoint,
+	workingDir string,
+) error {
+	d := &dupDetector{
+		tr:     tr,
+		rc:     rc,
+		cp:     cp,
+		logger: tr.logger,
+	}
+	err := d.run(ctx, workingDir, tr.dupIgnoreRows)
+	if err == nil {
+		return nil
+	}
+
+	if !ErrDuplicateKey.Equal(err) {
+		return errors.Trace(err)
+	}
+
+	var (
+		idxName                          string
+		oneConflictMsg, otherConflictMsg string
+	)
+
+	// provide a more friendly error message
+
+	dupErr := err.(*errors.Error)
+	conflictIdxID := dupErr.Args()[0]
+	if conflictIdxID == conflictOnHandle {
+		idxName = "PRIMARY"
+	} else {
+		for _, idxInfo := range tr.tableInfo.Core.Indices {
+			if idxInfo.ID == conflictIdxID {
+				idxName = idxInfo.Name.O
+				break
+			}
+		}
+	}
+	if idxName == "" {
+		return errors.Trace(err)
+	}
+	conflictEncodedRowIDs := dupErr.Args()[1].([][]byte)
+	if len(conflictEncodedRowIDs) < 2 {
+		return errors.Trace(err)
+	}
+	rowID := make([]int64, 2)
+	_, rowID[0], err = codec.DecodeComparableVarint(conflictEncodedRowIDs[0])
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, rowID[1], err = codec.DecodeComparableVarint(conflictEncodedRowIDs[1])
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tableCp, err := rc.checkpointsDB.Get(ctx, tr.tableName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, engineCp := range tableCp.Engines {
+		for _, chunkCp := range engineCp.Chunks {
+			if chunkCp.Chunk.PrevRowIDMax <= rowID[0] && rowID[0] < chunkCp.Chunk.RowIDMax {
+				oneConflictMsg = fmt.Sprintf("row %d starting from offset %d in file %s",
+					rowID[0]-chunkCp.Chunk.PrevRowIDMax,
+					chunkCp.Chunk.Offset,
+					chunkCp.FileMeta.Path)
+			}
+			if chunkCp.Chunk.PrevRowIDMax <= rowID[1] && rowID[1] < chunkCp.Chunk.RowIDMax {
+				otherConflictMsg = fmt.Sprintf("row %d starting from offset %d in file %s",
+					rowID[1]-chunkCp.Chunk.PrevRowIDMax,
+					chunkCp.Chunk.Offset,
+					chunkCp.FileMeta.Path)
+			}
+		}
+	}
+	if oneConflictMsg == "" || otherConflictMsg == "" {
+		return errors.Trace(err)
+	}
+	return errors.Errorf("duplicate entry for key '%s', a pair of conflicting rows are (%s, %s)",
+		idxName, oneConflictMsg, otherConflictMsg)
 }

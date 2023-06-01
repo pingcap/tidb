@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	kv2 "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -36,7 +37,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/store/driver/txn"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/extsort"
 	"go.uber.org/zap"
 )
@@ -378,9 +382,51 @@ func (cr *chunkProcessor) encodeLoop(
 					cr.parser.RecycleRow(lastRow)
 					curOffset = newOffset
 
+					if rc.errorMgr.RemainRecord() <= 0 {
+						continue
+					}
+
+					var (
+						conflictMsg string
+						kvs         encode.Row
+					)
+					_, idxID, err := codec.DecodeVarint(dupIgnoreRowsIter.UnsafeValue())
+					if err != nil {
+						conflictMsg = err.Error()
+						goto conflictMsgDone
+					}
+					kvs, err = kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
+					if err != nil {
+						conflictMsg = err.Error()
+						goto conflictMsgDone
+					}
+
+					if idxID == conflictOnHandle {
+						for _, kv := range kvs.(*kv2.Pairs).Pairs {
+							if tablecodec.IsRecordKey(kv.Key) {
+								dupErr := txn.ExtractKeyExistsErrFromHandle(kv.Key, kv.Val, t.encTable.Meta())
+								conflictMsg = dupErr.Error()
+								goto conflictMsgDone
+							}
+						}
+					} else {
+						for _, kv := range kvs.(*kv2.Pairs).Pairs {
+							_, decodedIdxID, isRecordKey, err := tablecodec.DecodeKeyHead(kv.Key)
+							if err != nil {
+								conflictMsg = err.Error()
+								goto conflictMsgDone
+							}
+							if isRecordKey && decodedIdxID == idxID {
+								dupErr := txn.ExtractKeyExistsErrFromIndex(kv.Key, kv.Val, t.encTable.Meta(), idxID)
+								conflictMsg = dupErr.Error()
+								goto conflictMsgDone
+							}
+						}
+					}
+
+				conflictMsgDone:
 					rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
-					// TODO: fill error message
-					err = rc.errorMgr.RecordConflictErrorV2(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, "", lastRow.RowID, rowText)
+					err = rc.errorMgr.RecordConflictErrorV2(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, conflictMsg, lastRow.RowID, rowText)
 					if err != nil {
 						return 0, 0, err
 					}

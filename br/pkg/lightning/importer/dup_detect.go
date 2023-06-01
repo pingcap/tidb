@@ -29,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/extsort"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -105,38 +107,58 @@ func makeDupHandlerConstructor(
 	}
 }
 
+var ErrDuplicateKey = errors.Normalize("duplicate key detected on indexID %d of KeyID: %v", errors.RFCCodeText("Lightning:PreDedup:ErrDuplicateKey"))
+
 var (
 	_ duplicate.Handler = &errorOnDup{}
 	_ duplicate.Handler = &replaceOnDup{}
 	_ duplicate.Handler = &ignoreOnDup{}
 )
 
-type errorOnDup struct{}
-
-func (errorOnDup) Begin(key []byte) error {
-	// TODO: add more useful information to the error message.
-	return errors.Errorf("duplicate key detected: %X", key)
+type errorOnDup struct {
+	idxID  int64
+	keyIDs [][]byte
 }
 
-func (errorOnDup) Append(_ []byte) error { return nil }
-func (errorOnDup) End() error            { return nil }
-func (errorOnDup) Close() error          { return nil }
+func (h *errorOnDup) Begin(key []byte) error {
+	idxID, err := decodeIndexID(key)
+	if err != nil {
+		return err
+	}
+	h.idxID = idxID
+	return nil
+}
+
+func (h *errorOnDup) Append(keyID []byte) error {
+	h.keyIDs = append(h.keyIDs, keyID)
+	return nil
+}
+func (h *errorOnDup) End() error {
+	return ErrDuplicateKey.GenWithStackByArgs(h.idxID, h.keyIDs)
+}
+func (*errorOnDup) Close() error { return nil }
 
 type replaceOnDup struct {
 	// All keyIDs except the last one will be written to w.
 	// keyID written to w will be ignored during importing.
 	w     extsort.Writer
 	keyID []byte
+	idxID []byte // Varint encoded indexID
 }
 
-func (h *replaceOnDup) Begin(_ []byte) error {
+func (h *replaceOnDup) Begin(key []byte) error {
 	h.keyID = h.keyID[:0]
+	idxID, err := decodeIndexID(key)
+	if err != nil {
+		return err
+	}
+	h.idxID = codec.EncodeVarint(nil, idxID)
 	return nil
 }
 
 func (h *replaceOnDup) Append(keyID []byte) error {
 	if len(h.keyID) > 0 {
-		if err := h.w.Put(h.keyID, nil); err != nil {
+		if err := h.w.Put(h.keyID, h.idxID); err != nil {
 			return err
 		}
 	}
@@ -157,10 +179,16 @@ type ignoreOnDup struct {
 	// keyID written to w will be ignored during importing.
 	w     extsort.Writer
 	first bool
+	idxID []byte // Varint encoded indexID
 }
 
-func (h *ignoreOnDup) Begin(_ []byte) error {
+func (h *ignoreOnDup) Begin(key []byte) error {
 	h.first = true
+	idxID, err := decodeIndexID(key)
+	if err != nil {
+		return err
+	}
+	h.idxID = codec.EncodeVarint(nil, idxID)
 	return nil
 }
 
@@ -169,7 +197,7 @@ func (h *ignoreOnDup) Append(keyID []byte) error {
 		h.first = false
 		return nil
 	}
-	return h.w.Put(keyID, nil)
+	return h.w.Put(keyID, h.idxID)
 }
 
 func (*ignoreOnDup) End() error {
@@ -367,4 +395,19 @@ func simplifyTable(
 		}
 	}
 	return newTblInfo, newColPerm
+}
+
+const conflictOnHandle = -1
+
+func decodeIndexID(key []byte) (int64, error) {
+	switch {
+	case tablecodec.IsRecordKey(key):
+		return conflictOnHandle, nil
+	case tablecodec.IsIndexKey(key):
+		_, idxID, _, err := tablecodec.DecodeIndexKey(key)
+		return idxID, errors.Trace(err)
+
+	default:
+		return 0, errors.Errorf("unexpected key: %X, expected a record key or index key", key)
+	}
 }
