@@ -90,11 +90,7 @@ func (e *testSubtaskExecutor) Run(_ context.Context) error {
 	return nil
 }
 
-func TestFrameworkStartUp(t *testing.T) {
-	defer dispatcher.ClearTaskFlowHandle()
-	defer scheduler.ClearSchedulers()
-
-	var v atomic.Int64
+func RegisterTaskMeta(v *atomic.Int64) {
 	dispatcher.ClearTaskFlowHandle()
 	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &testFlowHandle{})
 	scheduler.ClearSchedulers()
@@ -102,15 +98,14 @@ func TestFrameworkStartUp(t *testing.T) {
 		return &testScheduler{}, nil
 	})
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
-		return &testSubtaskExecutor{v: &v}, nil
+		return &testSubtaskExecutor{v: v}, nil
 	})
+}
 
-	test_context := testkit.CreateMockStore4DistExecution(t, 2)
-	test_context.InitOwner()
-
+func DispatchTask(taskKey string, t *testing.T, v *atomic.Int64) {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	taskID, err := mgr.AddNewGlobalTask("key1", proto.TaskTypeExample, 8, nil)
+	taskID, err := mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil)
 	require.NoError(t, err)
 	start := time.Now()
 
@@ -131,25 +126,18 @@ func TestFrameworkStartUp(t *testing.T) {
 
 	require.Equal(t, proto.TaskStateSucceed, task.State)
 	require.Equal(t, int64(9), v.Load())
-
-	// test_context.SetOwner(1) // bug can't set owner right
-
 	v.Store(0)
+}
 
-	taskID, err = mgr.AddNewGlobalTask("key2", proto.TaskTypeExample, 8, nil)
-	require.NoError(t, err)
-	start = time.Now()
-	for {
-		if time.Since(start) > 2*time.Minute {
-			require.FailNow(t, "timeout")
-		}
+func TestFrameworkStartUp(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
 
-		time.Sleep(time.Second)
-		task, err = mgr.GetGlobalTaskByID(taskID)
-		require.NoError(t, err)
-		require.NotNil(t, task)
-		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning {
-			break
-		}
-	}
+	test_context := testkit.CreateMockStore4DistExecution(t, 2)
+	test_context.InitOwner()
+	// test_context.SetOwner(1) // bug can't set owner right
+	DispatchTask("key1", t, &v)
+	DispatchTask("key2", t, &v)
 }
