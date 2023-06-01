@@ -3285,14 +3285,17 @@ func InitMDLVariable(store kv.Storage) error {
 	return err
 }
 
+// Bootstrap session and domain
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
-	return BootstrapSessionImpl(store, createSessions)
-}
-func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
-	return BootstrapSessionImpl(store, createSessions4DistExecutuon)
+	return bootstrapSessionImpl(store, createSessions)
 }
 
-func BootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
+// Bootstrap session and dom for Distributed execution test, only for unit testing
+func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
+	return bootstrapSessionImpl(store, createSessions4DistExecutuon)
+}
+
+func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Instance.PluginLoad) > 0 {
