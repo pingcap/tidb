@@ -1345,14 +1345,6 @@ func GetEtcdClient() *clientv3.Client {
 	return is.etcdCli
 }
 
-func GetresourceManagerClient() pd.ResourceManagerClient {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return nil
-	}
-	return is.resourceManagerClient
-}
-
 // GetPDScheduleConfig gets the schedule information from pd
 func GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
 	is, err := getGlobalInfoSyncer()

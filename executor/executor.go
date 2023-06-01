@@ -2162,10 +2162,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	// FIXME: perform plan digest generation only when necessary, and heres plan digest maybe empty
 	sc.RunawayChecker =  domain.GetDomain(ctx).RunawayManager().DeriveChecker(ctx.GetSessionVars().ResourceGroupName, sc.OriginalSQL, sc.GetPlanDigest())
+
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
 	// IgnoreErr and StrictSQLMode) to avoid setting the same bool variables and
 	// pushing them down to TiKV as flags.
+
 	sc.InRestrictedSQL = vars.InRestrictedSQL
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:

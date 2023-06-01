@@ -24,6 +24,7 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/memory"
@@ -579,7 +580,7 @@ type Request struct {
 	// StoreBusyThreshold is the threshold for the store to return ServerIsBusy
 	StoreBusyThreshold time.Duration
 
-	RunawayChecker *RunawayChecker
+	RunawayChecker *resourcegroup.RunawayChecker
 
 	// ConnID stores the session connection id.
 	ConnID uint64

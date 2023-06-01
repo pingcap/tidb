@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/globalconfigsync"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
@@ -93,6 +94,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 var (
@@ -141,7 +143,6 @@ type Domain struct {
 	// It must be used when the etcd path isn't needed to separate by keyspace.
 	// See keyspace RFC: https://github.com/pingcap/tidb/pull/39685
 	unprefixedEtcdCli       *clientv3.Client
-	runawayManager 			*util2.RunawayManager
 	sysVarCache             sysVarCache // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
 	expensiveQueryHandle    *expensivequery.Handle
@@ -159,7 +160,9 @@ type Domain struct {
 	logBackupAdvancer     *daemon.OwnerDaemon
 	historicalStatsWorker *HistoricalStatsWorker
 	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
-
+	runawayManager 			*resourcegroup.RunawayManager
+	resourceGroupsController *rmclient.ResourceGroupsController
+	
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
@@ -1168,6 +1171,10 @@ func (do *Domain) Init(
 	if err != nil {
 		return err
 	}
+	err = do.initResourceGroupsController(ctx, pdCli)
+	if err != nil {
+		return err
+	}
 	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdCli)
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
@@ -1217,6 +1224,21 @@ func (do *Domain) Init(
 // SetOnClose used to set do.onClose func.
 func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose
+}
+
+func (do *Domain) initResourceGroupsController(ctx context.Context,	pdCli pd.Client) error {
+	if pdClient == nil {
+		return errors.New("cannot setup up resource controller, should use tikv storage")
+	}
+
+	control, err := rmclient.NewResourceGroupController(ctx, do.ServerID(), pdClient, nil, rmclient.WithMaxWaitDuration(time.Second*30))
+	if err != nil {
+		return err
+	}
+	tikv.SetResourceControlInterceptor(control)
+	do.runawayManager = resourcegroup.NewRunawayManager(control)
+	do.resourceGroupsController= control
+	return nil
 }
 
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
@@ -1821,7 +1843,6 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.
 		}
 	}, "handleEvolvePlanTasksLoop")
 }
-
 // TelemetryReportLoop create a goroutine that reports usage data in a loop, it should be called only once
 // in BootstrapSession.
 func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
@@ -1906,12 +1927,12 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 	}
 }
 
-func (do *Domain) SetRunawayManager(runawayManager *runaway.RunawayManager) {
-	do.runawayManager = runawayManager
+func (do *Domain) RunawayManager() *RunawayManager {
+	return do.runawayManager
 }
 
-func (do *Domain) RunawayManager() *runaway.RunawayManager {
-	return do.runawayManager
+func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController {
+	return do.resourceGroupsController
 }
 
 // SetupHistoricalStatsWorker setups worker

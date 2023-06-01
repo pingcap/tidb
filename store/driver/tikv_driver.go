@@ -35,7 +35,6 @@ import (
 	derr "github.com/pingcap/tidb/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
-	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
@@ -97,27 +96,6 @@ func WithPDClientConfig(client config.PDClient) Option {
 	}
 }
 
-// TrySetupGlobalResourceController tries to setup global resource controller.
-func TrySetupGlobalResourceController(ctx context.Context, do *do.Domain, s kv.Storage) error {
-	serverID := do.ServerID()
-	var (
-		store *tikvStore
-		ok    bool
-	)
-	if store, ok = s.(*tikvStore); !ok {
-		return errors.New("cannot setup up resource controller, should use tikv storage")
-	}
-
-	control, err := rmclient.NewResourceGroupController(ctx, serverID, store.GetPDClient(), nil, rmclient.WithMaxWaitDuration(time.Second*30))
-	if err != nil {
-		return err
-	}
-	executor.SetResourceGroupController(control)
-	tikv.SetResourceControlInterceptor(control)
-	domain.SetRunawayManager(util2.NewRunawayManager(control))
-	control.Start(ctx)
-	return nil
-}
 
 func getKVStore(path string, tls config.Security) (kv.Storage, error) {
 	return TiKVDriver{}.OpenWithOptions(path, WithSecurity(tls))

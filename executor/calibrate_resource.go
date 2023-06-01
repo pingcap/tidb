@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/sessionctx"
@@ -76,20 +77,7 @@ var (
 			writeReqCount:    3550,
 		},
 	}
-
-	// resourceGroupCtl is the ResourceGroupController in pd client
-	resourceGroupCtl *rmclient.ResourceGroupsController
 )
-
-// SetResourceGroupController set a inited ResourceGroupsController for calibrate usage.
-func SetResourceGroupController(rc *rmclient.ResourceGroupsController) {
-	resourceGroupCtl = rc
-}
-
-// GetResourceGroupController returns the ResourceGroupsController.
-func GetResourceGroupController() *rmclient.ResourceGroupsController {
-	return resourceGroupCtl
-}
 
 // the resource cost rate of a specified workload per 1 tikv cpu.
 type baseResourceCost struct {
@@ -280,6 +268,7 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 	if !variable.EnableResourceControl.Load() {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
+	resourceGroupCtl := domain.GetDomain(e.ctx).ResourceGroupsController()
 	// first fetch the ru settings config.
 	if resourceGroupCtl == nil {
 		return errors.New("resource group controller is not initialized")
