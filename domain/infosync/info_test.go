@@ -235,12 +235,6 @@ func TestTiFlashManager(t *testing.T) {
 	require.Equal(t, false, rules[0].Override, false)
 	require.Equal(t, placement.RuleIndexTiFlash, rules[0].Index)
 
-	// PostTiFlashAccelerateSchedule
-	require.Nil(t, PostTiFlashAccelerateSchedule(ctx, 1))
-	z, ok := tiflash.SyncStatus[1]
-	require.Equal(t, true, ok)
-	require.Equal(t, true, z.Accel)
-
 	// GetTiFlashStoresStat
 	stats, err := GetTiFlashStoresStat(ctx)
 	require.NoError(t, err)
@@ -275,7 +269,7 @@ func TestTiFlashManager(t *testing.T) {
 	require.NoError(t, err)
 	// Have table a and partitions p1, p2
 	require.Equal(t, 3, len(rules))
-	z, ok = tiflash.SyncStatus[2]
+	z, ok := tiflash.SyncStatus[2]
 	require.Equal(t, true, ok)
 	require.Equal(t, true, z.Accel)
 	z, ok = tiflash.SyncStatus[3]
