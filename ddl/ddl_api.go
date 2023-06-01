@@ -1781,12 +1781,10 @@ func checkConstraintNames(tableName model.CIStr, constraints []*ast.Constraint) 
 			checkConstraints = append(checkConstraints, constr)
 		}
 	}
-
 	// Set check constraint name under its order.
 	if len(checkConstraints) > 0 {
 		setEmptyCheckConstraintName(tableName.L, constrNames, checkConstraints)
 	}
-
 	return nil
 }
 
