@@ -1221,6 +1221,7 @@ func syncNormalRunning(s Session) {
 	failpoint.Inject("mockResumeAllJobsFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			dom := domain.GetDomain(s)
+			//nolint: errcheck
 			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), syncer.NewStateInfo(syncer.StateNormalRunning))
 			failpoint.Return()
 		}
