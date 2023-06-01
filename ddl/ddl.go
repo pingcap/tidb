@@ -683,7 +683,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		})
 
 	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
-	// ywq todo read back filling code
 	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
 		return &BackFillSubtaskExecutor{
 			Task: minimalTask,

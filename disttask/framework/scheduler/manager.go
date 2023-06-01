@@ -104,7 +104,6 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 
 	for taskType := range subtaskExecutorConstructors {
 		poolSize := subtaskExecutorPoolSize
-		logutil.Logger(m.logCtx).Info("ywq test taskType", zap.String("type", taskType))
 		if opt, ok := subtaskExecutorOptions[taskType]; ok && opt.PoolSize > 0 {
 			poolSize = opt.PoolSize
 		}
@@ -119,7 +118,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 
 // Start starts the Manager.
 func (m *Manager) Start() {
-	logutil.Logger(m.logCtx).Info("ywq test start manager")
+	logutil.Logger(m.logCtx).Debug("Manager start")
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
@@ -191,8 +190,6 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 			logutil.Logger(m.logCtx).Error("unknown task type", zap.String("type", task.Type))
 			continue
 		}
-		logutil.Logger(m.logCtx).Info("hassubtasksinstates pending revert pending", zap.String("instance id", m.id), zap.Int64("task id", task.ID))
-
 		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending)
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))

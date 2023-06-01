@@ -81,7 +81,6 @@ func TestDefaultValueInEnum(t *testing.T) {
 	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "浣犲ソ"))
 }
 
-// ywq test
 func TestDDLStatementsBackFill(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -99,7 +98,6 @@ func TestDDLStatementsBackFill(t *testing.T) {
 	dom.DDL().SetHook(callback)
 	tk.MustExec("create table t (a int, b char(65));")
 	tk.MustExec("insert into t values (1, '123');")
-	tk.MustExec("set global tidb_enable_dist_task = 1;")
 	testCases := []struct {
 		ddlSQL            string
 		expectedNeedReorg bool

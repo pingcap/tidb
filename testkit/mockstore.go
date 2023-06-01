@@ -88,18 +88,15 @@ func (d *DistExecutionTestContext) SetOwner(idx int) error {
 	return nil
 }
 
-// consider tk how to know who is the ddl owner...
 func CreateMockStore4DistExecution(t testing.TB, serverNum int) *DistExecutionTestContext {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	gctuner.GlobalMemoryLimitTuner.Stop()
 	domains := make([]*domain.Domain, 0, serverNum)
-	// ywq todo set infosyncer
-	// ywq todo set ddl owner to be the last domain
 	sm := MockSessionManager{}
 
 	for i := 0; i < serverNum; i++ {
-		domains = append(domains, bootstrap(t, store, 500*time.Millisecond))
+		domains = append(domains, bootstrap4DistExecution(t, store, 500*time.Millisecond))
 		domains[i].InfoSyncer().SetSessionManager(&sm)
 	}
 	t.Cleanup(func() {
@@ -107,9 +104,12 @@ func CreateMockStore4DistExecution(t testing.TB, serverNum int) *DistExecutionTe
 		require.NoError(t, err)
 		gctuner.GlobalMemoryLimitTuner.Stop()
 	})
-	return &DistExecutionTestContext{schematracker.UnwrapStorage(store), domains}
+	res := DistExecutionTestContext{schematracker.UnwrapStorage(store), domains}
+	res.InitOwner()
+	return &res
 }
 
+// ywq todo refine
 func AddDomain4DistExecution(t testing.TB, store kv.Storage, dom *domain.Domain) {
 	dom1 := bootstrap(t, store, 500*time.Millisecond)
 	dom1.InfoSyncer().SetSessionManager(dom.InfoSyncer().GetSessionManager())
@@ -118,30 +118,33 @@ func AddDomain4DistExecution(t testing.TB, store kv.Storage, dom *domain.Domain)
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	store, err := mockstore.NewMockStore(opts...)
-
 	require.NoError(t, err)
-	dom1 := bootstrap(t, store, 500*time.Millisecond)
-	dom2 := bootstrap(t, store, 500*time.Millisecond)
-	// ywq todo should let dom2 not ddl owner
+	dom := bootstrap(t, store, 500*time.Millisecond)
 	sm := MockSessionManager{}
-	// ywq todo consider sm
-	dom1.InfoSyncer().SetSessionManager(&sm)
-	dom2.InfoSyncer().SetSessionManager(&sm)
+	dom.InfoSyncer().SetSessionManager(&sm)
 	t.Cleanup(func() {
 		view.Stop()
 		err := store.Close()
 		require.NoError(t, err)
 		gctuner.GlobalMemoryLimitTuner.Stop()
 	})
-	return schematracker.UnwrapStorage(store), dom2
+	return schematracker.UnwrapStorage(store), dom
+}
+
+func bootstrap4DistExecution(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
+	return bootstrapImpl(t, store, lease, session.BootstrapSession4DistExecution)
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
+	return bootstrapImpl(t, store, lease, session.BootstrapSession)
+}
+
+func bootstrapImpl(t testing.TB, store kv.Storage, lease time.Duration, bootstrapSessionImpl func(store kv.Storage) (*domain.Domain, error)) *domain.Domain {
 	session.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()
-	dom, err := session.BootstrapSessionForMPP(store)
+	dom, err := bootstrapSessionImpl(store)
 	require.NoError(t, err)
 
 	dom.SetStatsUpdating(true)

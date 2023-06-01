@@ -135,7 +135,6 @@ func TestFrameworkStartUp(t *testing.T) {
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	test_context := testkit.CreateMockStore4DistExecution(t, 2)
-	test_context.InitOwner()
 	DispatchTask("key1", t, &v)
 	DispatchTask("key2", t, &v)
 	test_context.SetOwner(0)

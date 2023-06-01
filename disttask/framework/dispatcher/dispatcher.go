@@ -295,7 +295,6 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 	}
 }
 
-// ywq todo read code
 func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) bool {
 	var err error
 	if len(errStr) > 0 {
@@ -422,7 +421,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	}
 
 	// Generate all available TiDB nodes for this global tasks.
-	serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask) //ywq todo get servernodes fail 多了一个 domain 不知从何而来。。。
+	serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask)
 	logutil.BgLogger().Warn("server nodes", zap.Int("node num", len(serverNodes)))
 
 	if err1 != nil {
@@ -432,12 +431,11 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		return errors.New("no available TiDB node")
 	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
-	// ywq todo select node policy here
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		pos := i % len(serverNodes)
 		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port, serverNodes[pos].ID)
-		logutil.BgLogger().Info("ywq test", zap.String("instanceID", instanceID), zap.Int("pos", pos))
+		logutil.BgLogger().Debug("Create subTask", zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
 
@@ -485,7 +483,6 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 }
 
 func matchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string, id string) bool {
-	logutil.BgLogger().Info("ywq test server num: %+v", zap.Int("serverinfonum:", len(serverInfos)))
 	for _, serverInfo := range serverInfos {
 		serverID := disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port, id)
 		if serverID == schedulerID {
