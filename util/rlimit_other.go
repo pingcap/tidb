@@ -16,6 +16,7 @@
 package util
 
 import (
+	"fmt"
 	"syscall"
 
 	"github.com/pingcap/tidb/util/logutil"
@@ -28,7 +29,7 @@ func GenRLimit(source string) uint64 {
 	var rl syscall.Rlimit
 	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl)
 	if err != nil {
-		logutil.BgLogger().Warn("get system open file limit error", zap.Error(err), zap.String("source", source), zap.String("default", "1024"))
+		logutil.BgLogger().Warn(fmt.Sprintf("[%s] get system open file limit error", source), zap.Error(err), zap.String("default", "1024"))
 	} else {
 		//nolint: unconvert
 		rLimit = uint64(rl.Cur)
