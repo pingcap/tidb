@@ -20,6 +20,7 @@ import (
 	"math"
 	"runtime"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -419,7 +421,24 @@ func postOptimize(ctx context.Context, sctx sessionctx.Context, plan PhysicalPla
 	countStarRewrite(plan)
 	disableReuseChunkIfNeeded(sctx, plan)
 	tryEnableLateMaterialization(sctx, plan)
+	generateRuntimeFilter(sctx, plan)
 	return plan, nil
+}
+
+func generateRuntimeFilter(sctx sessionctx.Context, plan PhysicalPlan) {
+	if !sctx.GetSessionVars().IsRuntimeFilterEnabled() || sctx.GetSessionVars().InRestrictedSQL {
+		return
+	}
+	logutil.BgLogger().Debug("Start runtime filter generator")
+	rfGenerator := &RuntimeFilterGenerator{
+		rfIDGenerator:      &util.IDGenerator{},
+		columnUniqueIDToRF: map[int64][]*RuntimeFilter{},
+		parentPhysicalPlan: plan,
+	}
+	startRFGenerator := time.Now()
+	rfGenerator.GenerateRuntimeFilter(plan)
+	logutil.BgLogger().Debug("Finish runtime filter generator",
+		zap.Duration("Cost", time.Since(startRFGenerator)))
 }
 
 // prunePhysicalColumns currently only work for MPP(HashJoin<-Exchange).

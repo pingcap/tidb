@@ -27,6 +27,7 @@ import (
 
 // TaskStep of LoadData.
 const (
+	// Import we sort source data and ingest it into TiKV in this step.
 	Import int64 = 1
 )
 
@@ -34,7 +35,6 @@ const (
 // All the field should be serializable.
 type TaskMeta struct {
 	Plan   importer.Plan
-	JobID  int64
 	Stmt   string
 	Result Result
 	// eligible instances to run this task, we run on all instances if it's empty.

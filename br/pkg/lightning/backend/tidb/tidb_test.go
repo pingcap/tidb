@@ -508,6 +508,7 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 				MaxError: config.MaxError{
 					Type: *atomic.NewInt64(10),
 				},
+				MaxErrorRecords: 100,
 			},
 		}, log.L()),
 	)
@@ -564,6 +565,7 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 				MaxError: config.MaxError{
 					Type: *atomic.NewInt64(3),
 				},
+				MaxErrorRecords: 100,
 			},
 		}, log.L()),
 	)

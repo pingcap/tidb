@@ -58,7 +58,7 @@ var (
 	_ LogicalPlan = &LogicalWindow{}
 )
 
-// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
+// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
 type JoinType int
 
 const (
@@ -930,7 +930,7 @@ type LogicalSelection struct {
 	Conditions []expression.Expression
 }
 
-func extractNotNullFromConds(Conditions []expression.Expression, p LogicalPlan) fd.FastIntSet {
+func extractNotNullFromConds(conditions []expression.Expression, p LogicalPlan) fd.FastIntSet {
 	// extract the column NOT NULL rejection characteristic from selection condition.
 	// CNF considered only, DNF doesn't have its meanings (cause that condition's eval may don't take effect)
 	//
@@ -944,7 +944,7 @@ func extractNotNullFromConds(Conditions []expression.Expression, p LogicalPlan) 
 	//
 	// As a result,	`a` will be extracted as not-null column to abound the FDSet.
 	notnullColsUniqueIDs := fd.NewFastIntSet()
-	for _, condition := range Conditions {
+	for _, condition := range conditions {
 		var cols []*expression.Column
 		cols = expression.ExtractColumnsFromExpressions(cols, []expression.Expression{condition}, nil)
 		if isNullRejected(p.SCtx(), p.Schema(), condition) {
@@ -956,7 +956,7 @@ func extractNotNullFromConds(Conditions []expression.Expression, p LogicalPlan) 
 	return notnullColsUniqueIDs
 }
 
-func extractConstantCols(Conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) fd.FastIntSet {
+func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) fd.FastIntSet {
 	// extract constant cols
 	// eg: where a=1 and b is null and (1+c)=5.
 	// TODO: Some columns can only be determined to be constant from multiple constraints (e.g. x <= 1 AND x >= 1)
@@ -964,7 +964,7 @@ func extractConstantCols(Conditions []expression.Expression, sctx sessionctx.Con
 		constObjs      []expression.Expression
 		constUniqueIDs = fd.NewFastIntSet()
 	)
-	constObjs = expression.ExtractConstantEqColumnsOrScalar(sctx, constObjs, Conditions)
+	constObjs = expression.ExtractConstantEqColumnsOrScalar(sctx, constObjs, conditions)
 	for _, constObj := range constObjs {
 		switch x := constObj.(type) {
 		case *expression.Column:
@@ -983,9 +983,9 @@ func extractConstantCols(Conditions []expression.Expression, sctx sessionctx.Con
 	return constUniqueIDs
 }
 
-func extractEquivalenceCols(Conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) [][]fd.FastIntSet {
+func extractEquivalenceCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) [][]fd.FastIntSet {
 	var equivObjsPair [][]expression.Expression
-	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, Conditions)
+	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, conditions)
 	equivUniqueIDs := make([][]fd.FastIntSet, 0, len(equivObjsPair))
 	for _, equivObjPair := range equivObjsPair {
 		// lhs of equivalence.

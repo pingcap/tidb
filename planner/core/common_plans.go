@@ -585,6 +585,21 @@ type LoadDataOpt struct {
 	Value expression.Expression
 }
 
+// ImportInto represents a ingest into plan.
+type ImportInto struct {
+	baseSchemaProducer
+
+	Table              *ast.TableName
+	ColumnAssignments  []*ast.Assignment
+	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	Path               string
+	Format             *string
+	Options            []*LoadDataOpt
+
+	GenCols InsertGeneratedColumns
+	Stmt    string
+}
+
 // LoadStats represents a load stats plan.
 type LoadStats struct {
 	baseSchemaProducer

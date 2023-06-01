@@ -1606,6 +1606,16 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
+// UpdateProcessInfo updates the session's process info for the running statement.
+func (s *session) UpdateProcessInfo() {
+	pi := s.ShowProcess()
+	if pi == nil || pi.CurTxnStartTS != 0 {
+		return
+	}
+	// Update the current transaction start timestamp.
+	pi.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
+}
+
 func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
 	return util.OOMAlarmVariablesInfo{
 		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
@@ -2142,6 +2152,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		plannercore.DebugTraceReceivedCommand(s, cmdByte, stmtNode)
 	}
 
+	if err := s.validateStatementInTxn(stmtNode); err != nil {
+		return nil, err
+	}
+
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
 		return nil, err
 	}
@@ -2259,6 +2273,14 @@ func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.Stm
 		return sessiontxn.GetTxnManager(s).OnStmtRetry(ctx)
 	}
 	return sessiontxn.GetTxnManager(s).OnStmtStart(ctx, node)
+}
+
+func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
+	vars := s.GetSessionVars()
+	if _, ok := stmtNode.(*ast.ImportIntoStmt); ok && vars.InTxn() {
+		return errors.New("cannot run IMPORT INTO in explicit transaction")
+	}
+	return nil
 }
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {

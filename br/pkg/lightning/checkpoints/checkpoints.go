@@ -51,6 +51,8 @@ const (
 	CheckpointStatusMaxInvalid      CheckpointStatus = 25
 	CheckpointStatusLoaded          CheckpointStatus = 30
 	CheckpointStatusAllWritten      CheckpointStatus = 60
+	CheckpointStatusDupDetected     CheckpointStatus = 70
+	CheckpointStatusIndexDropped    CheckpointStatus = 80
 	CheckpointStatusClosed          CheckpointStatus = 90
 	CheckpointStatusImported        CheckpointStatus = 120
 	CheckpointStatusIndexImported   CheckpointStatus = 140
