@@ -64,6 +64,57 @@ const (
 
 // Handle can update stats info periodically.
 type Handle struct {
+	pool sessionPool
+
+	// initStatsCtx is the ctx only used for initStats
+	initStatsCtx sessionctx.Context
+
+	// sysProcTracker is used to track sys process like analyze
+	sysProcTracker sessionctx.SysProcTracker
+
+	// serverIDGetter is used to get server ID for generating auto analyze ID.
+	serverIDGetter func() uint64
+
+	InitStatsDone chan struct{}
+
+	// ddlEventCh is a channel to notify a ddl operation has happened.
+	// It is sent only by owner or the drop stats executor, and read by stats handle.
+	ddlEventCh chan *ddlUtil.Event
+
+	// idxUsageListHead contains all the index usage collectors required by session.
+	idxUsageListHead *SessionIndexUsageCollector
+
+	// listHead contains all the stats collector required by session.
+	listHead *SessionStatsCollector
+
+	// It can be read by multiple readers at the same time without acquiring lock, but it can be
+	// written only after acquiring the lock.
+	statsCache struct {
+		atomic.Value
+		memTracker *memory.Tracker
+		sync.Mutex
+	}
+
+	// feedback is used to store query feedback info.
+	feedback struct {
+		data *statistics.QueryFeedbackMap
+		sync.Mutex
+	}
+
+	// globalMap contains all the delta map from collectors when we dump them to KV.
+	globalMap struct {
+		data tableDeltaMap
+		sync.Mutex
+	}
+
+	// colMap contains all the column stats usage information from collectors when we dump them to KV.
+	colMap struct {
+		data colStatsUsageMap
+		sync.Mutex
+	}
+
+	// tableLocked used to store locked tables
+	tableLocked []int64
 
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
@@ -75,52 +126,6 @@ type Handle struct {
 		syncutil.RWMutex
 	}
 
-	// It can be read by multiple readers at the same time without acquiring lock, but it can be
-	// written only after acquiring the lock.
-	statsCache struct {
-		atomic.Value
-		memTracker *memory.Tracker
-		sync.Mutex
-	}
-
-	pool sessionPool
-
-	// sysProcTracker is used to track sys process like analyze
-	sysProcTracker sessionctx.SysProcTracker
-
-	// initStatsCtx is the ctx only used for initStats
-	initStatsCtx sessionctx.Context
-
-	// colMap contains all the column stats usage information from collectors when we dump them to KV.
-	colMap struct {
-		data colStatsUsageMap
-		sync.Mutex
-	}
-
-	// globalMap contains all the delta map from collectors when we dump them to KV.
-	globalMap struct {
-		data tableDeltaMap
-		sync.Mutex
-	}
-	// feedback is used to store query feedback info.
-	feedback struct {
-		data *statistics.QueryFeedbackMap
-		sync.Mutex
-	}
-	// listHead contains all the stats collector required by session.
-	listHead *SessionStatsCollector
-
-	// idxUsageListHead contains all the index usage collectors required by session.
-	idxUsageListHead *SessionIndexUsageCollector
-
-	// ddlEventCh is a channel to notify a ddl operation has happened.
-	// It is sent only by owner or the drop stats executor, and read by stats handle.
-	ddlEventCh chan *ddlUtil.Event
-	// serverIDGetter is used to get server ID for generating auto analyze ID.
-	serverIDGetter func() uint64
-
-	InitStatsDone chan struct{}
-
 	schemaMu struct {
 		// pid2tid is the map from partition ID to table ID.
 		pid2tid map[int64]int64
@@ -128,9 +133,6 @@ type Handle struct {
 		schemaVersion int64
 		sync.RWMutex
 	}
-
-	// tableLocked used to store locked tables
-	tableLocked []int64
 
 	lease atomic2.Duration
 }
