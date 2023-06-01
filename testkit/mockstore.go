@@ -30,9 +30,15 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit/testenv"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gctuner"
+	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
+	"go.uber.org/zap"
 )
 
 // WithTiKV flag is only used for debugging locally with real tikv cluster.
@@ -66,7 +72,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 }
 
 type DistExecutionTestContext struct {
-	store   kv.Storage
+	Store   kv.Storage
 	domains []*domain.Domain
 	t       testing.TB
 }
@@ -90,7 +96,7 @@ func (d *DistExecutionTestContext) SetOwner(idx int) error {
 }
 
 func (d *DistExecutionTestContext) AddServer() {
-	dom := bootstrap4DistExecution(d.t, d.store, 500*time.Microsecond)
+	dom := bootstrap4DistExecution(d.t, d.Store, 500*time.Microsecond)
 	dom.InfoSyncer().SetSessionManager(d.domains[0].InfoSyncer().GetSessionManager())
 	dom.DDL().OwnerManager().RetireOwner()
 	d.domains = append(d.domains, dom)
@@ -110,6 +116,42 @@ func (d *DistExecutionTestContext) DeleteServer(idx int) error {
 	d.domains = append(d.domains[:idx], d.domains[idx+1:]...)
 	infosync.DeleteServerInfo(idx)
 	return err
+}
+
+func (d *DistExecutionTestContext) PrintIDs() {
+	for _, dom := range d.domains {
+		logutil.BgLogger().Info("dom id", zap.String("id", dom.DDL().GetID()))
+	}
+}
+
+func (d *DistExecutionTestContext) NewTestKit(idx int) *TestKit {
+	require.True(d.t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
+	testenv.SetGOMAXPROCSForTest()
+	tk := &TestKit{
+		require: require.New(d.t),
+		assert:  assert.New(d.t),
+		t:       d.t,
+		store:   d.Store,
+		alloc:   chunk.NewAllocator(),
+	}
+	tk.RefreshSession()
+
+	dom := d.domains[idx]
+	sm := dom.InfoSyncer().GetSessionManager()
+	if sm != nil {
+		mockSm, ok := sm.(*MockSessionManager)
+		if ok {
+			mockSm.mu.Lock()
+			if mockSm.Conn == nil {
+				mockSm.Conn = make(map[uint64]session.Session)
+			}
+			mockSm.Conn[tk.session.GetSessionVars().ConnectionID] = tk.session
+			mockSm.mu.Unlock()
+		}
+		tk.session.SetSessionManager(sm)
+	}
+
+	return tk
 }
 
 func NewDistExecutionTestContext(t testing.TB, serverNum int) *DistExecutionTestContext {
