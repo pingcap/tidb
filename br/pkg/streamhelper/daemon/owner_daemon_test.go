@@ -150,7 +150,9 @@ func TestDaemon(t *testing.T) {
 	req.False(ow.IsOwner())
 	app.AssertNotRunning(1 * time.Second)
 	ow.CampaignOwner()
-	req.True(ow.IsOwner())
+	req.Eventually(func() bool {
+		return ow.IsOwner()
+	}, 1*time.Second, 100*time.Millisecond)
 	app.AssertStart(1 * time.Second)
 	app.AssertTick(1 * time.Second)
 }
