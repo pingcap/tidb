@@ -612,8 +612,18 @@ func setGlobalVars() {
 	}
 	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
+<<<<<<< HEAD
 	kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
 	if cfg.Performance.TxnEntrySizeLimit > 120*1024*1024 {
+=======
+	if cfg.Performance.TxnTotalSizeLimit == config.DefTxnTotalSizeLimit {
+		// practically deprecate the config, let the new session memory tracker take charge of it.
+		kv.TxnTotalSizeLimit = config.SuperLargeTxnSize
+	} else {
+		kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
+	}
+	if cfg.Performance.TxnEntrySizeLimit > config.MaxTxnEntrySizeLimit {
+>>>>>>> bb2e845f712 (lightning: fix risk of OOM (#40443) (#44333))
 		log.Fatal("cannot set txn entry size limit larger than 120M")
 	}
 	kv.TxnEntrySizeLimit = cfg.Performance.TxnEntrySizeLimit
