@@ -328,7 +328,6 @@ func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTask
 	for i := 0; i < retryTimes; i++ {
 		err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(gTask, newSubTasks, gTaskState == proto.TaskStateReverting)
 		if err == nil {
-			logutil.BgLogger().Info("ywq test update global task and add sub tasks success")
 			break
 		}
 		if i%10 == 0 {

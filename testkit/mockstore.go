@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/session"
@@ -67,18 +68,18 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 type DistExecutionTestContext struct {
 	store   kv.Storage
 	domains []*domain.Domain
+	t       testing.TB
 }
 
-func (d *DistExecutionTestContext) InitOwner() error {
+func (d *DistExecutionTestContext) InitOwner() {
 	for _, dom := range d.domains {
 		dom.DDL().OwnerManager().RetireOwner()
 	}
-	return d.domains[len(d.domains)-1].DDL().OwnerManager().CampaignOwner()
-
+	d.domains[len(d.domains)-1].DDL().OwnerManager().CampaignOwner()
 }
 
 func (d *DistExecutionTestContext) SetOwner(idx int) error {
-	if idx >= len(d.domains) {
+	if idx >= len(d.domains) || idx < 0 {
 		return errors.New("server idx out of bound")
 	}
 	for _, dom := range d.domains {
@@ -88,7 +89,30 @@ func (d *DistExecutionTestContext) SetOwner(idx int) error {
 	return nil
 }
 
-func CreateMockStore4DistExecution(t testing.TB, serverNum int) *DistExecutionTestContext {
+func (d *DistExecutionTestContext) AddServer() {
+	dom := bootstrap4DistExecution(d.t, d.store, 500*time.Microsecond)
+	dom.InfoSyncer().SetSessionManager(d.domains[0].InfoSyncer().GetSessionManager())
+	dom.DDL().OwnerManager().RetireOwner()
+	d.domains = append(d.domains, dom)
+}
+
+func (d *DistExecutionTestContext) DeleteServer(idx int) error {
+	if idx >= len(d.domains) || idx < 0 {
+		return errors.New("server idx out of bound")
+	}
+	if len(d.domains) == 1 {
+		return errors.New("can't delete server, since server num = 1")
+	}
+	var err error
+	if d.domains[idx].DDL().OwnerManager().IsOwner() {
+		err = d.SetOwner(0)
+	}
+	d.domains = append(d.domains[:idx], d.domains[idx+1:]...)
+	infosync.DeleteServerInfo(idx)
+	return err
+}
+
+func NewDistExecutionTestContext(t testing.TB, serverNum int) *DistExecutionTestContext {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	gctuner.GlobalMemoryLimitTuner.Stop()
@@ -104,15 +128,9 @@ func CreateMockStore4DistExecution(t testing.TB, serverNum int) *DistExecutionTe
 		require.NoError(t, err)
 		gctuner.GlobalMemoryLimitTuner.Stop()
 	})
-	res := DistExecutionTestContext{schematracker.UnwrapStorage(store), domains}
+	res := DistExecutionTestContext{schematracker.UnwrapStorage(store), domains, t}
 	res.InitOwner()
 	return &res
-}
-
-// ywq todo refine
-func AddDomain4DistExecution(t testing.TB, store kv.Storage, dom *domain.Domain) {
-	dom1 := bootstrap(t, store, 500*time.Millisecond)
-	dom1.InfoSyncer().SetSessionManager(dom.InfoSyncer().GetSessionManager())
 }
 
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.

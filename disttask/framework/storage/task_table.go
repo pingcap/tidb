@@ -80,6 +80,10 @@ func execSQL(ctx context.Context, se sessionctx.Context, sql string, args ...int
 	if rs != nil {
 		rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
 		if err != nil {
+			err = rs.Close()
+			if err != nil {
+				return nil, err
+			}
 			return nil, err
 		}
 		err = rs.Close()
@@ -399,7 +403,6 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, isSubtaskRevert bool) error {
 	return stm.withNewTxn(func(se sessionctx.Context) error {
-
 		_, err := execSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %? where id = %?",
 			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, gTask.Error, gTask.ID)
 		if err != nil {
@@ -416,6 +419,7 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 		if isSubtaskRevert {
 			subtaskState = proto.TaskStateRevertPending
 		}
+
 		for _, subtask := range subtasks {
 			// TODO: insert subtasks in batch
 			_, err = execSQL(stm.ctx, se, "insert into mysql.tidb_background_subtask(step, task_key, exec_id, meta, state, type, checkpoint) values (%?, %?, %?, %?, %?, %?, %?)",

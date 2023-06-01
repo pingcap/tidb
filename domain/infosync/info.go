@@ -104,13 +104,13 @@ type InfoSyncer struct {
 	// It is only used in storeMinStartTS and RemoveMinStartTS now.
 	// It must be used when the etcd path isn't needed to separate by keyspace.
 	// See keyspace RFC: https://github.com/pingcap/tidb/pull/39685
-	unprefixedEtcdCli *clientv3.Client
-	infos             []*ServerInfo
-	// ywq tood refactor
-	serverInfoPath string
-	minStartTS     uint64
-	minStartTSPath string
-	managerMu      struct {
+	unprefixedEtcdCli   *clientv3.Client
+	info                *ServerInfo
+	infos4DistExecution []*ServerInfo
+	serverInfoPath      string
+	minStartTS          uint64
+	minStartTSPath      string
+	managerMu           struct {
 		mu sync.RWMutex
 		util2.SessionManager
 	}
@@ -202,11 +202,10 @@ func GlobalInfoSyncerInit(
 	is := &InfoSyncer{
 		etcdCli:           etcdCli,
 		unprefixedEtcdCli: unprefixedEtcdCli,
-		infos:             make([]*ServerInfo, 0),
+		info:              getServerInfo(id, serverIDGetter),
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
-	is.infos = append(is.infos, getServerInfo(id, serverIDGetter))
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
 		return nil, err
@@ -233,16 +232,19 @@ func AddServerInfo(id string, serverIDGetter func() uint64) error {
 	if err != nil {
 		return err
 	}
-	is.infos = append(is.infos, getServerInfo(id, serverIDGetter))
+	is.infos4DistExecution = append(is.infos4DistExecution, getServerInfo(id, serverIDGetter))
 	return nil
 }
 
-func ClearServerInfo() error {
+func DeleteServerInfo(idx int) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
 	}
-	is.infos = is.infos[:0]
+	if idx >= len(is.infos4DistExecution) || idx < 0 {
+		return errors.New("server idx out of bound")
+	}
+	is.infos4DistExecution = append(is.infos4DistExecution[:idx], is.infos4DistExecution[idx+1:]...)
 	return nil
 }
 
@@ -386,7 +388,7 @@ func GetServerInfo() (*ServerInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return is.infos[0], nil
+	return is.info, nil
 }
 
 // GetServerInfoByID gets specified server static information from etcd.
@@ -400,8 +402,8 @@ func GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
 
 // ywq todo change here
 func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
-	if is.etcdCli == nil || id == is.infos[0].ID {
-		return is.infos[0], nil
+	if is.etcdCli == nil || id == is.info.ID {
+		return is.info, nil
 	}
 	key := fmt.Sprintf("%s/%s", ServerInformationPath, id)
 	infoMap, err := getInfo(ctx, is.etcdCli, key, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
@@ -717,9 +719,12 @@ func PutRuleBundlesWithDefaultRetry(ctx context.Context, bundles []*placement.Bu
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
-		// ywq todo change it
-		for _, info := range is.infos {
-			allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter)
+		if len(is.infos4DistExecution) >= 1 {
+			for _, info := range is.infos4DistExecution {
+				allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter)
+			}
+		} else {
+			allInfo[is.info.ID] = getServerInfo(is.info.ID, is.info.ServerIDGetter)
 		}
 		return allInfo, nil
 	}
@@ -735,7 +740,7 @@ func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	infoBuf, err := is.infos[0].Marshal()
+	infoBuf, err := is.info.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -774,13 +779,13 @@ func (is *InfoSyncer) getTopologyInfo() TopologyInfo {
 	return TopologyInfo{
 		ServerVersionInfo: ServerVersionInfo{
 			Version: mysql.TiDBReleaseVersion,
-			GitHash: is.infos[0].ServerVersionInfo.GitHash,
+			GitHash: is.info.ServerVersionInfo.GitHash,
 		},
-		IP:             is.infos[0].IP,
-		StatusPort:     is.infos[0].StatusPort,
+		IP:             is.info.IP,
+		StatusPort:     is.info.StatusPort,
 		DeployPath:     dir,
-		StartTimestamp: is.infos[0].StartTimestamp,
-		Labels:         is.infos[0].Labels,
+		StartTimestamp: is.info.StartTimestamp,
+		Labels:         is.info.Labels,
 	}
 }
 
@@ -795,7 +800,7 @@ func (is *InfoSyncer) StoreTopologyInfo(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	str := string(hack.String(infoBuf))
-	key := fmt.Sprintf("%s/%s/info", TopologyInformationPath, net.JoinHostPort(is.infos[0].IP, strconv.Itoa(int(is.infos[0].Port))))
+	key := fmt.Sprintf("%s/%s/info", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
 	// Note: no lease is required here.
 	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, str)
 	if err != nil {
@@ -935,7 +940,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	}
 	is.session = session
 	binloginfo.RegisterStatusListener(func(status binloginfo.BinlogStatus) error {
-		is.infos[0].BinlogStatus = status.String()
+		is.info.BinlogStatus = status.String()
 		err := is.StoreServerInfo(ctx)
 		return errors.Trace(err)
 	})
@@ -947,7 +952,7 @@ func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, 
 	if is.etcdCli == nil {
 		return nil
 	}
-	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s", TopologyInformationPath, net.JoinHostPort(is.infos[0].IP, strconv.Itoa(int(is.infos[0].Port))))
+	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
 	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
 	if err != nil {
 		return err
@@ -962,7 +967,7 @@ func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	key := fmt.Sprintf("%s/%s/ttl", TopologyInformationPath, net.JoinHostPort(is.infos[0].IP, strconv.Itoa(int(is.infos[0].Port))))
+	key := fmt.Sprintf("%s/%s/ttl", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key,
 		fmt.Sprintf("%v", time.Now().UnixNano()),
 		clientv3.WithLease(is.topologySession.Lease()))

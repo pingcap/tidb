@@ -53,7 +53,6 @@ type domainMap struct {
 	domains map[string]*domain.Domain
 }
 
-// ywq todo create new domain
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()

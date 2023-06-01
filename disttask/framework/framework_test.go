@@ -129,16 +129,59 @@ func DispatchTask(taskKey string, t *testing.T, v *atomic.Int64) {
 	v.Store(0)
 }
 
-func TestFrameworkStartUp(t *testing.T) {
+func TestFrameworkBasic(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
-	test_context := testkit.CreateMockStore4DistExecution(t, 2)
+	test_context := testkit.NewDistExecutionTestContext(t, 2)
 	DispatchTask("key1", t, &v)
 	DispatchTask("key2", t, &v)
-	test_context.SetOwner(0)
-	time.Sleep(3 * time.Second) // make sure dispatcher changed
+	err := test_context.SetOwner(0)
+	require.NoError(t, err)
+	time.Sleep(2 * time.Second) // make sure owner changed
 	DispatchTask("key3", t, &v)
 	DispatchTask("key4", t, &v)
+}
+
+func TestFramework3Server(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+	test_context := testkit.NewDistExecutionTestContext(t, 3)
+	DispatchTask("key1", t, &v)
+	DispatchTask("key2", t, &v)
+	err := test_context.SetOwner(0)
+	require.NoError(t, err)
+	time.Sleep(2 * time.Second) // make sure owner changed
+	DispatchTask("key3", t, &v)
+	DispatchTask("key4", t, &v)
+}
+
+func TestFrameworkAddServer(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+	test_context := testkit.NewDistExecutionTestContext(t, 1)
+	DispatchTask("key1", t, &v)
+	test_context.AddServer()
+	DispatchTask("key2", t, &v)
+	err := test_context.SetOwner(1)
+	require.NoError(t, err)
+	time.Sleep(2 * time.Second) // make sure owner changed
+	DispatchTask("key3", t, &v)
+}
+
+func TestFrameworkDeleteServer(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+	test_context := testkit.NewDistExecutionTestContext(t, 2)
+	DispatchTask("key1", t, &v)
+	test_context.DeleteServer(1)
+	time.Sleep(2 * time.Second) // make sure the owner changed
+	DispatchTask("key2", t, &v)
 }

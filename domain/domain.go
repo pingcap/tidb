@@ -1008,7 +1008,6 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
-	logutil.BgLogger().Info("ywq test new domain")
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
 		store:               store,
@@ -1064,8 +1063,6 @@ func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	})
 	return cli, err
 }
-
-var mpp = true
 
 // Init initializes a domain.
 func (do *Domain) Init(
@@ -1160,17 +1157,10 @@ func (do *Domain) Init(
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli := do.GetPDClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
-	// global variable！！！！
-	logutil.BgLogger().Info("ywq test ddl id", zap.String("ddlid", do.ddl.GetID()), zap.Uint64("serverID", do.ServerID()))
-	// ywq todo must here...
+
 	if infosync.InfoSyncerInited() {
-		// ywq todo refinement, handle info sync and serverinfo
-		logutil.BgLogger().Info("ywq test info syncinited", zap.String("ddlid", do.ddl.GetID()), zap.Uint64("serverID", do.ServerID()))
+		// This will only run in distributed execution test.
 		do.info = infosync.GetGlobalInfoSyncerForTest()
-		if mpp {
-			infosync.ClearServerInfo()
-			mpp = false
-		}
 		infosync.AddServerInfo(do.ddl.GetID(), do.ServerID)
 	} else {
 		do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
@@ -1380,7 +1370,6 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
-	logutil.BgLogger().Info("ywq test init dist task loop", zap.String("ddlid", do.DDL().GetID()))
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil)
