@@ -19,7 +19,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/duplicate"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/dbutil"
 	"github.com/pingcap/tidb/util/extsort"
 	"github.com/stretchr/testify/require"
@@ -27,9 +29,13 @@ import (
 )
 
 func TestErrorOnDup(t *testing.T) {
+	k := tablecodec.EncodeRowKeyWithHandle(121, kv.IntHandle(22))
 	h := &errorOnDup{}
-	err := h.Begin([]byte("key"))
-	require.Error(t, err)
+	require.NoError(t, h.Begin(k))
+	require.NoError(t, h.Append([]byte{1}))
+	require.NoError(t, h.Append([]byte{2}))
+	err := h.End()
+	require.NoError(t, err)
 	require.NoError(t, h.Close())
 }
 

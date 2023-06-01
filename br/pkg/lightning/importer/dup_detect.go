@@ -107,6 +107,7 @@ func makeDupHandlerConstructor(
 	}
 }
 
+// ErrDuplicateKey is an error class for duplicate key error.
 var ErrDuplicateKey = errors.Normalize("duplicate key detected on indexID %d of KeyID: %v", errors.RFCCodeText("Lightning:PreDedup:ErrDuplicateKey"))
 
 var (
