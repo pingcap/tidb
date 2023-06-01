@@ -134,10 +134,12 @@ func TestFrameworkStartUp(t *testing.T) {
 	defer scheduler.ClearSchedulers()
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
-
 	test_context := testkit.CreateMockStore4DistExecution(t, 2)
 	test_context.InitOwner()
-	// test_context.SetOwner(1) // bug can't set owner right
 	DispatchTask("key1", t, &v)
 	DispatchTask("key2", t, &v)
+	test_context.SetOwner(0)
+	time.Sleep(3 * time.Second) // make sure dispatcher changed
+	DispatchTask("key3", t, &v)
+	DispatchTask("key4", t, &v)
 }

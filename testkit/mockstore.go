@@ -70,7 +70,11 @@ type DistExecutionTestContext struct {
 }
 
 func (d *DistExecutionTestContext) InitOwner() error {
+	for _, dom := range d.domains {
+		dom.DDL().OwnerManager().RetireOwner()
+	}
 	return d.domains[len(d.domains)-1].DDL().OwnerManager().CampaignOwner()
+
 }
 
 func (d *DistExecutionTestContext) SetOwner(idx int) error {
