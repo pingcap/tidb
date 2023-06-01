@@ -15,12 +15,12 @@
 package loaddata
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -28,10 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-)
-
-var (
-	checkTaskFinishInterval = 300 * time.Millisecond
 )
 
 // DistImporter is a JobImporter for distributed load data.
@@ -44,15 +40,13 @@ type DistImporter struct {
 	instance *infosync.ServerInfo
 }
 
-var _ importer.JobImporter = &DistImporter{}
-
 // NewDistImporter creates a new DistImporter.
 func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt string) (*DistImporter, error) {
 	return &DistImporter{
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
-		logger:         logutil.BgLogger().With(zap.String("component", "distribute importer"), zap.Int("id", int(param.Job.ID))),
+		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
 	}, nil
 }
 
@@ -66,6 +60,7 @@ func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
+		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
 		instance:       serverInfo,
 	}, nil
 }
@@ -76,18 +71,24 @@ func (ti *DistImporter) Param() *importer.JobImportParam {
 }
 
 // Import implements JobImporter.Import.
-func (ti *DistImporter) Import() {
+func (*DistImporter) Import() {
+	// todo: remove it
+}
+
+// ImportTask import task.
+func (ti *DistImporter) ImportTask(task *proto.Task) {
 	ti.logger.Info("start distribute load data")
 	ti.Group.Go(func() error {
 		defer close(ti.Done)
-		return ti.doImport(ti.GroupCtx)
+		// task is run using distribute framework, so we only wait for the task to finish.
+		return handle.WaitGlobalTask(ti.GroupCtx, task)
 	})
 }
 
 // Result implements JobImporter.Result.
-func (ti *DistImporter) Result() importer.JobImportResult {
+func (ti *DistImporter) Result(task *proto.Task) importer.JobImportResult {
 	var result importer.JobImportResult
-	taskMeta, err := ti.getTaskMeta()
+	taskMeta, err := ti.getTaskMeta(task)
 	if err != nil {
 		result.Msg = err.Error()
 		return result
@@ -115,99 +116,48 @@ func (*DistImporter) Close() error {
 	return nil
 }
 
-// submitGlobalTaskAndRun submits a global task and returns a channel that will be closed when the task is done.
-// TODO: move to handle, see https://github.com/pingcap/tidb/pull/43066
-func submitGlobalTaskAndRun(ctx context.Context, taskKey, taskType string, concurrency int, taskMeta []byte) error {
-	globalTaskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
-	if err != nil {
-		return err
-	}
-
-	if globalTask == nil {
-		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, concurrency, taskMeta)
-		if err != nil {
-			return err
-		}
-
-		globalTask, err = globalTaskManager.GetGlobalTaskByID(taskID)
-		if err != nil {
-			return err
-		}
-
-		if globalTask == nil {
-			return errors.Errorf("cannot find global task with ID %d", taskID)
-		}
-	}
-
-	ticker := time.NewTicker(checkTaskFinishInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			logutil.BgLogger().Warn("context done", zap.Error(ctx.Err()))
-			return ctx.Err()
-		case <-ticker.C:
-			found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
-			if err != nil {
-				logutil.BgLogger().Info("get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
-				continue
-			}
-
-			if found == nil {
-				return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
-			}
-
-			if found.State == proto.TaskStateSucceed {
-				return nil
-			}
-
-			// TODO: get the original error message.
-			if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled || found.State == proto.TaskStateReverted {
-				return errors.Errorf("task stopped with state %s", found.State)
-			}
-		}
-	}
-}
-
-func (ti *DistImporter) doImport(ctx context.Context) error {
+// SubmitTask submits a task to the distribute framework.
+func (ti *DistImporter) SubmitTask() (*proto.Task, error) {
 	var instances []*infosync.ServerInfo
 	if ti.instance != nil {
 		instances = append(instances, ti.instance)
 	}
 	task := TaskMeta{
 		Plan:              *ti.plan,
-		JobID:             ti.Job.ID,
 		Stmt:              ti.stmt,
 		EligibleInstances: instances,
 	}
 	taskMeta, err := json.Marshal(task)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return submitGlobalTaskAndRun(ctx, ti.taskKey(), proto.LoadData, int(ti.plan.ThreadCnt), taskMeta)
+	globalTask, err := handle.SubmitGlobalTask(ti.taskKey(), proto.LoadData, int(ti.plan.ThreadCnt), taskMeta)
+	if err != nil {
+		return nil, err
+	}
+
+	// update logger with task id.
+	ti.logger = ti.logger.With(zap.Int64("id", globalTask.ID))
+
+	return globalTask, nil
 }
 
-func (ti *DistImporter) taskKey() string {
-	return fmt.Sprintf("ddl/%s/%d", proto.LoadData, ti.Job.ID)
+func (*DistImporter) taskKey() string {
+	// task key is meaningless to IMPORT INTO, so we use a random uuid.
+	return fmt.Sprintf("%s/%s", proto.LoadData, uuid.New().String())
 }
 
-func (ti *DistImporter) getTaskMeta() (*TaskMeta, error) {
+func (*DistImporter) getTaskMeta(task *proto.Task) (*TaskMeta, error) {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
 	}
-	taskKey := ti.taskKey()
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	globalTask, err := globalTaskManager.GetGlobalTaskByID(task.ID)
 	if err != nil {
 		return nil, err
 	}
 	if globalTask == nil {
-		return nil, errors.Errorf("cannot find global task with key %s", taskKey)
+		return nil, errors.Errorf("cannot find global task with ID %d", task.ID)
 	}
 	var taskMeta TaskMeta
 	if err := json.Unmarshal(globalTask.Meta, &taskMeta); err != nil {

@@ -34,8 +34,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
-	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -62,6 +61,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -777,8 +777,13 @@ func cleanupSortPath(currentJobID int64) error {
 			logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
 			continue
 		}
-		// For now, there is only one task using ingest at the same time,
-		// so we can remove all the temp data of the previous jobs.
+		if _, ok := ingest.LitBackCtxMgr.Load(jobID); ok {
+			// The job is still running, skip it.
+			logutil.BgLogger().Warn("[ddl-ingest] the job is still running, skip removing it",
+				zap.Int64("running job ID", jobID))
+			continue
+		}
+		// Remove all the temp data of the previous done jobs.
 		if jobID < currentJobID {
 			logutil.BgLogger().Info("[ddl-ingest] remove stale temp index data",
 				zap.Int64("jobID", jobID), zap.Int64("currentJobID", currentJobID))
@@ -916,8 +921,9 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	if err != nil {
 		if !errorIsRetryable(err, job) {
+			logutil.BgLogger().Warn("[ddl] run reorg job failed, convert job to rollback",
+				zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
-			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
 		return false, ver, errors.Trace(err)
 	}
@@ -936,7 +942,6 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
 			if !errorIsRetryable(err, job) {
 				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
-				ingest.LitBackCtxMgr.Unregister(job.ID)
 			}
 		}
 		return false, ver, errors.Trace(err)
@@ -1106,9 +1111,6 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-				ingest.LitBackCtxMgr.Unregister(job.ID)
-			}
 			job.Args[0] = indexInfo.ID
 		} else {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
@@ -1844,6 +1846,10 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			// Every time we finish a partition, we update the progress of the job.
+			if rc := w.getReorgCtx(reorgInfo.Job.ID); rc != nil {
+				reorgInfo.Job.SetRowCount(rc.getRowCount())
+			}
 		}
 	} else {
 		//nolint:forcetypeassert
@@ -1859,6 +1865,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	}
 
 	taskType := BackfillTaskType
+	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
 	taskMeta := &BackfillGlobalMeta{
 		Job:        *reorgInfo.Job.Clone(),
 		EleID:      reorgInfo.currElement.ID,
@@ -1870,74 +1877,37 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		return err
 	}
 
-	globalTaskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
+	done := make(chan struct{})
+	g, ctx := errgroup.WithContext(context.Background())
 
-	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
-	if err != nil {
-		return err
-	}
+	g.Go(func() error {
+		defer close(done)
+		return handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
+	})
 
-	if globalTask == nil {
-		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, distPhysicalTableConcurrency, metaData)
-		if err != nil {
-			return nil
-		}
+	g.Go(func() error {
+		ticker := time.NewTicker(CheckBackfillJobFinishInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return nil
+			case <-ticker.C:
+				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+					if !dbterror.ErrCancelledDDLJob.Equal(err) {
+						return errors.Trace(err)
+					}
 
-		globalTask, err = globalTaskManager.GetGlobalTaskByID(taskID)
-		if err != nil {
-			return err
-		}
-
-		if globalTask == nil {
-			return errors.Errorf("cannot find global task with ID %d", taskID)
-		}
-	}
-
-	ticker := time.NewTicker(CheckBackfillJobFinishInterval)
-	defer ticker.Stop()
-
-	for {
-		<-ticker.C
-		found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
-		if err != nil {
-			logutil.BgLogger().Info("[ddl] get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
-			continue
-		}
-
-		if found == nil {
-			return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
-		}
-
-		if found.State == proto.TaskStateSucceed {
-			return nil
-		}
-
-		if found.State == proto.TaskStateReverted {
-			logutil.BgLogger().Error("[ddl] global task reverted", zap.Int64("taskID", globalTask.ID), zap.String("error", string(found.Error)))
-			return errors.New(string(found.Error))
-		}
-
-		// TODO: get the original error message.
-		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled {
-			return errors.Errorf("ddl task stopped with state %s, err %s", found.State, found.Error)
-		}
-
-		if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
-			if !dbterror.ErrCancelledDDLJob.Equal(err) {
-				return errors.Trace(err)
-			}
-
-			if found.State == proto.TaskStatePending || found.State == proto.TaskStateRunning {
-				if err = globalTaskManager.CancelGlobalTask(globalTask.ID); err != nil {
-					logutil.BgLogger().Error("[ddl] cancel global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
+					if err = handle.CancelGlobalTask(taskKey); err != nil {
+						logutil.BgLogger().Error("[ddl] cancel global task error", zap.String("task_key", taskKey), zap.Error(err))
+						// continue to cancel global task
+						continue
+					}
 				}
 			}
 		}
-	}
+	})
+	return g.Wait()
 }
 
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -29,7 +30,16 @@ import (
 )
 
 // CalculateAsOfTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
-func CalculateAsOfTsExpr(sctx sessionctx.Context, tsExpr ast.ExprNode) (uint64, error) {
+func CalculateAsOfTsExpr(ctx context.Context, sctx sessionctx.Context, tsExpr ast.ExprNode) (uint64, error) {
+	sctx.GetSessionVars().StmtCtx.SetStaleTSOProvider(func() (uint64, error) {
+		failpoint.Inject("mockStaleReadTSO", func(val failpoint.Value) (uint64, error) {
+			return uint64(val.(int)), nil
+		})
+		// this function accepts a context, but we don't need it when there is a valid cached ts.
+		// in most cases, the stale read ts can be calculated from `cached ts + time since cache - staleness`,
+		// this can be more accurate than `time.Now() - staleness`, because TiDB's local time can drift.
+		return sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
+	})
 	tsVal, err := expression.EvalAstExpr(sctx, tsExpr)
 	if err != nil {
 		return 0, err

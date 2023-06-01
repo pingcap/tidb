@@ -20,7 +20,6 @@ package ddl
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -554,7 +553,8 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 		logutil.BgLogger().Error("cannot find reorgCtx", zap.Int64("jobID", job.ID))
 		return
 	}
-	logutil.BgLogger().Info("[ddl] notify reorg worker during canceling ddl job", zap.Int64("jobID", job.ID))
+	logutil.BgLogger().Info("[ddl] notify reorg worker the job's state",
+		zap.Int64("jobID", job.ID), zap.Int32("jobState", int32(job.State)), zap.Int("jobState", int(job.SchemaState)))
 	rc.notifyJobState(job.State)
 }
 
@@ -679,7 +679,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	}
 
 	scheduler.RegisterSchedulerConstructor("backfill",
-		func(taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
 			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
 		})
 
@@ -1202,9 +1202,10 @@ func (d *ddl) SetHook(h Callback) {
 
 func (d *ddl) startCleanDeadTableLock() {
 	defer func() {
-		tidbutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 		d.wg.Done()
 	}()
+
+	defer tidbutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()
@@ -1456,9 +1457,7 @@ func cancelRunningJob(sess *sess.Session, job *model.Job,
 	}
 	job.State = model.JobStateCancelling
 	job.AdminOperator = byWho
-
-	// Make sure RawArgs isn't overwritten.
-	return json.Unmarshal(job.RawArgs, &job.Args)
+	return nil
 }
 
 // pauseRunningJob check and pause the running Job
@@ -1477,12 +1476,7 @@ func pauseRunningJob(sess *sess.Session, job *model.Job,
 
 	job.State = model.JobStatePausing
 	job.AdminOperator = byWho
-
-	if job.RawArgs == nil {
-		return nil
-	}
-
-	return json.Unmarshal(job.RawArgs, &job.Args)
+	return nil
 }
 
 // resumePausedJob check and resume the Paused Job
@@ -1502,7 +1496,7 @@ func resumePausedJob(se *sess.Session, job *model.Job,
 
 	job.State = model.JobStateQueueing
 
-	return json.Unmarshal(job.RawArgs, &job.Args)
+	return nil
 }
 
 // processJobs command on the Job according to the process
@@ -1558,7 +1552,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 				continue
 			}
 
-			err = updateDDLJob2Table(ns, job, true)
+			err = updateDDLJob2Table(ns, job, false)
 			if err != nil {
 				jobErrs[i] = err
 				continue
@@ -1649,7 +1643,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 				continue
 			}
 
-			err = updateDDLJob2Table(ns, job, true)
+			err = updateDDLJob2Table(ns, job, false)
 			if err != nil {
 				jobErrs[job.ID] = err
 				continue

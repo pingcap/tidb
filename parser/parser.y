@@ -27,6 +27,7 @@ package parser
 
 import (
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/ast"
@@ -781,6 +782,12 @@ import (
 	low                   "LOW"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
+	execElapsedInSec      "EXEC_ELAPSED_IN_SEC"
+	dryRun                "DRYRUN"
+	cooldown              "COOLDOWN"
+	watch                 "WATCH"
+	similar               "SIMILAR"
+	queryLimit            "QUERY_LIMIT"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -978,6 +985,7 @@ import (
 	InsertIntoStmt             "INSERT INTO statement"
 	CallStmt                   "CALL statement"
 	IndexAdviseStmt            "INDEX ADVISE statement"
+	ImportIntoStmt             "IMPORT INTO statement"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
@@ -1441,6 +1449,10 @@ import (
 	PlacementPolicyOption                  "Anonymous or placement policy option"
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
+	DirectResourceGroupRunawayOption       "Subset of anonymous or direct resource group runaway option"
+	ResourceGroupRunawayActionOption       "Resource group runaway action option"
+	ResourceGroupRunawayWatchOption        "Resource group runaway watch option"
+	ResourceGroupRunawayOptionList         "Anomymous or direct resource group runaway option list"
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
@@ -1725,6 +1737,80 @@ ResourceGroupPriorityOption:
 		$$ = uint64(16)
 	}
 
+ResourceGroupRunawayOptionList:
+	DirectResourceGroupRunawayOption
+	{
+		$$ = []*ast.ResourceGroupRunawayOption{$1.(*ast.ResourceGroupRunawayOption)}
+	}
+|	ResourceGroupRunawayOptionList DirectResourceGroupRunawayOption
+	{
+		if $1.([]*ast.ResourceGroupRunawayOption)[0].Tp == $2.(*ast.ResourceGroupRunawayOption).Tp ||
+			(len($1.([]*ast.ResourceGroupRunawayOption)) > 1 && $1.([]*ast.ResourceGroupRunawayOption)[1].Tp == $2.(*ast.ResourceGroupRunawayOption).Tp) ||
+			(len($1.([]*ast.ResourceGroupRunawayOption)) > 2 && $1.([]*ast.ResourceGroupRunawayOption)[2].Tp == $2.(*ast.ResourceGroupRunawayOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.ResourceGroupRunawayOption), $2.(*ast.ResourceGroupRunawayOption))
+	}
+|	ResourceGroupRunawayOptionList ',' DirectResourceGroupRunawayOption
+	{
+		if $1.([]*ast.ResourceGroupRunawayOption)[0].Tp == $3.(*ast.ResourceGroupRunawayOption).Tp ||
+			(len($1.([]*ast.ResourceGroupRunawayOption)) > 1 && $1.([]*ast.ResourceGroupRunawayOption)[1].Tp == $3.(*ast.ResourceGroupRunawayOption).Tp) ||
+			(len($1.([]*ast.ResourceGroupRunawayOption)) > 2 && $1.([]*ast.ResourceGroupRunawayOption)[2].Tp == $3.(*ast.ResourceGroupRunawayOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.ResourceGroupRunawayOption), $3.(*ast.ResourceGroupRunawayOption))
+	}
+
+ResourceGroupRunawayWatchOption:
+	"EXACT"
+	{
+		$$ = int32(model.WatchExact)
+	}
+|	"SIMILAR"
+	{
+		$$ = int32(model.WatchSimilar)
+	}
+
+ResourceGroupRunawayActionOption:
+	"DRYRUN"
+	{
+		$$ = int32(model.RunawayActionDryRun)
+	}
+|	"COOLDOWN"
+	{
+		$$ = int32(model.RunawayActionCooldown)
+	}
+|	"KILL"
+	{
+		$$ = int32(model.RunawayActionKill)
+	}
+
+DirectResourceGroupRunawayOption:
+	"EXEC_ELAPSED_IN_SEC" EqOpt stringLit
+	{
+		_, err := time.ParseDuration($3)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The EXEC_ELAPSED_IN_SEC option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayRule, StrValue: $3}
+	}
+|	"ACTION" EqOpt ResourceGroupRunawayActionOption
+	{
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayAction, IntValue: $3.(int32)}
+	}
+|	"WATCH" EqOpt ResourceGroupRunawayWatchOption "DURATION" EqOpt stringLit
+	{
+		_, err := time.ParseDuration($6)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The WATCH DURATION option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayWatch, StrValue: $6, IntValue: $3.(int32)}
+	}
+
 DirectResourceGroupOption:
 	"RU_PER_SEC" EqOpt LengthNum
 	{
@@ -1737,6 +1823,10 @@ DirectResourceGroupOption:
 |	"BURSTABLE"
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
+	}
+|	"QUERY_LIMIT" EqOpt '(' ResourceGroupRunawayOptionList ')'
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: $4.([]*ast.ResourceGroupRunawayOption)}
 	}
 
 PlacementOptionList:
@@ -3141,7 +3231,7 @@ ColumnDef:
 	ColumnName Type ColumnOptionListOpt
 	{
 		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: $2.(*types.FieldType), Options: $3.([]*ast.ColumnOption)}
-	        if err := colDef.Validate(); err != nil {
+		if err := colDef.Validate(); err != nil {
 			yylex.AppendError(err)
 			return 1
 		}
@@ -3155,7 +3245,7 @@ ColumnDef:
 		options = append(options, $3.([]*ast.ColumnOption)...)
 		tp.AddFlag(mysql.UnsignedFlag)
 		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: tp, Options: options}
-	        if err := colDef.Validate(); err != nil {
+		if err := colDef.Validate(); err != nil {
 			yylex.AppendError(err)
 			return 1
 		}
@@ -6816,6 +6906,12 @@ NotKeywordToken:
 |	"UNTIL_TS"
 |	"RESTORED_TS"
 |	"FULL_BACKUP_STORAGE"
+|	"EXEC_ELAPSED_IN_SEC"
+|	"DRYRUN"
+|	"COOLDOWN"
+|	"WATCH"
+|	"SIMILAR"
+|	"QUERY_LIMIT"
 
 /************************************************************************************
  *
@@ -11713,6 +11809,7 @@ Statement:
 |	GrantProxyStmt
 |	GrantRoleStmt
 |	CallStmt
+|	ImportIntoStmt
 |	InsertIntoStmt
 |	IndexAdviseStmt
 |	KillStmt
@@ -14257,6 +14354,19 @@ LoadDataOption:
 |	identifier "=" SignedLiteral
 	{
 		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1), Value: $3.(ast.ExprNode)}
+	}
+
+ImportIntoStmt:
+	"IMPORT" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt "FROM" stringLit FormatOpt LoadDataOptionListOpt
+	{
+		$$ = &ast.ImportIntoStmt{
+			Table:              $3.(*ast.TableName),
+			ColumnsAndUserVars: $4.([]*ast.ColumnNameOrUserVar),
+			ColumnAssignments:  $5.([]*ast.Assignment),
+			Path:               $7,
+			Format:             $8.(*string),
+			Options:            $9.([]*ast.LoadDataOpt),
+		}
 	}
 
 /*********************************************************************

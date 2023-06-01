@@ -171,6 +171,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 				if d.isRunningGTask(gTask.ID) {
 					continue
 				}
+				// owner changed
 				if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting || gTask.State == proto.TaskStateCancelling {
 					d.setRunningGTask(gTask)
 					cnt++
@@ -273,8 +274,9 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 		case <-ticker.C:
 			// TODO: Consider actively obtaining information about task completion.
 			stepIsFinished, errStr := d.probeTask(gTask)
-			// The global task isn't finished and failed.
+			// The global task isn't finished and not failed.
 			if !stepIsFinished && len(errStr) == 0 {
+				GetTaskFlowHandle(gTask.Type).OnTicker(d.ctx, gTask)
 				logutil.BgLogger().Debug("detect task, this task keeps current state",
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
 				break
@@ -381,6 +383,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		if handle.IsRetryableErr(err) {
 			return err
 		}
+		gTask.Error = []byte(err.Error())
 		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),

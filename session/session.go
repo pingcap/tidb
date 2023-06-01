@@ -1606,6 +1606,16 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
+// UpdateProcessInfo updates the session's process info for the running statement.
+func (s *session) UpdateProcessInfo() {
+	pi := s.ShowProcess()
+	if pi == nil || pi.CurTxnStartTS != 0 {
+		return
+	}
+	// Update the current transaction start timestamp.
+	pi.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
+}
+
 func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
 	return util.OOMAlarmVariablesInfo{
 		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
@@ -2142,6 +2152,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		plannercore.DebugTraceReceivedCommand(s, cmdByte, stmtNode)
 	}
 
+	if err := s.validateStatementInTxn(stmtNode); err != nil {
+		return nil, err
+	}
+
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
 		return nil, err
 	}
@@ -2261,6 +2275,14 @@ func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.Stm
 	return sessiontxn.GetTxnManager(s).OnStmtStart(ctx, node)
 }
 
+func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
+	vars := s.GetSessionVars()
+	if _, ok := stmtNode.(*ast.ImportIntoStmt); ok && vars.InTxn() {
+		return errors.New("cannot run IMPORT INTO in explicit transaction")
+	}
+	return nil
+}
+
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
 	vars := s.GetSessionVars()
 	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead || vars.InRestrictedSQL {
@@ -2295,26 +2317,25 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	return nil
 }
 
-// querySpecialKeys contains the keys of special query, the special query will handled by handleQuerySpecial method.
-var querySpecialKeys = []fmt.Stringer{
+// fileTransInConnKeys contains the keys of queries that will be handled by handleFileTransInConn.
+var fileTransInConnKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
 	executor.IndexAdviseVarKey,
 	executor.PlanReplayerLoadVarKey,
 }
 
-func (s *session) hasQuerySpecial() bool {
-	found := false
+func (s *session) hasFileTransInConn() bool {
 	s.mu.RLock()
-	for _, k := range querySpecialKeys {
+	defer s.mu.RUnlock()
+
+	for _, k := range fileTransInConnKeys {
 		v := s.mu.values[k]
 		if v != nil {
-			found = true
-			break
+			return true
 		}
 	}
-	s.mu.RUnlock()
-	return found
+	return false
 }
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
@@ -2385,8 +2406,8 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	err = finishStmt(ctx, se, err, s)
-	if se.hasQuerySpecial() {
-		// The special query will be handled later in handleQuerySpecial,
+	if se.hasFileTransInConn() {
+		// The query will be handled later in handleFileTransInConn,
 		// then should call the ExecStmt.FinishExecuteStmt to finish this statement.
 		se.SetValue(ExecStmtVarKey, s.(*executor.ExecStmt))
 	} else {

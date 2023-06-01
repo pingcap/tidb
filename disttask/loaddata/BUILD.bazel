@@ -21,6 +21,7 @@ go_library(
         "//br/pkg/lightning/mydump",
         "//br/pkg/lightning/verification",
         "//disttask/framework/dispatcher",
+        "//disttask/framework/handle",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
         "//disttask/framework/storage",
@@ -30,7 +31,10 @@ go_library(
         "//parser/mysql",
         "//table/tables",
         "//util/logutil",
+        "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
 )
