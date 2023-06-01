@@ -2153,6 +2153,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
+	do.wg.Run(func() { quitStatsOwner(do, owner) }, "quitStatsOwner")
 	if do.indexUsageSyncLease > 0 {
 		do.wg.Run(func() {
 			do.syncIndexUsageWorker(owner)
@@ -2166,6 +2167,14 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.wg.Run(func() { do.autoAnalyzeWorker(owner) }, "autoAnalyzeWorker")
 	do.wg.Run(func() { do.gcAnalyzeHistory(owner) }, "gcAnalyzeHistory")
 	return nil
+}
+
+func quitStatsOwner(do *Domain, mgr owner.Manager) {
+	select {
+	case <-do.exit:
+		mgr.Cancel()
+		return
+	}
 }
 
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
