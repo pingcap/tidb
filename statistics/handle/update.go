@@ -74,9 +74,9 @@ func (m tableDeltaMap) merge(deltaMap tableDeltaMap) {
 }
 
 type errorRateDelta struct {
-	PkID         int64
 	PkErrorRate  *statistics.ErrorRate
 	IdxErrorRate map[int64]*statistics.ErrorRate
+	PkID         int64
 }
 
 type errorRateDeltaMap map[int64]errorRateDelta
@@ -158,13 +158,13 @@ func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, rateMap errorRateDe
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
-	sync.Mutex
-
 	mapper   tableDeltaMap
 	feedback *statistics.QueryFeedbackMap
 	rateMap  errorRateDeltaMap
 	colMap   colStatsUsageMap
 	next     *SessionStatsCollector
+	sync.Mutex
+
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
 }
@@ -252,9 +252,9 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 
 // IndexUsageInformation is the data struct to store index usage information.
 type IndexUsageInformation struct {
+	LastUsedAt   string
 	QueryCount   int64
 	RowsSelected int64
-	LastUsedAt   string
 }
 
 // GlobalIndexID is the key type for indexUsageMap.
@@ -267,10 +267,10 @@ type indexUsageMap map[GlobalIndexID]IndexUsageInformation
 
 // SessionIndexUsageCollector is a list item that holds the index usage mapper. If you want to write or read mapper, you must lock it.
 type SessionIndexUsageCollector struct {
+	mapper indexUsageMap
+	next   *SessionIndexUsageCollector
 	sync.Mutex
 
-	mapper  indexUsageMap
-	next    *SessionIndexUsageCollector
 	deleted bool
 }
 
@@ -361,8 +361,8 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	mapper := h.sweepIdxUsageList()
 	type FullIndexUsageInformation struct {
-		id          GlobalIndexID
 		information IndexUsageInformation
+		id          GlobalIndexID
 	}
 	indexInformationSlice := make([]FullIndexUsageInformation, 0, len(mapper))
 	for id, value := range mapper {
@@ -946,8 +946,8 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		h.colMap.Unlock()
 	}()
 	type pair struct {
-		tblColID   model.TableItemID
 		lastUsedAt string
+		tblColID   model.TableItemID
 	}
 	pairs := make([]pair, 0, len(colMap))
 	for id, t := range colMap {
