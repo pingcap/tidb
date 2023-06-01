@@ -71,7 +71,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	mockPool := &MockPool{}
 
 	b := NewManagerBuilder()
-	b.setSchedulerFactory(func(ctx context.Context, id string, ddlid string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
+	b.setSchedulerFactory(func(ctx context.Context, id string, ddlDd string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
 		return mockInternalScheduler
 	})
 	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
@@ -142,7 +142,7 @@ func TestManager(t *testing.T) {
 	mockInternalScheduler := &MockInternalScheduler{}
 	mockPool := &MockPool{}
 	b := NewManagerBuilder()
-	b.setSchedulerFactory(func(ctx context.Context, id string, ddlid string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
+	b.setSchedulerFactory(func(ctx context.Context, id string, ddlId string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
 		return mockInternalScheduler
 	})
 	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {

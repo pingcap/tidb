@@ -421,7 +421,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 
 	// Generate all available TiDB nodes for this global tasks.
 	serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask)
-	logutil.BgLogger().Warn("server nodes", zap.Int("node num", len(serverNodes)))
+	logutil.BgLogger().Info("eligile instances", zap.Int("num", len(serverNodes)))
 
 	if err1 != nil {
 		return err1

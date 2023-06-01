@@ -1429,7 +1429,6 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		}
 		dispatch = newDispatch
 		dispatch.Start()
-		logutil.BgLogger().Info("a new dist task dispatcher started for current node becomes the DDL owner", zap.String("id", do.ddl.GetID()))
 	}
 	stopDispatchIfNeeded := func() {
 		if dispatch != nil {

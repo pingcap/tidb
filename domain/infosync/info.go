@@ -400,7 +400,6 @@ func GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
 	return is.getServerInfoByID(ctx, id)
 }
 
-// ywq todo change here
 func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
 	if is.etcdCli == nil || id == is.info.ID {
 		return is.info, nil
