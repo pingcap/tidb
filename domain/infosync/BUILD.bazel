@@ -8,7 +8,7 @@ go_library(
         "label_manager.go",
         "placement_manager.go",
         "region.go",
-        "resource_group_manager.go",
+        "resource_manager_client.go",
         "schedule_manager.go",
         "tiflash_manager.go",
     ],
