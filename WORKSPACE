@@ -3,7 +3,7 @@ load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 
 git_repository(
     name = "io_bazel_rules_go",
-    branch = "support_cover",
+    commit = "cf89118a",
     remote = "https://github.com/hawkingrei/rules_go",
 )
 
