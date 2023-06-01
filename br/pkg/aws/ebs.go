@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
@@ -17,6 +18,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -27,6 +29,10 @@ const (
 	AnnPodNameKey        string = "tidb.pingcap.com/pod-name"
 	AnnTemporaryVolumeID string = "temporary/volume-id"
 	EC2K8SClusterNameKey string = "aws:eks:cluster-name"
+
+	pendingSnapshotsQuota          = 100
+	pollingPendingSnapshotInterval = 60 * time.Second
+	errCodeTooManyPendingSnapshots = "PendingSnapshotLimitExceeded"
 
 	SourcePvcNameKey   string = "source/pvcName"
 	SourceVolumeIdKey  string = "source/VolumeId"
@@ -39,6 +45,37 @@ type EC2Session struct {
 	ec2 ec2iface.EC2API
 	// aws operation concurrency
 	concurrency uint
+
+	pendCache *pendingSnapshotCache
+}
+
+// pendingSnapshotCache caches the last query of pending snapshots.
+// once we have reached the quota of pending snapshots, we should poll the remaining pending snapshots.
+// and given there will be many pending snapshots, for reducing the request number
+// (or, perhaps we may exceed some other sort of quota...), we will cache the last request.
+type pendingSnapshotCache struct {
+	sync.Mutex
+
+	lastUpdate time.Time
+	pending    int
+}
+
+func (c *pendingSnapshotCache) fill(n int) {
+	c.Lock()
+	defer c.Unlock()
+	c.lastUpdate = time.Now()
+	c.pending = n
+
+	log.Info("Filling pending snapshot cache.", zap.Int("count", n))
+}
+
+func (c *pendingSnapshotCache) get() *int {
+	c.Lock()
+	defer c.Unlock()
+	if c.lastUpdate.IsZero() || time.Since(c.lastUpdate) > pollingPendingSnapshotInterval {
+		return nil
+	}
+	return &c.pending
 }
 
 type VolumeAZs map[string]string
@@ -64,7 +101,7 @@ func NewEC2Session(concurrency uint, region string) (*EC2Session, error) {
 		return nil, errors.Trace(err)
 	}
 	ec2Session := ec2.New(sess)
-	return &EC2Session{ec2: ec2Session, concurrency: concurrency}, nil
+	return &EC2Session{ec2: ec2Session, concurrency: concurrency, pendCache: new(pendingSnapshotCache)}, nil
 }
 
 func GenerateVolumeSnapshotTags(backupInfo *config.EBSBasedBRMeta, pvVolumeMap map[string]string) (VolumeSnapshotTags, error) {
@@ -202,7 +239,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 
 				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
 
-				resp, err := e.ec2.CreateSnapshots(&createSnapshotInput)
+				resp, err := e.createSnapshotsWithRetry(context.TODO(), &createSnapshotInput)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -231,6 +268,55 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 	}
 
 	return snapIDMap, volAZs, nil
+}
+
+func (e *EC2Session) createSnapshotsWithRetry(ctx context.Context, input *ec2.CreateSnapshotsInput) (*ec2.CreateSnapshotsOutput, error) {
+	res, err := e.ec2.CreateSnapshotsWithContext(ctx, input)
+	if aerr, ok := err.(awserr.Error); ok && aerr.Code() == errCodeTooManyPendingSnapshots {
+		e.waitForQuota(ctx)
+		return e.createSnapshotsWithRetry(ctx, input)
+	}
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to create snapshot for request %s", input)
+	}
+	return res, nil
+}
+
+func (e *EC2Session) pendingSnapshotsCount(ctx context.Context) (int, error) {
+	if cnt := e.pendCache.get(); cnt != nil {
+		return *cnt, nil
+	}
+	input := ec2.DescribeSnapshotsInput{
+		Filters: []*ec2.Filter{{
+			Name:   aws.String("status"),
+			Values: aws.StringSlice([]string{"pending"}),
+		}},
+	}
+	ss, err := e.ec2.DescribeSnapshotsWithContext(ctx, &input)
+	if err != nil {
+		return 0, err
+	}
+	count := len(ss.Snapshots)
+	e.pendCache.fill(count)
+	return count, nil
+}
+
+func (e *EC2Session) waitForQuota(ctx context.Context) error {
+	tick := time.NewTicker(30 * time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+			cnt, err := e.pendingSnapshotsCount(ctx)
+			if err != nil {
+				log.Warn("Failed to load pending snapshots.", logutil.ShortError(err))
+			}
+			if cnt < pendingSnapshotsQuota {
+				return nil
+			}
+		}
+	}
 }
 
 func (e *EC2Session) extractSnapProgress(str *string) int64 {
@@ -443,7 +529,13 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 	for len(pendingVolumes) > 0 {
 		// check every 5 seconds
 		time.Sleep(5 * time.Second)
-		log.Info("check pending snapshots", zap.Int("count", len(pendingVolumes)))
+		totalPending, err := e.pendingSnapshotsCount(context.Background())
+		if err != nil {
+			log.Warn("failed to fetch total pending volumes", logutil.ShortError(err))
+		}
+		log.Info("check pending snapshots",
+			zap.Int("count", len(pendingVolumes)),
+			zap.Int("possible-whole-region-pending", totalPending))
 		resp, err := e.ec2.DescribeVolumes(&ec2.DescribeVolumesInput{
 			VolumeIds: pendingVolumes,
 		})
