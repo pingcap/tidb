@@ -1,0 +1,75 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package util
+
+import "sync"
+
+// MockGlobalStateEntry is a mock global state entry.
+var MockGlobalStateEntry = &MockGlobalState{
+	currentOwner: make(map[string]string),
+}
+
+// MockGlobalState is a mock global state.
+type MockGlobalState struct {
+	mu           sync.Mutex
+	currentOwner map[string]string // owner_key (ddl/stats/bindinfo) => owner_id
+}
+
+// OwnerKey returns a mock global state selector with corresponding owner key.
+func (m *MockGlobalState) OwnerKey(tp string) *MockGlobalStateSelector {
+	return &MockGlobalStateSelector{m: m, ownerKey: tp}
+}
+
+// MockGlobalStateSelector is used to get info from global state.
+type MockGlobalStateSelector struct {
+	m        *MockGlobalState
+	ownerKey string
+}
+
+// GetOwner returns the owner.
+func (t *MockGlobalStateSelector) GetOwner() string {
+	t.m.mu.Lock()
+	defer t.m.mu.Unlock()
+	return t.m.currentOwner[t.ownerKey]
+}
+
+// SetOwner sets the owner if the owner is empty.
+func (t *MockGlobalStateSelector) SetOwner(owner string) bool {
+	t.m.mu.Lock()
+	defer t.m.mu.Unlock()
+	if t.m.currentOwner[t.ownerKey] == "" {
+		t.m.currentOwner[t.ownerKey] = owner
+		return true
+	}
+	return false
+}
+
+// UnsetOwner unsets the owner.
+func (t *MockGlobalStateSelector) UnsetOwner(owner string) bool {
+	t.m.mu.Lock()
+	defer t.m.mu.Unlock()
+	if t.m.currentOwner[t.ownerKey] == owner {
+		t.m.currentOwner[t.ownerKey] = ""
+		return true
+	}
+	return false
+}
+
+// IsOwner returns whether it is the owner.
+func (t *MockGlobalStateSelector) IsOwner(owner string) bool {
+	t.m.mu.Lock()
+	defer t.m.mu.Unlock()
+	return t.m.currentOwner[t.ownerKey] == owner
+}
