@@ -42,18 +42,18 @@ type statsWrapper struct {
 
 // StatsLoad is used to load stats concurrently
 type StatsLoad struct {
-	sync.Mutex
-	SubCtxs        []sessionctx.Context
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
 	WorkingColMap  map[model.TableItemID][]chan stmtctx.StatsLoadResult
+	SubCtxs        []sessionctx.Context
+	sync.Mutex
 }
 
 // NeededItemTask represents one needed column/indices with expire time.
 type NeededItemTask struct {
-	TableItemID model.TableItemID
 	ToTimeout   time.Time
 	ResultCh    chan stmtctx.StatsLoadResult
+	TableItemID model.TableItemID
 }
 
 // SendLoadRequests send neededColumns requests
