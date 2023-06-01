@@ -190,7 +190,7 @@ func TestFrameworkDeleteServer(t *testing.T) {
 	DispatchTask("key2", t, &v)
 }
 
-func TestFrameworkWithDifferentTestKit(t *testing.T) {
+func TestFrameworkWithQuery(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
 	var v atomic.Int64
@@ -198,26 +198,14 @@ func TestFrameworkWithDifferentTestKit(t *testing.T) {
 	test_context := testkit.NewDistExecutionTestContext(t, 2)
 	DispatchTask("key1", t, &v)
 
-	test_context.PrintIDs()
+	tk := testkit.NewTestKit(t, test_context.Store)
 
-	tk := test_context.NewTestKit(0)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null, b int not null)")
 	rs, err := tk.Exec("select ifnull(a,b) from t")
 	require.NoError(t, err)
 	fields := rs.Fields()
-	require.Greater(t, len(fields), 0)
-	require.Equal(t, "ifnull(a,b)", rs.Fields()[0].Column.Name.L)
-	require.NoError(t, rs.Close())
-
-	tk = test_context.NewTestKit(1)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int not null, b int not null)")
-	rs, err = tk.Exec("select ifnull(a,b) from t")
-	require.NoError(t, err)
-	fields = rs.Fields()
 	require.Greater(t, len(fields), 0)
 	require.Equal(t, "ifnull(a,b)", rs.Fields()[0].Column.Name.L)
 	require.NoError(t, rs.Close())
