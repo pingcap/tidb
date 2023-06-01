@@ -65,71 +65,74 @@ const (
 // Handle can update stats info periodically.
 type Handle struct {
 
-	// initStatsCtx is the ctx only used for initStats
-	initStatsCtx sessionctx.Context
+	// StatsLoad is used to load stats concurrently
+	StatsLoad StatsLoad
 
 	mu struct {
-		syncutil.RWMutex
 		ctx sessionctx.Context
 		// rateMap contains the error rate delta from feedback.
 		rateMap errorRateDeltaMap
-	}
-
-	schemaMu struct {
-		sync.RWMutex
-		// pid2tid is the map from partition ID to table ID.
-		pid2tid map[int64]int64
-		// schemaVersion is the version of information schema when `pid2tid` is built.
-		schemaVersion int64
+		syncutil.RWMutex
 	}
 
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
 	statsCache struct {
-		sync.Mutex
 		atomic.Value
 		memTracker *memory.Tracker
+		sync.Mutex
 	}
 
 	pool sessionPool
 
-	// ddlEventCh is a channel to notify a ddl operation has happened.
-	// It is sent only by owner or the drop stats executor, and read by stats handle.
-	ddlEventCh chan *ddlUtil.Event
-	// listHead contains all the stats collector required by session.
-	listHead *SessionStatsCollector
+	// sysProcTracker is used to track sys process like analyze
+	sysProcTracker sessionctx.SysProcTracker
+
+	// initStatsCtx is the ctx only used for initStats
+	initStatsCtx sessionctx.Context
+
+	// colMap contains all the column stats usage information from collectors when we dump them to KV.
+	colMap struct {
+		data colStatsUsageMap
+		sync.Mutex
+	}
+
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap struct {
-		sync.Mutex
 		data tableDeltaMap
+		sync.Mutex
 	}
 	// feedback is used to store query feedback info.
 	feedback struct {
-		sync.Mutex
 		data *statistics.QueryFeedbackMap
-	}
-	// colMap contains all the column stats usage information from collectors when we dump them to KV.
-	colMap struct {
 		sync.Mutex
-		data colStatsUsageMap
 	}
-
-	lease atomic2.Duration
+	// listHead contains all the stats collector required by session.
+	listHead *SessionStatsCollector
 
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *SessionIndexUsageCollector
 
-	// StatsLoad is used to load stats concurrently
-	StatsLoad StatsLoad
-
-	// sysProcTracker is used to track sys process like analyze
-	sysProcTracker sessionctx.SysProcTracker
+	// ddlEventCh is a channel to notify a ddl operation has happened.
+	// It is sent only by owner or the drop stats executor, and read by stats handle.
+	ddlEventCh chan *ddlUtil.Event
 	// serverIDGetter is used to get server ID for generating auto analyze ID.
 	serverIDGetter func() uint64
+
+	InitStatsDone chan struct{}
+
+	schemaMu struct {
+		// pid2tid is the map from partition ID to table ID.
+		pid2tid map[int64]int64
+		// schemaVersion is the version of information schema when `pid2tid` is built.
+		schemaVersion int64
+		sync.RWMutex
+	}
+
 	// tableLocked used to store locked tables
 	tableLocked []int64
 
-	InitStatsDone chan struct{}
+	lease atomic2.Duration
 }
 
 // GetTableLockedAndClearForTest for unit test only
@@ -648,13 +651,13 @@ func (h *Handle) UpdateSessionVar() error {
 // In the column statistics, the variable `num` is equal to the number of columns in the partition table.
 // In the index statistics, the variable `num` is always equal to one.
 type GlobalStats struct {
-	Num         int
-	Count       int64
-	ModifyCount int64
 	Hg          []*statistics.Histogram
 	Cms         []*statistics.CMSketch
 	TopN        []*statistics.TopN
 	Fms         []*statistics.FMSketch
+	Num         int
+	Count       int64
+	ModifyCount int64
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
