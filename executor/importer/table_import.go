@@ -158,7 +158,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		DupeDetectEnabled:       false,
 		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
 		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
-		MaxOpenFiles:            int(util.GenRLimit()),
+		MaxOpenFiles:            int(util.GenRLimit("table_import")),
 		KeyspaceName:            tidb.GetGlobalKeyspaceName(),
 		PausePDSchedulerScope:   config.PausePDSchedulerScopeTable,
 	}
