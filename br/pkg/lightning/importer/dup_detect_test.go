@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/duplicate"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -35,7 +36,22 @@ func TestErrorOnDup(t *testing.T) {
 	require.NoError(t, h.Append([]byte{1}))
 	require.NoError(t, h.Append([]byte{2}))
 	err := h.End()
-	require.NoError(t, err)
+	require.ErrorIs(t, err, ErrDuplicateKey)
+	dupErr := errors.Cause(err).(*errors.Error)
+	require.Equal(t, conflictOnHandle, dupErr.Args()[0])
+	require.Equal(t, [][]byte{{1}, {2}}, dupErr.Args()[1])
+	require.NoError(t, h.Close())
+
+	k = tablecodec.EncodeIndexSeekKey(122, 23, nil)
+	h = &errorOnDup{}
+	require.NoError(t, h.Begin(k))
+	require.NoError(t, h.Append([]byte{11}))
+	require.NoError(t, h.Append([]byte{12}))
+	err = h.End()
+	require.ErrorIs(t, err, ErrDuplicateKey)
+	dupErr = errors.Cause(err).(*errors.Error)
+	require.Equal(t, int64(23), dupErr.Args()[0])
+	require.Equal(t, [][]byte{{11}, {12}}, dupErr.Args()[1])
 	require.NoError(t, h.Close())
 }
 

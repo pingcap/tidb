@@ -398,7 +398,7 @@ func simplifyTable(
 	return newTblInfo, newColPerm
 }
 
-const conflictOnHandle = -1
+const conflictOnHandle = int64(-1)
 
 func decodeIndexID(key []byte) (int64, error) {
 	switch {
