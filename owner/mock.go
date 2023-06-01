@@ -133,6 +133,7 @@ func (m *mockManager) CampaignOwner() error {
 			}
 		}
 	}()
+	return nil
 }
 
 // ResignOwner lets the owner start a new election.

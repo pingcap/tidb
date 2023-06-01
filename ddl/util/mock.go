@@ -23,8 +23,8 @@ var MockGlobalStateEntry = &MockGlobalState{
 
 // MockGlobalState is a mock global state.
 type MockGlobalState struct {
-	mu           sync.Mutex
 	currentOwner map[string]string // owner_key (ddl/stats/bindinfo) => owner_id
+	mu           sync.Mutex
 }
 
 // OwnerKey returns a mock global state selector with corresponding owner key.
