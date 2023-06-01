@@ -68,7 +68,7 @@ func NewEC2Session(concurrency uint, region string) (*EC2Session, error) {
 		return nil, errors.Trace(err)
 	}
 	ec2Session := ec2.New(sess)
-	return &EC2Session{ec2: ec2Session, concurrency: concurrency, pendCache: new(pendingSnapshotCache)}, nil
+	return &EC2Session{ec2: ec2Session, concurrency: concurrency}, nil
 }
 
 func GenerateVolumeSnapshotTags(backupInfo *config.EBSBasedBRMeta, pvVolumeMap map[string]string) (VolumeSnapshotTags, error) {
