@@ -2775,6 +2775,8 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
 			}
+			lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+				"MPP mode may be blocked because window function frame can't be pushed down, because TiFlash does not support range frame type yet.")
 			return nil
 		}
 	}
