@@ -86,9 +86,9 @@ go_binary(
 
 go_binary(
     name = "tidb-server-coverage",
+    cover = "on",
     embed = [":tidb-server_lib"],
     visibility = ["//visibility:public"],
-    cover = "on",
     x_defs = {
         "github.com/pingcap/tidb/parser/mysql.TiDBReleaseVersion": "{STABLE_TiDB_RELEASE_VERSION}",
         "github.com/pingcap/tidb/util/versioninfo.TiDBBuildTS": "{STABLE_TiDB_BUILD_UTCTIME}",
