@@ -43,37 +43,6 @@ type EC2Session struct {
 	ec2 ec2iface.EC2API
 	// aws operation concurrency
 	concurrency uint
-
-	pendCache *pendingSnapshotCache
-}
-
-// pendingSnapshotCache caches the last query of pending snapshots.
-// once we have reached the quota of pending snapshots, we should poll the remaining pending snapshots.
-// and given there will be many pending snapshots, for reducing the request number
-// (or, perhaps we may exceed some other sort of quota...), we will cache the last request.
-type pendingSnapshotCache struct {
-	sync.Mutex
-
-	lastUpdate time.Time
-	pending    int
-}
-
-func (c *pendingSnapshotCache) fill(n int) {
-	c.Lock()
-	defer c.Unlock()
-	c.lastUpdate = time.Now()
-	c.pending = n
-
-	log.Info("Filling pending snapshot cache.", zap.Int("count", n))
-}
-
-func (c *pendingSnapshotCache) get() *int {
-	c.Lock()
-	defer c.Unlock()
-	if c.lastUpdate.IsZero() || time.Since(c.lastUpdate) > pollingPendingSnapshotInterval {
-		return nil
-	}
-	return &c.pending
 }
 
 type VolumeAZs map[string]string
