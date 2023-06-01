@@ -389,9 +389,11 @@ func (ch *CommonHandle) ExtraMemSize() uint64 {
 }
 
 // HandleMap is the map for Handle.
+// Use two two-dimensional map to fit partitionHandle.
+// The first int64 is for partitionID, if non parititonHandle, it will use 0 here.
 type HandleMap struct {
-	ints map[int64]interface{}
-	strs map[string]strHandleVal
+	ints map[int64]map[int64]interface{}
+	strs map[int64]map[string]strHandleVal
 }
 
 type strHandleVal struct {
@@ -401,20 +403,29 @@ type strHandleVal struct {
 
 // NewHandleMap creates a new map for handle.
 func NewHandleMap() *HandleMap {
-	// Initialize the two maps to avoid checking nil.
 	return &HandleMap{
-		ints: map[int64]interface{}{},
-		strs: map[string]strHandleVal{},
+		ints: map[int64]map[int64]interface{}{},
+		strs: map[int64]map[string]strHandleVal{},
 	}
 }
 
 // Get gets a value by a Handle.
 func (m *HandleMap) Get(h Handle) (v interface{}, ok bool) {
+	idx := int64(0)
+	if ph, ok := h.(PartitionHandle); ok {
+		idx = ph.PartitionID
+	}
 	if h.IsInt() {
-		v, ok = m.ints[h.IntValue()]
+		if m.ints[idx] == nil {
+			return nil, false
+		}
+		v, ok = m.ints[idx][h.IntValue()]
 	} else {
+		if m.strs[idx] == nil {
+			return nil, false
+		}
 		var strVal strHandleVal
-		strVal, ok = m.strs[string(h.Encoded())]
+		strVal, ok = m.strs[idx][string(h.Encoded())]
 		v = strVal.val
 	}
 	return
@@ -422,10 +433,20 @@ func (m *HandleMap) Get(h Handle) (v interface{}, ok bool) {
 
 // Set sets a value with a Handle.
 func (m *HandleMap) Set(h Handle, val interface{}) {
+	idx := int64(0)
+	if ph, ok := h.(PartitionHandle); ok {
+		idx = ph.PartitionID
+	}
 	if h.IsInt() {
-		m.ints[h.IntValue()] = val
+		if m.ints[idx] == nil {
+			m.ints[idx] = map[int64]interface{}{}
+		}
+		m.ints[idx][h.IntValue()] = val
 	} else {
-		m.strs[string(h.Encoded())] = strHandleVal{
+		if m.strs[idx] == nil {
+			m.strs[idx] = map[string]strHandleVal{}
+		}
+		m.strs[idx][string(h.Encoded())] = strHandleVal{
 			h:   h,
 			val: val,
 		}
@@ -434,28 +455,49 @@ func (m *HandleMap) Set(h Handle, val interface{}) {
 
 // Delete deletes a entry from the map.
 func (m *HandleMap) Delete(h Handle) {
+	idx := int64(0)
+	if ph, ok := h.(PartitionHandle); ok {
+		idx = ph.PartitionID
+	}
 	if h.IsInt() {
-		delete(m.ints, h.IntValue())
+		if m.ints[idx] == nil {
+			return
+		}
+		delete(m.ints[idx], h.IntValue())
 	} else {
-		delete(m.strs, string(h.Encoded()))
+		if m.strs[idx] == nil {
+			return
+		}
+		delete(m.strs[idx], string(h.Encoded()))
 	}
 }
 
 // Len returns the length of the map.
 func (m *HandleMap) Len() int {
-	return len(m.ints) + len(m.strs)
+	l := 0
+	for _, v := range m.ints {
+		l += len(v)
+	}
+	for _, v := range m.strs {
+		l += len(v)
+	}
+	return l
 }
 
 // Range iterates the HandleMap with fn, the fn returns true to continue, returns false to stop.
 func (m *HandleMap) Range(fn func(h Handle, val interface{}) bool) {
-	for h, val := range m.ints {
-		if !fn(IntHandle(h), val) {
-			return
+	for _, v := range m.ints {
+		for h, val := range v {
+			if !fn(IntHandle(h), val) {
+				return
+			}
 		}
 	}
-	for _, strVal := range m.strs {
-		if !fn(strVal.h, strVal.val) {
-			return
+	for _, v := range m.strs {
+		for _, strVal := range v {
+			if !fn(strVal.h, strVal.val) {
+				return
+			}
 		}
 	}
 }
@@ -464,8 +506,8 @@ func (m *HandleMap) Range(fn func(h Handle, val interface{}) bool) {
 // It only tracks the actual sizes. Objects that are pointed to by the key or value are not tracked.
 // Those should be tracked by the caller.
 type MemAwareHandleMap[V any] struct {
-	ints set.MemAwareMap[int64, V]
-	strs set.MemAwareMap[string, strHandleValue[V]]
+	ints map[int64]*set.MemAwareMap[int64, V]
+	strs map[int64]*set.MemAwareMap[string, strHandleValue[V]]
 }
 
 type strHandleValue[V any] struct {
@@ -475,20 +517,29 @@ type strHandleValue[V any] struct {
 
 // NewMemAwareHandleMap creates a new map for handle.
 func NewMemAwareHandleMap[V any]() *MemAwareHandleMap[V] {
-	// Initialize the two maps to avoid checking nil.
 	return &MemAwareHandleMap[V]{
-		ints: set.NewMemAwareMap[int64, V](),
-		strs: set.NewMemAwareMap[string, strHandleValue[V]](),
+		ints: map[int64]*set.MemAwareMap[int64, V]{},
+		strs: map[int64]*set.MemAwareMap[string, strHandleValue[V]]{},
 	}
 }
 
 // Get gets a value by a Handle.
 func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, ok bool) {
+	idx := int64(0)
+	if ph, ok := h.(PartitionHandle); ok {
+		idx = ph.PartitionID
+	}
 	if h.IsInt() {
-		v, ok = m.ints.Get(h.IntValue())
+		if m.ints[idx] == nil {
+			return v, false
+		}
+		v, ok = m.ints[idx].Get(h.IntValue())
 	} else {
+		if m.strs[idx] == nil {
+			return v, false
+		}
 		var strVal strHandleValue[V]
-		strVal, ok = m.strs.Get(string(h.Encoded()))
+		strVal, ok = m.strs[idx].Get(string(h.Encoded()))
 		v = strVal.val
 	}
 	return
@@ -496,10 +547,22 @@ func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, ok bool) {
 
 // Set sets a value with a Handle.
 func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
-	if h.IsInt() {
-		return m.ints.Set(h.IntValue(), val)
+	idx := int64(0)
+	if ph, ok := h.(PartitionHandle); ok {
+		idx = ph.PartitionID
 	}
-	return m.strs.Set(string(h.Encoded()), strHandleValue[V]{
+	if h.IsInt() {
+		if m.ints[idx] == nil {
+			awareMap := set.NewMemAwareMap[int64, V]()
+			m.ints[idx] = &awareMap
+		}
+		return m.ints[idx].Set(h.IntValue(), val)
+	}
+	if m.strs[idx] == nil {
+		awareMap := set.NewMemAwareMap[string, strHandleValue[V]]()
+		m.strs[idx] = &awareMap
+	}
+	return m.strs[idx].Set(string(h.Encoded()), strHandleValue[V]{
 		h:   h,
 		val: val,
 	})
@@ -507,21 +570,23 @@ func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
 
 // Range iterates the MemAwareHandleMap with fn, the fn returns true to continue, returns false to stop.
 func (m *MemAwareHandleMap[V]) Range(fn func(h Handle, val V) bool) {
-	for h, val := range m.ints.M {
-		if !fn(IntHandle(h), val) {
-			return
+	for _, v := range m.ints {
+		for h, val := range v.M {
+			if !fn(IntHandle(h), val) {
+				return
+			}
 		}
 	}
-	for _, strVal := range m.strs.M {
-		if !fn(strVal.h, strVal.val) {
-			return
+	for _, v := range m.strs {
+		for _, strVal := range v.M {
+			if !fn(strVal.h, strVal.val) {
+				return
+			}
 		}
 	}
 }
 
 // PartitionHandle combines a handle and a PartitionID, used to location a row in partitioned table.
-// Now only used in global index.
-// TODO: support PartitionHandle in HandleMap.
 type PartitionHandle struct {
 	Handle
 	PartitionID int64

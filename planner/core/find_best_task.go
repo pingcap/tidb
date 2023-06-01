@@ -1635,6 +1635,12 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	}
 	if candidate.isMatchProp {
 		cop.keepOrder = true
+		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
+			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
+			cop.extraHandleCol = col
+			cop.needExtraProj = cop.needExtraProj || isNew
+		}
+
 		if ds.tableInfo.GetPartitionInfo() != nil {
 			// Add sort items for index scan for merge-sort operation between partitions.
 			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
@@ -1645,20 +1651,25 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 				})
 			}
 			cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
-			if !is.Index.Global && cop.tablePlan != nil && ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-				is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
-				is.schema.Append(&expression.Column{
+			if cop.tablePlan != nil && ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+				if !is.Index.Global {
+					is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
+					is.schema.Append(&expression.Column{
+						RetType:  types.NewFieldType(mysql.TypeLonglong),
+						UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+						ID:       model.ExtraPhysTblID,
+					})
+				}
+				// global index for tableScan with keepOrder also need PhysicalTblID
+				ts := cop.tablePlan.(*PhysicalTableScan)
+				ts.Columns = append(ts.Columns, model.NewExtraPhysTblIDColInfo())
+				ts.schema.Append(&expression.Column{
 					RetType:  types.NewFieldType(mysql.TypeLonglong),
 					UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 					ID:       model.ExtraPhysTblID,
 				})
+				cop.needExtraProj = true
 			}
-		}
-
-		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
-			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
-			cop.extraHandleCol = col
-			cop.needExtraProj = cop.needExtraProj || isNew
 		}
 	}
 	if cop.needExtraProj {
