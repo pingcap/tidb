@@ -598,6 +598,7 @@ func BuildAddIndexSQL(
 	return singleSQL, multiSQLs
 }
 
+// BuildAnalyzeTableSQL builds the SQL statement to analyze table.
 func BuildAnalyzeTableSQL(tableName string) string {
 	return fmt.Sprintf("ANALYZE TABLE %s", tableName)
 }

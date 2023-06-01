@@ -1006,3 +1006,45 @@ func (s *mockGCSSuite) TestDiskQuota() {
 		strconv.Itoa(lineCount),
 	))
 }
+
+func (s *mockGCSSuite) TestAnalyzeTable() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
+	s.tk.MustExec("CREATE DATABASE load_data;")
+	s.tk.MustExec(`CREATE TABLE load_data.analyze_table (a INT, b INT, c int);`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "analyze_table-1.csv"},
+		Content:     []byte("1,11,111\n2,22,222\n3,33,333"),
+	})
+
+	sql := fmt.Sprintf(`IMPORT INTO load_data.analyze_table FROM 'gs://test-load/analyze_table-1.csv?endpoint=%s'
+		WITH analyze_table='false'`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT count(1) FROM load_data.analyze_table;").Check(testkit.Rows(
+		"3",
+	))
+	s.tk.MustQuery("SELECT COUNT(1) FROM information_schema.analyze_status WHERE TABLE_NAME='analyze_table';").Check(testkit.Rows(
+		"0",
+	))
+
+	s.tk.MustExec("TRUNCATE TABLE load_data.analyze_table;")
+	sql = fmt.Sprintf(`IMPORT INTO load_data.analyze_table FROM 'gs://test-load/analyze_table-1.csv?endpoint=%s'
+		WITH analyze_table='optional'`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT count(1) FROM load_data.analyze_table;").Check(testkit.Rows(
+		"3",
+	))
+	s.tk.MustQuery("SELECT COUNT(1) FROM information_schema.analyze_status WHERE TABLE_NAME='analyze_table';").Check(testkit.Rows(
+		"1",
+	))
+
+	s.tk.MustExec("TRUNCATE TABLE load_data.analyze_table;")
+	sql = fmt.Sprintf(`IMPORT INTO load_data.analyze_table FROM 'gs://test-load/analyze_table-1.csv?endpoint=%s'
+		WITH analyze_table='true'`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT count(1) FROM load_data.analyze_table;").Check(testkit.Rows(
+		"3",
+	))
+	s.tk.MustQuery("SELECT COUNT(1) FROM information_schema.analyze_status WHERE TABLE_NAME='analyze_table';").Check(testkit.Rows(
+		"2",
+	))
+}
