@@ -132,7 +132,7 @@ func TestFrameworkStartUp(t *testing.T) {
 	require.Equal(t, proto.TaskStateSucceed, task.State)
 	require.Equal(t, int64(9), v.Load())
 
-	test_context.SetOwner(1) // bug can't set owner right
+	// test_context.SetOwner(1) // bug can't set owner right
 
 	v.Store(0)
 

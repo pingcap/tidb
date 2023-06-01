@@ -237,6 +237,15 @@ func AddServerInfo(id string, serverIDGetter func() uint64) error {
 	return nil
 }
 
+func ClearServerInfo() error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	is.infos = is.infos[:0]
+	return nil
+}
+
 func GetGlobalInfoSyncerForTest() *InfoSyncer {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {

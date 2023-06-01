@@ -1065,6 +1065,8 @@ func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	return cli, err
 }
 
+var mpp = true
+
 // Init initializes a domain.
 func (do *Domain) Init(
 	ddlLease time.Duration,
@@ -1165,6 +1167,10 @@ func (do *Domain) Init(
 		// ywq todo refinement, handle info sync and serverinfo
 		logutil.BgLogger().Info("ywq test info syncinited", zap.String("ddlid", do.ddl.GetID()), zap.Uint64("serverID", do.ServerID()))
 		do.info = infosync.GetGlobalInfoSyncerForTest()
+		if mpp {
+			infosync.ClearServerInfo()
+			mpp = false
+		}
 		infosync.AddServerInfo(do.ddl.GetID(), do.ServerID)
 	} else {
 		do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
@@ -1438,7 +1444,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 	}
 	stopDispatchIfNeeded := func() {
 		if dispatch != nil {
-			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore")
+			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
 			dispatch.Stop()
 			dispatch = nil
 			logutil.BgLogger().Info("dist task dispatcher stopped", zap.String("id", do.ddl.GetID()))

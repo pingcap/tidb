@@ -435,17 +435,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	// ywq todo select node policy here
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
-		// pos := i % len(serverNodes) // ywq test todo since the first servernode is dummy
-		var pos int
-		if i == 1 {
-			pos = 1
-		}
-		if i == 2 {
-			pos = 2
-		}
-		if i == 0 {
-			pos = 1
-		}
+		pos := i % len(serverNodes)
 		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port, serverNodes[pos].ID)
 		logutil.BgLogger().Info("ywq test", zap.String("instanceID", instanceID), zap.Int("pos", pos))
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
