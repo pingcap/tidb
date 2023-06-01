@@ -184,7 +184,8 @@ func TestFrameworkDeleteServer(t *testing.T) {
 	RegisterTaskMeta(&v)
 	test_context := testkit.NewDistExecutionTestContext(t, 2)
 	DispatchTask("key1", t, &v)
-	test_context.DeleteServer(1)
+	err := test_context.DeleteServer(1)
+	require.NoError(t, err)
 	time.Sleep(2 * time.Second) // make sure the owner changed
 	DispatchTask("key2", t, &v)
 }

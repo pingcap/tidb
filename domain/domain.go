@@ -1165,7 +1165,10 @@ func (do *Domain) Init(
 	if infosync.InfoSyncerInited() {
 		// This will only run in distributed execution test.
 		do.info = infosync.GetGlobalInfoSyncerForTest()
-		infosync.AddServerInfo(do.ddl.GetID(), do.ServerID)
+		err := infosync.AddServerInfo(do.ddl.GetID(), do.ServerID)
+		if err != nil {
+			return nil
+		}
 	} else {
 		do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 			do.etcdClient, do.unprefixedEtcdCli, pdCli, do.Store().GetCodec(),
