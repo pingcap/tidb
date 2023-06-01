@@ -572,6 +572,7 @@ func (ti *TableImporter) setLastInsertID(id uint64) {
 	}
 }
 
+// CheckDiskQuota checks disk quota.
 func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 	var locker sync.Locker
 	lockDiskQuota := func() {
