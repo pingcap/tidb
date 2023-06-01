@@ -1688,6 +1688,15 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 			if err != nil {
 				return err
 			}
+			// Because len(outputOffsets) == tableScan.Schema().Len(),
+			// so we could use row.GetInt64(i) to get partition ID here.
+			// TODO: We could add plannercore.PartitionHandleCols to unify it.
+			for i, c := range w.indexMergeExec.Schema().Columns {
+				if c.ID == model.ExtraPhysTblID {
+					handle = kv.NewPartitionHandle(row.GetInt64(i), handle)
+					break
+				}
+			}
 			rowIdx, _ := task.indexOrder.Get(handle)
 			task.rowIdx = append(task.rowIdx, rowIdx.(int))
 		}
