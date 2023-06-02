@@ -553,15 +553,13 @@ func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, ok bool) {
 		if h.IsInt() {
 			if m.partitionInts[idx] == nil {
 				return v, false
-			} else {
-				ints = *m.partitionInts[idx]
 			}
+			ints = *m.partitionInts[idx]
 		} else {
 			if m.partitionStrs[idx] == nil {
 				return v, false
-			} else {
-				strs = *m.partitionStrs[idx]
 			}
+			strs = *m.partitionStrs[idx]
 		}
 	}
 	if h.IsInt() {
