@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -51,9 +51,10 @@ func TestCalibrateResource(t *testing.T) {
 	err = rs.Next(context.Background(), rs.NewChunk(nil))
 	require.ErrorContains(t, err, "resource group controller is not initialized")
 
-	oldResourceCtl := executor.GetResourceGroupController()
+	do := domain.GetDomain(tk.Session())
+	oldResourceCtl := do.ResourceGroupsController()
 	defer func() {
-		executor.SetResourceGroupController(oldResourceCtl)
+		do.SetResourceGroupsController(oldResourceCtl)
 	}()
 
 	mockPrivider := &mockResourceGroupProvider{
@@ -69,7 +70,7 @@ func TestCalibrateResource(t *testing.T) {
 	}
 	resourceCtl, err := rmclient.NewResourceGroupController(context.Background(), 1, mockPrivider, nil)
 	require.NoError(t, err)
-	executor.SetResourceGroupController(resourceCtl)
+	do.SetResourceGroupsController(resourceCtl)
 
 	// empty metrics error
 	rs, err = tk.Exec("CALIBRATE RESOURCE")

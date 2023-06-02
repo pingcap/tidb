@@ -33,7 +33,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	tidbmetrics "github.com/pingcap/tidb/metrics"
@@ -685,7 +687,7 @@ type copIterator struct {
 	storeBatchedNum         atomic.Uint64
 	storeBatchedFallbackNum atomic.Uint64
 
-	runawayChecker *RunawayChecker
+	runawayChecker *resourcegroup.RunawayChecker
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -1168,8 +1170,21 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
-	if err := worker.vars.RunawayChecker.BeforeCopRequest(req); err != nil {
-		return err
+	runawayActionWorker := func(action rmpb.RunawayAction) error {
+		switch action {
+		case rmpb.RunawayAction_Kill:
+			return derr.ErrResourceGroupQueryRunaway
+		case rmpb.RunawayAction_CoolDown:
+			req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
+			return nil
+		case rmpb.RunawayAction_DryRun:
+			return nil
+		default:
+			return nil
+		}
+	}
+	if err := worker.req.RunawayChecker.BeforeCopRequest(runawayActionWorker); err != nil {
+		return nil, err
 	}
 	req.StoreTp = getEndPointType(task.storeType)
 	startTime := time.Now()
@@ -1212,7 +1227,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, copResp)
 	}
-	worker.vars.RunawayChecker.AfterCopRequest()
+	worker.req.RunawayChecker.AfterCopRequest()
 
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
 	isInternal := util.IsRequestSourceInternal(&task.requestSource)

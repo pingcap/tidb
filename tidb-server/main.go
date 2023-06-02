@@ -240,7 +240,6 @@ func main() {
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreAndDomain(keyspaceName)
 	svr := createServer(storage, dom)
-	err = driver.TrySetupGlobalResourceController(context.Background(), dom.ServerID(), storage)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to setup global resource controller", zap.Error(err))
 	}

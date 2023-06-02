@@ -64,8 +64,10 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/BurntSushi/toml v1.2.1 h1:9F2/+DoOYIOksmaJFPw1tGFy1eDnIJXg+UHjuD8lTak=
 github.com/BurntSushi/toml v1.2.1/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbicEuybxQ=
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
-github.com/CabinfeverB/pd/client v0.0.0-20230530064228-755c2e52a8cc h1:AD5H/IfPImMg1PfXaACtPzWcgeBRyymXwWu+GsSd790=
-github.com/CabinfeverB/pd/client v0.0.0-20230530064228-755c2e52a8cc/go.mod h1:QEUda83Y16Zb+Y/VnNivilJNTR0K37UEIc1NtQjzt18=
+github.com/CabinfeverB/client-go/v2 v2.0.0-20230602095003-9e72e8dd57d9 h1:e6xR0Q/GdE6AWAzf+W7n9br7M7rUg1FV33KwIqmx5zM=
+github.com/CabinfeverB/client-go/v2 v2.0.0-20230602095003-9e72e8dd57d9/go.mod h1:DSHBjSsF/FZ9a30hzcG8RiL4MINCu2d+9BUNU2GjSwk=
+github.com/CabinfeverB/pd/client v0.0.0-20230601154623-a209ebf2b67c h1:rwzgdzfBUFofG6wrzaHLmXNbG8315HZs8QYOZV8I5ns=
+github.com/CabinfeverB/pd/client v0.0.0-20230601154623-a209ebf2b67c/go.mod h1:YmNkj9UT8IjwFov9k3oquH0UgIUHniUaQT3jXKgZYbM=
 github.com/CloudyKit/fastprinter v0.0.0-20170127035650-74b38d55f37a/go.mod h1:EFZQ978U7x8IRnstaskI3IysnWY5Ao3QgZUKOXlsAdw=
 github.com/CloudyKit/jet v2.1.3-0.20180809161101-62edd43e4f88+incompatible/go.mod h1:HPYO+50pSWkPoj9Q/eq0aRGByCL6ScRlUmiEX5Zgm+w=
 github.com/DATA-DOG/go-sqlmock v1.5.0 h1:Shsta01QNfFxHCfpW6YH2STWB0MudeXXEWMr20OEh60=
@@ -734,8 +736,6 @@ github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef/go.mod h1:7WjlapSfwQyo
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e/go.mod h1:zD1mROLANZcx1PVRCS0qkT7pwLkGfwJo4zjcN/Tysno=
 github.com/nishanths/predeclared v0.2.2 h1:V2EPdZPliZymNAn79T8RkNApBjMmVKh5XRpLm/w98Vk=
 github.com/nishanths/predeclared v0.2.2/go.mod h1:RROzoN6TnGQupbC+lqggsOlcgysk3LMK/HI84Mp280c=
-github.com/nolouch/client-go/v2 v2.0.0-alpha.0.20230531074744-3b9cd9b3c8a6 h1:2Dsya8GEFc9c70iv6Aj8Go1Q2z6yiHNlrKIDECs8n34=
-github.com/nolouch/client-go/v2 v2.0.0-alpha.0.20230531074744-3b9cd9b3c8a6/go.mod h1:bQtijg8EtFeW0VQGU3YCAkQlAQ6PL2UPWhr4Rm2ItDY=
 github.com/nxadm/tail v1.4.4/go.mod h1:kenIhsEOeOJmVchQTgglprH7qJGnHDVpk1VPCcaMI8A=
 github.com/nxadm/tail v1.4.8 h1:nPr65rt6Y5JFSKQO7qToXr7pePgD6Gwiw05lkbyAQTE=
 github.com/oklog/run v1.0.0/go.mod h1:dlhp/R75TPv97u0XWUtDeV/lRKWPKSdTuV0TZvrmrQA=
