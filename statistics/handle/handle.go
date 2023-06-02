@@ -1005,12 +1005,16 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
-		if tblInfo.GetPartitionInfo() == nil {
+		if tblInfo.GetPartitionInfo() == nil && h.statsCacheLen() < 10 {
 			h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
 		}
 		return tbl
 	}
 	return tbl
+}
+
+func (h *Handle) statsCacheLen() int {
+	return h.statsCache.Load().(statsCache).Len()
 }
 
 // updateStatsCache overrides the global statsCache with a new one, it may fail
