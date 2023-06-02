@@ -23,16 +23,22 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbutil"
 	"github.com/pingcap/tidb/util/extsort"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
 
+var (
+	exampleHandleKey = tablecodec.EncodeRowKeyWithHandle(121, kv.IntHandle(22))
+	exampleIndexID   = int64(23)
+	exampleIndexKey  = tablecodec.EncodeIndexSeekKey(122, exampleIndexID, nil)
+)
+
 func TestErrorOnDup(t *testing.T) {
-	k := tablecodec.EncodeRowKeyWithHandle(121, kv.IntHandle(22))
 	h := &errorOnDup{}
-	require.NoError(t, h.Begin(k))
+	require.NoError(t, h.Begin(exampleHandleKey))
 	require.NoError(t, h.Append([]byte{1}))
 	require.NoError(t, h.Append([]byte{2}))
 	err := h.End()
@@ -42,9 +48,8 @@ func TestErrorOnDup(t *testing.T) {
 	require.Equal(t, [][]byte{{1}, {2}}, dupErr.Args()[1])
 	require.NoError(t, h.Close())
 
-	k = tablecodec.EncodeIndexSeekKey(122, 23, nil)
 	h = &errorOnDup{}
-	require.NoError(t, h.Begin(k))
+	require.NoError(t, h.Begin(exampleIndexKey))
 	require.NoError(t, h.Append([]byte{11}))
 	require.NoError(t, h.Append([]byte{12}))
 	err = h.End()
@@ -59,9 +64,12 @@ func TestReplaceOnDup(t *testing.T) {
 	runDupHandlerTest(t,
 		func(w extsort.Writer) duplicate.Handler { return &replaceOnDup{w: w} },
 		[]dupRecord{{
-			[]byte("key1"), [][]byte{[]byte("01"), []byte("02"), []byte("03")}},
-			{[]byte("key2"), [][]byte{[]byte("11"), []byte("12"), []byte("13")}}},
-		[][]byte{[]byte("01"), []byte("02"), []byte("11"), []byte("12")},
+			exampleHandleKey, [][]byte{[]byte("01"), []byte("02"), []byte("03")}},
+			{exampleIndexKey, [][]byte{[]byte("11"), []byte("12"), []byte("13")}}},
+		map[int64][][]byte{
+			conflictOnHandle: {[]byte("01"), []byte("02")},
+			exampleIndexID:   {[]byte("11"), []byte("12")},
+		},
 	)
 }
 
@@ -69,9 +77,12 @@ func TestIgnoreOnDup(t *testing.T) {
 	runDupHandlerTest(t,
 		func(w extsort.Writer) duplicate.Handler { return &ignoreOnDup{w: w} },
 		[]dupRecord{{
-			[]byte("key1"), [][]byte{[]byte("01"), []byte("02"), []byte("03")}},
-			{[]byte("key2"), [][]byte{[]byte("11"), []byte("12"), []byte("13")}}},
-		[][]byte{[]byte("02"), []byte("03"), []byte("12"), []byte("13")},
+			exampleHandleKey, [][]byte{[]byte("01"), []byte("02"), []byte("03")}},
+			{exampleIndexKey, [][]byte{[]byte("11"), []byte("12"), []byte("13")}}},
+		map[int64][][]byte{
+			conflictOnHandle: {[]byte("02"), []byte("03")},
+			exampleIndexID:   {[]byte("12"), []byte("13")},
+		},
 	)
 }
 
@@ -84,7 +95,7 @@ func runDupHandlerTest(
 	t *testing.T,
 	makeHandler func(w extsort.Writer) duplicate.Handler,
 	input []dupRecord,
-	ignoredRowIDs [][]byte,
+	ignoredRowIDs map[int64][][]byte,
 ) {
 	ignoreRows, err := extsort.OpenDiskSorter(t.TempDir(), nil)
 	require.NoError(t, err)
@@ -108,9 +119,11 @@ func runDupHandlerTest(
 	it, err := ignoreRows.NewIterator(ctx)
 	require.NoError(t, err)
 
-	var rowIDs [][]byte
+	rowIDs := map[int64][][]byte{}
 	for it.First(); it.Valid(); it.Next() {
-		rowIDs = append(rowIDs, slices.Clone(it.UnsafeKey()))
+		_, idxID, err := codec.DecodeVarint(it.UnsafeValue())
+		require.NoError(t, err)
+		rowIDs[idxID] = append(rowIDs[idxID], slices.Clone(it.UnsafeKey()))
 	}
 	require.NoError(t, it.Error())
 	require.NoError(t, it.Close())
