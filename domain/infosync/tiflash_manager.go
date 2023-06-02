@@ -62,8 +62,6 @@ type TiFlashReplicaManager interface {
 	DeletePlacementRule(ctx context.Context, group string, ruleID string) error
 	// GetGroupRules to get all placement rule in a certain group.
 	GetGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error)
-	// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
-	PostAccelerateSchedule(ctx context.Context, tableID int64) error
 	// PostAccelerateScheduleBatch sends `regions/accelerate-schedule/batch` request.
 	PostAccelerateScheduleBatch(ctx context.Context, tableIDs []int64) error
 	// GetRegionCountFromPD is a helper function calling `/stats/region`.
@@ -462,31 +460,6 @@ func (m *TiFlashReplicaManagerCtx) GetGroupRules(ctx context.Context, group stri
 	}
 
 	return rules, nil
-}
-
-// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
-func (m *TiFlashReplicaManagerCtx) PostAccelerateSchedule(ctx context.Context, tableID int64) error {
-	startKey := tablecodec.GenTableRecordPrefix(tableID)
-	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-	startKey, endKey = m.codec.EncodeRegionRange(startKey, endKey)
-
-	input := map[string]string{
-		"start_key": hex.EncodeToString(startKey),
-		"end_key":   hex.EncodeToString(endKey),
-	}
-	j, err := json.Marshal(input)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	buf := bytes.NewBuffer(j)
-	res, err := doRequest(ctx, "PostAccelerateSchedule", m.etcdCli.Endpoints(), path.Join(pdapi.Regions, "accelerate-schedule"), "POST", buf)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if res == nil {
-		return fmt.Errorf("TiFlashReplicaManagerCtx returns error in PostAccelerateSchedule")
-	}
-	return nil
 }
 
 // PostAccelerateScheduleBatch sends `regions/batch-accelerate-schedule` request.
@@ -1077,18 +1050,6 @@ func (m *mockTiFlashReplicaManagerCtx) GetGroupRules(ctx context.Context, group 
 		return []placement.TiFlashRule{}, nil
 	}
 	return m.tiflash.HandleGetGroupRules(group)
-}
-
-// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
-func (m *mockTiFlashReplicaManagerCtx) PostAccelerateSchedule(ctx context.Context, tableID int64) error {
-	m.Lock()
-	defer m.Unlock()
-	if m.tiflash == nil {
-		return nil
-	}
-	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-	endKey = codec.EncodeBytes([]byte{}, endKey)
-	return m.tiflash.HandlePostAccelerateSchedule(hex.EncodeToString(endKey))
 }
 
 // PostAccelerateScheduleBatch sends `regions/batch-accelerate-schedule` request.

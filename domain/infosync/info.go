@@ -1221,16 +1221,6 @@ func GetTiFlashGroupRules(ctx context.Context, group string) ([]placement.TiFlas
 	return is.tiflashReplicaManager.GetGroupRules(ctx, group)
 }
 
-// PostTiFlashAccelerateSchedule sends `regions/accelerate-schedule` request.
-func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	logutil.BgLogger().Info("PostTiFlashAccelerateSchedule", zap.Int64("tableID", tableID))
-	return is.tiflashReplicaManager.PostAccelerateSchedule(ctx, tableID)
-}
-
 // GetTiFlashRegionCountFromPD is a helper function calling `/stats/region`.
 func GetTiFlashRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error {
 	is, err := getGlobalInfoSyncer()
