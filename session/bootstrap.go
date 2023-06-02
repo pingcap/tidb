@@ -584,7 +584,6 @@ const (
 	);`
 
 	// CreateLoadDataJobs is a table that LOAD DATA uses
-	// todo: delete it
 	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (
        job_id bigint(64) NOT NULL AUTO_INCREMENT,
        expected_status ENUM('running', 'paused', 'canceled') NOT NULL DEFAULT 'running',
@@ -611,18 +610,17 @@ const (
 		start_time TIMESTAMP(6) NULL DEFAULT NULL,
 		update_time TIMESTAMP(6) NULL DEFAULT NULL,
 		end_time TIMESTAMP(6) NULL DEFAULT NULL,
-		status VARCHAR(64) NOT NULL,
-		step VARCHAR(64) NOT NULL,
 		table_schema VARCHAR(64) NOT NULL,
 		table_name VARCHAR(64) NOT NULL,
 		table_id bigint(64) NOT NULL,
-		create_user VARCHAR(300) NOT NULL,
+		created_by VARCHAR(300) NOT NULL,
+		parameters json NOT NULL,
+		status VARCHAR(64) NOT NULL,
+		step VARCHAR(64) NOT NULL,
 		progress json DEFAULT NULL,
 		error_message TEXT DEFAULT NULL,
-		parameters json NOT NULL,
-		PRIMARY KEY (job_id),
-		KEY (create_time),
-		KEY (create_user));`
+		PRIMARY KEY (id),
+		KEY (created_by));`
 )
 
 // bootstrap initiates system DB for a store.

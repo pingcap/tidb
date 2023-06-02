@@ -11192,12 +11192,12 @@ ShowStmt:
 	{
 		$$ = $4.(*ast.ShowStmt)
 	}
-|	"SHOW" "LOAD" "DATA" "JOB" Int64Num
+|	"SHOW" "IMPORT" "JOB" Int64Num
 	{
-		v := $5.(int64)
+		v := $4.(int64)
 		$$ = &ast.ShowStmt{
-			Tp:            ast.ShowLoadDataJobs,
-			LoadDataJobID: &v,
+			Tp:          ast.ShowImportJobs,
+			ImportJobID: &v,
 		}
 	}
 |	"SHOW" "CREATE" "PROCEDURE" TableName
@@ -11546,9 +11546,9 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
 	}
-|	"LOAD" "DATA" "JOBS"
+|	"IMPORT" "JOBS"
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowLoadDataJobs}
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
 	}
 
 ShowLikeOrWhereOpt:
