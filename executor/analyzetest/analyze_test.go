@@ -3230,7 +3230,6 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	_, err0 := tk0.Exec(sqlPrepare)
 	require.NoError(t, err0)
 	_, err1 := tk0.Exec(sqlExecute)
-	// Killed and the WarnMsg is WarnMsgSuffixForInstance instead of WarnMsgSuffixForSingleQuery
 	require.True(t, strings.Contains(err1.Error(), "Out Of Memory Quota!"))
 	runtime.GC()
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
