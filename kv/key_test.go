@@ -222,6 +222,9 @@ func TestHandleMapWithPartialHandle(t *testing.T) {
 	ph2 := NewPartitionHandle(2, IntHandle(1))
 	m.Set(ph2, 2)
 
+	ph3 := NewPartitionHandle(1, IntHandle(3))
+	m.Set(ph3, 5)
+
 	ih := IntHandle(1)
 	m.Set(ih, 3)
 
@@ -242,6 +245,10 @@ func TestHandleMapWithPartialHandle(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, 2, v)
 
+	v, ok = m.Get(ph3)
+	assert.True(t, ok)
+	assert.Equal(t, 5, v)
+
 	v, ok = m.Get(ih)
 	assert.True(t, ok)
 	assert.Equal(t, 3, v)
@@ -250,17 +257,17 @@ func TestHandleMapWithPartialHandle(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, 4, v)
 
-	assert.Equal(t, 4, m.Len())
+	assert.Equal(t, 5, m.Len())
 
 	m.Delete(ph1)
 	v, ok = m.Get(ph1)
 	assert.False(t, ok)
 	assert.Nil(t, v)
-	assert.Equal(t, 3, m.Len())
+	assert.Equal(t, 4, m.Len())
 
 	// not panic for delete non exsits handle
 	m.Delete(NewPartitionHandle(3, IntHandle(1)))
-	assert.Equal(t, 3, m.Len())
+	assert.Equal(t, 4, m.Len())
 }
 
 func TestMemAwareHandleMapWithPartialHandle(t *testing.T) {
@@ -271,6 +278,9 @@ func TestMemAwareHandleMapWithPartialHandle(t *testing.T) {
 	ph2 := NewPartitionHandle(2, IntHandle(1))
 	m.Set(ph2, 2)
 
+	ph3 := NewPartitionHandle(1, IntHandle(3))
+	m.Set(ph3, 5)
+
 	ih := IntHandle(1)
 	m.Set(ih, 3)
 
@@ -290,6 +300,10 @@ func TestMemAwareHandleMapWithPartialHandle(t *testing.T) {
 	v, ok = m.Get(ph2)
 	assert.True(t, ok)
 	assert.Equal(t, 2, v)
+
+	v, ok = m.Get(ph3)
+	assert.True(t, ok)
+	assert.Equal(t, 5, v)
 
 	v, ok = m.Get(ih)
 	assert.True(t, ok)

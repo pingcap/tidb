@@ -441,12 +441,15 @@ func (m *HandleMap) Set(h Handle, val interface{}) {
 	ints, strs := m.ints, m.strs
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
-		if h.IsInt() && m.partitionInts[idx] == nil {
-			m.partitionInts[idx] = make(map[int64]interface{})
+		if h.IsInt() {
+			if m.partitionInts[idx] == nil {
+				m.partitionInts[idx] = make(map[int64]interface{})
+			}
 			ints = m.partitionInts[idx]
-		}
-		if !h.IsInt() && m.partitionStrs[idx] == nil {
-			m.partitionStrs[idx] = make(map[string]strHandleVal)
+		} else {
+			if m.partitionStrs[idx] == nil {
+				m.partitionStrs[idx] = make(map[string]strHandleVal)
+			}
 			strs = m.partitionStrs[idx]
 		}
 	}
@@ -577,12 +580,15 @@ func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
 	ints, strs := m.ints, m.strs
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
-		if h.IsInt() && m.partitionInts[idx].M == nil {
-			m.partitionInts[idx] = set.NewMemAwareMap[int64, V]()
+		if h.IsInt() {
+			if m.partitionInts[idx].M == nil {
+				m.partitionInts[idx] = set.NewMemAwareMap[int64, V]()
+			}
 			ints = m.partitionInts[idx]
-		}
-		if !h.IsInt() && m.partitionStrs[idx].M == nil {
-			m.partitionStrs[idx] = set.NewMemAwareMap[string, strHandleValue[V]]()
+		} else {
+			if m.partitionStrs[idx].M == nil {
+				m.partitionStrs[idx] = set.NewMemAwareMap[string, strHandleValue[V]]()
+			}
 			strs = m.partitionStrs[idx]
 		}
 	}
