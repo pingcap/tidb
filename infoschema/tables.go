@@ -202,6 +202,8 @@ const (
 	TableMemoryUsageOpsHistory = "MEMORY_USAGE_OPS_HISTORY"
 	// TableResourceGroups is the metadata of resource groups.
 	TableResourceGroups = "RESOURCE_GROUPS"
+	// TableSessionConnectAttrs is the string constant of session_connect_attrs table.
+	TableSessionConnectAttrs = "SESSION_CONNECT_ATTRS"
 )
 
 const (
@@ -309,6 +311,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableMemoryUsage:              autoid.InformationSchemaDBID + 86,
 	ClusterTableMemoryUsageOpsHistory:    autoid.InformationSchemaDBID + 87,
 	TableResourceGroups:                  autoid.InformationSchemaDBID + 88,
+	TableSessionConnectAttrs:             autoid.InformationSchemaDBID + 89,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1599,6 +1602,13 @@ var tableResourceGroupsCols = []columnInfo{
 	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 3},
 }
 
+var tableSessionConnectAttrs = []columnInfo{
+	{name: "PROCESSLIST_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "ATTR_NAME", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
+	{name: "ATTR_VALUE", tp: mysql.TypeVarchar, size: 1024},
+	{name: "ORDINAL_POSITION", tp: mysql.TypeLong, size: 11},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2080,6 +2090,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMemoryUsage:                        tableMemoryUsageCols,
 	TableMemoryUsageOpsHistory:              tableMemoryUsageOpsHistoryCols,
 	TableResourceGroups:                     tableResourceGroupsCols,
+	TableSessionConnectAttrs:                tableSessionConnectAttrs,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

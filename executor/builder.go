@@ -2016,7 +2016,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.ClusterTableMemoryUsage),
 			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
-			strings.ToLower(infoschema.TableResourceGroups):
+			strings.ToLower(infoschema.TableResourceGroups),
+			strings.ToLower(infoschema.TableSessionConnectAttrs):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
