@@ -414,7 +414,6 @@ outside:
 		case err == nil:
 		case log.IsContextCanceledError(err):
 			logger.Info("task canceled")
-			err = nil
 			break outside
 		default:
 			logger.Error("run failed")

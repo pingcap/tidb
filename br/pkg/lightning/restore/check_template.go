@@ -14,7 +14,11 @@
 package restore
 
 import (
+<<<<<<< HEAD
 	"fmt"
+=======
+	"strings"
+>>>>>>> d5d836cc3... lightning: output a clearer exit message (#28492)
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -113,6 +117,7 @@ func (c *SimpleTemplate) Output() string {
 			}
 		}
 		return nil
+<<<<<<< HEAD
 	}))
 	res := c.t.Render()
 	summary := "\n"
@@ -127,4 +132,8 @@ func (c *SimpleTemplate) Output() string {
 		summary += msg
 	}
 	return res + summary
+=======
+	})
+	return c.t.Render() + "\n"
+>>>>>>> d5d836cc3... lightning: output a clearer exit message (#28492)
 }
