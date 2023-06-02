@@ -19,11 +19,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -225,34 +225,51 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	for i := 0; i < n; i++ {
 		ctx.MergeExecDetails(details[i], nil)
 	}
-	d1 := ctx.CopTasksDetails()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessionctx/stmtctx/MustAllDetails", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessionctx/stmtctx/MustAllDetails"))
-	}()
-	ctx2 := new(stmtctx.StatementContext)
-	for i := 0; i < n; i++ {
-		ctx2.MergeExecDetails(details[i], nil)
-	}
-	d2 := ctx2.CopTasksDetails()
+	d := ctx.CopTasksDetails()
 
-	require.Equal(t, d1.NumCopTasks, d2.NumCopTasks)
-	require.Equal(t, d1.AvgProcessTime, d2.AvgProcessTime)
-	require.InEpsilon(t, d1.P90ProcessTime.Nanoseconds(), d2.P90ProcessTime.Nanoseconds(), 0.05)
-	require.Equal(t, d1.MaxProcessTime, d2.MaxProcessTime)
-	require.Equal(t, d1.MaxProcessAddress, d2.MaxProcessAddress)
-	require.Equal(t, d1.AvgWaitTime, d2.AvgWaitTime)
-	require.InEpsilon(t, d1.P90WaitTime.Nanoseconds(), d2.P90WaitTime.Nanoseconds(), 0.05)
-	require.Equal(t, d1.MaxWaitTime, d2.MaxWaitTime)
-	require.Equal(t, d1.MaxWaitAddress, d2.MaxWaitAddress)
-	fields := d2.ToZapFields()
+	require.Equal(t, d.NumCopTasks, n)
+	sort.Slice(details, func(i, j int) bool {
+		return details[i].TimeDetail.ProcessTime.Nanoseconds() < details[j].TimeDetail.ProcessTime.Nanoseconds()
+	})
+	var timeSum time.Duration
+	for _, detail := range details {
+		timeSum += detail.TimeDetail.ProcessTime
+	}
+	require.Equal(t, d.AvgProcessTime, timeSum/time.Duration(n))
+	require.InEpsilon(t, d.P90ProcessTime.Nanoseconds(), details[n*9/10].TimeDetail.ProcessTime.Nanoseconds(), 0.05)
+	require.Equal(t, d.MaxProcessTime, details[n-1].TimeDetail.ProcessTime)
+	require.Equal(t, d.MaxProcessAddress, details[n-1].CalleeAddress)
+
+	sort.Slice(details, func(i, j int) bool {
+		return details[i].TimeDetail.WaitTime.Nanoseconds() < details[j].TimeDetail.WaitTime.Nanoseconds()
+	})
+	timeSum = 0
+	for _, detail := range details {
+		timeSum += detail.TimeDetail.WaitTime
+	}
+	require.Equal(t, d.AvgWaitTime, timeSum/time.Duration(n))
+	require.InEpsilon(t, d.P90WaitTime.Nanoseconds(), details[n*9/10].TimeDetail.WaitTime.Nanoseconds(), 0.05)
+	require.Equal(t, d.MaxWaitTime, details[n-1].TimeDetail.WaitTime)
+	require.Equal(t, d.MaxWaitAddress, details[n-1].CalleeAddress)
+
+	fields := d.ToZapFields()
 	require.Equal(t, 9, len(fields))
 	for _, backoff := range backoffs {
-		require.Equal(t, d1.MaxBackoffAddress[backoff], d2.MaxBackoffAddress[backoff])
-		require.Equal(t, d1.MaxBackoffTime[backoff], d2.MaxBackoffTime[backoff])
-		require.InEpsilon(t, d1.P90BackoffTime[backoff], d2.P90BackoffTime[backoff], 0.1)
-		require.Equal(t, d1.AvgBackoffTime[backoff], d2.AvgBackoffTime[backoff])
-		require.Equal(t, d1.TotBackoffTimes[backoff], d2.TotBackoffTimes[backoff])
-		require.Equal(t, d1.TotBackoffTime[backoff], d2.TotBackoffTime[backoff])
+		sort.Slice(details, func(i, j int) bool {
+			return details[i].BackoffSleep[backoff].Nanoseconds() < details[j].BackoffSleep[backoff].Nanoseconds()
+		})
+		timeSum = 0
+		var timesSum = 0
+		for _, detail := range details {
+			timeSum += detail.BackoffSleep[backoff]
+			timesSum += detail.BackoffTimes[backoff]
+		}
+		require.Equal(t, d.MaxBackoffAddress[backoff], details[n-1].CalleeAddress)
+		require.Equal(t, d.MaxBackoffTime[backoff], details[n-1].BackoffSleep[backoff])
+		require.InEpsilon(t, d.P90BackoffTime[backoff], details[n*9/10].BackoffSleep[backoff], 0.1)
+		require.Equal(t, d.AvgBackoffTime[backoff], timeSum/time.Duration(n))
+
+		require.Equal(t, d.TotBackoffTimes[backoff], timesSum)
+		require.Equal(t, d.TotBackoffTime[backoff], timeSum)
 	}
 }
