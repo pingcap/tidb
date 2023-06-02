@@ -792,6 +792,9 @@ const (
 
 	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
 	TiDBStoreBatchSize = "tidb_store_batch_size"
+
+	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
+	TiDBOptFixControl = "tidb_opt_fix_control"
 )
 
 // TiDB vars that have only global scope

@@ -1325,6 +1325,25 @@ type SessionVars struct {
 
 	// ProtectedTSList holds a list of timestamps that should delay GC.
 	ProtectedTSList protectedTSList
+
+	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
+	OptimizerFixControl map[uint64]string
+}
+
+var (
+	// variables below are for the optimizer fix control.
+
+	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
+	TiDBOptFixControl44262 uint64 = 44262
+)
+
+// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
+	if s.OptimizerFixControl == nil {
+		return "", false
+	}
+	value, exist = s.OptimizerFixControl[key]
+	return
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
