@@ -525,6 +525,7 @@
       "executor/internal/": "executor/internal/",
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
+      "ddl/": "ddl",
       "ddl/backfilling.go": "ddl/backfilling.go",
       "ddl/column.go": "ddl/column.go",
       "ddl/index.go": "ddl/index.go",
