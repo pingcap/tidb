@@ -146,7 +146,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	// Test for the `SESSION_CONNECT_ATTRS` table
 	sm = &testkit.MockSessionManager{}
 	sm.ConAttrs = map[uint64]map[string]string{
-		123456: map[string]string{
+		123456: {
 			"_client_name": "libmysql",
 		},
 	}
