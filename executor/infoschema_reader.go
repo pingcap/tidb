@@ -3305,7 +3305,6 @@ func (e *memtableRetriever) setDataForSessionConnectAttrs(sctx sessionctx.Contex
 	allAttrs := sm.GetConAttrs()
 	rows := make([][]types.Datum, 0, len(allAttrs)*10) // 10 Attributes per connection
 	for pid, attrs := range allAttrs {                 // Note: PID is not ordered.
-
 		// Sorts the attributes by key and gives ORDINAL_POSITION based on this. This is needed as we didn't store the
 		// ORDINAL_POSITION and a map doesn't have a guaranteed sort order. This is needed to keep the ORDINAL_POSITION
 		// stable over multiple queries.
