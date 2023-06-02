@@ -1005,6 +1005,33 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 	}
 }
 
+func TestIssue41572(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a varchar(100), b int, c int, d int, index idx(a, b, c))")
+	testKit.MustExec("insert into t values ('t',1,1,1),('t',1,3,3),('t',2,1,3),('t',2,3,1),('w',0,3,3),('z',0,1,1)")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	rangerSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
+	}
+}
+
 func TestPrefixIndexMultiColDNF(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
