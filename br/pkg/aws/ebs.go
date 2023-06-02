@@ -238,15 +238,21 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 }
 
 func (e *EC2Session) createSnapshotsWithRetry(ctx context.Context, input *ec2.CreateSnapshotsInput) (*ec2.CreateSnapshotsOutput, error) {
-	res, err := e.ec2.CreateSnapshotsWithContext(ctx, input)
-	if aerr, ok := err.(awserr.Error); ok && aerr.Code() == errCodeTooManyPendingSnapshots {
-		time.Sleep(pollingPendingSnapshotInterval)
-		return e.createSnapshotsWithRetry(ctx, input)
+	for {
+		res, err := e.ec2.CreateSnapshotsWithContext(ctx, input)
+		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == errCodeTooManyPendingSnapshots {
+			log.Warn("the pending snapshots exceeds the limit. waiting...",
+				zap.String("instance", aws.StringValue(input.InstanceSpecification.InstanceId)),
+				zap.Strings("volumns", aws.StringValueSlice(input.InstanceSpecification.ExcludeDataVolumeIds)),
+			)
+			time.Sleep(pollingPendingSnapshotInterval)
+			continue
+		}
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to create snapshot for request %s", input)
+		}
+		return res, nil
 	}
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to create snapshot for request %s", input)
-	}
-	return res, nil
 }
 
 func (e *EC2Session) extractSnapProgress(str *string) int64 {
