@@ -2170,11 +2170,8 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 }
 
 func quitStatsOwner(do *Domain, mgr owner.Manager) {
-	select {
-	case <-do.exit:
-		mgr.Cancel()
-		return
-	}
+	<-do.exit
+	mgr.Cancel()
 }
 
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
