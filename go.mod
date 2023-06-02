@@ -123,7 +123,7 @@ require (
 	golang.org/x/term v0.8.0
 	golang.org/x/text v0.9.0
 	golang.org/x/time v0.3.0
-	golang.org/x/tools v0.9.2
+	golang.org/x/tools v0.9.3
 	google.golang.org/api v0.114.0
 	google.golang.org/grpc v1.54.0
 	gopkg.in/yaml.v2 v2.4.0
