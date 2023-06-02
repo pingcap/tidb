@@ -88,11 +88,11 @@ type Tracker struct {
 	}
 	label int // Label of this "Tracker".
 	// following fields are used with atomic operations, so make them 64-byte aligned.
-	bytesConsumed       int64            // Consumed bytes.
-	bytesReleased       int64            // Released bytes.
-	maxConsumed         atomicutil.Int64 // max number of bytes consumed during execution.
-	SessionID           uint64           // SessionID indicates the sessionID the tracker is bound.
-	NeedKill            atomic.Bool      // NeedKill indicates whether this session need kill because OOM
+	bytesConsumed       int64             // Consumed bytes.
+	bytesReleased       int64             // Released bytes.
+	maxConsumed         atomicutil.Int64  // max number of bytes consumed during execution.
+	SessionID           atomicutil.Uint64 // SessionID indicates the sessionID the tracker is bound.
+	NeedKill            atomic.Bool       // NeedKill indicates whether this session need kill because OOM
 	NeedKillReceived    sync.Once
 	IsRootTrackerOfSess bool // IsRootTrackerOfSess indicates whether this tracker is bound for session
 	isGlobal            bool // isGlobal indicates whether this tracker is global tracker
@@ -459,7 +459,11 @@ func (t *Tracker) Consume(bs int64) {
 			sessionRootTracker.NeedKillReceived.Do(
 				func() {
 					logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
+<<<<<<< HEAD
 						zap.Uint64("connID", sessionRootTracker.SessionID))
+=======
+						zap.Uint64("conn", sessionRootTracker.SessionID.Load()))
+>>>>>>> d5861ef4f48 (executor: make prepare analyze killed globally instead of query quota (#44352))
 				})
 			tryActionLastOne(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
 		}
