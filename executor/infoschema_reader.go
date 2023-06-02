@@ -3310,7 +3310,7 @@ func (e *memtableRetriever) setDataForSessionConnectAttrs(sctx sessionctx.Contex
 		// ORDINAL_POSITION and a map doesn't have a guaranteed sort order. This is needed to keep the ORDINAL_POSITION
 		// stable over multiple queries.
 		attrnames := make([]string, 0, len(attrs))
-		for attrname, _ := range attrs {
+		for attrname := range attrs {
 			attrnames = append(attrnames, attrname)
 		}
 		sort.Strings(attrnames)
