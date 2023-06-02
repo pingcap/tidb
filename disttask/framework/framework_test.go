@@ -52,8 +52,8 @@ func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle
 	return nil, nil
 }
 
-func (*testFlowHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
-	return dispatcher.GenerateSchedulerNodes(ctx)
+func (*testFlowHandle) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+	return dispatcher.GenerateSchedulerNodes4Test()
 }
 
 func (*testFlowHandle) IsRetryableErr(error) bool {

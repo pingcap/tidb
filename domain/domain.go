@@ -1165,10 +1165,7 @@ func (do *Domain) Init(
 	if infosync.InfoSyncerInited() {
 		// This will only run in distributed execution test.
 		do.info = infosync.GetGlobalInfoSyncerForTest()
-		err := infosync.AddServerInfo(do.ddl.GetID(), do.ServerID)
-		if err != nil {
-			return nil
-		}
+		infosync.MockGlobalServerInfoManagerEntry.Add(do.ddl.GetID(), do.ServerID)
 	} else {
 		do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 			do.etcdClient, do.unprefixedEtcdCli, pdCli, do.Store().GetCodec(),
@@ -1384,7 +1381,13 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	})
 
 	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
-	serverID := generateSubtaskExecID(ctx, do.ddl.GetID())
+	var serverID string
+	if intest.InTest {
+		serverID = disttaskutil.GenerateSubtaskExecID4Test(do.ddl.GetID())
+	} else {
+		serverID = disttaskutil.GenerateSubtaskExecID(ctx, do.ddl.GetID())
+	}
+
 	if serverID == "" {
 		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
 		return errors.New(errMsg)
@@ -1403,18 +1406,6 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	}, "distTaskFrameworkLoop")
 	return nil
 }
-
-func generateSubtaskExecID(ctx context.Context, ID string) string {
-	serverInfos, err := infosync.GetAllServerInfo(ctx)
-	if err != nil || len(serverInfos) == 0 {
-		return ""
-	}
-	if serverNode, ok := serverInfos[ID]; ok {
-		return disttaskutil.GenerateExecID(serverNode.IP, serverNode.Port, ID)
-	}
-	return ""
-}
-
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
 	schedulerManager.Start()
 	logutil.BgLogger().Info("dist task scheduler started")

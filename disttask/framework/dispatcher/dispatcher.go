@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
@@ -435,7 +436,12 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		pos := i % len(serverNodes)
-		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port, serverNodes[pos].ID)
+		var instanceID string
+		if intest.InTest {
+			instanceID = disttaskutil.GenerateExecID4Test(serverNodes[pos].IP, serverNodes[pos].Port, serverNodes[pos].ID)
+		} else {
+			instanceID = disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
+		}
 		logutil.BgLogger().Debug("Create subTask", zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
@@ -449,6 +455,19 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 	if err != nil {
 		return nil, err
 	}
+	if len(serverInfos) == 0 {
+		return nil, errors.New("not found instance")
+	}
+
+	serverNodes := make([]*infosync.ServerInfo, 0, len(serverInfos))
+	for _, serverInfo := range serverInfos {
+		serverNodes = append(serverNodes, serverInfo)
+	}
+	return serverNodes, nil
+}
+
+func GenerateSchedulerNodes4Test() ([]*infosync.ServerInfo, error) {
+	serverInfos := infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
 	if len(serverInfos) == 0 {
 		return nil, errors.New("not found instance")
 	}
@@ -476,21 +495,17 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 	}
 	ids := make([]string, 0, len(schedulerIDs))
 	for _, id := range schedulerIDs {
-		if ok := matchServerInfo(serverInfos, id, d.id); ok {
+		var ok bool
+		if intest.InTest {
+			ok = disttaskutil.MatchServerInfo4Test(serverInfos, id, d.id)
+		} else {
+			ok = disttaskutil.MatchServerInfo(serverInfos, id)
+		}
+		if ok {
 			ids = append(ids, id)
 		}
 	}
 	return ids, nil
-}
-
-func matchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string, id string) bool {
-	for _, serverInfo := range serverInfos {
-		serverID := disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port, id)
-		if serverID == schedulerID {
-			return true
-		}
-	}
-	return false
 }
 
 func (d *dispatcher) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error) {
