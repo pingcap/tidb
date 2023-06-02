@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/refers"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
 )
@@ -120,23 +119,18 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 	return newCache
 }
 
-type cacheInternalItem struct {
+type cacheItem struct {
 	value *statistics.Table
 	key   int64
 	cost  int64
 }
 
-func (c cacheInternalItem) copy() cacheInternalItem {
-	return cacheInternalItem{
+func (c cacheItem) copy() cacheItem {
+	return cacheItem{
 		key:   c.key,
 		value: c.value,
 		cost:  c.cost,
 	}
-}
-
-type cacheItem struct {
-	*cacheInternalItem
-	refs refers.Refs[cacheInternalItem]
 }
 
 type mapCache struct {
