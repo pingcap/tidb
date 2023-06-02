@@ -1164,7 +1164,7 @@ func (do *Domain) Init(
 
 	if infosync.InfoSyncerInited() {
 		// This will only run in distributed execution test.
-		do.info = infosync.GetGlobalInfoSyncerForTest()
+		do.info = infosync.GetGlobalInfoSyncer4Test()
 		infosync.MockGlobalServerInfoManagerEntry.Add(do.ddl.GetID(), do.ServerID)
 	} else {
 		do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,

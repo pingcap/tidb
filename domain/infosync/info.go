@@ -219,6 +219,7 @@ func GlobalInfoSyncerInit(
 	return is, nil
 }
 
+// Check if InfoSyncer inited, only used in unit test
 func InfoSyncerInited() bool {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -227,28 +228,8 @@ func InfoSyncerInited() bool {
 	return is != nil
 }
 
-func AddServerInfo(id string, serverIDGetter func() uint64) error {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return err
-	}
-	is.infos4DistExecution = append(is.infos4DistExecution, getServerInfo(id, serverIDGetter))
-	return nil
-}
-
-func DeleteServerInfo(idx int) error {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return err
-	}
-	if idx >= len(is.infos4DistExecution) || idx < 0 {
-		return errors.New("server idx out of bound")
-	}
-	is.infos4DistExecution = append(is.infos4DistExecution[:idx], is.infos4DistExecution[idx+1:]...)
-	return nil
-}
-
-func GetGlobalInfoSyncerForTest() *InfoSyncer {
+// Get InfoSyncer for unit test
+func GetGlobalInfoSyncer4Test() *InfoSyncer {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil

@@ -16,6 +16,7 @@ package framework_test
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -52,8 +53,21 @@ func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle
 	return nil, nil
 }
 
+func generateSchedulerNodes4Test() ([]*infosync.ServerInfo, error) {
+	serverInfos := infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
+	if len(serverInfos) == 0 {
+		return nil, errors.New("not found instance")
+	}
+
+	serverNodes := make([]*infosync.ServerInfo, 0, len(serverInfos))
+	for _, serverInfo := range serverInfos {
+		serverNodes = append(serverNodes, serverInfo)
+	}
+	return serverNodes, nil
+}
+
 func (*testFlowHandle) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
-	return dispatcher.GenerateSchedulerNodes4Test()
+	return generateSchedulerNodes4Test()
 }
 
 func (*testFlowHandle) IsRetryableErr(error) bool {

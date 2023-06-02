@@ -30,11 +30,7 @@ func GenerateExecID(ip string, port uint) string {
 	return net.JoinHostPort(ip, portstring)
 }
 
-func GenerateExecID4Test(ip string, port uint, id string) string {
-	portstring := fmt.Sprintf("%d", port)
-	return fmt.Sprintf("%s:%s", net.JoinHostPort(ip, portstring), id)
-}
-
+// MatchServerInfo will check if the schedulerID matched in all serverInfos
 func MatchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string) bool {
 	for _, serverInfo := range serverInfos {
 		serverID := GenerateExecID(serverInfo.IP, serverInfo.Port)
@@ -45,16 +41,7 @@ func MatchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID st
 	return false
 }
 
-func MatchServerInfo4Test(serverInfos map[string]*infosync.ServerInfo, schedulerID string, id string) bool {
-	for _, serverInfo := range serverInfos {
-		serverID := GenerateExecID4Test(serverInfo.IP, serverInfo.Port, id)
-		if serverID == schedulerID {
-			return true
-		}
-	}
-	return false
-}
-
+// GenerateSubtaskExecID generates the subTask execID
 func GenerateSubtaskExecID(ctx context.Context, ID string) string {
 	serverInfos, err := infosync.GetAllServerInfo(ctx)
 	if err != nil || len(serverInfos) == 0 {
@@ -66,13 +53,14 @@ func GenerateSubtaskExecID(ctx context.Context, ID string) string {
 	return ""
 }
 
+// GenerateSubtaskExecID4Test generates the subTask execID, only used in unit tests
 func GenerateSubtaskExecID4Test(ID string) string {
 	serverInfos := infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
 	if len(serverInfos) == 0 {
 		return ""
 	}
 	if serverNode, ok := serverInfos[ID]; ok {
-		return GenerateExecID4Test(serverNode.IP, serverNode.Port, ID)
+		return GenerateExecID(serverNode.IP, serverNode.Port)
 	}
 	return ""
 }

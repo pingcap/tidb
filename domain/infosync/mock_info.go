@@ -16,8 +16,13 @@ package infosync
 
 import (
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/util/versioninfo"
 )
 
 // MockGlobalServerInfoManagerEntry is a mock global ServerInfoManager entry.
@@ -29,12 +34,17 @@ type MockGlobalServerInfoManager struct {
 	mu    sync.Mutex
 }
 
+// used to mock ServerInfo, then every mock server will have different port
+var mock_server_port uint = 4000
+
+// Add one mock ServerInfo
 func (m *MockGlobalServerInfoManager) Add(id string, serverIDGetter func() uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.infos = append(m.infos, getServerInfo(id, serverIDGetter))
+	m.infos = append(m.infos, m.getServerInfo(id, serverIDGetter))
 }
 
+// Delete one mock ServerInfo by idx
 func (m *MockGlobalServerInfoManager) Delete(idx int) error {
 	if idx >= len(m.infos) || idx < 0 {
 		return errors.New("server idx out of bound")
@@ -43,10 +53,35 @@ func (m *MockGlobalServerInfoManager) Delete(idx int) error {
 	return nil
 }
 
+// GetAllServerInfo return all serverInfo in a map
 func (m *MockGlobalServerInfoManager) GetAllServerInfo() map[string]*ServerInfo {
 	allInfo := make(map[string]*ServerInfo)
 	for _, info := range m.infos {
-		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter)
+		allInfo[info.ID] = info
 	}
 	return allInfo
+}
+
+// getServerInfo gets self tidb server information.
+func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
+	cfg := config.GetGlobalConfig()
+
+	// TODO: each mock server can have different config
+	info := &ServerInfo{
+		ID:             id,
+		IP:             cfg.AdvertiseAddress,
+		Port:           mock_server_port,
+		StatusPort:     cfg.Status.StatusPort,
+		Lease:          cfg.Lease,
+		BinlogStatus:   binloginfo.GetStatus().String(),
+		StartTimestamp: time.Now().Unix(),
+		Labels:         cfg.Labels,
+		ServerIDGetter: serverIDGetter,
+	}
+
+	mock_server_port++
+
+	info.Version = mysql.ServerVersion
+	info.GitHash = versioninfo.TiDBGitHash
+	return info
 }

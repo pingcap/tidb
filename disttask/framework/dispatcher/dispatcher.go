@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
@@ -233,7 +232,6 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 			return false, nil
 		}
 		if cnt > 0 {
-			logutil.BgLogger().Info("check task, subtasks aren't finished", zap.Int64("task ID", gTask.ID), zap.Int64("cnt", cnt), zap.String("id", d.id))
 			return false, nil
 		}
 		return true, nil
@@ -424,7 +422,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 
 	// Generate all available TiDB nodes for this global tasks.
 	serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask)
-	logutil.BgLogger().Info("eligile instances", zap.Int("num", len(serverNodes)))
+	logutil.BgLogger().Debug("eligible instances", zap.Int("num", len(serverNodes)))
 
 	if err1 != nil {
 		return err1
@@ -436,13 +434,9 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		pos := i % len(serverNodes)
-		var instanceID string
-		if intest.InTest {
-			instanceID = disttaskutil.GenerateExecID4Test(serverNodes[pos].IP, serverNodes[pos].Port, serverNodes[pos].ID)
-		} else {
-			instanceID = disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
-		}
-		logutil.BgLogger().Debug("Create subTask", zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
+		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
+		logutil.BgLogger().Info("Create subTask",
+			zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
 
@@ -455,19 +449,6 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 	if err != nil {
 		return nil, err
 	}
-	if len(serverInfos) == 0 {
-		return nil, errors.New("not found instance")
-	}
-
-	serverNodes := make([]*infosync.ServerInfo, 0, len(serverInfos))
-	for _, serverInfo := range serverInfos {
-		serverNodes = append(serverNodes, serverInfo)
-	}
-	return serverNodes, nil
-}
-
-func GenerateSchedulerNodes4Test() ([]*infosync.ServerInfo, error) {
-	serverInfos := infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
 	if len(serverInfos) == 0 {
 		return nil, errors.New("not found instance")
 	}
@@ -495,13 +476,7 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 	}
 	ids := make([]string, 0, len(schedulerIDs))
 	for _, id := range schedulerIDs {
-		var ok bool
-		if intest.InTest {
-			ok = disttaskutil.MatchServerInfo4Test(serverInfos, id, d.id)
-		} else {
-			ok = disttaskutil.MatchServerInfo(serverInfos, id)
-		}
-		if ok {
+		if ok := disttaskutil.MatchServerInfo(serverInfos, id); ok {
 			ids = append(ids, id)
 		}
 	}
