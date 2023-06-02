@@ -3493,6 +3493,36 @@ func (n *LoadDataActionStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type ImportIntoActionTp int
+
+const (
+	ImportIntoCancel ImportIntoActionTp = iota
+)
+
+// ImportIntoActionStmt represent CANCEL IMPORT INTO JOB statement.
+// will support pause/resume/drop later.
+type ImportIntoActionStmt struct {
+	stmtNode
+
+	Tp    ImportIntoActionTp
+	JobID int64
+}
+
+func (n *ImportIntoActionStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
+	if n.Tp == ImportIntoCancel {
+		ctx.WriteKeyWord("CANCEL IMPORT JOB ")
+	} else {
+		return errors.Errorf("invalid IMPORT INTO action type: %d", n.Tp)
+	}
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
 // Ident is the table identifier composed of schema name and table name.
 type Ident struct {
 	Schema model.CIStr

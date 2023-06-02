@@ -20,15 +20,20 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/sync/errgroup"
 )
@@ -48,6 +53,10 @@ type ImportIntoExec struct {
 
 	detachHandled bool
 }
+
+var (
+	_ Executor = (*ImportIntoExec)(nil)
+)
 
 func newImportIntoExec(b baseExecutor, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (
 	*ImportIntoExec, error) {
@@ -146,4 +155,52 @@ func (e *ImportIntoExec) doImport(distImporter *loaddata.DistImporter, task *pro
 		userStmtCtx.SetAffectedRows(importResult.Affected)
 	}
 	return err
+}
+
+type ImportIntoActionExec struct {
+	baseExecutor
+	tp    ast.ImportIntoActionTp
+	jobID int64
+}
+
+var (
+	_ Executor = (*ImportIntoActionExec)(nil)
+)
+
+func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalImportInto)
+
+	var hasSuperPriv bool
+	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
+		hasSuperPriv = pm.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
+	}
+	if err := e.checkPrivilegeAndStatus(ctx, hasSuperPriv); err != nil {
+		return err
+	}
+
+	// we use sessionCtx from GetTaskManager, user ctx might not have enough privileges.
+	globalTaskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	return globalTaskManager.WithNewTxn(func(se sessionctx.Context) error {
+		exec := e.ctx.(sqlexec.SQLExecutor)
+		if err2 := importer.CancelJob(ctx, exec, e.jobID); err2 != nil {
+			return err2
+		}
+		return globalTaskManager.CancelGlobalTaskByKeySession(se, loaddata.TaskKey(e.jobID))
+	})
+}
+
+func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, hasSuperPriv bool) error {
+	exec := e.ctx.(sqlexec.SQLExecutor)
+	job := importer.NewJob(e.jobID, exec, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
+	info, err := job.Get(ctx)
+	if err != nil {
+		return err
+	}
+	if !info.CanCancel() {
+		return exeerrors.ErrLoadDataInvalidOperation.FastGenByArgs("CANCEL")
+	}
+	return nil
 }

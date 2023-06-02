@@ -73,6 +73,30 @@ type ImportParameters struct {
 	Options      map[string]interface{} `json:"options;omitempty"`
 }
 
+// JobInfo is the information of import into job.
+type JobInfo struct {
+	ID          int64
+	CreateTime  types.Time
+	StartTime   types.Time
+	EndTime     types.Time
+	TableSchema string
+	TableName   string
+	TableID     int64
+	CreatedBy   string
+	Parameters  ImportParameters
+	Status      string
+	// in SHOW IMPORT JOB, we name it as phase.
+	// here, we use the same name as in distributed framework.
+	Step         string
+	Progress     *asyncloaddata.Progress
+	ErrorMessage string
+}
+
+// CanCancel returns whether the job can be cancelled.
+func (j *JobInfo) CanCancel() bool {
+	return j.Status == jobStatusPending || j.Status == jobStatusRunning
+}
+
 // Job import job.
 type Job struct {
 	ID int64
@@ -203,47 +227,6 @@ func (j *Job) Fail(ctx context.Context, errorMsg string) error {
 	return nil
 }
 
-// Cancel cancels import into job. Only a running/paused job can be canceled.
-func (j *Job) Cancel(ctx context.Context) (err error) {
-	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	// check privileges
-	_, err = j.get(ctx)
-	if err != nil {
-		return err
-	}
-	sql := `UPDATE mysql.tidb_import_jobs
-			SET update_time = CURRENT_TIMESTAMP(6), status = %?,
-				end_time = CURRENT_TIMESTAMP(6), error_message = 'canceled by user'
-			WHERE id = %? AND status IN (%?, %?);`
-	args := []interface{}{jogStatusCancelled, j.ID, jobStatusPending, jobStatusRunning}
-	_, err = j.Conn.ExecuteInternal(ctx, sql, args...)
-	if err != nil {
-		return err
-	}
-	if j.Conn.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-		return errors.Errorf("cancel job failed, job %d not exists or not in pending or running status", j.ID)
-	}
-	return nil
-}
-
-// JobInfo is the information of import into job.
-type JobInfo struct {
-	ID          int64
-	CreateTime  types.Time
-	StartTime   types.Time
-	EndTime     types.Time
-	TableSchema string
-	TableName   string
-	TableID     int64
-	CreatedBy   string
-	Parameters  ImportParameters
-	Status      string
-	// in SHOW IMPORT JOB, we name it as phase
-	Step         string
-	Progress     *asyncloaddata.Progress
-	ErrorMessage string
-}
-
 // Get gets all needed information of import into job.
 func (j *Job) Get(ctx context.Context) (*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
@@ -344,4 +327,23 @@ func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user stri
 	}
 
 	return ret, nil
+}
+
+// CancelJob cancels import into job. Only a running/paused job can be canceled.
+// check privileges using get before calling this method.
+func CancelJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
+	sql := `UPDATE mysql.tidb_import_jobs
+			SET update_time = CURRENT_TIMESTAMP(6), status = %?,
+				end_time = CURRENT_TIMESTAMP(6), error_message = 'canceled by user'
+			WHERE id = %? AND status IN (%?, %?);`
+	args := []interface{}{jogStatusCancelled, jobID, jobStatusPending, jobStatusRunning}
+	_, err = conn.ExecuteInternal(ctx, sql, args...)
+	if err != nil {
+		return err
+	}
+	if conn.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+		return errors.Errorf("cancel job failed, job %d not exists or not in pending or running status", jobID)
+	}
+	return nil
 }

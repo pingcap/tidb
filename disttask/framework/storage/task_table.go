@@ -113,7 +113,8 @@ func (stm *TaskManager) withNewSession(fn func(se sessionctx.Context) error) err
 	return fn(se.(sessionctx.Context))
 }
 
-func (stm *TaskManager) withNewTxn(fn func(se sessionctx.Context) error) error {
+// WithNewTxn executes the fn in a new transaction.
+func (stm *TaskManager) WithNewTxn(fn func(se sessionctx.Context) error) error {
 	return stm.withNewSession(func(se sessionctx.Context) (err error) {
 		_, err = execSQL(stm.ctx, se, "begin")
 		if err != nil {
@@ -392,7 +393,7 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, isSubtaskRevert bool) error {
-	return stm.withNewTxn(func(se sessionctx.Context) error {
+	return stm.WithNewTxn(func(se sessionctx.Context) error {
 		_, err := execSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %? where id = %?",
 			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, gTask.Error, gTask.ID)
 		if err != nil {
@@ -428,6 +429,13 @@ func (stm *TaskManager) CancelGlobalTask(taskID int64) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_global_task set state=%? where id=%? and state in (%?, %?)",
 		proto.TaskStateCancelling, taskID, proto.TaskStatePending, proto.TaskStateRunning,
 	)
+	return err
+}
+
+// CancelGlobalTaskByKeySession cancels global task by key using input session
+func (stm *TaskManager) CancelGlobalTaskByKeySession(se sessionctx.Context, taskKey string) error {
+	_, err := execSQL(stm.ctx, se, "update mysql.tidb_global_task set state=%? where task_key=%? and state in (%?, %?)",
+		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning)
 	return err
 }
 

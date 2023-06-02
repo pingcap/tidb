@@ -277,5 +277,5 @@ func generateSubtaskMetas(ctx context.Context, taskID int64, taskMeta *TaskMeta)
 }
 
 func init() {
-	dispatcher.RegisterTaskFlowHandle(proto.LoadData, &flowHandle{})
+	dispatcher.RegisterTaskFlowHandle(proto.ImportInto, &flowHandle{})
 }

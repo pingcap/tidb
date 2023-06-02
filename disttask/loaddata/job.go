@@ -131,7 +131,7 @@ func (ti *DistImporter) SubmitTask() (*proto.Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	globalTask, err := handle.SubmitGlobalTask(ti.taskKey(), proto.LoadData, int(ti.plan.ThreadCnt), taskMeta)
+	globalTask, err := handle.SubmitGlobalTask(ti.taskKey(), proto.ImportInto, int(ti.plan.ThreadCnt), taskMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func (ti *DistImporter) SubmitTask() (*proto.Task, error) {
 
 func (*DistImporter) taskKey() string {
 	// task key is meaningless to IMPORT INTO, so we use a random uuid.
-	return fmt.Sprintf("%s/%s", proto.LoadData, uuid.New().String())
+	return fmt.Sprintf("%s/%s", proto.ImportInto, uuid.New().String())
 }
 
 func (*DistImporter) getTaskMeta(task *proto.Task) (*TaskMeta, error) {
@@ -164,4 +164,8 @@ func (*DistImporter) getTaskMeta(task *proto.Task) (*TaskMeta, error) {
 		return nil, err
 	}
 	return &taskMeta, nil
+}
+
+func TaskKey(jobID int64) string {
+	return fmt.Sprintf("%s/%d", proto.ImportInto, jobID)
 }

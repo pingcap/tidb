@@ -881,6 +881,12 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 			tp:           s.Tp,
 			jobID:        s.JobID,
 		}
+	case *ast.ImportIntoActionStmt:
+		return &ImportIntoActionExec{
+			baseExecutor: newBaseExecutor(b.ctx, nil, 0),
+			tp:           s.Tp,
+			jobID:        s.JobID,
+		}
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
