@@ -1019,8 +1019,6 @@
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
-<<<<<<< HEAD
-=======
   },
   "etcdconfig": {
     "exclude_files": {
@@ -1035,6 +1033,5 @@
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code"
     }
->>>>>>> eca4e9be284 (linter: Recover() must be directly called by defer (#44192))
   }
 }
