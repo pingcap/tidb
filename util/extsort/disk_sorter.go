@@ -748,9 +748,6 @@ func (d *DiskSorter) init() error {
 	g, ctx := errgroup.WithContext(context.Background())
 	outputCh := make(chan *fileMetadata, len(list))
 	for _, name := range list {
-		if ctx.Err() != nil {
-			break
-		}
 		if strings.HasSuffix(name, tmpFileSuffix) {
 			_ = d.fs.Remove(d.fs.PathJoin(d.dirname, name))
 			continue
@@ -763,6 +760,9 @@ func (d *DiskSorter) init() error {
 			d.idAlloc.Store(int64(fileNum))
 		}
 		g.Go(func() error {
+			if ctx.Err() != nil {
+				return errors.Trace(ctx.Err())
+			}
 			file, err := d.readFileMetadata(fileNum)
 			if err != nil {
 				return err
@@ -885,15 +885,17 @@ func (d *DiskSorter) doSort(ctx context.Context) error {
 	slices.SortFunc(d.orderedFiles, func(a, b *fileMetadata) bool {
 		return bytes.Compare(a.startKey, b.startKey) < 0
 	})
-	return d.maybeCompact(ctx)
+	files := d.pickCompactionFiles()
+	for len(files) > 0 {
+		if err := d.compactFiles(ctx, files); err != nil {
+			return err
+		}
+		files = d.pickCompactionFiles()
+	}
+	return nil
 }
 
-func (d *DiskSorter) maybeCompact(ctx context.Context) error {
-	files := d.pickCompactionFiles()
-	if len(files) == 0 {
-		return nil
-	}
-
+func (d *DiskSorter) compactFiles(ctx context.Context, files []*fileMetadata) error {
 	// Split files into multiple compaction groups.
 	// Each group will be compacted independently.
 	groups := splitCompactionFiles(files, d.opts.MaxCompactionDepth)
@@ -917,15 +919,15 @@ func (d *DiskSorter) maybeCompact(ctx context.Context) error {
 	// Run all compactions.
 	removedFileNums := generic.NewSyncMap[int, struct{}](len(files))
 	outputCh := make(chan *fileMetadata, len(compactions))
-	g, ctx := errgroup.WithContext(ctx)
+	g, gCtx := errgroup.WithContext(ctx)
 	g.SetLimit(d.opts.Concurrency)
 	for _, c := range compactions {
-		if ctx.Err() != nil {
-			break
-		}
 		c := c
 		g.Go(func() error {
-			output, err := d.runCompaction(ctx, c)
+			if gCtx.Err() != nil {
+				return errors.Trace(gCtx.Err())
+			}
+			output, err := d.runCompaction(gCtx, c)
 			if err != nil {
 				return err
 			}
@@ -958,9 +960,7 @@ func (d *DiskSorter) maybeCompact(ctx context.Context) error {
 		return bytes.Compare(a.startKey, b.startKey) < 0
 	})
 	d.orderedFiles = newOrderedFiles
-
-	// After compaction, check if we need to compact again.
-	return d.maybeCompact(ctx)
+	return nil
 }
 
 func (d *DiskSorter) pickCompactionFiles() []*fileMetadata {

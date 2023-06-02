@@ -90,10 +90,10 @@ func runParallelTest(t *testing.T, sorter extsort.ExternalSorter) {
 
 	kvCh := make(chan keyValue, 16)
 
-	g, ctx := errgroup.WithContext(ctx)
+	g, gCtx := errgroup.WithContext(ctx)
 	for i := 0; i < numWriters; i++ {
 		g.Go(func() (retErr error) {
-			w, err := sorter.NewWriter(ctx)
+			w, err := sorter.NewWriter(gCtx)
 			if err != nil {
 				return err
 			}
