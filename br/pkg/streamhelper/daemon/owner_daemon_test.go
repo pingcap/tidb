@@ -136,7 +136,7 @@ func TestDaemon(t *testing.T) {
 	defer cancel()
 	req := require.New(t)
 	app := newTestApp(t)
-	ow := owner.NewMockManager(ctx, "owner_daemon_test", "owner_key")
+	ow := owner.NewMockManager(ctx, "owner_daemon_test", nil, "owner_key")
 	d := daemon.New(app, ow, 100*time.Millisecond)
 
 	app.AssertService(req, false)

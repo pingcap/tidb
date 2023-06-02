@@ -46,9 +46,13 @@ type mockManager struct {
 // NewMockManager creates a new mock Manager.
 func NewMockManager(ctx context.Context, id string, store kv.Storage, ownerKey string) Manager {
 	cancelCtx, cancelFunc := context.WithCancel(ctx)
+	storeID := "mock_store_id"
+	if store != nil {
+		storeID = store.UUID()
+	}
 	return &mockManager{
 		id:           id,
-		storeID:      store.UUID(),
+		storeID:      storeID,
 		key:          ownerKey,
 		ctx:          cancelCtx,
 		cancel:       cancelFunc,
