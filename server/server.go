@@ -811,7 +811,7 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	return conn.ctx.ShowProcess(), ok
 }
 
-// GetConnAttrs returns the connection attributes
+// GetConAttrs returns the connection attributes
 func (s *Server) GetConAttrs() map[uint64]map[string]string {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
