@@ -16,9 +16,11 @@ package executor
 
 import (
 	"bytes"
+	"container/heap"
 	"context"
 	"fmt"
 	"runtime/trace"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,13 +29,18 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/internal/builder"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -83,6 +90,11 @@ type IndexMergeReaderExecutor struct {
 	dagPBs       []*tipb.DAGRequest
 	startTS      uint64
 	tableRequest *tipb.DAGRequest
+
+	keepOrder   bool
+	pushedLimit *plannercore.PushedDownLimit
+	byItems     []*plannerutil.ByItems
+
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 	*dataReaderBuilder
@@ -136,6 +148,9 @@ type indexMergeTableTask struct {
 
 	// parTblIdx are only used in indexMergeProcessWorker.fetchLoopIntersection.
 	parTblIdx int
+
+	// partialPlanID are only used for indexMergeProcessWorker.fetchLoopUnionWithOrderByAndPushedLimit.
+	partialPlanID int
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -148,7 +163,7 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
 	e.initRuntimeStats()
 	if e.isCorColInTableFilter {
-		e.tableRequest.Executors, err = constructDistExec(e.ctx, e.tblPlans)
+		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.ctx, e.tblPlans)
 		if err != nil {
 			return err
 		}
@@ -281,6 +296,8 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 			func() {
 				if e.isIntersection {
 					idxMergeProcessWorker.fetchLoopIntersection(ctx, fetch, workCh, e.resultCh, e.finished)
+				} else if e.pushedLimit != nil && len(e.byItems) != 0 {
+					idxMergeProcessWorker.fetchLoopUnionWithOrderByAndPushedLimit(ctx, fetch, workCh, e.resultCh, e.finished)
 				} else {
 					idxMergeProcessWorker.fetchLoopUnion(ctx, fetch, workCh, e.resultCh, e.finished)
 				}
@@ -294,7 +311,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask, workID int) error {
 	failpoint.Inject("testIndexMergeResultChCloseEarly", func(_ failpoint.Value) {
 		// Wait for processWorker to close resultCh.
-		time.Sleep(2)
+		time.Sleep(time.Second * 2)
 		// Should use fetchCh instead of resultCh to send error.
 		syncErr(ctx, e.finished, fetchCh, errors.New("testIndexMergeResultChCloseEarly"))
 	})
@@ -322,30 +339,24 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		util.WithRecovery(
 			func() {
 				failpoint.Inject("testIndexMergePanicPartialIndexWorker", nil)
-				failpoint.Inject("mockSleepBeforeStartTableReader", func(_ failpoint.Value) {
-					select {
-					case <-ctx.Done():
-						failpoint.Return()
-					case <-e.finished:
-						failpoint.Return()
-					case <-exitCh:
-						failpoint.Return()
-					}
-				})
 				worker := &partialIndexWorker{
-					stats:        e.stats,
-					idxID:        e.getPartitalPlanID(workID),
-					sc:           e.ctx,
-					batchSize:    e.maxChunkSize,
-					maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
-					maxChunkSize: e.maxChunkSize,
-					memTracker:   e.memTracker,
+					stats:              e.stats,
+					idxID:              e.getPartitalPlanID(workID),
+					sc:                 e.ctx,
+					batchSize:          e.maxChunkSize,
+					maxBatchSize:       e.ctx.GetSessionVars().IndexLookupSize,
+					maxChunkSize:       e.maxChunkSize,
+					memTracker:         e.memTracker,
+					partitionTableMode: e.partitionTableMode,
+					prunedPartitions:   e.prunedPartitions,
+					byItems:            e.byItems,
+					pushedLimit:        e.pushedLimit,
 				}
 
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
 					var err error
-					if e.dagPBs[workID].Executors, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.ctx, e.partialPlans[workID]); err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
@@ -355,7 +366,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				builder.SetDAGRequest(e.dagPBs[workID]).
 					SetStartTS(e.startTS).
 					SetDesc(e.descs[workID]).
-					SetKeepOrder(false).
+					SetKeepOrder(e.keepOrder).
 					SetTxnScope(e.txnScope).
 					SetReadReplicaScope(e.readReplicaScope).
 					SetIsStaleness(e.isStaleness).
@@ -363,13 +374,26 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetMemTracker(e.memTracker).
 					SetPaging(e.paging).
 					SetFromInfoSchema(e.ctx.GetInfoSchema()).
-					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID]))
+					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID])).
+					SetConnID(e.ctx.GetSessionVars().ConnectionID)
 
-				for parTblIdx, keyRange := range keyRanges {
+				tps := worker.getRetTpsForIndexScan(e.handleCols)
+				results := make([]distsql.SelectResult, 0, len(keyRanges))
+				defer func() {
+					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
+					for _, result := range results {
+						if err := result.Close(); err != nil {
+							logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
+						}
+					}
+				}()
+				for _, keyRange := range keyRanges {
 					// check if this executor is closed
 					select {
+					case <-ctx.Done():
+						return
 					case <-e.finished:
-						break
+						return
 					default:
 					}
 
@@ -383,34 +407,27 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
-					result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.handleCols.GetFieldsTypes(), e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getPartitalPlanID(workID))
+					result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getPartitalPlanID(workID))
 					if err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
-					worker.batchSize = e.maxChunkSize
-					if worker.batchSize > worker.maxBatchSize {
-						worker.batchSize = worker.maxBatchSize
-					}
-					if e.partitionTableMode {
-						worker.partition = e.prunedPartitions[parTblIdx]
-					}
-
-					// fetch all data from this partition
-					ctx1, cancel := context.WithCancel(ctx)
-					_, fetchErr := worker.fetchHandles(ctx1, result, exitCh, fetchCh, e.finished, e.handleCols, parTblIdx)
-					if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
-						e.feedbacks[workID].Invalidate()
-					}
-					if err := result.Close(); err != nil {
-						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
-					}
-					cancel()
-					e.ctx.StoreQueryFeedback(e.feedbacks[workID])
-					if fetchErr != nil {
-						break
-					}
+					results = append(results, result)
+					failpoint.Inject("testIndexMergePartialIndexWorkerCoprLeak", nil)
 				}
+				worker.batchSize = mathutil.Min(e.maxChunkSize, worker.maxBatchSize)
+				if len(results) > 1 && len(e.byItems) != 0 {
+					// e.Schema() not the output schema for partialIndexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
+					ssr := distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker)
+					results = []distsql.SelectResult{ssr}
+				}
+				ctx1, cancel := context.WithCancel(ctx)
+				_, fetchErr := worker.fetchHandles(ctx1, results, exitCh, fetchCh, e.finished, e.handleCols, workID)
+				if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
+					e.feedbacks[workID].Invalidate()
+				}
+				cancel()
+				e.ctx.StoreQueryFeedback(e.feedbacks[workID])
 			},
 			handleWorkerPanic(ctx, e.finished, fetchCh, nil, partialIndexWorkerType),
 		)
@@ -423,7 +440,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 	ts := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan)
 
 	tbls := make([]table.Table, 0, 1)
-	if e.partitionTableMode {
+	if e.partitionTableMode && len(e.byItems) == 0 {
 		for _, p := range e.prunedPartitions {
 			tbls = append(tbls, p)
 		}
@@ -437,16 +454,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		util.WithRecovery(
 			func() {
 				failpoint.Inject("testIndexMergePanicPartialTableWorker", nil)
-				failpoint.Inject("mockSleepBeforeStartTableReader", func(_ failpoint.Value) {
-					select {
-					case <-ctx.Done():
-						failpoint.Return()
-					case <-e.finished:
-						failpoint.Return()
-					case <-exitCh:
-						failpoint.Return()
-					}
-				})
 				var err error
 				partialTableReader := &TableReaderExecutor{
 					baseExecutor:     newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
@@ -459,31 +466,56 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					plans:            e.partialPlans[workID],
 					ranges:           e.ranges[workID],
 					netDataSize:      e.partialNetDataSizes[workID],
+					keepOrder:        ts.KeepOrder,
+					byItems:          e.byItems,
 				}
 
 				worker := &partialTableWorker{
-					stats:        e.stats,
-					sc:           e.ctx,
-					batchSize:    e.maxChunkSize,
-					maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
-					maxChunkSize: e.maxChunkSize,
-					tableReader:  partialTableReader,
-					memTracker:   e.memTracker,
+					stats:              e.stats,
+					sc:                 e.ctx,
+					batchSize:          e.maxChunkSize,
+					maxBatchSize:       e.ctx.GetSessionVars().IndexLookupSize,
+					maxChunkSize:       e.maxChunkSize,
+					tableReader:        partialTableReader,
+					memTracker:         e.memTracker,
+					partitionTableMode: e.partitionTableMode,
+					prunedPartitions:   e.prunedPartitions,
+					byItems:            e.byItems,
+					pushedLimit:        e.pushedLimit,
+				}
+
+				if len(e.prunedPartitions) != 0 && len(e.byItems) != 0 {
+					slices.SortFunc(worker.prunedPartitions, func(i, j table.PhysicalTable) bool {
+						return i.GetPhysicalID() < j.GetPhysicalID()
+					})
+					partialTableReader.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
+						sctx:       e.ctx,
+						partitions: worker.prunedPartitions,
+					}
 				}
 
 				if e.isCorColInPartialFilters[workID] {
-					if e.dagPBs[workID].Executors, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.ctx, e.partialPlans[workID]); err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
 					partialTableReader.dagPB = e.dagPBs[workID]
 				}
 
+				var tableReaderClosed bool
+				defer func() {
+					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
+					if !tableReaderClosed {
+						terror.Call(worker.tableReader.Close)
+					}
+				}()
 				for parTblIdx, tbl := range tbls {
 					// check if this executor is closed
 					select {
+					case <-ctx.Done():
+						return
 					case <-e.finished:
-						break
+						return
 					default:
 					}
 
@@ -494,23 +526,23 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 						syncErr(ctx, e.finished, fetchCh, err)
 						break
 					}
+					failpoint.Inject("testIndexMergePartialTableWorkerCoprLeak", nil)
+					tableReaderClosed = false
 					worker.batchSize = e.maxChunkSize
 					if worker.batchSize > worker.maxBatchSize {
 						worker.batchSize = worker.maxBatchSize
 					}
-					if e.partitionTableMode {
-						worker.partition = tbl.(table.PhysicalTable)
-					}
 
 					// fetch all handles from this table
 					ctx1, cancel := context.WithCancel(ctx)
-					_, fetchErr := worker.fetchHandles(ctx1, exitCh, fetchCh, e.finished, e.handleCols, parTblIdx)
+					_, fetchErr := worker.fetchHandles(ctx1, exitCh, fetchCh, e.finished, e.handleCols, parTblIdx, workID)
 					if fetchErr != nil { // this error is synced in fetchHandles, so don't sync it again
 						e.feedbacks[workID].Invalidate()
 					}
 
 					// release related resources
 					cancel()
+					tableReaderClosed = true
 					if err = worker.tableReader.Close(); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
@@ -549,23 +581,31 @@ func (e *IndexMergeReaderExecutor) getTablePlanRootID() int {
 }
 
 type partialTableWorker struct {
-	stats        *IndexMergeRuntimeStat
-	sc           sessionctx.Context
-	batchSize    int
-	maxBatchSize int
-	maxChunkSize int
-	tableReader  Executor
-	partition    table.PhysicalTable // it indicates if this worker is accessing a particular partition table
-	memTracker   *memory.Tracker
+	stats              *IndexMergeRuntimeStat
+	sc                 sessionctx.Context
+	batchSize          int
+	maxBatchSize       int
+	maxChunkSize       int
+	tableReader        Executor
+	memTracker         *memory.Tracker
+	partitionTableMode bool
+	prunedPartitions   []table.PhysicalTable
+	byItems            []*plannerutil.ByItems
+	scannedKeys        uint64
+	pushedLimit        *plannercore.PushedDownLimit
+}
+
+// hasExtralPidCol indicates whether we need create a partitonHandle or not.
+// If we want to keep order in IndexMerge for a partition table,
+// we should create a partitionHandle which contained pid information.
+// In TableRowIDScan, the partitionHandle will be used to create key ranges.
+func (w *partialTableWorker) hasExtralPidCol() bool {
+	return w.partitionTableMode && len(w.byItems) > 0
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask,
-	finished <-chan struct{}, handleCols plannercore.HandleCols, parTblIdx int) (count int64, err error) {
-	chk := w.sc.GetSessionVars().GetNewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize, w.maxChunkSize, w.tableReader.base().AllocPool)
-	var basic *execdetails.BasicRuntimeStats
-	if be := w.tableReader.base(); be != nil && be.runtimeStats != nil {
-		basic = be.runtimeStats
-	}
+	finished <-chan struct{}, handleCols plannercore.HandleCols, parTblIdx int, partialPlanIndex int) (count int64, err error) {
+	chk := w.sc.GetSessionVars().GetNewChunkWithCapacity(w.getRetTpsForTableScan(), w.maxChunkSize, w.maxChunkSize, w.tableReader.base().AllocPool)
 	for {
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols)
@@ -577,7 +617,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 			return count, nil
 		}
 		count += int64(len(handles))
-		task := w.buildTableTask(handles, retChunk, parTblIdx)
+		task := w.buildTableTask(handles, retChunk, parTblIdx, partialPlanIndex)
 		if w.stats != nil {
 			atomic.AddInt64(&w.stats.FetchIdxTime, int64(time.Since(start)))
 		}
@@ -590,10 +630,11 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 			return count, nil
 		case fetchCh <- task:
 		}
-		if basic != nil {
-			basic.Record(time.Since(start), chk.NumRows())
-		}
 	}
+}
+
+func (w *partialTableWorker) getRetTpsForTableScan() []*types.FieldType {
+	return retTypes(w.tableReader)
 }
 
 func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleCols plannercore.HandleCols) (
@@ -602,10 +643,21 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 	var memUsage int64
 	defer w.memTracker.Consume(-memUsage)
 	for len(handles) < w.batchSize {
-		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
+		requiredRows := w.batchSize - len(handles)
+		if w.pushedLimit != nil {
+			if w.pushedLimit.Offset+w.pushedLimit.Count <= w.scannedKeys {
+				return handles, retChk, nil
+			}
+			requiredRows = mathutil.Min(int(w.pushedLimit.Offset+w.pushedLimit.Count-w.scannedKeys), requiredRows)
+		}
+		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
+		start := time.Now()
 		err = errors.Trace(w.tableReader.Next(ctx, chk))
 		if err != nil {
 			return handles, nil, err
+		}
+		if be := w.tableReader.base(); be != nil && be.runtimeStats != nil {
+			be.runtimeStats.Record(time.Since(start), chk.NumRows())
 		}
 		if chk.NumRows() == 0 {
 			failpoint.Inject("testIndexMergeErrorPartialTableWorker", func(v failpoint.Value) {
@@ -617,11 +669,30 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
 		for i := 0; i < chk.NumRows(); i++ {
-			handle, err := handleCols.BuildHandle(chk.GetRow(i))
+			if w.pushedLimit != nil {
+				w.scannedKeys++
+				if w.scannedKeys > (w.pushedLimit.Offset + w.pushedLimit.Count) {
+					// Skip the handles after Offset+Count.
+					return handles, retChk, nil
+				}
+			}
+			var handle kv.Handle
+			if w.hasExtralPidCol() {
+				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
+			} else {
+				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
+			}
 			if err != nil {
 				return nil, nil, err
 			}
 			handles = append(handles, handle)
+		}
+		// used for limit embedded.
+		if len(w.byItems) != 0 {
+			if retChk == nil {
+				retChk = chunk.NewChunkWithCapacity(w.getRetTpsForTableScan(), w.batchSize)
+			}
+			retChk.Append(chk, 0, chk.NumRows())
 		}
 	}
 	w.batchSize *= 2
@@ -631,15 +702,18 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 	return handles, retChk, nil
 }
 
-func (w *partialTableWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk, parTblIdx int) *indexMergeTableTask {
+func (w *partialTableWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk, parTblIdx int, partialPlanID int) *indexMergeTableTask {
 	task := &indexMergeTableTask{
 		lookupTableTask: lookupTableTask{
 			handles: handles,
 			idxRows: retChk,
-
-			partitionTable: w.partition,
 		},
-		parTblIdx: parTblIdx,
+		parTblIdx:     parTblIdx,
+		partialPlanID: partialPlanID,
+	}
+
+	if w.prunedPartitions != nil {
+		task.partitionTable = w.prunedPartitions[parTblIdx]
 	}
 
 	task.doneCh = make(chan error, 1)
@@ -731,6 +805,12 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 }
 
 func (e *IndexMergeReaderExecutor) getResultTask() (*indexMergeTableTask, error) {
+	failpoint.Inject("testIndexMergeMainReturnEarly", func(_ failpoint.Value) {
+		// To make sure processWorker make resultCh to be full.
+		// When main goroutine close finished, processWorker may be stuck when writing resultCh.
+		time.Sleep(time.Second * 20)
+		failpoint.Return(nil, errors.New("failpoint testIndexMergeMainReturnEarly"))
+	})
 	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rows) {
 		return e.resultCurr, nil
 	}
@@ -758,6 +838,7 @@ func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- 
 			defer close(ch)
 		}
 		if r == nil {
+			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
 			return
 		}
 
@@ -808,6 +889,204 @@ type indexMergeProcessWorker struct {
 	stats      *IndexMergeRuntimeStat
 }
 
+type rowIdx struct {
+	partialID int
+	taskID    int
+	rowID     int
+}
+
+type handleHeap struct {
+	requiredCnt uint64
+	taskMap     map[int][]*indexMergeTableTask
+
+	idx         []rowIdx
+	compareFunc []chunk.CompareFunc
+	byItems     []*plannerutil.ByItems
+}
+
+func (h handleHeap) Len() int {
+	return len(h.idx)
+}
+
+func (h handleHeap) Less(i, j int) bool {
+	rowI := h.taskMap[h.idx[i].partialID][h.idx[i].taskID].idxRows.GetRow(h.idx[i].rowID)
+	rowJ := h.taskMap[h.idx[j].partialID][h.idx[j].taskID].idxRows.GetRow(h.idx[j].rowID)
+
+	for i, compFunc := range h.compareFunc {
+		cmp := compFunc(rowI, i, rowJ, i)
+		if !h.byItems[i].Desc {
+			cmp = -cmp
+		}
+		if cmp < 0 {
+			return true
+		} else if cmp > 0 {
+			return false
+		}
+	}
+	return false
+}
+
+func (h handleHeap) Swap(i, j int) {
+	h.idx[i], h.idx[j] = h.idx[j], h.idx[i]
+}
+
+func (h *handleHeap) Push(x interface{}) {
+	idx := x.(rowIdx)
+	h.idx = append(h.idx, idx)
+}
+
+func (h *handleHeap) Pop() interface{} {
+	idxRet := h.idx[len(h.idx)-1]
+	h.idx = h.idx[:len(h.idx)-1]
+	return idxRet
+}
+
+func (w *indexMergeProcessWorker) NewHandleHeap(taskMap map[int][]*indexMergeTableTask) *handleHeap {
+	compareFuncs := make([]chunk.CompareFunc, 0, len(w.indexMerge.byItems))
+	for _, item := range w.indexMerge.byItems {
+		keyType := item.Expr.GetType()
+		compareFuncs = append(compareFuncs, chunk.GetCompareFunc(keyType))
+	}
+	requiredCnt := w.indexMerge.pushedLimit.Count + w.indexMerge.pushedLimit.Offset
+	return &handleHeap{
+		requiredCnt: requiredCnt,
+		taskMap:     taskMap,
+		idx:         make([]rowIdx, 0, requiredCnt),
+		compareFunc: compareFuncs,
+		byItems:     w.indexMerge.byItems,
+	}
+}
+
+// pruneTableWorkerTaskIdxRows prune idxRows and only keep columns that will be used in byItems.
+// e.g. the common handle is (`b`, `c`) and order by with column `c`, we should make column `c` at the first.
+func (w *indexMergeProcessWorker) pruneTableWorkerTaskIdxRows(task *indexMergeTableTask) {
+	if task.idxRows == nil {
+		return
+	}
+	// IndexScan no need to prune retChk, Columns required by byItems are always first.
+	if plan, ok := w.indexMerge.partialPlans[task.partialPlanID][0].(*plannercore.PhysicalTableScan); ok {
+		prune := make([]int, 0, len(w.indexMerge.byItems))
+		for _, item := range plan.ByItems {
+			c, _ := item.Expr.(*expression.Column)
+			idx := plan.Schema().ColumnIndex(c)
+			// couldn't equals to -1 here, if idx == -1, just let it panic
+			prune = append(prune, idx)
+		}
+		task.idxRows = task.idxRows.Prune(prune)
+	}
+}
+
+func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderByAndPushedLimit(ctx context.Context, fetchCh <-chan *indexMergeTableTask,
+	workCh chan<- *indexMergeTableTask, resultCh chan<- *indexMergeTableTask, finished <-chan struct{}) {
+	memTracker := memory.NewTracker(w.indexMerge.id, -1)
+	memTracker.AttachTo(w.indexMerge.memTracker)
+	defer memTracker.Detach()
+	defer close(workCh)
+
+	if w.stats != nil {
+		start := time.Now()
+		defer func() {
+			w.stats.IndexMergeProcess += time.Since(start)
+		}()
+	}
+
+	distinctHandles := kv.NewHandleMap()
+	taskMap := make(map[int][]*indexMergeTableTask)
+	uselessMap := make(map[int]struct{})
+	taskHeap := w.NewHandleHeap(taskMap)
+	memTracker.Consume(int64(taskHeap.requiredCnt) * int64(unsafe.Sizeof(rowIdx{0, 0, 0})))
+
+	for task := range fetchCh {
+		select {
+		case err := <-task.doneCh:
+			// If got error from partialIndexWorker/partialTableWorker, stop processing.
+			if err != nil {
+				syncErr(ctx, finished, resultCh, err)
+				return
+			}
+		default:
+		}
+		if _, ok := uselessMap[task.partialPlanID]; ok {
+			continue
+		}
+		if _, ok := taskMap[task.partialPlanID]; !ok {
+			taskMap[task.partialPlanID] = make([]*indexMergeTableTask, 0)
+		}
+		w.pruneTableWorkerTaskIdxRows(task)
+		taskMap[task.partialPlanID] = append(taskMap[task.partialPlanID], task)
+		for i, h := range task.handles {
+			if _, ok := distinctHandles.Get(h); !ok {
+				distinctHandles.Set(h, true)
+				heap.Push(taskHeap, rowIdx{task.partialPlanID, len(taskMap[task.partialPlanID]) - 1, i})
+				if taskHeap.Len() > int(taskHeap.requiredCnt) {
+					top := heap.Pop(taskHeap).(rowIdx)
+					if top.partialID == task.partialPlanID && top.taskID == len(taskMap[task.partialPlanID])-1 && top.rowID == i {
+						uselessMap[task.partialPlanID] = struct{}{}
+						task.handles = task.handles[:i]
+						break
+					}
+				}
+			}
+			memTracker.Consume(int64(h.MemUsage()))
+		}
+		memTracker.Consume(task.idxRows.MemoryUsage())
+		if len(uselessMap) == len(w.indexMerge.partialPlans) {
+			// consume reset tasks
+			go func() {
+				for range fetchCh {
+				}
+			}()
+			break
+		}
+	}
+
+	needCount := mathutil.Max(0, taskHeap.Len()-int(w.indexMerge.pushedLimit.Offset))
+	if needCount == 0 {
+		return
+	}
+	fhs := make([]kv.Handle, needCount)
+	for i := needCount - 1; i >= 0; i-- {
+		idx := heap.Pop(taskHeap).(rowIdx)
+		fhs[i] = taskMap[idx.partialID][idx.taskID].handles[idx.rowID]
+	}
+
+	batchSize := w.indexMerge.ctx.GetSessionVars().IndexLookupSize
+	tasks := make([]*indexMergeTableTask, 0, len(fhs)/batchSize+1)
+	for len(fhs) > 0 {
+		l := mathutil.Min(len(fhs), batchSize)
+		// Save the index order.
+		indexOrder := kv.NewHandleMap()
+		for i, h := range fhs[:l] {
+			indexOrder.Set(h, i)
+		}
+		tasks = append(tasks, &indexMergeTableTask{
+			lookupTableTask: lookupTableTask{
+				handles:    fhs[:l],
+				indexOrder: indexOrder,
+				doneCh:     make(chan error, 1),
+			},
+		})
+		fhs = fhs[l:]
+	}
+	for _, task := range tasks {
+		select {
+		case <-ctx.Done():
+			return
+		case <-finished:
+			return
+		case workCh <- task:
+			select {
+			case <-ctx.Done():
+				return
+			case <-finished:
+				return
+			case resultCh <- task:
+				continue
+			}
+		}
+	}
+}
+
 func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-chan *indexMergeTableTask,
 	workCh chan<- *indexMergeTableTask, resultCh chan<- *indexMergeTableTask, finished <-chan struct{}) {
 	failpoint.Inject("testIndexMergeResultChCloseEarly", func(_ failpoint.Value) {
@@ -820,7 +1099,20 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 	failpoint.Inject("testIndexMergePanicProcessWorkerUnion", nil)
 
 	distinctHandles := make(map[int64]*kv.HandleMap)
-	for task := range fetchCh {
+	for {
+		var ok bool
+		var task *indexMergeTableTask
+		select {
+		case <-ctx.Done():
+			return
+		case <-finished:
+			return
+		case task, ok = <-fetchCh:
+			if !ok {
+				return
+			}
+		}
+
 		select {
 		case err := <-task.doneCh:
 			// If got error from partialIndexWorker/partialTableWorker, stop processing.
@@ -856,7 +1148,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 		if len(fhs) == 0 {
 			continue
 		}
-		task := &indexMergeTableTask{
+		task = &indexMergeTableTask{
 			lookupTableTask: lookupTableTask{
 				handles: fhs,
 				doneCh:  make(chan error, 1),
@@ -867,13 +1159,27 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 		if w.stats != nil {
 			w.stats.IndexMergeProcess += time.Since(start)
 		}
+		failpoint.Inject("testIndexMergeProcessWorkerUnionHang", func(_ failpoint.Value) {
+			for i := 0; i < cap(resultCh); i++ {
+				select {
+				case resultCh <- &indexMergeTableTask{}:
+				default:
+				}
+			}
+		})
 		select {
 		case <-ctx.Done():
 			return
 		case <-finished:
 			return
 		case workCh <- task:
-			resultCh <- task
+			select {
+			case <-ctx.Done():
+				return
+			case <-finished:
+				return
+			case resultCh <- task:
+			}
 		}
 	}
 }
@@ -940,8 +1246,8 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 	// We assume the result of intersection is small, so no need to track memory.
 	intersectedMap := make(map[int][]kv.Handle, len(w.handleMapsPerWorker))
 	for parTblIdx, hMap := range w.handleMapsPerWorker {
-		hMap.Range(func(h kv.Handle, val interface{}) bool {
-			if *(val.(*int)) == len(w.indexMerge.partialPlans) {
+		hMap.Range(func(h kv.Handle, val *int) bool {
+			if *(val) == len(w.indexMerge.partialPlans) {
 				// Means all partial paths have this handle.
 				intersectedMap[parTblIdx] = append(intersectedMap[parTblIdx], h)
 			}
@@ -972,6 +1278,14 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 				zap.Int("parTblIdx", parTblIdx), zap.Int("task.handles", len(task.handles)))
 		}
 	}
+	failpoint.Inject("testIndexMergeProcessWorkerIntersectionHang", func(_ failpoint.Value) {
+		for i := 0; i < cap(resultCh); i++ {
+			select {
+			case resultCh <- &indexMergeTableTask{}:
+			default:
+			}
+		}
+	})
 	for _, task := range tasks {
 		select {
 		case <-ctx.Done():
@@ -979,7 +1293,13 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 		case <-finished:
 			return
 		case workCh <- task:
-			resultCh <- task
+			select {
+			case <-ctx.Done():
+				return
+			case <-finished:
+				return
+			case resultCh <- task:
+			}
 		}
 	}
 }
@@ -1038,40 +1358,62 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		}, handleWorkerPanic(ctx, finished, resultCh, errCh, partTblIntersectionWorkerType))
 		workers = append(workers, worker)
 	}
-loop:
-	for task := range fetchCh {
+	defer func() {
+		for _, processWorker := range workers {
+			close(processWorker.workerCh)
+		}
+		wg.Wait()
+	}()
+	for {
+		var ok bool
+		var task *indexMergeTableTask
+		select {
+		case <-ctx.Done():
+			return
+		case <-finished:
+			return
+		case task, ok = <-fetchCh:
+			if !ok {
+				return
+			}
+		}
+
 		select {
 		case err := <-task.doneCh:
 			// If got error from partialIndexWorker/partialTableWorker, stop processing.
 			if err != nil {
 				syncErr(ctx, finished, resultCh, err)
-				break loop
+				return
 			}
 		default:
 		}
 
 		select {
+		case <-ctx.Done():
+			return
+		case <-finished:
+			return
 		case workers[task.parTblIdx%workerCnt].workerCh <- task:
 		case <-errCh:
 			// If got error from intersectionProcessWorker, stop processing.
-			break loop
+			return
 		}
 	}
-	for _, processWorker := range workers {
-		close(processWorker.workerCh)
-	}
-	wg.Wait()
 }
 
 type partialIndexWorker struct {
-	stats        *IndexMergeRuntimeStat
-	sc           sessionctx.Context
-	idxID        int
-	batchSize    int
-	maxBatchSize int
-	maxChunkSize int
-	partition    table.PhysicalTable // it indicates if this worker is accessing a particular partition table
-	memTracker   *memory.Tracker
+	stats              *IndexMergeRuntimeStat
+	sc                 sessionctx.Context
+	idxID              int
+	batchSize          int
+	maxBatchSize       int
+	maxChunkSize       int
+	memTracker         *memory.Tracker
+	partitionTableMode bool
+	prunedPartitions   []table.PhysicalTable
+	byItems            []*plannerutil.ByItems
+	scannedKeys        uint64
+	pushedLimit        *plannercore.PushedDownLimit
 }
 
 func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexMergeTableTask, err error) {
@@ -1095,36 +1437,33 @@ func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexM
 	}
 }
 
+func (w *partialIndexWorker) hasExtralPidCol() bool {
+	return w.partitionTableMode && len(w.byItems) > 0
+}
+
 func (w *partialIndexWorker) fetchHandles(
 	ctx context.Context,
-	result distsql.SelectResult,
+	results []distsql.SelectResult,
 	exitCh <-chan struct{},
 	fetchCh chan<- *indexMergeTableTask,
 	finished <-chan struct{},
 	handleCols plannercore.HandleCols,
-	parTblIdx int) (count int64, err error) {
-	chk := chunk.NewChunkWithCapacity(handleCols.GetFieldsTypes(), w.maxChunkSize)
-	var basicStats *execdetails.BasicRuntimeStats
-	if w.stats != nil {
-		if w.idxID != 0 {
-			basicStats = w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.idxID)
-		}
-	}
-	for {
+	partialPlanIndex int) (count int64, err error) {
+	tps := w.getRetTpsForIndexScan(handleCols)
+	chk := chunk.NewChunkWithCapacity(tps, w.maxChunkSize)
+	for i := 0; i < len(results); {
 		start := time.Now()
-		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result, handleCols)
+		handles, retChunk, err := w.extractTaskHandles(ctx, chk, results[i], handleCols)
 		if err != nil {
 			syncErr(ctx, finished, fetchCh, err)
 			return count, err
 		}
 		if len(handles) == 0 {
-			if basicStats != nil {
-				basicStats.Record(time.Since(start), chk.NumRows())
-			}
-			return count, nil
+			i++
+			continue
 		}
 		count += int64(len(handles))
-		task := w.buildTableTask(handles, retChunk, parTblIdx)
+		task := w.buildTableTask(handles, retChunk, i, partialPlanIndex)
 		if w.stats != nil {
 			atomic.AddInt64(&w.stats.FetchIdxTime, int64(time.Since(start)))
 		}
@@ -1137,10 +1476,22 @@ func (w *partialIndexWorker) fetchHandles(
 			return count, nil
 		case fetchCh <- task:
 		}
-		if basicStats != nil {
-			basicStats.Record(time.Since(start), chk.NumRows())
+	}
+	return count, nil
+}
+
+func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannercore.HandleCols) []*types.FieldType {
+	var tps []*types.FieldType
+	if len(w.byItems) != 0 {
+		for _, item := range w.byItems {
+			tps = append(tps, item.Expr.GetType())
 		}
 	}
+	tps = append(tps, handleCols.GetFieldsTypes()...)
+	if w.hasExtralPidCol() {
+		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+	}
+	return tps
 }
 
 func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleCols plannercore.HandleCols) (
@@ -1149,10 +1500,21 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 	var memUsage int64
 	defer w.memTracker.Consume(-memUsage)
 	for len(handles) < w.batchSize {
-		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
+		requiredRows := w.batchSize - len(handles)
+		if w.pushedLimit != nil {
+			if w.pushedLimit.Offset+w.pushedLimit.Count <= w.scannedKeys {
+				return handles, retChk, nil
+			}
+			requiredRows = mathutil.Min(int(w.pushedLimit.Offset+w.pushedLimit.Count-w.scannedKeys), requiredRows)
+		}
+		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
+		start := time.Now()
 		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
 			return handles, nil, err
+		}
+		if w.stats != nil && w.idxID != 0 {
+			w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.idxID).Record(time.Since(start), chk.NumRows())
 		}
 		if chk.NumRows() == 0 {
 			failpoint.Inject("testIndexMergeErrorPartialIndexWorker", func(v failpoint.Value) {
@@ -1164,11 +1526,30 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		memUsage += memDelta
 		w.memTracker.Consume(memDelta)
 		for i := 0; i < chk.NumRows(); i++ {
-			handle, err := handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
+			if w.pushedLimit != nil {
+				w.scannedKeys++
+				if w.scannedKeys > (w.pushedLimit.Offset + w.pushedLimit.Count) {
+					// Skip the handles after Offset+Count.
+					return handles, retChk, nil
+				}
+			}
+			var handle kv.Handle
+			if w.hasExtralPidCol() {
+				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
+			} else {
+				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
+			}
 			if err != nil {
 				return nil, nil, err
 			}
 			handles = append(handles, handle)
+		}
+		// used for limit embedded.
+		if len(w.byItems) != 0 {
+			if retChk == nil {
+				retChk = chunk.NewChunkWithCapacity(w.getRetTpsForIndexScan(handleCols), w.batchSize)
+			}
+			retChk.Append(chk, 0, chk.NumRows())
 		}
 	}
 	w.batchSize *= 2
@@ -1178,15 +1559,18 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 	return handles, retChk, nil
 }
 
-func (w *partialIndexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk, parTblIdx int) *indexMergeTableTask {
+func (w *partialIndexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk, parTblIdx int, partialPlanID int) *indexMergeTableTask {
 	task := &indexMergeTableTask{
 		lookupTableTask: lookupTableTask{
 			handles: handles,
 			idxRows: retChk,
-
-			partitionTable: w.partition,
 		},
-		parTblIdx: parTblIdx,
+		parTblIdx:     parTblIdx,
+		partialPlanID: partialPlanID,
+	}
+
+	if w.prunedPartitions != nil {
+		task.partitionTable = w.prunedPartitions[parTblIdx]
 	}
 
 	task.doneCh = make(chan error, 1)
@@ -1209,24 +1593,18 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 	for {
 		waitStart := time.Now()
 		select {
+		case <-ctx.Done():
+			return
+		case <-w.finished:
+			return
 		case *task, ok = <-w.workCh:
 			if !ok {
 				return
 			}
-		case <-w.finished:
-			return
 		}
 		// Make sure panic failpoint is after fetch task from workCh.
 		// Otherwise cannot send error to task.doneCh.
 		failpoint.Inject("testIndexMergePanicTableScanWorker", nil)
-		failpoint.Inject("mockSleepBeforeStartTableReader", func(_ failpoint.Value) {
-			select {
-			case <-ctx.Done():
-				failpoint.Return()
-			case <-w.finished:
-				failpoint.Return()
-			}
-		})
 		execStart := time.Now()
 		err := w.executeTask(ctx, *task)
 		if w.stats != nil {
@@ -1235,13 +1613,20 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 			atomic.AddInt64(&w.stats.TableTaskNum, 1)
 		}
 		failpoint.Inject("testIndexMergePickAndExecTaskPanic", nil)
-		(*task).doneCh <- err
+		select {
+		case <-ctx.Done():
+			return
+		case <-w.finished:
+			return
+		case (*task).doneCh <- err:
+		}
 	}
 }
 
 func (w *indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r interface{}) {
 	return func(r interface{}) {
 		if r == nil {
+			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
 			return
 		}
 
@@ -1262,7 +1647,7 @@ func (w *indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Conte
 
 func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *indexMergeTableTask) error {
 	tbl := w.indexMergeExec.table
-	if w.indexMergeExec.partitionTableMode {
+	if w.indexMergeExec.partitionTableMode && task.partitionTable != nil {
 		tbl = task.partitionTable
 	}
 	tableReader, err := w.indexMergeExec.buildFinalTableReader(ctx, tbl, task.handles)
@@ -1294,6 +1679,19 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			task.rows = append(task.rows, row)
 		}
+	}
+
+	if w.indexMergeExec.keepOrder {
+		task.rowIdx = make([]int, 0, len(task.rows))
+		for _, row := range task.rows {
+			handle, err := w.indexMergeExec.handleCols.BuildHandle(row)
+			if err != nil {
+				return err
+			}
+			rowIdx, _ := task.indexOrder.Get(handle)
+			task.rowIdx = append(task.rowIdx, rowIdx.(int))
+		}
+		sort.Sort(task)
 	}
 
 	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))

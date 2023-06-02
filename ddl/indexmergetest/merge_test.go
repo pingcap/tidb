@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
-	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -896,4 +896,45 @@ func TestAddIndexDuplicateAndWriteConflict(t *testing.T) {
 	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrCancelledDDLJob)
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1", "2 1"))
+}
+
+func TestAddIndexUpdateUntouchedValues(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+	tk.MustExec("insert into t values (1, 1, 1);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{}
+	var runDML bool
+	callback.OnJobRunAfterExported = func(job *model.Job) {
+		if t.Failed() || runDML {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			_, err := tk1.Exec("begin;")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("update t set k=k+1 where id = 1;")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("insert into t values (2, 1, 2);")
+			// Should not report "invalid temp index value".
+			assert.NoError(t, err)
+			_, err = tk1.Exec("commit;")
+			assert.NoError(t, err)
+			runDML = true
+		}
+	}
+	d.SetHook(callback)
+
+	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 2", "2 1 2"))
 }

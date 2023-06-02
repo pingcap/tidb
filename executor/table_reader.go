@@ -23,11 +23,14 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/executor/internal/builder"
+	internalutil "github.com/pingcap/tidb/executor/internal/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
@@ -105,6 +108,8 @@ type TableReaderExecutor struct {
 
 	keepOrder bool
 	desc      bool
+	// byItems only for partition table with orderBy + pushedLimit
+	byItems   []*util.ByItems
 	paging    bool
 	storeType kv.StoreType
 	// corColInFilter tells whether there's correlated column in filter.
@@ -152,13 +157,13 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInFilter {
 		if e.storeType == kv.TiFlash {
-			execs, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)
+			execs, err := builder.ConstructTreeBasedDistExec(e.ctx, e.tablePlan)
 			if err != nil {
 				return err
 			}
 			e.dagPB.RootExecutor = execs[0]
 		} else {
-			e.dagPB.Executors, err = constructDistExec(e.ctx, e.plans)
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.ctx, e.plans)
 			if err != nil {
 				return err
 			}
@@ -185,6 +190,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.feedback.Invalidate()
 		}
 	}
+
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
@@ -311,6 +317,26 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		return result, nil
 	}
 
+	// use sortedSelectResults here when pushDown limit for partition table.
+	if e.kvRangeBuilder != nil && e.byItems != nil {
+		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
+		if err != nil {
+			return nil, err
+		}
+		var results []distsql.SelectResult
+		for _, kvReq := range kvReqs {
+			result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, result)
+		}
+		if len(results) == 1 {
+			return results[0], nil
+		}
+		return distsql.NewSortedSelectResults(results, e.Schema(), e.byItems, e.memTracker), nil
+	}
+
 	kvReq, err := e.buildKVReq(ctx, ranges)
 	if err != nil {
 		return nil, err
@@ -335,7 +361,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
-		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
+		if err := internalutil.UpdateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
 			return nil, err
 		}
 		var builder distsql.RequestBuilder
@@ -354,6 +380,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetPaging(e.paging).
 			SetAllowBatchCop(e.batchCop).
 			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
+			SetConnID(e.ctx.GetSessionVars().ConnectionID).
 			Build()
 		if err != nil {
 			return nil, err
@@ -376,7 +403,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 			KeyRanges: kvRange,
 		})
 	}
-	if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, pids); err != nil {
+	if err := internalutil.UpdateExecutorTableID(ctx, e.dagPB.RootExecutor, true, pids); err != nil {
 		return nil, err
 	}
 	var builder distsql.RequestBuilder
@@ -395,6 +422,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetPaging(e.paging).
 		SetAllowBatchCop(e.batchCop).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
+		SetConnID(e.ctx.GetSessionVars().ConnectionID).
 		Build()
 	if err != nil {
 		return nil, err
@@ -443,7 +471,8 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
-		SetPaging(e.paging)
+		SetPaging(e.paging).
+		SetConnID(e.ctx.GetSessionVars().ConnectionID)
 	return reqBuilder.Build()
 }
 

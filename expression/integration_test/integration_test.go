@@ -1711,7 +1711,7 @@ func TestArithmeticBuiltin(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (v int);")
 	tk.MustExec("INSERT IGNORE INTO t VALUE(12 MOD 0);")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
+	tk.MustQuery("show warnings;").CheckContain("Division by 0")
 	tk.MustQuery("select v from t;").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select 0.000 % 0.11234500000000000000;").Check(testkit.Rows("0.00000000000000000000"))
 
@@ -1880,7 +1880,7 @@ func TestCompareBuiltin(t *testing.T) {
 
 	result = tk.MustQuery("select coalesce(NULL, a), coalesce(NULL, b, a), coalesce(c, NULL, a, b), coalesce(d, NULL), coalesce(d, c), coalesce(NULL, NULL, e, 1), coalesce(f), coalesce(1, a, b, c, d, e, f) from t2")
 	// coalesce(col_bit) is not same with MySQL, because it's a bug of MySQL(https://bugs.mysql.com/bug.php?id=103289&thanks=4)
-	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef \x00\x15 1", time.Now().In(tk.Session().GetSessionVars().Location()).Format("2006-01-02"))))
+	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef \x00\x15 1", time.Now().In(tk.Session().GetSessionVars().Location()).Format(time.DateOnly))))
 
 	// nullif
 	result = tk.MustQuery(`SELECT NULLIF(NULL, 1), NULLIF(1, NULL), NULLIF(1, 1), NULLIF(NULL, NULL);`)
@@ -3819,6 +3819,7 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization = OFF")
 
 	// < not pushed, cast only pushed to TiKV, date_format only pushed to TiFlash,
 	// > pushed to both TiKV and TiFlash
@@ -7171,7 +7172,7 @@ func TestIssue29708(t *testing.T) {
 	})
 
 	tk.MustExec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1301 Result of repeat() was larger than max_allowed_packet (67108864) - truncated"))
+	tk.MustQuery("show warnings;").CheckContain("Result of repeat() was larger than max_allowed_packet (67108864) - truncated")
 	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
 		{nil},
 		{"a"},
@@ -7675,7 +7676,7 @@ func TestCastJSONTimeDuration(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(i INT, j JSON)")
 
-	nowDate := time.Now().Format("2006-01-02")
+	nowDate := time.Now().Format(time.DateOnly)
 
 	// DATE/DATETIME/TIME will be automatically converted to json date/datetime/duration
 	tk.MustExec("insert into t values (0, DATE('1998-06-13'))")
@@ -7906,4 +7907,42 @@ func TestIssue40536(t *testing.T) {
 	tk.MustExec("CREATE TABLE `6bf9e76d-ab44-4031-8a07-418b10741580` (\n  `e0b5f703-6cfe-49b4-bc21-16a6455e43a7` set('7','va','ung60','ow','1g','gxwz5','uhnh','k','5la1','q8d9c','1f') NOT NULL DEFAULT '7,1g,uhnh,5la1,q8d9c',\n  `fbc3527f-9617-4b9d-a5dc-4be31c00d8a5` datetime DEFAULT '6449-09-28 14:39:04',\n  PRIMARY KEY (`e0b5f703-6cfe-49b4-bc21-16a6455e43a7`) /*T![clustered_index] CLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin;")
 	tk.MustExec("CREATE TABLE `8919f3f4-25be-4a1a-904a-bb5e863d8fc8` (\n  `9804d5f2-cbc7-43b7-b241-ea2656dc941a` enum('s951','36d','ua65','49yru','6l2em','4ea','jf2d2','vprsc','3yl7n','hz','ov') DEFAULT '4ea',\n  `323cdbcb-0c14-4362-90ab-ea42caaed6a5` year(4) NOT NULL DEFAULT '1983',\n  `b9b70f39-1a02-4114-9d7d-fa6259c1b691` time DEFAULT '20:18:04',\n  PRIMARY KEY (`323cdbcb-0c14-4362-90ab-ea42caaed6a5`) /*T![clustered_index] CLUSTERED */,\n  KEY `a704d6bb-772b-44ea-8cb0-6f7491c1aaa6` (`323cdbcb-0c14-4362-90ab-ea42caaed6a5`,`9804d5f2-cbc7-43b7-b241-ea2656dc941a`)\n) ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin;")
 	tk.MustExec("delete from `6bf9e76d-ab44-4031-8a07-418b10741580` where not( `6bf9e76d-ab44-4031-8a07-418b10741580`.`e0b5f703-6cfe-49b4-bc21-16a6455e43a7` in ( select `9804d5f2-cbc7-43b7-b241-ea2656dc941a` from `8919f3f4-25be-4a1a-904a-bb5e863d8fc8` where `6bf9e76d-ab44-4031-8a07-418b10741580`.`e0b5f703-6cfe-49b4-bc21-16a6455e43a7` in ( '1f' ) and `6bf9e76d-ab44-4031-8a07-418b10741580`.`e0b5f703-6cfe-49b4-bc21-16a6455e43a7` in ( '1g' ,'va' ,'uhnh' ) ) ) and not( IsNull( `6bf9e76d-ab44-4031-8a07-418b10741580`.`e0b5f703-6cfe-49b4-bc21-16a6455e43a7` ) );\n")
+}
+
+func TestIssue40015(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE test ( c1 varchar(20));")
+	tk.MustExec("INSERT INTO test VALUES (101111),(11100),(101111),(101111);")
+	tk.MustExec("set tidb_enable_vectorized_expression = true;")
+	tk.MustQuery("SELECT DATE_ADD(c1, INTERVAL 1 DAY_HOUR) from test;").Sort().Check(testkit.Rows(
+		"2010-11-11 01:00:00",
+		"2010-11-11 01:00:00",
+		"2010-11-11 01:00:00",
+		"<nil>",
+	))
+}
+
+func TestAesDecryptionVecEvalWithZeroChunk(t *testing.T) {
+	// see issue: https://github.com/pingcap/tidb/issues/43063
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test (name1 blob,name2 blob)")
+	tk.MustExec("insert into test values(aes_encrypt('a', 'x'), aes_encrypt('b', 'x'))")
+	tk.MustQuery("SELECT * FROM test WHERE CAST(AES_DECRYPT(name1, 'x') AS CHAR) = '00' AND CAST(AES_DECRYPT(name2, 'x') AS CHAR) = '1'").Check(testkit.Rows())
+}
+
+func TestIfFunctionWithNull(t *testing.T) {
+	// issue 43805
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ordres;")
+	tk.MustExec("CREATE TABLE orders (id bigint(20) unsigned NOT NULL ,account_id bigint(20) unsigned NOT NULL DEFAULT '0' ,loan bigint(20) unsigned NOT NULL DEFAULT '0' ,stage_num int(20) unsigned NOT NULL DEFAULT '0' ,apply_time bigint(20) unsigned NOT NULL DEFAULT '0' ,PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,KEY idx_orders_account_id (account_id),KEY idx_orders_apply_time (apply_time));")
+	tk.MustExec("insert into orders values (20, 210802010000721168, 20000 , 2 , 1682484268727), (22, 210802010000721168, 35100 , 4 , 1650885615002);")
+	tk.MustQuery("select min(if(apply_to_now_days <= 30,loan,null)) as min, max(if(apply_to_now_days <= 720,loan,null)) as max from (select loan, datediff(from_unixtime(unix_timestamp('2023-05-18 18:43:43') + 18000), from_unixtime(apply_time/1000 + 18000)) as apply_to_now_days from orders) t1;").Sort().Check(
+		testkit.Rows("20000 35100"))
 }

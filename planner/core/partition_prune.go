@@ -30,8 +30,8 @@ func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 	s := partitionProcessor{}
 	pi := tbl.Meta().Partition
 	switch pi.Type {
-	case model.PartitionTypeHash:
-		return s.pruneHashPartition(ctx, tbl, partitionNames, conds, columns, names)
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		return s.pruneHashOrKeyPartition(ctx, tbl, partitionNames, conds, columns, names)
 	case model.PartitionTypeRange:
 		rangeOr, err := s.pruneRangePartition(ctx, pi, tbl, conds, columns, names)
 		if err != nil {
@@ -40,7 +40,7 @@ func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 		ret := s.convertToIntSlice(rangeOr, pi, partitionNames)
 		return ret, nil
 	case model.PartitionTypeList:
-		return s.pruneListPartition(ctx, tbl, partitionNames, conds)
+		return s.pruneListPartition(ctx, tbl, partitionNames, conds, columns)
 	}
 	return []int{FullRange}, nil
 }

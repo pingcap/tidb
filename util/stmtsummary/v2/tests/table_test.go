@@ -37,6 +37,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select column_comment from information_schema.columns " +
@@ -53,6 +54,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test.
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	// Test INSERT
 	tk.MustExec("insert into t values(1, 'a')")
@@ -149,6 +151,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // affect est-rows in this UT
 
 	// This statement shouldn't be summarized.
 	tk.MustQuery("select * from t where a=2")
@@ -238,7 +241,7 @@ func TestStmtSummaryTablePrivilege(t *testing.T) {
 		Hostname:     "localhost",
 		AuthUsername: "test_user",
 		AuthHostname: "localhost",
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	result = tk1.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
 	// Ordinary users can not see others' records
@@ -296,7 +299,7 @@ func TestCapturePrivilege(t *testing.T) {
 		Hostname:     "localhost",
 		AuthUsername: "test_user",
 		AuthHostname: "localhost",
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	rows = tk1.MustQuery("show global bindings").Rows()
 	// Ordinary users can not see others' records
@@ -456,6 +459,48 @@ func TestStmtSummaryHistoryTableOther(t *testing.T) {
 		))
 }
 
+func TestPerformanceSchemaforNonPrepPlanCache(t *testing.T) {
+	setupStmtSummary()
+	defer closeStmtSummary()
+
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, key(a))`)
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustQuery("select exec_count, digest_text, prepared, plan_in_cache, plan_cache_hits, query_sample_text " +
+		"from information_schema.statements_summary where digest_text='select * from `t` where `a` = ?'").Check(testkit.Rows(
+		"2 select * from `t` where `a` = ? 0 1 1 select * from t where a=1"))
+
+	tk.MustExec(`select * from t where a=2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`select * from t where a=3`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// exec_count 2->4, plan_cache_hits 1->3
+	tk.MustQuery("select exec_count, digest_text, prepared, plan_in_cache, plan_cache_hits, query_sample_text " +
+		"from information_schema.statements_summary where digest_text='select * from `t` where `a` = ?'").Check(testkit.Rows(
+		"4 select * from `t` where `a` = ? 0 1 3 select * from t where a=1"))
+
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
+	tk.MustExec(`select * from t where a=2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`select * from t where a=3`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	// exec_count 4->6, plan_cache_hits 3->3
+	tk.MustQuery("select exec_count, digest_text, prepared, plan_in_cache, plan_cache_hits, query_sample_text " +
+		"from information_schema.statements_summary where digest_text='select * from `t` where `a` = ?'").Check(testkit.Rows(
+		"6 select * from `t` where `a` = ? 0 0 3 select * from t where a=1"))
+}
+
 func TestPerformanceSchemaforPlanCache(t *testing.T) {
 	setupStmtSummary()
 	defer closeStmtSummary()
@@ -490,19 +535,19 @@ func newTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := newTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	return tk
 }
 
 func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session()),
+		PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session(), false),
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	return tk
 }
 

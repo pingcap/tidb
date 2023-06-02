@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -1280,7 +1280,7 @@ func TestParallelDropIndex(t *testing.T) {
 	sql2 := "alter table t drop index idx2 ;"
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
-		require.EqualError(t, err2, "[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")
+		require.NoError(t, err2)
 	}
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }

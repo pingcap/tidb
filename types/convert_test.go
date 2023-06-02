@@ -252,7 +252,7 @@ func TestConvertType(t *testing.T) {
 	_, err = d.ToDecimal(sc)
 	require.Truef(t, terror.ErrorEqual(err, ErrTruncatedWrongVal), "err %v", err)
 
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	v, err = d.ToDecimal(sc)
 	require.NoError(t, err)
 	require.Equal(t, "0", v.(*MyDecimal).String())
@@ -474,7 +474,7 @@ func TestConvertToBinaryString(t *testing.T) {
 
 func testStrToInt(t *testing.T, str string, expect int64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = !truncateAsErr
+	sc.IgnoreTruncate.Store(!truncateAsErr)
 	val, err := StrToInt(sc, str, false)
 	if expectErr != nil {
 		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
@@ -486,7 +486,7 @@ func testStrToInt(t *testing.T, str string, expect int64, truncateAsErr bool, ex
 
 func testStrToUint(t *testing.T, str string, expect uint64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = !truncateAsErr
+	sc.IgnoreTruncate.Store(!truncateAsErr)
 	val, err := StrToUint(sc, str, false)
 	if expectErr != nil {
 		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
@@ -498,7 +498,7 @@ func testStrToUint(t *testing.T, str string, expect uint64, truncateAsErr bool, 
 
 func testStrToFloat(t *testing.T, str string, expect float64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = !truncateAsErr
+	sc.IgnoreTruncate.Store(!truncateAsErr)
 	val, err := StrToFloat(sc, str, false)
 	if expectErr != nil {
 		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
@@ -603,7 +603,7 @@ func accept(t *testing.T, tp byte, value interface{}, unsigned bool, expected st
 	d := NewDatum(value)
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = time.UTC
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	casted, err := d.ConvertTo(sc, ft)
 	require.NoErrorf(t, err, "%v", ft)
 	if casted.IsNull() {
@@ -1275,8 +1275,9 @@ func TestConvertDecimalStrToUint(t *testing.T) {
 		{"9223372036854775807.4999", 9223372036854775807, true},
 		{"18446744073709551614.55", 18446744073709551615, true},
 		{"18446744073709551615.344", 18446744073709551615, true},
-		{"18446744073709551615.544", 0, false},
+		{"18446744073709551615.544", 18446744073709551615, false},
 		{"-111.111", 0, false},
+		{"-10000000000000000000.0", 0, false},
 	}
 	for _, ca := range cases {
 		result, err := convertDecimalStrToUint(&stmtctx.StatementContext{}, ca.input, math.MaxUint64, 0)
@@ -1284,7 +1285,15 @@ func TestConvertDecimalStrToUint(t *testing.T) {
 			require.Error(t, err)
 		} else {
 			require.NoError(t, err)
-			require.Equal(t, ca.result, result)
 		}
+		require.Equal(t, ca.result, result, "input=%v", ca.input)
 	}
+
+	result, err := convertDecimalStrToUint(&stmtctx.StatementContext{}, "-99.0", math.MaxUint8, 0)
+	require.Error(t, err)
+	require.Equal(t, uint64(0), result)
+
+	result, err = convertDecimalStrToUint(&stmtctx.StatementContext{}, "-100.0", math.MaxUint8, 0)
+	require.Error(t, err)
+	require.Equal(t, uint64(0), result)
 }

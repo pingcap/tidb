@@ -46,7 +46,7 @@ func TestMain(m *testing.M) {
 	timeutil.SetSystemTZ("system")
 
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -61,6 +61,6 @@ func createContext(t *testing.T) *mock.Context {
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.TruncateAsWarning = true
 	require.NoError(t, ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864"))
-	ctx.GetSessionVars().PlanColumnID = 0
+	ctx.GetSessionVars().PlanColumnID.Store(0)
 	return ctx
 }

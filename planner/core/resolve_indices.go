@@ -584,6 +584,29 @@ func (p *PhysicalTopN) ResolveIndices() (err error) {
 			return err
 		}
 	}
+	for i, item := range p.PartitionBy {
+		newCol, err := item.Col.ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.PartitionBy[i].Col = newCol.(*expression.Column)
+	}
+	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalLimit) ResolveIndices() (err error) {
+	err = p.basePhysicalPlan.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	for i, item := range p.PartitionBy {
+		newCol, err := item.Col.ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.PartitionBy[i].Col = newCol.(*expression.Column)
+	}
 	return
 }
 
@@ -628,6 +651,11 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 		p.PhysicalHashJoin.NAEqualConditions[i] = newSf.(*expression.ScalarFunction)
 	}
 	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalTableScan) ResolveIndices() (err error) {
+	return p.physicalSchemaProducer.ResolveIndices()
 }
 
 // ResolveIndices implements Plan interface.

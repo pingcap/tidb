@@ -78,9 +78,10 @@ const (
 	flagSkipCheckPath     = "skip-check-path"
 	flagDryRun            = "dry-run"
 	// TODO used for local test, should be removed later
-	flagSkipAWS             = "skip-aws"
-	flagCloudAPIConcurrency = "cloud-api-concurrency"
-	flagWithSysTable        = "with-sys-table"
+	flagSkipAWS                       = "skip-aws"
+	flagCloudAPIConcurrency           = "cloud-api-concurrency"
+	flagWithSysTable                  = "with-sys-table"
+	flagOperatorPausedGCAndSchedulers = "operator-paused-gc-and-scheduler"
 
 	defaultSwitchInterval       = 5 * time.Minute
 	defaultGRPCKeepaliveTime    = 10 * time.Second
@@ -136,6 +137,15 @@ func (tls *TLSConfig) ToTLSConfig() (*tls.Config, error) {
 		return nil, errors.Trace(err)
 	}
 	return tlsConfig, nil
+}
+
+// Convert the TLS config to the PD security option.
+func (tls *TLSConfig) ToPDSecurityOption() pd.SecurityOption {
+	securityOption := pd.SecurityOption{}
+	securityOption.CAPath = tls.CA
+	securityOption.CertPath = tls.Cert
+	securityOption.KeyPath = tls.Key
+	return securityOption
 }
 
 // ParseFromFlags parses the TLS config from the flag set.
@@ -252,12 +262,6 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagChecksum, true, "Run checksum at end of task")
 	flags.Bool(flagRemoveTiFlash, true,
 		"Remove TiFlash replicas before backup or restore, for unsupported versions of TiFlash")
-
-	// Default concurrency is different for backup and restore.
-	// Leave it 0 and let them adjust the value.
-	flags.Uint32(flagConcurrency, 0, "The size of thread pool on each node that executes the task")
-	// It may confuse users , so just hide it.
-	_ = flags.MarkHidden(flagConcurrency)
 
 	flags.Uint64(flagRateLimitUnit, units.MiB, "The unit of rate limit")
 	_ = flags.MarkHidden(flagRateLimitUnit)
@@ -471,9 +475,7 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.NoCreds, err = flags.GetBool(flagNoCreds); err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.Concurrency, err = flags.GetUint32(flagConcurrency); err != nil {
-		return errors.Trace(err)
-	}
+
 	if cfg.Checksum, err = flags.GetBool(flagChecksum); err != nil {
 		return errors.Trace(err)
 	}

@@ -43,6 +43,13 @@ func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp
 	return p
 }
 
+func (p *LogicalCTE) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan {
+	if topN != nil {
+		return topN.setChild(p, opt)
+	}
+	return p
+}
+
 // setChild set p as topn's child.
 func (lt *LogicalTopN) setChild(p LogicalPlan, opt *logicalOptimizeOp) LogicalPlan {
 	// Remove this TopN if its child is a TableDual.
@@ -59,9 +66,10 @@ func (lt *LogicalTopN) setChild(p LogicalPlan, opt *logicalOptimizeOp) LogicalPl
 
 	if lt.isLimit() {
 		limit := LogicalLimit{
-			Count:      lt.Count,
-			Offset:     lt.Offset,
-			limitHints: lt.limitHints,
+			Count:       lt.Count,
+			Offset:      lt.Offset,
+			limitHints:  lt.limitHints,
+			PartitionBy: lt.GetPartitionBy(),
 		}.Init(lt.ctx, lt.blockOffset)
 		limit.SetChildren(p)
 		appendTopNPushDownTraceStep(limit, p, opt)

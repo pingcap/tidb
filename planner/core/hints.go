@@ -125,7 +125,7 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 		}
 		var dbName, tableName *model.CIStr
 		if blockOffset != parentOffset {
-			blockAsNames := sctx.GetSessionVars().PlannerSelectBlockAsName
+			blockAsNames := *(sctx.GetSessionVars().PlannerSelectBlockAsName.Load())
 			if blockOffset >= len(blockAsNames) {
 				continue
 			}
@@ -174,7 +174,10 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.T
 	}
 	switch pp := p.(type) {
 	case *PhysicalTableReader:
-		tbl := pp.TablePlans[0].(*PhysicalTableScan)
+		tbl, ok := pp.TablePlans[0].(*PhysicalTableScan)
+		if !ok {
+			return res
+		}
 		if tbl.StoreType == kv.TiFlash {
 			res = append(res, &ast.TableOptimizerHint{
 				QBName:   qbName,

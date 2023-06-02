@@ -18,7 +18,14 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // Top SQL metrics.
 var (
-	TopSQLIgnoredCounter = prometheus.NewCounterVec(
+	TopSQLIgnoredCounter          *prometheus.CounterVec
+	TopSQLReportDurationHistogram *prometheus.HistogramVec
+	TopSQLReportDataHistogram     *prometheus.HistogramVec
+)
+
+// InitTopSQLMetrics initializes top-sql metrics.
+func InitTopSQLMetrics() {
+	TopSQLIgnoredCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "topsql",
@@ -26,7 +33,7 @@ var (
 			Help:      "Counter of ignored top-sql metrics (register-sql, register-plan, collect-data and report-data), normally it should be 0.",
 		}, []string{LblType})
 
-	TopSQLReportDurationHistogram = prometheus.NewHistogramVec(
+	TopSQLReportDurationHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "topsql",
@@ -35,7 +42,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 24), // 1ms ~ 2.3h
 		}, []string{LblType, LblResult})
 
-	TopSQLReportDataHistogram = prometheus.NewHistogramVec(
+	TopSQLReportDataHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "topsql",
@@ -43,4 +50,4 @@ var (
 			Help:      "Bucket histogram of reporting records/sql/plan count to the top-sql agent.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 20), // 1 ~ 524288
 		}, []string{LblType})
-)
+}

@@ -69,14 +69,14 @@ func (eqh *Handle) Run() {
 				if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
 					logutil.BgLogger().Warn("execution timeout, kill it", zap.Duration("costTime", costTime),
 						zap.Duration("maxExecutionTime", time.Duration(info.MaxExecutionTime)*time.Millisecond), zap.String("processInfo", info.String()))
-					sm.Kill(info.ID, true)
+					sm.Kill(info.ID, true, true)
 				}
 				if info.ID == util.GetAutoAnalyzeProcID(sm.ServerID) {
 					maxAutoAnalyzeTime := variable.MaxAutoAnalyzeTime.Load()
 					if maxAutoAnalyzeTime > 0 && costTime > time.Duration(maxAutoAnalyzeTime)*time.Second {
 						logutil.BgLogger().Warn("auto analyze timeout, kill it", zap.Duration("costTime", costTime),
 							zap.Duration("maxAutoAnalyzeTime", time.Duration(maxAutoAnalyzeTime)*time.Second), zap.String("processInfo", info.String()))
-						sm.Kill(info.ID, true)
+						sm.Kill(info.ID, true, false)
 					}
 				}
 			}
@@ -98,7 +98,7 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 	// detailed message for it.
 	v := eqh.sm.Load()
 	if v == nil {
-		logutil.BgLogger().Info("expensive_query during bootstrap phase", zap.Uint64("conn_id", connID))
+		logutil.BgLogger().Info("expensive_query during bootstrap phase", zap.Uint64("conn", connID))
 		return
 	}
 	sm := v.(util.SessionManager)

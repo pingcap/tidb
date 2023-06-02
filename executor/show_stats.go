@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -140,7 +141,7 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 		partitionName,
 		e.versionToTime(statsTbl.Version),
 		statsTbl.ModifyCount,
-		statsTbl.Count,
+		statsTbl.RealtimeCount,
 	})
 }
 
@@ -223,7 +224,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		if !col.IsStatsInitialized() {
 			continue
 		}
-		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.Count, false),
+		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.RealtimeCount, false),
 			col.StatsLoadedStatus.StatusToString(), col.MemoryUsage())
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
@@ -509,8 +510,8 @@ func (e *ShowExec) fetchShowHistogramsInFlight() {
 	e.appendRow([]interface{}{statistics.HistogramNeededItems.Length()})
 }
 
-func (e *ShowExec) fetchShowAnalyzeStatus() error {
-	rows, err := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
+func (e *ShowExec) fetchShowAnalyzeStatus(ctx context.Context) error {
+	rows, err := dataForAnalyzeStatusHelper(ctx, e.baseExecutor.ctx, true)
 	if err != nil {
 		return err
 	}

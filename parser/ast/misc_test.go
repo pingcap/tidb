@@ -122,7 +122,8 @@ insert into t_copy select * from t where t.x > 5;
 (select /*+ TIDB_INLJ(t1) */ a from t1 where a=10 and b=1) union (select /*+ TIDB_SMJ(t2) */ a from t2 where a=11 and b=2) order by a limit 10;
 update t1 set col1 = col1 + 1, col2 = col1;
 show create table t;
-load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b';`
+load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b';
+import into t from '/file.csv'`
 
 	p := parser.New()
 	stmts, _, err := p.Parse(sql, "", "")
@@ -303,6 +304,8 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"READ_FROM_STORAGE(@sel TIFLASH[t1, t2])", "READ_FROM_STORAGE(@`sel` TIFLASH[`t1`, `t2`])"},
 		{"READ_FROM_STORAGE(@sel TIFLASH[t1 partition(p0)])", "READ_FROM_STORAGE(@`sel` TIFLASH[`t1` PARTITION(`p0`)])"},
 		{"TIME_RANGE('2020-02-02 10:10:10','2020-02-02 11:10:10')", "TIME_RANGE('2020-02-02 10:10:10', '2020-02-02 11:10:10')"},
+		{"RESOURCE_GROUP(rg1)", "RESOURCE_GROUP(`rg1`)"},
+		{"RESOURCE_GROUP(`default`)", "RESOURCE_GROUP(`default`)"},
 	}
 	extractNodeFunc := func(node ast.Node) ast.Node {
 		return node.(*ast.SelectStmt).TableHints[0]

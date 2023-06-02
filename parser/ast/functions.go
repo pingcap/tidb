@@ -62,6 +62,7 @@ const (
 	UnaryMinus         = "unaryminus"
 	In                 = "in"
 	Like               = "like"
+	Ilike              = "ilike"
 	Case               = "case"
 	Regexp             = "regexp"
 	RegexpLike         = "regexp_like"
@@ -264,8 +265,10 @@ const (
 	TiDBDecodePlan       = "tidb_decode_plan"
 	TiDBDecodeBinaryPlan = "tidb_decode_binary_plan"
 	TiDBDecodeSQLDigests = "tidb_decode_sql_digests"
+	TiDBEncodeSQLDigest  = "tidb_encode_sql_digest"
 	FormatBytes          = "format_bytes"
 	FormatNanoTime       = "format_nano_time"
+	CurrentResourceGroup = "current_resource_group"
 
 	// control functions
 	If     = "if"
@@ -296,6 +299,7 @@ const (
 	BinToUUID       = "bin_to_uuid"
 	VitessHash      = "vitess_hash"
 	TiDBShard       = "tidb_shard"
+	TiDBRowChecksum = "tidb_row_checksum"
 	GetLock         = "get_lock"
 	ReleaseLock     = "release_lock"
 
@@ -547,6 +551,13 @@ func (n *FuncCallExpr) specialFormatArgs(w io.Writer) bool {
 		n.Args[0].Format(w)
 		fmt.Fprint(w, " MEMBER OF ")
 		fmt.Fprint(w, " (")
+		n.Args[1].Format(w)
+		fmt.Fprint(w, ")")
+		return true
+	case Extract:
+		fmt.Fprintf(w, "%s(", n.FnName.L)
+		n.Args[0].Format(w)
+		fmt.Fprint(w, " FROM ")
 		n.Args[1].Format(w)
 		fmt.Fprint(w, ")")
 		return true

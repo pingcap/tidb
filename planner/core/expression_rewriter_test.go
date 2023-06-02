@@ -377,3 +377,44 @@ func TestInsertOnDuplicateLazyMoreThan1Row(t *testing.T) {
 	tk.MustExec("INSERT INTO t2 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);")
 	tk.MustExec("DROP TABLE if exists t1, t2, source;")
 }
+
+func TestConvertIfNullToCast(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("DROP TABLE if exists t1;")
+	tk.MustExec("CREATE TABLE t1(cnotnull tinyint not null, cnull tinyint null);")
+	tk.MustExec("INSERT INTO t1 VALUES(1, 1);")
+	tk.MustQuery("select CAST(IFNULL(cnull, '1') AS DATE), CAST(IFNULL(cnotnull, '1') AS DATE) from t1;").Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("explain format=\"brief\" select IFNULL(cnotnull, '1') from t1;").Check(testkit.Rows(
+		"Projection 10000.00 root  cast(test.t1.cnotnull, varchar(4) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#4]\n" +
+			"[└─TableReader 10000.00 root  data:TableFullScan]\n" +
+			"[  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+}
+
+func TestColResolutionPriBetweenOuterAndNatureJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("DROP TABLE if exists t0;")
+	tk.MustExec("DROP VIEW if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 TEXT(328) );")
+	tk.MustExec("CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT 'c' FROM t0;")
+	tk.MustExec("INSERT INTO t0 VALUES (-12);")
+	tk.MustQuery("SELECT v0.c0 AS c0 FROM  v0 NATURAL RIGHT JOIN t0  WHERE (1 !=((v0.c0)REGEXP(-7)));").Check(testkit.Rows())
+	tk.MustQuery("SELECT COUNT(v0.c0) AS c0 FROM v0 WHERE EXISTS(SELECT v0.c0 AS c0 FROM v0 NATURAL RIGHT JOIN t0  WHERE (1 !=((v0.c0)REGEXP(-7))));").Check(testkit.Rows("0"))
+}
+
+func TestColResolutionSubqueryWithUnionAll(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("DROP TABLE if exists t1;")
+	tk.MustExec("DROP TABLE if exists t2;")
+	tk.MustExec("DROP TABLE if exists t;")
+	tk.MustExec("create table t1(a int);")
+	tk.MustExec("create table t2(a int);")
+	tk.MustExec("create table t(a int);")
+	tk.MustQuery("select * from t where  exists ( select a from ( select a from t1 union all select a from t2) u where t.a=u.a);").Check(testkit.Rows())
+}

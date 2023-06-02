@@ -20,12 +20,13 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1056,10 +1057,16 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 			assert.Equal(t, rows[1][3], "add index /* subjob */ /* txn-merge */")
 			assert.Equal(t, rows[1][4], "delete only")
 			assert.Equal(t, rows[1][len(rows[1])-1], "running")
+			assert.True(t, len(rows[1][8].(string)) > 0)
+			assert.True(t, len(rows[1][9].(string)) > 0)
+			assert.True(t, len(rows[1][10].(string)) > 0)
 
 			assert.Equal(t, rows[2][3], "add index /* subjob */")
 			assert.Equal(t, rows[2][4], "none")
 			assert.Equal(t, rows[2][len(rows[2])-1], "queueing")
+			assert.True(t, len(rows[2][8].(string)) > 0)
+			assert.True(t, len(rows[2][9].(string)) > 0)
+			assert.True(t, len(rows[2][10].(string)) > 0)
 		}
 	}
 
@@ -1260,6 +1267,27 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 	dom.DDL().SetHook(originHook)
 }
 
+func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+
+	orig := variable.EnableRowLevelChecksum.Load()
+	defer variable.EnableRowLevelChecksum.Store(orig)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c int)")
+
+	variable.EnableRowLevelChecksum.Store(true)
+	tk.Session().GetSessionVars().EnableRowLevelChecksum = false
+	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
+
+	variable.EnableRowLevelChecksum.Store(false)
+	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
+	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
+}
+
 type cancelOnceHook struct {
 	store     kv.Storage
 	triggered bool
@@ -1276,7 +1304,7 @@ func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {
 	}
 	c.triggered = true
 	errs, err := ddl.CancelJobs(c.s, []int64{job.ID})
-	if errs[0] != nil {
+	if len(errs) > 0 && errs[0] != nil {
 		c.cancelErr = errs[0]
 		return
 	}

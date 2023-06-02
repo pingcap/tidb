@@ -42,18 +42,18 @@ type statsWrapper struct {
 
 // StatsLoad is used to load stats concurrently
 type StatsLoad struct {
-	sync.Mutex
-	SubCtxs        []sessionctx.Context
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
 	WorkingColMap  map[model.TableItemID][]chan stmtctx.StatsLoadResult
+	SubCtxs        []sessionctx.Context
+	sync.Mutex
 }
 
 // NeededItemTask represents one needed column/indices with expire time.
 type NeededItemTask struct {
-	TableItemID model.TableItemID
 	ToTimeout   time.Time
 	ResultCh    chan stmtctx.StatsLoadResult
+	TableItemID model.TableItemID
 }
 
 // SendLoadRequests send neededColumns requests
@@ -395,11 +395,7 @@ func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, re
 			IsHandle:   c.IsHandle,
 			StatsVer:   statsVer,
 		}
-		// Column.Count is calculated by Column.TotalRowCount(). Hence, we don't set Column.Count when initializing colHist.
-		colHist.Count = int64(colHist.TotalRowCount())
-		// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-		// So we need add colHist.Count > 0 here.
-		if statsVer != statistics.Version0 || colHist.Count > 0 {
+		if colHist.StatsAvailable() {
 			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 		}
 		w.col = colHist

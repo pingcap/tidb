@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/cteutil"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 )
@@ -230,6 +231,12 @@ func (e *CTEExec) Close() (err error) {
 }
 
 func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil && err == nil {
+			err = errors.Errorf("%v", r)
+		}
+	}()
+	failpoint.Inject("testCTESeedPanic", nil)
 	e.curIter = 0
 	e.iterInTbl.SetIter(e.curIter)
 	chks := make([]*chunk.Chunk, 0, 10)
@@ -239,13 +246,13 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 		}
 		chk := tryNewCacheChunk(e.seedExec)
 		if err = Next(ctx, e.seedExec, chk); err != nil {
-			return err
+			return
 		}
 		if chk.NumRows() == 0 {
 			break
 		}
 		if chk, err = e.tryDedupAndAdd(chk, e.iterInTbl, e.hashTbl); err != nil {
-			return err
+			return
 		}
 		chks = append(chks, chk)
 	}
@@ -253,36 +260,42 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 	// Just adding is ok.
 	for _, chk := range chks {
 		if err = e.resTbl.Add(chk); err != nil {
-			return err
+			return
 		}
 	}
 	e.curIter++
 	e.iterInTbl.SetIter(e.curIter)
 
-	return nil
+	return
 }
 
 func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil && err == nil {
+			err = errors.Errorf("%v", r)
+		}
+	}()
+	failpoint.Inject("testCTERecursivePanic", nil)
 	if e.recursiveExec == nil || e.iterInTbl.NumChunks() == 0 {
-		return nil
+		return
 	}
 
 	if e.curIter > e.ctx.GetSessionVars().CTEMaxRecursionDepth {
-		return ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
+		return exeerrors.ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
 	}
 
 	if e.limitDone(e.resTbl) {
-		return nil
+		return
 	}
 
 	for {
 		chk := tryNewCacheChunk(e.recursiveExec)
 		if err = Next(ctx, e.recursiveExec, chk); err != nil {
-			return err
+			return
 		}
 		if chk.NumRows() == 0 {
 			if err = e.setupTblsForNewIteration(); err != nil {
-				return err
+				return
 			}
 			if e.limitDone(e.resTbl) {
 				break
@@ -294,23 +307,23 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 			e.curIter++
 			e.iterInTbl.SetIter(e.curIter)
 			if e.curIter > e.ctx.GetSessionVars().CTEMaxRecursionDepth {
-				return ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
+				return exeerrors.ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
 			}
 			// Make sure iterInTbl is setup before Close/Open,
 			// because some executors will read iterInTbl in Open() (like IndexLookupJoin).
 			if err = e.recursiveExec.Close(); err != nil {
-				return err
+				return
 			}
 			if err = e.recursiveExec.Open(ctx); err != nil {
-				return err
+				return
 			}
 		} else {
 			if err = e.iterOutTbl.Add(chk); err != nil {
-				return err
+				return
 			}
 		}
 	}
-	return nil
+	return
 }
 
 // Get next chunk from resTbl for limit.

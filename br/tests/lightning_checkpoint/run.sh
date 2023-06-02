@@ -62,8 +62,8 @@ check_cluster_version 4 0 0 'local backend'
 
 # Set the failpoint to kill the lightning instance as soon as one table is imported
 # If checkpoint does work, this should only kill 9 instances of lightnings.
-SLOWDOWN_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownImport=sleep(250)'
-export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/restore/FailBeforeIndexEngineImported=return"
+SLOWDOWN_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownImport=sleep(250)'
+export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/importer/FailBeforeIndexEngineImported=return"
 
 # Start importing the tables.
 run_sql 'DROP DATABASE IF EXISTS cppk_tsr'
@@ -89,7 +89,7 @@ echo "******** Verify checkpoint no-op ********"
 run_lightning -d "$DBPATH" --enable-checkpoint=1
 run_sql "$PARTIAL_IMPORT_QUERY"
 check_contains "s: $(( (1000 * $CHUNK_COUNT + 1001) * $CHUNK_COUNT * $TABLE_COUNT ))"
-run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cppk`.table_v7 WHERE status >= 200'
+run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cppk`.table_v8 WHERE status >= 200'
 check_contains "count(*): $TABLE_COUNT"
 
 # Start importing the tables.
@@ -97,7 +97,7 @@ run_sql 'DROP DATABASE IF EXISTS cppk_tsr'
 run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_test_cppk'
 run_sql 'DROP DATABASE IF EXISTS `tidb_lightning_checkpoint_test_cppk.1357924680.bak`'
 
-export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/SetTaskID=return(1357924680);github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfIndexEngineImported=return(1)"
+export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/SetTaskID=return(1357924680);github.com/pingcap/tidb/br/pkg/lightning/importer/FailIfIndexEngineImported=return(1)"
 
 set +e
 for i in $(seq "$TABLE_COUNT"); do
@@ -113,5 +113,5 @@ echo "******** Verify checkpoint no-op ********"
 run_lightning -d "$DBPATH" --enable-checkpoint=1
 run_sql "$PARTIAL_IMPORT_QUERY"
 check_contains "s: $(( (1000 * $CHUNK_COUNT + 1001) * $CHUNK_COUNT * $TABLE_COUNT ))"
-run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cppk`.table_v7 WHERE status >= 200'
+run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cppk`.table_v8 WHERE status >= 200'
 check_contains "count(*): $TABLE_COUNT"

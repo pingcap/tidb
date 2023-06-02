@@ -82,9 +82,9 @@ func sleepWithCtx(ctx context.Context, d time.Duration) {
 }
 
 func (s *Server) listenStatusHTTPServer() error {
-	s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
+	s.statusAddr = net.JoinHostPort(s.cfg.Status.StatusHost, strconv.Itoa(int(s.cfg.Status.StatusPort)))
 	if s.cfg.Status.StatusPort == 0 && !RunInGoTest {
-		s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
+		s.statusAddr = net.JoinHostPort(s.cfg.Status.StatusHost, strconv.Itoa(defaultStatusPort))
 	}
 
 	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
@@ -205,6 +205,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
 	router.Handle("/plan_replayer/dump/{filename}", s.newPlanReplayerHandler()).Name("PlanReplayerDump")
+	router.Handle("/extract_task/dump", s.newExtractServeHandler()).Name("ExtractTaskDump")
 
 	router.Handle("/optimize_trace/dump/{filename}", s.newOptimizeTraceHandler()).Name("OptimizeTraceDump")
 
@@ -486,7 +487,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 				logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
 				break
 			}
-			selfAddr := fmt.Sprintf("%s:%d", s.cfg.AdvertiseAddress, s.cfg.Status.StatusPort)
+			selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
 			service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
 			logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
 			pb.RegisterAutoIDAllocServer(grpcServer, service)
@@ -548,7 +549,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	// If the server is in the process of shutting down, return a non-200 status.
 	// It is important not to return status{} as acquiring the s.ConnectionCount()
 	// acquires a lock that may already be held by the shutdown process.
-	if s.inShutdownMode {
+	if !s.health.Load() {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

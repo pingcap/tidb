@@ -26,6 +26,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -77,6 +78,12 @@ func TestConfigDefaultValue(t *testing.T) {
 // Fix issue#22540. Change tidb_dml_batch_size,
 // then check if load data into table with auto random column works properly.
 func TestLoadDataAutoRandom(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/executor/BeforeCommitWork", "sleep(1000)")
+	require.NoError(t, err)
+	defer func() {
+		//nolint:errcheck
+		_ = failpoint.Disable("github.com/pingcap/tidb/executor/BeforeCommitWork")
+	}()
 	ts := createTidbTestSuite(t)
 
 	ts.runTestLoadDataAutoRandom(t)
@@ -95,19 +102,19 @@ func TestExplainFor(t *testing.T) {
 }
 
 func TestStmtCount(t *testing.T) {
-	ts := createTidbTestSuite(t)
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 0
+	cfg.Status.RecordDBLabel = false
+	cfg.Performance.TCPKeepAlive = true
+	ts := createTidbTestSuiteWithCfg(t, cfg)
 
 	ts.runTestStmtCount(t)
 }
 
 func TestDBStmtCount(t *testing.T) {
-	cfg := newTestConfig()
-	cfg.Port = 0
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = 0
-	cfg.Status.RecordDBLabel = true
-	cfg.Performance.TCPKeepAlive = true
-	ts := createTidbTestSuiteWithCfg(t, cfg)
+	ts := createTidbTestSuite(t)
 
 	ts.runTestDBStmtCount(t)
 }

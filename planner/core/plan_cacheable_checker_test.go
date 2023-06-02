@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/mock"
@@ -51,6 +52,9 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.LoadDataStmt{}
 	require.False(t, core.Cacheable(stmt, is))
 
+	stmt = &ast.ImportIntoStmt{}
+	require.False(t, core.Cacheable(stmt, is))
+
 	// test SetOprStmt
 	stmt = &ast.SetOprStmt{}
 	require.True(t, core.Cacheable(stmt, is))
@@ -58,7 +62,7 @@ func TestCacheable(t *testing.T) {
 	tableRefsClause := &ast.TableRefsClause{TableRefs: &ast.Join{Left: &ast.TableSource{Source: tbl}}}
 	// test InsertStmt
 	stmt = &ast.InsertStmt{Table: tableRefsClause} // insert-values-stmt
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 	stmt = &ast.InsertStmt{Table: tableRefsClause, Select: &ast.SelectStmt{}} // insert-select-stmt
 	require.True(t, core.Cacheable(stmt, is))
 
@@ -271,6 +275,7 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int, key(a), key(b))`)
 	tk.MustExec("create table t1(a int, b int, index idx_b(b)) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
 	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
 	tk.MustExec("create table t3(a int, b int)")
@@ -281,46 +286,92 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	collation := mysql.DefaultCollationName
 
 	supported := []string{
-		"select * from t where a<10",
-		"select * from t where a<13 and b<15",
-		"select * from t where b=13",
-		"select * from t where c<8",
-		"select * from t where d>8",
-		"select * from t where c=8 and d>10",
-		"select * from t where a<12 and b<13 and c<12 and d>2",
-		"select * from t where a in (1, 2, 3)",
-		"select * from t where a<13 or b<15",
-		"select * from t where a<13 or b<15 and c=13",
+		"select * from test.t where a<10",
+		"select * from test.t where a<13 and b<15",
+		"select * from test.t where b=13",
+		"select * from test.t where c<8",
+		"select * from test.t where d>8",
+		"select * from test.t where c=8 and d>10",
+		"select * from test.t where a<12 and b<13 and c<12 and d>2",
+		"select * from test.t where a in (1, 2, 3)",
+		"select * from test.t where a<13 or b<15",
+		"select * from test.t where a<13 or b<15 and c=13",
+		"select * from test.t where a in (1, 2)",
+		"select * from test.t where a in (1, 2) and b in (1, 2, 3)",
+		"select * from test.t where a in (1, 2) and b < 15",
+		"select * from test.t where a between 1 and 10",
+		"select * from test.t where a between 1 and 10 and b < 15",
+		"select * from test.t where a+b=13",      // '+'
+		"select * from test.t where mod(a, 3)=1", // mod
+		"select * from test.t where d>now()",     // now
+		"select a+1 from test.t where a<13",
+		"select mod(a, 10) from test.t where a<13",
+		"select * from test.t limit 1", // limit
+
+		// 2-way joins
+		"select * from test.t inner join test.t3 on test.t.a=test.t3.a",
+		"select * from test.t inner join test.t3 on test.t.a=test.t3.a where test.t.a<10",
+		"select * from test.t, test.t3",
+		"select * from test.t, test.t3 where test.t.a=test.t3.a",
+		"select * from test.t, test.t3 where test.t.a=test.t3.a and test.t.b=t3.b",
+		"select * from test.t, test.t3 where test.t.a=test.t3.a and test.t.a<10",
 	}
 
 	unsupported := []string{
-		"select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2",               // hint
-		"select distinct a from t1 where a > 1 and b < 2",                                  // distinct
-		"select count(*) from t1 where a > 1 and b < 2 group by a",                         // group by
-		"select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
-		"select * from t1 limit 1",                                                         // limit
-		"select * from t1 order by a",                                                      // order by
-		"select * from t1, t2",                                                             // join
-		"select * from (select * from t1) t",                                               // sub-query
-		"insert into t1 values(1, 1)",                                                      // insert
-		"insert into t1(a, b) select a, b from t1",                                         // insert into select
-		"update t1 set a = 1 where b = 2",                                                  // update
-		"delete from t1 where b = 1",                                                       // delete
-
-		"select * from t where a+b=13",      // '+'
-		"select * from t where mod(a, 3)=1", // mod
-		"select * from t where d>now()",     // now
+		"select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2",                    // hint
+		"select distinct a from test.t1 where a > 1 and b < 2",                                  // distinct
+		"select count(*) from test.t1 where a > 1 and b < 2 group by a",                         // group by
+		"select a, sum(b) as c from test.t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
+		"select * from test.t1 order by a",                                                      // order by
+		"select * from (select * from test.t1) t",                                               // sub-query
+		"insert into test.t1 values(1, 1)",                                                      // insert
+		"insert into t1(a, b) select a, b from test.t1",                                         // insert into select
+		"update test.t1 set a = 1 where b = 2",                                                  // update
+		"delete from test.t1 where b = 1",                                                       // delete
+		"select * from test.t1 for update",                                                      // lock
+		"select * from test.t1 where a in (select a from t)",                                    // uncorrelated sub-query
+		"select * from test.t1 where a in (select a from test.t where a > t1.a)",                // correlated sub-query
 	}
 
+	sctx := tk.Session()
 	for _, q := range unsupported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		require.False(t, core.NonPreparedPlanCacheable(stmt, is))
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		require.False(t, ok)
 	}
 
 	for _, q := range supported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		require.True(t, core.NonPreparedPlanCacheable(stmt, is))
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		require.True(t, ok)
+	}
+}
+
+func BenchmarkNonPreparedPlanCacheableChecker(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+
+	p := parser.New()
+	sql := "select * from test.t where a<10"
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	sctx := tk.Session()
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+
+	core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		if !ok {
+			b.Fatal()
+		}
 	}
 }

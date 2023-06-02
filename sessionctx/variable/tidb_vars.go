@@ -23,10 +23,11 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
+	"github.com/pingcap/tidb/sessionctx/variable/featuretag/disttask"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"go.uber.org/atomic"
 )
 
@@ -48,6 +49,9 @@ const (
 
 	// TiDBOptAggPushDown is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
+
+	// TiDBOptDeriveTopN is used to enable/disable the optimizer rule of deriving topN.
+	TiDBOptDeriveTopN = "tidb_opt_derive_topn"
 
 	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
 	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
@@ -73,6 +77,9 @@ const (
 	// TiDBBCJThresholdCount is used to limit the count of small table for mpp broadcast join.
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	TiDBBCJThresholdCount = "tidb_broadcast_join_threshold_count"
+
+	// TiDBPreferBCJByExchangeDataSize indicates the method used to choose mpp broadcast join
+	TiDBPreferBCJByExchangeDataSize = "tidb_prefer_broadcast_join_by_exchange_data_size"
 
 	// TiDBOptWriteRowID is used to enable/disable the operations of insert、replace and update to _tidb_rowid.
 	TiDBOptWriteRowID = "tidb_opt_write_row_id"
@@ -168,6 +175,9 @@ const (
 	// TiDBRowFormatVersion is used to control tidb row format version current.
 	TiDBRowFormatVersion = "tidb_row_format_version"
 
+	// TiDBEnableRowLevelChecksum is used to control whether to append checksum to row values.
+	TiDBEnableRowLevelChecksum = "tidb_enable_row_level_checksum"
+
 	// TiDBEnableTablePartition is used to control table partition feature.
 	// The valid value include auto/on/off:
 	// on or auto: enable table partition if the partition type is implemented.
@@ -210,6 +220,9 @@ const (
 
 	// TiDBSlowLogThreshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
+
+	// TiDBSlowTxnLogThreshold is used to set the slow transaction log threshold in the server.
+	TiDBSlowTxnLogThreshold = "tidb_slow_txn_log_threshold"
 
 	// TiDBRecordPlanInSlowLog is used to log the plan of the slow query.
 	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
@@ -375,6 +388,16 @@ const (
 	// Default value is -1, means it will not be pushed down to tiflash.
 	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
 	TiDBMaxTiFlashThreads = "tidb_max_tiflash_threads"
+
+	// TiDBMaxBytesBeforeTiFlashExternalJoin is the maximum bytes used by a TiFlash join before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalJoin = "tidb_max_bytes_before_tiflash_external_join"
+
+	// TiDBMaxBytesBeforeTiFlashExternalGroupBy is the maximum bytes used by a TiFlash hash aggregation before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalGroupBy = "tidb_max_bytes_before_tiflash_external_group_by"
+
+	// TiDBMaxBytesBeforeTiFlashExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
+
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
 	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
@@ -753,14 +776,25 @@ const (
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
 	// TiDBPrepPlanCacheSize indicates the number of cached statements.
+	// This variable is deprecated, use tidb_session_plan_cache_size instead.
 	TiDBPrepPlanCacheSize = "tidb_prepared_plan_cache_size"
 	// TiDBEnablePrepPlanCacheMemoryMonitor indicates whether to enable prepared plan cache monitor
 	TiDBEnablePrepPlanCacheMemoryMonitor = "tidb_enable_prepared_plan_cache_memory_monitor"
 
 	// TiDBEnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	TiDBEnableNonPreparedPlanCache = "tidb_enable_non_prepared_plan_cache"
+	// TiDBEnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
+	TiDBEnableNonPreparedPlanCacheForDML = "tidb_enable_non_prepared_plan_cache_for_dml"
 	// TiDBNonPreparedPlanCacheSize controls the size of non-prepared plan cache.
+	// This variable is deprecated, use tidb_session_plan_cache_size instead.
 	TiDBNonPreparedPlanCacheSize = "tidb_non_prepared_plan_cache_size"
+	// TiDBPlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
+	TiDBPlanCacheMaxPlanSize = "tidb_plan_cache_max_plan_size"
+	// TiDBPlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
+	// related stats are analyzed after the plan cache is generated.
+	TiDBPlanCacheInvalidationOnFreshStats = "tidb_plan_cache_invalidation_on_fresh_stats"
+	// TiDBSessionPlanCacheSize controls the size of session plan cache.
+	TiDBSessionPlanCacheSize = "tidb_session_plan_cache_size"
 
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
@@ -806,9 +840,9 @@ const (
 	// MppVersion indicates the mpp-version used to build mpp plan
 	MppVersion = "mpp_version"
 
-	// TiDBPessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
+	// TiDBPessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
-	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_txn_aggressive_locking"
+	TiDBPessimisticTransactionFairLocking = "tidb_pessimistic_txn_fair_locking"
 
 	// TiDBEnablePlanCacheForParamLimit controls whether prepare statement with parameterized limit can be cached
 	TiDBEnablePlanCacheForParamLimit = "tidb_enable_plan_cache_for_param_limit"
@@ -816,8 +850,24 @@ const (
 	// TiDBEnableINLJoinInnerMultiPattern indicates whether enable multi pattern for inner side of inl join
 	TiDBEnableINLJoinInnerMultiPattern = "tidb_enable_inl_join_inner_multi_pattern"
 
+	// TiFlashComputeDispatchPolicy indicates how to dispatch task to tiflash_compute nodes.
+	TiFlashComputeDispatchPolicy = "tiflash_compute_dispatch_policy"
+
 	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
 	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
+
+	// TiDBOptEnableLateMaterialization indicates whether to enable late materialization
+	TiDBOptEnableLateMaterialization = "tidb_opt_enable_late_materialization"
+	// TiDBLoadBasedReplicaReadThreshold is the wait duration threshold to enable replica read automatically.
+	TiDBLoadBasedReplicaReadThreshold = "tidb_load_based_replica_read_threshold"
+
+	// TiDBOptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
+	TiDBOptOrderingIdxSelThresh = "tidb_opt_ordering_index_selectivity_threshold"
+
+	// TiDBOptEnableMPPSharedCTEExecution indicates whehter the optimizer try to build shared CTE scan during MPP execution.
+	TiDBOptEnableMPPSharedCTEExecution = "tidb_opt_enable_mpp_shared_cte_execution"
+	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
+	TiDBOptFixControl = "tidb_opt_fix_control"
 )
 
 // TiDB vars that have only global scope
@@ -873,8 +923,8 @@ const (
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
 	// will be killed. 0 indicates that there is no time limit.
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
-	// TiDBDDLEnableDistributeReorg indicates whether to enable the new Reorg framework.
-	TiDBDDLEnableDistributeReorg = "tidb_ddl_distribute_reorg"
+	// TiDBEnableDistTask indicates whether to enable the distributed execute background tasks(For example DDL, Import etc).
+	TiDBEnableDistTask = "tidb_enable_dist_task"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
@@ -938,6 +988,61 @@ const (
 	TiDBStmtSummaryFileMaxSize = "tidb_stmt_summary_file_max_size"
 	// TiDBStmtSummaryFileMaxBackups indicates the maximum number of files written by stmtsummary.
 	TiDBStmtSummaryFileMaxBackups = "tidb_stmt_summary_file_max_backups"
+	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
+	// limitation, if the storage is not TiKV).
+	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
+	// AuthenticationLDAPSASLAuthMethodName defines the authentication method used by LDAP SASL authentication plugin
+	AuthenticationLDAPSASLAuthMethodName = "authentication_ldap_sasl_auth_method_name"
+	// AuthenticationLDAPSASLCAPath defines the ca certificate to verify LDAP connection in LDAP SASL authentication plugin
+	AuthenticationLDAPSASLCAPath = "authentication_ldap_sasl_ca_path"
+	// AuthenticationLDAPSASLTLS defines whether to use TLS connection in LDAP SASL authentication plugin
+	AuthenticationLDAPSASLTLS = "authentication_ldap_sasl_tls"
+	// AuthenticationLDAPSASLServerHost defines the server host of LDAP server for LDAP SASL authentication plugin
+	AuthenticationLDAPSASLServerHost = "authentication_ldap_sasl_server_host"
+	// AuthenticationLDAPSASLServerPort defines the port of LDAP server for LDAP SASL authentication plugin
+	AuthenticationLDAPSASLServerPort = "authentication_ldap_sasl_server_port"
+	// AuthenticationLDAPSASLReferral defines whether to enable LDAP referral for LDAP SASL authentication plugin
+	AuthenticationLDAPSASLReferral = "authentication_ldap_sasl_referral"
+	// AuthenticationLDAPSASLUserSearchAttr defines the attribute of username in LDAP server
+	AuthenticationLDAPSASLUserSearchAttr = "authentication_ldap_sasl_user_search_attr"
+	// AuthenticationLDAPSASLBindBaseDN defines the `dn` to search the users in. It's used to limit the search scope of TiDB.
+	AuthenticationLDAPSASLBindBaseDN = "authentication_ldap_sasl_bind_base_dn"
+	// AuthenticationLDAPSASLBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSASLBindRootDN = "authentication_ldap_sasl_bind_root_dn"
+	// AuthenticationLDAPSASLBindRootPWD defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSASLBindRootPWD = "authentication_ldap_sasl_bind_root_pwd"
+	// AuthenticationLDAPSASLInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSASLInitPoolSize = "authentication_ldap_sasl_init_pool_size"
+	// AuthenticationLDAPSASLMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSASLMaxPoolSize = "authentication_ldap_sasl_max_pool_size"
+	// AuthenticationLDAPSimpleAuthMethodName defines the authentication method used by LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleAuthMethodName = "authentication_ldap_simple_auth_method_name"
+	// AuthenticationLDAPSimpleCAPath defines the ca certificate to verify LDAP connection in LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleCAPath = "authentication_ldap_simple_ca_path"
+	// AuthenticationLDAPSimpleTLS defines whether to use TLS connection in LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleTLS = "authentication_ldap_simple_tls"
+	// AuthenticationLDAPSimpleServerHost defines the server host of LDAP server for LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleServerHost = "authentication_ldap_simple_server_host"
+	// AuthenticationLDAPSimpleServerPort defines the port of LDAP server for LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleServerPort = "authentication_ldap_simple_server_port"
+	// AuthenticationLDAPSimpleReferral defines whether to enable LDAP referral for LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleReferral = "authentication_ldap_simple_referral"
+	// AuthenticationLDAPSimpleUserSearchAttr defines the attribute of username in LDAP server
+	AuthenticationLDAPSimpleUserSearchAttr = "authentication_ldap_simple_user_search_attr"
+	// AuthenticationLDAPSimpleBindBaseDN defines the `dn` to search the users in. It's used to limit the search scope of TiDB.
+	AuthenticationLDAPSimpleBindBaseDN = "authentication_ldap_simple_bind_base_dn"
+	// AuthenticationLDAPSimpleBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSimpleBindRootDN = "authentication_ldap_simple_bind_root_dn"
+	// AuthenticationLDAPSimpleBindRootPWD defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSimpleBindRootPWD = "authentication_ldap_simple_bind_root_pwd"
+	// AuthenticationLDAPSimpleInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSimpleInitPoolSize = "authentication_ldap_simple_init_pool_size"
+	// AuthenticationLDAPSimpleMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSimpleMaxPoolSize = "authentication_ldap_simple_max_pool_size"
+	// TiDBRuntimeFilterTypeName the value of is string, a runtime filter type list split by ",", such as: "IN,MIN_MAX"
+	TiDBRuntimeFilterTypeName = "tidb_runtime_filter_type"
+	// TiDBRuntimeFilterModeName the mode of runtime filter, such as "OFF", "LOCAL"
+	TiDBRuntimeFilterModeName = "tidb_runtime_filter_mode"
 )
 
 // TiDB intentional limits
@@ -968,6 +1073,7 @@ const (
 	DefSkipUTF8Check                               = false
 	DefSkipASCIICheck                              = false
 	DefOptAggPushDown                              = false
+	DefOptDeriveTopN                               = false
 	DefOptCartesianBCJ                             = 1
 	DefOptMPPOuterJoinFixedBuildSide               = false
 	DefOptWriteRowID                               = false
@@ -1010,15 +1116,19 @@ const (
 	DefTiDBProjectionConcurrency                   = ConcurrencyUnset
 	DefBroadcastJoinThresholdSize                  = 100 * 1024 * 1024
 	DefBroadcastJoinThresholdCount                 = 10 * 1024
+	DefPreferBCJByExchangeDataSize                 = false
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
 	DefTiDBEnableOuterJoinReorder                  = true
-	DefTiDBEnableNAAJ                              = false
+	DefTiDBEnableNAAJ                              = true
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
 	DefTiDBHashExchangeWithNewCollation            = true
 	DefTiDBEnforceMPPExecution                     = false
 	DefTiFlashMaxThreads                           = -1
+	DefTiFlashMaxBytesBeforeExternalJoin           = -1
+	DefTiFlashMaxBytesBeforeExternalGroupBy        = -1
+	DefTiFlashMaxBytesBeforeExternalSort           = -1
 	DefTiDBMPPStoreFailTTL                         = "60s"
 	DefTiDBTxnMode                                 = ""
 	DefTiDBRowFormatV1                             = 1
@@ -1080,7 +1190,6 @@ const (
 	DefTiDBAutoAnalyzePartitionBatchSize           = 1
 	DefTiDBEnableIndexMergeJoin                    = false
 	DefTiDBTrackAggregateMemoryUsage               = true
-	DefTiDBEnableExchangePartition                 = true
 	DefCTEMaxRecursionDepth                        = 1000
 	DefTiDBTmpTableMaxSize                         = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                          = false
@@ -1112,7 +1221,7 @@ const (
 	DefTiDBIgnorePreparedCacheCloseStmt            = false
 	DefTiDBBatchPendingTiFlashCount                = 4000
 	DefRCReadCheckTS                               = false
-	DefTiDBRemoveOrderbyInSubquery                 = false
+	DefTiDBRemoveOrderbyInSubquery                 = true
 	DefTiDBSkewDistinctAgg                         = false
 	DefTiDB3StageDistinctAgg                       = true
 	DefTiDB3StageMultiDistinctAgg                  = false
@@ -1133,9 +1242,10 @@ const (
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
 	DefTiDBEnablePrepPlanCache                     = true
 	DefTiDBPrepPlanCacheSize                       = 100
+	DefTiDBSessionPlanCacheSize                    = 100
 	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
-	DefTiDBDDLEnableDistributeReorg                = distributereorg.TiDBEnableDistributeReorg
+	DefTiDBEnableDistTask                          = disttask.TiDBEnableDistTask
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
@@ -1154,9 +1264,10 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableNonPreparedPlanCache              = false
+	DefTiDBEnableNonPreparedPlanCache              = true
+	DefTiDBEnableNonPreparedPlanCacheForDML        = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
-	DefTiDBEnableTiFlashReadForWriteStmt           = false
+	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
 	MinDDLReorgBatchSize                  int32  = 32
@@ -1165,7 +1276,7 @@ const (
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = true
-	DefTiDBOptAdvancedJoinHint                   = false
+	DefTiDBOptAdvancedJoinHint                   = true
 	DefTiDBAnalyzePartitionConcurrency           = 1
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                          = 2
@@ -1174,36 +1285,58 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold                      float64 = 0.6
-	DefTiDBOptPrefixIndexSingleScan                        = true
-	DefTiDBExternalTS                                      = 0
-	DefTiDBEnableExternalTSRead                            = false
-	DefTiDBEnableReusechunk                                = true
-	DefTiDBUseAlloc                                        = false
-	DefTiDBEnablePlanReplayerCapture                       = false
-	DefTiDBIndexMergeIntersectionConcurrency               = ConcurrencyUnset
-	DefTiDBTTLJobEnable                                    = true
-	DefTiDBTTLScanBatchSize                                = 500
-	DefTiDBTTLScanBatchMaxSize                             = 10240
-	DefTiDBTTLScanBatchMinSize                             = 1
-	DefTiDBTTLDeleteBatchSize                              = 100
-	DefTiDBTTLDeleteBatchMaxSize                           = 10240
-	DefTiDBTTLDeleteBatchMinSize                           = 1
-	DefTiDBTTLDeleteRateLimit                              = 0
-	DefPasswordReuseHistory                                = 0
-	DefPasswordReuseTime                                   = 0
-	DefTiDBStoreBatchSize                                  = 4
-	DefTiDBHistoricalStatsDuration                         = 7 * 24 * time.Hour
-	DefTiDBEnableHistoricalStatsForCapture                 = false
-	DefTiDBTTLJobScheduleWindowStartTime                   = "00:00 +0000"
-	DefTiDBTTLJobScheduleWindowEndTime                     = "23:59 +0000"
-	DefTiDBTTLScanWorkerCount                              = 4
-	DefTiDBTTLDeleteWorkerCount                            = 4
-	DefaultExchangeCompressionMode                         = kv.ExchangeCompressionModeUnspecified
-	DefTiDBEnableResourceControl                           = false
-	DefTiDBPessimisticTransactionAggressiveLocking         = false
-	DefTiDBEnablePlanCacheForParamLimit                    = true
-	DefTiDBEnablePlanCacheForSubquery                      = true
+	DefTiDBGOGCTunerThreshold                 float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan                   = true
+	DefTiDBExternalTS                                 = 0
+	DefTiDBEnableExternalTSRead                       = false
+	DefTiDBEnableReusechunk                           = true
+	DefTiDBUseAlloc                                   = false
+	DefTiDBEnablePlanReplayerCapture                  = false
+	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
+	DefTiDBTTLJobEnable                               = true
+	DefTiDBTTLScanBatchSize                           = 500
+	DefTiDBTTLScanBatchMaxSize                        = 10240
+	DefTiDBTTLScanBatchMinSize                        = 1
+	DefTiDBTTLDeleteBatchSize                         = 100
+	DefTiDBTTLDeleteBatchMaxSize                      = 10240
+	DefTiDBTTLDeleteBatchMinSize                      = 1
+	DefTiDBTTLDeleteRateLimit                         = 0
+	DefTiDBTTLRunningTasks                            = -1
+	DefPasswordReuseHistory                           = 0
+	DefPasswordReuseTime                              = 0
+	DefTiDBStoreBatchSize                             = 4
+	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture            = false
+	DefTiDBTTLJobScheduleWindowStartTime              = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime                = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                         = 4
+	DefTiDBTTLDeleteWorkerCount                       = 4
+	DefaultExchangeCompressionMode                    = kv.ExchangeCompressionModeUnspecified
+	DefTiDBEnableResourceControl                      = true
+	DefTiDBPessimisticTransactionFairLocking          = false
+	DefTiDBEnablePlanCacheForParamLimit               = true
+	DefTiFlashComputeDispatchPolicy                   = tiflashcompute.DispatchPolicyConsistentHashStr
+	DefTiDBEnablePlanCacheForSubquery                 = true
+	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
+	DefTiDBOptEnableLateMaterialization               = true
+	DefTiDBOptOrderingIdxSelThresh                    = 0.0
+	DefTiDBOptEnableMPPSharedCTEExecution             = false
+	DefTiDBPlanCacheInvalidationOnFreshStats          = true
+	DefTiDBEnableRowLevelChecksum                     = false
+	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"
+	DefAuthenticationLDAPSASLServerPort               = 389
+	DefAuthenticationLDAPSASLTLS                      = false
+	DefAuthenticationLDAPSASLUserSearchAttr           = "uid"
+	DefAuthenticationLDAPSASLInitPoolSize             = 10
+	DefAuthenticationLDAPSASLMaxPoolSize              = 1000
+	DefAuthenticationLDAPSimpleAuthMethodName         = "SIMPLE"
+	DefAuthenticationLDAPSimpleServerPort             = 389
+	DefAuthenticationLDAPSimpleTLS                    = false
+	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
+	DefAuthenticationLDAPSimpleInitPoolSize           = 10
+	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
+	DefRuntimeFilterType                              = "IN"
+	DefRuntimeFilterMode                              = "OFF"
 )
 
 // Process global variables.
@@ -1245,7 +1378,7 @@ var (
 	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
-	DDLEnableDistributeReorg          = atomic.NewBool(DefTiDBDDLEnableDistributeReorg)
+	EnableDistTask                    = atomic.NewBool(DefTiDBEnableDistTask)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
@@ -1257,6 +1390,8 @@ var (
 	// EnableForeignKey indicates whether to enable foreign key feature.
 	EnableForeignKey    = atomic.NewBool(true)
 	EnableRCReadCheckTS = atomic.NewBool(false)
+	// EnableRowLevelChecksum indicates whether to append checksum to row values.
+	EnableRowLevelChecksum = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
@@ -1280,7 +1415,10 @@ var (
 	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
-	EnableResourceControl              = atomic.NewBool(DefTiDBEnableResourceControl)
+	TTLRunningTasks                    = atomic.NewInt32(DefTiDBTTLRunningTasks)
+	// always set the default value to false because the resource control in kv-client is not inited
+	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
+	EnableResourceControl = atomic.NewBool(false)
 )
 
 var (
@@ -1309,9 +1447,9 @@ var (
 // Hooks functions for Cluster Resource Control.
 var (
 	// EnableGlobalResourceControlFunc is the function registered by tikv_driver to set cluster resource control.
-	EnableGlobalResourceControlFunc func() = func() {}
+	EnableGlobalResourceControlFunc = func() {}
 	// DisableGlobalResourceControlFunc is the function registered by tikv_driver to unset cluster resource control.
-	DisableGlobalResourceControlFunc func() = func() {}
+	DisableGlobalResourceControlFunc = func() {}
 )
 
 func serverMemoryLimitDefaultValue() string {

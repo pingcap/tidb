@@ -7,8 +7,10 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -227,8 +229,10 @@ func buildIndexRequest(
 	var rule *tipb.ChecksumRewriteRule
 	if oldIndexInfo != nil {
 		rule = &tipb.ChecksumRewriteRule{
-			OldPrefix: append(append([]byte{}, oldKeyspace...), tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)...),
-			NewPrefix: append(append([]byte{}, newKeyspace...), tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)...),
+			OldPrefix: append(append([]byte{}, oldKeyspace...),
+				tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)...),
+			NewPrefix: append(append([]byte{}, newKeyspace...),
+				tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)...),
 		}
 	}
 	checksum := &tipb.ChecksumRequest{
@@ -330,13 +334,31 @@ func (exec *Executor) Execute(
 	updateFn func(),
 ) (*tipb.ChecksumResponse, error) {
 	checksumResp := &tipb.ChecksumResponse{}
+	checksumBackoffer := utils.InitialRetryState(utils.ChecksumRetryTime,
+		utils.ChecksumWaitInterval, utils.ChecksumMaxWaitInterval)
 	for _, req := range exec.reqs {
 		// Pointer to SessionVars.Killed
 		// Killed is a flag to indicate that this query is killed.
 		//
 		// It is useful in TiDB, however, it's a place holder in BR.
 		killed := uint32(0)
-		resp, err := sendChecksumRequest(ctx, client, req, kv.NewVariables(&killed))
+		var (
+			resp *tipb.ChecksumResponse
+			err  error
+		)
+		err = utils.WithRetry(ctx, func() error {
+			resp, err = sendChecksumRequest(ctx, client, req, kv.NewVariables(&killed))
+			failpoint.Inject("checksumRetryErr", func(val failpoint.Value) {
+				// first time reach here. return error
+				if val.(bool) {
+					err = errors.New("inject checksum error")
+				}
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}, &checksumBackoffer)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

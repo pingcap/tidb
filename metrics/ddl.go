@@ -22,7 +22,49 @@ import (
 
 // Metrics for the DDL package.
 var (
-	JobsGauge = prometheus.NewGaugeVec(
+	JobsGauge            *prometheus.GaugeVec
+	HandleJobHistogram   *prometheus.HistogramVec
+	BatchAddIdxHistogram *prometheus.HistogramVec
+
+	SyncerInit    = "init"
+	SyncerRestart = "restart"
+	SyncerClear   = "clear"
+	SyncerRewatch = "rewatch"
+
+	StateSyncerInit = "init_global_state"
+
+	DeploySyncerHistogram      *prometheus.HistogramVec
+	UpdateSelfVersionHistogram *prometheus.HistogramVec
+
+	OwnerUpdateGlobalVersion = "update_global_version"
+	OwnerCheckAllVersions    = "check_all_versions"
+
+	UpdateGlobalState = "update_global_state"
+
+	OwnerHandleSyncerHistogram *prometheus.HistogramVec
+
+	// Metrics for ddl_worker.go.
+	WorkerNotifyDDLJob      = "notify_job"
+	WorkerAddDDLJob         = "add_job"
+	WorkerRunDDLJob         = "run_job"
+	WorkerFinishDDLJob      = "finish_job"
+	WorkerWaitSchemaChanged = "wait_schema_changed"
+	DDLWorkerHistogram      *prometheus.HistogramVec
+
+	CreateDDLInstance = "create_ddl_instance"
+	CreateDDL         = "create_ddl"
+	DDLOwner          = "owner"
+	DDLCounter        *prometheus.CounterVec
+
+	BackfillTotalCounter  *prometheus.CounterVec
+	BackfillProgressGauge *prometheus.GaugeVec
+	DDLJobTableDuration   *prometheus.HistogramVec
+	DDLRunningJobCount    *prometheus.GaugeVec
+)
+
+// InitDDLMetrics initializes defines DDL metrics.
+func InitDDLMetrics() {
+	JobsGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -30,7 +72,7 @@ var (
 			Help:      "Gauge of jobs.",
 		}, []string{LblType})
 
-	HandleJobHistogram = prometheus.NewHistogramVec(
+	HandleJobHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -39,7 +81,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24), // 10ms ~ 24hours
 		}, []string{LblType, LblResult})
 
-	BatchAddIdxHistogram = prometheus.NewHistogramVec(
+	BatchAddIdxHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -48,11 +90,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType})
 
-	SyncerInit            = "init"
-	SyncerRestart         = "restart"
-	SyncerClear           = "clear"
-	SyncerRewatch         = "rewatch"
-	DeploySyncerHistogram = prometheus.NewHistogramVec(
+	DeploySyncerHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -61,7 +99,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType, LblResult})
 
-	UpdateSelfVersionHistogram = prometheus.NewHistogramVec(
+	UpdateSelfVersionHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -70,9 +108,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblResult})
 
-	OwnerUpdateGlobalVersion   = "update_global_version"
-	OwnerCheckAllVersions      = "check_all_versions"
-	OwnerHandleSyncerHistogram = prometheus.NewHistogramVec(
+	OwnerHandleSyncerHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -81,13 +117,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType, LblResult})
 
-	// Metrics for ddl_worker.go.
-	WorkerNotifyDDLJob      = "notify_job"
-	WorkerAddDDLJob         = "add_job"
-	WorkerRunDDLJob         = "run_job"
-	WorkerFinishDDLJob      = "finish_job"
-	WorkerWaitSchemaChanged = "wait_schema_changed"
-	DDLWorkerHistogram      = prometheus.NewHistogramVec(
+	DDLWorkerHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -96,10 +126,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType, LblAction, LblResult})
 
-	CreateDDLInstance = "create_ddl_instance"
-	CreateDDL         = "create_ddl"
-	DDLOwner          = "owner"
-	DDLCounter        = prometheus.NewCounterVec(
+	DDLCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -107,7 +134,7 @@ var (
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{LblType})
 
-	BackfillTotalCounter = prometheus.NewCounterVec(
+	BackfillTotalCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -115,7 +142,7 @@ var (
 			Help:      "Speed of add index",
 		}, []string{LblType})
 
-	BackfillProgressGauge = prometheus.NewGaugeVec(
+	BackfillProgressGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -123,7 +150,7 @@ var (
 			Help:      "Percentage progress of backfill",
 		}, []string{LblType})
 
-	DDLJobTableDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	DDLJobTableDuration = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "ddl",
 		Name:      "job_table_duration_seconds",
@@ -131,14 +158,14 @@ var (
 		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 	}, []string{LblType})
 
-	DDLRunningJobCount = prometheus.NewGaugeVec(
+	DDLRunningJobCount = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
 			Name:      "running_job_count",
 			Help:      "Running DDL jobs count",
 		}, []string{LblType})
-)
+}
 
 // Label constants.
 const (
