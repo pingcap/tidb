@@ -548,6 +548,7 @@ type PlanReplayerDumpTask struct {
 	SessionVars     *variable.SessionVars
 	ExecStmts       []ast.StmtNode
 	Analyze         bool
+	HistoryStatsTS  uint64
 	DebugTrace      interface{}
 
 	FileName string

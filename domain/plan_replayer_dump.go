@@ -295,7 +295,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		if !task.IsContinuesCapture {
 			if variable.EnableHistoricalStatsForCapture.Load() {
 				// Dump stats
-				if err = dumpStats(zw, pairs, do); err != nil {
+				if err = dumpStats(zw, pairs, do, 0); err != nil {
 					return err
 				}
 			} else {
@@ -308,7 +308,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		}
 	} else {
 		// Dump stats
-		if err = dumpStats(zw, pairs, do); err != nil {
+		if err = dumpStats(zw, pairs, do, task.HistoryStatsTS); err != nil {
 			return err
 		}
 	}
@@ -503,12 +503,12 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 	return nil
 }
 
-func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain) error {
+func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain, historyStatsTS uint64) error {
 	for pair := range pairs {
 		if pair.IsView {
 			continue
 		}
-		jsonTbl, err := getStatsForTable(do, pair)
+		jsonTbl, err := getStatsForTable(do, pair, historyStatsTS)
 		if err != nil {
 			return err
 		}
@@ -744,12 +744,15 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	return tableExtractor.getTablesAndViews(), nil
 }
 
-func getStatsForTable(do *Domain, pair tableNamePair) (*handle.JSONTable, error) {
+func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*handle.JSONTable, error) {
 	is := do.InfoSchema()
 	h := do.StatsHandle()
 	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
 	if err != nil {
 		return nil, err
+	}
+	if historyStatsTS > 0 {
+		return h.DumpHistoricalStatsBySnapshot(pair.DBName, tbl.Meta(), historyStatsTS)
 	}
 	return h.DumpStatsToJSON(pair.DBName, tbl.Meta(), nil, true)
 }

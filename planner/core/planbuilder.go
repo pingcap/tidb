@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -5431,14 +5432,55 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	return
 }
 
-func (*PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
+func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
 	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
+
+	if pc.HistoryStatsInfo != nil {
+		p.HistoryStatsTS = calcTSForPlanReplayer(b.ctx, pc.HistoryStatsInfo.TsExpr)
+	}
+
 	schema := newColumnsWithNames(1)
 	schema.Append(buildColumnWithName("", "File_token", mysql.TypeVarchar, 128))
 	p.SetSchema(schema.col2Schema())
 	p.names = schema.names
 	return p
+}
+
+func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 {
+	tsVal, err := expression.EvalAstExpr(sctx, tsExpr)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return 0
+	}
+	// can't be NULL
+	if tsVal.IsNull() {
+		return 0
+	}
+
+	// first treat it as a TSO
+	tpLonglong := types.NewFieldType(mysql.TypeLonglong)
+	tpLonglong.SetFlag(mysql.UnsignedFlag)
+	tso, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, tpLonglong)
+	if err == nil {
+		return tso.GetUint64()
+	}
+
+	// if failed, treat it as a date/time
+	// this part is similar to CalculateAsOfTsExpr
+	tpTimestamp := types.NewFieldType(mysql.TypeTimestamp)
+	tpTimestamp.SetDecimal(3)
+	timestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, tpTimestamp)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return 0
+	}
+	goTime, err := timestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().Location())
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return 0
+	}
+	return oracle.GoTimeToTS(goTime)
 }
 
 func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {

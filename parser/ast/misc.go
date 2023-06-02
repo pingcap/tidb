@@ -264,9 +264,10 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 type PlanReplayerStmt struct {
 	stmtNode
 
-	Stmt    StmtNode
-	Analyze bool
-	Load    bool
+	Stmt             StmtNode
+	Analyze          bool
+	Load             bool
+	HistoryStatsInfo *AsOfClause
 
 	// Capture indicates 'plan replayer capture <sql_digest> <plan_digest>'
 	Capture bool
@@ -280,6 +281,9 @@ type PlanReplayerStmt struct {
 	// 1. plan replayer load 'file';
 	// 2. plan replayer dump explain <analyze> 'file'
 	File string
+
+	// Fields below are currently useless.
+
 	// Where is the where clause in select statement.
 	Where ExprNode
 	// OrderBy is the ordering expression list.
