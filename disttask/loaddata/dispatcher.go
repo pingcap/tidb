@@ -221,9 +221,6 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 	if err := verifyChecksum(ctx, tableImporter, subtaskMetas, logger); err != nil {
 		return err
 	}
-	if err := analyzeTable(ctx, handle, taskMeta, logger); err != nil {
-		return err
-	}
 
 	updateResult(taskMeta, subtaskMetas, logger)
 	return updateMeta(gTask, taskMeta)
@@ -297,21 +294,6 @@ func createTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskM
 		}
 	}
 	return nil
-}
-
-func analyzeTable(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
-	if taskMeta.Plan.Analyze == config.OpLevelOff {
-		return nil
-	}
-	tableName := common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
-	sqlStr := common.BuildAnalyzeTableSQL(tableName)
-	logger.Info("build analyze table sql", zap.String("sql", sqlStr))
-	err := executeSQL(ctx, handle, logger, sqlStr)
-	if err != nil && taskMeta.Plan.Analyze == config.OpLevelOptional {
-		logger.Warn("analyze table failed, but analyze is optional, will skip it", zap.Error(err))
-		return nil
-	}
-	return err
 }
 
 // TODO: return the result of sql.

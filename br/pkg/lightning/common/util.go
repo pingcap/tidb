@@ -598,11 +598,6 @@ func BuildAddIndexSQL(
 	return singleSQL, multiSQLs
 }
 
-// BuildAnalyzeTableSQL builds the SQL statement to analyze table.
-func BuildAnalyzeTableSQL(tableName string) string {
-	return fmt.Sprintf("ANALYZE TABLE %s", tableName)
-}
-
 // IsDupKeyError checks if err is a duplicate index error.
 func IsDupKeyError(err error) bool {
 	if merr, ok := errors.Cause(err).(*mysql.MySQLError); ok {

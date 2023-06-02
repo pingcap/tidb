@@ -1264,8 +1264,7 @@ func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB) error {
 		DB:     db,
 		Logger: tr.logger,
 	}
-	sql := common.BuildAnalyzeTableSQL(tr.tableName)
-	err := exec.Exec(ctx, "analyze table", sql)
+	err := exec.Exec(ctx, "analyze table", "ANALYZE TABLE "+tr.tableName)
 	task.End(zap.ErrorLevel, err)
 	return err
 }
