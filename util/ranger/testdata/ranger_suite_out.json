@@ -723,5 +723,34 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestTableRangeForNegativeUnsignedInt",
+    "Cases": [
+      {
+        "SQL": "update t set a = 10 where b in (-1, 1);",
+        "Plan": [
+          "Update_4 N/A root  N/A",
+          "└─IndexReader_7 1.00 root  index:IndexRangeScan_6",
+          "  └─IndexRangeScan_6 1.00 cop[tikv] table:t, index:PRIMARY(b, a) range:[1,1], keep order:false"
+        ]
+      },
+      {
+        "SQL": "update t set a = 11 where b in (0, 1);",
+        "Plan": [
+          "Update_4 N/A root  N/A",
+          "└─IndexReader_7 1.00 root  index:IndexRangeScan_6",
+          "  └─IndexRangeScan_6 1.00 cop[tikv] table:t, index:PRIMARY(b, a) range:[0,0], [1,1], keep order:false"
+        ]
+      },
+      {
+        "SQL": "update t set a = 20 where b in (2, -123) or b in (-10);",
+        "Plan": [
+          "Update_4 N/A root  N/A",
+          "└─IndexReader_7 1.00 root  index:IndexRangeScan_6",
+          "  └─IndexRangeScan_6 1.00 cop[tikv] table:t, index:PRIMARY(b, a) range:[2,2], keep order:false"
+        ]
+      }
+    ]
   }
 ]

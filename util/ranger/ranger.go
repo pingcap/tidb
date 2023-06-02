@@ -191,6 +191,8 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 			// For example, newBuildFromPatternLike calculates the end point by adding 1 to bytes.
 			// We need to skip these invalid strings.
 			return point, nil
+		} else if tp.GetType() == mysql.TypeLonglong && mysql.HasUnsignedFlag(tp.GetFlag()) && terror.ErrorEqual(err, types.ErrOverflow) {
+			// Ignore the types.ErrOverflow when a negative number is specified in range.
 		} else {
 			return point, errors.Trace(err)
 		}

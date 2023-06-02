@@ -1092,6 +1092,32 @@ func TestIndexRangeForBit(t *testing.T) {
 	}
 }
 
+func TestTableRangeForNegativeUnsignedInt(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b mediumint unsigned, primary key (b, a) /* [cluster_index] clustered */);")
+	tk.MustExec("insert into t values(1, 1), (2, 2);")
+	tk.MustExec("analyze table t;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	rangerSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func TestIndexRangeForYear(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
