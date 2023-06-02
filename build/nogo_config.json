@@ -1026,5 +1026,12 @@
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code"
     }
+  },
+  "deferrecover": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      ".*_test.go": "ignore test code",
+      "external/": "no need to vet third party code"
+    }
   }
 }
