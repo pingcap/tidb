@@ -137,8 +137,8 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 	limitSessMinSize := memory.ServerMemoryLimitSessMinSize.Load()
 	if instanceStats.HeapInuse > bt {
 		t := memory.MemUsageTop1Tracker.Load()
-		sessionID := t.SessionID.Load()
 		if t != nil {
+			sessionID := t.SessionID.Load()
 			memUsage := t.BytesConsumed()
 			// If the memory usage of the top1 session is less than tidb_server_memory_limit_sess_min_size, we do not need to kill it.
 			if uint64(memUsage) < limitSessMinSize {
