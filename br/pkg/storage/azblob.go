@@ -392,10 +392,16 @@ func (s *AzureBlobStorage) DeleteFile(ctx context.Context, name string) error {
 // Open implements the StorageReader interface.
 func (s *AzureBlobStorage) Open(ctx context.Context, name string) (ExternalFileReader, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
+	resp, err := client.GetProperties(ctx, nil)
+	if err != nil {
+		return nil, errors.Annotate(err, "Failed to get properties from the azure blob")
+	}
+
 	return &azblobObjectReader{
 		blobClient: client,
 
-		pos: 0,
+		pos:       0,
+		totalSize: *resp.ContentLength,
 
 		ctx: ctx,
 	}, nil
@@ -479,29 +485,36 @@ func (s *AzureBlobStorage) Rename(ctx context.Context, oldFileName, newFileName 
 type azblobObjectReader struct {
 	blobClient *blockblob.Client
 
-	pos int64
+	pos       int64
+	totalSize int64
 
 	ctx context.Context
 }
 
 // Read implement the io.Reader interface.
 func (r *azblobObjectReader) Read(p []byte) (n int, err error) {
-	count := int64(len(p))
+	maxCnt := r.totalSize - r.pos
+	if maxCnt > int64(len(p)) {
+		maxCnt = int64(len(p))
+	}
+	if maxCnt == 0 {
+		return 0, io.EOF
+	}
 	resp, err := r.blobClient.DownloadStream(r.ctx, &blob.DownloadStreamOptions{
 		Range: blob.HTTPRange{
 			Offset: r.pos,
-			Count:  count,
+			Count:  maxCnt,
 		},
 	})
 	if err != nil {
-		return 0, errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d', count='%d'", r.pos, count)
+		return 0, errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d', count='%d'", r.pos, maxCnt)
 	}
 	body := resp.NewRetryReader(r.ctx, &blob.RetryReaderOptions{
 		MaxRetries: azblobRetryTimes,
 	})
 	n, err = body.Read(p)
 	if err != nil && err != io.EOF {
-		return 0, errors.Annotatef(err, "Failed to read data from azure blob response, data info: pos='%d', count='%d'", r.pos, count)
+		return 0, errors.Annotatef(err, "Failed to read data from azure blob response, data info: pos='%d', count='%d'", r.pos, maxCnt)
 	}
 	r.pos += int64(n)
 	return n, body.Close()
@@ -526,28 +539,18 @@ func (r *azblobObjectReader) Seek(offset int64, whence int) (int64, error) {
 			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'.", offset, r.pos)
 		}
 	case io.SeekEnd:
-		if offset >= 0 {
+		if offset > 0 {
 			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
 		}
-		realOffset = offset
+		realOffset = offset + r.totalSize
 	default:
 		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
 	}
 
 	if realOffset < 0 {
-		resp, err := r.blobClient.GetProperties(r.ctx, nil)
-		if err != nil {
-			return 0, errors.Annotate(err, "Failed to get properties from the azure blob")
-		}
-
-		contentLength := *resp.ContentLength
-		r.pos = contentLength + realOffset
-		if r.pos < 0 {
-			return 0, errors.Annotatef(err, "Seek: offset is %d, but length of content is only %d", realOffset, contentLength)
-		}
-	} else {
-		r.pos = realOffset
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset is %d, but length of content is only %d", realOffset, r.totalSize)
 	}
+	r.pos = realOffset
 	return r.pos, nil
 }
 
