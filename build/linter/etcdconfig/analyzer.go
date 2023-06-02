@@ -17,7 +17,6 @@ package etcdconfig
 import (
 	"go/ast"
 
-
 	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
