@@ -2592,7 +2592,3 @@ create table t(
 		require.Equal(t, tt.resultStr, got, fmt.Sprintf("different for expr %s", tt.exprStr))
 	}
 }
-
-func TestConsiderDNFPath(t *testing.T) {
-
-}
