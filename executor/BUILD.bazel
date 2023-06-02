@@ -253,7 +253,6 @@ go_library(
         "@com_github_tikv_client_go_v2//txnkv/txnsnapshot",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
-        "@com_github_tikv_pd_client//resource_group/controller",
         "@com_github_twmb_murmur3//:murmur3",
         "@com_sourcegraph_sourcegraph_appdash//:appdash",
         "@com_sourcegraph_sourcegraph_appdash//opentracing",
