@@ -978,7 +978,10 @@ func (local *local) WriteToTiKV(
 	})
 	annotateErr := func(in error, peer *metapb.Peer) error {
 		// annotate the error with peer/store/region info to help debug.
-		return errors.Annotatef(in, "peer %d, store %d, region %d, epoch %s", peer.Id, peer.StoreId, region.Id, region.RegionEpoch.String())
+		return errors.Annotatef(
+			in,
+			"peer %d, store %d, region %d, epoch %s",
+			peer.Id, peer.StoreId, region.Region.Id, region.Region.RegionEpoch.String())
 	}
 
 	if local.checkTiKVAvaliable {
