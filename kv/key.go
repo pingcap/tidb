@@ -525,8 +525,8 @@ type MemAwareHandleMap[V any] struct {
 	ints set.MemAwareMap[int64, V]
 	strs set.MemAwareMap[string, strHandleValue[V]]
 
-	partitionInts map[int64]*set.MemAwareMap[int64, V]
-	partitionStrs map[int64]*set.MemAwareMap[string, strHandleValue[V]]
+	partitionInts map[int64]set.MemAwareMap[int64, V]
+	partitionStrs map[int64]set.MemAwareMap[string, strHandleValue[V]]
 }
 
 type strHandleValue[V any] struct {
@@ -540,8 +540,8 @@ func NewMemAwareHandleMap[V any]() *MemAwareHandleMap[V] {
 		ints: set.NewMemAwareMap[int64, V](),
 		strs: set.NewMemAwareMap[string, strHandleValue[V]](),
 
-		partitionInts: map[int64]*set.MemAwareMap[int64, V]{},
-		partitionStrs: map[int64]*set.MemAwareMap[string, strHandleValue[V]]{},
+		partitionInts: map[int64]set.MemAwareMap[int64, V]{},
+		partitionStrs: map[int64]set.MemAwareMap[string, strHandleValue[V]]{},
 	}
 }
 
@@ -551,15 +551,15 @@ func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, ok bool) {
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
 		if h.IsInt() {
-			if m.partitionInts[idx] == nil {
+			if m.partitionInts[idx].M == nil {
 				return v, false
 			}
-			ints = *m.partitionInts[idx]
+			ints = m.partitionInts[idx]
 		} else {
-			if m.partitionStrs[idx] == nil {
+			if m.partitionStrs[idx].M == nil {
 				return v, false
 			}
-			strs = *m.partitionStrs[idx]
+			strs = m.partitionStrs[idx]
 		}
 	}
 	if h.IsInt() {
@@ -577,15 +577,13 @@ func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
 	ints, strs := m.ints, m.strs
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
-		if h.IsInt() && m.partitionInts[idx] == nil {
-			tmp := set.NewMemAwareMap[int64, V]()
-			m.partitionInts[idx] = &tmp
-			ints = *m.partitionInts[idx]
+		if h.IsInt() && m.partitionInts[idx].M == nil {
+			m.partitionInts[idx] = set.NewMemAwareMap[int64, V]()
+			ints = m.partitionInts[idx]
 		}
-		if !h.IsInt() && m.partitionStrs[idx] == nil {
-			tmp := set.NewMemAwareMap[string, strHandleValue[V]]()
-			m.partitionStrs[idx] = &tmp
-			strs = *m.partitionStrs[idx]
+		if !h.IsInt() && m.partitionStrs[idx].M == nil {
+			m.partitionStrs[idx] = set.NewMemAwareMap[string, strHandleValue[V]]()
+			strs = m.partitionStrs[idx]
 		}
 	}
 	if h.IsInt() {
