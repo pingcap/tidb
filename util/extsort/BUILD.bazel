@@ -9,10 +9,16 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/extsort",
     visibility = ["//visibility:public"],
     deps = [
+        "//util/generic",
+        "//util/syncutil",
         "@com_github_cockroachdb_pebble//:pebble",
         "@com_github_cockroachdb_pebble//sstable",
+        "@com_github_cockroachdb_pebble//vfs",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
         "@org_golang_x_exp//slices",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
