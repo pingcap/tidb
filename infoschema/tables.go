@@ -998,7 +998,7 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 512},
 	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 	{name: "Remaining_seconds", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
-	{name: "Progress", tp: mysql.TypeVarchar},
+	{name: "Progress", tp: mysql.TypeVarchar, size: 20},
 	{name: "Estimated_total_rows", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 }
 
