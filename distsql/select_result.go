@@ -651,8 +651,8 @@ type CopRuntimeStats interface {
 }
 
 type selectResultRuntimeStats struct {
-	copRespTime             execdetails.Percentile[time.Duration]
-	procKeys                execdetails.Percentile[int64]
+	copRespTime             execdetails.Percentile[execdetails.Duration]
+	procKeys                execdetails.Percentile[execdetails.Int64]
 	backoffSleep            map[string]time.Duration
 	totalProcessTime        time.Duration
 	totalWaitTime           time.Duration
@@ -666,9 +666,9 @@ type selectResultRuntimeStats struct {
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
-	s.copRespTime.Add(respTime)
+	s.copRespTime.Add(execdetails.Duration(respTime))
 	if copStats.ScanDetail != nil {
-		s.procKeys.Add(copStats.ScanDetail.ProcessedKeys)
+		s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
 	} else {
 		s.procKeys.Add(0)
 	}
@@ -683,8 +683,8 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntim
 
 func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	newRs := selectResultRuntimeStats{
-		copRespTime:             execdetails.Percentile[time.Duration]{},
-		procKeys:                execdetails.Percentile[int64]{},
+		copRespTime:             execdetails.Percentile[execdetails.Duration]{},
+		procKeys:                execdetails.Percentile[execdetails.Int64]{},
 		backoffSleep:            make(map[string]time.Duration, len(s.backoffSleep)),
 		rpcStat:                 tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency:      s.distSQLConcurrency,
@@ -737,7 +737,7 @@ func (s *selectResultRuntimeStats) String() string {
 	if s.copRespTime.Size() > 0 {
 		size := s.copRespTime.Size()
 		if size == 1 {
-			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(s.copRespTime.GetPercentile(0)), s.procKeys.GetPercentile(0)))
+			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(time.Duration(s.copRespTime.GetPercentile(0))), s.procKeys.GetPercentile(0)))
 		} else {
 			vMax, vMin := s.copRespTime.GetMax(), s.copRespTime.GetMin()
 			vP95 := s.copRespTime.GetPercentile(0.95)
@@ -747,13 +747,13 @@ func (s *selectResultRuntimeStats) String() string {
 			keyMax := s.procKeys.GetMax()
 			keyP95 := s.procKeys.GetPercentile(0.95)
 			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,
-				execdetails.FormatDuration(vMax), execdetails.FormatDuration(vMin),
-				execdetails.FormatDuration(vAvg), execdetails.FormatDuration(vP95)))
+				execdetails.FormatDuration(time.Duration(vMax.GetFloat64())), execdetails.FormatDuration(time.Duration(vMin.GetFloat64())),
+				execdetails.FormatDuration(vAvg), execdetails.FormatDuration(time.Duration(vP95))))
 			if keyMax > 0 {
 				buf.WriteString(", max_proc_keys: ")
-				buf.WriteString(strconv.FormatInt(keyMax, 10))
+				buf.WriteString(strconv.FormatInt(int64(keyMax), 10))
 				buf.WriteString(", p95_proc_keys: ")
-				buf.WriteString(strconv.FormatInt(keyP95, 10))
+				buf.WriteString(strconv.FormatInt(int64(keyP95), 10))
 			}
 		}
 		if s.totalProcessTime > 0 {

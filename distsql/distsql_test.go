@@ -117,8 +117,8 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 		rpcStat:            tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency: 15,
 	}
-	s1.copRespTime.Add(time.Second)
-	s1.copRespTime.Add(time.Millisecond)
+	s1.copRespTime.Add(execdetails.Duration(time.Second))
+	s1.copRespTime.Add(execdetails.Duration(time.Millisecond))
 	s1.procKeys.Add(100)
 	s1.procKeys.Add(200)
 
@@ -148,7 +148,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 		totalWaitTime:    time.Second,
 		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
 	}
-	s1.copRespTime.Add(time.Second)
+	s1.copRespTime.Add(execdetails.Duration(time.Second))
 	s1.procKeys.Add(100)
 	expect = "cop_task: {num: 1, max: 1s, proc_keys: 100, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
 	require.Equal(t, expect, s1.String())
