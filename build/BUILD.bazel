@@ -126,6 +126,7 @@ nogo(
                "//build/linter/bodyclose",
                "//build/linter/deferrecover",
                "//build/linter/durationcheck",
+               "//build/linter/etcdconfig",
                "//build/linter/exportloopref",
                "//build/linter/forcetypeassert",
                "//build/linter/gofmt",

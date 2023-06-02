@@ -349,7 +349,7 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(start) > 0 && len(end) > 0 && pid > 0 {
+	if pid > 0 {
 		reorgInfo.StartKey = start
 		reorgInfo.EndKey = end
 		reorgInfo.PhysicalTableID = pid
