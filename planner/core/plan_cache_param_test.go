@@ -112,7 +112,7 @@ func TestParameterize(t *testing.T) {
 	for _, c := range cases {
 		stmt, err := parser.New().ParseOneStmt(c.sql, "", "")
 		require.Nil(t, err)
-		paramSQL, params, err := ParameterizeAST(context.Background(), sctx, stmt)
+		paramSQL, params, err := ParameterizeAST(stmt)
 		require.Nil(t, err)
 		require.Equal(t, c.paramSQL, paramSQL)
 		require.Equal(t, len(c.params), len(params))
@@ -160,12 +160,12 @@ c_credit, c_credit_lim, c_discount, c_balance, c_since FROM customer WHERE c_w_i
 	stmt, err := parser.New().ParseOneStmt(paymentSelectCustomerForUpdate, "", "")
 	require.Nil(b, err)
 	sctx := MockContext()
-	_, _, err = ParameterizeAST(context.Background(), sctx, stmt)
+	_, _, err = ParameterizeAST(stmt)
 	require.Nil(b, err)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ParameterizeAST(context.Background(), sctx, stmt)
+		ParameterizeAST(stmt)
 	}
 }
 
@@ -174,12 +174,12 @@ func BenchmarkParameterizeInsert(b *testing.B) {
 	stmt, err := parser.New().ParseOneStmt(paymentInsertHistory, "", "")
 	require.Nil(b, err)
 	sctx := MockContext()
-	_, _, err = ParameterizeAST(context.Background(), sctx, stmt)
+	_, _, err = ParameterizeAST(stmt)
 	require.Nil(b, err)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ParameterizeAST(context.Background(), sctx, stmt)
+		ParameterizeAST(stmt)
 	}
 }
 

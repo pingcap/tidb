@@ -96,7 +96,7 @@ func (pr *paramReplacer) Reset() {
 // paramVals are copied from this AST.
 func GetParamSQLFromAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, paramVals []types.Datum, err error) {
 	var params []*driver.ValueExpr
-	paramSQL, params, err = ParameterizeAST(ctx, sctx, stmt)
+	paramSQL, params, err = ParameterizeAST(stmt)
 	if err != nil {
 		return "", nil, err
 	}
@@ -105,14 +105,14 @@ func GetParamSQLFromAST(ctx context.Context, sctx sessionctx.Context, stmt ast.S
 		p.Datum.Copy(&paramVals[i])
 	}
 
-	err = RestoreASTWithParams(ctx, sctx, stmt, params)
+	err = RestoreASTWithParams(sctx, stmt, params)
 	return
 }
 
 // ParameterizeAST parameterizes this StmtNode.
 // e.g. `select * from t where a<10 and b<23` --> `select * from t where a<? and b<?`, [10, 23].
 // NOTICE: this function may modify the input stmt.
-func ParameterizeAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, err error) {
+func ParameterizeAST(stmt ast.StmtNode) (paramSQL string, params []*driver.ValueExpr, err error) {
 	pr := paramReplacerPool.Get().(*paramReplacer)
 	pCtx := paramCtxPool.Get().(*format.RestoreCtx)
 	defer func() {
@@ -162,7 +162,7 @@ func (pr *paramRestorer) Reset() {
 
 // RestoreASTWithParams restore this parameterized AST with specific parameters.
 // e.g. `select * from t where a<? and b<?`, [10, 23] --> `select * from t where a<10 and b<23`.
-func RestoreASTWithParams(ctx context.Context, _ sessionctx.Context, stmt ast.StmtNode, params []*driver.ValueExpr) error {
+func RestoreASTWithParams(_ sessionctx.Context, stmt ast.StmtNode, params []*driver.ValueExpr) error {
 	pr := paramRestorerPool.Get().(*paramRestorer)
 	defer func() {
 		pr.Reset()

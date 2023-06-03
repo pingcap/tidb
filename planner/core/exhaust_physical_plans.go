@@ -1022,7 +1022,7 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 func (p *LogicalJoin) constructInnerTableScanTask(
 	wrapper *indexJoinInnerChildWrapper,
 	ranges ranger.Ranges,
-	outerJoinKeys []*expression.Column,
+	_ []*expression.Column,
 	rangeInfo string,
 	keepOrder bool,
 	desc bool,
@@ -1153,76 +1153,13 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 	return physicalUnionScan
 }
 
-func getColsNDVLowerBoundFromHistColl(cols []*expression.Column, histColl *statistics.HistColl) int64 {
-	if len(cols) == 0 || histColl == nil {
-		return -1
-	}
-	colUIDs := make([]int64, len(cols))
-	for i, col := range cols {
-		colUIDs[i] = col.UniqueID
-	}
-
-	// Note that we don't need to specially handle prefix index in this function, because the NDV of a prefix index is
-	// equal or less than the corresponding normal index, and that's safe here since we want a lower bound.
-
-	// 1. Try to get NDV from column stats if it's a single column.
-	if len(colUIDs) == 1 && histColl.Columns != nil {
-		uid := colUIDs[0]
-		if colStats, ok := histColl.Columns[uid]; ok && colStats != nil {
-			return colStats.NDV
-		}
-	}
-
-	slices.Sort(colUIDs)
-	if histColl.Indices == nil || histColl.Idx2ColumnIDs == nil {
-		return -1
-	}
-
-	// 2. Try to get NDV from index stats.
-	for idxID, idxCols := range histColl.Idx2ColumnIDs {
-		if len(idxCols) != len(colUIDs) {
-			continue
-		}
-		orderedIdxCols := make([]int64, len(idxCols))
-		copy(orderedIdxCols, idxCols)
-		slices.Sort(orderedIdxCols)
-		if !slices.Equal(orderedIdxCols, colUIDs) {
-			continue
-		}
-		if idxStats, ok := histColl.Indices[idxID]; ok && idxStats != nil {
-			return idxStats.NDV
-		}
-	}
-
-	// TODO: if there's an index that contains the expected columns, we can also make use of its NDV.
-	// For example, NDV(a,b,c) / NDV(c) is a safe lower bound of NDV(a,b).
-
-	// 3. If we still haven't got an NDV, we use the minimal NDV in the column stats as a lower bound.
-	// This would happen when len(cols) > 1 and no proper index stats are available.
-	minNDV := int64(-1)
-	for _, colStats := range histColl.Columns {
-		if colStats == nil || colStats.Info == nil {
-			continue
-		}
-		col := colStats.Info
-		if col.IsGenerated() && !col.GeneratedStored {
-			continue
-		}
-		if (colStats.NDV > 0 && minNDV <= 0) ||
-			colStats.NDV < minNDV {
-			minNDV = colStats.NDV
-		}
-	}
-	return minNDV
-}
-
 // constructInnerIndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
 func (p *LogicalJoin) constructInnerIndexScanTask(
 	wrapper *indexJoinInnerChildWrapper,
 	path *util.AccessPath,
 	ranges ranger.Ranges,
 	filterConds []expression.Expression,
-	innerJoinKeys []*expression.Column,
+	_ []*expression.Column,
 	rangeInfo string,
 	keepOrder bool,
 	desc bool,
@@ -1319,7 +1256,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	// Because we are estimating an average row count of the inner side corresponding to each row from the outer side,
 	// the estimated row count of the IndexScan should be no larger than (total row count / NDV of join key columns).
 	// We use it as an upper bound here.
-	rowCountUpperBound := -1.0
+	//rowCountUpperBound := -1.0
 	//if ds.tableStats != nil {
 	//	joinKeyNDV := getColsNDVLowerBoundFromHistColl(innerJoinKeys, ds.tableStats.HistColl)
 	//	if joinKeyNDV > 0 {
@@ -1327,9 +1264,9 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	//	}
 	//}
 
-	if rowCountUpperBound > 0 {
-		rowCount = math.Min(rowCount, rowCountUpperBound)
-	}
+	//if rowCountUpperBound > 0 {
+	//	rowCount = math.Min(rowCount, rowCountUpperBound)
+	//}
 	if maxOneRow {
 		// Theoretically, this line is unnecessary because row count estimation of join should guarantee rowCount is not larger
 		// than 1.0; however, there may be rowCount larger than 1.0 in reality, e.g, pseudo statistics cases, which does not reflect
@@ -1352,9 +1289,6 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
 		// i.e, rowCount equals to `countAfterIndex * selectivity`.
 		cnt := rowCount / selectivity
-		if rowCountUpperBound > 0 {
-			cnt = math.Min(cnt, rowCountUpperBound)
-		}
 		if maxOneRow {
 			cnt = math.Min(cnt, 1.0)
 		}
@@ -1368,9 +1302,6 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			selectivity = SelectionFactor
 		}
 		cnt := tmpPath.CountAfterIndex / selectivity
-		if rowCountUpperBound > 0 {
-			cnt = math.Min(cnt, rowCountUpperBound)
-		}
 		if maxOneRow {
 			cnt = math.Min(cnt, 1.0)
 		}
@@ -2092,14 +2023,14 @@ func checkChildFitBC(p Plan) bool {
 	return p.SCtx().GetSessionVars().BroadcastJoinThresholdSize == -1 || sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
 
-func calcBroadcastExchangeSize(p Plan, mppStoreCnt int) (float64, float64, bool) {
+func calcBroadcastExchangeSize(p Plan, mppStoreCnt int) (row float64, size float64, hasSize bool) {
 	s := p.statsInfo()
-	row := float64(s.Count()) * float64(mppStoreCnt-1)
+	row = float64(s.Count()) * float64(mppStoreCnt-1)
 	if s.HistColl == nil {
 		return row, 0, false
 	}
 	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
-	size := avg * row
+	size = avg * row
 	return row, size, true
 }
 

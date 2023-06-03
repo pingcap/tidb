@@ -42,7 +42,7 @@ type exprPrefixAdder struct {
 	lengths   []int
 }
 
-func (s *ppdSolver) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (*ppdSolver) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	_, p := lp.PredicatePushDown(nil, opt)
 	return p, nil
 }
