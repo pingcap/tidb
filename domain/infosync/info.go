@@ -515,13 +515,13 @@ func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
 		pdClient := store.GetPDClient()
 		var stores []*metapb.Store
 		var err error
-		// Wait at most 3 second to make sure pd has updated the store information.
-		for i := 0; i < 60; i++ {
+		// Wait at most 10 second to make sure pd has updated the store information.
+		for i := 0; i < 20; i++ {
 			stores, err = pdClient.GetAllStores(context.Background(), pd.WithExcludeTombstone())
 			if err == nil {
 				break
 			}
-			time.Sleep(time.Millisecond * 50)
+			time.Sleep(time.Millisecond * 500)
 		}
 
 		if err != nil {
