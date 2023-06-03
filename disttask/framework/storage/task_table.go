@@ -158,29 +158,35 @@ func (stm *TaskManager) executeSQLWithNewSession(ctx context.Context, sql string
 // AddNewGlobalTask adds a new task to global task table.
 func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta []byte) (taskID int64, err error) {
 	err = stm.withNewSession(func(se sessionctx.Context) error {
-		_, err = execSQL(stm.ctx, se, "insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, state_update_time) values (%?, %?, %?, %?, %?, %?, %?)", key, tp, proto.TaskStatePending, concurrency, proto.StepInit, meta, time.Now().UTC().String())
-		if err != nil {
-			return err
-		}
-
-		rs, err := execSQL(stm.ctx, se, "select @@last_insert_id")
-		if err != nil {
-			return err
-		}
-
-		taskID, err = strconv.ParseInt(rs[0].GetString(0), 10, 64)
-		if err != nil {
-			return err
-		}
-		failpoint.Inject("testSetLastTaskID", func() { TestLastTaskID.Store(taskID) })
-
-		return nil
+		var err2 error
+		taskID, err2 = stm.AddGlobalTaskWithSession(se, key, tp, concurrency, meta)
+		return err2
 	})
+	return
+}
 
+// AddGlobalTaskWithSession adds a new task to global task table with session.
+func (stm *TaskManager) AddGlobalTaskWithSession(se sessionctx.Context, key, tp string, concurrency int, meta []byte) (taskID int64, err error) {
+	_, err = execSQL(stm.ctx, se,
+		`insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, state_update_time)
+		values (%?, %?, %?, %?, %?, %?, %?)`,
+		key, tp, proto.TaskStatePending, concurrency, proto.StepInit, meta, time.Now().UTC().String())
 	if err != nil {
 		return 0, err
 	}
-	return
+
+	rs, err := execSQL(stm.ctx, se, "select @@last_insert_id")
+	if err != nil {
+		return 0, err
+	}
+
+	taskID, err = strconv.ParseInt(rs[0].GetString(0), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	failpoint.Inject("testSetLastTaskID", func() { TestLastTaskID.Store(taskID) })
+
+	return taskID, nil
 }
 
 // GetNewGlobalTask get a new task from global task table, it's used by dispatcher only.

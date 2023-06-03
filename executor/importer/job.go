@@ -62,33 +62,45 @@ const (
 	JobStepValidating  = "validating"
 	JobStepAddingIndex = "adding-index"
 	JobStepAnalyzing   = "analyzing"
+
+	baseQuerySql = `SELECT
+					id, create_time, start_time, end_time,
+					table_schema, table_name, table_id, created_by, parameters, source_file_size,
+					status, step, summary, error_message,
+				FROM mysql.tidb_import_jobs`
 )
 
+// ImportParameters is the parameters for import into statement.
+// it's a minimal meta info to store in tidb_import_jobs for diagnose.
+// for detailed info, see tidb_global_tasks.
 type ImportParameters struct {
 	ColumnsAndVars string `json:"columns_and_vars;omitempty"`
 	SetClause      string `json:"set_clause;omitempty"`
 	// for s3 URL, AK/SK is redacted for security
-	FileLocation string                 `json:"file_location"`
-	Format       string                 `json:"format"`
-	Options      map[string]interface{} `json:"options;omitempty"`
+	FileLocation string `json:"file_location"`
+	Format       string `json:"format"`
+	// only include what user specified, not include default value.
+	Options map[string]interface{} `json:"options;omitempty"`
 }
 
 // JobInfo is the information of import into job.
 type JobInfo struct {
-	ID          int64
-	CreateTime  types.Time
-	StartTime   types.Time
-	EndTime     types.Time
-	TableSchema string
-	TableName   string
-	TableID     int64
-	CreatedBy   string
-	Parameters  ImportParameters
-	Status      string
+	ID             int64
+	CreateTime     types.Time
+	StartTime      types.Time
+	EndTime        types.Time
+	TableSchema    string
+	TableName      string
+	TableID        int64
+	CreatedBy      string
+	Parameters     ImportParameters
+	SourceFileSize int64
+	Status         string
 	// in SHOW IMPORT JOB, we name it as phase.
 	// here, we use the same name as in distributed framework.
-	Step         string
-	Progress     *asyncloaddata.Progress
+	Step string
+	// the summary info of the job, it's updated only when the job is finished.
+	Summary      *asyncloaddata.Progress
 	ErrorMessage string
 }
 
@@ -123,6 +135,7 @@ func CreateJob(
 	tableID int64,
 	user string,
 	parameters *ImportParameters,
+	sourceFileSize int64,
 ) (int64, error) {
 	bytes, err := json.Marshal(parameters)
 	if err != nil {
@@ -130,9 +143,9 @@ func CreateJob(
 	}
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err = conn.ExecuteInternal(ctx, `INSERT INTO mysql.tidb_import_jobs
-		(table_schema, table_name, table_id, created_by, parameters, status, step)
-		VALUES (%?, %?, %?, %?, %?, %?, %?);`,
-		db, table, tableID, user, bytes, jobStatusPending, jobStepNone)
+		(table_schema, table_name, table_id, created_by, parameters, source_file_size, status, step)
+		VALUES (%?, %?, %?, %?, %?, %?, %?, %?);`,
+		db, table, tableID, user, bytes, sourceFileSize, jobStatusPending, jobStepNone)
 	if err != nil {
 		return 0, err
 	}
@@ -175,33 +188,13 @@ func (j *Job) Start(ctx context.Context) error {
 	return nil
 }
 
-// UpdateProgress updates the progress of running job. It should be called
-// periodically after StartJob.
-// It will not return error when there's no matched job or the job is not running.
-func (j *Job) UpdateProgress(ctx context.Context, progress string) error {
-	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	// let TiDB handle heartbeat check for concurrent SQL
-	// we tolerate 2 times of failure/timeout when updating heartbeat
-	_, err := j.Conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-		SET update_time = CURRENT_TIMESTAMP(6), progress = %?
-		WHERE id = %? and status = %?;`,
-		progress, j.ID, jobStatusRunning)
-	if err != nil {
-		return err
-	}
-	if j.Conn.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-		return errors.Errorf("update progress failed, job %d not exists or not in running status", j.ID)
-	}
-	return nil
-}
-
 // Finish finishes import into job. A job can only be finished once.
-func (j *Job) Finish(ctx context.Context, progress string) error {
+func (j *Job) Finish(ctx context.Context, summary string) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err := j.Conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, step = %?, progress = %?
+		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, step = %?, summary = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFinished, jobStepNone, progress, j.ID, jobStatusRunning)
+		jobStatusFinished, jobStepNone, summary, j.ID, jobStatusRunning)
 	if err != nil {
 		return err
 	}
@@ -234,12 +227,7 @@ func (j *Job) Get(ctx context.Context) (*JobInfo, error) {
 }
 
 func (j *Job) get(ctx context.Context) (*JobInfo, error) {
-	sql := `SELECT
-				id, create_time, start_time, end_time,
-				table_schema, table_name, table_id, created_by, parameters,
-				status, step, progress, error_message,
-			FROM mysql.tidb_import_jobs
-			WHERE id = %?`
+	sql := baseQuerySql + ` WHERE id = %?`
 	args := []interface{}{j.ID}
 	rs, err := j.Conn.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
@@ -270,39 +258,36 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 	if err := json.Unmarshal([]byte(parametersStr), &parameters); err != nil {
 		return nil, errors.Trace(err)
 	}
-	var progress *asyncloaddata.Progress
-	progressStr := row.GetString(11)
-	if len(progressStr) > 0 {
-		progress = &asyncloaddata.Progress{}
-		if err := json.Unmarshal([]byte(progressStr), progress); err != nil {
+	var summary *asyncloaddata.Progress
+	summaryStr := row.GetString(12)
+	if len(summaryStr) > 0 {
+		summary = &asyncloaddata.Progress{}
+		if err := json.Unmarshal([]byte(summaryStr), summary); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	return &JobInfo{
-		ID:           row.GetInt64(0),
-		CreateTime:   row.GetTime(1),
-		StartTime:    row.GetTime(2),
-		EndTime:      row.GetTime(3),
-		TableSchema:  row.GetString(4),
-		TableName:    row.GetString(5),
-		TableID:      row.GetInt64(6),
-		CreatedBy:    row.GetString(7),
-		Parameters:   parameters,
-		Status:       row.GetString(9),
-		Step:         row.GetString(10),
-		Progress:     progress,
-		ErrorMessage: row.GetString(12),
+		ID:             row.GetInt64(0),
+		CreateTime:     row.GetTime(1),
+		StartTime:      row.GetTime(2),
+		EndTime:        row.GetTime(3),
+		TableSchema:    row.GetString(4),
+		TableName:      row.GetString(5),
+		TableID:        row.GetInt64(6),
+		CreatedBy:      row.GetString(7),
+		Parameters:     parameters,
+		SourceFileSize: row.GetInt64(9),
+		Status:         row.GetString(10),
+		Step:           row.GetString(11),
+		Summary:        summary,
+		ErrorMessage:   row.GetString(13),
 	}, nil
 }
 
 // GetAllViewableJobs gets all viewable jobs.
 func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) ([]*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	sql := `SELECT
-				id, create_time, start_time, end_time,
-				table_schema, table_name, table_id, created_by, parameters,
-				status, step, progress, error_message,
-			FROM mysql.tidb_import_jobs`
+	sql := baseQuerySql
 	args := []interface{}{}
 	if !hasSuperPriv {
 		sql += " AND created_by = %?"

@@ -260,3 +260,42 @@ func TestParseRawURL(t *testing.T) {
 		require.Equal(t, c.secretAccessKey, secretAccessKey)
 	}
 }
+
+func TestRedactURL(t *testing.T) {
+	type args struct {
+		str string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    string
+		wantErr bool
+	}{
+		{"empty", args{""}, "", false},
+		{"empty", args{":"}, "", true},
+		{"empty", args{"~/file"}, "~/file", false},
+		{"empty", args{"gs://bucket/file"}, "gs://bucket/file", false},
+		// gs don't have access-key/secret-access-key, so it will NOT be redacted
+		{"empty", args{"gs://bucket/file?access-key=123"}, "gs://bucket/file?access-key=123", false},
+		{"empty", args{"gs://bucket/file?secret-access-key=123"}, "gs://bucket/file?secret-access-key=123", false},
+		{"empty", args{"s3://bucket/file"}, "s3://bucket/file", false},
+		{"empty", args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123", false},
+		{"empty", args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=redacted", false},
+		{"empty", args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=redacted", false},
+		// underline
+		{"empty", args{"s3://bucket/file?access_key=123"}, "s3://bucket/file?access_key=redacted", false},
+		{"empty", args{"s3://bucket/file?secret_access_key=123"}, "s3://bucket/file?secret_access_key=redacted", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := RedactURL(tt.args.str)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("RedactURL() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("RedactURL() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

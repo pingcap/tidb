@@ -51,7 +51,7 @@ type ImportIntoExec struct {
 	controller *importer.LoadDataController
 	stmt       string
 
-	detachHandled bool
+	dataFilled bool
 }
 
 var (
@@ -82,7 +82,7 @@ func newImportIntoExec(b baseExecutor, userSctx sessionctx.Context, plan *planne
 func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.maxChunkSize)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalImportInto)
-	if e.detachHandled {
+	if e.dataFilled {
 		// need to return an empty req to indicate all results have been written
 		return nil
 	}
@@ -113,7 +113,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		_ = distImporter.Close()
 	}()
 	param.Progress.SourceFileSize = e.controller.TotalFileSize
-	task, err := distImporter.SubmitTask()
+	jobID, task, err := distImporter.SubmitTask(ctx)
 	if err != nil {
 		return err
 	}
@@ -128,20 +128,34 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 				TestDetachedTaskFinished.Store(true)
 			})
 		}()
-		req.AppendInt64(0, task.ID)
-		e.detachHandled = true
-		return nil
+		return e.fillJobInfo(ctx, jobID, req)
 	}
-	return e.doImport(distImporter, task)
+	if err = e.doImport(distImporter, task); err != nil {
+		return err
+	}
+	return e.fillJobInfo(ctx, jobID, req)
+}
+
+func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chunk.Chunk) error {
+	e.dataFilled = true
+
+	sqlExec := e.userSctx.(sqlexec.SQLExecutor)
+	job := importer.NewJob(jobID, sqlExec, e.ctx.GetSessionVars().User.String(), false)
+	info, err := job.Get(ctx)
+	if err != nil {
+		return err
+	}
+	fillOneImportJobInfo(info, req, 0)
+	return nil
 }
 
 func (e *ImportIntoExec) getJobImporter(param *importer.JobImportParam) (*loaddata.DistImporter, error) {
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
 	// todo: if we import from local directory, we should also import on current node.
 	if variable.EnableDistTask.Load() {
-		return loaddata.NewDistImporter(param, e.importPlan, e.stmt)
+		return loaddata.NewDistImporter(param, e.importPlan, e.stmt, e.controller.TotalFileSize)
 	}
-	return loaddata.NewDistImporterCurrNode(param, e.importPlan, e.stmt)
+	return loaddata.NewDistImporterCurrNode(param, e.importPlan, e.stmt, e.controller.TotalFileSize)
 }
 
 func (e *ImportIntoExec) doImport(distImporter *loaddata.DistImporter, task *proto.Task) error {
@@ -149,7 +163,7 @@ func (e *ImportIntoExec) doImport(distImporter *loaddata.DistImporter, task *pro
 	group := distImporter.Param().Group
 	err := group.Wait()
 	if !e.controller.Detached {
-		importResult := distImporter.Result(task)
+		importResult := distImporter.Result()
 		userStmtCtx := e.userSctx.GetSessionVars().StmtCtx
 		userStmtCtx.SetMessage(importResult.Msg)
 		userStmtCtx.SetAffectedRows(importResult.Affected)

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
@@ -2174,6 +2175,42 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	e.appendRow([]interface{}{stateJSON, tokenJSON})
 	return nil
 }
+func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount int64) {
+	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
+	result.AppendInt64(0, info.ID)
+	result.AppendString(1, info.Parameters.FileLocation)
+	result.AppendString(2, fullTableName)
+	result.AppendInt64(3, info.TableID)
+	result.AppendString(4, info.Step)
+	result.AppendString(5, info.Status)
+	result.AppendInt64(6, info.SourceFileSize)
+	if info.Summary != nil {
+		result.AppendUint64(7, info.Summary.LoadedRowCnt.Load())
+	} else if importedRowCount > 0 {
+		result.AppendUint64(7, uint64(importedRowCount))
+	} else {
+		result.AppendNull(7)
+	}
+	result.AppendString(8, info.ErrorMessage)
+	result.AppendTime(9, info.CreateTime)
+	result.AppendTime(10, info.StartTime)
+	result.AppendTime(11, info.EndTime)
+	result.AppendString(12, info.CreatedBy)
+}
+
+func handleImportJobInfo(info *importer.JobInfo, result *chunk.Chunk) error {
+	var importedRowCount int64
+	if info.Summary == nil {
+		// the job is running, need get progress from distributed framework.
+		taskMeta, err := loaddata.GetTaskMeta(info.ID)
+		if err != nil {
+			return err
+		}
+		importedRowCount = int64(taskMeta.Result.LoadedRowCnt)
+	}
+	fillOneImportJobInfo(info, result, importedRowCount)
+	return nil
+}
 
 // fetchShowImportJobs fills the result with the schema:
 // {"Job_ID", "Data_Source", "Target_Table", "Table_ID",
@@ -2181,27 +2218,6 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 // "Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
 func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.SQLExecutor)
-	handleOneInfo := func(info *importer.JobInfo) {
-		fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
-		e.result.AppendInt64(0, info.ID)
-		e.result.AppendString(1, info.Parameters.FileLocation)
-		e.result.AppendString(2, fullTableName)
-		e.result.AppendInt64(3, info.TableID)
-		e.result.AppendString(4, info.Step)
-		e.result.AppendString(5, info.Status)
-		if info.Progress != nil {
-			e.result.AppendInt64(6, info.Progress.SourceFileSize)
-			e.result.AppendUint64(7, info.Progress.LoadedRowCnt.Load())
-		} else {
-			e.result.AppendNull(6)
-			e.result.AppendNull(7)
-		}
-		e.result.AppendString(8, info.ErrorMessage)
-		e.result.AppendTime(9, info.CreateTime)
-		e.result.AppendTime(10, info.StartTime)
-		e.result.AppendTime(11, info.EndTime)
-		e.result.AppendString(12, info.CreatedBy)
-	}
 
 	var hasSuperPriv bool
 	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
@@ -2214,15 +2230,16 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		handleOneInfo(info)
-		return nil
+		return handleImportJobInfo(info, e.result)
 	}
 	infos, err := importer.GetAllViewableJobs(ctx, exec, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
 	if err != nil {
 		return err
 	}
 	for _, info := range infos {
-		handleOneInfo(info)
+		if err2 := handleImportJobInfo(info, e.result); err2 != nil {
+			return err2
+		}
 	}
 	// TODO: does not support filtering for now
 	return nil

@@ -206,3 +206,24 @@ func FormatBackendURL(backend *backuppb.StorageBackend) (u url.URL) {
 	}
 	return
 }
+
+// RedactURL redacts the secret tokens in the URL. It only supports S3 for now.
+func RedactURL(str string) (string, error) {
+	u, err := ParseRawURL(str)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if strings.ToLower(u.Scheme) == "s3" {
+		values := u.Query()
+		for k := range values {
+			// see below on why we normalize key
+			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
+			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
+			if normalizedKey == "access-key" || normalizedKey == "secret-access-key" {
+				values[k] = []string{"redacted"}
+			}
+		}
+		u.RawQuery = values.Encode()
+	}
+	return u.String(), nil
+}

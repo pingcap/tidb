@@ -615,9 +615,10 @@ const (
 		table_id bigint(64) NOT NULL,
 		created_by VARCHAR(300) NOT NULL,
 		parameters json NOT NULL,
+		source_file_size bigint(64) NOT NULL,
 		status VARCHAR(64) NOT NULL,
 		step VARCHAR(64) NOT NULL,
-		progress json DEFAULT NULL,
+		summary json DEFAULT NULL,
 		error_message TEXT DEFAULT NULL,
 		PRIMARY KEY (id),
 		KEY (created_by));`

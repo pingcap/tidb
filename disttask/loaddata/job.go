@@ -15,6 +15,7 @@
 package loaddata
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -26,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -37,21 +40,26 @@ type DistImporter struct {
 	stmt   string
 	logger *zap.Logger
 	// the instance to import data, used for single-node import, nil means import data on all instances.
-	instance *infosync.ServerInfo
+	instance       *infosync.ServerInfo
+	sourceFileSize int64
+	// only set after submit task
+	jobID  int64
+	taskID int64
 }
 
 // NewDistImporter creates a new DistImporter.
-func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt string) (*DistImporter, error) {
+func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt string, sourceFileSize int64) (*DistImporter, error) {
 	return &DistImporter{
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
 		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
+		sourceFileSize: sourceFileSize,
 	}, nil
 }
 
 // NewDistImporterCurrNode creates a new DistImporter to import data on current node.
-func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan, stmt string) (*DistImporter, error) {
+func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan, stmt string, sourceFileSize int64) (*DistImporter, error) {
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
 		return nil, err
@@ -62,6 +70,7 @@ func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan
 		stmt:           stmt,
 		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
 		instance:       serverInfo,
+		sourceFileSize: sourceFileSize,
 	}, nil
 }
 
@@ -86,9 +95,9 @@ func (ti *DistImporter) ImportTask(task *proto.Task) {
 }
 
 // Result implements JobImporter.Result.
-func (ti *DistImporter) Result(task *proto.Task) importer.JobImportResult {
+func (ti *DistImporter) Result() importer.JobImportResult {
 	var result importer.JobImportResult
-	taskMeta, err := ti.getTaskMeta(task)
+	taskMeta, err := GetTaskMeta(ti.jobID)
 	if err != nil {
 		result.Msg = err.Error()
 		return result
@@ -117,29 +126,61 @@ func (*DistImporter) Close() error {
 }
 
 // SubmitTask submits a task to the distribute framework.
-func (ti *DistImporter) SubmitTask() (*proto.Task, error) {
+func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, error) {
 	var instances []*infosync.ServerInfo
 	if ti.instance != nil {
 		instances = append(instances, ti.instance)
 	}
-	task := TaskMeta{
-		Plan:              *ti.plan,
-		Stmt:              ti.stmt,
-		EligibleInstances: instances,
-	}
-	taskMeta, err := json.Marshal(task)
+	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
-		return nil, err
-	}
-	globalTask, err := handle.SubmitGlobalTask(ti.taskKey(), proto.ImportInto, int(ti.plan.ThreadCnt), taskMeta)
-	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 
+	var jobID, taskID int64
+	plan := ti.plan
+	if err = globalTaskManager.WithNewTxn(func(se sessionctx.Context) error {
+		var err2 error
+		exec := se.(sqlexec.SQLExecutor)
+		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
+			plan.User, plan.Parameters, ti.sourceFileSize)
+		if err2 != nil {
+			return err2
+		}
+		task := TaskMeta{
+			JobID:             jobID,
+			Plan:              *plan,
+			Stmt:              ti.stmt,
+			EligibleInstances: instances,
+		}
+		taskMeta, err2 := json.Marshal(task)
+		if err2 != nil {
+			return err2
+		}
+		taskID, err2 = globalTaskManager.AddGlobalTaskWithSession(se, TaskKey(jobID), proto.ImportInto,
+			int(plan.ThreadCnt), taskMeta)
+		if err2 != nil {
+			return err2
+		}
+		return nil
+	}); err != nil {
+		return 0, nil, err
+	}
+
+	globalTask, err := globalTaskManager.GetGlobalTaskByID(taskID)
+	if err != nil {
+		return 0, nil, err
+	}
+	if globalTask == nil {
+		return 0, nil, errors.Errorf("cannot find global task with ID %d", taskID)
+	}
 	// update logger with task id.
-	ti.logger = ti.logger.With(zap.Int64("id", globalTask.ID))
+	ti.jobID = jobID
+	ti.taskID = taskID
+	ti.logger = ti.logger.With(zap.Int64("task-id", globalTask.ID))
 
-	return globalTask, nil
+	ti.logger.Info("job submitted to global task queue", zap.Int64("job-id", jobID))
+
+	return jobID, globalTask, nil
 }
 
 func (*DistImporter) taskKey() string {
@@ -147,17 +188,19 @@ func (*DistImporter) taskKey() string {
 	return fmt.Sprintf("%s/%s", proto.ImportInto, uuid.New().String())
 }
 
-func (*DistImporter) getTaskMeta(task *proto.Task) (*TaskMeta, error) {
+// GetTaskMeta gets task meta of a job.
+func GetTaskMeta(jobID int64) (*TaskMeta, error) {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
 	}
-	globalTask, err := globalTaskManager.GetGlobalTaskByID(task.ID)
+	taskKey := TaskKey(jobID)
+	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
 	if err != nil {
 		return nil, err
 	}
 	if globalTask == nil {
-		return nil, errors.Errorf("cannot find global task with ID %d", task.ID)
+		return nil, errors.Errorf("cannot find global task with key %s", taskKey)
 	}
 	var taskMeta TaskMeta
 	if err := json.Unmarshal(globalTask.Meta, &taskMeta); err != nil {
@@ -166,6 +209,7 @@ func (*DistImporter) getTaskMeta(task *proto.Task) (*TaskMeta, error) {
 	return &taskMeta, nil
 }
 
+// TaskKey returns the task key for a job.
 func TaskKey(jobID int64) string {
 	return fmt.Sprintf("%s/%d", proto.ImportInto, jobID)
 }

@@ -4347,15 +4347,11 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	return p, err
 }
 
-// DetachedOption is a special option in load data statement that need to be handled separately.
-const DetachedOption = "detached"
-
 func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (Plan, error) {
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	var (
-		err      error
-		options  = make([]*LoadDataOpt, 0, len(ld.Options))
-		detached = false
+		err     error
+		options = make([]*LoadDataOpt, 0, len(ld.Options))
 	)
 	for _, opt := range ld.Options {
 		loadDataOpt := LoadDataOpt{Name: opt.Name}
@@ -4364,9 +4360,6 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			if err != nil {
 				return nil, err
 			}
-		}
-		if strings.ToLower(opt.Name) == DetachedOption && opt.Value == nil {
-			detached = true
 		}
 		options = append(options, &loadDataOpt)
 	}
@@ -4413,11 +4406,14 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		return nil, err
 	}
 
-	if detached {
-		p.setSchemaAndNames(expression.NewSchema(&expression.Column{
-			RetType: types.NewFieldType(mysql.TypeLonglong),
-		}), types.NameSlice{{ColName: model.NewCIStr("Task_ID")}})
-	}
+	outputNames := []string{"Job_ID", "Data_Source", "Target_Table", "Table_ID",
+		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Result_Message",
+		"Create_Time", "Start_Time", "End_Time", "Created_By"}
+	outputTypes := []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+		mysql.TypeString, mysql.TypeString, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeString,
+		mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
+	outputSchema, outputFields := convert2OutputSchemasAndNames(outputNames, outputTypes)
+	p.setSchemaAndNames(outputSchema, outputFields)
 	return p, nil
 }
 
@@ -5405,7 +5401,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 			mysql.TypeString, mysql.TypeString, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
 	}
+	return convert2OutputSchemasAndNames(names, ftypes)
+}
 
+func convert2OutputSchemasAndNames(names []string, ftypes []byte) (schema *expression.Schema, outputNames []*types.FieldName) {
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	outputNames = make([]*types.FieldName, 0, len(names))
 	for i := range names {
