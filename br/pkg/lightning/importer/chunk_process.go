@@ -380,6 +380,7 @@ func (cr *chunkProcessor) encodeLoop(
 				}
 				if isDupIgnored {
 					cr.parser.RecycleRow(lastRow)
+					lastOffset := curOffset
 					curOffset = newOffset
 
 					if rc.errorMgr.RemainRecord() <= 0 {
@@ -395,7 +396,7 @@ func (cr *chunkProcessor) encodeLoop(
 						conflictMsg = err.Error()
 						goto conflictMsgDone
 					}
-					kvs, err = kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
+					kvs, err = kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, lastOffset)
 					if err != nil {
 						conflictMsg = err.Error()
 						goto conflictMsgDone
@@ -409,6 +410,10 @@ func (cr *chunkProcessor) encodeLoop(
 								goto conflictMsgDone
 							}
 						}
+						logger.Warn("fail to find conflict record key",
+							zap.String("file", cr.chunk.FileMeta.Path),
+							zap.Int64("offset", lastOffset),
+							zap.Any("row", lastRow.Row))
 					} else {
 						for _, kv := range kvs.(*kv2.Pairs).Pairs {
 							_, decodedIdxID, isRecordKey, err := tablecodec.DecodeKeyHead(kv.Key)
@@ -416,12 +421,16 @@ func (cr *chunkProcessor) encodeLoop(
 								conflictMsg = err.Error()
 								goto conflictMsgDone
 							}
-							if isRecordKey && decodedIdxID == idxID {
+							if !isRecordKey && decodedIdxID == idxID {
 								dupErr := txn.ExtractKeyExistsErrFromIndex(kv.Key, kv.Val, t.encTable.Meta(), idxID)
 								conflictMsg = dupErr.Error()
 								goto conflictMsgDone
 							}
 						}
+						logger.Warn("fail to find conflict index key",
+							zap.String("file", cr.chunk.FileMeta.Path),
+							zap.Int64("offset", lastOffset),
+							zap.Any("row", lastRow.Row))
 					}
 
 				conflictMsgDone:

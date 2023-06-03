@@ -1703,7 +1703,7 @@ func (tr *TableImporter) preDeduplicate(
 
 	// provide a more friendly error message
 
-	dupErr := err.(*errors.Error)
+	dupErr := errors.Cause(err).(*errors.Error)
 	conflictIdxID := dupErr.Args()[0]
 	if conflictIdxID == conflictOnHandle {
 		idxName = "PRIMARY"
