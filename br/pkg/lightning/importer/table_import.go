@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -1687,13 +1688,13 @@ func (tr *TableImporter) preDeduplicate(
 		cp:     cp,
 		logger: tr.logger,
 	}
-	err := d.run(ctx, workingDir, tr.dupIgnoreRows)
-	if err == nil {
+	originalErr := d.run(ctx, workingDir, tr.dupIgnoreRows)
+	if originalErr == nil {
 		return nil
 	}
 
-	if !ErrDuplicateKey.Equal(err) {
-		return errors.Trace(err)
+	if !ErrDuplicateKey.Equal(originalErr) {
+		return errors.Trace(originalErr)
 	}
 
 	var (
@@ -1703,8 +1704,8 @@ func (tr *TableImporter) preDeduplicate(
 
 	// provide a more friendly error message
 
-	dupErr := errors.Cause(err).(*errors.Error)
-	conflictIdxID := dupErr.Args()[0]
+	dupErr := errors.Cause(originalErr).(*errors.Error)
+	conflictIdxID := dupErr.Args()[0].(int64)
 	if conflictIdxID == conflictOnHandle {
 		idxName = "PRIMARY"
 	} else {
@@ -1716,28 +1717,43 @@ func (tr *TableImporter) preDeduplicate(
 		}
 	}
 	if idxName == "" {
-		return errors.Trace(err)
+		tr.logger.Error("cannot find index name", zap.Int64("conflictIdxID", conflictIdxID))
+		return errors.Trace(originalErr)
 	}
 	conflictEncodedRowIDs := dupErr.Args()[1].([][]byte)
 	if len(conflictEncodedRowIDs) < 2 {
-		return errors.Trace(err)
+		tr.logger.Error("invalid conflictEncodedRowIDs", zap.Int("len", len(conflictEncodedRowIDs)))
+		return errors.Trace(originalErr)
 	}
 	rowID := make([]int64, 2)
+	var err error
 	_, rowID[0], err = codec.DecodeComparableVarint(conflictEncodedRowIDs[0])
 	if err != nil {
-		return errors.Trace(err)
+		rowIDHex := hex.EncodeToString(conflictEncodedRowIDs[0])
+		tr.logger.Error("failed to decode rowID",
+			zap.String("rowID", rowIDHex),
+			zap.Error(err))
+		return errors.Trace(originalErr)
 	}
 	_, rowID[1], err = codec.DecodeComparableVarint(conflictEncodedRowIDs[1])
 	if err != nil {
-		return errors.Trace(err)
+		rowIDHex := hex.EncodeToString(conflictEncodedRowIDs[1])
+		tr.logger.Error("failed to decode rowID",
+			zap.String("rowID", rowIDHex),
+			zap.Error(err))
+		return errors.Trace(originalErr)
 	}
 
 	tableCp, err := rc.checkpointsDB.Get(ctx, tr.tableName)
 	if err != nil {
+		tr.logger.Error("failed to get table checkpoint", zap.Error(err))
 		return errors.Trace(err)
 	}
 	for _, engineCp := range tableCp.Engines {
 		for _, chunkCp := range engineCp.Chunks {
+			tr.logger.Info("lance test",
+				zap.Any("preRowIDMax", chunkCp.Chunk.PrevRowIDMax),
+				zap.Any("rowIDMax", chunkCp.Chunk.RowIDMax))
 			if chunkCp.Chunk.PrevRowIDMax <= rowID[0] && rowID[0] < chunkCp.Chunk.RowIDMax {
 				oneConflictMsg = fmt.Sprintf("row %d starting from offset %d in file %s",
 					rowID[0]-chunkCp.Chunk.PrevRowIDMax,
@@ -1753,6 +1769,9 @@ func (tr *TableImporter) preDeduplicate(
 		}
 	}
 	if oneConflictMsg == "" || otherConflictMsg == "" {
+		tr.logger.Error("cannot find conflict rows by rowID",
+			zap.Int64("rowID[0]", rowID[0]),
+			zap.Int64("rowID[1]", rowID[1]))
 		return errors.Trace(err)
 	}
 	return errors.Errorf("duplicate entry for key '%s', a pair of conflicting rows are (%s, %s)",
