@@ -125,8 +125,7 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo, 
 	return exprs[0], nil
 }
 
-func getPartColumnsForHashPartition(ctx sessionctx.Context, hashExpr expression.Expression,
-	columns []*expression.Column, names types.NameSlice) ([]*expression.Column, []int) {
+func getPartColumnsForHashPartition(hashExpr expression.Expression) ([]*expression.Column, []int) {
 	partCols := expression.ExtractColumns(hashExpr)
 	colLen := make([]int, 0, len(partCols))
 	for i := 0; i < len(partCols); i++ {
@@ -144,7 +143,7 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 	if err != nil {
 		return nil, nil, err
 	}
-	partCols, colLen := getPartColumnsForHashPartition(ctx, hashExpr, columns, names)
+	partCols, colLen := getPartColumnsForHashPartition(hashExpr)
 	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, nil, err
@@ -245,7 +244,7 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 
 func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 	tbl table.Table, partitionNames []model.CIStr, columns []*expression.Column,
-	conds []expression.Expression, names types.NameSlice) ([]int, []expression.Expression, error) {
+	conds []expression.Expression, _ types.NameSlice) ([]int, []expression.Expression, error) {
 	pi := tbl.Meta().Partition
 	partExpr := tbl.(partitionTable).PartitionExpr()
 	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
@@ -486,8 +485,7 @@ type listPartitionPruner struct {
 	listPrune      *tables.ForListPruning
 }
 
-func newListPartitionPruner(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
-	s *partitionProcessor, conds []expression.Expression, pruneList *tables.ForListPruning, columns []*expression.Column) *listPartitionPruner {
+func newListPartitionPruner(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr, s *partitionProcessor, pruneList *tables.ForListPruning, columns []*expression.Column) *listPartitionPruner {
 	pruneList = pruneList.Clone()
 	for i := range pruneList.PruneExprCols {
 		for j := range columns {
@@ -723,7 +721,7 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 	pi := tbl.Meta().Partition
 	partExpr := tbl.(partitionTable).PartitionExpr()
 
-	listPruner := newListPartitionPruner(ctx, tbl, partitionNames, s, conds, partExpr.ForListPruning, columns)
+	listPruner := newListPartitionPruner(ctx, tbl, partitionNames, s, partExpr.ForListPruning, columns)
 	var used map[int]struct{}
 	var err error
 	if partExpr.ForListPruning.ColPrunes == nil {
