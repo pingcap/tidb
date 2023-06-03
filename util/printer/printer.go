@@ -40,7 +40,6 @@ func PrintTiDBInfo() {
 		zap.String("GoVersion", buildVersion),
 		zap.Bool("Race Enabled", israce.RaceEnabled),
 		zap.Bool("Check Table Before Drop", config.CheckTableBeforeDrop),
-		zap.String("TiKV Min Version", versioninfo.TiKVMinVersion),
 	}
 	if versioninfo.TiDBEnterpriseExtensionGitHash != "" {
 		fields = append(fields, zap.String("Enterprise Extension Commit Hash", versioninfo.TiDBEnterpriseExtensionGitHash))
@@ -66,7 +65,6 @@ func GetTiDBInfo() string {
 		"UTC Build Time: %s\n"+
 		"GoVersion: %s\n"+
 		"Race Enabled: %v\n"+
-		"TiKV Min Version: %s\n"+
 		"Check Table Before Drop: %v\n"+
 		"Store: %s"+
 		"%s",
@@ -77,7 +75,6 @@ func GetTiDBInfo() string {
 		versioninfo.TiDBBuildTS,
 		buildVersion,
 		israce.RaceEnabled,
-		versioninfo.TiKVMinVersion,
 		config.CheckTableBeforeDrop,
 		config.GetGlobalConfig().Store,
 		enterpriseVersion,
