@@ -163,63 +163,34 @@ func TestSimplifyTable(t *testing.T) {
 			expTable:   "CREATE TABLE t(c int, d int, UNIQUE INDEX idx_cd(c, d))",
 			expColPerm: []int{2, 3, 10},
 		},
-		//{
-		//	table: "CREATE TABLE `dup_detect`\n" +
-		//		"(\n" +
-		//		"    `col1` bigint(20) unsigned NOT NULL,\n" +
-		//		"    `col2` varchar(10)     NOT NULL,\n" +
-		//		"    `col3` bigint(20) unsigned NOT NULL,\n" +
-		//		"    `col4` varchar(10)     NOT NULL,\n" +
-		//		"    `col5` decimal(36, 18) NOT NULL,\n" +
-		//		"    `col6` tinyint(4) NOT NULL,\n" +
-		//		"    `col7` int(11) NOT NULL,\n" +
-		//		"    PRIMARY KEY (`col1`),\n" +
-		//		"    INDEX  `idx_col3` (`col3`),\n" +
-		//		"    INDEX  `idx_col4` (`col4`),\n" +
-		//		"    UNIQUE KEY `uniq_col6_col7` (`col6`, `col7`)\n)",
-		//	colPerm: []int{0, 1, 2, 3, 4, 5, 6},
-		//	expTable: "CREATE TABLE `dup_detect`\n" +
-		//		"(\n" +
-		//		"    `col1` bigint(20) unsigned NOT NULL,\n" +
-		//		"    `col6` tinyint(4) NOT NULL,\n" +
-		//		"    `col7` int(11) NOT NULL,\n" +
-		//		"    PRIMARY KEY (`col1`),\n" +
-		//		"    UNIQUE KEY `uniq_col6_col7` (`col6`, `col7`)\n)",
-		//	expColPerm: []int{0, 5, 6},
-		//},
 	}
 	for _, tc := range testCases {
 		p := parser.New()
 		originalTblInfo, err := dbutil.GetTableInfoBySQL(tc.table, p)
 		require.NoError(t, err)
-		actualTblInfo, actualColPerm := simplifyTable(originalTblInfo, tc.colPerm)
 
-		if tc.expTableHasNoCols {
-			require.Empty(t, actualTblInfo.Columns)
-		} else {
-			expTblInfo, err := dbutil.GetTableInfoBySQL(tc.expTable, p)
-			require.NoError(t, err)
+		// run twice to make sure originalTblInfo is not changed
+		for i := 0; i < 2; i++ {
+			actualTblInfo, actualColPerm := simplifyTable(originalTblInfo, tc.colPerm)
+			if tc.expTableHasNoCols {
+				require.Empty(t, actualTblInfo.Columns)
+			} else {
+				expTblInfo, err := dbutil.GetTableInfoBySQL(tc.expTable, p)
+				require.NoError(t, err)
 
-			require.Equal(t, len(expTblInfo.Columns), len(actualTblInfo.Columns))
-			for i, col := range actualTblInfo.Columns {
-				require.Equal(t, expTblInfo.Columns[i].Name, col.Name)
-				require.Equal(t, expTblInfo.Columns[i].Offset, col.Offset)
-			}
-
-			require.Equal(t, len(expTblInfo.Indices), len(actualTblInfo.Indices))
-		compareName:
-			for i, idxInfo := range actualTblInfo.Indices {
-				require.Equal(t, expTblInfo.Indices[i].Name, idxInfo.Name)
-				require.Equal(t, expTblInfo.Indices[i].Columns, idxInfo.Columns)
-				for _, idx := range originalTblInfo.Indices {
-					if idx.Name == idxInfo.Name {
-						require.Equal(t, idx.ID, idxInfo.ID)
-						continue compareName
-					}
+				require.Equal(t, len(expTblInfo.Columns), len(actualTblInfo.Columns))
+				for i, col := range actualTblInfo.Columns {
+					require.Equal(t, expTblInfo.Columns[i].Name, col.Name)
+					require.Equal(t, expTblInfo.Columns[i].Offset, col.Offset)
 				}
-				require.FailNow(t, "index %s not found", idxInfo.Name)
+
+				require.Equal(t, len(expTblInfo.Indices), len(actualTblInfo.Indices))
+				for i, idxInfo := range actualTblInfo.Indices {
+					require.Equal(t, expTblInfo.Indices[i].Name, idxInfo.Name)
+					require.Equal(t, expTblInfo.Indices[i].Columns, idxInfo.Columns)
+				}
 			}
+			require.Equal(t, tc.expColPerm, actualColPerm)
 		}
-		require.Equal(t, tc.expColPerm, actualColPerm)
 	}
 }

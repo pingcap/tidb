@@ -363,7 +363,7 @@ func simplifyTable(
 	usedColOffsets := make(map[int]struct{})
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.Primary || idxInfo.Unique {
-			usedIndices = append(usedIndices, idxInfo)
+			usedIndices = append(usedIndices, idxInfo.Clone())
 			for _, col := range idxInfo.Columns {
 				usedColOffsets[col.Offset] = struct{}{}
 			}
