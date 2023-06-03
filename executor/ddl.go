@@ -720,7 +720,7 @@ func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
 }
 
 func (e *DDLExec) executeRepairTable(s *ast.RepairTableStmt) error {
-	return domain.GetDomain(e.ctx).DDL().RepairTable(e.ctx, s.Table, s.CreateStmt)
+	return domain.GetDomain(e.ctx).DDL().RepairTable(e.ctx, s.CreateStmt)
 }
 
 func (e *DDLExec) executeCreateSequence(s *ast.CreateSequenceStmt) error {

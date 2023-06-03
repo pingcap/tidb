@@ -216,7 +216,7 @@ func deleteETCDRowCntStatIfNecessary(ctx context.Context, reorgInfo *reorgInfo, 
 // the additional ddl round.
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
-func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
+func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 	lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
 	d := reorgInfo.d

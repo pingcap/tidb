@@ -78,7 +78,7 @@ func TestDDLScheduling(t *testing.T) {
 				})
 				for {
 					time.Sleep(time.Millisecond * 100)
-					jobs, err := ddl.GetAllDDLJobs(testkit.NewTestKit(t, store).Session(), nil)
+					jobs, err := ddl.GetAllDDLJobs(testkit.NewTestKit(t, store).Session())
 					require.NoError(t, err)
 					if len(jobs) == i+1 {
 						break
@@ -209,7 +209,7 @@ func TestUpgradingRelatedJobState(t *testing.T) {
 	hook.OnGetJobBeforeExported = func(jobType string) {
 		for i := 0; i < 100; i++ {
 			time.Sleep(time.Millisecond * 100)
-			jobs, err := ddl.GetAllDDLJobs(testkit.NewTestKit(t, store).Session(), nil)
+			jobs, err := ddl.GetAllDDLJobs(testkit.NewTestKit(t, store).Session())
 			require.NoError(t, err)
 			if len(jobs) < 1 || jobs[0].Query != testCases[num].sql {
 				continue

@@ -542,7 +542,7 @@ type DDLJobRetriever struct {
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
 	m := meta.NewMeta(txn)
-	jobs, err := ddl.GetAllDDLJobs(sess, m)
+	jobs, err := ddl.GetAllDDLJobs(sess)
 	if err != nil {
 		return err
 	}
@@ -711,7 +711,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	session.GetSessionVars().SetInTxn(true)
 
 	m := meta.NewMeta(txn)
-	jobs, err = ddl.GetAllDDLJobs(session, m)
+	jobs, err = ddl.GetAllDDLJobs(session)
 	if err != nil {
 		return err
 	}
@@ -799,7 +799,7 @@ func (e *ShowDDLJobQueriesWithRangeExec) Open(ctx context.Context) error {
 	session.GetSessionVars().SetInTxn(true)
 
 	m := meta.NewMeta(txn)
-	jobs, err = ddl.GetAllDDLJobs(session, m)
+	jobs, err = ddl.GetAllDDLJobs(session)
 	if err != nil {
 		return err
 	}
