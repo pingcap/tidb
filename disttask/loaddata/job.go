@@ -97,7 +97,7 @@ func (ti *DistImporter) ImportTask(task *proto.Task) {
 // Result implements JobImporter.Result.
 func (ti *DistImporter) Result() importer.JobImportResult {
 	var result importer.JobImportResult
-	taskMeta, err := GetTaskMeta(ti.jobID)
+	taskMeta, err := getTaskMeta(ti.jobID)
 	if err != nil {
 		result.Msg = err.Error()
 		return result
@@ -188,8 +188,7 @@ func (*DistImporter) taskKey() string {
 	return fmt.Sprintf("%s/%s", proto.ImportInto, uuid.New().String())
 }
 
-// GetTaskMeta gets task meta of a job.
-func GetTaskMeta(jobID int64) (*TaskMeta, error) {
+func getTaskMeta(jobID int64) (*TaskMeta, error) {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
@@ -207,6 +206,36 @@ func GetTaskMeta(jobID int64) (*TaskMeta, error) {
 		return nil, err
 	}
 	return &taskMeta, nil
+}
+
+// GetTaskImportedRows gets the number of imported rows of a job.
+// Note: for finished job, we can get the number of imported rows from task meta.
+func GetTaskImportedRows(jobID int64) (uint64, error) {
+	globalTaskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return 0, err
+	}
+	taskKey := TaskKey(jobID)
+	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	if err != nil {
+		return 0, err
+	}
+	if globalTask == nil {
+		return 0, errors.Errorf("cannot find global task with key %s", taskKey)
+	}
+	subtasks, err := globalTaskManager.GetSubtasksByStep(globalTask.ID, Import)
+	if err != nil {
+		return 0, err
+	}
+	var importedRows uint64
+	for _, subtask := range subtasks {
+		var subtaskMeta SubtaskMeta
+		if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
+			return 0, err2
+		}
+		importedRows += subtaskMeta.Result.LoadedRowCnt
+	}
+	return importedRows, nil
 }
 
 // TaskKey returns the task key for a job.

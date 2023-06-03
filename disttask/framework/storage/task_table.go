@@ -457,3 +457,21 @@ func (stm *TaskManager) IsGlobalTaskCancelling(taskID int64) (bool, error) {
 
 	return len(rs) > 0, nil
 }
+
+// GetSubtasksByStep gets subtasks of global task by step
+func (stm *TaskManager) GetSubtasksByStep(taskID, step int64) ([]*proto.Subtask, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+		"select * from mysql.tidb_background_subtask where task_key = %? and step = %?",
+		taskID, step)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	subtasks := make([]*proto.Subtask, 0, len(rs))
+	for _, r := range rs {
+		subtasks = append(subtasks, row2SubTask(r))
+	}
+	return subtasks, nil
+}

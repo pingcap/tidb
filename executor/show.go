@@ -2175,7 +2175,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	e.appendRow([]interface{}{stateJSON, tokenJSON})
 	return nil
 }
-func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount int64) {
+func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount uint64) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
 	result.AppendString(1, info.Parameters.FileLocation)
@@ -2187,7 +2187,7 @@ func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 	if info.Summary != nil {
 		result.AppendUint64(7, info.Summary.LoadedRowCnt.Load())
 	} else if importedRowCount > 0 {
-		result.AppendUint64(7, uint64(importedRowCount))
+		result.AppendUint64(7, importedRowCount)
 	} else {
 		result.AppendNull(7)
 	}
@@ -2199,14 +2199,14 @@ func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 }
 
 func handleImportJobInfo(info *importer.JobInfo, result *chunk.Chunk) error {
-	var importedRowCount int64
-	if info.Summary == nil {
-		// the job is running, need get progress from distributed framework.
-		taskMeta, err := loaddata.GetTaskMeta(info.ID)
+	var importedRowCount uint64
+	if info.Summary == nil && info.Status == importer.JobStatusRunning {
+		// for running jobs, need get from distributed framework.
+		rows, err := loaddata.GetTaskImportedRows(info.ID)
 		if err != nil {
 			return err
 		}
-		importedRowCount = int64(taskMeta.Result.LoadedRowCnt)
+		importedRowCount = rows
 	}
 	fillOneImportJobInfo(info, result, importedRowCount)
 	return nil

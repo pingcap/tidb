@@ -50,8 +50,9 @@ const (
 	// 	     │             │       ┌─────────┐
 	// 	     └─────────────┴──────►│cancelled│
 	// 	                           └─────────┘
-	jobStatusPending   = "pending"
-	jobStatusRunning   = "running"
+	jobStatusPending = "pending"
+	// JobStatusRunning exported since it's used in show import jobs
+	JobStatusRunning   = "running"
 	jogStatusCancelled = "cancelled"
 	jobStatusFailed    = "failed"
 	jobStatusFinished  = "finished"
@@ -106,7 +107,7 @@ type JobInfo struct {
 
 // CanCancel returns whether the job can be cancelled.
 func (j *JobInfo) CanCancel() bool {
-	return j.Status == jobStatusPending || j.Status == jobStatusRunning
+	return j.Status == jobStatusPending || j.Status == JobStatusRunning
 }
 
 // Job import job.
@@ -176,7 +177,7 @@ func (j *Job) Start(ctx context.Context) error {
 	_, err := j.Conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
 		SET update_time = CURRENT_TIMESTAMP(6), start_time = CURRENT_TIMESTAMP(6), status = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusRunning, j.ID, jobStatusPending)
+		JobStatusRunning, j.ID, jobStatusPending)
 	if err != nil {
 		return err
 	}
@@ -194,7 +195,7 @@ func (j *Job) Finish(ctx context.Context, summary string) error {
 	_, err := j.Conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
 		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, step = %?, summary = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFinished, jobStepNone, summary, j.ID, jobStatusRunning)
+		jobStatusFinished, jobStepNone, summary, j.ID, JobStatusRunning)
 	if err != nil {
 		return err
 	}
@@ -210,7 +211,7 @@ func (j *Job) Fail(ctx context.Context, errorMsg string) error {
 	_, err := j.Conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
 		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFailed, errorMsg, j.ID, jobStatusRunning)
+		jobStatusFailed, errorMsg, j.ID, JobStatusRunning)
 	if err != nil {
 		return err
 	}
@@ -322,7 +323,7 @@ func CancelJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err 
 			SET update_time = CURRENT_TIMESTAMP(6), status = %?,
 				end_time = CURRENT_TIMESTAMP(6), error_message = 'canceled by user'
 			WHERE id = %? AND status IN (%?, %?);`
-	args := []interface{}{jogStatusCancelled, jobID, jobStatusPending, jobStatusRunning}
+	args := []interface{}{jogStatusCancelled, jobID, jobStatusPending, JobStatusRunning}
 	_, err = conn.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return err
