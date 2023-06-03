@@ -16,9 +16,13 @@ package domain_test
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/stretchr/testify/require"
 )
 
@@ -118,4 +122,28 @@ func TestPlanReplayerHandleDumpTask(t *testing.T) {
 	require.Equal(t, prHandle.GetTaskStatus().GetRunningTaskStatusLen(), 0)
 	// assert capture * task still remained
 	require.Len(t, prHandle.GetTasks(), 1)
+}
+
+func TestPlanReplayerGC(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	handler := dom.GetDumpFileGCChecker()
+
+	startTime := time.Now()
+	time := startTime.UnixNano()
+	fileName := fmt.Sprintf("replayer_single_xxxxxx_%v.zip", time)
+	err := os.MkdirAll(replayer.GetPlanReplayerDirName(), os.ModePerm)
+	require.NoError(t, err)
+	tk.MustExec("insert into mysql.plan_replayer_status(sql_digest, plan_digest, token, instance) values" +
+		"('123','123','" + fileName + "','123')")
+	path := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
+	zf, err := os.Create(path)
+	require.NoError(t, err)
+	zf.Close()
+	handler.GCDumpFiles(0, 0)
+	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("0"))
+
+	_, err = os.Stat(path)
+	require.NotNil(t, err)
+	require.True(t, os.IsNotExist(err))
 }

@@ -20,8 +20,9 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
@@ -32,16 +33,18 @@ import (
 )
 
 // ImportScheduler is a scheduler for load data.
+// Scheduler is equivalent to a Lightning instance.
 type ImportScheduler struct {
+	taskID        int64
 	taskMeta      *TaskMeta
-	indexEngine   *backend.OpenedEngine
-	dataEngines   sync.Map
 	tableImporter *importer.TableImporter
+	sharedVars    sync.Map
+	logger        *zap.Logger
 }
 
 // InitSubtaskExecEnv implements the Scheduler.InitSubtaskExecEnv interface.
 func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
-	logutil.BgLogger().Info("InitSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
+	s.logger.Info("InitSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
 
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, s.taskMeta.Plan.TableInfo)
@@ -62,27 +65,19 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 
 	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
-		Progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
-		Job: &asyncloaddata.Job{
-			ID: s.taskMeta.JobID,
-		},
-	}, controller)
+		Progress: asyncloaddata.NewProgress(false),
+		Job:      &asyncloaddata.Job{},
+	}, controller, s.taskID)
 	if err != nil {
 		return err
 	}
 	s.tableImporter = tableImporter
-
-	indexEngine, err := s.tableImporter.OpenIndexEngine(ctx)
-	if err != nil {
-		return err
-	}
-	s.indexEngine = indexEngine
 	return nil
 }
 
 // SplitSubtask implements the Scheduler.SplitSubtask interface.
 func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
-	logutil.BgLogger().Info("SplitSubtask", zap.Any("taskMeta", s.taskMeta))
+	s.logger.Info("SplitSubtask", zap.Any("taskMeta", s.taskMeta))
 	var subtaskMeta SubtaskMeta
 	err := json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
@@ -93,60 +88,88 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 	if err != nil {
 		return nil, err
 	}
-	s.dataEngines.Store(subtaskMeta.ID, dataEngine)
+	// Unlike in Lightning, we start an index engine for each subtask, whereas previously there was only a single index engine globally.
+	// This is because the scheduler currently does not have a post-processing mechanism.
+	// If we import the index in `cleanupSubtaskEnv`, the dispatcher will not wait for the import to complete.
+	// Multiple index engines may suffer performance degradation due to range overlap.
+	// These issues will be alleviated after we integrate s3 sorter.
+	// engineID = -1, -2, -3, ...
+	indexEngine, err := s.tableImporter.OpenIndexEngine(ctx, common.IndexEngineID-subtaskMeta.ID)
+	if err != nil {
+		return nil, err
+	}
+	sharedVars := &SharedVars{
+		TableImporter: s.tableImporter,
+		DataEngine:    dataEngine,
+		IndexEngine:   indexEngine,
+		Progress:      asyncloaddata.NewProgress(false),
+		Checksum:      &verification.KVChecksum{},
+	}
+	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
 	miniTask := make([]proto.MinimalTask, 0, len(subtaskMeta.Chunks))
 	for _, chunk := range subtaskMeta.Chunks {
 		miniTask = append(miniTask, MinimalTaskMeta{
-			Plan:          s.taskMeta.Plan,
-			Chunk:         chunk,
-			DataEngine:    dataEngine,
-			IndexEngine:   s.indexEngine,
-			TableImporter: s.tableImporter,
+			Plan:       s.taskMeta.Plan,
+			Chunk:      chunk,
+			SharedVars: sharedVars,
 		})
 	}
 	return miniTask, nil
 }
 
 // OnSubtaskFinished implements the Scheduler.OnSubtaskFinished interface.
-func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaBytes []byte) error {
-	logutil.BgLogger().Info("OnSubtaskFinished", zap.Any("taskMeta", s.taskMeta))
+func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
+	s.logger.Info("OnSubtaskFinished", zap.Any("taskMeta", s.taskMeta))
 	var subtaskMeta SubtaskMeta
 	if err := json.Unmarshal(subtaskMetaBytes, &subtaskMeta); err != nil {
-		return err
+		return nil, err
 	}
 
-	dataEngine, ok := s.dataEngines.Load(subtaskMeta.ID)
+	val, ok := s.sharedVars.Load(subtaskMeta.ID)
 	if !ok {
-		return errors.Errorf("data engine %d not found", subtaskMeta.ID)
+		return nil, errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
-	engine, ok := dataEngine.(*backend.OpenedEngine)
+	sharedVars, ok := val.(*SharedVars)
 	if !ok {
-		return errors.Errorf("data engine %d not found", subtaskMeta.ID)
+		return nil, errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
-	closedEngine, err := engine.Close(ctx)
+
+	// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
+	s.logger.Info("import data engine", zap.Any("id", subtaskMeta.ID))
+	closedDataEngine, err := sharedVars.DataEngine.Close(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.tableImporter.ImportAndCleanup(ctx, closedEngine)
+	dataKVCount, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
+	if err != nil {
+		return nil, err
+	}
+
+	logutil.BgLogger().Info("import index engine", zap.Any("id", subtaskMeta.ID))
+	if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
+		return nil, err
+	} else if _, err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
+		return nil, err
+	}
+
+	sharedVars.mu.Lock()
+	defer sharedVars.mu.Unlock()
+	subtaskMeta.Checksum.Sum = sharedVars.Checksum.Sum()
+	subtaskMeta.Checksum.KVs = sharedVars.Checksum.SumKVS()
+	subtaskMeta.Checksum.Size = sharedVars.Checksum.SumSize()
+	subtaskMeta.Result = Result{
+		ReadRowCnt:   sharedVars.Progress.ReadRowCnt.Load(),
+		LoadedRowCnt: uint64(dataKVCount),
+	}
+	s.sharedVars.Delete(subtaskMeta.ID)
+	return json.Marshal(subtaskMeta)
 }
 
 // CleanupSubtaskExecEnv implements the Scheduler.CleanupSubtaskExecEnv interface.
-func (s *ImportScheduler) CleanupSubtaskExecEnv(ctx context.Context) (err error) {
-	defer func() {
-		err2 := s.tableImporter.Close()
-		if err == nil {
-			err = err2
-		}
-	}()
-
-	logutil.BgLogger().Info("CleanupSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
-	// FIXME: if cleanup failed, framework still regard it as success.
-	closedIndexEngine, err := s.indexEngine.Close(ctx)
-	if err != nil {
-		return err
-	}
-	return s.tableImporter.ImportAndCleanup(ctx, closedIndexEngine)
+func (s *ImportScheduler) CleanupSubtaskExecEnv(_ context.Context) (err error) {
+	s.logger.Info("CleanupSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
+	return s.tableImporter.Close()
 }
 
 // Rollback implements the Scheduler.Rollback interface.
@@ -159,13 +182,19 @@ func (s *ImportScheduler) Rollback(context.Context) error {
 func init() {
 	scheduler.RegisterSchedulerConstructor(
 		proto.LoadData,
-		func(bs []byte, step int64) (scheduler.Scheduler, error) {
+		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
 			taskMeta := TaskMeta{}
 			if err := json.Unmarshal(bs, &taskMeta); err != nil {
 				return nil, err
 			}
-			logutil.BgLogger().Info("register scheduler constructor", zap.Any("taskMeta", taskMeta))
-			return &ImportScheduler{taskMeta: &taskMeta}, nil
+			logger := logutil.BgLogger().With(zap.String("component", "scheduler"), zap.String("type", proto.LoadData), zap.Int64("table_id", taskMeta.Plan.TableInfo.ID))
+			logger.Info("create new load data scheduler", zap.Any("taskMeta", taskMeta))
+			return &ImportScheduler{
+				taskID:   taskID,
+				taskMeta: &taskMeta,
+				logger:   logger,
+			}, nil
 		},
+		scheduler.WithConcurrentSubtask(),
 	)
 }

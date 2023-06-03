@@ -132,12 +132,11 @@ Projection	10000.00	root		eq(test.t1.c2, test.t2.c2)->Column#11
 └─Apply	10000.00	root		CARTESIAN left outer join
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Limit(Probe)	10000.00	root		offset:0, count:1
-    └─Projection	10000.00	root		test.t2.c1, test.t2.c2
-      └─IndexLookUp	10000.00	root		
-        ├─Limit(Build)	10000.00	cop[tikv]		offset:0, count:1
-        │ └─IndexRangeScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true, stats:pseudo
-        └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─Projection(Probe)	10000.00	root		test.t2.c1, test.t2.c2
+    └─IndexLookUp	10000.00	root		limit embedded(offset:0, count:1)
+      ├─Limit(Build)	10000.00	cop[tikv]		offset:0, count:1
+      │ └─IndexRangeScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true, stats:pseudo
+      └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 order by c1 desc limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
@@ -680,9 +679,8 @@ Sort	10000.00	root		test.t.a, test.t.b
 explain format = 'brief' select * from (select * from t order by c) t order by a, b;
 id	estRows	task	access object	operator info
 Sort	10000.00	root		test.t.a, test.t.b
-└─Sort	10000.00	root		test.t.c
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
 explain format = 'brief' SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a;

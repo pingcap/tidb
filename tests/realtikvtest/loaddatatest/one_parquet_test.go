@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -28,13 +28,7 @@ import (
 //go:embed test.parquet
 var content []byte
 
-func (s *mockGCSSuite) TestLoadParquet() {
-	s.testLoadParquet(importer.LogicalImportMode)
-	s.testLoadParquet(importer.PhysicalImportMode)
-}
-
-func (s *mockGCSSuite) testLoadParquet(importMode string) {
-	withOptions := fmt.Sprintf("WITH DETACHED, import_mode='%s'", importMode)
+func (s *mockGCSSuite) TestDetachedLoadParquet() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("USE load_csv;")
@@ -51,16 +45,15 @@ func (s *mockGCSSuite) testLoadParquet(importMode string) {
 		Content: content,
 	})
 
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load-parquet/p?endpoint=%s'
-		FORMAT 'parquet' INTO TABLE t %s;`, gcsEndpoint, withOptions)
+	s.T().Cleanup(func() { executor.TestDetachedTaskFinished.Store(false) })
+	s.enableFailpoint("github.com/pingcap/tidb/executor/testDetachedTaskFinished", "return(true)")
+	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-load-parquet/p?endpoint=%s'
+		FORMAT 'parquet' WITH detached;`, gcsEndpoint)
 	rows := s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
-	jobID := rows[0][0].(string)
 	require.Eventually(s.T(), func() bool {
-		rows = s.tk.MustQuery("SHOW LOAD DATA JOB " + jobID + ";").Rows()
-		require.Len(s.T(), rows, 1)
-		return rows[0][9] == "finished"
-	}, 5*time.Second, time.Second)
+		return executor.TestDetachedTaskFinished.Load()
+	}, 10*time.Second, time.Second)
 
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows(
 		"1 1 0 123 1.23 0.00000001 1234567890 123 1.23000000",

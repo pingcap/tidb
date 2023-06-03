@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/stretchr/testify/require"
 )
 
@@ -101,8 +103,10 @@ func prepareData4OptimizeTrace(t *testing.T, client *testServerClient, statHandl
 
 func TestOptimizerDebugTrace(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/SetBindingTimeToZero", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DebugTraceStableStatsTbl", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/SetBindingTimeToZero"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DebugTraceStableStatsTbl"))
 	}()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -131,7 +135,10 @@ func TestOptimizerDebugTrace(t *testing.T) {
 
 	tk.MustExec("plan replayer capture '0595c79f25d183319d0830ff8ca538c9054cbf407e5e27488b5dc40e4738a7c8' '*'")
 	tk.MustExec("plan replayer capture 'c0fcc0abbaaffcaafe21115a3c67ae5d96a188cc197559953d2865ea6852d3cc' '*'")
+	tk.MustExec("plan replayer capture '58fcbdd56a722c02225488c89a782cd2d626f8219c8ef8f57cd3bcdb6eb7c1b2' '*'")
 	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(col1) from t where col1 < ? and col1 > 100"))
+	tk.MustExec("prepare stmt from 'select * from t where col1 in (?, 2, 3)'")
+	tk.MustExec("set @a = 1")
 	var (
 		in  []string
 		out []interface{}
@@ -151,5 +158,14 @@ func TestOptimizerDebugTrace(t *testing.T) {
 			out[i] = res
 		})
 		require.Equal(t, out[i], res, cmdString)
+	}
+
+	prHandle := dom.GetPlanReplayerHandle()
+	worker := prHandle.GetWorker()
+	for i := 0; i < 3; i++ {
+		task := prHandle.DrainTask()
+		success := worker.HandleTask(task)
+		require.True(t, success)
+		require.NoError(t, os.Remove(filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName)))
 	}
 }

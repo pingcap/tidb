@@ -162,7 +162,7 @@ func initSessCtx(sessCtx sessionctx.Context, sqlMode mysql.SQLMode, tzLocation *
 	return nil
 }
 
-func (b *txnBackfillScheduler) expectedWorkerSize() (size int) {
+func (*txnBackfillScheduler) expectedWorkerSize() (size int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
 	return mathutil.Min(workerCnt, maxBackfillWorkerSize)
 }
@@ -296,11 +296,9 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 		return errors.Trace(errors.New("cannot get lightning backend"))
 	}
 	b.backendCtx = bc
-	if !b.distribute {
-		mgr, err := ingest.NewCheckpointManager(b.ctx, bc, b.sessPool, job.ID, b.reorgInfo.currElement.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	mgr := bc.GetCheckpointManager()
+	if mgr != nil {
+		mgr.Reset(b.tbl.GetPhysicalID(), b.reorgInfo.StartKey, b.reorgInfo.EndKey)
 		b.checkpointMgr = mgr
 	}
 	copReqSenderPool, err := b.createCopReqSenderPool()
@@ -333,7 +331,7 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		b.writerPool.ReleaseAndWait()
 	}
 	if b.checkpointMgr != nil {
-		b.checkpointMgr.Close()
+		b.checkpointMgr.Sync()
 		// Get the latest status after all workers are closed so that the result is more accurate.
 		cnt, nextKey := b.checkpointMgr.Status()
 		b.resultCh <- &backfillResult{
@@ -437,10 +435,10 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return nil, err
 	}
-	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.checkpointMgr), nil
+	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
-func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
+func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
 	readerSize = mathutil.Min(workerCnt/2, maxBackfillWorkerSize)
 	readerSize = mathutil.Max(readerSize, 1)
@@ -486,20 +484,18 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		result.totalCount = cnt
 		result.nextKey = nextKey
 		result.err = w.checkpointMgr.UpdateCurrent(rs.id, count)
-		count = cnt
 	} else {
 		result.addedCount = count
 		result.scanCount = count
 		result.nextKey = nextKey
 	}
-	w.metricCounter.Add(float64(count))
 	if ResultCounterForTest != nil && result.err == nil {
 		ResultCounterForTest.Add(1)
 	}
 	w.resultCh <- result
 }
 
-func (w *addIndexIngestWorker) Close() {}
+func (*addIndexIngestWorker) Close() {}
 
 type taskIDAllocator struct {
 	id int

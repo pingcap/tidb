@@ -16,8 +16,10 @@ package ingest
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -29,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -41,10 +45,27 @@ type BackendCtx interface {
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
 	ResetWorkers(jobID, indexID int64)
-	Flush(indexID int64, force bool) (flushed, imported bool, err error)
+	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
 	Done() bool
 	SetDone()
+
+	AttachCheckpointManager(*CheckpointManager)
+	GetCheckpointManager() *CheckpointManager
 }
+
+// FlushMode is used to control how to flush.
+type FlushMode byte
+
+const (
+	// FlushModeAuto means flush when the memory table size reaches the threshold.
+	FlushModeAuto FlushMode = iota
+	// FlushModeForceLocal means flush all data to local storage.
+	FlushModeForceLocal
+	// FlushModeForceLocalAndCheckDiskQuota means flush all data to local storage and check disk quota.
+	FlushModeForceLocalAndCheckDiskQuota
+	// FlushModeForceGlobal means import all data in local storage to global storage.
+	FlushModeForceGlobal
+)
 
 // litBackendCtx store a backend info for add index reorg task.
 type litBackendCtx struct {
@@ -61,6 +82,8 @@ type litBackendCtx struct {
 
 	timeOfLastFlush atomicutil.Time
 	updateInterval  time.Duration
+	checkpointMgr   *CheckpointManager
+	etcdClient      *clientv3.Client
 }
 
 // CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
@@ -100,6 +123,10 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 		return err
 	}
 
+	failpoint.Inject("mockFinishImportErr", func() {
+		failpoint.Return(fmt.Errorf("mock finish import error"))
+	})
+
 	// Check remote duplicate value for the index.
 	if unique {
 		errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.BgLogger()})
@@ -125,46 +152,94 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 	return nil
 }
 
+func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {
+	mu := concurrency.NewMutex(se, key)
+	err := mu.Lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return mu, nil
+}
+
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
-func (bc *litBackendCtx) Flush(indexID int64, force bool) (flushed, imported bool, err error) {
+func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error) {
 	ei, exist := bc.Load(indexID)
 	if !exist {
 		logutil.BgLogger().Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
 		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
-	bc.diskRoot.UpdateUsage()
-	shouldImport := bc.diskRoot.ShouldImport()
-	shouldFlush := force ||
-		shouldImport ||
-		time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
+	shouldFlush, shouldImport := bc.ShouldSync(mode)
 	if !shouldFlush {
 		return false, false, nil
 	}
+	if !ei.flushing.CompareAndSwap(false, true) {
+		return false, false, nil
+	}
+	defer ei.flushing.Store(false)
+	ei.flushLock.Lock()
+	defer ei.flushLock.Unlock()
 
-	bc.timeOfLastFlush.Store(time.Now())
 	err = ei.Flush()
 	if err != nil {
 		return false, false, err
 	}
+	bc.timeOfLastFlush.Store(time.Now())
 
-	if force || shouldImport {
-		release := ei.acquireFlushLock()
-		if release == nil {
-			return true, false, nil
-		}
-		defer release()
-		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
-			zap.String("usage info", bc.diskRoot.UsageInfo()))
-		err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
+	if !shouldImport {
+		return true, false, nil
+	}
+
+	// Use distributed lock if run in distributed mode).
+	if bc.etcdClient != nil {
+		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
+		se, _ := concurrency.NewSession(bc.etcdClient)
+		mu, err := acquireLock(bc.ctx, se, distLockKey)
 		if err != nil {
-			logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
-				zap.String("usage info", bc.diskRoot.UsageInfo()))
 			return true, false, err
 		}
-		return true, true, nil
+		logutil.BgLogger().Info("[ddl] acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
+		defer func() {
+			err = mu.Unlock(bc.ctx)
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl] release distributed flush lock error", zap.Error(err), zap.Int64("jobID", bc.jobID))
+			} else {
+				logutil.BgLogger().Info("[ddl] release distributed flush lock success", zap.Int64("jobID", bc.jobID))
+			}
+			err = se.Close()
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl] close session error", zap.Error(err))
+			}
+		}()
 	}
-	return true, false, nil
+
+	logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
+		zap.String("usage info", bc.diskRoot.UsageInfo()))
+	err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
+	if err != nil {
+		logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
+			zap.String("usage info", bc.diskRoot.UsageInfo()))
+		return true, false, err
+	}
+	return true, true, nil
+}
+
+func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImport bool) {
+	if mode == FlushModeForceGlobal {
+		return true, true
+	}
+	if mode == FlushModeForceLocal {
+		return true, false
+	}
+	bc.diskRoot.UpdateUsage()
+	shouldImport = bc.diskRoot.ShouldImport()
+	if mode == FlushModeForceLocalAndCheckDiskQuota {
+		shouldFlush = true
+	} else {
+		shouldFlush = shouldImport ||
+			time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
+	}
+	return shouldFlush, shouldImport
 }
 
 // Done returns true if the lightning backfill is done.
@@ -175,4 +250,14 @@ func (bc *litBackendCtx) Done() bool {
 // SetDone sets the done flag.
 func (bc *litBackendCtx) SetDone() {
 	bc.done = true
+}
+
+// AttachCheckpointManager attaches a checkpoint manager to the backend context.
+func (bc *litBackendCtx) AttachCheckpointManager(mgr *CheckpointManager) {
+	bc.checkpointMgr = mgr
+}
+
+// GetCheckpointManager returns the checkpoint manager attached to the backend context.
+func (bc *litBackendCtx) GetCheckpointManager() *CheckpointManager {
+	return bc.checkpointMgr
 }

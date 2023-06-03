@@ -44,36 +44,36 @@ var (
 	// the workload.
 	workloadBaseRUCostMap = map[ast.CalibrateResourceType]*baseResourceCost{
 		ast.TPCC: {
-			tidbCPU:       0.6,
-			kvCPU:         0.15,
-			readBytes:     units.MiB / 2,
-			writeBytes:    units.MiB,
-			readReqCount:  300,
-			writeReqCount: 1750,
+			tidbToKVCPURatio: 0.6,
+			kvCPU:            0.15,
+			readBytes:        units.MiB / 2,
+			writeBytes:       units.MiB,
+			readReqCount:     300,
+			writeReqCount:    1750,
 		},
 		ast.OLTPREADWRITE: {
-			tidbCPU:       1.25,
-			kvCPU:         0.35,
-			readBytes:     units.MiB * 4.25,
-			writeBytes:    units.MiB / 3,
-			readReqCount:  1600,
-			writeReqCount: 1400,
+			tidbToKVCPURatio: 1.25,
+			kvCPU:            0.35,
+			readBytes:        units.MiB * 4.25,
+			writeBytes:       units.MiB / 3,
+			readReqCount:     1600,
+			writeReqCount:    1400,
 		},
 		ast.OLTPREADONLY: {
-			tidbCPU:       2,
-			kvCPU:         0.52,
-			readBytes:     units.MiB * 28,
-			writeBytes:    0,
-			readReqCount:  4500,
-			writeReqCount: 0,
+			tidbToKVCPURatio: 2,
+			kvCPU:            0.52,
+			readBytes:        units.MiB * 28,
+			writeBytes:       0,
+			readReqCount:     4500,
+			writeReqCount:    0,
 		},
 		ast.OLTPWRITEONLY: {
-			tidbCPU:       1,
-			kvCPU:         0,
-			readBytes:     0,
-			writeBytes:    units.MiB,
-			readReqCount:  0,
-			writeReqCount: 3550,
+			tidbToKVCPURatio: 1,
+			kvCPU:            0,
+			readBytes:        0,
+			writeBytes:       units.MiB,
+			readReqCount:     0,
+			writeReqCount:    3550,
 		},
 	}
 
@@ -93,10 +93,10 @@ func GetResourceGroupController() *rmclient.ResourceGroupsController {
 
 // the resource cost rate of a specified workload per 1 tikv cpu.
 type baseResourceCost struct {
-	// the average tikv cpu time, this is used to calculate whether tikv cpu
+	// represents the average ratio of TiDB CPU time to TiKV CPU time, this is used to calculate whether tikv cpu
 	// or tidb cpu is the performance bottle neck.
-	tidbCPU float64
-	// the kv CPU time for calculate RU, it's smaller than the actual cpu usage.
+	tidbToKVCPURatio float64
+	// the kv CPU time for calculate RU, it's smaller than the actual cpu usage. The unit is seconds.
 	kvCPU float64
 	// the read bytes rate per 1 tikv cpu.
 	readBytes uint64
@@ -132,19 +132,19 @@ type calibrateResourceExec struct {
 	done         bool
 }
 
-func (e *calibrateResourceExec) parseCalibrateDuration() (startTime time.Time, endTime time.Time, err error) {
+func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (startTime time.Time, endTime time.Time, err error) {
 	var dur time.Duration
 	var ts uint64
 	for _, op := range e.optionList {
 		switch op.Tp {
 		case ast.CalibrateStartTime:
-			ts, err = staleread.CalculateAsOfTsExpr(e.ctx, op.Ts)
+			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, op.Ts)
 			if err != nil {
 				return
 			}
 			startTime = oracle.GetTimeFromTS(ts)
 		case ast.CalibrateEndTime:
-			ts, err = staleread.CalculateAsOfTsExpr(e.ctx, op.Ts)
+			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, op.Ts)
 			if err != nil {
 				return
 			}
@@ -197,12 +197,12 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 }
 
 func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
-	startTs, endTs, err := e.parseCalibrateDuration()
+	startTs, endTs, err := e.parseCalibrateDuration(ctx)
 	if err != nil {
 		return err
 	}
-	startTime := startTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
-	endTime := endTs.In(e.ctx.GetSessionVars().Location()).Format("2006-01-02 15:04:05")
+	startTime := startTs.In(e.ctx.GetSessionVars().Location()).Format(time.DateTime)
+	endTime := endTs.In(e.ctx.GetSessionVars().Location()).Format(time.DateTime)
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
@@ -243,7 +243,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		}
 		tikvQuota, tidbQuota := tikvCPUs.getValue()/totalKVCPUQuota, tidbCPUs.getValue()/totalTiDBCPU
 		// If one of the two cpu usage is greater than the `valuableUsageThreshold`, we can accept it.
-		// And if both are greater than the `lowUsageThreshold`, we can also accpet it.
+		// And if both are greater than the `lowUsageThreshold`, we can also accept it.
 		if tikvQuota > valuableUsageThreshold || tidbQuota > valuableUsageThreshold {
 			quotas = append(quotas, rus.getValue()/mathutil.Max(tikvQuota, tidbQuota))
 		} else if tikvQuota < lowUsageThreshold || tidbQuota < lowUsageThreshold {
@@ -262,7 +262,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		sort.Slice(quotas, func(i, j int) bool {
 			return quotas[i] > quotas[j]
 		})
-		lowerBound := int(math.Round(float64(len(quotas)) * float64(discardRate)))
+		lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
 		upperBound := len(quotas) - lowerBound
 		sum := 0.
 		for i := lowerBound; i < upperBound; i++ {
@@ -303,12 +303,12 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 		return errors.Errorf("unknown workload '%T'", e.workloadType)
 	}
 
-	if totalTiDBCPU/baseCost.tidbCPU < totalKVCPUQuota {
-		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbCPU
+	if totalTiDBCPU/baseCost.tidbToKVCPURatio < totalKVCPUQuota {
+		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbToKVCPURatio
 	}
 	ruCfg := resourceGroupCtl.GetConfig()
 	ruPerKVCPU := float64(ruCfg.ReadBaseCost)*float64(baseCost.readReqCount) +
-		float64(ruCfg.CPUMsCost)*baseCost.kvCPU +
+		float64(ruCfg.CPUMsCost)*baseCost.kvCPU*1000 + // convert to ms
 		float64(ruCfg.ReadBytesCost)*float64(baseCost.readBytes) +
 		float64(ruCfg.WriteBaseCost)*float64(baseCost.writeReqCount) +
 		float64(ruCfg.WriteBytesCost)*float64(baseCost.writeBytes)

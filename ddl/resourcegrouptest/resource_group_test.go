@@ -22,8 +22,8 @@ import (
 
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	mysql "github.com/pingcap/tidb/errno"
@@ -111,21 +111,21 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustExec("create resource group y RU_PER_SEC=4000")
 	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
-		require.Equal(t, true, groupInfo.ID != 0)
-		require.Equal(t, "y", groupInfo.Name.L)
-		require.Equal(t, groupID.Load(), groupInfo.ID)
-		require.Equal(t, uint64(4000), groupInfo.RURate)
-		require.Equal(t, int64(4000), groupInfo.BurstLimit)
+		re.Equal(true, groupInfo.ID != 0)
+		re.Equal("y", groupInfo.Name.L)
+		re.Equal(groupID.Load(), groupInfo.ID)
+		re.Equal(uint64(4000), groupInfo.RURate)
+		re.Equal(int64(4000), groupInfo.BurstLimit)
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
 	tk.MustExec("alter resource group y BURSTABLE RU_PER_SEC=5000")
 	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
-		require.Equal(t, true, groupInfo.ID != 0)
-		require.Equal(t, "y", groupInfo.Name.L)
-		require.Equal(t, groupID.Load(), groupInfo.ID)
-		require.Equal(t, uint64(5000), groupInfo.RURate)
-		require.Equal(t, int64(-1), groupInfo.BurstLimit)
+		re.Equal(true, groupInfo.ID != 0)
+		re.Equal("y", groupInfo.Name.L)
+		re.Equal(groupID.Load(), groupInfo.ID)
+		re.Equal(uint64(5000), groupInfo.RURate)
+		re.Equal(int64(-1), groupInfo.BurstLimit)
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
@@ -142,8 +142,8 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustGetErrCode("create resource group x  burstable, ru_per_sec=1000, burstable", mysql.ErrParse)
 	tk.MustContainErrMsg("create resource group x burstable, ru_per_sec=1000, burstable", "Dupliated options specified")
 	groups, err := infosync.ListResourceGroups(context.TODO())
-	require.Equal(t, 1, len(groups))
-	require.NoError(t, err)
+	re.Equal(1, len(groups))
+	re.NoError(err)
 
 	// Check information schema table information_schema.resource_groups
 	tk.MustExec("create resource group x RU_PER_SEC=1000 PRIORITY=LOW")
@@ -344,4 +344,25 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 			require.Equal(t, test.output, group)
 		}
 	}
+}
+
+func TestBindHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	re := require.New(t)
+
+	tk.MustExec("drop resource group if exists rg1")
+	tk.MustExec("create resource group rg1 RU_PER_SEC=1000")
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+
+	tk.MustExec("create global binding for select * from t using select /*+ resource_group(rg1) */ * from t")
+	tk.MustQuery("select * from t")
+	re.Equal("rg1", tk.Session().GetSessionVars().StmtCtx.ResourceGroup)
+	re.Equal("", tk.Session().GetSessionVars().ResourceGroupName)
+	tk.MustQuery("select a, b from t")
+	re.Equal("", tk.Session().GetSessionVars().StmtCtx.ResourceGroup)
+	re.Equal("", tk.Session().GetSessionVars().ResourceGroupName)
 }

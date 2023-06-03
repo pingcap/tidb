@@ -16,8 +16,10 @@ package loaddata
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/executor/importer"
@@ -25,16 +27,29 @@ import (
 	"go.uber.org/zap"
 )
 
-// ImportSubtaskExecutor is a subtask executor for load data.
-type ImportSubtaskExecutor struct {
+// ImportMinimalTaskExecutor is a subtask executor for load data.
+type ImportMinimalTaskExecutor struct {
 	task *MinimalTaskMeta
 }
 
 // Run implements the SubtaskExecutor.Run interface.
-func (e *ImportSubtaskExecutor) Run(ctx context.Context) error {
-	logutil.BgLogger().Info("subtask executor run", zap.Any("task", e.task))
+func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
+	logger := logutil.BgLogger().With(zap.String("component", "minimal task executor"), zap.String("type", proto.LoadData), zap.Int64("table_id", e.task.Plan.TableInfo.ID))
+	logger.Info("subtask executor run", zap.Any("task", e.task))
+	failpoint.Inject("errorWhenSortChunk", func() {
+		time.Sleep(3 * time.Second) // wait ToImportMode called
+		failpoint.Return(errors.New("occur an error when sort chunk"))
+	})
 	chunkCheckpoint := toChunkCheckpoint(e.task.Chunk)
-	return importer.ProcessChunk(ctx, &chunkCheckpoint, e.task.TableImporter, e.task.DataEngine, e.task.IndexEngine, logutil.BgLogger())
+	sharedVars := e.task.SharedVars
+	if err := importer.ProcessChunk(ctx, &chunkCheckpoint, sharedVars.TableImporter, sharedVars.DataEngine, sharedVars.IndexEngine, sharedVars.Progress, logger); err != nil {
+		return err
+	}
+
+	sharedVars.mu.Lock()
+	defer sharedVars.mu.Unlock()
+	sharedVars.Checksum.Add(&chunkCheckpoint.Checksum)
+	return nil
 }
 
 func init() {
@@ -46,7 +61,7 @@ func init() {
 			if !ok {
 				return nil, errors.Errorf("invalid task type %T", minimalTask)
 			}
-			return &ImportSubtaskExecutor{task: &task}, nil
+			return &ImportMinimalTaskExecutor{task: &task}, nil
 		},
 	)
 }

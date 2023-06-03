@@ -897,20 +897,27 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 		}
 	}
 
-	// If this happens, some Projection Operator must be inlined into this Limit. (issues/14428)
-	// For example, if the original plan is `IndexLookUp(col1, col2) -> Limit(col1, col2) -> Project(col1)`,
-	//  then after inlining the Project, it will be `IndexLookUp(col1, col2) -> Limit(col1)` here.
-	// If the Limit is sunk into the IndexLookUp, the IndexLookUp's schema needs to be updated as well,
-	//  but updating it here is not safe, so do not sink Limit into this IndexLookUp in this case now.
-	if p.Schema().Len() != reader.Schema().Len() {
-		return false
-	}
-
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
 	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
 	if !isTableScan {
 		return false
 	}
+
+	// If this happens, some Projection Operator must be inlined into this Limit. (issues/14428)
+	// For example, if the original plan is `IndexLookUp(col1, col2) -> Limit(col1, col2) -> Project(col1)`,
+	//  then after inlining the Project, it will be `IndexLookUp(col1, col2) -> Limit(col1)` here.
+	// If the Limit is sunk into the IndexLookUp, the IndexLookUp's schema needs to be updated as well,
+	// So we add an extra projection to solve the problem.
+	if p.Schema().Len() != reader.Schema().Len() {
+		extraProj := PhysicalProjection{
+			Exprs: expression.Column2Exprs(p.schema.Columns),
+		}.Init(p.SCtx(), p.statsInfo(), p.blockOffset, nil)
+		extraProj.SetSchema(p.schema)
+		// If the root.p is already a Projection. We left the optimization for the later Projection Elimination.
+		extraProj.SetChildren(root.p)
+		root.p = extraProj
+	}
+
 	reader.PushedLimit = &PushedDownLimit{
 		Offset: p.Offset,
 		Count:  p.Count,
@@ -1138,8 +1145,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}
 			if plan, ok := finalScan.(*PhysicalTableScan); ok {
 				plan.ByItems = p.ByItems
-				tblInfo := plan.Table
-				if tblInfo.GetPartitionInfo() != nil {
+				if plan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
 					plan.schema.Append(&expression.Column{
 						RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -1150,8 +1156,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}
 			if plan, ok := finalScan.(*PhysicalIndexScan); ok {
 				plan.ByItems = p.ByItems
-				tblInfo := plan.Table
-				if tblInfo.GetPartitionInfo() != nil && !plan.Index.Global {
+				if plan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() && !plan.Index.Global {
 					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
 					plan.schema.Append(&expression.Column{
 						RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -1164,10 +1169,6 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		}
 	}
 
-	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
-	for _, expr := range p.GetPartitionBy() {
-		newPartitionBy = append(newPartitionBy, expr.Clone())
-	}
 	if !copTsk.indexPlanFinished {
 		// If indexPlan side isn't finished, there's no selection on the table side.
 		if len(copTsk.idxMergePartPlans) > 0 {
@@ -1192,6 +1193,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				if !clonedTblScan.Schema().Contains(pkCol) {
 					clonedTblScan.Schema().Append(pkCol)
 					clonedTblScan.Columns = append(clonedTblScan.Columns, pk)
+					copTsk.needExtraProj = true
 				}
 			} else if tblInfo.IsCommonHandle {
 				idxInfo := tblInfo.GetPrimaryKey()
@@ -1200,30 +1202,41 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 					if !clonedTblScan.Schema().Contains(c) {
 						clonedTblScan.Schema().Append(c)
 						clonedTblScan.Columns = append(clonedTblScan.Columns, c.ToInfo())
+						copTsk.needExtraProj = true
 					}
 				}
 			} else {
 				if !clonedTblScan.Schema().Contains(clonedTblScan.HandleCols.GetCol(0)) {
 					clonedTblScan.Schema().Append(clonedTblScan.HandleCols.GetCol(0))
 					clonedTblScan.Columns = append(clonedTblScan.Columns, model.NewExtraHandleColInfo())
+					copTsk.needExtraProj = true
 				}
 			}
 			clonedTblScan.HandleCols, err = clonedTblScan.HandleCols.ResolveIndices(clonedTblScan.Schema())
 			if err != nil {
 				return nil, false
 			}
+			if copTsk.needExtraProj {
+				copTsk.originSchema = copTsk.tablePlan.Schema()
+			}
 			copTsk.tablePlan = clonedTblScan
 			copTsk.indexPlanFinished = true
 			rootTask := copTsk.convertToRootTask(p.ctx)
-			if indexMerge, ok := rootTask.p.(*PhysicalIndexMergeReader); ok {
-				indexMerge.PushedLimit = &PushedDownLimit{
-					Offset: p.Offset,
-					Count:  p.Count,
+			indexMerge, ok := rootTask.p.(*PhysicalIndexMergeReader)
+			if !ok {
+				// needExtraProj == true
+				indexMerge, ok = rootTask.p.Children()[0].(*PhysicalIndexMergeReader)
+				if !ok {
+					return nil, false
 				}
-				indexMerge.ByItems = p.ByItems
-				indexMerge.KeepOrder = true
-				return rootTask, true
 			}
+			indexMerge.PushedLimit = &PushedDownLimit{
+				Offset: p.Offset,
+				Count:  p.Count,
+			}
+			indexMerge.ByItems = p.ByItems
+			indexMerge.KeepOrder = true
+			return rootTask, true
 		}
 	} else {
 		return nil, false
@@ -2608,6 +2621,50 @@ func (p *PhysicalWindow) attach2Task(tasks ...task) task {
 	}
 	t := tasks[0].convertToRootTask(p.ctx)
 	return attachPlan2Task(p.self, t)
+}
+
+func (p *PhysicalCTEStorage) attach2Task(tasks ...task) task {
+	t := tasks[0].copy()
+	if mpp, ok := t.(*mppTask); ok {
+		p.SetChildren(t.plan())
+		return &mppTask{
+			p:           p,
+			partTp:      mpp.partTp,
+			hashCols:    mpp.hashCols,
+			tblColHists: mpp.tblColHists,
+		}
+	}
+	t.convertToRootTask(p.ctx)
+	p.SetChildren(t.plan())
+	return &rootTask{
+		p: p,
+	}
+}
+
+func (p *PhysicalSequence) attach2Task(tasks ...task) task {
+	for _, t := range tasks {
+		_, isMpp := t.(*mppTask)
+		if !isMpp {
+			return tasks[len(tasks)-1]
+		}
+	}
+
+	lastTask := tasks[len(tasks)-1].(*mppTask)
+
+	children := make([]PhysicalPlan, 0, len(tasks))
+	for _, t := range tasks {
+		children = append(children, t.plan())
+	}
+
+	p.SetChildren(children...)
+
+	mppTask := &mppTask{
+		p:           p,
+		partTp:      lastTask.partTp,
+		hashCols:    lastTask.hashCols,
+		tblColHists: lastTask.tblColHists,
+	}
+	return mppTask
 }
 
 // mppTask can not :

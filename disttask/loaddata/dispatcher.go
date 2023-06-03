@@ -17,32 +17,70 @@ package loaddata
 import (
 	"context"
 	"encoding/json"
+	"sync"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
-// FlowHandle is the dispatcher for load data.
-type FlowHandle struct{}
+type flowHandle struct {
+	mu sync.RWMutex
+	// the last time we switch TiKV into IMPORT mode, this is a global operation, do it for one task makes
+	// no difference to do it for all tasks. So we do not need to record the switch time for each task.
+	lastSwitchTime atomic.Time
+}
 
-// ProcessNormalFlow implements dispatcher.TaskFlowHandle interface.
-func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
+var _ dispatcher.TaskFlowHandle = (*flowHandle)(nil)
+
+func (h *flowHandle) OnTicker(ctx context.Context, task *proto.Task) {
+	// only switch TiKV mode when task is running and reach the interval
+	if task.State != proto.TaskStateRunning || time.Since(h.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
+		return
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if time.Since(h.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
+		return
+	}
+
+	logger := logutil.BgLogger().With(zap.Int64("task_id", task.ID))
+	switcher, err := importer.GetTiKVModeSwitcher(logger)
+	if err != nil {
+		logger.Warn("get tikv mode switcher failed", zap.Error(err))
+		return
+	}
+	switcher.ToImportMode(ctx)
+	h.lastSwitchTime.Store(time.Now())
+}
+
+func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
+	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
 		return nil, err
 	}
-	logutil.BgLogger().Info("process normal flow", zap.Any("task_meta", taskMeta), zap.Any("step", gTask.Step))
+	logger.Info("process normal flow", zap.Any("task_meta", taskMeta), zap.Any("step", gTask.Step))
 
 	switch gTask.Step {
 	case Import:
+		h.switchTiKV2NormalMode(ctx, logutil.BgLogger())
+		if err := postProcess(ctx, handle, gTask, logger); err != nil {
+			return nil, err
+		}
 		gTask.State = proto.TaskStateSucceed
 		return nil, nil
 	default:
@@ -52,11 +90,11 @@ func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandl
 	//	if err != nil {
 	//		return nil, err
 	//	}
-	subtaskMetas, err := generateSubtaskMetas(ctx, taskMeta)
+	subtaskMetas, err := generateSubtaskMetas(ctx, gTask.ID, taskMeta)
 	if err != nil {
 		return nil, err
 	}
-	logutil.BgLogger().Info("generate subtasks", zap.Any("subtask_metas", subtaskMetas))
+	logger.Info("generate subtasks", zap.Any("subtask_metas", subtaskMetas))
 	metaBytes := make([][]byte, 0, len(subtaskMetas))
 	for _, subtaskMeta := range subtaskMetas {
 		bs, err := json.Marshal(subtaskMeta)
@@ -69,14 +107,118 @@ func (*FlowHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.TaskHandl
 	return metaBytes, nil
 }
 
-// ProcessErrFlow implements dispatcher.ProcessErrFlow interface.
-func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
-	logutil.BgLogger().Info("process error flow", zap.ByteStrings("error message", receiveErr))
+func (h *flowHandle) ProcessErrFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
+	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
+	logger.Info("process error flow", zap.ByteStrings("error message", receiveErr))
+	h.switchTiKV2NormalMode(ctx, logger)
 	gTask.Error = receiveErr[0]
 	return nil, nil
 }
 
-func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {
+func (*flowHandle) GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error) {
+	taskMeta := &TaskMeta{}
+	err := json.Unmarshal(gTask.Meta, taskMeta)
+	if err != nil {
+		return nil, err
+	}
+	if len(taskMeta.EligibleInstances) > 0 {
+		return taskMeta.EligibleInstances, nil
+	}
+	return dispatcher.GenerateSchedulerNodes(ctx)
+}
+
+func (*flowHandle) IsRetryableErr(error) bool {
+	// TODO: check whether the error is retryable.
+	return false
+}
+
+func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logger) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	switcher, err := importer.GetTiKVModeSwitcher(logger)
+	if err != nil {
+		logger.Warn("get tikv mode switcher failed", zap.Error(err))
+		return
+	}
+	switcher.ToNormalMode(ctx)
+
+	// clear it, so next task can switch TiKV mode again.
+	h.lastSwitchTime.Store(time.Time{})
+}
+
+// postProcess does the post-processing for the task.
+func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, logger *zap.Logger) error {
+	taskMeta := &TaskMeta{}
+	err := json.Unmarshal(gTask.Meta, taskMeta)
+	if err != nil {
+		return err
+	}
+	tableImporter, err := buildTableImporter(ctx, gTask.ID, taskMeta)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err2 := tableImporter.Close()
+		if err == nil {
+			err = err2
+		}
+	}()
+
+	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
+	if err != nil {
+		return err
+	}
+
+	subtaskMetas := make([]*SubtaskMeta, 0, len(metas))
+	for _, bs := range metas {
+		var subtaskMeta SubtaskMeta
+		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
+			return err
+		}
+		subtaskMetas = append(subtaskMetas, &subtaskMeta)
+	}
+
+	logger.Info("post process", zap.Any("task_meta", taskMeta), zap.Any("subtask_metas", subtaskMetas))
+	if err := verifyChecksum(ctx, tableImporter, subtaskMetas, logger); err != nil {
+		return err
+	}
+
+	updateResult(taskMeta, subtaskMetas, logger)
+	return updateMeta(gTask, taskMeta)
+}
+
+func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, subtaskMetas []*SubtaskMeta, logger *zap.Logger) error {
+	if tableImporter.Checksum == config.OpLevelOff {
+		return nil
+	}
+	var localChecksum verify.KVChecksum
+	for _, subtaskMeta := range subtaskMetas {
+		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
+		localChecksum.Add(&checksum)
+	}
+	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+	return tableImporter.VerifyChecksum(ctx, localChecksum)
+}
+
+func updateResult(taskMeta *TaskMeta, subtaskMetas []*SubtaskMeta, logger *zap.Logger) {
+	for _, subtaskMeta := range subtaskMetas {
+		taskMeta.Result.ReadRowCnt += subtaskMeta.Result.ReadRowCnt
+		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
+	}
+	logger.Info("update result", zap.Any("task_meta", taskMeta))
+}
+
+func updateMeta(gTask *proto.Task, taskMeta *TaskMeta) error {
+	bs, err := json.Marshal(taskMeta)
+	if err != nil {
+		return err
+	}
+	gTask.Meta = bs
+	return nil
+}
+
+func buildTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
@@ -95,13 +237,15 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas
 		return nil, err
 	}
 
-	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
+	return importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
-		Progress: asyncloaddata.NewProgress(controller.ImportMode == importer.LogicalImportMode),
-		Job: &asyncloaddata.Job{
-			ID: taskMeta.JobID,
-		},
-	}, controller)
+		Progress: asyncloaddata.NewProgress(false),
+		Job:      &asyncloaddata.Job{},
+	}, controller, taskID)
+}
+
+func generateSubtaskMetas(ctx context.Context, taskID int64, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {
+	tableImporter, err := buildTableImporter(ctx, taskID, taskMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -133,5 +277,5 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas
 }
 
 func init() {
-	dispatcher.RegisterTaskFlowHandle(proto.LoadData, &FlowHandle{})
+	dispatcher.RegisterTaskFlowHandle(proto.LoadData, &flowHandle{})
 }

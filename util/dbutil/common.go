@@ -309,7 +309,7 @@ func GetTimeZoneOffset(ctx context.Context, db QueryExecutor) (time.Duration, er
 		}
 		timeStr = timeStr[1:]
 	}
-	t, err := time.Parse("15:04:05", timeStr)
+	t, err := time.Parse(time.TimeOnly, timeStr)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -606,7 +606,7 @@ func GetTidbLatestTSO(ctx context.Context, db QueryExecutor) (int64, error) {
 	}
 	defer rows.Close()
 
-	for rows.Next() {
+	if rows.Next() {
 		fields, err1 := ScanRow(rows)
 		if err1 != nil {
 			return 0, errors.Trace(err1)
@@ -648,12 +648,11 @@ func GetDBVersion(ctx context.Context, db QueryExecutor) (string, error) {
 	defer result.Close()
 
 	var version sql.NullString
-	for result.Next() {
+	if result.Next() {
 		err := result.Scan(&version)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		break
 	}
 
 	if version.Valid {

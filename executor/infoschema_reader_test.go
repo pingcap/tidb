@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -102,7 +101,7 @@ func TestSchemataTables(t *testing.T) {
 	require.NoError(t, schemataTester.Session().Auth(&auth.UserIdentity{
 		Username: "schemata_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("1"))
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
 		[][]interface{}{})
@@ -174,6 +173,10 @@ func TestColumnsTables(t *testing.T) {
 	tk.MustExec("CREATE TABLE t (`COL3` bit(1) NOT NULL,b year) ;")
 	tk.MustQuery("select column_type from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 't';").
 		Check(testkit.Rows("bit(1)", "year(4)"))
+
+	// For issue: https://github.com/pingcap/tidb/issues/43379
+	tk.MustQuery("select ordinal_position from information_schema.columns where table_schema=database() and table_name='t' and column_name='b'").
+		Check(testkit.Rows("2"))
 }
 
 func TestEngines(t *testing.T) {
@@ -243,7 +246,7 @@ func TestDDLJobs(t *testing.T) {
 	require.NoError(t, DDLJobsTester.Session().Auth(&auth.UserIdentity{
 		Username: "DDL_JOBS_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 
 	// Test the privilege of user for information_schema.ddl_jobs.
 	DDLJobsTester.MustQuery("select DB_NAME, TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
@@ -275,7 +278,7 @@ func TestKeyColumnUsage(t *testing.T) {
 	require.NoError(t, keyColumnTester.Session().Auth(&auth.UserIdentity{
 		Username: "key_column_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	keyColumnTester.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
 
 	// test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
@@ -297,7 +300,7 @@ func TestUserPrivileges(t *testing.T) {
 	require.NoError(t, constraintsTester.Session().Auth(&auth.UserIdentity{
 		Username: "constraints_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
 
 	// test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
@@ -316,7 +319,7 @@ func TestUserPrivileges(t *testing.T) {
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{
 		Username: "tester1",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	tk1.MustQuery("select * from information_schema.STATISTICS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
 
 	// test the privilege of user with some privilege for information_schema
@@ -329,7 +332,7 @@ func TestUserPrivileges(t *testing.T) {
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{
 		Username: "tester2",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	tk2.MustExec("set role r_columns_priv")
 	rows = tk2.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Rows()
 	require.Greater(t, len(rows), 0)
@@ -346,7 +349,7 @@ func TestUserPrivileges(t *testing.T) {
 	require.NoError(t, tk3.Session().Auth(&auth.UserIdentity{
 		Username: "tester3",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	tk3.MustExec("set role r_all_priv")
 	rows = tk3.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Rows()
 	require.Greater(t, len(rows), 0)
@@ -364,7 +367,7 @@ func TestUserPrivilegesTable(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "usageuser",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def USAGE NO"))
 	// the usage row disappears when there is a non-dynamic privilege added
 	tk1.MustExec("GRANT SELECT ON *.* to usageuser")
@@ -379,9 +382,6 @@ func TestUserPrivilegesTable(t *testing.T) {
 
 func TestDataForTableStatsField(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	oldExpiryTime := executor.TableStatsCacheExpiry
-	executor.TableStatsCacheExpiry = 0
-	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
 	h := dom.StatsHandle()
 	h.Clear()
 	is := dom.InfoSchema()
@@ -427,9 +427,6 @@ func TestDataForTableStatsField(t *testing.T) {
 
 func TestPartitionsTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	oldExpiryTime := executor.TableStatsCacheExpiry
-	executor.TableStatsCacheExpiry = 0
-	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
 	h := dom.StatsHandle()
 	h.Clear()
 	is := dom.InfoSchema()
@@ -566,7 +563,10 @@ func TestForAnalyzeStatus(t *testing.T) {
 		"  `STATE` varchar(64) DEFAULT NULL,\n" +
 		"  `FAIL_REASON` longtext DEFAULT NULL,\n" +
 		"  `INSTANCE` varchar(512) DEFAULT NULL,\n" +
-		"  `PROCESS_ID` bigint(64) unsigned DEFAULT NULL\n" +
+		"  `PROCESS_ID` bigint(64) unsigned DEFAULT NULL,\n" +
+		"  `Remaining_seconds` bigint(64) unsigned DEFAULT NULL,\n" +
+		"  `Progress` varchar(20) DEFAULT NULL,\n" +
+		"  `Estimated_total_rows` bigint(64) unsigned DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	tk.MustQuery("show create table information_schema.analyze_status").Check(testkit.Rows("ANALYZE_STATUS " + analyzeStatusTable))
 	tk.MustExec("delete from mysql.analyze_jobs")
@@ -586,7 +586,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	require.NoError(t, analyzeTester.Session().Auth(&auth.UserIdentity{
 		Username: "analyze_tester",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 	analyzeTester.MustQuery("show analyze status").Check([][]interface{}{})
 	analyzeTester.MustQuery("select * from information_schema.ANALYZE_STATUS;").Check([][]interface{}{})
 
@@ -603,17 +603,19 @@ func TestForAnalyzeStatus(t *testing.T) {
 	rows := tk.MustQuery("select * from information_schema.analyze_status where TABLE_NAME='t1'").Sort().Rows()
 	require.Greater(t, len(rows), 0)
 	for _, row := range rows {
-		require.Len(t, row, 11) // test length of row
+		require.Len(t, row, 14) // test length of row
 		// test `End_time` field
 		str, ok := row[6].(string)
 		require.True(t, ok)
-		_, err := time.Parse("2006-01-02 15:04:05", str)
+		_, err := time.Parse(time.DateTime, str)
 		require.NoError(t, err)
 	}
 	rows2 := tk.MustQuery("show analyze status where TABLE_NAME='t1'").Sort().Rows()
 	require.Equal(t, len(rows), len(rows2))
-	for i, row2 := range rows2 {
-		require.Equal(t, rows[i], row2)
+	for i, row := range rows {
+		for j, r := range row {
+			require.Equal(t, r, rows2[i][j])
+		}
 	}
 }
 

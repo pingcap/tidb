@@ -58,7 +58,7 @@ var (
 	_ LogicalPlan = &LogicalWindow{}
 )
 
-// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
+// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
 type JoinType int
 
 const (
@@ -930,7 +930,7 @@ type LogicalSelection struct {
 	Conditions []expression.Expression
 }
 
-func extractNotNullFromConds(Conditions []expression.Expression, p LogicalPlan) fd.FastIntSet {
+func extractNotNullFromConds(conditions []expression.Expression, p LogicalPlan) fd.FastIntSet {
 	// extract the column NOT NULL rejection characteristic from selection condition.
 	// CNF considered only, DNF doesn't have its meanings (cause that condition's eval may don't take effect)
 	//
@@ -944,7 +944,7 @@ func extractNotNullFromConds(Conditions []expression.Expression, p LogicalPlan) 
 	//
 	// As a result,	`a` will be extracted as not-null column to abound the FDSet.
 	notnullColsUniqueIDs := fd.NewFastIntSet()
-	for _, condition := range Conditions {
+	for _, condition := range conditions {
 		var cols []*expression.Column
 		cols = expression.ExtractColumnsFromExpressions(cols, []expression.Expression{condition}, nil)
 		if isNullRejected(p.SCtx(), p.Schema(), condition) {
@@ -956,7 +956,7 @@ func extractNotNullFromConds(Conditions []expression.Expression, p LogicalPlan) 
 	return notnullColsUniqueIDs
 }
 
-func extractConstantCols(Conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) fd.FastIntSet {
+func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) fd.FastIntSet {
 	// extract constant cols
 	// eg: where a=1 and b is null and (1+c)=5.
 	// TODO: Some columns can only be determined to be constant from multiple constraints (e.g. x <= 1 AND x >= 1)
@@ -964,7 +964,7 @@ func extractConstantCols(Conditions []expression.Expression, sctx sessionctx.Con
 		constObjs      []expression.Expression
 		constUniqueIDs = fd.NewFastIntSet()
 	)
-	constObjs = expression.ExtractConstantEqColumnsOrScalar(sctx, constObjs, Conditions)
+	constObjs = expression.ExtractConstantEqColumnsOrScalar(sctx, constObjs, conditions)
 	for _, constObj := range constObjs {
 		switch x := constObj.(type) {
 		case *expression.Column:
@@ -983,9 +983,9 @@ func extractConstantCols(Conditions []expression.Expression, sctx sessionctx.Con
 	return constUniqueIDs
 }
 
-func extractEquivalenceCols(Conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) [][]fd.FastIntSet {
+func extractEquivalenceCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) [][]fd.FastIntSet {
 	var equivObjsPair [][]expression.Expression
-	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, Conditions)
+	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, conditions)
 	equivUniqueIDs := make([][]fd.FastIntSet, 0, len(equivObjsPair))
 	for _, equivObjPair := range equivObjsPair {
 		// lhs of equivalence.
@@ -1705,6 +1705,7 @@ type LogicalLimit struct {
 	Offset      uint64
 	Count       uint64
 	limitHints  limitHintInfo
+	IsPartial   bool
 }
 
 // GetPartitionBy returns partition by fields
@@ -2037,6 +2038,8 @@ type LogicalCTE struct {
 	cteName        model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
+
+	onlyUsedAsStorage bool
 }
 
 // LogicalCTETable is for CTE table
@@ -2058,4 +2061,23 @@ func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 		corCols = append(corCols, ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
 	}
 	return corCols
+}
+
+// LogicalSequence is used to mark the CTE producer in the main query tree.
+// Its last child is main query. The previous children are cte producers.
+// And there might be dependencies between the CTE producers:
+//
+//	Suppose that the sequence has 4 children, naming c0, c1, c2, c3.
+//	From the definition, c3 is the main query. c0, c1, c2 are CTE producers.
+//	It's possible that c1 references c0, c2 references c1 and c2.
+//	But it's no possible that c0 references c1 or c2.
+//
+// We use this property to do complex optimizations for CTEs.
+type LogicalSequence struct {
+	baseLogicalPlan
+}
+
+// Schema returns its last child(which is the main query plan)'s schema.
+func (p *LogicalSequence) Schema() *expression.Schema {
+	return p.children[len(p.children)-1].Schema()
 }

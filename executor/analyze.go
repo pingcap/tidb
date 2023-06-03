@@ -324,7 +324,6 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 		} else {
 			finishJobWithLog(e.ctx, results.Job, nil)
 		}
-		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			finishJobWithLog(e.ctx, results.Job, exeerrors.ErrQueryInterrupted)
 			return errors.Trace(exeerrors.ErrQueryInterrupted)

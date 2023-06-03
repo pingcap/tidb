@@ -577,15 +577,27 @@ type LoadData struct {
 	Options            []*LoadDataOpt
 
 	GenCols InsertGeneratedColumns
-
-	// only use for distributed load data
-	Stmt string
 }
 
 // LoadDataOpt represents load data option.
 type LoadDataOpt struct {
 	Name  string
 	Value expression.Expression
+}
+
+// ImportInto represents a ingest into plan.
+type ImportInto struct {
+	baseSchemaProducer
+
+	Table              *ast.TableName
+	ColumnAssignments  []*ast.Assignment
+	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	Path               string
+	Format             *string
+	Options            []*LoadDataOpt
+
+	GenCols InsertGeneratedColumns
+	Stmt    string
 }
 
 // LoadStats represents a load stats plan.
@@ -1386,7 +1398,10 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx), nil
 	case *PhysicalTableReader:
-		tableScan := v.TablePlans[0].(*PhysicalTableScan)
+		tableScan, ok := v.TablePlans[0].(*PhysicalTableScan)
+		if !ok {
+			return false, nil
+		}
 		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPointNonNullable(ctx)
 		if !isPointRange {
 			return false, nil
