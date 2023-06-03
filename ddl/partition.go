@@ -1125,8 +1125,7 @@ func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, opti
 	// append p2 range to the coverage of table t's rules. This mechanism is good for cascading change
 	// when policy x is altered.
 	for _, opt := range options {
-		switch opt.Tp {
-		case ast.TableOptionPlacementPolicy:
+		if opt.Tp == ast.TableOptionPlacementPolicy {
 			partition.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(opt.StrValue),
 			}
@@ -1766,7 +1765,7 @@ func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 	return nt
 }
 
-func dropLabelRules(d *ddlCtx, schemaName, tableName string, partNames []string) error {
+func dropLabelRules(_ *ddlCtx, schemaName, tableName string, partNames []string) error {
 	deleteRules := make([]string, 0, len(partNames))
 	for _, partName := range partNames {
 		deleteRules = append(deleteRules, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, schemaName, tableName, partName))
@@ -1908,7 +1907,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				// and then run the reorg next time.
 				return ver, errors.Trace(err)
 			}
-			err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
+			err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
 				defer tidbutil.Recover(metrics.LabelDDL, "onDropTablePartition",
 					func() {
 						dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")
@@ -2654,7 +2653,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID), d, rh, job, dbInfo, partTbl, physTblIDs, elements)
-	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (reorgErr error) {
+	err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (reorgErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
@@ -2864,7 +2863,7 @@ func (w *reorgPartitionWorker) AddMetricInfo(cnt float64) {
 	w.metricCounter.Add(cnt)
 }
 
-func (w *reorgPartitionWorker) String() string {
+func (*reorgPartitionWorker) String() string {
 	return typeReorgPartitionWorker.String()
 }
 
@@ -2972,7 +2971,7 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 	return nil
 }
 
-func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
+func bundlesForExchangeTablePartition(t *meta.Meta, _ *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
 	bundles := make([]*placement.Bundle, 0, 3)
 
 	ptBundle, err := placement.NewTableBundle(t, pt)
@@ -3199,7 +3198,7 @@ func checkPartitionColumnsUnique(tbInfo *model.TableInfo) error {
 	return nil
 }
 
-func checkNoHashPartitions(ctx sessionctx.Context, partitionNum uint64) error {
+func checkNoHashPartitions(_ sessionctx.Context, partitionNum uint64) error {
 	if partitionNum == 0 {
 		return ast.ErrNoParts.GenWithStackByArgs("partitions")
 	}
@@ -3309,7 +3308,7 @@ type columnNameExtractor struct {
 	err              error
 }
 
-func (cne *columnNameExtractor) Enter(node ast.Node) (ast.Node, bool) {
+func (*columnNameExtractor) Enter(node ast.Node) (ast.Node, bool) {
 	return node, false
 }
 
