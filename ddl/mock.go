@@ -50,7 +50,7 @@ func NewMockSchemaSyncer() syncer.SchemaSyncer {
 }
 
 // Init implements SchemaSyncer.Init interface.
-func (s *MockSchemaSyncer) Init(ctx context.Context) error {
+func (s *MockSchemaSyncer) Init(_ context.Context) error {
 	s.mdlSchemaVersions = sync.Map{}
 	s.globalVerCh = make(chan clientv3.WatchResponse, 1)
 	s.mockSession = make(chan struct{}, 1)
@@ -63,10 +63,10 @@ func (s *MockSchemaSyncer) GlobalVersionCh() clientv3.WatchChan {
 }
 
 // WatchGlobalSchemaVer implements SchemaSyncer.WatchGlobalSchemaVer interface.
-func (s *MockSchemaSyncer) WatchGlobalSchemaVer(context.Context) {}
+func (*MockSchemaSyncer) WatchGlobalSchemaVer(context.Context) {}
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
-func (s *MockSchemaSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version int64) error {
+func (s *MockSchemaSyncer) UpdateSelfVersion(_ context.Context, jobID int64, version int64) error {
 	failpoint.Inject("mockUpdateMDLToETCDError", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.New("mock update mdl to etcd error"))
@@ -97,7 +97,7 @@ func (s *MockSchemaSyncer) Restart(_ context.Context) error {
 }
 
 // OwnerUpdateGlobalVersion implements SchemaSyncer.OwnerUpdateGlobalVersion interface.
-func (s *MockSchemaSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version int64) error {
+func (s *MockSchemaSyncer) OwnerUpdateGlobalVersion(_ context.Context, _ int64) error {
 	select {
 	case s.globalVerCh <- clientv3.WatchResponse{}:
 	default:
@@ -209,10 +209,10 @@ func (*mockDelRange) removeFromGCDeleteRange(_ context.Context, _ int64) error {
 }
 
 // start implements delRangeManager interface.
-func (dr *mockDelRange) start() {}
+func (*mockDelRange) start() {}
 
 // clear implements delRangeManager interface.
-func (dr *mockDelRange) clear() {}
+func (*mockDelRange) clear() {}
 
 // MockTableInfo mocks a table info by create table stmt ast and a specified table id.
 func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {

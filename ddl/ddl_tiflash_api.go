@@ -87,25 +87,25 @@ type PollTiFlashBackoffContext struct {
 }
 
 // NewPollTiFlashBackoffContext creates an instance of PollTiFlashBackoffContext.
-func NewPollTiFlashBackoffContext(MinThreshold, MaxThreshold TiFlashTick, Capacity int, Rate TiFlashTick) (*PollTiFlashBackoffContext, error) {
-	if MaxThreshold < MinThreshold {
-		return nil, fmt.Errorf("`MaxThreshold` should always be larger than `MinThreshold`")
+func NewPollTiFlashBackoffContext(minThreshold, maxThreshold TiFlashTick, capacity int, rate TiFlashTick) (*PollTiFlashBackoffContext, error) {
+	if maxThreshold < minThreshold {
+		return nil, fmt.Errorf("`maxThreshold` should always be larger than `minThreshold`")
 	}
-	if MinThreshold < 1 {
-		return nil, fmt.Errorf("`MinThreshold` should not be less than 1")
+	if minThreshold < 1 {
+		return nil, fmt.Errorf("`minThreshold` should not be less than 1")
 	}
-	if Capacity < 0 {
-		return nil, fmt.Errorf("negative `Capacity`")
+	if capacity < 0 {
+		return nil, fmt.Errorf("negative `capacity`")
 	}
-	if Rate <= 1 {
-		return nil, fmt.Errorf("`Rate` should always be larger than 1")
+	if rate <= 1 {
+		return nil, fmt.Errorf("`rate` should always be larger than 1")
 	}
 	return &PollTiFlashBackoffContext{
-		MinThreshold: MinThreshold,
-		MaxThreshold: MaxThreshold,
-		Capacity:     Capacity,
+		MinThreshold: minThreshold,
+		MaxThreshold: maxThreshold,
+		Capacity:     capacity,
 		elements:     make(map[int64]*PollTiFlashBackoffElement),
-		Rate:         Rate,
+		Rate:         rate,
 	}, nil
 }
 
@@ -129,12 +129,12 @@ type AvailableTableID struct {
 // 1. A bool indicates whether threshold is grown during this tick.
 // 2. A bool indicates whether this ID exists.
 // 3. A int indicates how many ticks ID has counted till now.
-func (b *PollTiFlashBackoffContext) Tick(ID int64) (bool, bool, int) {
-	e, ok := b.Get(ID)
+func (b *PollTiFlashBackoffContext) Tick(id int64) (grew bool, exist bool, cnt int) {
+	e, ok := b.Get(id)
 	if !ok {
 		return false, false, 0
 	}
-	grew := e.MaybeGrow(b)
+	grew = e.MaybeGrow(b)
 	e.Counter++
 	e.TotalCounter++
 	return grew, true, e.TotalCounter
@@ -168,26 +168,26 @@ func (e *PollTiFlashBackoffElement) MaybeGrow(b *PollTiFlashBackoffContext) bool
 }
 
 // Remove will reset table from backoff.
-func (b *PollTiFlashBackoffContext) Remove(ID int64) bool {
-	_, ok := b.elements[ID]
-	delete(b.elements, ID)
+func (b *PollTiFlashBackoffContext) Remove(id int64) bool {
+	_, ok := b.elements[id]
+	delete(b.elements, id)
 	return ok
 }
 
 // Get returns pointer to inner PollTiFlashBackoffElement.
 // Only exported for test.
-func (b *PollTiFlashBackoffContext) Get(ID int64) (*PollTiFlashBackoffElement, bool) {
-	res, ok := b.elements[ID]
+func (b *PollTiFlashBackoffContext) Get(id int64) (*PollTiFlashBackoffElement, bool) {
+	res, ok := b.elements[id]
 	return res, ok
 }
 
 // Put will record table into backoff pool, if there is enough room, or returns false.
-func (b *PollTiFlashBackoffContext) Put(ID int64) bool {
-	_, ok := b.elements[ID]
+func (b *PollTiFlashBackoffContext) Put(id int64) bool {
+	_, ok := b.elements[id]
 	if ok {
 		return true
 	} else if b.Len() < b.Capacity {
-		b.elements[ID] = NewPollTiFlashBackoffElement()
+		b.elements[id] = NewPollTiFlashBackoffElement()
 		return true
 	}
 	return false
@@ -351,7 +351,7 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	return nil
 }
 
-func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
+func pollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
 	pollMaxCount := RefreshProgressMaxTableCount
 	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
 		pollMaxCount = uint64(val.(int))

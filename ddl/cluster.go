@@ -143,7 +143,6 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 		select {
 		case <-ticker.C:
 			minSafeTime = getStoreGlobalMinSafeTS(sctx.GetStore())
-			break
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -209,11 +208,11 @@ func checkSystemSchemaID(t *meta.Meta, schemaID int64, flashbackTSString string)
 	if schemaID <= 0 {
 		return nil
 	}
-	DBInfo, err := t.GetDatabase(schemaID)
-	if err != nil || DBInfo == nil {
+	dbInfo, err := t.GetDatabase(schemaID)
+	if err != nil || dbInfo == nil {
 		return errors.Trace(err)
 	}
-	if filter.IsSystemSchema(DBInfo.Name.L) {
+	if filter.IsSystemSchema(dbInfo.Name.L) {
 		return errors.Errorf("Detected modified system table during [%s, now), can't do flashback", flashbackTSString)
 	}
 	return nil
@@ -296,7 +295,7 @@ func checkAndSetFlashbackClusterInfo(se sessionctx.Context, d *ddlCtx, t *meta.M
 		}
 	}
 
-	jobs, err := GetAllDDLJobs(se, t)
+	jobs, err := GetAllDDLJobs(se)
 	if err != nil {
 		return errors.Trace(err)
 	}

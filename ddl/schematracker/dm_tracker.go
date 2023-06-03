@@ -97,7 +97,7 @@ func (d SchemaTracker) CreateTestDB() {
 }
 
 // CreateSchemaWithInfo implements the DDL interface.
-func (d SchemaTracker) CreateSchemaWithInfo(ctx sessionctx.Context, dbInfo *model.DBInfo, onExist ddl.OnExist) error {
+func (d SchemaTracker) CreateSchemaWithInfo(_ sessionctx.Context, dbInfo *model.DBInfo, onExist ddl.OnExist) error {
 	oldInfo := d.SchemaByName(dbInfo.Name)
 	if oldInfo != nil {
 		if onExist == ddl.OnExistIgnore {
@@ -111,7 +111,7 @@ func (d SchemaTracker) CreateSchemaWithInfo(ctx sessionctx.Context, dbInfo *mode
 }
 
 // AlterSchema implements the DDL interface.
-func (d SchemaTracker) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
+func (d SchemaTracker) AlterSchema(_ sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	dbInfo := d.SchemaByName(stmt.Name)
 	if dbInfo == nil {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(stmt.Name.O)
@@ -163,7 +163,7 @@ func (d SchemaTracker) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDataba
 }
 
 // DropSchema implements the DDL interface.
-func (d SchemaTracker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error {
+func (d SchemaTracker) DropSchema(_ sessionctx.Context, stmt *ast.DropDatabaseStmt) error {
 	ok := d.DeleteSchema(stmt.Name)
 	if !ok {
 		if stmt.IfExists {
@@ -232,7 +232,7 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 
 // CreateTableWithInfo implements the DDL interface.
 func (d SchemaTracker) CreateTableWithInfo(
-	ctx sessionctx.Context,
+	_ sessionctx.Context,
 	dbName model.CIStr,
 	info *model.TableInfo,
 	cs ...ddl.CreateTableWithInfoConfigurier,
@@ -291,7 +291,7 @@ func (d SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt)
 }
 
 // DropTable implements the DDL interface.
-func (d SchemaTracker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+func (d SchemaTracker) DropTable(_ sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	notExistTables := make([]string, 0, len(stmt.Tables))
 	for _, name := range stmt.Tables {
 		tb, err := d.TableByName(name.Schema, name.Name)
@@ -319,22 +319,22 @@ func (d SchemaTracker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt
 }
 
 // RecoverTable implements the DDL interface, which is no-op in DM's case.
-func (d SchemaTracker) RecoverTable(ctx sessionctx.Context, recoverInfo *ddl.RecoverInfo) (err error) {
+func (SchemaTracker) RecoverTable(_ sessionctx.Context, _ *ddl.RecoverInfo) (err error) {
 	return nil
 }
 
 // FlashbackCluster implements the DDL interface, which is no-op in DM's case.
-func (d SchemaTracker) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) (err error) {
+func (SchemaTracker) FlashbackCluster(_ sessionctx.Context, _ uint64) (err error) {
 	return nil
 }
 
 // RecoverSchema implements the DDL interface, which is no-op in DM's case.
-func (d SchemaTracker) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *ddl.RecoverSchemaInfo) (err error) {
+func (SchemaTracker) RecoverSchema(_ sessionctx.Context, _ *ddl.RecoverSchemaInfo) (err error) {
 	return nil
 }
 
 // DropView implements the DDL interface.
-func (d SchemaTracker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+func (d SchemaTracker) DropView(_ sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	notExistTables := make([]string, 0, len(stmt.Tables))
 	for _, name := range stmt.Tables {
 		tb, err := d.TableByName(name.Schema, name.Name)
@@ -457,7 +457,7 @@ func (d SchemaTracker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt
 }
 
 // dropIndex is shared by DropIndex and AlterTable.
-func (d SchemaTracker) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) (err error) {
+func (d SchemaTracker) dropIndex(_ sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) (err error) {
 	tblInfo, err := d.TableClonedByName(ti.Schema, ti.Name)
 	if err != nil {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
@@ -509,7 +509,7 @@ func (d SchemaTracker) addColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast
 		return infoschema.ErrColumnExists.GenWithStackByArgs(colName)
 	}
 
-	col, err := ddl.CreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
+	col, err := ddl.CreateNewColumn(ctx, schema, spec, t, specNewColumn)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -529,7 +529,7 @@ func (d SchemaTracker) addColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast
 }
 
 // dropColumn is used by AlterTable.
-func (d *SchemaTracker) dropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) (err error) {
+func (d *SchemaTracker) dropColumn(_ sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) (err error) {
 	tblInfo, err := d.TableClonedByName(ti.Schema, ti.Name)
 	if err != nil {
 		return err
@@ -573,7 +573,7 @@ func (d *SchemaTracker) dropColumn(ctx sessionctx.Context, ti ast.Ident, spec *a
 }
 
 // renameColumn is used by AlterTable.
-func (d SchemaTracker) renameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+func (d SchemaTracker) renameColumn(_ sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
 	oldColName := spec.OldColumnName.Name
 	newColName := spec.NewColumnName.Name
 
@@ -750,7 +750,7 @@ func (d SchemaTracker) handleModifyColumn(
 }
 
 // renameIndex is used by AlterTable.
-func (d SchemaTracker) renameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+func (d SchemaTracker) renameIndex(_ sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
 	tblInfo, err := d.TableClonedByName(ident.Schema, ident.Name)
 	if err != nil {
 		return err
@@ -793,7 +793,7 @@ func (d SchemaTracker) addTablePartitions(ctx sessionctx.Context, ident ast.Iden
 }
 
 // dropTablePartitions is used by AlterTable.
-func (d SchemaTracker) dropTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+func (d SchemaTracker) dropTablePartitions(_ sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
 	tblInfo, err := d.TableClonedByName(ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(err)
@@ -1064,7 +1064,7 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 }
 
 // TruncateTable implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error {
+func (SchemaTracker) TruncateTable(_ sessionctx.Context, _ ast.Ident) error {
 	return nil
 }
 
@@ -1082,7 +1082,7 @@ func (d SchemaTracker) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTable
 }
 
 // renameTable is used by RenameTable and AlterTable.
-func (d SchemaTracker) renameTable(ctx sessionctx.Context, oldIdents, newIdents []ast.Ident, isAlterTable bool) error {
+func (d SchemaTracker) renameTable(_ sessionctx.Context, oldIdents, newIdents []ast.Ident, isAlterTable bool) error {
 	tablesCache := make(map[string]int64)
 	is := InfoStoreAdaptor{inner: d.InfoStore}
 	for i := range oldIdents {
@@ -1114,37 +1114,37 @@ func (d SchemaTracker) renameTable(ctx sessionctx.Context, oldIdents, newIdents 
 }
 
 // LockTables implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
+func (SchemaTracker) LockTables(_ sessionctx.Context, _ *ast.LockTablesStmt) error {
 	return nil
 }
 
 // UnlockTables implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error {
+func (SchemaTracker) UnlockTables(_ sessionctx.Context, _ []model.TableLockTpInfo) error {
 	return nil
 }
 
 // CleanupTableLock implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
+func (SchemaTracker) CleanupTableLock(_ sessionctx.Context, _ []*ast.TableName) error {
 	return nil
 }
 
 // UpdateTableReplicaInfo implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
+func (SchemaTracker) UpdateTableReplicaInfo(_ sessionctx.Context, _ int64, _ bool) error {
 	return nil
 }
 
 // RepairTable implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
+func (SchemaTracker) RepairTable(_ sessionctx.Context, _ *ast.CreateTableStmt) error {
 	return nil
 }
 
 // CreateSequence implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
+func (SchemaTracker) CreateSequence(_ sessionctx.Context, _ *ast.CreateSequenceStmt) error {
 	return nil
 }
 
 // DropSequence implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error) {
+func (SchemaTracker) DropSequence(_ sessionctx.Context, _ *ast.DropSequenceStmt) (err error) {
 	return nil
 }
 
@@ -1164,7 +1164,7 @@ func (SchemaTracker) DropPlacementPolicy(_ sessionctx.Context, _ *ast.DropPlacem
 }
 
 // AlterPlacementPolicy implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error {
+func (SchemaTracker) AlterPlacementPolicy(_ sessionctx.Context, _ *ast.AlterPlacementPolicyStmt) error {
 	return nil
 }
 
@@ -1179,7 +1179,7 @@ func (SchemaTracker) DropResourceGroup(_ sessionctx.Context, _ *ast.DropResource
 }
 
 // AlterResourceGroup implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error {
+func (SchemaTracker) AlterResourceGroup(_ sessionctx.Context, _ *ast.AlterResourceGroupStmt) error {
 	return nil
 }
 
@@ -1194,37 +1194,37 @@ func (d SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema m
 }
 
 // CreatePlacementPolicyWithInfo implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist ddl.OnExist) error {
+func (SchemaTracker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *model.PolicyInfo, _ ddl.OnExist) error {
 	return nil
 }
 
 // Start implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) Start(ctxPool *pools.ResourcePool) error {
+func (SchemaTracker) Start(_ *pools.ResourcePool) error {
 	return nil
 }
 
 // GetLease implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) GetLease() time.Duration {
+func (SchemaTracker) GetLease() time.Duration {
 	return 0
 }
 
 // Stats implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+func (SchemaTracker) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
 	return nil, nil
 }
 
 // GetScope implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) GetScope(status string) variable.ScopeFlag {
+func (SchemaTracker) GetScope(_ string) variable.ScopeFlag {
 	return 0
 }
 
 // Stop implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) Stop() error {
+func (SchemaTracker) Stop() error {
 	return nil
 }
 
 // RegisterStatsHandle implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) RegisterStatsHandle(handle *handle.Handle) {}
+func (SchemaTracker) RegisterStatsHandle(_ *handle.Handle) {}
 
 // SchemaSyncer implements the DDL interface, it's no-op in DM's case.
 func (SchemaTracker) SchemaSyncer() syncer.SchemaSyncer {
@@ -1247,27 +1247,27 @@ func (SchemaTracker) GetID() string {
 }
 
 // GetTableMaxHandle implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) GetTableMaxHandle(ctx *ddl.JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error) {
+func (SchemaTracker) GetTableMaxHandle(_ *ddl.JobContext, _ uint64, _ table.PhysicalTable) (kv.Handle, bool, error) {
 	return nil, false, nil
 }
 
 // SetBinlogClient implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) SetBinlogClient(client *pumpcli.PumpsClient) {}
+func (SchemaTracker) SetBinlogClient(_ *pumpcli.PumpsClient) {}
 
 // GetHook implements the DDL interface, it's no-op in DM's case.
-func (d SchemaTracker) GetHook() ddl.Callback {
+func (SchemaTracker) GetHook() ddl.Callback {
 	return nil
 }
 
 // SetHook implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) SetHook(h ddl.Callback) {}
+func (SchemaTracker) SetHook(_ ddl.Callback) {}
 
 // GetInfoSchemaWithInterceptor implements the DDL interface.
-func (SchemaTracker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
+func (SchemaTracker) GetInfoSchemaWithInterceptor(_ sessionctx.Context) infoschema.InfoSchema {
 	panic("not implemented")
 }
 
 // DoDDLJob implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+func (SchemaTracker) DoDDLJob(_ sessionctx.Context, _ *model.Job) error {
 	return nil
 }
