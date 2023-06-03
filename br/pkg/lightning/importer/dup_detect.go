@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
 
@@ -159,7 +160,7 @@ func (h *replaceOnDup) Begin(key []byte) error {
 }
 
 func (h *replaceOnDup) Append(keyID []byte) error {
-	println("lance test begin", keyID)
+	fmt.Println("lance test begin", keyID)
 	if len(h.keyID) > 0 {
 		if err := h.w.Put(h.keyID, h.idxID); err != nil {
 			return err
@@ -240,6 +241,7 @@ func (d *dupDetector) addKeys(ctx context.Context, detector *duplicate.Detector)
 	return g.Wait()
 }
 
+// TODO: add UT about it.
 func (d *dupDetector) addKeysByChunk(
 	ctx context.Context,
 	adder *duplicate.KeyAdder,
@@ -324,6 +326,9 @@ func (d *dupDetector) addKeysByChunk(
 			return errors.Trace(err)
 		}
 		for _, kvPair := range kv.Row2KvPairs(row) {
+			keyHex := hex.EncodeToString(kvPair.Key)
+			rowIDHex := hex.EncodeToString(kvPair.RowID)
+			d.logger.Warn("lance test add key", zap.String("key", keyHex), zap.String("rowID", rowIDHex))
 			if err := adder.Add(kvPair.Key, kvPair.RowID); err != nil {
 				return err
 			}
