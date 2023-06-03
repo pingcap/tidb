@@ -160,9 +160,9 @@ func TestSimplifyTable(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		p := parser.New()
-		tblInfo, err := dbutil.GetTableInfoBySQL(tc.table, p)
+		originalTblInfo, err := dbutil.GetTableInfoBySQL(tc.table, p)
 		require.NoError(t, err)
-		actualTblInfo, actualColPerm := simplifyTable(tblInfo, tc.colPerm)
+		actualTblInfo, actualColPerm := simplifyTable(originalTblInfo, tc.colPerm)
 
 		if tc.expTableHasNoCols {
 			require.Empty(t, actualTblInfo.Columns)
@@ -177,9 +177,17 @@ func TestSimplifyTable(t *testing.T) {
 			}
 
 			require.Equal(t, len(expTblInfo.Indices), len(actualTblInfo.Indices))
+		compareName:
 			for i, idxInfo := range actualTblInfo.Indices {
 				require.Equal(t, expTblInfo.Indices[i].Name, idxInfo.Name)
 				require.Equal(t, expTblInfo.Indices[i].Columns, idxInfo.Columns)
+				for _, idx := range originalTblInfo.Indices {
+					if idx.Name == idxInfo.Name {
+						require.Equal(t, idx.ID, idxInfo.ID)
+						continue compareName
+					}
+				}
+				require.FailNow(t, "index %s not found", idxInfo.Name)
 			}
 		}
 		require.Equal(t, tc.expColPerm, actualColPerm)
