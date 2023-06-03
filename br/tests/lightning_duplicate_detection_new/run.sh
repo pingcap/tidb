@@ -39,14 +39,15 @@ if [ "$expected_rows" != "$actual_rows" ] || [ "$expected_pks" != "$actual_pks" 
   exit 1
 fi
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
-check_contains "count(*): 228"
+check_contains "count(*): 227"
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2 WHERE error = ''"
 check_contains "count(*): 0"
 run_sql "SELECT * FROM lightning_task_info.conflict_error_v2 WHERE row_id = 12"
 check_contains "(171,'yRxZE',9201592769833450947,'xs3d',5,4,283270321)"
 check_contains "[kv:1062]Duplicate entry '171' for key 'dup_detect.PRIMARY'"
-# find some UK duplicate
-read -p 123
+run_sql "SELECT * FROM lightning_task_info.conflict_error_v2 WHERE row_id = 1"
+check_contains "(87,'nEoKu',7836621565948506759,'y6',48,0,177543185)"
+check_contains "[kv:1062]Duplicate entry '0-177543185' for key 'dup_detect.uniq_col6_col7'"
 
 # 2. Test ignore strategy.
 cleanup
@@ -63,18 +64,20 @@ if [ "$expected_rows" != "$actual_rows" ] || [ "$expected_pks" != "$actual_pks" 
   exit 1
 fi
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
-check_contains "count(*): 227"
+check_contains "count(*): 228"
 
 # 3. Test error strategy.
 cleanup
+# TODO: why error is insufficient bytes to decode value?
 run_lightning --backend local --config "tests/$TEST_NAME/local-error.toml" --log-file "$LOG_FILE" || true
+read -p 123
 check_contains "duplicate key detected" "$LOG_FILE"
 
 # 4. Test limit error records.
 cleanup
 run_lightning --backend local --config "tests/$TEST_NAME/local-limit-error-records.toml" --log-file "$LOG_FILE"
 run_sql "SELECT count(*) FROM test.dup_detect"
-check_contains "count(*): 173"
+check_contains "count(*): 174"
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
 check_contains "count(*): 50"
 
@@ -89,7 +92,7 @@ rm -f "$LOG_FILE"
 run_lightning_ctl --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/local-replace.toml" --checkpoint-error-ignore="\`test\`.\`dup_detect\`"
 run_lightning --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/local-replace.toml" --log-file "$LOG_FILE"
 run_sql "SELECT count(*) FROM test.dup_detect"
-check_contains "count(*): 173"
+check_contains "count(*): 174"
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
-check_contains "count(*): 227"
+check_contains "count(*): 228"
 check_not_contains "duplicate detection start" "$LOG_FILE"
