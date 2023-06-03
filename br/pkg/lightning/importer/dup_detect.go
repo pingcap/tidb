@@ -153,12 +153,13 @@ func (h *replaceOnDup) Begin(key []byte) error {
 	if err != nil {
 		return err
 	}
-	println("lance test", idxID)
+	println("lance test begin", idxID)
 	h.idxID = codec.EncodeVarint(nil, idxID)
 	return nil
 }
 
 func (h *replaceOnDup) Append(keyID []byte) error {
+	println("lance test begin", keyID)
 	if len(h.keyID) > 0 {
 		if err := h.w.Put(h.keyID, h.idxID); err != nil {
 			return err
@@ -169,6 +170,7 @@ func (h *replaceOnDup) Append(keyID []byte) error {
 }
 
 func (*replaceOnDup) End() error {
+	println("lance test end")
 	return nil
 }
 

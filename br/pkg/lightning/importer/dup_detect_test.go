@@ -157,6 +157,12 @@ func TestSimplifyTable(t *testing.T) {
 			expTable:   "CREATE TABLE t(a int UNIQUE KEY, b int, c int, UNIQUE INDEX idx_bc(b, c))",
 			expColPerm: []int{0, 1, 2, 10},
 		},
+		{
+			table:      "CREATE TABLE t(a int, b int, c int, d int, INDEX idx_b(b), INDEX idx_c(c), UNIQUE INDEX idx_cd(c, d))",
+			colPerm:    []int{0, 1, 2, 3, 10},
+			expTable:   "CREATE TABLE t(c int, d int, UNIQUE INDEX idx_cd(c, d))",
+			expColPerm: []int{2, 3, 10},
+		},
 	}
 	for _, tc := range testCases {
 		p := parser.New()
