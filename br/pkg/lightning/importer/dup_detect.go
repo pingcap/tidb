@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/extsort"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -132,7 +133,7 @@ func (h *errorOnDup) Begin(key []byte) error {
 
 func (h *errorOnDup) Append(keyID []byte) error {
 	fmt.Println("lance test", keyID)
-	h.keyIDs = append(h.keyIDs, keyID)
+	h.keyIDs = append(h.keyIDs, slices.Clone(keyID))
 	return nil
 }
 func (h *errorOnDup) End() error {

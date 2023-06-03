@@ -201,6 +201,7 @@ type Handler interface {
 	Begin(key []byte) error
 	// Append appends a keyID to the current duplicate key.
 	// Multiple keyIDs are appended in lexicographical order.
+	// NOTE: keyID will be changed after the call.
 	Append(keyID []byte) error
 	// End is called when all keyIDs of the current duplicate key have been appended.
 	End() error
