@@ -39,7 +39,7 @@ if [ "$expected_rows" != "$actual_rows" ] || [ "$expected_pks" != "$actual_pks" 
   exit 1
 fi
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
-check_contains "count(*): 227"
+check_contains "count(*): 228"
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2 WHERE error = ''"
 check_contains "count(*): 0"
 run_sql "SELECT * FROM lightning_task_info.conflict_error_v2 WHERE row_id = 12"

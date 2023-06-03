@@ -451,7 +451,6 @@ func (cr *chunkProcessor) encodeLoop(
 							zap.Int64("offset", lastOffset),
 							zap.Any("row", lastRow.Row))
 					} else {
-						logger.Warn("lance test", zap.Int64("idxID", idxID))
 						for _, kv := range kvs.(*kv2.Pairs).Pairs {
 							_, decodedIdxID, isRecordKey, err := tablecodec.DecodeKeyHead(kv.Key)
 							if err != nil {
@@ -459,7 +458,6 @@ func (cr *chunkProcessor) encodeLoop(
 								goto conflictMsgDone
 							}
 							if !isRecordKey && decodedIdxID == idxID {
-								logger.Warn("lance test 2", zap.Any("key", kv.Key), zap.Any("val", kv.Val))
 								dupErr := txn.ExtractKeyExistsErrFromIndex(kv.Key, kv.Val, t.tableInfo.Core, idxID)
 								conflictMsg = dupErr.Error()
 								goto conflictMsgDone

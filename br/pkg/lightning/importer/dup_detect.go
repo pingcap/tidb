@@ -16,8 +16,6 @@ package importer
 
 import (
 	"context"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 
@@ -155,13 +153,11 @@ func (h *replaceOnDup) Begin(key []byte) error {
 	if err != nil {
 		return err
 	}
-	println("lance test begin", idxID)
 	h.idxID = codec.EncodeVarint(nil, idxID)
 	return nil
 }
 
 func (h *replaceOnDup) Append(keyID []byte) error {
-	fmt.Println("lance test begin", keyID)
 	if len(h.keyID) > 0 {
 		if err := h.w.Put(h.keyID, h.idxID); err != nil {
 			return err
@@ -172,7 +168,6 @@ func (h *replaceOnDup) Append(keyID []byte) error {
 }
 
 func (*replaceOnDup) End() error {
-	println("lance test end")
 	return nil
 }
 
@@ -297,13 +292,7 @@ func (d *dupDetector) addKeysByChunk(
 	}
 
 	// 3. Simplify table structure and create kv encoder.
-	d.logger.Warn("lance test colPerm", zap.Any("colPerm", colPerm))
 	tblInfo, colPerm = simplifyTable(tblInfo, colPerm)
-	d.logger.Warn("lance test colPerm", zap.Any("colPerm", colPerm))
-	for _, idxInfo := range tblInfo.Indices {
-		bs, _ := json.Marshal(idxInfo)
-		d.logger.Warn("lance test idxInfo", zap.Any("idxInfo", string(bs)))
-	}
 	encTable, err := tables.TableFromMeta(d.tr.alloc, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -333,9 +322,6 @@ func (d *dupDetector) addKeysByChunk(
 			return errors.Trace(err)
 		}
 		for _, kvPair := range kv.Row2KvPairs(row) {
-			keyHex := hex.EncodeToString(kvPair.Key)
-			rowIDHex := hex.EncodeToString(kvPair.RowID)
-			d.logger.Warn("lance test add key", zap.String("key", keyHex), zap.String("rowID", rowIDHex))
 			if err := adder.Add(kvPair.Key, kvPair.RowID); err != nil {
 				return err
 			}
