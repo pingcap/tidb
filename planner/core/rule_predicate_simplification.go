@@ -154,7 +154,7 @@ func applyPredicateSimplification(sctx sessionctx.Context, predicates []expressi
 	return newValues
 }
 
-func (s *DataSource) predicateSimplification(opt *logicalOptimizeOp) LogicalPlan {
+func (s *DataSource) predicateSimplification(*logicalOptimizeOp) LogicalPlan {
 	p := s.self.(*DataSource)
 	p.pushedDownConds = applyPredicateSimplification(p.ctx, p.pushedDownConds)
 	p.allConds = applyPredicateSimplification(p.ctx, p.allConds)
