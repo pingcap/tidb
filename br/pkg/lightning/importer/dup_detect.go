@@ -17,6 +17,7 @@ package importer
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 
@@ -296,7 +297,13 @@ func (d *dupDetector) addKeysByChunk(
 	}
 
 	// 3. Simplify table structure and create kv encoder.
+	d.logger.Warn("lance test colPerm", zap.Any("colPerm", colPerm))
 	tblInfo, colPerm = simplifyTable(tblInfo, colPerm)
+	d.logger.Warn("lance test colPerm", zap.Any("colPerm", colPerm))
+	for _, idxInfo := range tblInfo.Indices {
+		bs, _ := json.Marshal(idxInfo)
+		d.logger.Warn("lance test idxInfo", zap.Any("idxInfo", string(bs)))
+	}
 	encTable, err := tables.TableFromMeta(d.tr.alloc, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
