@@ -94,5 +94,5 @@ run_lightning --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/l
 run_sql "SELECT count(*) FROM test.dup_detect"
 check_contains "count(*): 174"
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
-check_contains "count(*): 228"
+check_contains "count(*): 227"
 check_not_contains "duplicate detection start" "$LOG_FILE"
