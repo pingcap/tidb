@@ -26,3 +26,12 @@ ENV PATH $GOPATH/bin:$GOROOT/bin:$PATH
 RUN curl -fsSL "$GOLANG_DOWNLOAD_URL" -o golang.tar.gz \
     && tar -C /usr/local -xzf golang.tar.gz \
     && rm golang.tar.gz
+
+RUN mkdir -p /go/src/github.com/pingcap/tidb
+WORKDIR /go/src/github.com/pingcap/tidb
+
+COPY go.mod .
+COPY go.sum .
+COPY parser/go.mod parser/go.mod
+COPY parser/go.sum parser/go.sum
+RUN GO111MODULE=on go mod download

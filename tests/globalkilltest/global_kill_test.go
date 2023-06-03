@@ -163,43 +163,43 @@ func (s *GlobalKillSuite) startPD(dataDir string) (err error) {
 func (s *GlobalKillSuite) startCluster() (err error) {
 	err = s.startPD(s.clusterID)
 	if err != nil {
-		return
+		return errors.Trace(err)
 	}
 
 	err = s.startTiKV(s.clusterID)
 	if err != nil {
-		return
+		return errors.Trace(err)
 	}
 	time.Sleep(10 * time.Second)
-	return
+	return nil
 }
 
 func (s *GlobalKillSuite) stopPD() (err error) {
 	if err = s.pdProc.Process.Kill(); err != nil {
-		return
+		return errors.Trace(err)
 	}
 	if err = s.pdProc.Wait(); err != nil && err.Error() != "signal: killed" {
-		return err
+		return errors.Trace(err)
 	}
 	return nil
 }
 
 func (s *GlobalKillSuite) stopTiKV() (err error) {
 	if err = s.tikvProc.Process.Kill(); err != nil {
-		return
+		return errors.Trace(err)
 	}
 	if err = s.tikvProc.Wait(); err != nil && err.Error() != "signal: killed" {
-		return err
+		return errors.Trace(err)
 	}
 	return nil
 }
 
 func (s *GlobalKillSuite) cleanCluster() (err error) {
 	if err = s.stopPD(); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if err = s.stopTiKV(); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	log.Info("cluster cleaned")
 	return nil
@@ -232,6 +232,7 @@ func (s *GlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath strin
 		fmt.Sprintf("-P=%d", port),
 		fmt.Sprintf("--status=%d", statusPort),
 		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port),
+		fmt.Sprintf("--log-slow-query=%s/tidb-slow%d.log", *tmpPath, port),
 		fmt.Sprintf("--config=%s", "./config.toml"))
 	log.Info("starting tidb", zap.Any("cmd", cmd))
 	err = cmd.Start()

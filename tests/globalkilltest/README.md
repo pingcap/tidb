@@ -24,7 +24,7 @@ Usage: ./run-tests.sh [options]
     --tidb_status_port <port>: First TiDB server status listening port. port ~ port+2 will be used.
                                Defaults to "8000".
 
-    --pd <pd-client-path>: PD client path, ip:port list seperated by comma.
+    --pd <pd-client-path>: PD client path, ip:port list separated by comma.
                            Defaults to "127.0.0.1:2379".
 
     --pd_proxy_port <port>: PD proxy port. PD proxy is used to simulate lost connection between TiDB and PD.
@@ -54,7 +54,7 @@ cd tests/globalkilltest
 mkdir -p bin
 tiup install pd:nightly tikv:nightly
 cp ~/.tiup/components/pd/$(ls ~/.tiup/components/pd | tail -1)/pd-server bin/
-cp ~/.tiup/components/tikv/$(ls ~/.tiup/components/pd | tail -1)/tikv-server bin
+cp ~/.tiup/components/tikv/$(ls ~/.tiup/components/tikv | tail -1)/tikv-server bin/
 ```
 
 Alternatively, if you have Docker environment, you can run `up.sh`, which will prepare binaries & run `make` for you:

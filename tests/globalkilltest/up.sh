@@ -20,9 +20,11 @@ set -euxo pipefail
 mkdir -p bin
 tiup install pd:nightly tikv:nightly
 cp ~/.tiup/components/pd/$(ls ~/.tiup/components/pd | tail -1)/pd-server bin/
-cp ~/.tiup/components/tikv/$(ls ~/.tiup/components/pd | tail -1)/tikv-server bin
+cp ~/.tiup/components/tikv/$(ls ~/.tiup/components/tikv | tail -1)/tikv-server bin/
 
-TIDB_PATH=$(builtin cd ../..; pwd)
+cd ../..
+TIDB_PATH=$(pwd)
 
-docker build -t globalkilltest .
-docker run --name globalkilltest -it --rm -v $TIDB_PATH:/tidb globalkilltest /bin/bash -c 'cd /tidb/tests/globalkilltest && make && ./run-tests.sh'
+docker build -t globalkilltest -f tests/globalkilltest/Dockerfile .
+docker run --name globalkilltest -it --rm -v $TIDB_PATH:/tidb globalkilltest /bin/bash -c \
+  'git config --global --add safe.directory /tidb && cd /tidb/tests/globalkilltest && make && ./run-tests.sh'
