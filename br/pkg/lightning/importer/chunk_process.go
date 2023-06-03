@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/driver/txn"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -188,6 +189,31 @@ func (cr *chunkProcessor) process(
 		return err
 	}
 	defer kvEncoder.Close()
+	// create the kvEncoder with original tableInfo if dropIndex
+	originalKVEncoder := kvEncoder
+	if rc.cfg.TikvImporter.AddIndexBySQL {
+		encTable, err := tables.TableFromMeta(t.alloc, t.tableInfo.Core)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		originalKVEncoder, err = rc.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
+			SessionOptions: encode.SessionOptions{
+				SQLMode:   rc.cfg.TiDB.SQLMode,
+				Timestamp: cr.chunk.Timestamp,
+				SysVars:   rc.sysVars,
+				// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
+				AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
+			},
+			Path:   cr.chunk.Key.Path,
+			Table:  encTable,
+			Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer originalKVEncoder.Close()
+	}
 
 	kvsCh := make(chan []deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)
@@ -203,7 +229,16 @@ func (cr *chunkProcessor) process(
 
 	logTask := logger.Begin(zap.InfoLevel, "restore file")
 
-	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(ctx, kvsCh, t, logger, kvEncoder, deliverCompleteCh, rc)
+	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(
+		ctx,
+		kvsCh,
+		t,
+		logger,
+		kvEncoder,
+		originalKVEncoder,
+		deliverCompleteCh,
+		rc,
+	)
 	var deliverErr error
 	select {
 	case deliverResult, ok := <-deliverCompleteCh:
@@ -232,6 +267,7 @@ func (cr *chunkProcessor) encodeLoop(
 	t *TableImporter,
 	logger log.Logger,
 	kvEncoder encode.Encoder,
+	originalKVEncoder encode.Encoder,
 	deliverCompleteCh <-chan deliverResult,
 	rc *Controller,
 ) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
@@ -396,7 +432,7 @@ func (cr *chunkProcessor) encodeLoop(
 						conflictMsg = err.Error()
 						goto conflictMsgDone
 					}
-					kvs, err = kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, lastOffset)
+					kvs, err = originalKVEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, lastOffset)
 					if err != nil {
 						conflictMsg = err.Error()
 						goto conflictMsgDone
@@ -422,7 +458,7 @@ func (cr *chunkProcessor) encodeLoop(
 								goto conflictMsgDone
 							}
 							if !isRecordKey && decodedIdxID == idxID {
-								dupErr := txn.ExtractKeyExistsErrFromIndex(kv.Key, kv.Val, t.encTable.Meta(), idxID)
+								dupErr := txn.ExtractKeyExistsErrFromIndex(kv.Key, kv.Val, t.tableInfo.Core, idxID)
 								conflictMsg = dupErr.Error()
 								goto conflictMsgDone
 							}
