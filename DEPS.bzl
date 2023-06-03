@@ -3552,8 +3552,8 @@ def go_deps():
         name = "com_github_prometheus_procfs",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/procfs",
-        sum = "h1:UkG7GPYkO4UZyLnyXjaWYcgOSONqwdBqFUT95ugmt6I=",
-        version = "v0.10.0",
+        sum = "h1:kYK1Va/YMlutzCGazswoHKo//tZVlFpKYh+PymziUAg=",
+        version = "v0.10.1",
     )
     go_repository(
         name = "com_github_prometheus_prometheus",
