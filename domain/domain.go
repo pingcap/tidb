@@ -1168,6 +1168,9 @@ func (do *Domain) Init(
 				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
 				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
 			} else {
+				if err := do.info.StoreServerInfo(context.Background()); err != nil {
+					return errors.Trace(err)
+				}
 				do.isLostConnectionToPD.Store(0)
 			}
 
