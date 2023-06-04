@@ -42,6 +42,7 @@ func TestAutoIncPool(t *testing.T) {
 	)
 
 	pool.InitExt(Size, true, TryCnt)
+	assert.Equal(int(Size), pool.Cap())
 	assert.Equal(0, pool.Len())
 
 	// get all.
@@ -90,6 +91,7 @@ func TestLockFreePoolBasic(t *testing.T) {
 	)
 
 	pool.InitExt(uint32(1<<SizeInBits), math.MaxUint32)
+	assert.Equal(int(Size), pool.Cap())
 	assert.Equal(int(Size), pool.Len())
 
 	// get all.
@@ -136,6 +138,7 @@ func TestLockFreePoolInitEmpty(t *testing.T) {
 	)
 
 	pool.InitExt(uint32(1<<SizeInBits), 0)
+	assert.Equal(int(Size), pool.Cap())
 	assert.Equal(0, pool.Len())
 
 	// put to full.
@@ -201,6 +204,10 @@ func (p *LockBasedCircularPool) Len() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return int(p.tail - p.head)
+}
+
+func (p *LockBasedCircularPool) Cap() int {
+	return int(p.cap - 1)
 }
 
 func (p LockBasedCircularPool) String() string {
