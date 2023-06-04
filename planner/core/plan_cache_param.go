@@ -134,8 +134,7 @@ type paramRestorer struct {
 }
 
 func (pr *paramRestorer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch n := in.(type) {
-	case *driver.ParamMarkerExpr:
+	if n, ok := in.(*driver.ParamMarkerExpr); ok {
 		if n.Offset >= len(pr.params) {
 			pr.err = errors.New("failed to restore ast.Node")
 			return nil, true
@@ -151,7 +150,7 @@ func (pr *paramRestorer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	return in, false
 }
 
-func (pr *paramRestorer) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*paramRestorer) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 

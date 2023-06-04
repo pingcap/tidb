@@ -930,8 +930,7 @@ func (or partitionRangeOR) intersection(x partitionRangeOR) partitionRangeOR {
 }
 
 // intersectionRange calculate the intersection of [start, end) and [newStart, newEnd)
-func intersectionRange(start, end, newStart, newEnd int) (int, int) {
-	var s, e int
+func intersectionRange(start, end, newStart, newEnd int) (s int, e int) {
 	if start > newStart {
 		s = start
 	} else {
@@ -1266,7 +1265,7 @@ type rangePruner struct {
 	monotonous monotoneMode
 }
 
-func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (int, int, bool) {
+func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (start int, end int, ok bool) {
 	if constExpr, ok := expr.(*expression.Constant); ok {
 		if b, err := constExpr.Value.ToBool(sctx.GetSessionVars().StmtCtx); err == nil && b == 0 {
 			// A constant false expression.
@@ -1280,7 +1279,7 @@ func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expres
 	}
 
 	unsigned := mysql.HasUnsignedFlag(p.col.RetType.GetFlag())
-	start, end := pruneUseBinarySearch(p.lessThan, dataForPrune, unsigned)
+	start, end = pruneUseBinarySearch(p.lessThan, dataForPrune, unsigned)
 	return start, end, true
 }
 

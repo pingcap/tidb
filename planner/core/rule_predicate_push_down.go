@@ -896,17 +896,17 @@ func (ds *DataSource) AddPrefix4ShardIndexes(sc sessionctx.Context, conds []expr
 
 func (ds *DataSource) addExprPrefixCond(sc sessionctx.Context, path *util.AccessPath,
 	conds []expression.Expression) ([]expression.Expression, error) {
-	IdxCols, IdxColLens :=
+	idxCols, idxColLens :=
 		expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
-	if len(IdxCols) == 0 {
+	if len(idxCols) == 0 {
 		return conds, nil
 	}
 
 	adder := &exprPrefixAdder{
 		sctx:      sc,
 		OrigConds: conds,
-		cols:      IdxCols,
-		lengths:   IdxColLens,
+		cols:      idxCols,
+		lengths:   idxColLens,
 	}
 
 	return adder.addExprPrefix4ShardIndex()

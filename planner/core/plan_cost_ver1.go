@@ -817,8 +817,8 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64
 	cpuCost += probeCost
 	// For merge join, only one group of rows with same join key(not null) are cached,
 	// we compute average memory cost using estimated group size.
-	NDV, _ := getColsNDVWithMatchedLen(innerKeys, innerSchema, innerStats)
-	memoryCost := (innerCnt / NDV) * sessVars.GetMemoryFactor()
+	ndv, _ := getColsNDVWithMatchedLen(innerKeys, innerSchema, innerStats)
+	memoryCost := (innerCnt / ndv) * sessVars.GetMemoryFactor()
 	return cpuCost + memoryCost
 }
 
