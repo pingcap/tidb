@@ -2810,7 +2810,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `d`, please run analyze table to refresh columns of all partitions",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p0` column `d`",
 	))
 
 	// analyze partition with existing table-level & partition-level options and existing partition stats under dynamic
