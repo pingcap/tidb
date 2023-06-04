@@ -1126,7 +1126,7 @@ func (*LogicalJoin) constructInnerSel(sel *LogicalSelection, child PhysicalPlan)
 	return physicalSel
 }
 
-func (p *LogicalJoin) constructInnerProj(proj *LogicalProjection, child PhysicalPlan) PhysicalPlan {
+func (*LogicalJoin) constructInnerProj(proj *LogicalProjection, child PhysicalPlan) PhysicalPlan {
 	if proj == nil {
 		return child
 	}
@@ -1139,7 +1139,7 @@ func (p *LogicalJoin) constructInnerProj(proj *LogicalProjection, child Physical
 	return physicalProj
 }
 
-func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
+func (*LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
 	if us == nil {
 		return reader
 	}

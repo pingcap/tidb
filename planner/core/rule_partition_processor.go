@@ -1813,7 +1813,7 @@ func (p *rangeColumnsPruner) getPartCol(colID int64) *expression.Column {
 	return nil
 }
 
-func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (int, int, bool) {
+func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (start int, end int, ok bool) {
 	op, ok := expr.(*expression.ScalarFunction)
 	if !ok {
 		return 0, len(p.lessThan), false
@@ -1864,7 +1864,7 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 	if exprColl != colColl && (opName != ast.EQ || !collate.IsBinCollation(exprColl)) {
 		return 0, len(p.lessThan), true
 	}
-	start, end := p.pruneUseBinarySearch(sctx, opName, con)
+	start, end = p.pruneUseBinarySearch(sctx, opName, con)
 	return start, end, true
 }
 
