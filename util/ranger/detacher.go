@@ -185,21 +185,69 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 	return -1
 }
 
-// extractIndexPointRangesForCNF extracts a CNF item from the input CNF expressions, such that the CNF item
-// has the maximum range length among all the CNF items. If two CNF items has the same range length, we choose the one
-// with totally point ranges.
+type cnfItemRangeResult struct {
+	emptyRange  bool
+	rangeResult *DetachRangeResult
+	offset      int
+	// isPointRanges means that each range is point range and all of them have the same column numbers(i.e., maxColNum = minColNum).
+	isPointRanges bool
+	maxColNum     int
+	minColNum     int
+}
+
+func getCNFItemRangeResult(sctx sessionctx.Context, rangeResult *DetachRangeResult, offset int) *cnfItemRangeResult {
+	isPointRanges := true
+	var maxColNum, minColNum int
+	for i, ran := range rangeResult.Ranges {
+		if !ran.IsPoint(sctx) {
+			isPointRanges = false
+		}
+		if i == 0 {
+			maxColNum = len(ran.LowVal)
+			minColNum = len(ran.LowVal)
+		} else {
+			if len(ran.LowVal) > maxColNum {
+				maxColNum = len(ran.LowVal)
+			}
+			if len(ran.LowVal) < minColNum {
+				minColNum = len(ran.LowVal)
+			}
+		}
+	}
+	return &cnfItemRangeResult{
+		rangeResult:   rangeResult,
+		offset:        offset,
+		isPointRanges: isPointRanges,
+		maxColNum:     maxColNum,
+		minColNum:     minColNum,
+	}
+}
+
+func compareCNFItemRangeResult(curResult, bestResult *cnfItemRangeResult) (curIsBetter bool) {
+	if curResult.isPointRanges && bestResult.isPointRanges {
+		return curResult.minColNum > bestResult.minColNum
+	}
+	if !curResult.isPointRanges && !bestResult.isPointRanges {
+		if curResult.minColNum == bestResult.minColNum {
+			return curResult.maxColNum > bestResult.maxColNum
+		}
+		return curResult.minColNum > bestResult.minColNum
+	}
+	// Point ranges is better than non-point ranges since we can append subsequent column ranges to point ranges.
+	return curResult.isPointRanges
+}
+
+// extractBestCNFItemRanges builds ranges for each CNF item from the input CNF expressions and returns the best CNF
+// item ranges.
 // e.g, for input CNF expressions ((a,b) in ((1,1),(2,2))) and a > 1 and ((a,b,c) in (1,1,1),(2,2,2))
 // ((a,b,c) in (1,1,1),(2,2,2)) would be extracted.
-func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.Expression, cols []*expression.Column,
-	lengths []int, rangeMaxSize int64) (*DetachRangeResult, int, bool, []*valueInfo, error) {
+func extractBestCNFItemRanges(sctx sessionctx.Context, conds []expression.Expression, cols []*expression.Column,
+	lengths []int, rangeMaxSize int64) (*cnfItemRangeResult, []*valueInfo, error) {
 	if len(conds) < 2 {
-		return nil, -1, false, nil, nil
+		return nil, nil, nil
 	}
-	var r *DetachRangeResult
+	var bestRes *cnfItemRangeResult
 	columnValues := make([]*valueInfo, len(cols))
-	maxNumCols := int(0)
-	offset := int(-1)
-	allPoints := false
 	for i, cond := range conds {
 		tmpConds := []expression.Expression{cond}
 		colSets := expression.ExtractColumnSet(cond)
@@ -215,45 +263,25 @@ func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.E
 		// which are not point ranges, and we cannot append `c = 1` anymore.
 		res, err := detachCondAndBuildRangeWithoutMerging(sctx, tmpConds, cols, lengths, rangeMaxSize)
 		if err != nil {
-			return nil, -1, false, nil, err
+			return nil, nil, err
 		}
 		if len(res.Ranges) == 0 {
-			return &DetachRangeResult{}, -1, false, nil, nil
+			return &cnfItemRangeResult{emptyRange: true, offset: i}, nil, nil
 		}
 		// take the union of the two columnValues
 		columnValues = unionColumnValues(columnValues, res.ColumnValues)
 		if len(res.AccessConds) == 0 || len(res.RemainedConds) > 0 {
 			continue
 		}
-		sameLens, curAllPoints := true, true
-		numCols := int(0)
-		for j, ran := range res.Ranges {
-			if !ran.IsPoint(sctx) {
-				curAllPoints = false
-			}
-			if j == 0 {
-				numCols = len(ran.LowVal)
-			} else if numCols != len(ran.LowVal) {
-				sameLens = false
-				break
-			}
-		}
-		if !sameLens {
-			continue
-		}
-		// The meaning of `numCols == maxNumCols && !allPoints && curAllPoints` is as follows:
-		// If two CNF items has the same range length, we choose the one with totally point ranges.
-		if numCols > maxNumCols || (numCols == maxNumCols && !allPoints && curAllPoints) {
-			r = res
-			offset = i
-			maxNumCols = numCols
-			allPoints = curAllPoints
+		curRes := getCNFItemRangeResult(sctx, res, i)
+		if bestRes == nil || compareCNFItemRangeResult(curRes, bestRes) {
+			bestRes = curRes
 		}
 	}
-	if r != nil {
-		r.IsDNFCond = false
+	if bestRes != nil && bestRes.rangeResult != nil {
+		bestRes.rangeResult.IsDNFCond = false
 	}
-	return r, offset, allPoints, columnValues, nil
+	return bestRes, columnValues, nil
 }
 
 func unionColumnValues(lhs, rhs []*valueInfo) []*valueInfo {
@@ -348,35 +376,33 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		optPrefixIndexSingleScan: d.sctx.GetSessionVars().OptPrefixIndexSingleScan,
 	}
 	if considerDNF {
-		bestCNFItemRes, offset, allPoints, columnValues, err := extractIndexPointRangesForCNF(d.sctx, conditions, d.cols, d.lengths, d.rangeMaxSize)
+		bestCNFItemRes, columnValues, err := extractBestCNFItemRanges(d.sctx, conditions, d.cols, d.lengths, d.rangeMaxSize)
 		if err != nil {
 			return nil, err
 		}
 		res.ColumnValues = unionColumnValues(res.ColumnValues, columnValues)
 		if bestCNFItemRes != nil {
-			if len(bestCNFItemRes.Ranges) == 0 {
+			if bestCNFItemRes.emptyRange {
 				return &DetachRangeResult{}, nil
 			}
-			if allPoints && len(bestCNFItemRes.Ranges[0].LowVal) > eqOrInCount {
-				bestCNFItemRes.ColumnValues = res.ColumnValues
-				res = bestCNFItemRes
-				pointRanges = bestCNFItemRes.Ranges
+			if bestCNFItemRes.isPointRanges && bestCNFItemRes.minColNum > eqOrInCount {
+				bestCNFItemRes.rangeResult.ColumnValues = res.ColumnValues
+				res = bestCNFItemRes.rangeResult
+				pointRanges = bestCNFItemRes.rangeResult.Ranges
 				eqOrInCount = len(res.Ranges[0].LowVal)
 				newConditions = newConditions[:0]
-				newConditions = append(newConditions, conditions[:offset]...)
-				newConditions = append(newConditions, conditions[offset+1:]...)
+				newConditions = append(newConditions, conditions[:bestCNFItemRes.offset]...)
+				newConditions = append(newConditions, conditions[bestCNFItemRes.offset+1:]...)
 				if eqOrInCount == len(d.cols) || len(newConditions) == 0 {
 					res.RemainedConds = append(res.RemainedConds, newConditions...)
 					return res, nil
 				}
-			} else if !allPoints && len(bestCNFItemRes.Ranges[0].LowVal) > eqOrInCount+1 {
-				// For the case `!allPoints && len(bestCNFItemRes.Ranges[0].LowVal) == eqOrInCount+1`, we don't choose to
-				// do early return here because the subsequent code can build better tail range.
-				bestCNFItemRes.ColumnValues = res.ColumnValues
-				res = bestCNFItemRes
+			} else if !bestCNFItemRes.isPointRanges && eqOrInCount == 0 && bestCNFItemRes.minColNum > 0 && bestCNFItemRes.maxColNum > 1 {
+				bestCNFItemRes.rangeResult.ColumnValues = res.ColumnValues
+				res = bestCNFItemRes.rangeResult
 				newConditions = newConditions[:0]
-				newConditions = append(newConditions, conditions[:offset]...)
-				newConditions = append(newConditions, conditions[offset+1:]...)
+				newConditions = append(newConditions, conditions[:bestCNFItemRes.offset]...)
+				newConditions = append(newConditions, conditions[bestCNFItemRes.offset+1:]...)
 				res.RemainedConds = append(res.RemainedConds, newConditions...)
 				return res, nil
 			}
