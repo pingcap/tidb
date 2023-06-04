@@ -246,6 +246,15 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	if p.StoreType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		buffer.WriteString(", PartitionTableScan:true")
 	}
+	if len(p.runtimeFilterList) > 0 {
+		buffer.WriteString(", runtime filter:")
+		for i, runtimeFilter := range p.runtimeFilterList {
+			if i != 0 {
+				buffer.WriteString(", ")
+			}
+			buffer.WriteString(runtimeFilter.ExplainInfo(false))
+		}
+	}
 	return buffer.String()
 }
 
@@ -609,6 +618,17 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	}
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+	}
+
+	// for runtime filter
+	if len(p.runtimeFilterList) > 0 {
+		buffer.WriteString(", runtime filter:")
+		for i, runtimeFilter := range p.runtimeFilterList {
+			if i != 0 {
+				buffer.WriteString(", ")
+			}
+			buffer.WriteString(runtimeFilter.ExplainInfo(true))
+		}
 	}
 	return buffer.String()
 }

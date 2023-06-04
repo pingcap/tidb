@@ -97,7 +97,7 @@ func GetTiKVModeSwitcher(logger *zap.Logger) (local.TiKVModeSwitcher, error) {
 }
 
 // NewTableImporter creates a new table importer.
-func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableImporter, err error) {
+func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -105,7 +105,8 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
-	dir, err := prepareSortDir(e, param.Job.ID)
+	// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
+	dir, err := prepareSortDir(e, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +150,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		DupeDetectEnabled:       false,
 		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
 		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
-		MaxOpenFiles:            int(util.GenRLimit()),
+		MaxOpenFiles:            int(util.GenRLimit("table_import")),
 		KeyspaceName:            keySpaceName,
 		PausePDSchedulerScope:   config.PausePDSchedulerScopeTable,
 	}

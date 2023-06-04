@@ -138,6 +138,8 @@ const (
 	AllSQLDigestsStr = "ALL_SQL_DIGESTS"
 	// RelatedTableIDsStr is the table id of the TIDB_TRX table's RelatedTableIDs column.
 	RelatedTableIDsStr = "RELATED_TABLE_IDS"
+	// WaitingTimeStr is the column name of the TIDB_TRX table's WaitingTime column.
+	WaitingTimeStr = "WAITING_TIME"
 )
 
 // TxnRunningStateStrs is the names of the TxnRunningStates
@@ -251,6 +253,12 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 			str.WriteString(fmt.Sprintf("%d", tblID))
 		}
 		return types.NewDatum(str.String())
+	},
+	WaitingTimeStr: func(info *TxnInfo) types.Datum {
+		if !info.BlockStartTime.Valid {
+			return types.NewDatum(nil)
+		}
+		return types.NewFloat64Datum(time.Since(info.BlockStartTime.Time).Seconds())
 	},
 }
 

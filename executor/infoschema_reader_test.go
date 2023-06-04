@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -383,9 +382,6 @@ func TestUserPrivilegesTable(t *testing.T) {
 
 func TestDataForTableStatsField(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	oldExpiryTime := executor.TableStatsCacheExpiry
-	executor.TableStatsCacheExpiry = 0
-	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
 	h := dom.StatsHandle()
 	h.Clear()
 	is := dom.InfoSchema()
@@ -431,9 +427,6 @@ func TestDataForTableStatsField(t *testing.T) {
 
 func TestPartitionsTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	oldExpiryTime := executor.TableStatsCacheExpiry
-	executor.TableStatsCacheExpiry = 0
-	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
 	h := dom.StatsHandle()
 	h.Clear()
 	is := dom.InfoSchema()
@@ -570,7 +563,10 @@ func TestForAnalyzeStatus(t *testing.T) {
 		"  `STATE` varchar(64) DEFAULT NULL,\n" +
 		"  `FAIL_REASON` longtext DEFAULT NULL,\n" +
 		"  `INSTANCE` varchar(512) DEFAULT NULL,\n" +
-		"  `PROCESS_ID` bigint(64) unsigned DEFAULT NULL\n" +
+		"  `PROCESS_ID` bigint(64) unsigned DEFAULT NULL,\n" +
+		"  `Remaining_seconds` bigint(64) unsigned DEFAULT NULL,\n" +
+		"  `Progress` varchar(20) DEFAULT NULL,\n" +
+		"  `Estimated_total_rows` bigint(64) unsigned DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	tk.MustQuery("show create table information_schema.analyze_status").Check(testkit.Rows("ANALYZE_STATUS " + analyzeStatusTable))
 	tk.MustExec("delete from mysql.analyze_jobs")
@@ -607,7 +603,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	rows := tk.MustQuery("select * from information_schema.analyze_status where TABLE_NAME='t1'").Sort().Rows()
 	require.Greater(t, len(rows), 0)
 	for _, row := range rows {
-		require.Len(t, row, 11) // test length of row
+		require.Len(t, row, 14) // test length of row
 		// test `End_time` field
 		str, ok := row[6].(string)
 		require.True(t, ok)

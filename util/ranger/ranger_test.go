@@ -1000,7 +1000,7 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 	}
 }
 
-func TestComplexCondForConsiderDNFPath(t *testing.T) {
+func TestIssue41572(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	testKit := testkit.NewTestKit(t, store)
@@ -1023,7 +1023,7 @@ func TestComplexCondForConsiderDNFPath(t *testing.T) {
 			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		testKit.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }
 
