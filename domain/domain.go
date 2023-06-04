@@ -1158,7 +1158,7 @@ func (do *Domain) Init(
 		return err
 	}
 
-	// step 2: intialize the global kill, which depends on `globalInfoSyncer`.`
+	// step 2: initialize the global kill, which depends on `globalInfoSyncer`.`
 	if config.GetGlobalConfig().EnableGlobalKill {
 		do.connIDAllocator = globalconn.NewGlobalAllocator(do.ServerID, config.GetGlobalConfig().Experimental.EnableGlobalKill32Bits)
 

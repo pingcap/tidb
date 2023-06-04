@@ -197,6 +197,7 @@ func (p *LockFreeCircularPool) Len() int {
 	return int(p.tail.Load() - p.head.Load())
 }
 
+// Cap implements IDPool interface.
 func (p *LockFreeCircularPool) Cap() int {
 	return int(p.cap - 1)
 }
