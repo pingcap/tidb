@@ -2029,18 +2029,18 @@ func checkChildFitBC(p Plan) bool {
 	return p.SCtx().GetSessionVars().BroadcastJoinThresholdSize == -1 || sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
 
-func calcBroadcastExchangeSize(p Plan, mppStoreCnt int) (float64, float64, bool) {
+func calcBroadcastExchangeSize(p Plan, mppStoreCnt int) (row float64, size float64, hasSize bool) {
 	s := p.statsInfo()
-	row := float64(s.Count()) * float64(mppStoreCnt-1)
+	row = float64(s.Count()) * float64(mppStoreCnt-1)
 	if s.HistColl == nil {
 		return row, 0, false
 	}
 	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
-	size := avg * row
+	size = avg * row
 	return row, size, true
 }
 
-func calcBroadcastExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, float64, bool) {
+func calcBroadcastExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (row float64, size float64, hasSize bool) {
 	row1, size1, hasSize1 := calcBroadcastExchangeSize(p1, mppStoreCnt)
 	row2, size2, hasSize2 := calcBroadcastExchangeSize(p2, mppStoreCnt)
 
@@ -2056,18 +2056,18 @@ func calcBroadcastExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float6
 	return math.Min(row1, row2), 0, false
 }
 
-func calcHashExchangeSize(p Plan, mppStoreCnt int) (float64, float64, bool) {
+func calcHashExchangeSize(p Plan, mppStoreCnt int) (row float64, sz float64, hasSize bool) {
 	s := p.statsInfo()
-	row := float64(s.Count()) * float64(mppStoreCnt-1) / float64(mppStoreCnt)
+	row = float64(s.Count()) * float64(mppStoreCnt-1) / float64(mppStoreCnt)
 	if s.HistColl == nil {
 		return row, 0, false
 	}
 	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
-	sz := avg * row
+	sz = avg * row
 	return row, sz, true
 }
 
-func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, float64, bool) {
+func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (row float64, size float64, hasSize bool) {
 	row1, size1, hasSize1 := calcHashExchangeSize(p1, mppStoreCnt)
 	row2, size2, hasSize2 := calcHashExchangeSize(p2, mppStoreCnt)
 
