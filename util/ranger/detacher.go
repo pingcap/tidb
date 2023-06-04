@@ -15,7 +15,6 @@
 package ranger
 
 import (
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -187,7 +187,6 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 }
 
 type cnfItemRangeResult struct {
-	emptyRange  bool
 	rangeResult *DetachRangeResult
 	offset      int
 	// sameLenPointRanges means that each range is point range and all of them have the same column numbers(i.e., maxColNum = minColNum).
@@ -270,7 +269,7 @@ func extractBestCNFItemRanges(sctx sessionctx.Context, conds []expression.Expres
 			return nil, nil, err
 		}
 		if len(res.Ranges) == 0 {
-			return &cnfItemRangeResult{emptyRange: true, offset: i}, nil, nil
+			return &cnfItemRangeResult{rangeResult: res, offset: i}, nil, nil
 		}
 		// take the union of the two columnValues
 		columnValues = unionColumnValues(columnValues, res.ColumnValues)
@@ -385,8 +384,8 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 			return nil, err
 		}
 		res.ColumnValues = unionColumnValues(res.ColumnValues, columnValues)
-		if bestCNFItemRes != nil {
-			if bestCNFItemRes.emptyRange {
+		if bestCNFItemRes != nil && bestCNFItemRes.rangeResult != nil {
+			if len(bestCNFItemRes.rangeResult.Ranges) == 0 {
 				return &DetachRangeResult{}, nil
 			}
 			if bestCNFItemRes.sameLenPointRanges && bestCNFItemRes.minColNum > eqOrInCount {

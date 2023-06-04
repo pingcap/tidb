@@ -23,6 +23,7 @@ go_library(
         "//parser/terror",
         "//sessionctx",
         "//sessionctx/stmtctx",
+        "//sessionctx/variable",
         "//types",
         "//types/parser_driver",
         "//util/chunk",
