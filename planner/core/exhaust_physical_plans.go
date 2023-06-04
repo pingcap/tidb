@@ -139,7 +139,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 	return []*property.PhysicalProperty{lProp, rProp}, true
 }
 
-func (p *LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
+func (*LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
 	// if a left key and its corresponding right key have different collation, don't use MergeJoin since
 	// the their children may sort their records in different ways
 	for i := range leftKeys {
@@ -1115,7 +1115,7 @@ func (p *LogicalJoin) constructInnerByWrapper(wrapper *indexJoinInnerChildWrappe
 	return child
 }
 
-func (p *LogicalJoin) constructInnerSel(sel *LogicalSelection, child PhysicalPlan) PhysicalPlan {
+func (*LogicalJoin) constructInnerSel(sel *LogicalSelection, child PhysicalPlan) PhysicalPlan {
 	if sel == nil {
 		return child
 	}

@@ -15,7 +15,6 @@
 package core
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -139,7 +138,7 @@ func TestGetParamSQLFromASTConcurrently(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			for i := 0; i < 1000; i++ {
-				_, vals, err := GetParamSQLFromAST(context.Background(), MockContext(), stmts[id])
+				_, vals, err := GetParamSQLFromAST(MockContext(), stmts[id])
 				require.Nil(t, err)
 				require.Equal(t, len(vals), 3)
 				require.Equal(t, vals[0].GetValue(), int64(id*3+0))
@@ -188,6 +187,6 @@ func BenchmarkGetParamSQL(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		GetParamSQLFromAST(context.Background(), sctx, stmt)
+		GetParamSQLFromAST(sctx, stmt)
 	}
 }

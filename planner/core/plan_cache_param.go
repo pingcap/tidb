@@ -16,7 +16,6 @@ package core
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"sync"
 
@@ -83,7 +82,7 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	return in, false
 }
 
-func (pr *paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*paramReplacer) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
@@ -94,7 +93,7 @@ func (pr *paramReplacer) Reset() {
 // GetParamSQLFromAST returns the parameterized SQL of this AST.
 // NOTICE: this function does not modify the original AST.
 // paramVals are copied from this AST.
-func GetParamSQLFromAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, paramVals []types.Datum, err error) {
+func GetParamSQLFromAST(sctx sessionctx.Context, stmt ast.StmtNode) (paramSQL string, paramVals []types.Datum, err error) {
 	var params []*driver.ValueExpr
 	paramSQL, params, err = ParameterizeAST(stmt)
 	if err != nil {
