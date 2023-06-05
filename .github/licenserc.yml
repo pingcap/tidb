@@ -3,7 +3,6 @@ header:
     spdx-id: Apache-2.0
     copyright-owner: PingCAP, Inc.
   paths-ignore:
-<<<<<<< HEAD
     - 'docs/'
     - 'br/'
     - '.gitignore'
