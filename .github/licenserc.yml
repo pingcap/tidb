@@ -29,4 +29,6 @@ header:
     - 'parser/'
     - 'dumpling/'
     - '**/*.sql'
+    - "**/OWNERS"
+    - "OWNERS_ALIASES"
   comment: on-failure
