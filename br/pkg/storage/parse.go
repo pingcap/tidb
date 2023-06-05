@@ -232,3 +232,17 @@ func RedactURL(str string) (string, error) {
 	}
 	return u.String(), nil
 }
+
+// IsLocalPath returns true if the path is a local file path.
+func IsLocalPath(p string) (bool, error) {
+	u, err := url.Parse(p)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return IsLocal(u), nil
+}
+
+// IsLocal returns true if the URL is a local file path.
+func IsLocal(u *url.URL) bool {
+	return u.Scheme == "local" || u.Scheme == "file" || u.Scheme == ""
+}

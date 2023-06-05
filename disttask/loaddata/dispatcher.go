@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
@@ -105,7 +105,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	if err = startJob(ctx, taskMeta); err != nil {
 		return nil, err
 	}
-	subtaskMetas, err := generateSubtaskMetas(ctx, gTask.ID, taskMeta)
+	subtaskMetas, err := generateSubtaskMetas(ctx, taskMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -185,16 +185,11 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 		return nil, err
 	}
 
-	tableImporter, err := buildTableImporter(ctx, gTask.ID, taskMeta)
+	controller, err := buildController(taskMeta)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		err2 := tableImporter.Close()
-		if err == nil {
-			err = err2
-		}
-	}()
+	// no need and should not call controller.InitDataFiles, files might not exist on this instance.
 
 	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
 	if err != nil {
@@ -211,15 +206,15 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 	}
 
 	logger.Info("post process", zap.Any("task_meta", taskMeta), zap.Any("subtask_metas", subtaskMetas))
-	if err := verifyChecksum(ctx, tableImporter, subtaskMetas, logger); err != nil {
+	if err := verifyChecksum(ctx, controller, subtaskMetas, logger); err != nil {
 		return nil, err
 	}
 
 	return subtaskMetas, nil
 }
 
-func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, subtaskMetas []*SubtaskMeta, logger *zap.Logger) error {
-	if tableImporter.Checksum == config.OpLevelOff {
+func verifyChecksum(ctx context.Context, controller *importer.LoadDataController, subtaskMetas []*SubtaskMeta, logger *zap.Logger) error {
+	if controller.Checksum == config.OpLevelOff {
 		return nil
 	}
 	var localChecksum verify.KVChecksum
@@ -228,7 +223,7 @@ func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, 
 		localChecksum.Add(&checksum)
 	}
 	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
-	return tableImporter.VerifyChecksum(ctx, localChecksum)
+	return controller.VerifyChecksum(ctx, localChecksum)
 }
 
 func updateResult(taskMeta *TaskMeta, subtaskMetas []*SubtaskMeta, logger *zap.Logger) {
@@ -248,7 +243,7 @@ func updateMeta(gTask *proto.Task, taskMeta *TaskMeta) error {
 	return nil
 }
 
-func buildTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*importer.TableImporter, error) {
+func buildController(taskMeta *TaskMeta) (*importer.LoadDataController, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
@@ -263,43 +258,48 @@ func buildTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (
 	if err != nil {
 		return nil, err
 	}
-	if err := controller.InitDataFiles(ctx); err != nil {
-		return nil, err
-	}
-
-	return importer.NewTableImporter(&importer.JobImportParam{
-		GroupCtx: ctx,
-		Progress: asyncloaddata.NewProgress(false),
-		Job:      &asyncloaddata.Job{},
-	}, controller, taskID)
+	return controller, nil
 }
 
-func generateSubtaskMetas(ctx context.Context, taskID int64, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {
-	tableImporter, err := buildTableImporter(ctx, taskID, taskMeta)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		err2 := tableImporter.Close()
-		if err == nil {
-			err = err2
-		}
-	}()
-
-	engineCheckpoints, err := tableImporter.PopulateChunks(ctx)
-	if err != nil {
-		return nil, err
-	}
+// todo: converting back and forth, we should unify struct and remove this function later.
+func toChunkMap(engineCheckpoints map[int32]*checkpoints.EngineCheckpoint) map[int32][]Chunk {
+	chunkMap := make(map[int32][]Chunk, len(engineCheckpoints))
 	for id, ecp := range engineCheckpoints {
+		chunkMap[id] = make([]Chunk, 0, len(ecp.Chunks))
+		for _, chunkCheckpoint := range ecp.Chunks {
+			chunkMap[id] = append(chunkMap[id], toChunk(*chunkCheckpoint))
+		}
+	}
+	return chunkMap
+}
+
+func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {
+	var chunkMap map[int32][]Chunk
+	if len(taskMeta.ChunkMap) > 0 {
+		chunkMap = taskMeta.ChunkMap
+	} else {
+		controller, err2 := buildController(taskMeta)
+		if err2 != nil {
+			return nil, err2
+		}
+		if err2 = controller.InitDataFiles(ctx); err2 != nil {
+			return nil, err2
+		}
+
+		engineCheckpoints, err2 := controller.PopulateChunks(ctx)
+		if err2 != nil {
+			return nil, err2
+		}
+		chunkMap = toChunkMap(engineCheckpoints)
+	}
+	for id := range chunkMap {
 		if id == common.IndexEngineID {
 			continue
 		}
 		subtaskMeta := &SubtaskMeta{
-			ID:   id,
-			Plan: taskMeta.Plan,
-		}
-		for _, chunkCheckpoint := range ecp.Chunks {
-			subtaskMeta.Chunks = append(subtaskMeta.Chunks, toChunk(*chunkCheckpoint))
+			ID:     id,
+			Plan:   taskMeta.Plan,
+			Chunks: chunkMap[id],
 		}
 		subtaskMetas = append(subtaskMetas, subtaskMeta)
 	}

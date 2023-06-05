@@ -160,7 +160,7 @@ func TestModifyColumn(t *testing.T) {
 	for _, tt := range tests {
 		ftA := colDefStrToFieldType(t, tt.origin, ctx)
 		ftB := colDefStrToFieldType(t, tt.to, ctx)
-		err := checkModifyTypes(ctx, ftA, ftB, false)
+		err := checkModifyTypes(ftA, ftB, false)
 		if err == nil {
 			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
 		} else {

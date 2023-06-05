@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
@@ -40,7 +41,9 @@ type DistImporter struct {
 	stmt   string
 	logger *zap.Logger
 	// the instance to import data, used for single-node import, nil means import data on all instances.
-	instance       *infosync.ServerInfo
+	instance *infosync.ServerInfo
+	// the files to import, when import from server file, we need to pass those file to the framework.
+	chunkMap       map[int32][]Chunk
 	sourceFileSize int64
 	// only set after submit task
 	jobID  int64
@@ -72,6 +75,18 @@ func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan
 		instance:       serverInfo,
 		sourceFileSize: sourceFileSize,
 	}, nil
+}
+
+// NewDistImporterServerFile creates a new DistImporter to import given files on current node.
+// we also run import on current node.
+// todo: merge all 3 ctor into one.
+func NewDistImporterServerFile(param *importer.JobImportParam, plan *importer.Plan, stmt string, ecp map[int32]*checkpoints.EngineCheckpoint, sourceFileSize int64) (*DistImporter, error) {
+	distImporter, err := NewDistImporterCurrNode(param, plan, stmt, sourceFileSize)
+	if err != nil {
+		return nil, err
+	}
+	distImporter.chunkMap = toChunkMap(ecp)
+	return distImporter, nil
 }
 
 // Param implements JobImporter.Param.
@@ -151,6 +166,7 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 			Plan:              *plan,
 			Stmt:              ti.stmt,
 			EligibleInstances: instances,
+			ChunkMap:          ti.chunkMap,
 		}
 		taskMeta, err2 := json.Marshal(task)
 		if err2 != nil {
