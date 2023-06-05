@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
@@ -206,12 +207,8 @@ func getCNFItemRangeResult(sctx sessionctx.Context, rangeResult *DetachRangeResu
 			maxColNum = len(ran.LowVal)
 			minColNum = len(ran.LowVal)
 		} else {
-			if len(ran.LowVal) > maxColNum {
-				maxColNum = len(ran.LowVal)
-			}
-			if len(ran.LowVal) < minColNum {
-				minColNum = len(ran.LowVal)
-			}
+			maxColNum = mathutil.Max(maxColNum, len(ran.LowVal))
+			minColNum = mathutil.Min(minColNum, len(ran.LowVal))
 		}
 	}
 	if minColNum != maxColNum {

@@ -30,6 +30,7 @@ go_library(
         "//util/codec",
         "//util/collate",
         "//util/dbterror",
+        "//util/mathutil",
         "@com_github_pingcap_errors//:errors",
         "@org_golang_x_exp//slices",
     ],
