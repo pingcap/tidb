@@ -549,3 +549,10 @@ const tablePDProfileGoroutines = "CREATE TABLE IF NOT EXISTS " + tableNamePDProf
 const tableSessionVariables = "CREATE TABLE IF NOT EXISTS " + tableNameSessionVariables + " (" +
 	"VARIABLE_NAME VARCHAR(64) NOT NULL," +
 	"VARIABLE_VALUE VARCHAR(1024) NOT NULL);"
+
+// tableSessionConnectAttrs contains the column name definitions for the table session_connect_attrs
+const tableSessionConnectAttrs = "CREATE TABLE IF NOT EXISTS " + tableNameSessionConnectAttrs + " (" +
+	"PROCESSLIST_ID bigint unsigned NOT NULL," +
+	"ATTR_NAME varchar(32) COLLATE utf8mb4_bin NOT NULL," +
+	"ATTR_VALUE varchar(1024) COLLATE utf8mb4_bin DEFAULT NULL," +
+	"ORDINAL_POSITION int DEFAULT NULL);"

@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -191,8 +190,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
 		case infoschema.TableResourceGroups:
 			err = e.setDataFromResourceGroups()
-		case infoschema.TableSessionConnectAttrs:
-			err = e.setDataForSessionConnectAttrs(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -3289,37 +3286,6 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 				nil,
 				nil,
 				nil,
-			)
-			rows = append(rows, row)
-		}
-	}
-	e.rows = rows
-	return nil
-}
-
-func (e *memtableRetriever) setDataForSessionConnectAttrs(sctx sessionctx.Context) error {
-	sm := sctx.GetSessionManager()
-	if sm == nil {
-		return nil
-	}
-	allAttrs := sm.GetConAttrs()
-	rows := make([][]types.Datum, 0, len(allAttrs)*10) // 10 Attributes per connection
-	for pid, attrs := range allAttrs {                 // Note: PID is not ordered.
-		// Sorts the attributes by key and gives ORDINAL_POSITION based on this. This is needed as we didn't store the
-		// ORDINAL_POSITION and a map doesn't have a guaranteed sort order. This is needed to keep the ORDINAL_POSITION
-		// stable over multiple queries.
-		attrnames := make([]string, 0, len(attrs))
-		for attrname := range attrs {
-			attrnames = append(attrnames, attrname)
-		}
-		sort.Strings(attrnames)
-
-		for ord, attrkey := range attrnames {
-			row := types.MakeDatums(
-				pid,
-				attrkey,
-				attrs[attrkey],
-				ord,
 			)
 			rows = append(rows, row)
 		}

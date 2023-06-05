@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -202,8 +203,6 @@ const (
 	TableMemoryUsageOpsHistory = "MEMORY_USAGE_OPS_HISTORY"
 	// TableResourceGroups is the metadata of resource groups.
 	TableResourceGroups = "RESOURCE_GROUPS"
-	// TableSessionConnectAttrs is the string constant of session_connect_attrs table.
-	TableSessionConnectAttrs = "SESSION_CONNECT_ATTRS"
 )
 
 const (
@@ -311,7 +310,6 @@ var tableIDMap = map[string]int64{
 	ClusterTableMemoryUsage:              autoid.InformationSchemaDBID + 86,
 	ClusterTableMemoryUsageOpsHistory:    autoid.InformationSchemaDBID + 87,
 	TableResourceGroups:                  autoid.InformationSchemaDBID + 88,
-	TableSessionConnectAttrs:             autoid.InformationSchemaDBID + 89,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1602,13 +1600,6 @@ var tableResourceGroupsCols = []columnInfo{
 	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 3},
 }
 
-var tableSessionConnectAttrs = []columnInfo{
-	{name: "PROCESSLIST_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
-	{name: "ATTR_NAME", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
-	{name: "ATTR_VALUE", tp: mysql.TypeVarchar, size: 1024},
-	{name: "ORDINAL_POSITION", tp: mysql.TypeLong, size: 11},
-}
-
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2013,6 +2004,36 @@ func GetDataFromSessionVariables(ctx context.Context, sctx sessionctx.Context) (
 	return rows, nil
 }
 
+func GetDataForSessionConnectAttrs(ctx sessionctx.Context) ([][]types.Datum,error) {
+	sm := ctx.GetSessionManager()
+	if sm == nil {
+		return nil,nil
+	}
+	allAttrs := sm.GetConAttrs()
+	rows := make([][]types.Datum, 0, len(allAttrs)*10) // 10 Attributes per connection
+	for pid, attrs := range allAttrs {                 // Note: PID is not ordered.
+		// Sorts the attributes by key and gives ORDINAL_POSITION based on this. This is needed as we didn't store the
+		// ORDINAL_POSITION and a map doesn't have a guaranteed sort order. This is needed to keep the ORDINAL_POSITION
+		// stable over multiple queries.
+		attrnames := make([]string, 0, len(attrs))
+		for attrname := range attrs {
+			attrnames = append(attrnames, attrname)
+		}
+		sort.Strings(attrnames)
+
+		for ord, attrkey := range attrnames {
+			row := types.MakeDatums(
+				pid,
+				attrkey,
+				attrs[attrkey],
+				ord,
+			)
+			rows = append(rows, row)
+		}
+	}
+	return rows, nil
+}
+
 var tableNameToColumns = map[string][]columnInfo{
 	TableSchemata:                           schemataCols,
 	TableTables:                             tablesCols,
@@ -2090,7 +2111,6 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMemoryUsage:                        tableMemoryUsageCols,
 	TableMemoryUsageOpsHistory:              tableMemoryUsageOpsHistoryCols,
 	TableResourceGroups:                     tableResourceGroupsCols,
-	TableSessionConnectAttrs:                tableSessionConnectAttrs,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
