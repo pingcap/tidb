@@ -15,7 +15,6 @@
 package core
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -28,7 +27,6 @@ import (
 )
 
 func TestParameterize(t *testing.T) {
-	sctx := MockContext()
 	cases := []struct {
 		sql      string
 		paramSQL string
@@ -112,7 +110,7 @@ func TestParameterize(t *testing.T) {
 	for _, c := range cases {
 		stmt, err := parser.New().ParseOneStmt(c.sql, "", "")
 		require.Nil(t, err)
-		paramSQL, params, err := ParameterizeAST(context.Background(), sctx, stmt)
+		paramSQL, params, err := ParameterizeAST(stmt)
 		require.Nil(t, err)
 		require.Equal(t, c.paramSQL, paramSQL)
 		require.Equal(t, len(c.params), len(params))
@@ -140,7 +138,7 @@ func TestGetParamSQLFromASTConcurrently(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			for i := 0; i < 1000; i++ {
-				_, vals, err := GetParamSQLFromAST(context.Background(), MockContext(), stmts[id])
+				_, vals, err := GetParamSQLFromAST(MockContext(), stmts[id])
 				require.Nil(t, err)
 				require.Equal(t, len(vals), 3)
 				require.Equal(t, vals[0].GetValue(), int64(id*3+0))
@@ -159,13 +157,12 @@ func BenchmarkParameterizeSelect(b *testing.B) {
 c_credit, c_credit_lim, c_discount, c_balance, c_since FROM customer WHERE c_w_id = ? AND c_d_id = ?AND c_id = ? FOR UPDATE`
 	stmt, err := parser.New().ParseOneStmt(paymentSelectCustomerForUpdate, "", "")
 	require.Nil(b, err)
-	sctx := MockContext()
-	_, _, err = ParameterizeAST(context.Background(), sctx, stmt)
+	_, _, err = ParameterizeAST(stmt)
 	require.Nil(b, err)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ParameterizeAST(context.Background(), sctx, stmt)
+		ParameterizeAST(stmt)
 	}
 }
 
@@ -173,13 +170,12 @@ func BenchmarkParameterizeInsert(b *testing.B) {
 	paymentInsertHistory := `INSERT INTO history (h_c_d_id, h_c_w_id, h_c_id, h_d_id, h_w_id, h_date, h_amount, h_data) VALUES (1, 2, 3, 4, 5, 6, 7, 8)`
 	stmt, err := parser.New().ParseOneStmt(paymentInsertHistory, "", "")
 	require.Nil(b, err)
-	sctx := MockContext()
-	_, _, err = ParameterizeAST(context.Background(), sctx, stmt)
+	_, _, err = ParameterizeAST(stmt)
 	require.Nil(b, err)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ParameterizeAST(context.Background(), sctx, stmt)
+		ParameterizeAST(stmt)
 	}
 }
 
@@ -191,6 +187,6 @@ func BenchmarkGetParamSQL(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		GetParamSQLFromAST(context.Background(), sctx, stmt)
+		GetParamSQLFromAST(sctx, stmt)
 	}
 }

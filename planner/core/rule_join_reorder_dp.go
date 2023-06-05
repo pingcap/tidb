@@ -138,7 +138,7 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, tracer *joinReorder
 }
 
 // bfsGraph bfs a sub graph starting at startPos. And relabel its label for future use.
-func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents [][]int, nodeID2VisitID []int) []int {
+func (*joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents [][]int, nodeID2VisitID []int) []int {
 	queue := []int{startNode}
 	visited[startNode] = true
 	var visitID2NodeID []int
@@ -211,7 +211,7 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, _ []
 	return bestPlan[(1<<nodeCnt)-1].p, nil
 }
 
-func (s *joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos []int,
+func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos []int,
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) ([]joinGroupEqEdge, []expression.Expression) {
 	//nolint: prealloc
 	var usedEqEdges []joinGroupEqEdge
