@@ -491,6 +491,9 @@ type PlanBuilder struct {
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
 	outerCTEs    []*cteInfo
+	// outerBlockExpand register current Expand OP for rollup syntax in every select query block.
+	outerBlockExpand   []*LogicalExpand
+	currentBlockExpand *LogicalExpand
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
@@ -3549,7 +3552,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.BeginStmt:
 		readTS := b.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
 		if raw.AsOf != nil {
-			startTS, err := staleread.CalculateAsOfTsExpr(b.ctx, raw.AsOf.TsExpr)
+			startTS, err := staleread.CalculateAsOfTsExpr(ctx, b.ctx, raw.AsOf.TsExpr)
 			if err != nil {
 				return nil, err
 			}

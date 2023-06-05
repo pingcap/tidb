@@ -91,13 +91,6 @@ func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
 	return nil
 }
 
-func (m *txnManager) SetTxnInfoSchema(is infoschema.InfoSchema) {
-	if m.ctxProvider == nil {
-		return
-	}
-	m.ctxProvider.SetTxnInfoSchema(is)
-}
-
 func (m *txnManager) GetStmtReadTS() (uint64, error) {
 	if m.ctxProvider == nil {
 		return 0, errors.New("context provider not set")
