@@ -28,4 +28,6 @@ header:
     - '.github/'
     - 'parser/'
     - 'dumpling/'
+    - "**/OWNERS"
+    - "OWNERS_ALIASES"
   comment: on-failure
