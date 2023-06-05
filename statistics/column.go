@@ -462,3 +462,23 @@ func (s StatsLoadedStatus) StatusToString() string {
 	}
 	return "unknown"
 }
+
+// IsAnalyzed indicates whether the column is analyzed.
+// The set of IsAnalyzed columns is a subset of the set of StatsAvailable columns.
+func (c *Column) IsAnalyzed() bool {
+	return c.StatsVer != Version0
+}
+
+// StatsAvailable indicates whether the column stats are collected.
+// Note:
+//  1. The function merely talks about whether the stats are collected, regardless of the stats loaded status.
+//  2. The function is used to decide StatsLoadedStatus.statsInitialized when reading the column stats from storage.
+//  3. There are two cases that StatsAvailable is true:
+//     a. IsAnalyzed is true.
+//     b. The column is newly-added/modified and its stats are generated according to the default value.
+func (c *Column) StatsAvailable() bool {
+	// Typically, when the column is analyzed, StatsVer is set to Version1/Version2, so we check IsAnalyzed().
+	// However, when we add/modify a column, its stats are generated according to the default value without setting
+	// StatsVer, so we check NDV > 0 || NullCount > 0 for the case.
+	return c.IsAnalyzed() || c.NDV > 0 || c.NullCount > 0
+}

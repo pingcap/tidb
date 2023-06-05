@@ -1133,9 +1133,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statsReader, col model.Table
 	}
 	// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
 	colHist.Count = int64(colHist.TotalRowCount())
-	// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-	// So we need add colHist.Count > 0 here.
-	if statsVer != statistics.Version0 || colHist.Count > 0 {
+	if colHist.StatsAvailable() {
 		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
@@ -1376,9 +1374,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				Flag:       flag,
 				StatsVer:   statsVer,
 			}
-			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-			// So we need add col.Count > 0 here.
-			if statsVer != statistics.Version0 || col.Count > 0 {
+			if col.StatsAvailable() {
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
@@ -1417,9 +1413,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			}
 			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
 			col.Count = int64(col.TotalRowCount())
-			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-			// So we need add colHist.Count > 0 here.
-			if statsVer != statistics.Version0 || col.Count > 0 {
+			if col.StatsAvailable() {
 				col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)

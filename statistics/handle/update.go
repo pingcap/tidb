@@ -978,12 +978,12 @@ var AutoAnalyzeMinCnt int64 = 1000
 // TableAnalyzed checks if the table is analyzed.
 func TableAnalyzed(tbl *statistics.Table) bool {
 	for _, col := range tbl.Columns {
-		if col.Count > 0 {
+		if col.IsAnalyzed() {
 			return true
 		}
 	}
 	for _, idx := range tbl.Indices {
-		if idx.Histogram.Len() > 0 {
+		if idx.IsAnalyzed() {
 			return true
 		}
 	}
