@@ -20,7 +20,6 @@ package ddl
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -183,7 +182,7 @@ type DDL interface {
 	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 	UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error
-	RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error
+	RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStmt) error
 	CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error
 	DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error)
 	AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error
@@ -554,7 +553,8 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 		logutil.BgLogger().Error("cannot find reorgCtx", zap.Int64("jobID", job.ID))
 		return
 	}
-	logutil.BgLogger().Info("[ddl] notify reorg worker during canceling ddl job", zap.Int64("jobID", job.ID))
+	logutil.BgLogger().Info("[ddl] notify reorg worker the job's state",
+		zap.Int64("jobID", job.ID), zap.Int32("jobState", int32(job.State)), zap.Int("jobState", int(job.SchemaState)))
 	rc.notifyJobState(job.State)
 }
 
@@ -679,7 +679,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	}
 
 	scheduler.RegisterSchedulerConstructor("backfill",
-		func(taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
 			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
 		})
 
@@ -1202,9 +1202,10 @@ func (d *ddl) SetHook(h Callback) {
 
 func (d *ddl) startCleanDeadTableLock() {
 	defer func() {
-		tidbutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 		d.wg.Done()
 	}()
+
+	defer tidbutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()
@@ -1439,7 +1440,7 @@ func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
 }
 
 // cancelRunningJob cancel a DDL job that is in the concurrent state.
-func cancelRunningJob(sess *sess.Session, job *model.Job,
+func cancelRunningJob(_ *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	// These states can't be cancelled.
 	if job.IsDone() || job.IsSynced() {
@@ -1456,13 +1457,11 @@ func cancelRunningJob(sess *sess.Session, job *model.Job,
 	}
 	job.State = model.JobStateCancelling
 	job.AdminOperator = byWho
-
-	// Make sure RawArgs isn't overwritten.
-	return json.Unmarshal(job.RawArgs, &job.Args)
+	return nil
 }
 
 // pauseRunningJob check and pause the running Job
-func pauseRunningJob(sess *sess.Session, job *model.Job,
+func pauseRunningJob(_ *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	if job.IsPausing() || job.IsPaused() {
 		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
@@ -1477,16 +1476,11 @@ func pauseRunningJob(sess *sess.Session, job *model.Job,
 
 	job.State = model.JobStatePausing
 	job.AdminOperator = byWho
-
-	if job.RawArgs == nil {
-		return nil
-	}
-
-	return json.Unmarshal(job.RawArgs, &job.Args)
+	return nil
 }
 
 // resumePausedJob check and resume the Paused Job
-func resumePausedJob(se *sess.Session, job *model.Job,
+func resumePausedJob(_ *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	if !job.IsResumable() {
 		errMsg := fmt.Sprintf("job has not been paused, job state:%s, schema state:%s",
@@ -1502,7 +1496,7 @@ func resumePausedJob(se *sess.Session, job *model.Job,
 
 	job.State = model.JobStateQueueing
 
-	return json.Unmarshal(job.RawArgs, &job.Args)
+	return nil
 }
 
 // processJobs command on the Job according to the process
@@ -1522,7 +1516,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 
 	ns := sess.NewSession(sessCtx)
 	// We should process (and try) all the jobs in one Transaction.
-	for tryN := uint(0); tryN < 3; tryN += 1 {
+	for tryN := uint(0); tryN < 3; tryN++ {
 		jobErrs = make([]error, len(ids))
 		// Need to figure out which one could not be paused
 		jobMap := make(map[int64]int, len(ids))
@@ -1558,7 +1552,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 				continue
 			}
 
-			err = updateDDLJob2Table(ns, job, true)
+			err = updateDDLJob2Table(ns, job, false)
 			if err != nil {
 				jobErrs[i] = err
 				continue
@@ -1628,9 +1622,9 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 		return nil, err
 	}
 
-	var jobID int64 = 0
-	var jobIDMax int64 = 0
-	var limit int = 100
+	var jobID int64
+	var jobIDMax int64
+	var limit = 100
 	for {
 		var jobs []*model.Job
 		jobs, err = getJobsBySQL(ns, JobTable,
@@ -1649,7 +1643,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 				continue
 			}
 
-			err = updateDDLJob2Table(ns, job, true)
+			err = updateDDLJob2Table(ns, job, false)
 			if err != nil {
 				jobErrs[job.ID] = err
 				continue
@@ -1687,7 +1681,7 @@ func ResumeAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
 }
 
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
-func GetAllDDLJobs(se sessionctx.Context, t *meta.Meta) ([]*model.Job, error) {
+func GetAllDDLJobs(se sessionctx.Context) ([]*model.Job, error) {
 	return getJobsBySQL(sess.NewSession(se), JobTable, "1 order by job_id")
 }
 
@@ -1729,7 +1723,7 @@ func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, e
 // IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
 // then iterates history DDL jobs until the `finishFn` return true or error.
 func IterAllDDLJobs(ctx sessionctx.Context, txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
-	jobs, err := GetAllDDLJobs(ctx, meta.NewMeta(txn))
+	jobs, err := GetAllDDLJobs(ctx)
 	if err != nil {
 		return err
 	}

@@ -209,28 +209,54 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
 	var bestTask task = invalidTask
 	var curCntPlan, cntPlan int64
+	var err error
 	childTasks := make([]task, 0, len(p.children))
 	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
-	for _, pp := range physicalPlans {
+	iteration := func(
+		selfPhysicalPlan PhysicalPlan,
+		childTasks []task,
+		childCnts []int64,
+		prop *property.PhysicalProperty,
+		opt *physicalOptimizeOp,
+	) ([]task, int64, []int64, error) {
 		// Find best child tasks firstly.
 		childTasks = childTasks[:0]
 		// The curCntPlan records the number of possible plans for pp
-		curCntPlan = 1
-		timeStampNow := p.GetLogicalTS4TaskMap()
-		savedPlanID := p.ctx.GetSessionVars().PlanID.Load()
+		curCntPlan := int64(1)
 		for j, child := range p.children {
-			childProp := pp.GetChildReqProps(j)
+			childProp := selfPhysicalPlan.GetChildReqProps(j)
 			childTask, cnt, err := child.findBestTask(childProp, &PlanCounterDisabled, opt)
 			childCnts[j] = cnt
 			if err != nil {
-				return nil, 0, err
+				return nil, 0, childCnts, err
 			}
 			curCntPlan = curCntPlan * cnt
 			if childTask != nil && childTask.invalid() {
-				break
+				return nil, 0, childCnts, nil
 			}
 			childTasks = append(childTasks, childTask)
+		}
+
+		// This check makes sure that there is no invalid child task.
+		if len(childTasks) != len(p.children) {
+			return nil, 0, childCnts, nil
+		}
+		return childTasks, curCntPlan, childCnts, nil
+	}
+
+	if seq, ok := p.self.(*LogicalSequence); ok {
+		iteration = seq.iterateChildPlan
+	}
+
+	for _, pp := range physicalPlans {
+		timeStampNow := p.GetLogicalTS4TaskMap()
+		savedPlanID := p.ctx.GetSessionVars().PlanID.Load()
+
+		childTasks, curCntPlan, childCnts, err = iteration(pp, childTasks, childCnts, prop, opt)
+
+		if err != nil {
+			return nil, 0, err
 		}
 
 		// This check makes sure that there is no invalid child task.
@@ -287,6 +313,64 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 	}
 	return bestTask, cntPlan, nil
+}
+
+// iterateChildPlan does the special part for sequence. We need to iterate its child one by one to check whether the former child is a valid plan and then go to the nex
+func (p *LogicalSequence) iterateChildPlan(
+	selfPhysicalPlan PhysicalPlan,
+	childTasks []task,
+	childCnts []int64,
+	prop *property.PhysicalProperty,
+	opt *physicalOptimizeOp,
+) ([]task, int64, []int64, error) {
+	// Find best child tasks firstly.
+	childTasks = childTasks[:0]
+	// The curCntPlan records the number of possible plans for pp
+	curCntPlan := int64(1)
+	lastIdx := len(p.children) - 1
+	for j := 0; j < lastIdx; j++ {
+		child := p.children[j]
+		childProp := selfPhysicalPlan.GetChildReqProps(j)
+		childTask, cnt, err := child.findBestTask(childProp, &PlanCounterDisabled, opt)
+		childCnts[j] = cnt
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		curCntPlan = curCntPlan * cnt
+		if childTask != nil && childTask.invalid() {
+			return nil, 0, nil, nil
+		}
+		_, isMpp := childTask.(*mppTask)
+		if !isMpp && prop.IsFlashProp() {
+			break
+		}
+		childTasks = append(childTasks, childTask)
+	}
+	// This check makes sure that there is no invalid child task.
+	if len(childTasks) != len(p.children)-1 {
+		return nil, 0, nil, nil
+	}
+
+	lastChildProp := selfPhysicalPlan.GetChildReqProps(lastIdx).CloneEssentialFields()
+	if lastChildProp.IsFlashProp() {
+		lastChildProp.CTEProducerStatus = property.AllCTECanMpp
+	}
+	lastChildTask, cnt, err := p.Children()[lastIdx].findBestTask(lastChildProp, &PlanCounterDisabled, opt)
+	childCnts[lastIdx] = cnt
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	curCntPlan = curCntPlan * cnt
+	if lastChildTask != nil && lastChildTask.invalid() {
+		return nil, 0, nil, nil
+	}
+
+	if _, ok := lastChildTask.(*mppTask); !ok && lastChildProp.CTEProducerStatus == property.AllCTECanMpp {
+		return nil, 0, nil, nil
+	}
+
+	childTasks = append(childTasks, lastChildTask)
+	return childTasks, curCntPlan, childCnts, nil
 }
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
@@ -699,7 +783,7 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 	return candidate
 }
 
-func (ds *DataSource) getIndexMergeCandidate(path *util.AccessPath) *candidatePath {
+func (*DataSource) getIndexMergeCandidate(path *util.AccessPath) *candidatePath {
 	candidate := &candidatePath{path: path}
 	return candidate
 }
@@ -1039,9 +1123,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			if allRangeIsPoint {
 				var pointGetTask task
 				if len(path.Ranges) == 1 {
-					pointGetTask = ds.convertToPointGet(prop, candidate, opt)
+					pointGetTask = ds.convertToPointGet(prop, candidate)
 				} else {
-					pointGetTask = ds.convertToBatchPointGet(prop, candidate, hashPartColName, opt)
+					pointGetTask = ds.convertToBatchPointGet(prop, candidate, hashPartColName)
 				}
 
 				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
@@ -1129,7 +1213,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	return
 }
 
-func (ds *DataSource) isSafePointGetPlan4PlanCache(path *util.AccessPath) bool {
+func (*DataSource) isSafePointGetPlan4PlanCache(path *util.AccessPath) bool {
 	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
 	// these assumptions may be broken after parameters change.
 
@@ -1561,7 +1645,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 				})
 			}
 			cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
-			if !is.Index.Global && cop.tablePlan != nil {
+			if !is.Index.Global && cop.tablePlan != nil && ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
 				is.schema.Append(&expression.Column{
 					RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -1713,6 +1797,23 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
+}
+
+// NeedExtraOutputCol is designed for check whether need an extra column for
+// pid or physical table id when build indexReq.
+func (is *PhysicalIndexScan) NeedExtraOutputCol() bool {
+	if is.Table.Partition == nil {
+		return false
+	}
+	// has global index, should return pid
+	if is.Index.Global {
+		return true
+	}
+	// has embedded limit, should return physical table id
+	if len(is.ByItems) != 0 && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return true
+	}
+	return false
 }
 
 // SplitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
@@ -2206,7 +2307,7 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 	}, nil
 }
 
-func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task) {
+func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath) (task task) {
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
@@ -2283,8 +2384,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	return rTsk
 }
 
-func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
-	candidate *candidatePath, hashPartColName *model.CIStr, opt *physicalOptimizeOp) (task task) {
+func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath, hashPartColName *model.CIStr) (task task) {
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
@@ -2525,14 +2625,30 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	return is
 }
 
-func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, _ *PlanCounterTp, _ *physicalOptimizeOp) (t task, cntPlan int64, err error) {
+func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, counter *PlanCounterTp, pop *physicalOptimizeOp) (t task, cntPlan int64, err error) {
+	if len(p.children) > 0 {
+		return p.baseLogicalPlan.findBestTask(prop, counter, pop)
+	}
 	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
 		return invalidTask, 1, nil
 	}
 	// The physical plan has been build when derive stats.
 	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName, cteName: p.cteName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
-	t = &rootTask{p: pcte, isEmpty: false}
+	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
+		pcte.readerReceiver = PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.ctx, p.stats)
+		if prop.MPPPartitionTp != property.AnyType {
+			return invalidTask, 1, nil
+		}
+		t = &mppTask{
+			p:           pcte,
+			partTp:      prop.MPPPartitionTp,
+			hashCols:    prop.MPPPartitionCols,
+			tblColHists: p.stats.HistColl,
+		}
+	} else {
+		t = &rootTask{p: pcte, isEmpty: false}
+	}
 	if prop.CanAddEnforcer {
 		t = enforceProperty(prop, t, p.basePlan.ctx)
 	}

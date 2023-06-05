@@ -1077,16 +1077,10 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(11,11,11),(12,12,12),(13,13,13),(14,14,14)")
 
 	h := dom.StatsHandle()
-	oriLease := h.Lease()
-	h.SetLease(1)
-	defer func() {
-		h.SetLease(oriLease)
-	}()
+
 	// analyze partition only sets options of partition
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
 	is := dom.InfoSchema()
-	tk.MustQuery("select * from t where b > 1 and c > 1")
-	require.NoError(t, h.LoadNeededHistograms())
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
@@ -1106,8 +1100,6 @@ PARTITION BY RANGE ( a ) (
 
 	// merge partition & table level options
 	tk.MustExec("analyze table t columns a,b with 0 topn, 2 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
-	require.NoError(t, h.LoadNeededHistograms())
 	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	p1 := h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
 	require.Greater(t, p0.Version, lastVersion)
@@ -1142,8 +1134,6 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition only updates this partition, and set different collist
 	tk.MustExec("analyze table t partition p1 columns a,c with 1 buckets")
-	tk.MustQuery("select * from t where b > 1 and c > 1")
-	require.NoError(t, h.LoadNeededHistograms())
 	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	p1 = h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
 	require.Equal(t, p0.Version, lastVersion)
@@ -1282,11 +1272,6 @@ func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
 	tk.MustExec("insert into t2 values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
 
 	h := dom.StatsHandle()
-	oriLease := h.Lease()
-	h.SetLease(1)
-	defer func() {
-		h.SetLease(oriLease)
-	}()
 
 	tk.MustExec("analyze table t1 with 1 topn, 3 buckets")
 	tk.MustExec("analyze table t2 with 0 topn, 2 buckets")
@@ -2365,7 +2350,8 @@ func TestAnalyzeJob(t *testing.T) {
 		require.Equal(t, connID, rows[0][10])
 
 		executor.StartAnalyzeJob(se, job)
-		rows = tk.MustQuery("show analyze status").Rows()
+		ctx := context.WithValue(context.Background(), executor.AnalyzeProgressTest, 100)
+		rows = tk.MustQueryWithContext(ctx, "show analyze status").Rows()
 		checkTime := func(val interface{}) {
 			str, ok := val.(string)
 			require.True(t, ok)
@@ -2374,6 +2360,9 @@ func TestAnalyzeJob(t *testing.T) {
 		}
 		checkTime(rows[0][5])
 		require.Equal(t, statistics.AnalyzeRunning, rows[0][7])
+		require.Equal(t, "9m0s", rows[0][11]) // REMAINING_SECONDS
+		require.Equal(t, "0.1", rows[0][12])  // PROGRESS
+		require.Equal(t, "0", rows[0][13])    // ESTIMATED_TOTAL_ROWS
 
 		// UpdateAnalyzeJob requires the interval between two updates to mysql.analyze_jobs is more than 5 second.
 		// Hence we fake last dump time as 10 second ago in order to make update to mysql.analyze_jobs happen.
@@ -3095,6 +3084,49 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
 	tk0.MustExec(sql)
+}
+
+func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_mem_quota_query = 209715200 ") // 200MB
+	tk0.MustExec("set global tidb_server_memory_limit = 5GB")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
+	}
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tk0.MustExec("use test")
+	tk0.MustExec("create table t(a int)")
+	tk0.MustExec("insert into t select 1")
+	for i := 1; i <= 8; i++ {
+		tk0.MustExec("insert into t select * from t") // 256 Lines
+	}
+	sqlPrepare := "prepare stmt from 'analyze table t with 1.0 samplerate';"
+	sqlExecute := "execute stmt;"                                                                                 // Need about 100MB
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`)) // 512MB
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
+	// won't be killed by tidb_mem_quota_query
+	tk0.MustExec(sqlPrepare)
+	tk0.MustExec(sqlExecute)
+	runtime.GC()
+	// killed by tidb_server_memory_limit
+	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
+	_, err0 := tk0.Exec(sqlPrepare)
+	require.NoError(t, err0)
+	_, err1 := tk0.Exec(sqlExecute)
+	// Killed and the WarnMsg is WarnMsgSuffixForInstance instead of WarnMsgSuffixForSingleQuery
+	require.True(t, strings.Contains(err1.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
+	runtime.GC()
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
+	tk0.MustExec(sqlPrepare)
+	tk0.MustExec(sqlExecute)
 }
 
 func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {

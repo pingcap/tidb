@@ -20,6 +20,7 @@ import (
 	"math"
 	"runtime"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -82,6 +84,8 @@ const (
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
 	flagPrunColumnsAgain
+	flagPushDownSequence
+	flagResolveExpand
 )
 
 var optRuleList = []logicalOptRule{
@@ -106,6 +110,8 @@ var optRuleList = []logicalOptRule{
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&pushDownSequenceSolver{},
+	&resolveExpand{},
 }
 
 type logicalOptimizeOp struct {
@@ -277,22 +283,17 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 	return s.EnableStableResultMode && (!st.InInsertStmt && !st.InUpdateStmt && !st.InDeleteStmt && !st.InLoadDataStmt)
 }
 
-// DoOptimize optimizes a logical plan to a physical plan.
-func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+// DoOptimizeAndLogicAsRet optimizes a logical plan to a physical plan and return the optimized logical plan.
+func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (LogicalPlan, PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
-
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
 		flag |= flagPrunColumnsAgain
 	}
-	if checkStableResultMode(sctx) {
+	if checkStableResultMode(logic.SCtx()) {
 		flag |= flagStabilizeResults
 	}
-	if sessVars.StmtCtx.StraightJoinOrder {
+	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^flagJoinReOrder
 	}
@@ -300,10 +301,11 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	flag |= flagSyncWaitStatsLoadPoint
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
+
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
-		return nil, 0, errors.Trace(ErrCartesianProductUnsupported)
+		return nil, nil, 0, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	planCounter := PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
 	if planCounter == 0 {
@@ -311,11 +313,11 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	}
 	physical, cost, err := physicalOptimize(logic, &planCounter)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	finalPlan, err := postOptimize(ctx, sctx, physical)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
@@ -324,7 +326,18 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if sessVars.StmtCtx.EnableOptimizeTrace {
 		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.buildPlanTrace())
 	}
-	return finalPlan, cost, nil
+	return logic, finalPlan, cost, nil
+}
+
+// DoOptimize optimizes a logical plan to a physical plan.
+func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+	sessVars := sctx.GetSessionVars()
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
+	}
+	_, finalPlan, cost, err := DoOptimizeAndLogicAsRet(ctx, sctx, flag, logic)
+	return finalPlan, cost, err
 }
 
 // refineCETrace will adjust the content of CETrace.
@@ -410,7 +423,24 @@ func postOptimize(ctx context.Context, sctx sessionctx.Context, plan PhysicalPla
 	countStarRewrite(plan)
 	disableReuseChunkIfNeeded(sctx, plan)
 	tryEnableLateMaterialization(sctx, plan)
+	generateRuntimeFilter(sctx, plan)
 	return plan, nil
+}
+
+func generateRuntimeFilter(sctx sessionctx.Context, plan PhysicalPlan) {
+	if !sctx.GetSessionVars().IsRuntimeFilterEnabled() || sctx.GetSessionVars().InRestrictedSQL {
+		return
+	}
+	logutil.BgLogger().Debug("Start runtime filter generator")
+	rfGenerator := &RuntimeFilterGenerator{
+		rfIDGenerator:      &util.IDGenerator{},
+		columnUniqueIDToRF: map[int64][]*RuntimeFilter{},
+		parentPhysicalPlan: plan,
+	}
+	startRFGenerator := time.Now()
+	rfGenerator.GenerateRuntimeFilter(plan)
+	logutil.BgLogger().Debug("Finish runtime filter generator",
+		zap.Duration("Cost", time.Since(startRFGenerator)))
 }
 
 // prunePhysicalColumns currently only work for MPP(HashJoin<-Exchange).

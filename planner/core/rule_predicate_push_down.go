@@ -42,7 +42,7 @@ type exprPrefixAdder struct {
 	lengths   []int
 }
 
-func (s *ppdSolver) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (*ppdSolver) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	_, p := lp.PredicatePushDown(nil, opt)
 	return p, nil
 }
@@ -896,17 +896,17 @@ func (ds *DataSource) AddPrefix4ShardIndexes(sc sessionctx.Context, conds []expr
 
 func (ds *DataSource) addExprPrefixCond(sc sessionctx.Context, path *util.AccessPath,
 	conds []expression.Expression) ([]expression.Expression, error) {
-	IdxCols, IdxColLens :=
+	idxCols, idxColLens :=
 		expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
-	if len(IdxCols) == 0 {
+	if len(idxCols) == 0 {
 		return conds, nil
 	}
 
 	adder := &exprPrefixAdder{
 		sctx:      sc,
 		OrigConds: conds,
-		cols:      IdxCols,
-		lengths:   IdxColLens,
+		cols:      idxCols,
+		lengths:   idxColLens,
 	}
 
 	return adder.addExprPrefix4ShardIndex()
@@ -1012,4 +1012,13 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *lo
 	}
 	p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.ComposeCNFCondition(p.ctx, newPred...))
 	return predicates, p.self
+}
+
+// PredicatePushDown implements the LogicalPlan interface.
+// Currently, we only maintain the main query tree.
+func (p *LogicalSequence) PredicatePushDown(predicates []expression.Expression, op *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+	lastIdx := len(p.children) - 1
+	remained, newLastChild := p.children[lastIdx].PredicatePushDown(predicates, op)
+	p.SetChild(lastIdx, newLastChild)
+	return remained, p
 }

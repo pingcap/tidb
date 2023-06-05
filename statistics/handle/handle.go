@@ -64,72 +64,77 @@ const (
 
 // Handle can update stats info periodically.
 type Handle struct {
+	pool sessionPool
 
 	// initStatsCtx is the ctx only used for initStats
 	initStatsCtx sessionctx.Context
 
-	mu struct {
-		syncutil.RWMutex
-		ctx sessionctx.Context
-		// rateMap contains the error rate delta from feedback.
-		rateMap errorRateDeltaMap
-	}
+	// sysProcTracker is used to track sys process like analyze
+	sysProcTracker sessionctx.SysProcTracker
 
-	schemaMu struct {
-		sync.RWMutex
-		// pid2tid is the map from partition ID to table ID.
-		pid2tid map[int64]int64
-		// schemaVersion is the version of information schema when `pid2tid` is built.
-		schemaVersion int64
-	}
+	// serverIDGetter is used to get server ID for generating auto analyze ID.
+	serverIDGetter func() uint64
 
-	// It can be read by multiple readers at the same time without acquiring lock, but it can be
-	// written only after acquiring the lock.
-	statsCache struct {
-		sync.Mutex
-		atomic.Value
-		memTracker *memory.Tracker
-	}
-
-	pool sessionPool
+	InitStatsDone chan struct{}
 
 	// ddlEventCh is a channel to notify a ddl operation has happened.
 	// It is sent only by owner or the drop stats executor, and read by stats handle.
 	ddlEventCh chan *ddlUtil.Event
-	// listHead contains all the stats collector required by session.
-	listHead *SessionStatsCollector
-	// globalMap contains all the delta map from collectors when we dump them to KV.
-	globalMap struct {
-		sync.Mutex
-		data tableDeltaMap
-	}
-	// feedback is used to store query feedback info.
-	feedback struct {
-		sync.Mutex
-		data *statistics.QueryFeedbackMap
-	}
-	// colMap contains all the column stats usage information from collectors when we dump them to KV.
-	colMap struct {
-		sync.Mutex
-		data colStatsUsageMap
-	}
-
-	lease atomic2.Duration
 
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *SessionIndexUsageCollector
 
-	// StatsLoad is used to load stats concurrently
-	StatsLoad StatsLoad
+	// listHead contains all the stats collector required by session.
+	listHead *SessionStatsCollector
 
-	// sysProcTracker is used to track sys process like analyze
-	sysProcTracker sessionctx.SysProcTracker
-	// serverIDGetter is used to get server ID for generating auto analyze ID.
-	serverIDGetter func() uint64
+	// It can be read by multiple readers at the same time without acquiring lock, but it can be
+	// written only after acquiring the lock.
+	statsCache struct {
+		atomic.Value
+		memTracker *memory.Tracker
+		sync.Mutex
+	}
+
+	// feedback is used to store query feedback info.
+	feedback struct {
+		data *statistics.QueryFeedbackMap
+		sync.Mutex
+	}
+
+	// globalMap contains all the delta map from collectors when we dump them to KV.
+	globalMap struct {
+		data tableDeltaMap
+		sync.Mutex
+	}
+
+	// colMap contains all the column stats usage information from collectors when we dump them to KV.
+	colMap struct {
+		data colStatsUsageMap
+		sync.Mutex
+	}
+
 	// tableLocked used to store locked tables
 	tableLocked []int64
 
-	InitStatsDone chan struct{}
+	// StatsLoad is used to load stats concurrently
+	StatsLoad StatsLoad
+
+	mu struct {
+		ctx sessionctx.Context
+		// rateMap contains the error rate delta from feedback.
+		rateMap errorRateDeltaMap
+		syncutil.RWMutex
+	}
+
+	schemaMu struct {
+		// pid2tid is the map from partition ID to table ID.
+		pid2tid map[int64]int64
+		// schemaVersion is the version of information schema when `pid2tid` is built.
+		schemaVersion int64
+		sync.RWMutex
+	}
+
+	lease atomic2.Duration
 }
 
 // GetTableLockedAndClearForTest for unit test only
@@ -297,6 +302,7 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 			logutil.BgLogger().Error("[stats] error occurred when update mysql.stats_meta", zap.Error(err))
 			return "", err
 		}
+		TableRowStatsCache.Invalidate(tid)
 
 		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
 		if err != nil {
@@ -323,6 +329,7 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 			logutil.BgLogger().Error("[stats] error occurred when update mysql.stats_meta", zap.Error(err))
 			return "", err
 		}
+		TableRowStatsCache.Invalidate(tid)
 
 		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
 		if err != nil {
@@ -646,13 +653,13 @@ func (h *Handle) UpdateSessionVar() error {
 // In the column statistics, the variable `num` is equal to the number of columns in the partition table.
 // In the index statistics, the variable `num` is always equal to one.
 type GlobalStats struct {
-	Num         int
-	Count       int64
-	ModifyCount int64
 	Hg          []*statistics.Histogram
 	Cms         []*statistics.CMSketch
 	TopN        []*statistics.TopN
 	Fms         []*statistics.FMSketch
+	Num         int
+	Count       int64
+	ModifyCount int64
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -998,10 +1005,16 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
-		h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
+		if tblInfo.GetPartitionInfo() == nil || h.statsCacheLen() < 64 {
+			h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
+		}
 		return tbl
 	}
 	return tbl
+}
+
+func (h *Handle) statsCacheLen() int {
+	return h.statsCache.Load().(statsCache).Len()
 }
 
 // updateStatsCache overrides the global statsCache with a new one, it may fail
@@ -1010,7 +1023,6 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(statsCache)
-	enableQuota := oldCache.EnableQuota()
 	newCost := newCache.Cost()
 	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
 		h.statsCache.memTracker.Consume(newCost - oldCache.Cost())
@@ -1018,7 +1030,7 @@ func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 		updated = true
 	}
 	h.statsCache.Unlock()
-	if updated && enableQuota {
+	if updated {
 		handle_metrics.CostGauge.Set(float64(newCost))
 	}
 	return
@@ -1440,6 +1452,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 		}
 		statsVer = version
 	}
+	TableRowStatsCache.Invalidate(tableID)
 	// 2. Save histograms.
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
@@ -1557,6 +1570,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
 		_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+		TableRowStatsCache.Invalidate(tableID)
 	} else {
 		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %?", version, tableID)
 	}
@@ -1634,6 +1648,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 	version := txn.StartTS()
 	_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
 	statsVer = version
+	TableRowStatsCache.Invalidate(tableID)
 	return err
 }
 

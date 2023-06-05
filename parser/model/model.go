@@ -1312,6 +1312,17 @@ func (pi *PartitionInfo) FindPartitionDefinitionByName(partitionDefinitionName s
 	return -1
 }
 
+// GetPartitionIDByName gets the partition ID by name.
+func (pi *PartitionInfo) GetPartitionIDByName(partitionDefinitionName string) int64 {
+	lowConstrName := strings.ToLower(partitionDefinitionName)
+	for _, definition := range pi.Definitions {
+		if definition.Name.L == lowConstrName {
+			return definition.ID
+		}
+	}
+	return -1
+}
+
 // IndexColumn provides index column info.
 type IndexColumn struct {
 	Name   CIStr `json:"name"`   // Index name
@@ -1838,20 +1849,85 @@ func (p *PlacementSettings) Clone() *PlacementSettings {
 	return &cloned
 }
 
+// RunawayActionType is the type of runaway action.
+type RunawayActionType int32
+
+//revive:disable:exported
+const (
+	RunawayActionNone RunawayActionType = iota
+	RunawayActionDryRun
+	RunawayActionCooldown
+	RunawayActionKill
+)
+
+// RunawayWatchType is the type of runaway watch.
+type RunawayWatchType int32
+
+//revive:disable:exported
+const (
+	WatchExact RunawayWatchType = iota
+	WatchSimilar
+)
+
+// RunawayWatchValueToName converts the runaway watch value to corresponding name
+func (t RunawayWatchType) String() string {
+	switch t {
+	case WatchExact:
+		return "EXACT"
+	case WatchSimilar:
+		return "SIMILAR"
+	default:
+		return "EXACT"
+	}
+}
+
+// RunawayOptionType is the runaway's option type.
+type RunawayOptionType int
+
+//revive:disable:exported
+const (
+	RunawayRule RunawayOptionType = iota
+	RunawayAction
+	RunawayWatch
+)
+
+// RunawayActionValueToName converts the runaway action value to corresponding name
+func RunawayActionValueToName(value int32) string {
+	switch RunawayActionType(value) {
+	case RunawayActionDryRun:
+		return "DRYRUN"
+	case RunawayActionCooldown:
+		return "COOLDOWN"
+	case RunawayActionKill:
+		return "KILL"
+	default:
+		return "None"
+	}
+}
+
 // ResourceGroupRefInfo is the struct to refer the resource group.
 type ResourceGroupRefInfo struct {
 	ID   int64 `json:"id"`
 	Name CIStr `json:"name"`
 }
 
+// ResourceGroupRunawaySettings is the runaway settings of the resource group
+type ResourceGroupRunawaySettings struct {
+	ExecElapsedTimeMs uint64 `json:"exec_elapsed_time_ms"`
+	Action            uint64 `json:"action"`
+	WatchType         uint64 `json:"watch_type"`
+	WatchDurationMs   uint64 `json:"watch_duration_ms"`
+}
+
 // ResourceGroupSettings is the settings of the resource group
 type ResourceGroupSettings struct {
-	RURate           uint64 `json:"ru_per_sec"`
-	Priority         uint64 `json:"priority"`
-	CPULimiter       string `json:"cpu_limit"`
-	IOReadBandwidth  string `json:"io_read_bandwidth"`
-	IOWriteBandwidth string `json:"io_write_bandwidth"`
-	BurstLimit       int64  `json:"burst_limit"`
+	RURate           uint64                        `json:"ru_per_sec"`
+	Priority         uint64                        `json:"priority"`
+	CPULimiter       string                        `json:"cpu_limit"`
+	IOReadBandwidth  string                        `json:"io_read_bandwidth"`
+	IOWriteBandwidth string                        `json:"io_write_bandwidth"`
+	BurstLimit       int64                         `json:"burst_limit"`
+	Runaway          *ResourceGroupRunawaySettings `json:"runaway"`
 }
 
 // NewResourceGroupSettings creates a new ResourceGroupSettings.

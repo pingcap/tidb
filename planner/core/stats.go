@@ -1108,11 +1108,15 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.cte.seedPartLogicalPlan.SelectBlockOffset())
 			newSel.SetChildren(p.cte.seedPartLogicalPlan)
 			p.cte.seedPartLogicalPlan = newSel
+			p.cte.optFlag |= flagPredicatePushDown
 		}
-		p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag|flagPredicatePushDown, p.cte.seedPartLogicalPlan)
+		p.cte.seedPartLogicalPlan, p.cte.seedPartPhysicalPlan, _, err = DoOptimizeAndLogicAsRet(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
 		if err != nil {
 			return nil, err
 		}
+	}
+	if p.onlyUsedAsStorage {
+		p.SetChildren(p.cte.seedPartLogicalPlan)
 	}
 	resStat := p.cte.seedPartPhysicalPlan.Stats()
 	// Changing the pointer so that seedStat in LogicalCTETable can get the new stat.
@@ -1150,5 +1154,11 @@ func (p *LogicalCTETable) DeriveStats(_ []*property.StatsInfo, _ *expression.Sch
 		return p.stats, nil
 	}
 	p.stats = p.seedStat
+	return p.stats, nil
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+	p.stats = childStats[len(childStats)-1]
 	return p.stats, nil
 }
