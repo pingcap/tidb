@@ -107,6 +107,7 @@ type JobInfo struct {
 	// here, we use the same name as in distributed framework.
 	Step string
 	// the summary info of the job, it's updated only when the job is finished.
+	// for running job, we should query the progress from the distributed framework.
 	Summary      *JobSummary
 	ErrorMessage string
 }
