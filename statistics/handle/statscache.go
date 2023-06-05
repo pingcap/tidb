@@ -18,6 +18,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -143,13 +144,86 @@ func (c cacheItem) copy() cacheItem {
 
 type tableCacheShard struct {
 	Item *map[int64]cacheItem
+	ref  atomic.Int32
 }
 
 func newTableCacheShard() *tableCacheShard {
 	item := make(map[int64]cacheItem)
-	return &tableCacheShard{
+	result := &tableCacheShard{
 		Item: &item,
 	}
+	result.ref.Store(1)
+	return result
+}
+
+func (t *tableCacheShard) Release() {
+	if t.ref.Add(-1) == 0 {
+		t.Item = nil
+	}
+}
+
+func (t *tableCacheShard) Get(k int64) (*statistics.Table, bool) {
+	value, ok := (*t.Item)[k]
+	return value.value, ok
+}
+
+func (t *tableCacheShard) Put(k int64, v *statistics.Table) int64 {
+	if t.ref.Load() != 1 {
+		t.copy()
+	}
+	item, ok := (*t.Item)[k]
+	if ok {
+		oldCost := item.cost
+		newCost := v.MemoryUsage().TotalMemUsage
+		item.value = v
+		item.cost = newCost
+		(*(t.Item))[k] = item
+		return newCost - oldCost
+	}
+	cost := v.MemoryUsage().TotalMemUsage
+	item = cacheItem{
+		key:   k,
+		value: v,
+		cost:  cost,
+	}
+	(*(t.Item))[k] = item
+	return cost
+}
+
+func (t *tableCacheShard) Del(k int64) int64 {
+	if t.ref.Load() != 1 {
+		t.copy()
+	}
+	item, ok := (*t.Item)[k]
+	if !ok {
+		return 0
+	}
+	delete(*t.Item, k)
+	return item.cost
+}
+
+func (t *tableCacheShard) Len() int {
+	return len(*t.Item)
+}
+
+func (t *tableCacheShard) Iterate(f func(k int64, v *statistics.Table)) {
+	for k, v := range *t.Item {
+		f(k, v.value)
+	}
+}
+
+func (t *tableCacheShard) copy() {
+	newItem := make(map[int64]cacheItem, len(*t.Item))
+	for k, v := range *t.Item {
+		newItem[k] = v.copy()
+	}
+	newT := &tableCacheShard{
+		Item: &newItem,
+	}
+	newT.ref.Store(1)
+	old := t
+	t = newT
+	old.Release()
 }
 
 const tablesCacheShardCnt = 128
@@ -180,37 +254,14 @@ func (m *mapCache) PutByQuery(k int64, v *statistics.Table) {
 // Put implements statsCacheInner
 func (m *mapCache) Put(k int64, v *statistics.Table) {
 	table := m.tables[k%tablesCacheShardCnt]
-	it := *table.Item
-	item, ok := it[k]
-	if ok {
-		oldCost := item.cost
-		newCost := v.MemoryUsage().TotalMemUsage
-		item.value = v
-		item.cost = newCost
-		(*(table.Item))[k] = item
-		m.memUsage += newCost - oldCost
-		return
-	}
-	cost := v.MemoryUsage().TotalMemUsage
-	item = cacheItem{
-		key:   k,
-		value: v,
-		cost:  cost,
-	}
-	(*(table.Item))[k] = item
-	m.memUsage += cost
+	delta := table.Put(k, v)
+	m.memUsage += delta
 }
 
 // Del implements statsCacheInner
 func (m *mapCache) Del(k int64) {
 	table := m.tables[k%tablesCacheShardCnt]
-	it := *table.Item
-	item, ok := it[k]
-	if !ok {
-		return
-	}
-	delete(it, k)
-	m.memUsage -= item.cost
+	m.memUsage -= table.Del(k)
 }
 
 // Cost implements statsCacheInner
@@ -222,9 +273,9 @@ func (m *mapCache) Cost() int64 {
 func (m *mapCache) Keys() []int64 {
 	ks := make([]int64, 0, len(m.tables))
 	for _, table := range m.tables {
-		for k := range *(table.Item) {
+		table.Iterate(func(k int64, _ *statistics.Table) {
 			ks = append(ks, k)
-		}
+		})
 	}
 	return ks
 }
@@ -233,9 +284,9 @@ func (m *mapCache) Keys() []int64 {
 func (m *mapCache) Values() []*statistics.Table {
 	vs := make([]*statistics.Table, 0, len(m.tables))
 	for _, table := range m.tables {
-		for _, v := range *(table.Item) {
-			vs = append(vs, v.value)
-		}
+		table.Iterate(func(_ int64, v *statistics.Table) {
+			vs = append(vs, v)
+		})
 	}
 	return vs
 }
@@ -244,16 +295,20 @@ func (m *mapCache) Values() []*statistics.Table {
 func (m *mapCache) Map() map[int64]*statistics.Table {
 	t := make(map[int64]*statistics.Table, len(m.tables))
 	for _, table := range m.tables {
-		for k, v := range *(table.Item) {
-			t[k] = v.value
-		}
+		table.Iterate(func(k int64, v *statistics.Table) {
+			t[k] = v
+		})
 	}
 	return t
 }
 
 // Len implements statsCacheInner
 func (m *mapCache) Len() int {
-	return len(m.tables)
+	var s int
+	for idx := range m.tables {
+		s += m.tables[idx].Len()
+	}
+	return s
 }
 
 // FreshMemUsage implements statsCacheInner
@@ -271,18 +326,11 @@ func (m *mapCache) FreshMemUsage() {
 func (m *mapCache) Copy() statsCacheInner {
 	var tables [tablesCacheShardCnt]*tableCacheShard
 	for v := range tables {
-		tables[v] = newTableCacheShard()
+		tables[v] = m.tables[v]
 	}
 	newM := &mapCache{
 		tables:   tables,
 		memUsage: m.memUsage,
-	}
-	for idx, table := range m.tables {
-		item := newM.tables[idx]
-		tbl := *(item.Item)
-		for k, v := range *(table.Item) {
-			tbl[k] = v.copy()
-		}
 	}
 	return newM
 }
