@@ -31,6 +31,7 @@ const (
 
 type EC2Session struct {
 	ec2 ec2iface.EC2API
+
 	// aws operation concurrency
 	concurrency uint
 }
