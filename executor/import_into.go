@@ -140,8 +140,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	e.dataFilled = true
 
 	sqlExec := e.userSctx.(sqlexec.SQLExecutor)
-	job := importer.NewJob(jobID, sqlExec, e.ctx.GetSessionVars().User.String(), false)
-	info, err := job.Get(ctx)
+	info, err := importer.GetJob(ctx, sqlExec, jobID, e.ctx.GetSessionVars().User.String(), false)
 	if err != nil {
 		return err
 	}
@@ -208,8 +207,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, hasSuperPriv bool) error {
 	exec := e.ctx.(sqlexec.SQLExecutor)
-	job := importer.NewJob(e.jobID, exec, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
-	info, err := job.Get(ctx)
+	info, err := importer.GetJob(ctx, exec, e.jobID, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
 	if err != nil {
 		return err
 	}

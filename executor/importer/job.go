@@ -67,7 +67,7 @@ const (
 	baseQuerySql = `SELECT
 					id, create_time, start_time, end_time,
 					table_schema, table_name, table_id, created_by, parameters, source_file_size,
-					status, step, summary, error_message,
+					status, step, summary, error_message
 				FROM mysql.tidb_import_jobs`
 )
 
@@ -75,19 +75,19 @@ const (
 // it's a minimal meta info to store in tidb_import_jobs for diagnose.
 // for detailed info, see tidb_global_tasks.
 type ImportParameters struct {
-	ColumnsAndVars string `json:"columns-and-vars;omitempty"`
-	SetClause      string `json:"set-clause;omitempty"`
+	ColumnsAndVars string `json:"columns-and-vars,omitempty"`
+	SetClause      string `json:"set-clause,omitempty"`
 	// for s3 URL, AK/SK is redacted for security
 	FileLocation string `json:"file-location"`
 	Format       string `json:"format"`
 	// only include what user specified, not include default value.
-	Options map[string]interface{} `json:"options;omitempty"`
+	Options map[string]interface{} `json:"options,omitempty"`
 }
 
 // JobSummary is the summary info of import into job.
 type JobSummary struct {
 	// ImportedRows is the number of rows imported into TiKV.
-	ImportedRows uint64 `json:"imported-rows;omitempty"`
+	ImportedRows uint64 `json:"imported-rows,omitempty"`
 }
 
 // JobInfo is the information of import into job.
@@ -117,30 +117,16 @@ func (j *JobInfo) CanCancel() bool {
 	return j.Status == jobStatusPending || j.Status == JobStatusRunning
 }
 
-// Job import job.
-type Job struct {
-	ID int64
-	// Job don't manage the life cycle of the connection.
-	Conn sqlexec.SQLExecutor
-	User string
-	// whether the user has super privilege.
-	// If the user has super privilege, the user can show or operate all jobs,
-	// else the user can only show or operate his own jobs.
-	HasSuperPriv bool
-}
-
-// NewJob returns new Job.
-func NewJob(ID int64, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) *Job {
-	return &Job{ID: ID, Conn: conn, User: user, HasSuperPriv: hasSuperPriv}
-}
-
-// Get gets all needed information of import into job.
-func (j *Job) Get(ctx context.Context) (*JobInfo, error) {
+// GetJob returns the job with the given id if the user has privilege.
+// hasSuperPriv: whether the user has super privilege.
+// If the user has super privilege, the user can show or operate all jobs,
+// else the user can only show or operate his own jobs.
+func GetJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, user string, hasSuperPriv bool) (*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 
 	sql := baseQuerySql + ` WHERE id = %?`
-	args := []interface{}{j.ID}
-	rs, err := j.Conn.ExecuteInternal(ctx, sql, args...)
+	args := []interface{}{jobID}
+	rs, err := conn.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -150,14 +136,14 @@ func (j *Job) Get(ctx context.Context) (*JobInfo, error) {
 		return nil, err
 	}
 	if len(rows) != 1 {
-		return nil, exeerrors.ErrLoadDataJobNotFound.GenWithStackByArgs(j.ID)
+		return nil, exeerrors.ErrLoadDataJobNotFound.GenWithStackByArgs(jobID)
 	}
 
 	info, err := convert2JobInfo(rows[0])
 	if err != nil {
 		return nil, err
 	}
-	if !j.HasSuperPriv && info.CreatedBy != j.User {
+	if !hasSuperPriv && info.CreatedBy != user {
 		return nil, core.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
 	}
 	return info, nil
@@ -232,12 +218,16 @@ func Job2Step(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step s
 
 // FinishJob tries to finish a running job with jobID, change its status to finished, clear its step.
 // It will not return error when there's no matched job.
-func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summary string) error {
+func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summary *JobSummary) error {
+	bytes, err := json.Marshal(summary)
+	if err != nil {
+		return err
+	}
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
+	_, err = conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
 		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, step = %?, summary = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFinished, jobStepNone, summary, jobID, JobStatusRunning)
+		jobStatusFinished, jobStepNone, bytes, jobID, JobStatusRunning)
 	return err
 }
 
@@ -290,10 +280,10 @@ func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user stri
 	sql := baseQuerySql
 	args := []interface{}{}
 	if !hasSuperPriv {
-		sql += " AND created_by = %?"
+		sql += " WHERE created_by = %?"
 		args = append(args, user)
 	}
-	rs, err := conn.ExecuteInternal(ctx, sql, args)
+	rs, err := conn.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -319,8 +309,7 @@ func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user stri
 func CancelJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	sql := `UPDATE mysql.tidb_import_jobs
-			SET update_time = CURRENT_TIMESTAMP(6), status = %?,
-				end_time = CURRENT_TIMESTAMP(6), error_message = 'canceled by user'
+			SET update_time = CURRENT_TIMESTAMP(6), status = %?, error_message = 'cancelled by user'
 			WHERE id = %? AND status IN (%?, %?);`
 	args := []interface{}{jogStatusCancelled, jobID, jobStatusPending, JobStatusRunning}
 	_, err = conn.ExecuteInternal(ctx, sql, args...)

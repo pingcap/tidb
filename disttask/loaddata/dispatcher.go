@@ -329,17 +329,13 @@ func job2Step(ctx context.Context, taskMeta *TaskMeta, step string) error {
 }
 
 func finishJob(ctx context.Context, taskMeta *TaskMeta, summary *importer.JobSummary) error {
-	bytes, err := json.Marshal(summary)
-	if err != nil {
-		return err
-	}
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
 	return globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
-		return importer.FinishJob(ctx, exec, taskMeta.JobID, string(bytes))
+		return importer.FinishJob(ctx, exec, taskMeta.JobID, summary)
 	})
 }
 

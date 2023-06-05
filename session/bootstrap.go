@@ -614,11 +614,11 @@ const (
 		table_name VARCHAR(64) NOT NULL,
 		table_id bigint(64) NOT NULL,
 		created_by VARCHAR(300) NOT NULL,
-		parameters json NOT NULL,
+		parameters text NOT NULL,
 		source_file_size bigint(64) NOT NULL,
 		status VARCHAR(64) NOT NULL,
 		step VARCHAR(64) NOT NULL,
-		summary json DEFAULT NULL,
+		summary text DEFAULT NULL,
 		error_message TEXT DEFAULT NULL,
 		PRIMARY KEY (id),
 		KEY (created_by));`

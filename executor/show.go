@@ -2225,8 +2225,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	}
 
 	if e.ImportJobID != nil {
-		job := importer.NewJob(*e.ImportJobID, exec, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
-		info, err := job.Get(ctx)
+		info, err := importer.GetJob(ctx, exec, *e.ImportJobID, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
 		if err != nil {
 			return err
 		}
