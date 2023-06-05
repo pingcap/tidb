@@ -435,7 +435,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		// we assign the subtask to the instance in a round-robin way.
 		pos := i % len(serverNodes)
 		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
-		logutil.BgLogger().Info("Create subTask",
+		logutil.BgLogger().Debug("Create subTask",
 			zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
