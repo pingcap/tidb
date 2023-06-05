@@ -170,7 +170,7 @@ func (e *Engine) Cleanup(dataDir string) error {
 		return errors.Trace(err)
 	}
 	uuid := e.UUID.String()
-	e.logger.Info("lance test cleanup", zap.String("uuid", filepath.Join(dataDir, uuid+DupDetectDirSuffix)))
+	fmt.Printf("lance test cleanup %s\n", filepath.Join(dataDir, uuid+DupDetectDirSuffix))
 	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupDetectDirSuffix)); err != nil {
 		return errors.Trace(err)
 	}
