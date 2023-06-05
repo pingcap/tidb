@@ -186,7 +186,7 @@ func CreateJob(
 		return 0, errors.Errorf("unexpected result length: %d", len(rows))
 	}
 
-	failpoint.Inject("saveLastImportJobID", func() {
+	failpoint.Inject("setLastImportJobID", func() {
 		TestLastImportJobID.Store(rows[0].GetInt64(0))
 	})
 	return rows[0].GetInt64(0), nil

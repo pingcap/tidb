@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
@@ -207,13 +208,17 @@ func FormatBackendURL(backend *backuppb.StorageBackend) (u url.URL) {
 	return
 }
 
-// RedactURL redacts the secret tokens in the URL. It only supports S3 for now.
+// RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
 func RedactURL(str string) (string, error) {
 	u, err := ParseRawURL(str)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	if strings.ToLower(u.Scheme) == "s3" {
+	scheme := u.Scheme
+	failpoint.Inject("forceRedactURL", func() {
+		scheme = "s3"
+	})
+	if strings.ToLower(scheme) == "s3" {
 		values := u.Query()
 		for k := range values {
 			// see below on why we normalize key

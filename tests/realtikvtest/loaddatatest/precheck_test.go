@@ -37,6 +37,6 @@ func (s *mockGCSSuite) TestPreCheckTableNotEmpty() {
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
 	s.tk.MustExec("insert into t values(9, 'test9', 99);")
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://precheck-tbl-empty/file.csv?endpoint=%s'`, gcsEndpoint)
-	err := s.tk.ExecToErr(loadDataSQL)
+	err := s.tk.QueryToErr(loadDataSQL)
 	require.ErrorIs(s.T(), err, exeerrors.ErrLoadDataPreCheckFailed)
 }

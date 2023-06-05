@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -2183,7 +2184,7 @@ func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 	result.AppendInt64(3, info.TableID)
 	result.AppendString(4, info.Step)
 	result.AppendString(5, info.Status)
-	result.AppendInt64(6, info.SourceFileSize)
+	result.AppendString(6, units.HumanSize(float64(info.SourceFileSize)))
 	if info.Summary != nil {
 		result.AppendUint64(7, info.Summary.ImportedRows)
 	} else if importedRowCount > 0 {

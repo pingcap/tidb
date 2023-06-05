@@ -171,8 +171,8 @@ type Plan struct {
 	DistSQLScanConcurrency int
 
 	// todo: remove it when load data code is reverted.
-	InImportInto bool `json:"-"`
-	// only initialized for IMPORT INTO
+	InImportInto bool
+	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
 	// the user who executes the statement,in the form of user@host
 	// only initialized for IMPORT INTO

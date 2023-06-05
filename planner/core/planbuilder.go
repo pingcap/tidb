@@ -4347,6 +4347,15 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	return p, err
 }
 
+var (
+	importIntoSchemaNames = []string{"Job_ID", "Data_Source", "Target_Table", "Table_ID",
+		"Phase", "Status", "Source_File_Size", "Imported_Rows",
+		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
+	importIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
+)
+
 func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (Plan, error) {
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	var (
@@ -4406,13 +4415,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		return nil, err
 	}
 
-	outputNames := []string{"Job_ID", "Data_Source", "Target_Table", "Table_ID",
-		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Result_Message",
-		"Create_Time", "Start_Time", "End_Time", "Created_By"}
-	outputTypes := []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
-		mysql.TypeString, mysql.TypeString, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeString,
-		mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
-	outputSchema, outputFields := convert2OutputSchemasAndNames(outputNames, outputTypes)
+	outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes)
 	p.setSchemaAndNames(outputSchema, outputFields)
 	return p, nil
 }
@@ -5394,12 +5397,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Session_states", "Session_token"}
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
 	case ast.ShowImportJobs:
-		names = []string{"Job_ID", "Data_Source", "Target_Table", "Table_ID",
-			"Phase", "Status", "Source_File_Size", "Imported_Rows",
-			"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
-		ftypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
-			mysql.TypeString, mysql.TypeString, mysql.TypeLonglong, mysql.TypeLonglong,
-			mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
+		names = importIntoSchemaNames
+		ftypes = importIntoSchemaFTypes
 	}
 	return convert2OutputSchemasAndNames(names, ftypes)
 }
