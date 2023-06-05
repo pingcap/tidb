@@ -192,16 +192,9 @@ func (cr *chunkProcessor) process(
 	// create the kvEncoder with original tableInfo if dropIndex
 	originalKVEncoder := kvEncoder
 	if rc.cfg.TikvImporter.AddIndexBySQL {
-		encTable, err := tables.TableFromMeta(t.alloc, t.tableInfo.Core)
+		encTable, err := tables.TableFromMeta(t.alloc, t.tableInfo.Desired)
 		if err != nil {
 			return errors.Trace(err)
-		}
-
-		for _, idx := range encTable.Indices() {
-			logger.Info("lance test",
-				zap.Any("name", idx.Meta().Name.O),
-				zap.Any("columns", idx.Meta().Columns),
-				zap.Any("id", idx.Meta().ID))
 		}
 
 		originalKVEncoder, err = rc.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{

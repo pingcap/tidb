@@ -82,6 +82,7 @@ check_contains "count(*): 174"
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
 check_contains "count(*): 50"
 # TODO(lance6716): can't generate error message of UK when add-index-by-sql
+read -p 123
 
 # 5. Test fail after duplicate detection.
 cleanup
