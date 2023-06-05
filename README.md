@@ -17,7 +17,7 @@ TiDB (/’taɪdiːbi:/, "Ti" stands for Titanium) is an open-source distributed 
 - [Architecture](#architecture)
 - [MySQL compatibility](https://docs.pingcap.com/tidb/stable/mysql-compatibility)
 
-See what TiDB is capable ONLINE, go to [TiDB Playground](https://play.tidbcloud.com/?utm_source=github&utm_medium=tidb_readme).
+See what TiDB is capable ONLINE at [TiDB Playground](https://play.tidbcloud.com/?utm_source=github&utm_medium=tidb_readme).
 
 For more details and latest updates, see [TiDB documentation](https://docs.pingcap.com/tidb/stable) and [release notes](https://docs.pingcap.com/tidb/dev/release-notes).
 
