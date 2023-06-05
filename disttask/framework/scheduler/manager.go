@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -72,7 +73,7 @@ type Manager struct {
 		handlingTasks map[int64]context.CancelFunc
 	}
 	id           string
-	wg           sync.WaitGroup
+	wg           tidbutil.WaitGroupWrapper
 	ctx          context.Context
 	cancel       context.CancelFunc
 	logCtx       context.Context
@@ -115,17 +116,8 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 
 // Start starts the Manager.
 func (m *Manager) Start() {
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		m.fetchAndHandleRunnableTasks(m.ctx)
-	}()
-
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		m.fetchAndFastCancelTasks(m.ctx)
-	}()
+	m.wg.Run(m.fetchAndHandleRunnableTasks)
+	m.wg.Run(m.fetchAndFastCancelTasks)
 }
 
 // Stop stops the Manager.
@@ -139,11 +131,11 @@ func (m *Manager) Stop() {
 }
 
 // fetchAndHandleRunnableTasks fetches the runnable tasks from the global task table and handles them.
-func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
+func (m *Manager) fetchAndHandleRunnableTasks() {
 	ticker := time.NewTicker(checkTime)
 	for {
 		select {
-		case <-ctx.Done():
+		case <-m.ctx.Done():
 			logutil.Logger(m.logCtx).Info("fetchAndHandleRunnableTasks done")
 			return
 		case <-ticker.C:
@@ -152,17 +144,17 @@ func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
 				m.onError(err)
 				continue
 			}
-			m.onRunnableTasks(ctx, tasks)
+			m.onRunnableTasks(m.ctx, tasks)
 		}
 	}
 }
 
 // fetchAndFastCancelTasks fetches the reverting tasks from the global task table and fast cancels them.
-func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
+func (m *Manager) fetchAndFastCancelTasks() {
 	ticker := time.NewTicker(checkTime)
 	for {
 		select {
-		case <-ctx.Done():
+		case <-m.ctx.Done():
 			m.cancelAllRunningTasks()
 			logutil.Logger(m.logCtx).Info("fetchAndFastCancelTasks done")
 			return
@@ -172,7 +164,7 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 				m.onError(err)
 				continue
 			}
-			m.onCanceledTasks(ctx, tasks)
+			m.onCanceledTasks(m.ctx, tasks)
 		}
 	}
 }
