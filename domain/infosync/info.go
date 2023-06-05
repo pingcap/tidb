@@ -218,15 +218,6 @@ func GlobalInfoSyncerInit(
 	return is, nil
 }
 
-// GetGlobalInfoSyncer4Test get InfoSyncer for unit test
-func GetGlobalInfoSyncer4Test() *InfoSyncer {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return nil
-	}
-	return is
-}
-
 // Init creates a new etcd session and stores server info to etcd.
 func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) error {
 	err := is.newSessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
