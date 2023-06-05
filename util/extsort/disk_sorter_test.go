@@ -16,7 +16,10 @@ package extsort
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
+
+	"github.com/cockroachdb/pebble"
 
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
@@ -214,6 +217,9 @@ func TestSSTWriter(t *testing.T) {
 	require.NoError(t, sw.Set([]byte("ee"), []byte("55")))
 	require.NoError(t, sw.Close())
 	require.FileExists(t, makeFilename(fs, dirname, fileNum))
+	list, err := fs.List(dirname)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
 
 	require.NotNil(t, fileMeta)
 	require.Equal(t, fileNum, fileMeta.fileNum)
@@ -238,6 +244,10 @@ func TestSSTWriterEmpty(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, sw.Close())
+	require.FileExists(t, makeFilename(fs, dirname, fileNum))
+	list, err := fs.List(dirname)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
 
 	require.NotNil(t, fileMeta)
 	require.Equal(t, fileNum, fileMeta.fileNum)
@@ -245,7 +255,6 @@ func TestSSTWriterEmpty(t *testing.T) {
 	require.Equal(t, []byte{0}, fileMeta.endKey)
 	require.Nil(t, fileMeta.lastKey)
 	require.Equal(t, kvStats{}, fileMeta.kvStats)
-	require.FileExists(t, makeFilename(fs, dirname, fileNum))
 }
 
 func TestSSTWriterError(t *testing.T) {
@@ -263,4 +272,67 @@ func TestSSTWriterError(t *testing.T) {
 	list, err := fs.List(dirname)
 	require.NoError(t, err)
 	require.Empty(t, list)
+}
+
+func TestSSTReaderPool(t *testing.T) {
+	fs := vfs.Default
+	dirname := t.TempDir()
+
+	touchSSTFile(t, fs, dirname, 1)
+
+	pool := newSSTReaderPool(fs, dirname, pebble.NewCache(8<<20))
+
+	r1, err := pool.get(1)
+	require.NoError(t, err)
+	r2, err := pool.get(1)
+	require.NoError(t, err)
+	require.True(t, r1 == r2, "should be the same reader")
+
+	require.NoError(t, pool.unref(1))
+	// reader is still referenced, so it should be valid.
+	iter, err := r1.NewIter(nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, iter.Close())
+
+	require.NoError(t, pool.unref(1))
+	// reader is no longer referenced, so it should be closed.
+	iter, err = r1.NewIter(nil, nil)
+	require.Error(t, err)
+
+	// reader has been removed from the pool, unref should panic.
+	require.Panics(t, func() {
+		_ = pool.unref(1)
+	})
+}
+
+func TestSSTReaderPoolParallel(t *testing.T) {
+	fs := vfs.Default
+	dirname := t.TempDir()
+
+	touchSSTFile(t, fs, dirname, 1)
+	touchSSTFile(t, fs, dirname, 2)
+	touchSSTFile(t, fs, dirname, 3)
+
+	pool := newSSTReaderPool(fs, dirname, pebble.NewCache(8<<20))
+
+	var wg sync.WaitGroup
+	for i := 0; i <= 16; i++ {
+		wg.Add(1)
+		go func(fileNum int) {
+			defer wg.Done()
+			for j := 0; j < 10000; j++ {
+				_, err := pool.get(fileNum)
+				require.NoError(t, err)
+				require.NoError(t, pool.unref(fileNum))
+			}
+		}(i%3 + 1)
+	}
+	wg.Wait()
+}
+
+// touchSSTFile creates an empty SST file.
+func touchSSTFile(t *testing.T, fs vfs.FS, dirname string, fileNum int) {
+	sw, err := newSSTWriter(fs, dirname, fileNum, 0, func(meta *fileMetadata) {})
+	require.NoError(t, err)
+	require.NoError(t, sw.Close())
 }
