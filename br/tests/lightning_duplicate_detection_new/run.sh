@@ -71,6 +71,8 @@ cleanup
 run_lightning --backend local --config "tests/$TEST_NAME/local-error.toml" --log-file "$LOG_FILE" 2>&1 | grep -q "duplicate key in table \`test\`.\`dup_detect\` caused by index .*, you can turn on checkpoint and re-run to see the conflicting rows"
 run_lightning --backend local --config "tests/$TEST_NAME/local-error.toml" --log-file "$LOG_FILE" --enable-checkpoint=1 2>&1 | grep -q "duplicate entry for key 'uniq_col6_col7', a pair of conflicting rows are (row 1 counting from offset 0 in file test.dup_detect.1.sql, row 101 counting from offset 0 in file test.dup_detect.4.sql)"
 check_contains "restore table \`test\`.\`dup_detect\` failed: duplicate entry for key 'uniq_col6_col7', a pair of conflicting rows are (row 1 counting from offset 0 in file test.dup_detect.1.sql, row 101 counting from offset 0 in file test.dup_detect.4.sql)" "$LOG_FILE"
+# remove the dupdetect and dupresult folder
+rm -r $TEST_DIR/$TEST_NAME.sorted
 
 # 4. Test limit error records.
 cleanup
@@ -79,7 +81,7 @@ run_sql "SELECT count(*) FROM test.dup_detect"
 check_contains "count(*): 174"
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
 check_contains "count(*): 50"
-read -p 123
+# TODO(lance6716): can't generate error message of UK when add-index-by-sql
 
 # 5. Test fail after duplicate detection.
 cleanup
@@ -89,6 +91,7 @@ run_lightning --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/l
 
 unset GO_FAILPOINTS
 rm -f "$LOG_FILE"
+# TODO(lance6716) checkpoint has wrong tableID when add-index-by-sql
 run_lightning_ctl --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/local-replace.toml" --checkpoint-error-ignore="\`test\`.\`dup_detect\`"
 run_lightning --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/local-replace.toml" --log-file "$LOG_FILE"
 run_sql "SELECT count(*) FROM test.dup_detect"

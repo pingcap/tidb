@@ -238,7 +238,6 @@ func (d *dupDetector) addKeys(ctx context.Context, detector *duplicate.Detector)
 	return g.Wait()
 }
 
-// TODO: add UT about it.
 func (d *dupDetector) addKeysByChunk(
 	ctx context.Context,
 	adder *duplicate.KeyAdder,

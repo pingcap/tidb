@@ -197,6 +197,13 @@ func (cr *chunkProcessor) process(
 			return errors.Trace(err)
 		}
 
+		for _, idx := range encTable.Indices() {
+			logger.Info("lance test",
+				zap.Any("name", idx.Meta().Name.O),
+				zap.Any("columns", idx.Meta().Columns),
+				zap.Any("id", idx.Meta().ID))
+		}
+
 		originalKVEncoder, err = rc.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
 			SessionOptions: encode.SessionOptions{
 				SQLMode:   rc.cfg.TiDB.SQLMode,
