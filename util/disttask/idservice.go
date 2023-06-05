@@ -42,24 +42,24 @@ func MatchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID st
 }
 
 // GenerateSubtaskExecID generates the subTask execID
-func GenerateSubtaskExecID(ctx context.Context, ID string) string {
+func GenerateSubtaskExecID(ctx context.Context, id string) string {
 	serverInfos, err := infosync.GetAllServerInfo(ctx)
 	if err != nil || len(serverInfos) == 0 {
 		return ""
 	}
-	if serverNode, ok := serverInfos[ID]; ok {
+	if serverNode, ok := serverInfos[id]; ok {
 		return GenerateExecID(serverNode.IP, serverNode.Port)
 	}
 	return ""
 }
 
 // GenerateSubtaskExecID4Test generates the subTask execID, only used in unit tests
-func GenerateSubtaskExecID4Test(ID string) string {
+func GenerateSubtaskExecID4Test(id string) string {
 	serverInfos := infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
 	if len(serverInfos) == 0 {
 		return ""
 	}
-	if serverNode, ok := serverInfos[ID]; ok {
+	if serverNode, ok := serverInfos[id]; ok {
 		return GenerateExecID(serverNode.IP, serverNode.Port)
 	}
 	return ""
