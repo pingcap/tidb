@@ -74,11 +74,11 @@ type DistExecutionTestContext struct {
 }
 
 // InitOwner select the last domain as DDL owner in DistExecutionTestContext
-func (d *DistExecutionTestContext) InitOwner() {
+func (d *DistExecutionTestContext) InitOwner() error {
 	for _, dom := range d.domains {
 		dom.DDL().OwnerManager().RetireOwner()
 	}
-	d.domains[len(d.domains)-1].DDL().OwnerManager().CampaignOwner()
+	return d.domains[len(d.domains)-1].DDL().OwnerManager().CampaignOwner()
 }
 
 // SetOwner set one mock domain to DDL Owner by idx
@@ -89,8 +89,7 @@ func (d *DistExecutionTestContext) SetOwner(idx int) error {
 	for _, dom := range d.domains {
 		dom.DDL().OwnerManager().RetireOwner()
 	}
-	d.domains[idx].DDL().OwnerManager().CampaignOwner()
-	return nil
+	return d.domains[idx].DDL().OwnerManager().CampaignOwner()
 }
 
 // AddServer add 1 server for DistExecutionTestContext
@@ -112,14 +111,16 @@ func (d *DistExecutionTestContext) DeleteServer(idx int) error {
 	var err error
 	if d.domains[idx].DDL().OwnerManager().IsOwner() {
 		err = d.SetOwner(0)
+		if err != nil {
+			return err
+		}
 	}
 	d.domains = append(d.domains[:idx], d.domains[idx+1:]...)
-	infosync.MockGlobalServerInfoManagerEntry.Delete(idx)
-	return err
+	return infosync.MockGlobalServerInfoManagerEntry.Delete(idx)
 }
 
 // NewDistExecutionTestContext create DistExecutionTestContext for testing
-func NewDistExecutionTestContext(t testing.TB, serverNum int) *DistExecutionTestContext {
+func NewDistExecutionTestContext(t testing.TB, serverNum int) (*DistExecutionTestContext, error) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	gctuner.GlobalMemoryLimitTuner.Stop()
@@ -136,8 +137,11 @@ func NewDistExecutionTestContext(t testing.TB, serverNum int) *DistExecutionTest
 		gctuner.GlobalMemoryLimitTuner.Stop()
 	})
 	res := DistExecutionTestContext{schematracker.UnwrapStorage(store), domains, t}
-	res.InitOwner()
-	return &res
+	err = res.InitOwner()
+	if err != nil {
+		return nil, err
+	}
+	return &res, nil
 }
 
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
