@@ -162,12 +162,13 @@ func (t *tableCacheShard) AddRef() {
 }
 
 func (t *tableCacheShard) DecRef() {
-	if t.ref.Add(-1) == 0 {
-		t.Item = nil
-	}
+	t.ref.Add(-1)
 }
 
 func (t *tableCacheShard) Get(k int64) (*statistics.Table, bool) {
+	if t.Item == nil {
+		return nil, false
+	}
 	value, ok := (*t.Item)[k]
 	return value.value, ok
 }
