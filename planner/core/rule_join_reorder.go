@@ -511,7 +511,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPla
 		// the original outer join's other conditions has been bound to the outer join Edge,
 		// these remained other condition here shouldn't be appended to it because on-mismatch
 		// logic will produce more append-null rows which is banned in original semantic.
-		remainOtherConds = append(remainOtherConds, otherConds...)
+		remainOtherConds = append(remainOtherConds, otherConds...) // nozero
 		otherConds = otherConds[:0]
 	}
 	if len(joinType.outerBindCondition) > 0 {
