@@ -32,6 +32,7 @@ go_test(
     embed = [":extsort"],
     flaky = True,
     deps = [
+        "@com_github_cockroachdb_pebble//:pebble",
         "@com_github_cockroachdb_pebble//sstable",
         "@com_github_cockroachdb_pebble//vfs",
         "@com_github_stretchr_testify//require",
