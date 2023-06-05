@@ -232,9 +232,8 @@ func (s *testSuite1) TestIssue41773(c *C) {
 }
 
 // Check https://github.com/pingcap/tidb/issues/41048
-func TestCaseInsensitiveSchemaNames(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite1) TestCaseInsensitiveSchemaNames(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test.TABLE_PRIV(id int, name varchar(20));`)
 	// Verify the case-insensitive updates for mysql.tables_priv table.
