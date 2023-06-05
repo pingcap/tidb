@@ -183,8 +183,8 @@ func TestGetAndCancelJob(t *testing.T) {
 	jobInfo.ErrorMessage = "cancelled by user"
 	jobInfoEqual(t, jobInfo, gotJobInfo)
 
-	// cancel twice should fail
-	require.Error(t, importer.CancelJob(ctx, conn, jobID1))
+	// call cancel twice is ok, caller should check job status before cancel.
+	require.NoError(t, importer.CancelJob(ctx, conn, jobID1))
 
 	jobInfo.Status = "pending"
 	jobInfo.ErrorMessage = ""
