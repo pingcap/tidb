@@ -29,9 +29,10 @@ go_test(
         "disk_sorter_test.go",
         "external_sorter_test.go",
     ],
+    embed = [":extsort"],
     flaky = True,
     deps = [
-        ":extsort",
+        "@com_github_cockroachdb_pebble//sstable",
         "@com_github_stretchr_testify//require",
         "@org_golang_x_exp//slices",
         "@org_golang_x_sync//errgroup",

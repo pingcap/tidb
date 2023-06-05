@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package extsort_test
+package extsort
 
 import (
 	"bytes"
@@ -21,18 +21,12 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/pingcap/tidb/util/extsort"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
-type keyValue struct {
-	key   []byte
-	value []byte
-}
-
-func runCommonTest(t *testing.T, sorter extsort.ExternalSorter) {
+func runCommonTest(t *testing.T, sorter ExternalSorter) {
 	const numKeys = 1000
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -42,19 +36,9 @@ func runCommonTest(t *testing.T, sorter extsort.ExternalSorter) {
 	require.NoError(t, err)
 
 	rng := rand.New(rand.NewSource(0))
-
-	var kvs []keyValue
-	for i := 0; i < numKeys; i++ {
-		kv := keyValue{
-			key:   make([]byte, rng.Intn(256)),
-			value: make([]byte, rng.Intn(1024)),
-		}
-		rng.Read(kv.key)
-		rng.Read(kv.value)
-		kv.key = binary.BigEndian.AppendUint32(kv.key, uint32(i))
-		kvs = append(kvs, kv)
-		err := w.Put(kv.key, kv.value)
-		require.NoError(t, err)
+	kvs := genRandomKVs(rng, numKeys, 256, 1024)
+	for _, kv := range kvs {
+		require.NoError(t, w.Put(kv.key, kv.value))
 	}
 	require.NoError(t, w.Close())
 
@@ -79,7 +63,7 @@ func runCommonTest(t *testing.T, sorter extsort.ExternalSorter) {
 	require.NoError(t, iter.Close())
 }
 
-func runParallelTest(t *testing.T, sorter extsort.ExternalSorter) {
+func runCommonParallelTest(t *testing.T, sorter ExternalSorter) {
 	const (
 		numKeys    = 10000
 		numWriters = 10
@@ -114,20 +98,10 @@ func runParallelTest(t *testing.T, sorter extsort.ExternalSorter) {
 	}
 
 	rng := rand.New(rand.NewSource(0))
-
-	var kvs []keyValue
-	for i := 0; i < numKeys; i++ {
-		kv := keyValue{
-			key:   make([]byte, rng.Intn(256)),
-			value: make([]byte, rng.Intn(1024)),
-		}
-		rng.Read(kv.key)
-		rng.Read(kv.value)
-		kv.key = binary.BigEndian.AppendUint32(kv.key, uint32(i))
-		kvs = append(kvs, kv)
+	kvs := genRandomKVs(rng, numKeys, 256, 1024)
+	for _, kv := range kvs {
 		kvCh <- kv
 	}
-
 	close(kvCh)
 	require.NoError(t, g.Wait())
 
@@ -147,4 +121,29 @@ func runParallelTest(t *testing.T, sorter extsort.ExternalSorter) {
 	}
 	require.Equal(t, len(kvs), kvCnt)
 	require.NoError(t, iter.Close())
+}
+
+// genRandomKVs generates n unique random key-value pairs.
+// Each key is composed of random bytes with length in [0, keySizeRange-4) and
+// the last 4 bytes are the encoded uint32 of the key's index.
+// Each value is composed of random bytes with length in [0, valueSizeRange).
+func genRandomKVs(
+	rng *rand.Rand,
+	n int,
+	keySizeRange int,
+	valueSizeRange int,
+) []keyValue {
+	kvs := make([]keyValue, 0, n)
+	for i := 0; i < n; i++ {
+		keySize := rng.Intn(keySizeRange-4) + 4
+		kv := keyValue{
+			key:   make([]byte, keySize),
+			value: make([]byte, rng.Intn(valueSizeRange)),
+		}
+		rng.Read(kv.key[:keySize-4])
+		rng.Read(kv.value)
+		kv.key = binary.BigEndian.AppendUint32(kv.key[keySize-4:], uint32(i))
+		kvs = append(kvs, kv)
+	}
+	return kvs
 }
