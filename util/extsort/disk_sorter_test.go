@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
-
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/stretchr/testify/require"
@@ -278,7 +277,7 @@ func TestSSTReaderPool(t *testing.T) {
 	fs := vfs.Default
 	dirname := t.TempDir()
 
-	touchSSTFile(t, fs, dirname, 1)
+	writeSSTFile(t, fs, dirname, 1, nil)
 
 	pool := newSSTReaderPool(fs, dirname, pebble.NewCache(8<<20))
 
@@ -309,9 +308,9 @@ func TestSSTReaderPoolParallel(t *testing.T) {
 	fs := vfs.Default
 	dirname := t.TempDir()
 
-	touchSSTFile(t, fs, dirname, 1)
-	touchSSTFile(t, fs, dirname, 2)
-	touchSSTFile(t, fs, dirname, 3)
+	writeSSTFile(t, fs, dirname, 1, nil)
+	writeSSTFile(t, fs, dirname, 2, nil)
+	writeSSTFile(t, fs, dirname, 3, nil)
 
 	pool := newSSTReaderPool(fs, dirname, pebble.NewCache(8<<20))
 
@@ -331,8 +330,80 @@ func TestSSTReaderPoolParallel(t *testing.T) {
 }
 
 // touchSSTFile creates an empty SST file.
-func touchSSTFile(t *testing.T, fs vfs.FS, dirname string, fileNum int) {
-	sw, err := newSSTWriter(fs, dirname, fileNum, 0, func(meta *fileMetadata) {})
+func writeSSTFile(
+	t *testing.T,
+	fs vfs.FS,
+	dirname string,
+	fileNum int,
+	kvs []keyValue,
+) {
+	sw, err := newSSTWriter(fs, dirname, fileNum, 8, func(meta *fileMetadata) {})
 	require.NoError(t, err)
+	for _, kv := range kvs {
+		require.NoError(t, sw.Set(kv.key, kv.value))
+	}
 	require.NoError(t, sw.Close())
+}
+
+func TestSSTIter(t *testing.T) {
+	fs := vfs.Default
+	dirname := t.TempDir()
+
+	writeSSTFile(t, fs, dirname, 1, []keyValue{
+		{[]byte("aa"), []byte("11")},
+		{[]byte("bb"), []byte("22")},
+		{[]byte("cc"), []byte("33")},
+		{[]byte("dd"), []byte("44")},
+		{[]byte("ee"), []byte("55")},
+	})
+
+	pool := newSSTReaderPool(fs, dirname, pebble.NewCache(8<<20))
+	reader, err := pool.get(1)
+	require.NoError(t, err)
+
+	rawIter, err := reader.NewIter(nil, nil)
+	require.NoError(t, err)
+
+	iter := &sstIter{
+		iter: rawIter,
+		onClose: func() error {
+			return pool.unref(1)
+		},
+	}
+
+	require.True(t, iter.Seek([]byte("bc")))
+	require.Equal(t, []byte("cc"), iter.UnsafeKey())
+	require.Equal(t, []byte("33"), iter.UnsafeValue())
+	require.True(t, iter.First())
+	require.Equal(t, []byte("aa"), iter.UnsafeKey())
+	require.Equal(t, []byte("11"), iter.UnsafeValue())
+	require.True(t, iter.Next())
+	require.Equal(t, []byte("bb"), iter.UnsafeKey())
+	require.Equal(t, []byte("22"), iter.UnsafeValue())
+	require.True(t, iter.Last())
+	require.Equal(t, []byte("ee"), iter.UnsafeKey())
+	require.Equal(t, []byte("55"), iter.UnsafeValue())
+	require.False(t, iter.Next())
+	require.False(t, iter.Valid())
+	require.NoError(t, iter.Close())
+}
+
+func TestMergingIter(t *testing.T) {
+	// TODO
+}
+
+func TestCompactFiles(t *testing.T) {
+	// TODO
+}
+
+func TestPickCompactionFiles(t *testing.T) {
+	// TODO
+}
+
+func TestSplitCompactionFiles(t *testing.T) {
+	// TODO
+}
+
+func TestBuildCompactions(t *testing.T) {
+	// TODO
 }
