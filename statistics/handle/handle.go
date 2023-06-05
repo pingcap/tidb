@@ -1028,7 +1028,8 @@ func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	newCost := newCache.Cost()
 	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
 		h.statsCache.memTracker.Consume(newCost - oldCache.Cost())
-		h.statsCache.Store(&newCache)
+		old := h.statsCache.Swap(&newCache)
+		old.Release()
 		updated = true
 	}
 	h.statsCache.Unlock()
@@ -2308,8 +2309,7 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 	if v == nil {
 		return
 	}
-	sc := v
-	sc.SetCapacity(c)
+	v.SetCapacity(c)
 }
 
 // GetStatsCacheFrontTable gets front table in statsCacheInner implementation
@@ -2322,6 +2322,5 @@ func (h *Handle) GetStatsCacheFrontTable() int64 {
 	if v == nil {
 		return 0
 	}
-	sc := v
-	return sc.Front()
+	return v.Front()
 }

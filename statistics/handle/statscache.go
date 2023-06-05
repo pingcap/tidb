@@ -50,6 +50,7 @@ type statsCacheInner interface {
 	SetCapacity(int64)
 	// Front returns the front element's owner tableID, only used for test
 	Front() int64
+	Release()
 }
 
 func newStatsCache() statsCache {
@@ -329,6 +330,12 @@ func (m *mapCache) Len() int {
 func (m *mapCache) FreshMemUsage() {
 	for _, table := range m.tables {
 		m.memUsage += table.FreshMemUsage()
+	}
+}
+
+func (m *mapCache) Release() {
+	for _, table := range m.tables {
+		table.DecRef()
 	}
 }
 
