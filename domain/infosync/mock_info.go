@@ -28,14 +28,14 @@ import (
 // MockGlobalServerInfoManagerEntry is a mock global ServerInfoManager entry.
 var MockGlobalServerInfoManagerEntry = &MockGlobalServerInfoManager{}
 
-// Manager serverInfos in Distributed unit tests
+// MockGlobalServerInfoManager manages serverInfos in Distributed unit tests
 type MockGlobalServerInfoManager struct {
 	infos []*ServerInfo
 	mu    sync.Mutex
 }
 
 // used to mock ServerInfo, then every mock server will have different port
-var mock_server_port uint = 4000
+var mockServerPort uint = 4000
 
 // Add one mock ServerInfo
 func (m *MockGlobalServerInfoManager) Add(id string, serverIDGetter func() uint64) {
@@ -70,7 +70,7 @@ func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter fu
 	info := &ServerInfo{
 		ID:             id,
 		IP:             cfg.AdvertiseAddress,
-		Port:           mock_server_port,
+		Port:           mockServerPort,
 		StatusPort:     cfg.Status.StatusPort,
 		Lease:          cfg.Lease,
 		BinlogStatus:   binloginfo.GetStatus().String(),
@@ -79,7 +79,7 @@ func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter fu
 		ServerIDGetter: serverIDGetter,
 	}
 
-	mock_server_port++
+	mockServerPort++
 
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash

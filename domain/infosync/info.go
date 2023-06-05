@@ -219,7 +219,7 @@ func GlobalInfoSyncerInit(
 	return is, nil
 }
 
-// Check if InfoSyncer inited, only used in unit test
+// InfoSyncerInited check if InfoSyncer inited, only used in unit test
 func InfoSyncerInited() bool {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -228,7 +228,7 @@ func InfoSyncerInited() bool {
 	return is != nil
 }
 
-// Get InfoSyncer for unit test
+// GetGlobalInfoSyncer4Test get InfoSyncer for unit test
 func GetGlobalInfoSyncer4Test() *InfoSyncer {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {

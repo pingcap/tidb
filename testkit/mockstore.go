@@ -65,12 +65,15 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 	return store
 }
 
+// DistExecutionTestContext is the context
+// that used in Distributed execution test for Dist task framework and DDL
 type DistExecutionTestContext struct {
 	Store   kv.Storage
 	domains []*domain.Domain
 	t       testing.TB
 }
 
+// InitOwner select the last domain as DDL owner in DistExecutionTestContext
 func (d *DistExecutionTestContext) InitOwner() {
 	for _, dom := range d.domains {
 		dom.DDL().OwnerManager().RetireOwner()
@@ -78,6 +81,7 @@ func (d *DistExecutionTestContext) InitOwner() {
 	d.domains[len(d.domains)-1].DDL().OwnerManager().CampaignOwner()
 }
 
+// SetOwner set one mock domain to DDL Owner by idx
 func (d *DistExecutionTestContext) SetOwner(idx int) error {
 	if idx >= len(d.domains) || idx < 0 {
 		return errors.New("server idx out of bound")
@@ -89,6 +93,7 @@ func (d *DistExecutionTestContext) SetOwner(idx int) error {
 	return nil
 }
 
+// AddServer add 1 server for DistExecutionTestContext
 func (d *DistExecutionTestContext) AddServer() {
 	dom := bootstrap4DistExecution(d.t, d.Store, 500*time.Microsecond)
 	dom.InfoSyncer().SetSessionManager(d.domains[0].InfoSyncer().GetSessionManager())
@@ -96,6 +101,7 @@ func (d *DistExecutionTestContext) AddServer() {
 	d.domains = append(d.domains, dom)
 }
 
+// DeleteServer delete 1 server by idx in DistExecutionTestContext
 func (d *DistExecutionTestContext) DeleteServer(idx int) error {
 	if idx >= len(d.domains) || idx < 0 {
 		return errors.New("server idx out of bound")
@@ -112,6 +118,7 @@ func (d *DistExecutionTestContext) DeleteServer(idx int) error {
 	return err
 }
 
+// NewDistExecutionTestContext create DistExecutionTestContext for testing
 func NewDistExecutionTestContext(t testing.TB, serverNum int) *DistExecutionTestContext {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)

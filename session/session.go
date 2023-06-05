@@ -3285,12 +3285,12 @@ func InitMDLVariable(store kv.Storage) error {
 	return err
 }
 
-// Bootstrap session and domain
+// BootstrapSession bootstrap session and domain
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	return bootstrapSessionImpl(store, createSessions)
 }
 
-// Bootstrap session and dom for Distributed execution test, only for unit testing
+// BootstrapSession4DistExecution bootstrap session and dom for Distributed execution test, only for unit testing
 func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 	return bootstrapSessionImpl(store, createSessions4DistExecutuon)
 }
