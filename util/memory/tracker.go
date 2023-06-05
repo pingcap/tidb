@@ -459,11 +459,7 @@ func (t *Tracker) Consume(bs int64) {
 			sessionRootTracker.NeedKillReceived.Do(
 				func() {
 					logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
-<<<<<<< HEAD
-						zap.Uint64("connID", sessionRootTracker.SessionID))
-=======
-						zap.Uint64("conn", sessionRootTracker.SessionID.Load()))
->>>>>>> d5861ef4f48 (executor: make prepare analyze killed globally instead of query quota (#44352))
+						zap.Uint64("connID", sessionRootTracker.SessionID.Load()))
 				})
 			tryActionLastOne(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
 		}

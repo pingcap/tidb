@@ -139,11 +139,7 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 	if !a.acted {
 		if a.logHook == nil {
 			logutil.BgLogger().Warn("memory exceeds quota",
-<<<<<<< HEAD
-				zap.Uint64("connID", t.SessionID), zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
-=======
-				zap.Uint64("conn", t.SessionID.Load()), zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
->>>>>>> d5861ef4f48 (executor: make prepare analyze killed globally instead of query quota (#44352))
+				zap.Uint64("connID", t.SessionID.Load()), zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
 		} else {
 			a.logHook(a.ConnID)
 		}
