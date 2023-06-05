@@ -93,7 +93,7 @@ func (rs *resultReorder) injectSort(lp LogicalPlan) LogicalPlan {
 	return sort
 }
 
-func (rs *resultReorder) isInputOrderKeeper(lp LogicalPlan) bool {
+func (*resultReorder) isInputOrderKeeper(lp LogicalPlan) bool {
 	switch lp.(type) {
 	case *LogicalSelection, *LogicalProjection, *LogicalLimit:
 		return true
@@ -123,6 +123,6 @@ func (rs *resultReorder) extractHandleCol(lp LogicalPlan) *expression.Column {
 	return nil
 }
 
-func (rs *resultReorder) name() string {
+func (*resultReorder) name() string {
 	return "result_reorder"
 }

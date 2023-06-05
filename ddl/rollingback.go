@@ -386,7 +386,7 @@ func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
 		d.notifyReorgWorkerJobStateChange(job)
 	}
 
-	return dbterror.ErrPausedDDLJob
+	return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
 }
 
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {

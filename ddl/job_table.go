@@ -214,6 +214,10 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		logutil.BgLogger().Warn("[ddl-upgrading] normal cluster state, resume the job successfully", zap.Stringer("job", job))
 	}
 
+	if job.IsPaused() {
+		return false, nil
+	}
+
 	return true, nil
 }
 
@@ -606,6 +610,7 @@ func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
 }
 
 func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (startKey, endKey kv.Key, physicalTableID int64, err error) {
+	startKey, endKey = kv.Key{}, kv.Key{}
 	sql := fmt.Sprintf("select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
 	rows, err := se.Execute(ctx, sql, "get_handle")
@@ -629,8 +634,12 @@ func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (startKey, endKe
 				zap.String("end", hex.EncodeToString(cp.EndKey)),
 				zap.Int64("checkpoint physical ID", cp.PhysicalID))
 			physicalTableID = cp.PhysicalID
-			startKey = cp.StartKey
-			endKey = cp.EndKey
+			if len(cp.StartKey) > 0 {
+				startKey = cp.StartKey
+			}
+			if len(cp.EndKey) > 0 {
+				endKey = cp.EndKey
+			}
 		}
 	}
 	return
