@@ -2197,10 +2197,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
-	if err == nil {
-		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, stmt.Plan)
-	}
-
 	if err != nil {
 		s.rollbackOnError(ctx)
 

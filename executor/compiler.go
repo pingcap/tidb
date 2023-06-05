@@ -156,6 +156,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			}
 		}
 	}
+
+	if err = sessiontxn.OptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
+		return nil, err
+	}
+
 	if c.Ctx.GetSessionVars().EnablePlanReplayerCapture && !c.Ctx.GetSessionVars().InRestrictedSQL {
 		checkPlanReplayerCaptureTask(c.Ctx, stmtNode)
 	}
