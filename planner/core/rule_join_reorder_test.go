@@ -84,17 +84,17 @@ func TestAdditionOtherConditionsRemained4OuterJoin(t *testing.T) {
 
 	tk.MustQuery("SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows("" +
 		"13 i1"))
-	tk.MustQuery("explain SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows(""+
-		"Sort_14 2.50 root  test.queries_identifier.id",
-		"└─Projection_17 2.50 root  test.queries_identifier.id, test.queries_identifier.name",
-		"  └─Selection_18 2.50 root  or(and(eq(test.queries_channel.id, 5), eq(test.queries_program.id, 9)), eq(test.queries_program.id, 8))",
-		"    └─IndexJoin_22 3.12 root  left outer join, inner:IndexReader_21, outer key:test.queries_identifier.id, inner key:test.queries_channel.identifier_id, equal cond:eq(test.queries_identifier.id, test.queries_channel.identifier_id)",
-		"      ├─IndexHashJoin_37(Build) 2.50 root  inner join, inner:TableReader_32, outer key:test.queries_program.identifier_id, inner key:test.queries_identifier.id, equal cond:eq(test.queries_program.identifier_id, test.queries_identifier.id)",
-		"      │ ├─Batch_Point_Get_42(Build) 2.00 root table:queries_program handle:[8 9], keep order:false, desc:false",
-		"      │ └─TableReader_32(Probe) 2.00 root  data:TableRangeScan_31",
-		"      │   └─TableRangeScan_31 2.00 cop[tikv] table:queries_identifier range: decided by [test.queries_program.identifier_id], keep order:false, stats:pseudo",
-		"      └─IndexReader_21(Probe) 2.50 root  index:IndexRangeScan_20",
-		"        └─IndexRangeScan_20 2.50 cop[tikv] table:queries_channel, index:identifier_id(identifier_id) range: decided by [eq(test.queries_channel.identifier_id, test.queries_identifier.id)], keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows(""+
+		"Sort 2.50 root  test.queries_identifier.id",
+		"└─Projection 2.50 root  test.queries_identifier.id, test.queries_identifier.name",
+		"  └─Selection 2.50 root  or(and(eq(test.queries_channel.id, 5), eq(test.queries_program.id, 9)), eq(test.queries_program.id, 8))",
+		"    └─IndexJoin 3.12 root  left outer join, inner:IndexReader, outer key:test.queries_identifier.id, inner key:test.queries_channel.identifier_id, equal cond:eq(test.queries_identifier.id, test.queries_channel.identifier_id)",
+		"      ├─IndexHashJoin(Build) 2.50 root  inner join, inner:TableReader, outer key:test.queries_program.identifier_id, inner key:test.queries_identifier.id, equal cond:eq(test.queries_program.identifier_id, test.queries_identifier.id)",
+		"      │ ├─Batch_Point_Get(Build) 2.00 root table:queries_program handle:[8 9], keep order:false, desc:false",
+		"      │ └─TableReader(Probe) 2.00 root  data:TableRangeScan",
+		"      │   └─TableRangeScan 2.00 cop[tikv] table:queries_identifier range: decided by [test.queries_program.identifier_id], keep order:false, stats:pseudo",
+		"      └─IndexReader(Probe) 2.50 root  index:IndexRangeScan",
+		"        └─IndexRangeScan 2.50 cop[tikv] table:queries_channel, index:identifier_id(identifier_id) range: decided by [eq(test.queries_channel.identifier_id, test.queries_identifier.id)], keep order:false, stats:pseudo"))
 }
 
 func TestOuterJoinWIthEqCondCrossInnerJoin(t *testing.T) {
