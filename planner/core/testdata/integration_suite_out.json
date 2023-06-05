@@ -9592,8 +9592,8 @@
           "        └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.partsupp.ps_suppkey)]",
           "          ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "          │   └─TableFullScan 10000.00 mpp[tiflash] table:supplier keep order:false",
-          "          └─TableFullScan(Probe) 800000.00 mpp[tiflash] table:partsupp keep order:false"
+          "          │   └─TableFullScan 10000.00 mpp[tiflash] table:supplier keep order:false, stats:pseudo",
+          "          └─TableFullScan(Probe) 800000.00 mpp[tiflash] table:partsupp keep order:false, stats:pseudo"
         ]
       }
     ]
