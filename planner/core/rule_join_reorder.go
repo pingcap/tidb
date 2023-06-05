@@ -133,7 +133,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	tmpOtherConds = append(tmpOtherConds, join.OtherConditions...)
 	tmpOtherConds = append(tmpOtherConds, join.LeftConditions...)
 	tmpOtherConds = append(tmpOtherConds, join.RightConditions...)
-	if join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin {
+	if join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin || join.JoinType == LeftOuterSemiJoin || join.JoinType == AntiLeftOuterSemiJoin {
 		for range join.EqualConditions {
 			abType := &joinTypeWithExtMsg{JoinType: join.JoinType}
 			// outer join's other condition should be bound with the connecting edge.
@@ -426,6 +426,13 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPla
 	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
 		return expression.ExprFromSchema(expr, mergedSchema)
 	})
+	if (joinType.JoinType == LeftOuterJoin || joinType.JoinType == RightOuterJoin || joinType.JoinType == LeftOuterSemiJoin || joinType.JoinType == AntiLeftOuterSemiJoin) && len(otherConds) > 0 {
+		// the original outer join's other conditions has been bound to the outer join Edge,
+		// these remained other condition here shouldn't be appended to it because on-mismatch
+		// logic will produce more append-null rows which is banned in original semantic.
+		remainOtherConds = append(remainOtherConds, otherConds...) // nozero
+		otherConds = otherConds[:0]
+	}
 	if len(joinType.outerBindCondition) > 0 {
 		remainOBOtherConds := make([]expression.Expression, len(joinType.outerBindCondition))
 		copy(remainOBOtherConds, joinType.outerBindCondition)
@@ -468,6 +475,14 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 			resultJoinGroup = append(resultJoinGroup, newJoin)
 		}
 		cartesianJoinGroup, resultJoinGroup = resultJoinGroup, cartesianJoinGroup
+	}
+	// other conditions may be possible to exist across different cartesian join group, resolving cartesianJoin first then adding another selection.
+	if len(s.otherConds) > 0 {
+		additionSelection := LogicalSelection{
+			Conditions: s.otherConds,
+		}.Init(cartesianJoinGroup[0].SCtx(), cartesianJoinGroup[0].SelectBlockOffset())
+		additionSelection.SetChildren(cartesianJoinGroup[0])
+		cartesianJoinGroup[0] = additionSelection
 	}
 	return cartesianJoinGroup[0]
 }
