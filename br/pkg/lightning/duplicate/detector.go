@@ -16,7 +16,6 @@ package duplicate
 
 import (
 	"context"
-	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -154,7 +153,6 @@ type KeyAdder struct {
 // If key is duplicated, the keyID can be used to locate
 // the duplicate key in the original data source.
 func (k *KeyAdder) Add(key, keyID []byte) error {
-	fmt.Println("lance test 3", keyID)
 	ikey := internalKey{key: key, keyID: keyID}
 	k.keyBuf = encodeInternalKey(k.keyBuf[:0], ikey)
 	return k.w.Put(k.keyBuf, nil)

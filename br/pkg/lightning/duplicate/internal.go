@@ -52,6 +52,5 @@ func decodeInternalKey(data []byte, ikey *internalKey) error {
 	}
 	ikey.key = key
 	ikey.keyID = append(ikey.keyID[:0], leftover...)
-	fmt.Println("lance test decodeInternalKey ikey.keyID:", ikey.keyID)
 	return nil
 }

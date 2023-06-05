@@ -1721,7 +1721,7 @@ func (tr *TableImporter) preDeduplicate(
 		return errors.Trace(originalErr)
 	}
 	if !rc.cfg.Checkpoint.Enable {
-		return errors.Errorf("duplicate key in table `%s` caused by index `%s`, you can turn on checkpoint and re-run to see the conflicting rows",
+		return errors.Errorf("duplicate key in table %s caused by index `%s`, you can turn on checkpoint and re-run to see the conflicting rows",
 			tr.tableName, idxName)
 	}
 	conflictEncodedRowIDs := dupErr.Args()[1].([][]byte)
@@ -1748,7 +1748,6 @@ func (tr *TableImporter) preDeduplicate(
 		return errors.Trace(originalErr)
 	}
 
-	// TODO: checkpoint is not enable????
 	tableCp, err := rc.checkpointsDB.Get(ctx, tr.tableName)
 	if err != nil {
 		tr.logger.Error("failed to get table checkpoint", zap.Error(err))

@@ -132,7 +132,6 @@ func (h *errorOnDup) Begin(key []byte) error {
 }
 
 func (h *errorOnDup) Append(keyID []byte) error {
-	fmt.Println("lance test", keyID)
 	h.keyIDs = append(h.keyIDs, slices.Clone(keyID))
 	return nil
 }
