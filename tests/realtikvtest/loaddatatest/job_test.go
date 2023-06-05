@@ -70,8 +70,9 @@ func (s *mockGCSSuite) TestShowJob() {
 	do, err := session.GetDomain(s.store)
 	s.NoError(err)
 	tableID1 := do.MustGetTableID(s.T(), "test_show_job", "t1")
-	//tableID2 := do.MustGetTableID(s.T(), "test_show_job", "t2")
+	tableID2 := do.MustGetTableID(s.T(), "test_show_job", "t2")
 
+	// test show job by id using test_show_job1
 	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/setLastImportJobID", `return(true)`)
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/br/pkg/storage/forceRedactURL", "return(true)")
@@ -103,12 +104,19 @@ func (s *mockGCSSuite) TestShowJob() {
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
+	// test show job by id using test_show_job2
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job2", Hostname: "localhost"}, nil, nil, nil))
 	result2 := s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test-show-job/t.csv?endpoint=%s'`, gcsEndpoint)).Rows()
 	s.tk.MustQuery("select * from t2").Check(testkit.Rows("1", "2"))
 	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 	s.Len(rows, 1)
 	s.Equal(result2, rows)
+	jobInfo.ID = importer.TestLastImportJobID.Load()
+	jobInfo.TableName = "t2"
+	jobInfo.TableID = tableID2
+	jobInfo.CreatedBy = "test_show_job2@localhost"
+	jobInfo.Parameters.FileLocation = fmt.Sprintf(`gs://test-show-job/t.csv?endpoint=%s`, gcsEndpoint)
+	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 	// if this case run twice, it might fail, start another cluster to solve this problem.
 	rows = s.tk.MustQuery("show import jobs").Rows()
 	s.Len(rows, 1)
@@ -139,4 +147,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job2", Hostname: "localhost"}, nil, nil, nil))
 	rows = s.tk.MustQuery("show import jobs").Rows()
 	checkJobsMatch(rows)
+
+	// show running jobs
+
 }
