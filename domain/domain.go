@@ -1161,18 +1161,11 @@ func (do *Domain) Init(
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli := do.GetPDClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
-
-	if infosync.InfoSyncerInited() && intest.InTest {
-		// This will only run in distributed execution test.
-		do.info = infosync.GetGlobalInfoSyncer4Test()
-		infosync.MockGlobalServerInfoManagerEntry.Add(do.ddl.GetID(), do.ServerID)
-	} else {
-		do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
-			do.etcdClient, do.unprefixedEtcdCli, pdCli, do.Store().GetCodec(),
-			skipRegisterToDashboard)
-		if err != nil {
-			return err
-		}
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
+		do.etcdClient, do.unprefixedEtcdCli, pdCli, do.Store().GetCodec(),
+		skipRegisterToDashboard)
+	if err != nil {
+		return err
 	}
 	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdCli)
 	err = do.ddl.SchemaSyncer().Init(ctx)
@@ -1218,6 +1211,12 @@ func (do *Domain) Init(
 	}
 
 	return nil
+}
+
+// InitInfo4Test init infosync for distributed execution test
+func (do *Domain) InitInfo4Test() {
+	do.info = infosync.GetGlobalInfoSyncer4Test()
+	infosync.MockGlobalServerInfoManagerEntry.Add(do.ddl.GetID(), do.ServerID)
 }
 
 // SetOnClose used to set do.onClose func.

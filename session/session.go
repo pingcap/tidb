@@ -3519,7 +3519,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		dom.Close()
 		return nil, err
 	}
-
+	dom.InitInfo4Test()
 	err = dom.InitDistTaskLoop(ctx)
 	if err != nil {
 		return nil, err
