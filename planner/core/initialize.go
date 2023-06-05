@@ -93,6 +93,12 @@ func (p LogicalProjection) Init(ctx sessionctx.Context, offset int) *LogicalProj
 	return &p
 }
 
+// Init initializes LogicalProjection.
+func (p LogicalExpand) Init(ctx sessionctx.Context, offset int) *LogicalExpand {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
+	return &p
+}
+
 // Init initializes PhysicalProjection.
 func (p PhysicalProjection) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalProjection {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeProj, &p, offset)
