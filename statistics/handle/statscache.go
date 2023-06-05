@@ -256,9 +256,7 @@ func (m *mapCache) GetByQuery(k int64) (*statistics.Table, bool) {
 // Get implements statsCacheInner
 func (m *mapCache) Get(k int64) (*statistics.Table, bool) {
 	table := m.tables[k%tablesCacheShardCnt]
-	item := *table.Item
-	v, ok := item[k]
-	return v.value, ok
+	return table.Get(k)
 }
 
 // PutByQuery implements statsCacheInner
