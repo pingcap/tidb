@@ -67,7 +67,9 @@ const (
 )
 
 const (
+	// DupDetectDirSuffix is used by pre-deduplication to store the encoded index KV.
 	DupDetectDirSuffix = ".dupdetect"
+	// DupResultDirSuffix is used by pre-deduplication to store the duplicated row ID.
 	DupResultDirSuffix = ".dupresult"
 )
 
