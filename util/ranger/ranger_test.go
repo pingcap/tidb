@@ -1020,7 +1020,7 @@ func TestIssue41572(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Sort().Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
@@ -2590,5 +2590,33 @@ create table t(
 		require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds), fmt.Sprintf("wrong filter conditions for expr: %s", tt.exprStr))
 		got := fmt.Sprintf("%v", res.Ranges)
 		require.Equal(t, tt.resultStr, got, fmt.Sprintf("different for expr %s", tt.exprStr))
+	}
+}
+
+func TestIssue44389(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a varchar(100), b int, c int, index idx_ab(a, b))")
+	testKit.MustExec("insert into t values ('kk', 1, 10), ('kk', 1, 20), ('hh', 2, 10), ('hh', 3, 10), ('xx', 4, 10), ('yy', 5, 10), ('yy', 6, 20), ('zz', 7, 10)")
+	testKit.MustExec("set @@tidb_opt_fix_control = '44389:ON'")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	rangerSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Sort().Rows())
+		})
+		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }
