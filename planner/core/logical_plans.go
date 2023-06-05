@@ -598,7 +598,7 @@ func (p *LogicalExpand) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 }
 
 // GetUsedCols extracts all of the Columns used by proj.
-func (p *LogicalExpand) GetUsedCols() (usedCols []*expression.Column) {
+func (*LogicalExpand) GetUsedCols() (usedCols []*expression.Column) {
 	// be careful that, expand OP itself, shouldn't output its own used cols, because
 	// it just replicates the child's schema by defined grouping sets. (pass down what
 	// the parent's used is enough here)
