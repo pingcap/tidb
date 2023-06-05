@@ -511,6 +511,10 @@ func TestLoadDataRestore(t *testing.T) {
 func TestImportActions(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{
+			sourceSQL: "cancel import job 123",
+			expectSQL: "CANCEL IMPORT JOB 123",
+		},
+		{
 			sourceSQL: "show import jobs",
 			expectSQL: "SHOW IMPORT JOBS",
 		},

@@ -70,10 +70,10 @@ func (h *flowHandle) OnTicker(ctx context.Context, task *proto.Task) {
 	h.lastSwitchTime.Store(time.Now())
 }
 
-func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
+func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (_ [][]byte, err error) {
 	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
 	taskMeta := &TaskMeta{}
-	err := json.Unmarshal(gTask.Meta, taskMeta)
+	err = json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +81,17 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 
 	switch gTask.Step {
 	case Import:
+		defer func() {
+			if err == nil {
+				err = finishJob(ctx, taskMeta, &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt})
+			} else {
+				// todo: we're not running in a transaction with task update, there might be case
+				// failJob return error, but task update succeed.
+				if err2 := failJob(ctx, taskMeta, err.Error()); err2 != nil {
+					logger.Error("call failJob failed", zap.Error(err2))
+				}
+			}
+		}()
 		h.switchTiKV2NormalMode(ctx, logutil.BgLogger())
 		subtaskMetas, err2 := postProcess(ctx, handle, gTask, logger)
 		if err2 != nil {
@@ -88,9 +99,6 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		}
 		updateResult(taskMeta, subtaskMetas, logger)
 		if err2 = updateMeta(gTask, taskMeta); err2 != nil {
-			return nil, err2
-		}
-		if err2 = finishJob(ctx, taskMeta, &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}); err2 != nil {
 			return nil, err2
 		}
 		gTask.State = proto.TaskStateSucceed
