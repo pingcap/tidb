@@ -1382,7 +1382,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 
 	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
 	var serverID string
-	if intest.InTest {
+	if infosync.MockGlobalServerInfoManagerEntry.Inited() {
 		serverID = disttaskutil.GenerateSubtaskExecID4Test(do.ddl.GetID())
 	} else {
 		serverID = disttaskutil.GenerateSubtaskExecID(ctx, do.ddl.GetID())

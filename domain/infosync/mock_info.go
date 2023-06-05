@@ -26,21 +26,32 @@ import (
 )
 
 // MockGlobalServerInfoManagerEntry is a mock global ServerInfoManager entry.
-var MockGlobalServerInfoManagerEntry = &MockGlobalServerInfoManager{}
+var MockGlobalServerInfoManagerEntry = &MockGlobalServerInfoManager{
+	inited: false,
+}
 
 // MockGlobalServerInfoManager manages serverInfos in Distributed unit tests
 type MockGlobalServerInfoManager struct {
-	infos []*ServerInfo
-	mu    sync.Mutex
+	infos  []*ServerInfo
+	mu     sync.Mutex
+	inited bool
 }
 
 // used to mock ServerInfo, then every mock server will have different port
 var mockServerPort uint = 4000
 
+// Inited check if MockGlobalServerInfoManager inited for Distributed unit tests
+func (m *MockGlobalServerInfoManager) Inited() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.inited
+}
+
 // Add one mock ServerInfo
 func (m *MockGlobalServerInfoManager) Add(id string, serverIDGetter func() uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.inited = true
 	m.infos = append(m.infos, m.getServerInfo(id, serverIDGetter))
 }
 
