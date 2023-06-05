@@ -181,7 +181,7 @@ func extractJoinGroup(p LogicalPlan) *joinGroupResult {
 	tmpOtherConds = append(tmpOtherConds, join.OtherConditions...)
 	tmpOtherConds = append(tmpOtherConds, join.LeftConditions...)
 	tmpOtherConds = append(tmpOtherConds, join.RightConditions...)
-	if join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin {
+	if join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin || join.JoinType == LeftOuterSemiJoin || join.JoinType == AntiLeftOuterSemiJoin {
 		for range join.EqualConditions {
 			abType := &joinTypeWithExtMsg{JoinType: join.JoinType}
 			// outer join's other condition should be bound with the connecting edge.
@@ -503,7 +503,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPla
 	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
 		return expression.ExprFromSchema(expr, mergedSchema)
 	})
-	if (joinType.JoinType == LeftOuterJoin || joinType.JoinType == RightOuterJoin) && len(otherConds) > 0 {
+	if (joinType.JoinType == LeftOuterJoin || joinType.JoinType == RightOuterJoin || joinType.JoinType == LeftOuterSemiJoin || joinType.JoinType == AntiLeftOuterSemiJoin) && len(otherConds) > 0 {
 		// the original outer join's other conditions has been bound to the outer join Edge,
 		// these remained other condition here shouldn't be appended to it because on-mismatch
 		// logic will produce more append-null rows which is banned in original semantic.
