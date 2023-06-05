@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/sync/errgroup"
 )
@@ -78,6 +80,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return nil
 	}
 
+	// todo: we don't need to do it here, remove it.
 	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 		return err2
 	}
@@ -127,8 +130,19 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 }
 
 func (e *ImportIntoExec) getJobImporter(param *importer.JobImportParam) (*loaddata.DistImporter, error) {
+	importFromServer, err := storage.IsLocalPath(e.controller.Path)
+	if err != nil {
+		// since we have checked this during creating controller, this should not happen.
+		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(err.Error())
+	}
+	if importFromServer {
+		ecp, err2 := e.controller.PopulateChunks(param.GroupCtx)
+		if err2 != nil {
+			return nil, err2
+		}
+		return loaddata.NewDistImporterServerFile(param, e.importPlan, e.stmt, ecp)
+	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
-	// todo: if we import from local directory, we should also import on current node.
 	if variable.EnableDistTask.Load() {
 		return loaddata.NewDistImporter(param, e.importPlan, e.stmt)
 	}

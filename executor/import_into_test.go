@@ -18,8 +18,10 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,6 +35,19 @@ func TestImportIntoExplicitTransaction(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, "cannot run IMPORT INTO in explicit transaction", err.Error())
 	tk.MustExec("commit")
+}
+
+func TestSecurityEnhancedMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	sem.Enable()
+	defer sem.Disable()
+	tk.MustExec("create table test.t (id int);")
+
+	// When SEM is enabled these features are restricted to all users
+	// regardless of what privileges they have available.
+	tk.MustGetErrMsg("IMPORT INTO test.t FROM '/file.csv'", "[planner:8132]Feature 'IMPORT INTO from server disk' is not supported when security enhanced mode is enabled")
 }
 
 func TestImportIntoOptionsNegativeCase(t *testing.T) {
@@ -128,5 +143,28 @@ func TestImportIntoOptionsNegativeCase(t *testing.T) {
 		sql := fmt.Sprintf(sqlTemplate, c.OptionStr)
 		err := tk.ExecToErr(sql)
 		require.ErrorIs(t, err, c.Err, sql)
+	}
+
+	nonCSVCases := []struct {
+		OptionStr string
+		Err       error
+	}{
+		{OptionStr: "character_set='utf8'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "fields_terminated_by='a'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "fields_enclosed_by='a'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "fields_escaped_by='a'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "fields_defined_null_by='a'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "lines_terminated_by='a'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "skip_rows=1", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: "split_file", Err: exeerrors.ErrLoadDataUnsupportedOption},
+	}
+
+	sqlTemplate = "import into t from '/file.csv' format '%s' with %s"
+	for _, c := range nonCSVCases {
+		for _, format := range []string{importer.DataFormatParquet, importer.DataFormatSQL} {
+			sql := fmt.Sprintf(sqlTemplate, format, c.OptionStr)
+			err := tk.ExecToErr(sql)
+			require.ErrorIs(t, err, c.Err, sql)
+		}
 	}
 }
