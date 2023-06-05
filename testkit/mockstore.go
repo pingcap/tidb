@@ -153,8 +153,6 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	dom.InfoSyncer().SetSessionManager(&sm)
 	t.Cleanup(func() {
 		view.Stop()
-		err := store.Close()
-		require.NoError(t, err)
 		gctuner.GlobalMemoryLimitTuner.Stop()
 	})
 	return schematracker.UnwrapStorage(store), dom
@@ -180,6 +178,8 @@ func bootstrapImpl(t testing.TB, store kv.Storage, lease time.Duration, bootstra
 	t.Cleanup(func() {
 		dom.Close()
 		view.Stop()
+		err := store.Close()
+		require.NoError(t, err)
 		resourcemanager.InstanceResourceManager.Reset()
 	})
 	return dom
