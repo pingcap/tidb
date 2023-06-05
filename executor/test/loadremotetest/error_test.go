@@ -54,14 +54,14 @@ func (s *mockGCSSuite) TestErrorMessage() {
 	checkClientErrorMessage(s.T(), err, "ERROR 1054 (42S22): Unknown column 'wrong' in 'field list'")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 'abc://1' INTO TABLE t;")
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8158 (HY000): The URI of INFILE is invalid. Reason: storage abc not support yet. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'")
+		"ERROR 8158 (HY000): The URI of file location is invalid. Reason: storage abc not support yet. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 's3://no-network' INTO TABLE t;")
 	checkClientErrorMessage(s.T(), err,
 		"ERROR 8159 (HY000): Access to the source file has been denied. Reason: failed to get region of bucket no-network. Please check the URI, access key and secret access key are correct")
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://wrong-bucket/p?endpoint=%s'
 		INTO TABLE t;`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8160 (HY000): Failed to read source files. Reason: the object doesn't exist, file info: input.bucket='wrong-bucket', input.key='p'. Please check the INFILE path is correct")
+		"ERROR 8160 (HY000): Failed to read source files. Reason: the object doesn't exist, file info: input.bucket='wrong-bucket', input.key='p'. Please check the file location is correct")
 
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{

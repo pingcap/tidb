@@ -17,6 +17,8 @@ package loaddatatest
 import (
 	_ "embed"
 	"fmt"
+	"os"
+	"path"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
@@ -26,7 +28,7 @@ import (
 )
 
 //go:embed test.parquet
-var content []byte
+var parquetContent []byte
 
 func (s *mockGCSSuite) TestDetachedLoadParquet() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
@@ -42,9 +44,21 @@ func (s *mockGCSSuite) TestDetachedLoadParquet() {
 			BucketName: "test-load-parquet",
 			Name:       "p",
 		},
-		Content: content,
+		Content: parquetContent,
 	})
+	tempDir := s.T().TempDir()
+	s.NoError(os.WriteFile(path.Join(tempDir, "test.parquet"), parquetContent, 0o644))
+	s.tk.MustExec(fmt.Sprintf("IMPORT INTO t FROM '%s' FORMAT 'parquet';", path.Join(tempDir, "test.parquet")))
+	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows(
+		"1 1 0 123 1.23 0.00000001 1234567890 123 1.23000000",
+		"2 123456 0 123456 9999.99 0.12345678 99999999999999999999 999999999999999999999999999999999999 99999999999999999999.99999999",
+		"3 123456 0 -123456 -9999.99 -0.12340000 -99999999999999999999 -999999999999999999999999999999999999 -99999999999999999999.99999999",
+		"4 1 0 123 1.23 0.00000001 1234567890 123 1.23000000",
+		"5 123456 0 123456 9999.99 0.12345678 12345678901234567890 123456789012345678901234567890123456 99999999999999999999.99999999",
+		"6 123456 0 -123456 -9999.99 -0.12340000 -12345678901234567890 -123456789012345678901234567890123456 -99999999999999999999.99999999",
+	))
 
+	s.tk.MustExec("TRUNCATE TABLE t;")
 	s.T().Cleanup(func() { executor.TestDetachedTaskFinished.Store(false) })
 	s.enableFailpoint("github.com/pingcap/tidb/executor/testDetachedTaskFinished", "return(true)")
 	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-load-parquet/p?endpoint=%s'
