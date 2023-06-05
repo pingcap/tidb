@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble/sstable"
+	"github.com/cockroachdb/pebble/vfs"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,12 +50,12 @@ func TestKVStatsCollector(t *testing.T) {
 		{[]byte("ee"), []byte("55")},
 	}
 	testCases := []struct {
-		bucketSize      int
-		expectedKVStats kvStats
+		bucketSize int
+		expected   kvStats
 	}{
 		{
 			bucketSize: 0,
-			expectedKVStats: kvStats{Histogram: []kvStatsBucket{
+			expected: kvStats{Histogram: []kvStatsBucket{
 				{4, []byte("aa")},
 				{4, []byte("bb")},
 				{4, []byte("cc")},
@@ -64,7 +65,7 @@ func TestKVStatsCollector(t *testing.T) {
 		},
 		{
 			bucketSize: 4,
-			expectedKVStats: kvStats{Histogram: []kvStatsBucket{
+			expected: kvStats{Histogram: []kvStatsBucket{
 				{4, []byte("aa")},
 				{4, []byte("bb")},
 				{4, []byte("cc")},
@@ -74,7 +75,7 @@ func TestKVStatsCollector(t *testing.T) {
 		},
 		{
 			bucketSize: 7,
-			expectedKVStats: kvStats{Histogram: []kvStatsBucket{
+			expected: kvStats{Histogram: []kvStatsBucket{
 				{8, []byte("bb")},
 				{8, []byte("dd")},
 				{4, []byte("ee")},
@@ -82,7 +83,7 @@ func TestKVStatsCollector(t *testing.T) {
 		},
 		{
 			bucketSize: 50,
-			expectedKVStats: kvStats{Histogram: []kvStatsBucket{
+			expected: kvStats{Histogram: []kvStatsBucket{
 				{20, []byte("ee")},
 			}},
 		},
@@ -101,6 +102,96 @@ func TestKVStatsCollector(t *testing.T) {
 		require.True(t, ok)
 		var stats kvStats
 		require.NoError(t, json.Unmarshal([]byte(prop), &stats))
-		require.Equal(t, tc.expectedKVStats, stats)
+		require.Equal(t, tc.expected, stats)
+	}
+}
+
+func TestMakeFilename(t *testing.T) {
+	testCases := []struct {
+		dir      string
+		fileNum  int
+		expected string
+	}{
+		{
+			dir:      "/tmp",
+			fileNum:  1,
+			expected: "/tmp/000001.sst",
+		},
+		{
+			dir:      "/tmp",
+			fileNum:  123,
+			expected: "/tmp/000123.sst",
+		},
+		{
+			dir:      "/tmp",
+			fileNum:  666666,
+			expected: "/tmp/666666.sst",
+		},
+		{
+			dir:      "/tmp",
+			fileNum:  7777777,
+			expected: "/tmp/7777777.sst",
+		},
+	}
+
+	fs := vfs.NewMem()
+	for _, tc := range testCases {
+		require.Equal(t, tc.expected, makeFilename(fs, tc.dir, tc.fileNum))
+	}
+}
+
+func TestParseFilename(t *testing.T) {
+	testCases := []struct {
+		filename   string
+		expOK      bool
+		expFileNum int
+	}{
+		{
+			filename:   "/tmp/1.sst",
+			expOK:      true,
+			expFileNum: 1,
+		},
+		{
+			filename:   "/tmp/123.sst",
+			expOK:      true,
+			expFileNum: 123,
+		},
+		{
+			filename:   "/tmp/000001.sst",
+			expOK:      true,
+			expFileNum: 1,
+		},
+		{
+			filename:   "/tmp/000123.sst",
+			expOK:      true,
+			expFileNum: 123,
+		},
+		{
+			filename:   "/tmp/666666.sst",
+			expOK:      true,
+			expFileNum: 666666,
+		},
+		{
+			filename:   "/tmp/7777777.sst",
+			expOK:      true,
+			expFileNum: 7777777,
+		},
+		{
+			filename: "/tmp/123.sst.tmp",
+			expOK:    false,
+		},
+		{
+			filename: diskSorterSortedFile,
+			expOK:    false,
+		},
+	}
+
+	fs := vfs.NewMem()
+	for _, tc := range testCases {
+		fileNum, ok := parseFilename(fs, tc.filename)
+		require.Equal(t, tc.expOK, ok)
+		if tc.expOK {
+			require.Equal(t, tc.expFileNum, fileNum)
+		}
 	}
 }
