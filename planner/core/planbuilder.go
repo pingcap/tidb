@@ -491,6 +491,9 @@ type PlanBuilder struct {
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
 	outerCTEs    []*cteInfo
+	// outerBlockExpand register current Expand OP for rollup syntax in every select query block.
+	outerBlockExpand   []*LogicalExpand
+	currentBlockExpand *LogicalExpand
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
