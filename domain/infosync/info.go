@@ -104,13 +104,12 @@ type InfoSyncer struct {
 	// It is only used in storeMinStartTS and RemoveMinStartTS now.
 	// It must be used when the etcd path isn't needed to separate by keyspace.
 	// See keyspace RFC: https://github.com/pingcap/tidb/pull/39685
-	unprefixedEtcdCli   *clientv3.Client
-	info                *ServerInfo
-	infos4DistExecution []*ServerInfo
-	serverInfoPath      string
-	minStartTS          uint64
-	minStartTSPath      string
-	managerMu           struct {
+	unprefixedEtcdCli *clientv3.Client
+	info              *ServerInfo
+	serverInfoPath    string
+	minStartTS        uint64
+	minStartTSPath    string
+	managerMu         struct {
 		mu sync.RWMutex
 		util2.SessionManager
 	}
@@ -699,13 +698,7 @@ func PutRuleBundlesWithDefaultRetry(ctx context.Context, bundles []*placement.Bu
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
-		if len(is.infos4DistExecution) >= 1 {
-			for _, info := range is.infos4DistExecution {
-				allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter)
-			}
-		} else {
-			allInfo[is.info.ID] = getServerInfo(is.info.ID, is.info.ServerIDGetter)
-		}
+		allInfo[is.info.ID] = getServerInfo(is.info.ID, is.info.ServerIDGetter)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())

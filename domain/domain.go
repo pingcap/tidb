@@ -1162,7 +1162,7 @@ func (do *Domain) Init(
 	pdCli := do.GetPDClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 
-	if infosync.InfoSyncerInited() {
+	if infosync.InfoSyncerInited() && intest.InTest {
 		// This will only run in distributed execution test.
 		do.info = infosync.GetGlobalInfoSyncer4Test()
 		infosync.MockGlobalServerInfoManagerEntry.Add(do.ddl.GetID(), do.ServerID)
