@@ -18,14 +18,19 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 )
 
 func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row []interface{}) {
@@ -45,7 +50,11 @@ func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row 
 	s.Equal(jobInfo.Step, row[4])
 	s.Equal(jobInfo.Status, row[5])
 	s.Equal(units.HumanSize(float64(jobInfo.SourceFileSize)), row[6])
-	s.Equal(strconv.Itoa(int(jobInfo.Summary.ImportedRows)), row[7])
+	if jobInfo.Summary == nil {
+		s.Equal("<nil>", row[7].(string))
+	} else {
+		s.Equal(strconv.Itoa(int(jobInfo.Summary.ImportedRows)), row[7])
+	}
 	s.Equal(jobInfo.ErrorMessage, row[8])
 	s.Equal(jobInfo.CreatedBy, row[12])
 }
@@ -54,6 +63,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.prepareAndUseDB("test_show_job")
 	s.tk.MustExec("CREATE TABLE t1 (i INT PRIMARY KEY);")
 	s.tk.MustExec("CREATE TABLE t2 (i INT PRIMARY KEY);")
+	s.tk.MustExec("CREATE TABLE t3 (i INT PRIMARY KEY);")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-show-job", Name: "t.csv"},
 		Content:     []byte("1\n2"),
@@ -71,6 +81,11 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.NoError(err)
 	tableID1 := do.MustGetTableID(s.T(), "test_show_job", "t1")
 	tableID2 := do.MustGetTableID(s.T(), "test_show_job", "t2")
+	tableID3 := do.MustGetTableID(s.T(), "test_show_job", "t3")
+
+	// show non-exists job
+	err = s.tk.QueryToErr("show import job 9999999999")
+	s.ErrorIs(err, exeerrors.ErrLoadDataJobNotFound)
 
 	// test show job by id using test_show_job1
 	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/setLastImportJobID", `return(true)`)
@@ -148,6 +163,106 @@ func (s *mockGCSSuite) TestShowJob() {
 	rows = s.tk.MustQuery("show import jobs").Rows()
 	checkJobsMatch(rows)
 
-	// show running jobs
+	// show running jobs with 2 subtasks
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/scheduler/syncAfterSubtaskFinish", `return(true)`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-show-job", Name: "t2.csv"},
+		Content:     []byte("3\n4\n5"),
+	})
+	backup4 := config.DefaultBatchSize
+	config.DefaultBatchSize = 1
+	s.T().Cleanup(func() {
+		config.DefaultBatchSize = backup4
+	})
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// wait first subtask finish
+		<-scheduler.TestSyncChan
 
+		jobInfo = &importer.JobInfo{
+			ID:          importer.TestLastImportJobID.Load(),
+			TableSchema: "test_show_job",
+			TableName:   "t3",
+			TableID:     tableID3,
+			CreatedBy:   "test_show_job2@localhost",
+			Parameters: importer.ImportParameters{
+				FileLocation: fmt.Sprintf(`gs://test-show-job/t*.csv?endpoint=%s`, gcsEndpoint),
+				Format:       importer.DataFormatCSV,
+			},
+			SourceFileSize: 8,
+			Status:         "running",
+			Step:           "importing",
+			Summary: &importer.JobSummary{
+				ImportedRows: 2,
+			},
+			ErrorMessage: "",
+		}
+		tk2 := testkit.NewTestKit(s.T(), s.store)
+		rows = tk2.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
+		s.Len(rows, 1)
+		s.compareJobInfoWithoutTime(jobInfo, rows[0])
+
+		// resume the scheduler
+		scheduler.TestSyncChan <- struct{}{}
+		// wait second subtask finish
+		<-scheduler.TestSyncChan
+		rows = tk2.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
+		s.Len(rows, 1)
+		jobInfo.Summary.ImportedRows = 5
+		s.compareJobInfoWithoutTime(jobInfo, rows[0])
+		// resume the scheduler
+		scheduler.TestSyncChan <- struct{}{}
+	}()
+	s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-job/t*.csv?endpoint=%s'`, gcsEndpoint))
+	wg.Wait()
+	s.tk.MustQuery("select * from t3").Sort().Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
+
+func (s *mockGCSSuite) TestShowDetachedJob() {
+	s.prepareAndUseDB("test_show_job")
+	s.tk.MustExec("CREATE TABLE t1 (i INT PRIMARY KEY);")
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-show-job", Name: "t.csv"},
+		Content:     []byte("1\n2"),
+	})
+	do, err := session.GetDomain(s.store)
+	s.NoError(err)
+	tableID1 := do.MustGetTableID(s.T(), "test_show_job", "t1")
+
+	jobInfo := &importer.JobInfo{
+		TableSchema: "test_show_job",
+		TableName:   "t1",
+		TableID:     tableID1,
+		CreatedBy:   "root@%",
+		Parameters: importer.ImportParameters{
+			FileLocation: fmt.Sprintf(`gs://test-show-job/t.csv?endpoint=%s`, gcsEndpoint),
+			Format:       importer.DataFormatCSV,
+		},
+		SourceFileSize: 3,
+		Status:         "pending",
+		Step:           "",
+	}
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	result1 := s.tk.MustQuery(fmt.Sprintf(`import into t1 FROM 'gs://test-show-job/t.csv?endpoint=%s' with detached`,
+		gcsEndpoint)).Rows()
+	s.Len(result1, 1)
+	jobID, err := strconv.Atoi(result1[0][0].(string))
+	s.NoError(err)
+	jobInfo.ID = int64(jobID)
+	s.compareJobInfoWithoutTime(jobInfo, result1[0])
+
+	s.Eventually(func() bool {
+		rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+		return rows[0][5] == "finished"
+	}, 10*time.Second, 500*time.Millisecond)
+	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+	s.Len(rows, 1)
+	jobInfo.Status = "finished"
+	jobInfo.Summary = &importer.JobSummary{
+		ImportedRows: 2,
+	}
+	s.compareJobInfoWithoutTime(jobInfo, rows[0])
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2"))
 }
