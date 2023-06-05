@@ -259,6 +259,8 @@ func (vt *perfSchemaTable) getRows(ctx context.Context, sctx sessionctx.Context,
 		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/goroutine?debug=2", true)
 	case tableNameSessionVariables:
 		fullRows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
+	case tableNameSessionConnectAttrs:
+		fullRows, err = infoschema.GetDataFromSessionConnectAttrs(sctx)
 	}
 	if err != nil {
 		return

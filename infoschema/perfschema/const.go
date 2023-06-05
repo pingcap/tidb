@@ -17,6 +17,7 @@ package perfschema
 // perfSchemaTables is a shortcut to involve all table names.
 var perfSchemaTables = []string{
 	tableGlobalStatus,
+	tableSessionConnectAttrs,
 	tableSessionStatus,
 	tableSetupActors,
 	tableSetupObjects,

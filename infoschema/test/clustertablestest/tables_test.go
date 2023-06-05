@@ -151,7 +151,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 		},
 	}
 	tk.Session().SetSessionManager(sm)
-	tk.MustQuery("SELECT PROCESSLIST_ID,ATTR_NAME,ATTR_VALUE,ORDINAL_POSITION FROM information_schema.SESSION_CONNECT_ATTRS").Check(testkit.Rows("123456 _client_name libmysql 0"))
+	tk.MustQuery("SELECT PROCESSLIST_ID,ATTR_NAME,ATTR_VALUE,ORDINAL_POSITION FROM performance_schema.SESSION_CONNECT_ATTRS").Check(testkit.Rows("123456 _client_name libmysql 0"))
 
 	// Test for all system tables `TABLE_TYPE` is `SYSTEM VIEW`.
 	rows1 := tk.MustQuery("select count(*) from information_schema.tables where table_schema in ('INFORMATION_SCHEMA','PERFORMANCE_SCHEMA','METRICS_SCHEMA');").Rows()
