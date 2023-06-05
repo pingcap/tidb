@@ -27,18 +27,17 @@ import (
 
 // MockGlobalServerInfoManagerEntry is a mock global ServerInfoManager entry.
 var MockGlobalServerInfoManagerEntry = &MockGlobalServerInfoManager{
-	inited: false,
+	inited:         false,
+	mockServerPort: 4000,
 }
 
 // MockGlobalServerInfoManager manages serverInfos in Distributed unit tests
 type MockGlobalServerInfoManager struct {
-	infos  []*ServerInfo
-	mu     sync.Mutex
-	inited bool
+	infos          []*ServerInfo
+	mu             sync.Mutex
+	inited         bool
+	mockServerPort uint // used to mock ServerInfo, then every mock server will have different port
 }
-
-// used to mock ServerInfo, then every mock server will have different port
-var mockServerPort uint = 4000
 
 // Inited check if MockGlobalServerInfoManager inited for Distributed unit tests
 func (m *MockGlobalServerInfoManager) Inited() bool {
@@ -85,7 +84,7 @@ func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter fu
 	info := &ServerInfo{
 		ID:             id,
 		IP:             cfg.AdvertiseAddress,
-		Port:           mockServerPort,
+		Port:           m.mockServerPort,
 		StatusPort:     cfg.Status.StatusPort,
 		Lease:          cfg.Lease,
 		BinlogStatus:   binloginfo.GetStatus().String(),
@@ -94,9 +93,17 @@ func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter fu
 		ServerIDGetter: serverIDGetter,
 	}
 
-	mockServerPort++
+	m.mockServerPort++
 
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
 	return info
+}
+
+func (m *MockGlobalServerInfoManager) Close() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.inited = false
+	m.mockServerPort = 4000
+	m.infos = m.infos[:0]
 }

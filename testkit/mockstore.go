@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/gctuner"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -120,7 +121,10 @@ func (d *DistExecutionTestContext) DeleteServer(idx int) error {
 	}
 	var err error
 	if d.domains[idx].DDL().OwnerManager().IsOwner() {
+		logutil.BgLogger().Info("ywq test delete server")
+		d.mu.Unlock()
 		err = d.SetOwner(0)
+		d.mu.Lock()
 		if err != nil {
 			return err
 		}
@@ -143,6 +147,7 @@ func NewDistExecutionTestContext(t testing.TB, serverNum int) (*DistExecutionTes
 	}
 	t.Cleanup(func() {
 		gctuner.GlobalMemoryLimitTuner.Stop()
+		infosync.MockGlobalServerInfoManagerEntry.Close()
 	})
 	res := DistExecutionTestContext{
 		schematracker.UnwrapStorage(store), domains, t, sync.Mutex{}}

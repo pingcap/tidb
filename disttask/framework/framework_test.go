@@ -146,6 +146,33 @@ func DispatchTask(taskKey string, t *testing.T, v *atomic.Int64) {
 	v.Store(0)
 }
 
+func DispatchAndCancelTask(taskKey string, t *testing.T, v *atomic.Int64) {
+	mgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	taskID, err := mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil)
+	require.NoError(t, err)
+	start := time.Now()
+	mgr.CancelGlobalTask(1)
+	var task *proto.Task
+	for {
+		if time.Since(start) > 2*time.Minute {
+			require.FailNow(t, "timeout")
+		}
+
+		time.Sleep(time.Second)
+		task, err = mgr.GetGlobalTaskByID(taskID)
+		require.NoError(t, err)
+		require.NotNil(t, task)
+		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
+			break
+		}
+	}
+
+	require.Equal(t, proto.TaskStateReverted, task.State)
+	require.Equal(t, int64(0), v.Load())
+	v.Store(0)
+}
+
 func TestFrameworkBasic(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
@@ -228,4 +255,14 @@ func TestFrameworkWithQuery(t *testing.T) {
 	require.Greater(t, len(fields), 0)
 	require.Equal(t, "ifnull(a,b)", rs.Fields()[0].Column.Name.L)
 	require.NoError(t, rs.Close())
+}
+
+func TestFrameworkCancelGTask(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+	_, err := testkit.NewDistExecutionTestContext(t, 2)
+	require.NoError(t, err)
+	DispatchAndCancelTask("key1", t, &v)
 }

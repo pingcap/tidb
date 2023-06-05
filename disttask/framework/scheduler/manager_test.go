@@ -29,7 +29,7 @@ import (
 
 func TestManageTask(t *testing.T) {
 	b := NewManagerBuilder()
-	m, err := b.BuildManager(context.Background(), "test", nil, "mock")
+	m, err := b.BuildManager(context.Background(), "test", nil)
 	require.NoError(t, err)
 	tasks := []*proto.Task{{ID: 1}, {ID: 2}}
 	newTasks := m.filterAlreadyHandlingTasks(tasks)
@@ -71,7 +71,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	mockPool := &MockPool{}
 
 	b := NewManagerBuilder()
-	b.setSchedulerFactory(func(ctx context.Context, id string, ddlID string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
+	b.setSchedulerFactory(func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
 		return mockInternalScheduler
 	})
 	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
@@ -81,7 +81,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	taskID := int64(1)
 	task := &proto.Task{ID: taskID, State: proto.TaskStateRunning, Step: 0, Type: "type"}
 
-	m, err := b.BuildManager(context.Background(), id, mockTaskTable, "mock")
+	m, err := b.BuildManager(context.Background(), id, mockTaskTable)
 	require.NoError(t, err)
 
 	// no task
@@ -142,7 +142,7 @@ func TestManager(t *testing.T) {
 	mockInternalScheduler := &MockInternalScheduler{}
 	mockPool := &MockPool{}
 	b := NewManagerBuilder()
-	b.setSchedulerFactory(func(ctx context.Context, id string, ddlID string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
+	b.setSchedulerFactory(func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler {
 		return mockInternalScheduler
 	})
 	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
@@ -185,7 +185,7 @@ func TestManager(t *testing.T) {
 	}, func(opts *subtaskExecutorRegisterOptions) {
 		opts.PoolSize = 1
 	})
-	m, err := b.BuildManager(context.Background(), id, mockTaskTable, "mock")
+	m, err := b.BuildManager(context.Background(), id, mockTaskTable)
 	require.NoError(t, err)
 	m.Start()
 	time.Sleep(5 * time.Second)

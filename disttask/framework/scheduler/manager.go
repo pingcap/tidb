@@ -36,7 +36,7 @@ var (
 // ManagerBuilder is used to build a Manager.
 type ManagerBuilder struct {
 	newPool      func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
-	newScheduler func(ctx context.Context, id string, ddlID string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler
+	newScheduler func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler
 }
 
 // NewManagerBuilder creates a new ManagerBuilder.
@@ -55,7 +55,7 @@ func (b *ManagerBuilder) setPoolFactory(poolFactory func(name string, size int32
 }
 
 // setSchedulerFactory sets the schedulerFactory to mock the InternalScheduler in unit test.
-func (b *ManagerBuilder) setSchedulerFactory(schedulerFactory func(ctx context.Context, id string, ddlID string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler) {
+func (b *ManagerBuilder) setSchedulerFactory(schedulerFactory func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler) {
 	b.newScheduler = schedulerFactory
 }
 
@@ -72,20 +72,18 @@ type Manager struct {
 		handlingTasks map[int64]context.CancelFunc
 	}
 	id           string
-	ddlID        string
 	wg           sync.WaitGroup
 	ctx          context.Context
 	cancel       context.CancelFunc
 	logCtx       context.Context
 	newPool      func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
-	newScheduler func(ctx context.Context, id string, ddlID string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler
+	newScheduler func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler
 }
 
 // BuildManager builds a Manager.
-func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable TaskTable, ddlID string) (*Manager, error) {
+func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
 	m := &Manager{
 		id:                   id,
-		ddlID:                ddlID,
 		taskTable:            taskTable,
 		subtaskExecutorPools: make(map[string]Pool),
 		logCtx:               logutil.WithKeyValue(context.Background(), "dist_task_manager", id),
@@ -260,7 +258,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 		return
 	}
 	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks
-	scheduler := m.newScheduler(ctx, m.id, m.ddlID, taskID, m.taskTable, m.subtaskExecutorPools[taskType])
+	scheduler := m.newScheduler(ctx, m.id, taskID, m.taskTable, m.subtaskExecutorPools[taskType])
 	scheduler.Start()
 	defer scheduler.Stop()
 	for {
