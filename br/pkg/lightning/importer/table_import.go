@@ -1756,13 +1756,13 @@ func (tr *TableImporter) preDeduplicate(
 	for _, engineCp := range tableCp.Engines {
 		for _, chunkCp := range engineCp.Chunks {
 			if chunkCp.Chunk.PrevRowIDMax <= rowID[0] && rowID[0] < chunkCp.Chunk.RowIDMax {
-				oneConflictMsg = fmt.Sprintf("row %d starting from offset %d in file %s",
+				oneConflictMsg = fmt.Sprintf("row %d counting from offset %d in file %s",
 					rowID[0]-chunkCp.Chunk.PrevRowIDMax,
 					chunkCp.Chunk.Offset,
 					chunkCp.FileMeta.Path)
 			}
 			if chunkCp.Chunk.PrevRowIDMax <= rowID[1] && rowID[1] < chunkCp.Chunk.RowIDMax {
-				otherConflictMsg = fmt.Sprintf("row %d starting from offset %d in file %s",
+				otherConflictMsg = fmt.Sprintf("row %d counting from offset %d in file %s",
 					rowID[1]-chunkCp.Chunk.PrevRowIDMax,
 					chunkCp.Chunk.Offset,
 					chunkCp.FileMeta.Path)
