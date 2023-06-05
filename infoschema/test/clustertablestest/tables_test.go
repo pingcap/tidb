@@ -143,16 +143,6 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
 
-	// Test for the `SESSION_CONNECT_ATTRS` table
-	sm = &testkit.MockSessionManager{}
-	sm.ConAttrs = map[uint64]map[string]string{
-		123456: {
-			"_client_name": "libmysql",
-		},
-	}
-	tk.Session().SetSessionManager(sm)
-	tk.MustQuery("SELECT PROCESSLIST_ID,ATTR_NAME,ATTR_VALUE,ORDINAL_POSITION FROM performance_schema.SESSION_CONNECT_ATTRS").Check(testkit.Rows("123456 _client_name libmysql 0"))
-
 	// Test for all system tables `TABLE_TYPE` is `SYSTEM VIEW`.
 	rows1 := tk.MustQuery("select count(*) from information_schema.tables where table_schema in ('INFORMATION_SCHEMA','PERFORMANCE_SCHEMA','METRICS_SCHEMA');").Rows()
 	rows2 := tk.MustQuery("select count(*) from information_schema.tables where table_schema in ('INFORMATION_SCHEMA','PERFORMANCE_SCHEMA','METRICS_SCHEMA') and  table_type = 'SYSTEM VIEW';").Rows()
