@@ -458,7 +458,7 @@ func (cr *chunkProcessor) encodeLoop(
 								goto conflictMsgDone
 							}
 							if !isRecordKey && decodedIdxID == idxID {
-								dupErr := txn.ExtractKeyExistsErrFromIndex(kv.Key, kv.Val, t.tableInfo.Core, idxID)
+								dupErr := txn.ExtractKeyExistsErrFromIndex(kv.Key, kv.Val, t.tableInfo.Desired, idxID)
 								conflictMsg = dupErr.Error()
 								goto conflictMsgDone
 							}
