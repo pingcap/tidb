@@ -313,11 +313,5 @@ func CancelJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err 
 			WHERE id = %? AND status IN (%?, %?);`
 	args := []interface{}{jogStatusCancelled, jobID, jobStatusPending, JobStatusRunning}
 	_, err = conn.ExecuteInternal(ctx, sql, args...)
-	if err != nil {
-		return err
-	}
-	if conn.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-		return errors.Errorf("cancel job failed, job %d not exists or not in pending or running status", jobID)
-	}
-	return nil
+	return err
 }
