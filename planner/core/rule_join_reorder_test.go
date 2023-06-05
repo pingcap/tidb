@@ -84,6 +84,8 @@ func TestAdditionOtherConditionsRemained4OuterJoin(t *testing.T) {
 
 	tk.MustQuery("SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows("" +
 		"13 i1"))
+	tk.MustQuery("SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` RIGHT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows("" +
+		"13 i1"))
 	tk.MustQuery("explain format = 'brief' SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows(""+
 		"Sort 2.50 root  test.queries_identifier.id",
 		"└─Projection 2.50 root  test.queries_identifier.id, test.queries_identifier.name",
