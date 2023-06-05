@@ -2004,10 +2004,10 @@ func GetDataFromSessionVariables(ctx context.Context, sctx sessionctx.Context) (
 	return rows, nil
 }
 
-func GetDataForSessionConnectAttrs(ctx sessionctx.Context) ([][]types.Datum,error) {
+func GetDataForSessionConnectAttrs(ctx sessionctx.Context) ([][]types.Datum, error) {
 	sm := ctx.GetSessionManager()
 	if sm == nil {
-		return nil,nil
+		return nil, nil
 	}
 	allAttrs := sm.GetConAttrs()
 	rows := make([][]types.Datum, 0, len(allAttrs)*10) // 10 Attributes per connection
