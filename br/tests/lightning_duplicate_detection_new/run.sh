@@ -72,6 +72,13 @@ run_lightning --backend local --config "tests/$TEST_NAME/local-error.toml" --log
 run_lightning --backend local --config "tests/$TEST_NAME/local-error.toml" --log-file "$LOG_FILE" --enable-checkpoint=1 2>&1 | grep -q "duplicate entry for key 'uniq_col6_col7', a pair of conflicting rows are (row 1 counting from offset 0 in file test.dup_detect.1.sql, row 101 counting from offset 0 in file test.dup_detect.4.sql)"
 check_contains "restore table \`test\`.\`dup_detect\` failed: duplicate entry for key 'uniq_col6_col7', a pair of conflicting rows are (row 1 counting from offset 0 in file test.dup_detect.1.sql, row 101 counting from offset 0 in file test.dup_detect.4.sql)" "$LOG_FILE"
 run_lightning_ctl --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/local-error.toml" --checkpoint-error-destroy="\`test\`.\`dup_detect\`"
+files_left=$(ls "$TEST_DIR/$TEST_NAME.sorted" | wc -l)
+if [ "$files_left" -ne "0" ];then
+    echo "checkpoint-error-destroy has left some files"
+    ls "$TEST_DIR/$TEST_NAME.sorted"
+    exit 1
+fi
+rm -rf "$TEST_DIR/$TEST_NAME.sorted"
 
 # 4. Test limit error records.
 cleanup
