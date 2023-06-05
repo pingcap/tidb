@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
@@ -159,14 +160,21 @@ func (e *Engine) Close() error {
 	return err
 }
 
-// Cleanup remove meta and db files
+// Cleanup remove meta, db and duplicate detection files
 func (e *Engine) Cleanup(dataDir string) error {
 	if err := os.RemoveAll(e.sstDir); err != nil {
 		return errors.Trace(err)
 	}
+	uuid := e.UUID.String()
+	if err := os.RemoveAll(filepath.Join(dataDir, uuid+importer.DupDetectDirSuffix)); err != nil {
+		return errors.Trace(err)
+	}
+	if err := os.RemoveAll(filepath.Join(dataDir, uuid+importer.DupResultDirSuffix)); err != nil {
+		return errors.Trace(err)
+	}
 
-	dbPath := filepath.Join(dataDir, e.UUID.String())
-	return os.RemoveAll(dbPath)
+	dbPath := filepath.Join(dataDir, uuid)
+	return errors.Trace(os.RemoveAll(dbPath))
 }
 
 // Exist checks if db folder existing (meta sometimes won't flush before lightning exit)
