@@ -177,7 +177,7 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 
 // preProcess does the pre processing for the task.
 func preProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) error {
-	logger.Info("pre process", zap.Any("task_meta", taskMeta))
+	logger.Info("pre process", zap.Any("table_info", taskMeta.Plan.TableInfo))
 	if err := dropTableIndexes(ctx, handle, taskMeta, logger); err != nil {
 		return err
 	}
@@ -251,7 +251,7 @@ func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMet
 				switch merr.Number {
 				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
 					remainIndexes = append(remainIndexes, idxInfo)
-					logger.Info("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
+					logger.Warn("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
 					continue
 				}
 			}
