@@ -2153,13 +2153,14 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
-	do.wg.Run(func() { quitStatsOwner(do, owner) }, "quitStatsOwner")
 	if do.indexUsageSyncLease > 0 {
 		do.wg.Run(func() {
 			do.syncIndexUsageWorker(owner)
 		}, "syncIndexUsageWorker")
 	}
 	if do.statsLease <= 0 {
+		// For statsLease > 0, `updateStatsWorker` handles the quit of stats owner.
+		do.wg.Run(func() { quitStatsOwner(do, owner) }, "quitStatsOwner")
 		return nil
 	}
 	do.SetStatsUpdating(true)
