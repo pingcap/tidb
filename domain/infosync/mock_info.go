@@ -57,6 +57,8 @@ func (m *MockGlobalServerInfoManager) Add(id string, serverIDGetter func() uint6
 
 // Delete one mock ServerInfo by idx
 func (m *MockGlobalServerInfoManager) Delete(idx int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if idx >= len(m.infos) || idx < 0 {
 		return errors.New("server idx out of bound")
 	}
@@ -66,6 +68,8 @@ func (m *MockGlobalServerInfoManager) Delete(idx int) error {
 
 // GetAllServerInfo return all serverInfo in a map
 func (m *MockGlobalServerInfoManager) GetAllServerInfo() map[string]*ServerInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	allInfo := make(map[string]*ServerInfo)
 	for _, info := range m.infos {
 		allInfo[info.ID] = info

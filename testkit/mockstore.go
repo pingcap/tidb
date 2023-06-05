@@ -18,6 +18,7 @@ package testkit
 
 import (
 	"flag"
+	"sync"
 	"testing"
 	"time"
 
@@ -71,10 +72,13 @@ type DistExecutionTestContext struct {
 	Store   kv.Storage
 	domains []*domain.Domain
 	t       testing.TB
+	mu      sync.Mutex
 }
 
 // InitOwner select the last domain as DDL owner in DistExecutionTestContext
 func (d *DistExecutionTestContext) InitOwner() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	for _, dom := range d.domains {
 		dom.DDL().OwnerManager().RetireOwner()
 	}
@@ -83,6 +87,8 @@ func (d *DistExecutionTestContext) InitOwner() error {
 
 // SetOwner set one mock domain to DDL Owner by idx
 func (d *DistExecutionTestContext) SetOwner(idx int) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if idx >= len(d.domains) || idx < 0 {
 		return errors.New("server idx out of bound")
 	}
@@ -94,6 +100,8 @@ func (d *DistExecutionTestContext) SetOwner(idx int) error {
 
 // AddServer add 1 server for DistExecutionTestContext
 func (d *DistExecutionTestContext) AddServer() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	dom := bootstrap4DistExecution(d.t, d.Store, 500*time.Microsecond)
 	dom.InfoSyncer().SetSessionManager(d.domains[0].InfoSyncer().GetSessionManager())
 	dom.DDL().OwnerManager().RetireOwner()
@@ -102,6 +110,8 @@ func (d *DistExecutionTestContext) AddServer() {
 
 // DeleteServer delete 1 server by idx in DistExecutionTestContext
 func (d *DistExecutionTestContext) DeleteServer(idx int) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if idx >= len(d.domains) || idx < 0 {
 		return errors.New("server idx out of bound")
 	}
@@ -136,7 +146,8 @@ func NewDistExecutionTestContext(t testing.TB, serverNum int) (*DistExecutionTes
 		require.NoError(t, err)
 		gctuner.GlobalMemoryLimitTuner.Stop()
 	})
-	res := DistExecutionTestContext{schematracker.UnwrapStorage(store), domains, t}
+	res := DistExecutionTestContext{
+		schematracker.UnwrapStorage(store), domains, t, sync.Mutex{}}
 	err = res.InitOwner()
 	if err != nil {
 		return nil, err
@@ -153,6 +164,8 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	dom.InfoSyncer().SetSessionManager(&sm)
 	t.Cleanup(func() {
 		view.Stop()
+		err := store.Close()
+		require.NoError(t, err)
 		gctuner.GlobalMemoryLimitTuner.Stop()
 	})
 	return schematracker.UnwrapStorage(store), dom
@@ -178,8 +191,6 @@ func bootstrapImpl(t testing.TB, store kv.Storage, lease time.Duration, bootstra
 	t.Cleanup(func() {
 		dom.Close()
 		view.Stop()
-		err := store.Close()
-		require.NoError(t, err)
 		resourcemanager.InstanceResourceManager.Reset()
 	})
 	return dom
@@ -198,5 +209,9 @@ func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, 
 	dom := bootstrap(t, store, lease)
 	sm := MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
+	t.Cleanup(func() {
+		err := store.Close()
+		require.NoError(t, err)
+	})
 	return schematracker.UnwrapStorage(store), dom
 }
