@@ -195,3 +195,72 @@ func TestParseFilename(t *testing.T) {
 		}
 	}
 }
+
+func TestSSTWriter(t *testing.T) {
+	fs := vfs.Default
+	dirname := t.TempDir()
+	fileNum := 13
+
+	var fileMeta *fileMetadata
+	sw, err := newSSTWriter(fs, dirname, fileNum, 8, func(meta *fileMetadata) {
+		fileMeta = meta
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, sw.Set([]byte("aa"), []byte("11")))
+	require.NoError(t, sw.Set([]byte("bb"), []byte("22")))
+	require.NoError(t, sw.Set([]byte("cc"), []byte("33")))
+	require.NoError(t, sw.Set([]byte("dd"), []byte("44")))
+	require.NoError(t, sw.Set([]byte("ee"), []byte("55")))
+	require.NoError(t, sw.Close())
+	require.FileExists(t, makeFilename(fs, dirname, fileNum))
+
+	require.NotNil(t, fileMeta)
+	require.Equal(t, fileNum, fileMeta.fileNum)
+	require.Equal(t, []byte("aa"), fileMeta.startKey)
+	require.Equal(t, []byte("ee\x00"), fileMeta.endKey)
+	require.Equal(t, []byte("ee"), fileMeta.lastKey)
+	require.Equal(t, kvStats{Histogram: []kvStatsBucket{
+		{8, []byte("bb")},
+		{8, []byte("dd")},
+		{4, []byte("ee")},
+	}}, fileMeta.kvStats)
+}
+
+func TestSSTWriterEmpty(t *testing.T) {
+	fs := vfs.Default
+	dirname := t.TempDir()
+	fileNum := 13
+
+	var fileMeta *fileMetadata
+	sw, err := newSSTWriter(fs, dirname, fileNum, 8, func(meta *fileMetadata) {
+		fileMeta = meta
+	})
+	require.NoError(t, err)
+	require.NoError(t, sw.Close())
+
+	require.NotNil(t, fileMeta)
+	require.Equal(t, fileNum, fileMeta.fileNum)
+	require.Nil(t, fileMeta.startKey)
+	require.Equal(t, []byte{0}, fileMeta.endKey)
+	require.Nil(t, fileMeta.lastKey)
+	require.Equal(t, kvStats{}, fileMeta.kvStats)
+	require.FileExists(t, makeFilename(fs, dirname, fileNum))
+}
+
+func TestSSTWriterError(t *testing.T) {
+	fs := vfs.Default
+	dirname := t.TempDir()
+	fileNum := 13
+
+	sw, err := newSSTWriter(fs, dirname, fileNum, 0, func(meta *fileMetadata) {})
+	require.NoError(t, err)
+
+	require.NoError(t, sw.Set([]byte("bb"), []byte("11")))
+	require.Error(t, sw.Set([]byte("aa"), []byte("22")))
+	require.Error(t, sw.Close())
+
+	list, err := fs.List(dirname)
+	require.NoError(t, err)
+	require.Empty(t, list)
+}

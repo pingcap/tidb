@@ -188,6 +188,8 @@ func (sw *sstWriter) Close() (retErr error) {
 	defer func() {
 		if retErr == nil {
 			retErr = sw.fs.Rename(sw.tmpPath, sw.destPath)
+		} else {
+			_ = sw.fs.Remove(sw.tmpPath)
 		}
 	}()
 	closeErr := sw.w.Close()
