@@ -100,6 +100,7 @@ func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter fu
 	return info
 }
 
+// Close reset MockGlobalServerInfoManager
 func (m *MockGlobalServerInfoManager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
