@@ -158,7 +158,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 			// TODO: Consider getting these tasks, in addition to the task being worked on..
 			gTasks, err := d.taskMgr.GetGlobalTasksInStates(proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStateCancelling)
 			if err != nil {
-				logutil.BgLogger().Warn("get unfinished(pending, running or reverting) tasks failed", zap.Error(err))
+				logutil.BgLogger().Warn("get unfinished(pending, running, reverting or cancelling) tasks failed", zap.Error(err))
 				break
 			}
 

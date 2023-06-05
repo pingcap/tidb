@@ -142,8 +142,6 @@ func NewDistExecutionTestContext(t testing.TB, serverNum int) (*DistExecutionTes
 		domains[i].InfoSyncer().SetSessionManager(&sm)
 	}
 	t.Cleanup(func() {
-		err := store.Close()
-		require.NoError(t, err)
 		gctuner.GlobalMemoryLimitTuner.Stop()
 	})
 	res := DistExecutionTestContext{
@@ -164,8 +162,6 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	dom.InfoSyncer().SetSessionManager(&sm)
 	t.Cleanup(func() {
 		view.Stop()
-		err := store.Close()
-		require.NoError(t, err)
 		gctuner.GlobalMemoryLimitTuner.Stop()
 	})
 	return schematracker.UnwrapStorage(store), dom
@@ -191,6 +187,8 @@ func bootstrapImpl(t testing.TB, store kv.Storage, lease time.Duration, bootstra
 	t.Cleanup(func() {
 		dom.Close()
 		view.Stop()
+		err := store.Close()
+		require.NoError(t, err)
 		resourcemanager.InstanceResourceManager.Reset()
 	})
 	return dom
@@ -209,9 +207,5 @@ func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, 
 	dom := bootstrap(t, store, lease)
 	sm := MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
-	t.Cleanup(func() {
-		err := store.Close()
-		require.NoError(t, err)
-	})
 	return schematracker.UnwrapStorage(store), dom
 }

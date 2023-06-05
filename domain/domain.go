@@ -1215,7 +1215,6 @@ func (do *Domain) Init(
 
 // InitInfo4Test init infosync for distributed execution test
 func (do *Domain) InitInfo4Test() {
-	do.info = infosync.GetGlobalInfoSyncer4Test()
 	infosync.MockGlobalServerInfoManagerEntry.Add(do.ddl.GetID(), do.ServerID)
 }
 
