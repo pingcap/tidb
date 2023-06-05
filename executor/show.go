@@ -2185,7 +2185,7 @@ func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 	result.AppendString(5, info.Status)
 	result.AppendInt64(6, info.SourceFileSize)
 	if info.Summary != nil {
-		result.AppendUint64(7, info.Summary.LoadedRowCnt.Load())
+		result.AppendUint64(7, info.Summary.ImportedRows)
 	} else if importedRowCount > 0 {
 		result.AppendUint64(7, importedRowCount)
 	} else {

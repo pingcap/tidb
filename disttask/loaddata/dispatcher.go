@@ -17,6 +17,7 @@ package loaddata
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,11 +27,14 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -78,8 +82,16 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	switch gTask.Step {
 	case Import:
 		h.switchTiKV2NormalMode(ctx, logutil.BgLogger())
-		if err := postProcess(ctx, handle, gTask, logger); err != nil {
-			return nil, err
+		subtaskMetas, err2 := postProcess(ctx, handle, gTask, logger)
+		if err2 != nil {
+			return nil, err2
+		}
+		updateResult(taskMeta, subtaskMetas, logger)
+		if err2 = updateMeta(gTask, taskMeta); err2 != nil {
+			return nil, err2
+		}
+		if err2 = finishJob(ctx, taskMeta, &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}); err2 != nil {
+			return nil, err2
 		}
 		gTask.State = proto.TaskStateSucceed
 		return nil, nil
@@ -90,6 +102,9 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	//	if err != nil {
 	//		return nil, err
 	//	}
+	if err = startJob(ctx, taskMeta); err != nil {
+		return nil, err
+	}
 	subtaskMetas, err := generateSubtaskMetas(ctx, gTask.ID, taskMeta)
 	if err != nil {
 		return nil, err
@@ -110,6 +125,18 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 func (h *flowHandle) ProcessErrFlow(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
 	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
 	logger.Info("process error flow", zap.ByteStrings("error message", receiveErr))
+	taskMeta := &TaskMeta{}
+	err := json.Unmarshal(gTask.Meta, taskMeta)
+	if err != nil {
+		return nil, err
+	}
+	var errStrs []string
+	for _, errStr := range receiveErr {
+		errStrs = append(errStrs, string(errStr))
+	}
+	if err = failJob(ctx, taskMeta, strings.Join(errStrs, "; ")); err != nil {
+		return nil, err
+	}
 	h.switchTiKV2NormalMode(ctx, logger)
 	gTask.Error = receiveErr[0]
 	return nil, nil
@@ -148,15 +175,19 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 }
 
 // postProcess does the post-processing for the task.
-func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, logger *zap.Logger) error {
+func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, logger *zap.Logger) ([]*SubtaskMeta, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	if err = job2Step(ctx, taskMeta, importer.JobStepValidating); err != nil {
+		return nil, err
+	}
+
 	tableImporter, err := buildTableImporter(ctx, gTask.ID, taskMeta)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		err2 := tableImporter.Close()
@@ -167,25 +198,24 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 
 	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	subtaskMetas := make([]*SubtaskMeta, 0, len(metas))
 	for _, bs := range metas {
 		var subtaskMeta SubtaskMeta
 		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
-			return err
+			return nil, err
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
 
 	logger.Info("post process", zap.Any("task_meta", taskMeta), zap.Any("subtask_metas", subtaskMetas))
 	if err := verifyChecksum(ctx, tableImporter, subtaskMetas, logger); err != nil {
-		return err
+		return nil, err
 	}
 
-	updateResult(taskMeta, subtaskMetas, logger)
-	return updateMeta(gTask, taskMeta)
+	return subtaskMetas, nil
 }
 
 func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, subtaskMetas []*SubtaskMeta, logger *zap.Logger) error {
@@ -274,6 +304,54 @@ func generateSubtaskMetas(ctx context.Context, taskID int64, taskMeta *TaskMeta)
 		subtaskMetas = append(subtaskMetas, subtaskMeta)
 	}
 	return subtaskMetas, nil
+}
+
+func startJob(ctx context.Context, taskMeta *TaskMeta) error {
+	globalTaskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	return globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+		exec := se.(sqlexec.SQLExecutor)
+		return importer.StartJob(ctx, exec, taskMeta.JobID)
+	})
+}
+
+func job2Step(ctx context.Context, taskMeta *TaskMeta, step string) error {
+	globalTaskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	return globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+		exec := se.(sqlexec.SQLExecutor)
+		return importer.Job2Step(ctx, exec, taskMeta.JobID, step)
+	})
+}
+
+func finishJob(ctx context.Context, taskMeta *TaskMeta, summary *importer.JobSummary) error {
+	bytes, err := json.Marshal(summary)
+	if err != nil {
+		return err
+	}
+	globalTaskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	return globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+		exec := se.(sqlexec.SQLExecutor)
+		return importer.FinishJob(ctx, exec, taskMeta.JobID, string(bytes))
+	})
+}
+
+func failJob(ctx context.Context, taskMeta *TaskMeta, errorMsg string) error {
+	globalTaskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	return globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+		exec := se.(sqlexec.SQLExecutor)
+		return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
+	})
 }
 
 func init() {
