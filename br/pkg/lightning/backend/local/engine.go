@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
@@ -65,6 +64,11 @@ const (
 	// and add isImportingAtomic with this value. In other state, we directly store with the state value.
 	// so this must always the last value of this enum.
 	importMutexStateReadLock
+)
+
+const (
+	DupDetectDirSuffix = ".dupdetect"
+	DupResultDirSuffix = ".dupresult"
 )
 
 // engineMeta contains some field that is necessary to continue the engine restore/import process.
@@ -166,10 +170,10 @@ func (e *Engine) Cleanup(dataDir string) error {
 		return errors.Trace(err)
 	}
 	uuid := e.UUID.String()
-	if err := os.RemoveAll(filepath.Join(dataDir, uuid+importer.DupDetectDirSuffix)); err != nil {
+	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupDetectDirSuffix)); err != nil {
 		return errors.Trace(err)
 	}
-	if err := os.RemoveAll(filepath.Join(dataDir, uuid+importer.DupResultDirSuffix)); err != nil {
+	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupResultDirSuffix)); err != nil {
 		return errors.Trace(err)
 	}
 

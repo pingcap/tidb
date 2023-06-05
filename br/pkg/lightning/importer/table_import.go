@@ -60,11 +60,6 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-const (
-	DupDetectDirSuffix = ".dupdetect"
-	DupResultDirSuffix = ".dupresult"
-)
-
 // TableImporter is a helper struct to import a table.
 type TableImporter struct {
 	// The unique table name in the form "`db`.`tbl`".
@@ -209,8 +204,8 @@ func (tr *TableImporter) importTable(
 	// 2. Do duplicate detection if needed
 	if isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.OnDuplicate != "" {
 		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
-		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+DupDetectDirSuffix)
-		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+DupResultDirSuffix)
+		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)
+		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupResultDirSuffix)
 
 		dupIgnoreRows, err := extsort.OpenDiskSorter(resultDir, &extsort.DiskSorterOptions{
 			Concurrency: rc.cfg.App.RegionConcurrency,
