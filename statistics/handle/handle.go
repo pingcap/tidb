@@ -92,7 +92,7 @@ type Handle struct {
 	statsCache struct {
 		atomic.Pointer[statsCache]
 		memTracker *memory.Tracker
-		sync.Mutex
+		sync.RWMutex
 	}
 
 	// feedback is used to store query feedback info.
@@ -629,7 +629,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
-	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion, opts...))
+	h.createAndUpdateStatsCache(oldCache, tables, deletedTableIDs, lastVersion, opts...)
 	return nil
 }
 
@@ -993,6 +993,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 		tbl.PhysicalID = pid
 		return tbl
 	}
+	h.statsCache.RLock()
 	statsCache := h.statsCache.Load()
 	var ok bool
 	option := &tableStatsOption{}
@@ -1004,11 +1005,12 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 	} else {
 		tbl, ok = statsCache.Get(pid)
 	}
+	h.statsCache.RUnlock()
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
 		if tblInfo.GetPartitionInfo() == nil || h.statsCacheLen() < 64 {
-			h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
+			h.createAndUpdateStatsCache(statsCache, []*statistics.Table{tbl}, nil, statsCache.version)
 		}
 		return tbl
 	}
@@ -1025,6 +1027,25 @@ func (h *Handle) statsCacheLen() int {
 func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load()
+	newCost := newCache.Cost()
+	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
+		h.statsCache.memTracker.Consume(newCost - oldCache.Cost())
+		old := h.statsCache.Swap(&newCache)
+		old.Release()
+		updated = true
+	}
+	h.statsCache.Unlock()
+	if updated {
+		handle_metrics.CostGauge.Set(float64(newCost))
+	}
+	return
+}
+
+// createAndUpdateStatsCache creates a new statsCache and overrides the global statsCache with it.
+func (h *Handle) createAndUpdateStatsCache(statsCache *statsCache, tables []*statistics.Table, deletedIDs []int64, newVersion uint64, opts ...TableStatsOpt) (updated bool) {
+	h.statsCache.Lock()
+	oldCache := h.statsCache.Load()
+	newCache := statsCache.update(tables, deletedIDs, newVersion, opts...)
 	newCost := newCache.Cost()
 	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
 		h.statsCache.memTracker.Consume(newCost - oldCache.Cost())
@@ -1125,7 +1146,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 	}
 	tbl = tbl.Copy()
 	tbl.Columns[c.ID] = colHist
-	if h.updateStatsCache(oldCache.update([]*statistics.Table{tbl}, nil, oldCache.version)) {
+	if h.createAndUpdateStatsCache(oldCache, []*statistics.Table{tbl}, nil, oldCache.version) {
 		statistics.HistogramNeededItems.Delete(col)
 	}
 	return nil
@@ -1178,7 +1199,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 	}
 	tbl = tbl.Copy()
 	tbl.Indices[idx.ID] = idxHist
-	if h.updateStatsCache(oldCache.update([]*statistics.Table{tbl}, nil, oldCache.version)) {
+	if h.createAndUpdateStatsCache(oldCache, []*statistics.Table{tbl}, nil, oldCache.version) {
 		statistics.HistogramNeededItems.Delete(idx)
 	}
 	return nil
@@ -1192,7 +1213,7 @@ func (h *Handle) LastUpdateVersion() uint64 {
 // SetLastUpdateVersion sets the last update version.
 func (h *Handle) SetLastUpdateVersion(version uint64) {
 	statsCache := h.statsCache.Load()
-	h.updateStatsCache(statsCache.update(nil, nil, version))
+	h.createAndUpdateStatsCache(statsCache, nil, nil, version)
 }
 
 // FlushStats flushes the cached stats update into store.
@@ -1827,7 +1848,7 @@ func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 		}
 		newTbl := tbl.Copy()
 		delete(newTbl.ExtendedStats.Stats, statsName)
-		if h.updateStatsCache(oldCache.update([]*statistics.Table{newTbl}, nil, oldCache.version)) {
+		if h.createAndUpdateStatsCache(oldCache, []*statistics.Table{newTbl}, nil, oldCache.version) {
 			return
 		}
 		if retry == 1 {
@@ -1860,7 +1881,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 			}
 			tables = append(tables, t)
 		}
-		if h.updateStatsCache(oldCache.update(tables, nil, oldCache.version)) {
+		if h.createAndUpdateStatsCache(oldCache, tables, nil, oldCache.version) {
 			return nil
 		}
 	}
