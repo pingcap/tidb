@@ -87,9 +87,10 @@ run_sql "SELECT count(*) FROM test.dup_detect"
 check_contains "count(*): 174"
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
 check_contains "count(*): 50"
-# TODO(lance6716): can't generate error message of UK when add-index-by-sql
-# Duplicate entry '7480000000000000915f69800000000000000303800000000000000003800000' for key 'UNKNOWN'
-read -p 123
+run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2 WHERE error LIKE '%PRIMARY%'"
+check_contains "count(*): 49"
+run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2 WHERE error LIKE '%uniq_col6_col7%'"
+check_contains "count(*): 1"
 
 # 5. Test fail after duplicate detection.
 cleanup
