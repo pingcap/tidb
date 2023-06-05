@@ -105,15 +105,13 @@ type dispatcher struct {
 		taskIDs map[int64]struct{}
 	}
 	detectPendingGTaskCh chan *proto.Task
-	id                   string
 }
 
 // NewDispatcher creates a dispatcher struct.
-func NewDispatcher(ctx context.Context, taskTable *storage.TaskManager, id string) (Dispatch, error) {
+func NewDispatcher(ctx context.Context, taskTable *storage.TaskManager) (Dispatch, error) {
 	dispatcher := &dispatcher{
 		taskMgr:              taskTable,
 		detectPendingGTaskCh: make(chan *proto.Task, DefaultDispatchConcurrency),
-		id:                   id,
 	}
 	pool, err := spool.NewPool("dispatch_pool", int32(DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
