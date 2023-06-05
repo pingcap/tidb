@@ -40,7 +40,6 @@ type ExecDetails struct {
 	BackoffTime      time.Duration
 	LockKeysDuration time.Duration
 	RequestCount     int
-	RUDetail         *util.RURuntimeStats
 }
 
 // DetailsNeedP90 contains execution detail information which need calculate P90.
