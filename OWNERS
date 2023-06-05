@@ -82,7 +82,7 @@ approvers:
   - sdojjy
   - suzaku
   - YuJuncen
-reviewer:
+reviewers:
   # tidb-reviewers:
   - aytrack
   - Benjamin2037
