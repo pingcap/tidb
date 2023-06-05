@@ -1357,7 +1357,7 @@ func TestIssue42662(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().ConnectionID = 12345
 	tk.Session().GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
-	tk.Session().GetSessionVars().MemTracker.SessionID = 12345
+	tk.Session().GetSessionVars().MemTracker.SessionID.Store(12345)
 	tk.Session().GetSessionVars().MemTracker.IsRootTrackerOfSess = true
 
 	sm := &testkit.MockSessionManager{

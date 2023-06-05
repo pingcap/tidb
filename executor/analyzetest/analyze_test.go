@@ -3196,6 +3196,48 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	tk0.MustExec(sql)
 }
 
+func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_mem_quota_query = 209715200 ") // 200MB
+	tk0.MustExec("set global tidb_server_memory_limit = 5GB")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
+	}
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tk0.MustExec("use test")
+	tk0.MustExec("create table t(a int)")
+	tk0.MustExec("insert into t select 1")
+	for i := 1; i <= 8; i++ {
+		tk0.MustExec("insert into t select * from t") // 256 Lines
+	}
+	sqlPrepare := "prepare stmt from 'analyze table t with 1.0 samplerate';"
+	sqlExecute := "execute stmt;"                                                                                 // Need about 100MB
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`)) // 512MB
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
+	// won't be killed by tidb_mem_quota_query
+	tk0.MustExec(sqlPrepare)
+	tk0.MustExec(sqlExecute)
+	runtime.GC()
+	// killed by tidb_server_memory_limit
+	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
+	_, err0 := tk0.Exec(sqlPrepare)
+	require.NoError(t, err0)
+	_, err1 := tk0.Exec(sqlExecute)
+	require.True(t, strings.Contains(err1.Error(), "Out Of Memory Quota!"))
+	runtime.GC()
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
+	tk0.MustExec(sqlPrepare)
+	tk0.MustExec(sqlExecute)
+}
+
 func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
