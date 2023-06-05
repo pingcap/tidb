@@ -69,7 +69,7 @@ check_contains "count(*): 228"
 # 3. Test error strategy.
 cleanup
 # TODO: why error is insufficient bytes to decode value?
-run_lightning --backend local --config "tests/$TEST_NAME/local-error.toml" --log-file "$LOG_FILE" || true
+run_lightning --backend local --config "tests/$TEST_NAME/local-error.toml" --log-file "$LOG_FILE" 2>&1 | grep -q "checksum mismatched remote vs local"
 read -p 123
 check_contains "duplicate key detected" "$LOG_FILE"
 

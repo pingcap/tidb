@@ -1720,6 +1720,10 @@ func (tr *TableImporter) preDeduplicate(
 		tr.logger.Error("cannot find index name", zap.Int64("conflictIdxID", conflictIdxID))
 		return errors.Trace(originalErr)
 	}
+	if !rc.cfg.Checkpoint.Enable {
+		return errors.Errorf("duplicate key in table `%s` caused by index `%s`, you can turn on checkpoint and re-run to see the conflicting rows",
+			tr.tableName, idxName)
+	}
 	conflictEncodedRowIDs := dupErr.Args()[1].([][]byte)
 	if len(conflictEncodedRowIDs) < 2 {
 		tr.logger.Error("invalid conflictEncodedRowIDs", zap.Int("len", len(conflictEncodedRowIDs)))
@@ -1744,6 +1748,7 @@ func (tr *TableImporter) preDeduplicate(
 		return errors.Trace(originalErr)
 	}
 
+	// TODO: checkpoint is not enable????
 	tableCp, err := rc.checkpointsDB.Get(ctx, tr.tableName)
 	if err != nil {
 		tr.logger.Error("failed to get table checkpoint", zap.Error(err))
@@ -1751,9 +1756,6 @@ func (tr *TableImporter) preDeduplicate(
 	}
 	for _, engineCp := range tableCp.Engines {
 		for _, chunkCp := range engineCp.Chunks {
-			tr.logger.Info("lance test",
-				zap.Any("preRowIDMax", chunkCp.Chunk.PrevRowIDMax),
-				zap.Any("rowIDMax", chunkCp.Chunk.RowIDMax))
 			if chunkCp.Chunk.PrevRowIDMax <= rowID[0] && rowID[0] < chunkCp.Chunk.RowIDMax {
 				oneConflictMsg = fmt.Sprintf("row %d starting from offset %d in file %s",
 					rowID[0]-chunkCp.Chunk.PrevRowIDMax,
@@ -1772,7 +1774,7 @@ func (tr *TableImporter) preDeduplicate(
 		tr.logger.Error("cannot find conflict rows by rowID",
 			zap.Int64("rowID[0]", rowID[0]),
 			zap.Int64("rowID[1]", rowID[1]))
-		return errors.Trace(err)
+		return errors.Trace(originalErr)
 	}
 	return errors.Errorf("duplicate entry for key '%s', a pair of conflicting rows are (%s, %s)",
 		idxName, oneConflictMsg, otherConflictMsg)
