@@ -2004,6 +2004,7 @@ func GetDataFromSessionVariables(ctx context.Context, sctx sessionctx.Context) (
 	return rows, nil
 }
 
+// GetDataForSessionConnectAttrs produces the rows for the session_connect_attrs table.
 func GetDataForSessionConnectAttrs(ctx sessionctx.Context) ([][]types.Datum, error) {
 	sm := ctx.GetSessionManager()
 	if sm == nil {
