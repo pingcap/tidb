@@ -2312,6 +2312,14 @@ def go_deps():
         version = "v2.5.1",
     )
     go_repository(
+        name = "com_github_jellydator_ttlcache_v3",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/jellydator/ttlcache/v3",
+        sum = "h1:cHgCSMS7TdQcoprXnWUptJZzyFsqs18Lt8VVhRuZYVU=",
+        version = "v3.0.1",
+    )
+
+    go_repository(
         name = "com_github_jgautheron_goconst",
         build_file_proto_mode = "disable",
         importpath = "github.com/jgautheron/goconst",

@@ -2160,9 +2160,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InExplainStmt = true
 		sc.InVerboseExplain = strings.ToLower(explainForStmt.Format) == types.ExplainFormatVerbose
 	}
-	planNormalized, _ := sc.GetPlanDigest()
-	// FIXME: perform plan digest generation only when necessary, and heres plan digest maybe empty
-	sc.RunawayChecker = domain.GetDomain(ctx).RunawayManager().DeriveChecker(ctx.GetSessionVars().ResourceGroupName, sc.OriginalSQL, planNormalized)
 
 	// TODO: Many same bool variables here.
 	// We should set only two variables (

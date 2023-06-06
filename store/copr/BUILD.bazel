@@ -11,6 +11,7 @@ go_library(
         "mpp.go",
         "mpp_probe.go",
         "region_cache.go",
+        "runaway_worker.go",
         "store.go",
     ],
     importpath = "github.com/pingcap/tidb/store/copr",

@@ -61,6 +61,7 @@ go_library(
         "//sessiontxn/staleread",
         "//statistics",
         "//statistics/handle",
+        "//store/copr",
         "//store/driver/error",
         "//store/driver/txn",
         "//store/helper",

@@ -78,6 +78,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/copr"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
@@ -2189,10 +2190,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	stmt, err := compiler.Compile(ctx, stmtNode)
 	// session resource-group might be changed by query hint, ensure restore it back when
 	// the execution finished.
-	if s.GetSessionVars().ResourceGroupName != originalResourceGroup {
+	if sessVars.ResourceGroupName != originalResourceGroup {
 		defer func() {
 			// Restore the resource group for the session
-			s.GetSessionVars().ResourceGroupName = originalResourceGroup
+			sessVars.ResourceGroupName = originalResourceGroup
 		}()
 	}
 	if err != nil {
@@ -2227,7 +2228,13 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			s.currentPlan = nil
 		}
 	}
-
+	if variable.EnableResourceControl.Load() {
+		planNormalized, _ := executor.GetPlanDigest(sessVars.StmtCtx)
+		sessVars.StmtCtx.RunawayChecker = domain.GetDomain(s).RunawayManager().DeriveChecker(sessVars.ResourceGroupName, sessVars.StmtCtx.OriginalSQL, planNormalized)
+		if err := sessVars.StmtCtx.RunawayChecker.BeforeCopRequest(copr.RunawayActionKillWorker); err != nil {
+			return nil, err
+		}
+	}
 	// Execute the physical plan.
 	logStmt(stmt, s)
 

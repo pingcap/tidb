@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
@@ -1170,20 +1169,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
-	runawayActionWorker := func(action rmpb.RunawayAction) error {
-		switch action {
-		case rmpb.RunawayAction_Kill:
-			return derr.ErrResourceGroupQueryRunaway
-		case rmpb.RunawayAction_CoolDown:
-			req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
-			return nil
-		case rmpb.RunawayAction_DryRun:
-			return nil
-		default:
-			return nil
-		}
-	}
-	if err := worker.req.RunawayChecker.BeforeCopRequest(runawayActionWorker); err != nil {
+	if err := worker.req.RunawayChecker.BeforeCopRequest(RunawayActionKillWorker, createCooldownWorker(req)); err != nil {
 		return nil, err
 	}
 	req.StoreTp = getEndPointType(task.storeType)

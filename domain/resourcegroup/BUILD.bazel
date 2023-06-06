@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/domain/resourcegroup",
     visibility = ["//visibility:public"],
     deps = [
+        "@com_github_jellydator_ttlcache_v3//:go_default_library",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_tikv_pd_client//resource_group/controller",
     ],
