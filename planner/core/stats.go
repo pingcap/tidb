@@ -70,7 +70,7 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 	stats := &property.StatsInfo{
 		RowCount:     float64(statsTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, len(p.TableInfo.Columns)),
-		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo.Columns, p.schema.Columns, p.TableInfo.Indices),
+		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo.Columns, p.schema.Columns, p.TableInfo),
 		StatsVersion: statistics.PseudoVersion,
 	}
 	for _, col := range selfSchema.Columns {
@@ -289,7 +289,7 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, ds.schema.Len()),
-		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns, ds.tableInfo.Indices),
+		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns, ds.tableInfo),
 		StatsVersion: ds.statisticTable.Version,
 	}
 	if ds.statisticTable.Pseudo {
