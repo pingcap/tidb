@@ -1178,5 +1178,12 @@
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code"
     }
+  },
+  "QF1002": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      ".*_test.go": "ignore test code",
+      "external/": "no need to vet third party code"
+    }
   }
 }
