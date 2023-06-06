@@ -3923,7 +3923,8 @@ func TestPartitionOnMissing(t *testing.T) {
 	tk.MustExec(`CREATE TABLE tt1 (
 		id INT NOT NULL,
 		listid INT,
-		name varchar(10)
+		name varchar(10),
+		primary key (listid) clustered
 	)
 	PARTITION BY LIST (listid) (
 		PARTITION p1 VALUES IN (1),
@@ -3955,4 +3956,14 @@ func TestPartitionOnMissing(t *testing.T) {
 
 	tk.MustQuery(`select /*+ inl_join(tt1)*/ count(*) from tt2
 		left join tt1 on tt1.listid=tt2.listid and tt1.id=tt2.id`).Check(testkit.Rows("5"))
+	tk.MustQuery(`select /*+ inl_join(tt1)*/ count(*) from tt2
+		left join tt1 on tt1.listid=tt2.listid`).Check(testkit.Rows("5"))
+	tk.MustQuery(`explain format = 'brief' select /*+ inl_join(tt1)*/ count(*) from tt2
+		left join tt1 on tt1.listid=tt2.listid`).Check(testkit.Rows(""+
+		"StreamAgg 1.00 root  funcs:count(1)->Column#7",
+		"└─IndexJoin 5.00 root  left outer join, inner:TableReader, outer key:onmissing.tt2.listid, inner key:onmissing.tt1.listid, equal cond:eq(onmissing.tt2.listid, onmissing.tt1.listid)",
+		"  ├─IndexReader(Build) 5.00 root  index:IndexFullScan",
+		"  │ └─IndexFullScan 5.00 cop[tikv] table:tt2, index:idx_listid(listid) keep order:false",
+		"  └─TableReader(Probe) 4.00 root partition:all data:TableRangeScan",
+		"    └─TableRangeScan 4.00 cop[tikv] table:tt1 range: decided by [onmissing.tt2.listid], keep order:false"))
 }
