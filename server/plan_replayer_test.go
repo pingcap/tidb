@@ -44,6 +44,10 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	require.NoError(t, err)
 	defer server.Close()
 
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
+
 	client.port = getPortFromTCPAddr(server.listener.Addr())
 	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
@@ -52,8 +56,6 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	}()
 	client.waitUntilServerOnline()
 
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
 	statsHandler := &StatsHandler{dom}
 
 	planReplayerHandler := &PlanReplayerHandler{}

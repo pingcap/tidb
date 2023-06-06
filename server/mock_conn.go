@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/intest"
@@ -90,6 +91,9 @@ func CreateMockServer(t *testing.T, store kv.Storage) *Server {
 	cfg.Security.AutoTLS = false
 	server, err := NewServer(cfg, tidbdrv)
 	require.NoError(t, err)
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
 	return server
 }
 

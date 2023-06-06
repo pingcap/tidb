@@ -8,13 +8,21 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/util/globalconn",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_cznic_mathutil//:mathutil"],
+    deps = [
+        "//util/logutil",
+        "@com_github_cznic_mathutil//:mathutil",
+        "@com_github_ngaut_sync2//:sync2",
+        "@org_uber_go_zap//:zap",
+    ],
 )
 
 go_test(
     name = "globalconn_test",
     timeout = "short",
-    srcs = ["pool_test.go"],
+    srcs = [
+        "globalconn_test.go",
+        "pool_test.go",
+    ],
     flaky = True,
     deps = [
         ":globalconn",

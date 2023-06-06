@@ -66,6 +66,7 @@ require (
 	github.com/lestrrat-go/jwx/v2 v2.0.6
 	github.com/mgechev/revive v1.3.2
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
+	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/nishanths/predeclared v0.2.2
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.2.0
@@ -225,7 +226,6 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/nbutton23/zxcvbn-go v0.0.0-20210217022336-fa2cb2858354 // indirect
 	github.com/ncw/directio v1.0.5 // indirect
-	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/petermattis/goid v0.0.0-20211229010228-4d14c490ee36 // indirect
