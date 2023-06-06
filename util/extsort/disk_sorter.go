@@ -453,7 +453,7 @@ func (m *mergingIter) Seek(key []byte) bool {
 				toClose = append(toClose, oldHeap[i:]...)
 				break
 			}
-			// The iterator is not in the range of [startKey, endKey), close it.
+			// The seek key is not in the range of [startKey, endKey), close it.
 			toClose = append(toClose, item)
 		}
 	}
@@ -668,7 +668,7 @@ type DiskSorterOptions struct {
 	// file 3:       d---f
 	//
 	// The overlap depth of these files is 3, because file 0, 1, 2 overlap at
-	// the range [c, d), and file 1, 2, 3 overlap at the interval [d, e).
+	// the interval [c, d), and file 1, 2, 3 overlap at the interval [d, e).
 	//
 	// If the overlap depth is larger than CompactionThreshold, the sorter will
 	// compact files to reduce the overlap depth during sorting. The larger the
