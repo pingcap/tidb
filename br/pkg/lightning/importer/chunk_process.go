@@ -531,7 +531,6 @@ func (cr *chunkProcessor) getDuplicateMessage(
 	kvs, err := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, lastOffset)
 	if err != nil {
 		return err.Error()
-
 	}
 
 	if idxID == conflictOnHandle {
