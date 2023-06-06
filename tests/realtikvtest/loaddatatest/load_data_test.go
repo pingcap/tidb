@@ -891,7 +891,7 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 		Content:     []byte("5,55,555,\n6,66,666\n7,77,777"),
 	})
 	sql := fmt.Sprintf(`IMPORT INTO load_data.add_index FROM 'gs://test-load/add_index-*.tsv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.add_index;").Sort().Check(testkit.Rows(
 		"1 11 111",
 		"2 22 222",
@@ -923,7 +923,7 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
 		Content:     []byte("8,8|8,888\n"),
 	})
-	err := s.tk.ExecToErr(sql)
+	err := s.tk.QueryToErr(sql)
 	require.ErrorContains(s.T(), err, "Truncated incorrect DOUBLE value")
 	s.tk.MustQuery("SHOW CREATE TABLE load_data.add_index;").Check(testkit.Rows(
 		"add_index CREATE TABLE `add_index` (\n" +
@@ -945,7 +945,7 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
 		Content:     []byte("7,88,888\n"),
 	})
-	err = s.tk.ExecToErr(sql)
+	err = s.tk.QueryToErr(sql)
 	require.ErrorContains(s.T(), err, "checksum mismatched")
 	s.tk.MustQuery("SELECT COUNT(1) FROM load_data.add_index;").Sort().Check(testkit.Rows(
 		"7",
@@ -967,7 +967,7 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
 		Content:     []byte("8,77,777\n"),
 	})
-	err = s.tk.ExecToErr(sql)
+	err = s.tk.QueryToErr(sql)
 	require.EqualError(s.T(), err, "Failed to create index: [kv:1062]Duplicate entry '77' for key 'add_index.b'"+
 		", please execute the SQL manually, sql: ALTER TABLE `load_data`.`add_index` ADD UNIQUE KEY `b`(`b`), ADD KEY `c_1`(`c`)")
 	s.tk.MustQuery("SHOW CREATE TABLE load_data.add_index;").Check(testkit.Rows(
@@ -986,7 +986,7 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
 		Content:     []byte("7,77,777\n8,77,777\n"),
 	})
-	err = s.tk.ExecToErr(sql)
+	err = s.tk.QueryToErr(sql)
 	require.ErrorContains(s.T(), err, "checksum mismatched")
 	require.ErrorContains(s.T(), err, "Failed to create index: [kv:1062]Duplicate entry '77' for key 'add_index.b'"+
 		", please execute the SQL manually, sql: ALTER TABLE `load_data`.`add_index` ADD UNIQUE KEY `b`(`b`), ADD KEY `c_1`(`c`)")
