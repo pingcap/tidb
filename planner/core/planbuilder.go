@@ -3887,14 +3887,9 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return n
 	}
 
-	if len(insert.Setlist) > 0 {
-		// Branch for `INSERT ... SET ...`.
-		err := b.buildSetValuesOfInsert(ctx, insert, insertPlan, mockTablePlan, checkRefColumn)
-		if err != nil {
-			return nil, err
-		}
-	} else if len(insert.Lists) > 0 {
+	if len(insert.Lists) > 0 {
 		// Branch for `INSERT ... VALUES ...`.
+		// Branch for `INSERT ... SET ...`.
 		err := b.buildValuesListOfInsert(ctx, insert, insertPlan, mockTablePlan, checkRefColumn)
 		if err != nil {
 			return nil, err
@@ -3992,6 +3987,7 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert
 		// This branch is for the following scenarios:
 		// 1. `INSERT INTO tbl_name (col_name [, col_name] ...) {VALUES | VALUE} (value_list) [, (value_list)] ...`,
 		// 2. `INSERT INTO tbl_name (col_name [, col_name] ...) SELECT ...`.
+		// 2. `INSERT INTO tbl_name (col_name [, col_name] ...) SET ...`.
 		colName := make([]string, 0, len(insertStmt.Columns))
 		for _, col := range insertStmt.Columns {
 			colName = append(colName, col.Name.L)
@@ -4002,7 +3998,7 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert
 			return nil, ErrUnknownColumn.GenWithStackByArgs(
 				insertStmt.Columns[missingColIdx].Name.O, clauseMsg[fieldList])
 		}
-	} else if len(insertStmt.Setlist) == 0 {
+	} else {
 		// This branch is for the following scenarios:
 		// 1. `INSERT INTO tbl_name {VALUES | VALUE} (value_list) [, (value_list)] ...`,
 		// 2. `INSERT INTO tbl_name SELECT ...`.
@@ -4071,49 +4067,6 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 		return nil, ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
 	}
 	return outExpr, nil
-}
-
-func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
-	tableInfo := insertPlan.Table.Meta()
-	colNames := make([]string, 0, len(insert.Setlist))
-	exprCols := make([]*expression.Column, 0, len(insert.Setlist))
-	for _, assign := range insert.Setlist {
-		idx, err := expression.FindFieldName(insertPlan.tableColNames, assign.Column)
-		if err != nil {
-			return err
-		}
-		if idx < 0 {
-			return dbterror.ErrBadField.GenWithStackByArgs(assign.Column, "field list")
-		}
-		colNames = append(colNames, assign.Column.Name.L)
-		exprCols = append(exprCols, insertPlan.tableSchema.Columns[idx])
-	}
-
-	// Check whether the column to be updated is the generated column.
-	tCols, missingColIdx := table.FindColumns(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
-	if missingColIdx >= 0 {
-		return ErrUnknownColumn.GenWithStackByArgs(insert.Setlist[missingColIdx].Column.Name.O, clauseMsg[fieldList])
-	}
-
-	insertPlan.AllAssignmentsAreConstant = true
-	for i, assign := range insert.Setlist {
-		expr, err := b.getInsertColExpr(ctx, insertPlan, mockTablePlan, tCols[i], assign.Expr, checkRefColumn)
-		if err != nil {
-			return err
-		}
-		if expr == nil {
-			continue
-		}
-
-		insertPlan.SetList = append(insertPlan.SetList, &expression.Assignment{
-			Col:     exprCols[i],
-			ColName: model.NewCIStr(colNames[i]),
-			Expr:    expr,
-		})
-	}
-	insertPlan.Schema4OnDuplicate = insertPlan.tableSchema
-	insertPlan.names4OnDuplicate = insertPlan.tableColNames
-	return nil
 }
 
 func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
