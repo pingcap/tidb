@@ -792,7 +792,14 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	})
 	sql := fmt.Sprintf(`IMPORT INTO load_data.cols_and_vars (@V1, @v2, @v3) set a=@V1, b=@V2*10, c=123
 		FROM 'gs://test-load/cols_and_vars-*.tsv?endpoint=%s' WITH thread=2`, gcsEndpoint)
-	s.tk.MustQuery(sql)
+	rows := s.tk.MustQuery(sql).Rows()
+	s.Len(rows, 1)
+	jobID1, err := strconv.Atoi(rows[0][0].(string))
+	s.NoError(err)
+	jobInfo, err := importer.GetJob(context.Background(), s.tk.Session(), int64(jobID1), "", true)
+	s.NoError(err)
+	s.Equal("(@`V1`, @`v2`, @`v3`)", jobInfo.Parameters.ColumnsAndVars)
+	s.Equal("`a`=@`V1`, `b`=@`V2`*10, `c`=123", jobInfo.Parameters.SetClause)
 	s.tk.MustQuery("SELECT * FROM load_data.cols_and_vars;").Sort().Check(testkit.Rows(
 		"1 110 123",
 		"2 220 123",
