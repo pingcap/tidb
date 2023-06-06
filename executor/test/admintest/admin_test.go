@@ -1664,9 +1664,9 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 		require.NoError(t, err)
 		require.Equalf(t, randomRow, handle, "i :%d", i)
 		tk.MustQuery("admin recover index admin_test c2")
-		tk.MustExec("set @@tidb_fast_check_table = 0")
+		tk.MustExec("set @@tidb_enable_fast_table_check = 0")
 		tk.MustExec("admin check table admin_test")
-		tk.MustExec("set @@tidb_fast_check_table = 1")
+		tk.MustExec("set @@tidb_enable_fast_table_check = 1")
 	}
 
 	// Add an index record randomly on exists row.

@@ -870,7 +870,7 @@ const (
 	TiDBOptFixControl = "tidb_opt_fix_control"
 
 	// TiDBFastCheckTable enables fast check table.
-	TiDBFastCheckTable = "tidb_fast_check_table"
+	TiDBFastCheckTable = "tidb_enable_fast_table_check"
 )
 
 // TiDB vars that have only global scope
