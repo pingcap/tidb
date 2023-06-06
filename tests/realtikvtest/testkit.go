@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -141,6 +142,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 	t.Cleanup(func() {
 		dom.Close()
 		require.NoError(t, store.Close())
+		infosync.MockGlobalServerInfoManagerEntry.Close()
 		transaction.PrewriteMaxBackoff.Store(20000)
 		view.Stop()
 	})

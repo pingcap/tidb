@@ -27,7 +27,6 @@ import (
 
 // MockGlobalServerInfoManagerEntry is a mock global ServerInfoManager entry.
 var MockGlobalServerInfoManagerEntry = &MockGlobalServerInfoManager{
-	inited:         false,
 	mockServerPort: 4000,
 }
 
@@ -35,7 +34,6 @@ var MockGlobalServerInfoManagerEntry = &MockGlobalServerInfoManager{
 type MockGlobalServerInfoManager struct {
 	infos          []*ServerInfo
 	mu             sync.Mutex
-	inited         bool
 	mockServerPort uint // used to mock ServerInfo, then every mock server will have different port
 }
 
@@ -43,14 +41,13 @@ type MockGlobalServerInfoManager struct {
 func (m *MockGlobalServerInfoManager) Inited() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.inited
+	return len(m.infos) >= 2
 }
 
 // Add one mock ServerInfo
 func (m *MockGlobalServerInfoManager) Add(id string, serverIDGetter func() uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.inited = true
 	m.infos = append(m.infos, m.getServerInfo(id, serverIDGetter))
 }
 
@@ -104,7 +101,6 @@ func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter fu
 func (m *MockGlobalServerInfoManager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.inited = false
 	m.mockServerPort = 4000
 	m.infos = m.infos[:0]
 }
