@@ -97,7 +97,7 @@ run_sql 'DROP TABLE charsets.latin1;'
 run_lightning --config "tests/$TEST_NAME/utf8mb4.toml" -d "tests/$TEST_NAME/latin1" 2>&1 | grep -q "invalid schema encoding"
 run_lightning --config "tests/$TEST_NAME/latin1-only-schema.toml" -d "tests/$TEST_NAME/latin1" 2>&1 | grep -q "unknown columns in header"
 run_lightning --config "tests/$TEST_NAME/latin1.toml" -d "tests/$TEST_NAME/latin1"
-run_sql 'SELECT * AS s FROM charsets.latin1'
+run_sql 'SELECT * FROM charsets.latin1'
 check_contains 'ÏÐ: 1'
 check_contains 'data: ‘’“”'
 check_contains 'ÏÐ: 2'
