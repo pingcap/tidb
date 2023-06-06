@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
@@ -65,6 +66,8 @@ type TaskHandle interface {
 	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error)
+	// ExecInNewSession executes the function with a new session.
+	ExecInNewSession(fn func(se sessionctx.Context) error) error
 }
 
 func (d *dispatcher) getRunningGTaskCnt() int {
@@ -171,6 +174,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 				if d.isRunningGTask(gTask.ID) {
 					continue
 				}
+				// owner changed
 				if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting || gTask.State == proto.TaskStateCancelling {
 					d.setRunningGTask(gTask)
 					cnt++
@@ -273,8 +277,9 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 		case <-ticker.C:
 			// TODO: Consider actively obtaining information about task completion.
 			stepIsFinished, errStr := d.probeTask(gTask)
-			// The global task isn't finished and failed.
+			// The global task isn't finished and not failed.
 			if !stepIsFinished && len(errStr) == 0 {
+				GetTaskFlowHandle(gTask.Type).OnTicker(d.ctx, gTask)
 				logutil.BgLogger().Debug("detect task, this task keeps current state",
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
 				break
@@ -496,4 +501,8 @@ func (d *dispatcher) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byt
 		previousSubtaskMetas = append(previousSubtaskMetas, subtask.Meta)
 	}
 	return previousSubtaskMetas, nil
+}
+
+func (d *dispatcher) ExecInNewSession(fn func(se sessionctx.Context) error) error {
+	return d.taskMgr.WithNewSession(fn)
 }

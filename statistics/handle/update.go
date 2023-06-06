@@ -74,9 +74,9 @@ func (m tableDeltaMap) merge(deltaMap tableDeltaMap) {
 }
 
 type errorRateDelta struct {
-	PkID         int64
 	PkErrorRate  *statistics.ErrorRate
 	IdxErrorRate map[int64]*statistics.ErrorRate
+	PkID         int64
 }
 
 type errorRateDeltaMap map[int64]errorRateDelta
@@ -158,13 +158,13 @@ func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, rateMap errorRateDe
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
-	sync.Mutex
-
 	mapper   tableDeltaMap
 	feedback *statistics.QueryFeedbackMap
 	rateMap  errorRateDeltaMap
 	colMap   colStatsUsageMap
 	next     *SessionStatsCollector
+	sync.Mutex
+
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
 }
@@ -252,9 +252,9 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 
 // IndexUsageInformation is the data struct to store index usage information.
 type IndexUsageInformation struct {
+	LastUsedAt   string
 	QueryCount   int64
 	RowsSelected int64
-	LastUsedAt   string
 }
 
 // GlobalIndexID is the key type for indexUsageMap.
@@ -267,10 +267,10 @@ type indexUsageMap map[GlobalIndexID]IndexUsageInformation
 
 // SessionIndexUsageCollector is a list item that holds the index usage mapper. If you want to write or read mapper, you must lock it.
 type SessionIndexUsageCollector struct {
+	mapper indexUsageMap
+	next   *SessionIndexUsageCollector
 	sync.Mutex
 
-	mapper  indexUsageMap
-	next    *SessionIndexUsageCollector
 	deleted bool
 }
 
@@ -361,8 +361,8 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	mapper := h.sweepIdxUsageList()
 	type FullIndexUsageInformation struct {
-		id          GlobalIndexID
 		information IndexUsageInformation
+		id          GlobalIndexID
 	}
 	indexInformationSlice := make([]FullIndexUsageInformation, 0, len(mapper))
 	for id, value := range mapper {
@@ -585,6 +585,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 				_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
 					"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS, id, delta.Count, delta.Delta)
 			}
+			TableRowStatsCache.Invalidate(id)
 		}
 		statsVer = startTS
 		return errors.Trace(err)
@@ -643,7 +644,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 			if fb.Tp == statistics.PkType {
 				err = h.DumpFeedbackToKV(fb)
 			} else {
-				t, ok := h.statsCache.Load().(statsCache).Get(fb.PhysicalID)
+				t, ok := h.statsCache.Load().Get(fb.PhysicalID)
 				if !ok {
 					continue
 				}
@@ -750,7 +751,7 @@ OUTER:
 				newTblStats.Columns[fb.Hist.ID] = &newCol
 			}
 			for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-				oldCache := h.statsCache.Load().(statsCache)
+				oldCache := h.statsCache.Load()
 				if h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version)) {
 					break
 				}
@@ -787,7 +788,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 	}
 	h.mu.Unlock()
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-		oldCache := h.statsCache.Load().(statsCache)
+		oldCache := h.statsCache.Load()
 		if h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version)) {
 			break
 		}
@@ -945,8 +946,8 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		h.colMap.Unlock()
 	}()
 	type pair struct {
-		tblColID   model.TableItemID
 		lastUsedAt string
+		tblColID   model.TableItemID
 	}
 	pairs := make([]pair, 0, len(colMap))
 	for id, t := range colMap {
@@ -1411,7 +1412,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 }
 
 func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
-	t, ok := h.statsCache.Load().(statsCache).Get(q.PhysicalID)
+	t, ok := h.statsCache.Load().Get(q.PhysicalID)
 	if !ok {
 		return
 	}
@@ -1452,7 +1453,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback, enablePseudoForOutdatedStats bool) error {
-	t, ok := h.statsCache.Load().(statsCache).Get(q.PhysicalID)
+	t, ok := h.statsCache.Load().Get(q.PhysicalID)
 	if !ok {
 		return nil
 	}

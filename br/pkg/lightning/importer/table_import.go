@@ -15,11 +15,10 @@
 package importer
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
-	"strconv"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -44,12 +43,11 @@ import (
 	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/extsort"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -67,6 +65,9 @@ type TableImporter struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 	kvStore   tidbkv.Storage
+
+	// dupIgnoreRows tracks the rowIDs of rows that are duplicated and should be ignored.
+	dupIgnoreRows extsort.ExternalSorter
 
 	ignoreColumns map[string]struct{}
 }
@@ -194,7 +195,55 @@ func (tr *TableImporter) importTable(
 		}
 	}
 
-	// 2. Restore engines (if still needed)
+	// 2. Do duplicate detection if needed
+	if isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.OnDuplicate != "" {
+		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
+		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+".dupdetect")
+		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+".dupresult")
+
+		dupIgnoreRows, err := extsort.OpenDiskSorter(resultDir, &extsort.DiskSorterOptions{
+			Concurrency: rc.cfg.App.RegionConcurrency,
+		})
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		tr.dupIgnoreRows = dupIgnoreRows
+
+		if cp.Status < checkpoints.CheckpointStatusDupDetected {
+			d := &dupDetector{
+				tr:     tr,
+				rc:     rc,
+				cp:     cp,
+				logger: tr.logger,
+			}
+			err := d.run(ctx, workingDir, dupIgnoreRows)
+			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusDupDetected)
+			if err := firstErr(err, saveCpErr); err != nil {
+				return false, errors.Trace(err)
+			}
+		}
+
+		if !dupIgnoreRows.IsSorted() {
+			if err := dupIgnoreRows.Sort(ctx); err != nil {
+				return false, errors.Trace(err)
+			}
+		}
+
+		failpoint.Inject("FailAfterDuplicateDetection", func() {
+			panic("forcing failure after duplicate detection")
+		})
+	}
+
+	// 3. Drop indexes if add-index-by-sql is enabled
+	if cp.Status < checkpoints.CheckpointStatusIndexDropped && isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.AddIndexBySQL {
+		err := tr.dropIndexes(ctx, rc.db)
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexDropped)
+		if err := firstErr(err, saveCpErr); err != nil {
+			return false, errors.Trace(err)
+		}
+	}
+
+	// 4. Restore engines (if still needed)
 	err := tr.importEngines(ctx, rc, cp)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -205,13 +254,16 @@ func (tr *TableImporter) importTable(
 		return false, errors.Trace(err)
 	}
 
-	// 3. Post-process. With the last parameter set to false, we can allow delay analyze execute latter
+	// 5. Post-process. With the last parameter set to false, we can allow delay analyze execute latter
 	return tr.postProcess(ctx, rc, cp, false /* force-analyze */, metaMgr)
 }
 
 // Close implements the Importer interface.
 func (tr *TableImporter) Close() {
 	tr.encTable = nil
+	if tr.dupIgnoreRows != nil {
+		_ = tr.dupIgnoreRows.Close()
+	}
 	tr.logger.Info("restore done")
 }
 
@@ -693,7 +745,7 @@ ChunkLoop:
 			setError(err)
 			break
 		}
-		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
+		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo.Core)
 		if err != nil {
 			setError(err)
 			break
@@ -1217,6 +1269,48 @@ func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB) error {
 	return err
 }
 
+func (tr *TableImporter) dropIndexes(ctx context.Context, db *sql.DB) error {
+	logger := log.FromContext(ctx).With(zap.String("table", tr.tableName))
+
+	tblInfo := tr.tableInfo
+	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
+	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo.Core)
+	for _, idxInfo := range dropIndexes {
+		sqlStr := common.BuildDropIndexSQL(tableName, idxInfo)
+
+		logger.Info("drop index", zap.String("sql", sqlStr))
+
+		s := common.SQLWithRetry{
+			DB:     db,
+			Logger: logger,
+		}
+		if err := s.Exec(ctx, "drop index", sqlStr); err != nil {
+			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
+				switch merr.Number {
+				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
+					remainIndexes = append(remainIndexes, idxInfo)
+					logger.Info("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
+					continue
+				}
+			}
+			return common.ErrDropIndexFailed.Wrap(err).GenWithStackByArgs(common.EscapeIdentifier(idxInfo.Name.O), tr.tableName)
+		}
+	}
+	if len(remainIndexes) < len(tblInfo.Core.Indices) {
+		// Must clone (*model.TableInfo) before modifying it, since it may be referenced in other place.
+		tblInfo.Core = tblInfo.Core.Clone()
+		tblInfo.Core.Indices = remainIndexes
+
+		// Rebuild encTable.
+		encTable, err := tables.TableFromMeta(tr.alloc, tblInfo.Core)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tr.encTable = encTable
+	}
+	return nil
+}
+
 func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr error) {
 	const progressStep = "add-index"
 	task := tr.logger.Begin(zap.InfoLevel, "add indexes")
@@ -1227,7 +1321,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	tblInfo := tr.tableInfo
 	tableName := tr.tableName
 
-	singleSQL, multiSQLs := buildAddIndexSQL(tableName, tblInfo.Core, tblInfo.Desired)
+	singleSQL, multiSQLs := common.BuildAddIndexSQL(tableName, tblInfo.Core, tblInfo.Desired)
 	if len(multiSQLs) == 0 {
 		return nil
 	}
@@ -1269,7 +1363,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	if err == nil {
 		return nil
 	}
-	if !isDupKeyError(err) {
+	if !common.IsDupKeyError(err) {
 		return err
 	}
 	if len(multiSQLs) == 1 {
@@ -1287,7 +1381,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 				logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 			}
 		})
-		if err != nil && !isDupKeyError(err) {
+		if err != nil && !common.IsDupKeyError(err) {
 			return err
 		}
 		baseProgress += 1.0 / float64(len(multiSQLs))
@@ -1373,79 +1467,6 @@ func (*TableImporter) executeDDL(
 			}
 		}
 	}
-}
-
-// buildAddIndexSQL builds the SQL statement to create missing indexes.
-// It returns both a single SQL statement that creates all indexes at once,
-// and a list of SQL statements that creates each index individually.
-func buildAddIndexSQL(tableName string, curTblInfo, desiredTblInfo *model.TableInfo) (singleSQL string, multiSQLs []string) {
-	addIndexSpecs := make([]string, 0, len(desiredTblInfo.Indices))
-	for _, desiredIdxInfo := range desiredTblInfo.Indices {
-		present := false
-		for _, curIdxInfo := range curTblInfo.Indices {
-			if curIdxInfo.Name.L == desiredIdxInfo.Name.L {
-				present = true
-			}
-		}
-		if present {
-			continue
-		}
-
-		var buf bytes.Buffer
-		if desiredIdxInfo.Primary {
-			buf.WriteString("ADD PRIMARY KEY ")
-		} else if desiredIdxInfo.Unique {
-			buf.WriteString("ADD UNIQUE KEY ")
-		} else {
-			buf.WriteString("ADD KEY ")
-		}
-		// "primary" is a special name for primary key, we should not use it as index name.
-		if desiredIdxInfo.Name.L != "primary" {
-			buf.WriteString(common.EscapeIdentifier(desiredIdxInfo.Name.O))
-		}
-
-		colStrs := make([]string, 0, len(desiredIdxInfo.Columns))
-		for _, col := range desiredIdxInfo.Columns {
-			var colStr string
-			if desiredTblInfo.Columns[col.Offset].Hidden {
-				colStr = fmt.Sprintf("(%s)", desiredTblInfo.Columns[col.Offset].GeneratedExprString)
-			} else {
-				colStr = common.EscapeIdentifier(col.Name.O)
-				if col.Length != types.UnspecifiedLength {
-					colStr = fmt.Sprintf("%s(%s)", colStr, strconv.Itoa(col.Length))
-				}
-			}
-			colStrs = append(colStrs, colStr)
-		}
-		fmt.Fprintf(&buf, "(%s)", strings.Join(colStrs, ","))
-
-		if desiredIdxInfo.Invisible {
-			fmt.Fprint(&buf, " INVISIBLE")
-		}
-		if desiredIdxInfo.Comment != "" {
-			fmt.Fprintf(&buf, ` COMMENT '%s'`, format.OutputFormat(desiredIdxInfo.Comment))
-		}
-		addIndexSpecs = append(addIndexSpecs, buf.String())
-	}
-	if len(addIndexSpecs) == 0 {
-		return "", nil
-	}
-
-	singleSQL = fmt.Sprintf("ALTER TABLE %s %s", tableName, strings.Join(addIndexSpecs, ", "))
-	for _, spec := range addIndexSpecs {
-		multiSQLs = append(multiSQLs, fmt.Sprintf("ALTER TABLE %s %s", tableName, spec))
-	}
-	return singleSQL, multiSQLs
-}
-
-func isDupKeyError(err error) bool {
-	if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
-		switch merr.Number {
-		case errno.ErrDupKeyName, errno.ErrMultiplePriKey, errno.ErrDupUnique:
-			return true
-		}
-	}
-	return false
 }
 
 func isDeterminedError(err error) bool {

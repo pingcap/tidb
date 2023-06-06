@@ -61,7 +61,9 @@ STATICHECK_ANALYZERS = [
     "SA2003",
     "SA3000",
     "SA3001",
+    "SA4004",
     "SA4009",
+    "SA4018",
     "SA5000",
     "SA5001",
     "SA5002",
@@ -78,6 +80,7 @@ STATICHECK_ANALYZERS = [
     "SA6001",
     "SA6002",
     "SA6005",
+    "QF1002",
     "U1000",
 ]
 
@@ -125,6 +128,7 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/unusedresult:go_default_library",
                "//build/linter/asciicheck",
                "//build/linter/bodyclose",
+               "//build/linter/deferrecover",
                "//build/linter/durationcheck",
                "//build/linter/etcdconfig",
                "//build/linter/exportloopref",

@@ -924,7 +924,6 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			logutil.BgLogger().Warn("[ddl] run reorg job failed, convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
-			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
 		return false, ver, errors.Trace(err)
 	}
@@ -943,7 +942,6 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
 			if !errorIsRetryable(err, job) {
 				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
-				ingest.LitBackCtxMgr.Unregister(job.ID)
 			}
 		}
 		return false, ver, errors.Trace(err)
@@ -1015,7 +1013,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
-	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+	err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onCreateIndex",
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
@@ -1113,9 +1111,6 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-				ingest.LitBackCtxMgr.Unregister(job.ID)
-			}
 			job.Args[0] = indexInfo.ID
 		} else {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,

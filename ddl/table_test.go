@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"

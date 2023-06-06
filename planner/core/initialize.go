@@ -93,6 +93,12 @@ func (p LogicalProjection) Init(ctx sessionctx.Context, offset int) *LogicalProj
 	return &p
 }
 
+// Init initializes LogicalProjection.
+func (p LogicalExpand) Init(ctx sessionctx.Context, offset int) *LogicalExpand {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
+	return &p
+}
+
 // Init initializes PhysicalProjection.
 func (p PhysicalProjection) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalProjection {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeProj, &p, offset)
@@ -249,6 +255,12 @@ func (p Insert) Init(ctx sessionctx.Context) *Insert {
 // Init initializes LoadData.
 func (p LoadData) Init(ctx sessionctx.Context) *LoadData {
 	p.basePlan = newBasePlan(ctx, plancodec.TypeLoadData, 0)
+	return &p
+}
+
+// Init initializes ImportInto.
+func (p ImportInto) Init(ctx sessionctx.Context) *ImportInto {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeImportInto, 0)
 	return &p
 }
 
