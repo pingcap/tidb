@@ -72,8 +72,8 @@ type Handle struct {
 	// sysProcTracker is used to track sys process like analyze
 	sysProcTracker sessionctx.SysProcTracker
 
-	// serverIDGetter is used to get server ID for generating auto analyze ID.
-	serverIDGetter func() uint64
+	// autoAnalyzeProcIDGetter is used to generate auto analyze ID.
+	autoAnalyzeProcIDGetter func() uint64
 
 	InitStatsDone chan struct{}
 
@@ -90,7 +90,7 @@ type Handle struct {
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
 	statsCache struct {
-		atomic.Value
+		atomic.Pointer[statsCache]
 		memTracker *memory.Tracker
 		sync.Mutex
 	}
@@ -453,7 +453,8 @@ func (h *Handle) Clear() {
 	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
 	h.mu.Lock()
 	h.statsCache.Lock()
-	h.statsCache.Store(newStatsCache())
+	newCache := newStatsCache()
+	h.statsCache.Store(&newCache)
 	h.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	h.statsCache.Unlock()
 	for len(h.ddlEventCh) > 0 {
@@ -483,23 +484,24 @@ type sessionPool interface {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, serverIDGetter func() uint64) (*Handle, error) {
+func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 	handle := &Handle{
-		ddlEventCh:       make(chan *ddlUtil.Event, 1000),
-		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
-		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
-		pool:             pool,
-		sysProcTracker:   tracker,
-		serverIDGetter:   serverIDGetter,
-		InitStatsDone:    make(chan struct{}),
+		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
+		listHead:                &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
+		idxUsageListHead:        &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
+		pool:                    pool,
+		sysProcTracker:          tracker,
+		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
+		InitStatsDone:           make(chan struct{}),
 	}
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
 	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
-	handle.statsCache.Store(newStatsCache())
+	newCache := newStatsCache()
+	handle.statsCache.Store(&newCache)
 	handle.globalMap.data = make(tableDeltaMap)
 	handle.feedback.data = statistics.NewQueryFeedbackMap()
 	handle.colMap.data = make(colStatsUsageMap)
@@ -547,7 +549,7 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 	}
 
 	distribution := make([]int64, 5)
-	for _, tbl := range v.(statsCache).Values() {
+	for _, tbl := range v.Values() {
 		healthy, ok := tbl.GetStatsHealthy()
 		if !ok {
 			continue
@@ -570,7 +572,7 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
-	oldCache := h.statsCache.Load().(statsCache)
+	oldCache := h.statsCache.Load()
 	lastVersion := oldCache.version
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
@@ -991,7 +993,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 		tbl.PhysicalID = pid
 		return tbl
 	}
-	statsCache := h.statsCache.Load().(statsCache)
+	statsCache := h.statsCache.Load()
 	var ok bool
 	option := &tableStatsOption{}
 	for _, opt := range opts {
@@ -1014,7 +1016,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 }
 
 func (h *Handle) statsCacheLen() int {
-	return h.statsCache.Load().(statsCache).Len()
+	return h.statsCache.Load().Len()
 }
 
 // updateStatsCache overrides the global statsCache with a new one, it may fail
@@ -1022,11 +1024,11 @@ func (h *Handle) statsCacheLen() int {
 // Callers should add retry loop if necessary.
 func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	h.statsCache.Lock()
-	oldCache := h.statsCache.Load().(statsCache)
+	oldCache := h.statsCache.Load()
 	newCost := newCache.Cost()
 	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
 		h.statsCache.memTracker.Consume(newCost - oldCache.Cost())
-		h.statsCache.Store(newCache)
+		h.statsCache.Store(&newCache)
 		updated = true
 	}
 	h.statsCache.Unlock()
@@ -1066,7 +1068,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 }
 
 func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col model.TableItemID, loadFMSketch bool) (err error) {
-	oldCache := h.statsCache.Load().(statsCache)
+	oldCache := h.statsCache.Load()
 	tbl, ok := oldCache.Get(col.TableID)
 	if !ok {
 		return nil
@@ -1115,7 +1117,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
-	oldCache = h.statsCache.Load().(statsCache)
+	oldCache = h.statsCache.Load()
 	tbl, ok = oldCache.Get(col.TableID)
 	if !ok {
 		return nil
@@ -1129,7 +1131,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 }
 
 func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx model.TableItemID, loadFMSketch bool) (err error) {
-	oldCache := h.statsCache.Load().(statsCache)
+	oldCache := h.statsCache.Load()
 	tbl, ok := oldCache.Get(idx.TableID)
 	if !ok {
 		return nil
@@ -1168,7 +1170,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
 	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
-	oldCache = h.statsCache.Load().(statsCache)
+	oldCache = h.statsCache.Load()
 	tbl, ok = oldCache.Get(idx.TableID)
 	if !ok {
 		return nil
@@ -1183,12 +1185,12 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 
 // LastUpdateVersion gets the last update version.
 func (h *Handle) LastUpdateVersion() uint64 {
-	return h.statsCache.Load().(statsCache).version
+	return h.statsCache.Load().version
 }
 
 // SetLastUpdateVersion sets the last update version.
 func (h *Handle) SetLastUpdateVersion(version uint64) {
-	statsCache := h.statsCache.Load().(statsCache)
+	statsCache := h.statsCache.Load()
 	h.updateStatsCache(statsCache.update(nil, nil, version))
 }
 
@@ -1220,7 +1222,7 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			err = err1
 		}
 	}()
-	statsTbl, ok := h.statsCache.Load().(statsCache).Get(physicalID)
+	statsTbl, ok := h.statsCache.Load().Get(physicalID)
 	if !ok {
 		statsTbl = nil
 	}
@@ -1817,7 +1819,7 @@ const updateStatsCacheRetryCnt = 5
 
 func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-		oldCache := h.statsCache.Load().(statsCache)
+		oldCache := h.statsCache.Load()
 		tbl, ok := oldCache.Get(tableID)
 		if !ok || tbl.ExtendedStats == nil || len(tbl.ExtendedStats.Stats) == 0 {
 			return
@@ -1848,7 +1850,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 		}
 	}()
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-		oldCache := h.statsCache.Load().(statsCache)
+		oldCache := h.statsCache.Load()
 		tables := make([]*statistics.Table, 0, oldCache.Len())
 		for physicalID, tbl := range oldCache.Map() {
 			t, err := statistics.ExtendedStatsFromStorage(reader, tbl.Copy(), physicalID, true)
@@ -2306,7 +2308,7 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 	if v == nil {
 		return
 	}
-	sc := v.(statsCache)
+	sc := v
 	sc.SetCapacity(c)
 }
 
@@ -2320,6 +2322,6 @@ func (h *Handle) GetStatsCacheFrontTable() int64 {
 	if v == nil {
 		return 0
 	}
-	sc := v.(statsCache)
+	sc := v
 	return sc.Front()
 }
