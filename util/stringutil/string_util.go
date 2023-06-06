@@ -336,7 +336,7 @@ func Escape(str string, sqlMode mysql.SQLMode) string {
 	} else {
 		quote = "`"
 	}
-	return quote + strings.Replace(str, quote, quote+quote, -1) + quote
+	return quote + strings.ReplaceAll(str, quote, quote+quote) + quote
 }
 
 // BuildStringFromLabels construct config labels into string by following format:

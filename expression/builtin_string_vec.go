@@ -2400,7 +2400,7 @@ func (b *builtinReplaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 			result.AppendString(str)
 			continue
 		}
-		str = strings.Replace(str, oldStr, newStr, -1)
+		str = strings.ReplaceAll(str, oldStr, newStr)
 		result.AppendString(str)
 	}
 	return nil
@@ -2911,8 +2911,8 @@ func (b *builtinFromBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			continue
 		}
 
-		str = strings.Replace(str, "\t", "", -1)
-		str = strings.Replace(str, " ", "", -1)
+		str = strings.ReplaceAll(str, "\t", "")
+		str = strings.ReplaceAll(str, " ", "")
 		newStr, err := base64.StdEncoding.DecodeString(str)
 		if err != nil {
 			// When error happens, take `from_base64("asc")` as an example, we should return NULL.

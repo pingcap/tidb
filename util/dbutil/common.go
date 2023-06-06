@@ -729,7 +729,7 @@ func ColumnName(column string) string {
 }
 
 func escapeName(name string) string {
-	return strings.Replace(name, "`", "``", -1)
+	return strings.ReplaceAll(name, "`", "``")
 }
 
 // ReplacePlaceholder will use args to replace '?', used for log.
@@ -740,7 +740,7 @@ func ReplacePlaceholder(str string, args []string) string {
 		str is "a > ? AND a < ?", args is {'1', '2'},
 		this function will return "a > '1' AND a < '2'"
 	*/
-	newStr := strings.Replace(str, "?", "'%s'", -1)
+	newStr := strings.ReplaceAll(str, "?", "'%s'")
 	return fmt.Sprintf(newStr, util.StringsToInterfaces(args)...)
 }
 

@@ -2898,21 +2898,21 @@ func (du *baseDateArithmetical) getIntervalFromDecimal(ctx sessionctx.Context, a
 		}
 		switch strings.ToUpper(unit) {
 		case "HOUR_MINUTE", "MINUTE_SECOND":
-			interval = strings.Replace(interval, ".", ":", -1)
+			interval = strings.ReplaceAll(interval, ".", ":")
 		case "YEAR_MONTH":
-			interval = strings.Replace(interval, ".", "-", -1)
+			interval = strings.ReplaceAll(interval, ".", "-")
 		case "DAY_HOUR":
-			interval = strings.Replace(interval, ".", " ", -1)
+			interval = strings.ReplaceAll(interval, ".", " ")
 		case "DAY_MINUTE":
-			interval = "0 " + strings.Replace(interval, ".", ":", -1)
+			interval = "0 " + strings.ReplaceAll(interval, ".", ":")
 		case "DAY_SECOND":
-			interval = "0 00:" + strings.Replace(interval, ".", ":", -1)
+			interval = "0 00:" + strings.ReplaceAll(interval, ".", ":")
 		case "DAY_MICROSECOND":
 			interval = "0 00:00:" + interval
 		case "HOUR_MICROSECOND":
 			interval = "00:00:" + interval
 		case "HOUR_SECOND":
-			interval = "00:" + strings.Replace(interval, ".", ":", -1)
+			interval = "00:" + strings.ReplaceAll(interval, ".", ":")
 		case "MINUTE_MICROSECOND":
 			interval = "00:" + interval
 		case "SECOND_MICROSECOND":
@@ -3288,23 +3288,23 @@ func (du *baseDateArithmetical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, in
 		switch strings.ToUpper(unit) {
 		case "HOUR_MINUTE", "MINUTE_SECOND":
 			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
-				return strings.Replace(val, ".", ":", -1), false, nil
+				return strings.ReplaceAll(val, ".", ":"), false, nil
 			}
 		case "YEAR_MONTH":
 			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
-				return strings.Replace(val, ".", "-", -1), false, nil
+				return strings.ReplaceAll(val, ".", "-"), false, nil
 			}
 		case "DAY_HOUR":
 			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
-				return strings.Replace(val, ".", " ", -1), false, nil
+				return strings.ReplaceAll(val, ".", " "), false, nil
 			}
 		case "DAY_MINUTE":
 			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
-				return "0 " + strings.Replace(val, ".", ":", -1), false, nil
+				return "0 " + strings.ReplaceAll(val, ".", ":"), false, nil
 			}
 		case "DAY_SECOND":
 			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
-				return "0 00:" + strings.Replace(val, ".", ":", -1), false, nil
+				return "0 00:" + strings.ReplaceAll(val, ".", ":"), false, nil
 			}
 		case "DAY_MICROSECOND":
 			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
@@ -3316,7 +3316,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, in
 			}
 		case "HOUR_SECOND":
 			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
-				return "00:" + strings.Replace(val, ".", ":", -1), false, nil
+				return "00:" + strings.ReplaceAll(val, ".", ":"), false, nil
 			}
 		case "MINUTE_MICROSECOND":
 			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
