@@ -3235,6 +3235,13 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 	return nil
 }
 
+// used in resource_groups
+const (
+	burstableStr      = "YES"
+	burstdisableStr   = "NO"
+	unlimitedFillRate = "UNLIMITED"
+)
+
 func (e *memtableRetriever) setDataFromResourceGroups() error {
 	resourceGroups, err := infosync.ListResourceGroups(context.TODO())
 	if err != nil {
@@ -3243,29 +3250,52 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 	rows := make([][]types.Datum, 0, len(resourceGroups))
 	for _, group := range resourceGroups {
 		//mode := ""
-		burstable := "NO"
+		burstable := burstdisableStr
 		priority := model.PriorityValueToName(uint64(group.Priority))
-		fillrate := "UNLIMITED"
+		fillrate := unlimitedFillRate
 		isDefaultInReservedSetting := group.Name == "default" && group.RUSettings.RU.Settings.FillRate == math.MaxInt32
 		if !isDefaultInReservedSetting {
 			fillrate = strconv.FormatUint(group.RUSettings.RU.Settings.FillRate, 10)
 		}
+		// convert runaway settings
+		queryLimit := ""
+		if setting := group.RunawaySettings; setting != nil {
+			runawayRule, runawayAction, runawayWatch := "", "", ""
+			if setting.Rule == nil {
+				return errors.Errorf("unexpected runaway config in resource group")
+			}
+			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
+			runawayRule = fmt.Sprintf("%s=%s", "EXEC_ELAPSED", dur.String())
+			runawayAction = fmt.Sprintf("%s=%s", "ACTION", model.RunawayActionType(setting.Action).String())
+			if setting.Watch != nil {
+				dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
+				runawayWatch = fmt.Sprintf("%s=%s[%s]", "WATCH", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())
+				queryLimit = fmt.Sprintf("%s, %s, %s", runawayRule, runawayAction, runawayWatch)
+			} else {
+				queryLimit = fmt.Sprintf("%s, %s", runawayRule, runawayAction)
+			}
+		}
 		switch group.Mode {
 		case rmpb.GroupMode_RUMode:
 			if group.RUSettings.RU.Settings.BurstLimit < 0 {
-				burstable = "YES"
+				burstable = burstableStr
 			}
 			row := types.MakeDatums(
 				group.Name,
 				fillrate,
 				priority,
 				burstable,
+				queryLimit,
 			)
+			if len(queryLimit) == 0 {
+				row[4].SetNull()
+			}
 			rows = append(rows, row)
 		default:
 			//mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
 				group.Name,
+				nil,
 				nil,
 				nil,
 				nil,
