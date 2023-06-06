@@ -26,69 +26,69 @@ run_lightning_expecting_fail() {
 
 run_sql 'DROP DATABASE IF EXISTS charsets;'
 
-## gb18030
-#
-#run_lightning --config "tests/$TEST_NAME/auto.toml" -d "tests/$TEST_NAME/gb18030"
-#run_sql 'SELECT sum(`主键`) AS s FROM charsets.gb18030'
-#check_contains 's: 267'
-#run_sql 'DROP TABLE charsets.gb18030;'
-#
-#run_lightning --config "tests/$TEST_NAME/gb18030.toml" -d "tests/$TEST_NAME/gb18030"
-#run_sql 'SELECT sum(`主键`) AS s FROM charsets.gb18030'
-#check_contains 's: 267'
-#run_sql 'DROP TABLE charsets.gb18030;'
-#
-#run_lightning_expecting_fail --config "tests/$TEST_NAME/utf8mb4.toml" -d "tests/$TEST_NAME/gb18030"
-#
-#run_lightning --config "tests/$TEST_NAME/binary.toml" -d "tests/$TEST_NAME/gb18030"
-#run_sql 'SELECT sum(`????`) AS s FROM charsets.gb18030'
-#check_contains 's: 267'
-#
-## utf8mb4
-#
-#run_lightning --config "tests/$TEST_NAME/auto.toml" -d "tests/$TEST_NAME/utf8mb4"
-#run_sql 'SELECT sum(`主键`) AS s FROM charsets.utf8mb4'
-#check_contains 's: 1119'
-#run_sql 'DROP TABLE charsets.utf8mb4;'
-#
-#run_lightning --config "tests/$TEST_NAME/gb18030.toml" -d "tests/$TEST_NAME/utf8mb4"
-#run_sql 'SELECT sum(`涓婚敭`) AS s FROM charsets.utf8mb4'
-#check_contains 's: 1119'
-#run_sql 'DROP TABLE charsets.utf8mb4;'
-#
-#run_lightning --config "tests/$TEST_NAME/utf8mb4.toml" -d "tests/$TEST_NAME/utf8mb4"
-#run_sql 'SELECT sum(`主键`) AS s FROM charsets.utf8mb4'
-#check_contains 's: 1119'
-#run_sql 'DROP TABLE charsets.utf8mb4;'
-#
-#run_lightning --config "tests/$TEST_NAME/binary.toml" -d "tests/$TEST_NAME/utf8mb4"
-#run_sql 'SELECT sum(`主键`) AS s FROM charsets.utf8mb4'
-#check_contains 's: 1119'
-#
-## mixed
-#
-#run_lightning_expecting_fail --config "tests/$TEST_NAME/auto.toml" -d "tests/$TEST_NAME/mixed"
-#run_lightning_expecting_fail --config "tests/$TEST_NAME/gb18030.toml" -d "tests/$TEST_NAME/mixed"
-#run_lightning_expecting_fail --config "tests/$TEST_NAME/utf8mb4.toml" -d "tests/$TEST_NAME/mixed"
-#
-#run_lightning --config "tests/$TEST_NAME/binary.toml" -d "tests/$TEST_NAME/mixed"
-#run_sql 'SELECT sum(`唯一键`) AS s FROM charsets.mixed'
-#check_contains 's: 5291'
-#
-## test about unsupported charset in UTF-8 encoding dump files
-## test local backend
-#run_lightning --config "tests/$TEST_NAME/greek.toml" -d "tests/$TEST_NAME/greek" 2>&1 | grep -q "Unknown character set: 'greek'"
-#run_sql 'DROP DATABASE IF EXISTS charsets;'
-#run_sql 'CREATE DATABASE charsets;'
-#run_sql 'CREATE TABLE charsets.greek (c VARCHAR(20) PRIMARY KEY);'
-#run_lightning --config "tests/$TEST_NAME/greek.toml" -d "tests/$TEST_NAME/greek"
-#run_sql "SELECT count(*) FROM charsets.greek WHERE c = 'α';"
-#check_contains 'count(*): 1'
-## test tidb backend
-#run_sql 'TRUNCATE TABLE charsets.greek;'
-#run_lightning --config "tests/$TEST_NAME/greek.toml" -d "tests/$TEST_NAME/greek" --backend tidb
-#run_sql "SELECT count(*) FROM charsets.greek WHERE c = 'α';"
-#check_contains 'count(*): 1'
+# gb18030
+
+run_lightning --config "tests/$TEST_NAME/auto.toml" -d "tests/$TEST_NAME/gb18030"
+run_sql 'SELECT sum(`主键`) AS s FROM charsets.gb18030'
+check_contains 's: 267'
+run_sql 'DROP TABLE charsets.gb18030;'
+
+run_lightning --config "tests/$TEST_NAME/gb18030.toml" -d "tests/$TEST_NAME/gb18030"
+run_sql 'SELECT sum(`主键`) AS s FROM charsets.gb18030'
+check_contains 's: 267'
+run_sql 'DROP TABLE charsets.gb18030;'
+
+run_lightning_expecting_fail --config "tests/$TEST_NAME/utf8mb4.toml" -d "tests/$TEST_NAME/gb18030"
+
+run_lightning --config "tests/$TEST_NAME/binary.toml" -d "tests/$TEST_NAME/gb18030"
+run_sql 'SELECT sum(`????`) AS s FROM charsets.gb18030'
+check_contains 's: 267'
+
+# utf8mb4
+
+run_lightning --config "tests/$TEST_NAME/auto.toml" -d "tests/$TEST_NAME/utf8mb4"
+run_sql 'SELECT sum(`主键`) AS s FROM charsets.utf8mb4'
+check_contains 's: 1119'
+run_sql 'DROP TABLE charsets.utf8mb4;'
+
+run_lightning --config "tests/$TEST_NAME/gb18030.toml" -d "tests/$TEST_NAME/utf8mb4"
+run_sql 'SELECT sum(`涓婚敭`) AS s FROM charsets.utf8mb4'
+check_contains 's: 1119'
+run_sql 'DROP TABLE charsets.utf8mb4;'
+
+run_lightning --config "tests/$TEST_NAME/utf8mb4.toml" -d "tests/$TEST_NAME/utf8mb4"
+run_sql 'SELECT sum(`主键`) AS s FROM charsets.utf8mb4'
+check_contains 's: 1119'
+run_sql 'DROP TABLE charsets.utf8mb4;'
+
+run_lightning --config "tests/$TEST_NAME/binary.toml" -d "tests/$TEST_NAME/utf8mb4"
+run_sql 'SELECT sum(`主键`) AS s FROM charsets.utf8mb4'
+check_contains 's: 1119'
+
+# mixed
+
+run_lightning_expecting_fail --config "tests/$TEST_NAME/auto.toml" -d "tests/$TEST_NAME/mixed"
+run_lightning_expecting_fail --config "tests/$TEST_NAME/gb18030.toml" -d "tests/$TEST_NAME/mixed"
+run_lightning_expecting_fail --config "tests/$TEST_NAME/utf8mb4.toml" -d "tests/$TEST_NAME/mixed"
+
+run_lightning --config "tests/$TEST_NAME/binary.toml" -d "tests/$TEST_NAME/mixed"
+run_sql 'SELECT sum(`唯一键`) AS s FROM charsets.mixed'
+check_contains 's: 5291'
+
+# test about unsupported charset in UTF-8 encoding dump files
+# test local backend
+run_lightning --config "tests/$TEST_NAME/greek.toml" -d "tests/$TEST_NAME/greek" 2>&1 | grep -q "Unknown character set: 'greek'"
+run_sql 'DROP DATABASE IF EXISTS charsets;'
+run_sql 'CREATE DATABASE charsets;'
+run_sql 'CREATE TABLE charsets.greek (c VARCHAR(20) PRIMARY KEY);'
+run_lightning --config "tests/$TEST_NAME/greek.toml" -d "tests/$TEST_NAME/greek"
+run_sql "SELECT count(*) FROM charsets.greek WHERE c = 'α';"
+check_contains 'count(*): 1'
+# test tidb backend
+run_sql 'TRUNCATE TABLE charsets.greek;'
+run_lightning --config "tests/$TEST_NAME/greek.toml" -d "tests/$TEST_NAME/greek" --backend tidb
+run_sql "SELECT count(*) FROM charsets.greek WHERE c = 'α';"
+check_contains 'count(*): 1'
 
 # latin1
 # wrong encoding will have wrong column name and data
