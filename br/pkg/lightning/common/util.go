@@ -357,10 +357,10 @@ func TableExists(ctx context.Context, db utils.QueryExecutor, schema, table stri
 	query := "SELECT 1 from INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
 	var exist string
 	err := db.QueryRowContext(ctx, query, schema, table).Scan(&exist)
-	switch {
-	case err == nil:
+	switch err {
+	case nil:
 		return true, nil
-	case err == sql.ErrNoRows:
+	case sql.ErrNoRows:
 		return false, nil
 	default:
 		return false, errors.Annotatef(err, "check table exists failed")
@@ -372,10 +372,10 @@ func SchemaExists(ctx context.Context, db utils.QueryExecutor, schema string) (b
 	query := "SELECT 1 from INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?"
 	var exist string
 	err := db.QueryRowContext(ctx, query, schema).Scan(&exist)
-	switch {
-	case err == nil:
+	switch err {
+	case nil:
 		return true, nil
-	case err == sql.ErrNoRows:
+	case sql.ErrNoRows:
 		return false, nil
 	default:
 		return false, errors.Annotatef(err, "check schema exists failed")

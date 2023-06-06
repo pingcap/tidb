@@ -222,8 +222,7 @@ func (rc *Client) getDatabaseByName(name string) (*database, bool) {
 func (rc *Client) afterSystemTablesReplaced(tables []string) error {
 	var err error
 	for _, table := range tables {
-		switch {
-		case table == "user":
+		if table == "user" {
 			if rc.fullClusterRestore {
 				log.Info("privilege system table restored, please reconnect to make it effective")
 				err = rc.dom.NotifyUpdatePrivilege()
