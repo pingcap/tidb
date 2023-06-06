@@ -296,7 +296,7 @@ func runTimerStoreWatchTest(t *testing.T, store *api.TimerStore) {
 
 	ch := store.Watch(ctx)
 	assertWatchEvent := func(tp api.WatchTimerEventType, id string) {
-		timeout := time.NewTimer(time.Second)
+		timeout := time.NewTimer(10 * time.Second)
 		defer timeout.Stop()
 		select {
 		case resp, ok := <-ch:
@@ -384,7 +384,7 @@ func runNotifierTest(t *testing.T, notifier api.TimerWatchEventNotifier) {
 	loop:
 		for {
 			select {
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				require.Equal(t, events, gotEvents, "wait events timeout")
 				return
 			case resp, ok := <-ch:
@@ -412,7 +412,7 @@ func runNotifierTest(t *testing.T, notifier api.TimerWatchEventNotifier) {
 					return
 				}
 				require.False(t, checkNoData)
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				require.FailNow(t, "wait closed timeout")
 			}
 		}

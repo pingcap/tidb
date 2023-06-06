@@ -33,6 +33,7 @@ go_test(
     srcs = ["sql_test.go"],
     embed = [":tablestore"],
     flaky = True,
+    race = "on",
     shard_count = 6,
     deps = [
         "//timer/api",
