@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//ddl/util",
+        "//kv",
         "//metrics",
         "//parser/terror",
         "//util",

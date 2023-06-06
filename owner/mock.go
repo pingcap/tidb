@@ -16,11 +16,14 @@ package owner
 
 import (
 	"context"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var _ Manager = &mockManager{}
@@ -29,18 +32,32 @@ var _ Manager = &mockManager{}
 // It's used for local store and testing.
 // So this worker will always be the owner.
 type mockManager struct {
-	owner       int32
-	id          string // id is the ID of manager.
-	cancel      context.CancelFunc
-	beOwnerHook func()
+	id           string // id is the ID of manager.
+	storeID      string
+	key          string
+	ctx          context.Context
+	wg           sync.WaitGroup
+	cancel       context.CancelFunc
+	beOwnerHook  func()
+	campaignDone chan struct{}
+	resignDone   chan struct{}
 }
 
 // NewMockManager creates a new mock Manager.
-func NewMockManager(ctx context.Context, id string) Manager {
-	_, cancelFunc := context.WithCancel(ctx)
+func NewMockManager(ctx context.Context, id string, store kv.Storage, ownerKey string) Manager {
+	cancelCtx, cancelFunc := context.WithCancel(ctx)
+	storeID := "mock_store_id"
+	if store != nil {
+		storeID = store.UUID()
+	}
 	return &mockManager{
-		id:     id,
-		cancel: cancelFunc,
+		id:           id,
+		storeID:      storeID,
+		key:          ownerKey,
+		ctx:          cancelCtx,
+		cancel:       cancelFunc,
+		campaignDone: make(chan struct{}),
+		resignDone:   make(chan struct{}),
 	}
 }
 
@@ -51,24 +68,33 @@ func (m *mockManager) ID() string {
 
 // IsOwner implements Manager.IsOwner interface.
 func (m *mockManager) IsOwner() bool {
-	return atomic.LoadInt32(&m.owner) == 1
+	logutil.BgLogger().Debug("[ddl] owner manager checks owner",
+		zap.String("ID", m.id), zap.String("ownerKey", m.key))
+	return util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).IsOwner(m.id)
 }
 
 func (m *mockManager) toBeOwner() {
-	if m.beOwnerHook != nil {
-		m.beOwnerHook()
+	ok := util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).SetOwner(m.id)
+	if ok {
+		logutil.BgLogger().Debug("[ddl] owner manager gets owner",
+			zap.String("ID", m.id), zap.String("ownerKey", m.key))
+		if m.beOwnerHook != nil {
+			m.beOwnerHook()
+		}
 	}
-	atomic.StoreInt32(&m.owner, 1)
 }
 
 // RetireOwner implements Manager.RetireOwner interface.
 func (m *mockManager) RetireOwner() {
-	atomic.StoreInt32(&m.owner, 0)
+	util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).UnsetOwner(m.id)
 }
 
 // Cancel implements Manager.Cancel interface.
 func (m *mockManager) Cancel() {
 	m.cancel()
+	m.wg.Wait()
+	logutil.BgLogger().Info("[ddl] owner manager is canceled",
+		zap.String("ID", m.id), zap.String("ownerKey", m.key))
 }
 
 // GetOwnerID implements Manager.GetOwnerID interface.
@@ -88,15 +114,38 @@ func (*mockManager) SetOwnerOpValue(_ context.Context, op OpType) error {
 
 // CampaignOwner implements Manager.CampaignOwner interface.
 func (m *mockManager) CampaignOwner() error {
-	m.toBeOwner()
+	m.wg.Add(1)
+	go func() {
+		logutil.BgLogger().Debug("[ddl] owner manager campaign owner",
+			zap.String("ID", m.id), zap.String("ownerKey", m.key))
+		defer m.wg.Done()
+		for {
+			select {
+			case <-m.campaignDone:
+				m.RetireOwner()
+				logutil.BgLogger().Debug("[ddl] owner manager campaign done", zap.String("ID", m.id))
+				return
+			case <-m.ctx.Done():
+				m.RetireOwner()
+				logutil.BgLogger().Debug("[ddl] owner manager is cancelled", zap.String("ID", m.id))
+				return
+			case <-m.resignDone:
+				m.RetireOwner()
+				time.Sleep(1 * time.Second) // Give a chance to the other owner managers to get owner.
+			default:
+				m.toBeOwner()
+				time.Sleep(1 * time.Second)
+				logutil.BgLogger().Debug("[ddl] owner manager tick", zap.String("ID", m.id),
+					zap.String("ownerKey", m.key), zap.String("currentOwner", util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).GetOwner()))
+			}
+		}
+	}()
 	return nil
 }
 
 // ResignOwner lets the owner start a new election.
 func (m *mockManager) ResignOwner(_ context.Context) error {
-	if m.IsOwner() {
-		m.RetireOwner()
-	}
+	m.resignDone <- struct{}{}
 	return nil
 }
 
@@ -110,8 +159,8 @@ func (m *mockManager) SetBeOwnerHook(hook func()) {
 }
 
 // CampaignCancel implements Manager.CampaignCancel interface
-func (*mockManager) CampaignCancel() {
-	// do nothing
+func (m *mockManager) CampaignCancel() {
+	m.campaignDone <- struct{}{}
 }
 
 func mockDelOwnerKey(mockCal, ownerKey string, m *ownerManager) error {

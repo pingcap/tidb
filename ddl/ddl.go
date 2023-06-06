@@ -628,7 +628,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
-		manager = owner.NewMockManager(ctx, id)
+		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
 		schemaSyncer = NewMockSchemaSyncer()
 		stateSyncer = NewMockStateSyncer()
 	} else {
