@@ -143,7 +143,7 @@ func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskH
 	if err != nil {
 		return nil, err
 	}
-	var errStrs []string
+	errStrs := make([]string, 0, len(receiveErr))
 	for _, errStr := range receiveErr {
 		errStrs = append(errStrs, string(errStr))
 	}
