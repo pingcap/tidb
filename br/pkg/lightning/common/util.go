@@ -540,15 +540,12 @@ func BuildAddIndexSQL(
 	desiredTblInfo *model.TableInfo,
 ) (singleSQL string, multiSQLs []string) {
 	addIndexSpecs := make([]string, 0, len(desiredTblInfo.Indices))
+loop:
 	for _, desiredIdxInfo := range desiredTblInfo.Indices {
-		present := false
 		for _, curIdxInfo := range curTblInfo.Indices {
 			if curIdxInfo.Name.L == desiredIdxInfo.Name.L {
-				present = true
+				continue loop
 			}
-		}
-		if present {
-			continue
 		}
 
 		var buf bytes.Buffer
