@@ -214,6 +214,106 @@ func TestHandleMap(t *testing.T) {
 	assert.Equal(t, 2, cnt)
 }
 
+func TestHandleMapWithPartialHandle(t *testing.T) {
+	m := NewHandleMap()
+	ph1 := NewPartitionHandle(1, IntHandle(1))
+	m.Set(ph1, 1)
+
+	ph2 := NewPartitionHandle(2, IntHandle(1))
+	m.Set(ph2, 2)
+
+	ph3 := NewPartitionHandle(1, IntHandle(3))
+	m.Set(ph3, 5)
+
+	ih := IntHandle(1)
+	m.Set(ih, 3)
+
+	dec := types.NewDecFromInt(1)
+	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
+	assert.Nil(t, err)
+	assert.Less(t, len(encoded), 9)
+
+	ch, err := NewCommonHandle(encoded)
+	assert.NoError(t, err)
+	m.Set(ch, 4)
+
+	v, ok := m.Get(ph1)
+	assert.True(t, ok)
+	assert.Equal(t, 1, v)
+
+	v, ok = m.Get(ph2)
+	assert.True(t, ok)
+	assert.Equal(t, 2, v)
+
+	v, ok = m.Get(ph3)
+	assert.True(t, ok)
+	assert.Equal(t, 5, v)
+
+	v, ok = m.Get(ih)
+	assert.True(t, ok)
+	assert.Equal(t, 3, v)
+
+	v, ok = m.Get(ch)
+	assert.True(t, ok)
+	assert.Equal(t, 4, v)
+
+	assert.Equal(t, 5, m.Len())
+
+	m.Delete(ph1)
+	v, ok = m.Get(ph1)
+	assert.False(t, ok)
+	assert.Nil(t, v)
+	assert.Equal(t, 4, m.Len())
+
+	// not panic for delete non exsits handle
+	m.Delete(NewPartitionHandle(3, IntHandle(1)))
+	assert.Equal(t, 4, m.Len())
+}
+
+func TestMemAwareHandleMapWithPartialHandle(t *testing.T) {
+	m := NewMemAwareHandleMap[int]()
+	ph1 := NewPartitionHandle(1, IntHandle(1))
+	m.Set(ph1, 1)
+
+	ph2 := NewPartitionHandle(2, IntHandle(1))
+	m.Set(ph2, 2)
+
+	ph3 := NewPartitionHandle(1, IntHandle(3))
+	m.Set(ph3, 5)
+
+	ih := IntHandle(1)
+	m.Set(ih, 3)
+
+	dec := types.NewDecFromInt(1)
+	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
+	assert.Nil(t, err)
+	assert.Less(t, len(encoded), 9)
+
+	ch, err := NewCommonHandle(encoded)
+	assert.NoError(t, err)
+	m.Set(ch, 4)
+
+	v, ok := m.Get(ph1)
+	assert.True(t, ok)
+	assert.Equal(t, 1, v)
+
+	v, ok = m.Get(ph2)
+	assert.True(t, ok)
+	assert.Equal(t, 2, v)
+
+	v, ok = m.Get(ph3)
+	assert.True(t, ok)
+	assert.Equal(t, 5, v)
+
+	v, ok = m.Get(ih)
+	assert.True(t, ok)
+	assert.Equal(t, 3, v)
+
+	v, ok = m.Get(ch)
+	assert.True(t, ok)
+	assert.Equal(t, 4, v)
+}
+
 func TestKeyRangeDefinition(t *testing.T) {
 	// The struct layout for kv.KeyRange and coprocessor.KeyRange should be exactly the same.
 	// This allow us to use unsafe pointer to convert them and reduce allocation.
