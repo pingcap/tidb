@@ -26,7 +26,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -35,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/extension"
 	_ "github.com/pingcap/tidb/extension/_import"
@@ -341,8 +339,6 @@ func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
 	copr.GlobalMPPFailedStoreProber.Run()
-	err = infosync.CheckTiKVVersion(storage, *semver.New(versioninfo.TiKVMinVersion))
-	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
 	dom, err := session.BootstrapSession(storage)
 	terror.MustNil(err)
@@ -819,7 +815,6 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 		log.Fatal("failed to create the server", zap.Error(err), zap.Stack("stack"))
 	}
 	svr.SetDomain(dom)
-	svr.InitGlobalConnID(dom.ServerID)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 	go dom.MemoryUsageAlarmHandle().SetSessionManager(svr).Run()
 	go dom.ServerMemoryLimitHandle().SetSessionManager(svr).Run()

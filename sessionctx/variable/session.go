@@ -1500,6 +1500,8 @@ var (
 
 	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
 	TiDBOptFixControl44262 uint64 = 44262
+	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
+	TiDBOptFixControl44389 uint64 = 44389
 )
 
 // GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
