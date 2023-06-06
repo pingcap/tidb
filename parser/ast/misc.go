@@ -3517,7 +3517,7 @@ func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Tp == ImportIntoCancel {
 		ctx.WriteKeyWord("CANCEL IMPORT JOB ")
 	} else {
-		return errors.Errorf("invalid IMPORT INTO action type: %d", n.Tp)
+		return errors.Errorf("invalid IMPORT INTO action type: %s", n.Tp)
 	}
 	ctx.WritePlainf("%d", n.JobID)
 	return nil
