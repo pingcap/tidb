@@ -550,7 +550,7 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc := dc.getReorgCtx(job.ID)
 	if rc == nil {
-		logutil.BgLogger().Error("cannot find reorgCtx", zap.Int64("jobID", job.ID))
+		logutil.BgLogger().Warn("cannot find reorgCtx", zap.Int64("jobID", job.ID))
 		return
 	}
 	logutil.BgLogger().Info("[ddl] notify reorg worker the job's state",
