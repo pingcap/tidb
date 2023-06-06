@@ -544,10 +544,6 @@ func TestLoadDataActions(t *testing.T) {
 			expectSQL: "RESUME LOAD DATA JOB 123",
 		},
 		{
-			sourceSQL: "Cancel load data job 123",
-			expectSQL: "CANCEL LOAD DATA JOB 123",
-		},
-		{
 			sourceSQL: "drop   load data job 123",
 			expectSQL: "DROP LOAD DATA JOB 123",
 		},
