@@ -3923,8 +3923,8 @@ func TestPartitionOnMissing(t *testing.T) {
 	tk.MustExec(`CREATE TABLE tt1 (
 		id INT NOT NULL,
 		listid INT,
-		name varchar(10),
-		primary key (listid) clustered
+		name varchar(10)
+		//primary key (listid) clustered
 	)
 	PARTITION BY LIST (listid) (
 		PARTITION p1 VALUES IN (1),
