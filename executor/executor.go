@@ -2465,7 +2465,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 
 	// CheckSum of (handle + index columns).
 	var md5HandleAndIndexCol strings.Builder
-	md5HandleAndIndexCol.WriteString("crc32(md5(concat(")
+	md5HandleAndIndexCol.WriteString("crc32(md5(concat_ws(0x2, ")
 	for _, col := range pkCols {
 		md5HandleAndIndexCol.WriteString(col)
 		md5HandleAndIndexCol.WriteString(", ")
@@ -2487,7 +2487,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 
 	// Used to group by and order.
 	var md5Handle strings.Builder
-	md5Handle.WriteString("crc32(md5(concat(")
+	md5Handle.WriteString("crc32(md5(concat_ws(0x2, ")
 	for i, col := range pkCols {
 		md5Handle.WriteString(col)
 		if i != len(pkCols)-1 {
