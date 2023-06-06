@@ -3058,30 +3058,66 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 }
 
 // SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
-func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, typ ast.ResourceUnitType, stringVal string, uintVal uint64, boolValue bool) error {
-	switch typ {
+func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupOption) error {
+	switch opt.Tp {
 	case ast.ResourceRURate:
-		resourceGroupSettings.RURate = uintVal
+		resourceGroupSettings.RURate = opt.UintValue
 	case ast.ResourcePriority:
-		resourceGroupSettings.Priority = uintVal
+		resourceGroupSettings.Priority = opt.UintValue
 	case ast.ResourceUnitCPU:
-		resourceGroupSettings.CPULimiter = stringVal
+		resourceGroupSettings.CPULimiter = opt.StrValue
 	case ast.ResourceUnitIOReadBandwidth:
-		resourceGroupSettings.IOReadBandwidth = stringVal
+		resourceGroupSettings.IOReadBandwidth = opt.StrValue
 	case ast.ResourceUnitIOWriteBandwidth:
-		resourceGroupSettings.IOWriteBandwidth = stringVal
+		resourceGroupSettings.IOWriteBandwidth = opt.StrValue
 	case ast.ResourceBurstableOpiton:
 		// Some about BurstLimit(b):
 		//   - If b == 0, that means the limiter is unlimited capacity. default use in resource controller (burst with a rate within a unlimited capacity).
 		//   - If b < 0, that means the limiter is unlimited capacity and fillrate(r) is ignored, can be seen as r == Inf (burst with a inf rate within a unlimited capacity).
 		//   - If b > 0, that means the limiter is limited capacity. (current not used).
 		limit := int64(0)
-		if boolValue {
+		if opt.BoolValue {
 			limit = -1
 		}
 		resourceGroupSettings.BurstLimit = limit
+	case ast.ResourceGroupRunaway:
+		for _, opt := range opt.ResourceGroupRunawayOptionList {
+			err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue)
+			if err != nil {
+				return err
+			}
+		}
 	default:
 		return errors.Trace(errors.New("unknown resource unit type"))
+	}
+	return nil
+}
+
+// SetDirectResourceGroupRunawayOption tries to set runaway part of the ResourceGroupSettings.
+func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGroupSettings, typ ast.RunawayOptionType, stringVal string, intVal int32) error {
+	if resourceGroupSettings.Runaway == nil {
+		resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{}
+	}
+	settings := resourceGroupSettings.Runaway
+	switch typ {
+	case ast.RunawayRule:
+		// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
+		dur, err := time.ParseDuration(stringVal)
+		if err != nil {
+			return err
+		}
+		settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
+	case ast.RunawayAction:
+		settings.Action = model.RunawayActionType(intVal)
+	case ast.RunawayWatch:
+		settings.WatchType = model.RunawayWatchType(intVal)
+		dur, err := time.ParseDuration(stringVal)
+		if err != nil {
+			return err
+		}
+		settings.WatchDurationMs = uint64(dur.Milliseconds())
+	default:
+		return errors.Trace(errors.New("unknown runaway option type"))
 	}
 	return nil
 }
@@ -8078,7 +8114,7 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
 	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
 	for _, opt := range options {
-		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue, opt.BoolValue)
+		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt)
 		if err != nil {
 			return nil, err
 		}
