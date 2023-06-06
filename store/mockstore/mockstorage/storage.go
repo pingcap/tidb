@@ -17,7 +17,6 @@ package mockstorage
 import (
 	"context"
 	"crypto/tls"
-	"sync"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/kv"
@@ -33,7 +32,6 @@ type mockStorage struct {
 	*copr.Store
 	memCache  kv.MemManager
 	LockWaits []*deadlockpb.WaitForEntry
-	mu        sync.Mutex
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
@@ -115,8 +113,6 @@ func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 }
 
 func (s *mockStorage) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	select {
 	case <-s.KVStore.Closed():
 		return nil

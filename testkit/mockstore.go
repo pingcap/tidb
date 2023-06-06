@@ -133,6 +133,8 @@ func (d *DistExecutionTestContext) DeleteServer(idx int) error {
 // Close cleanup running goroutines, release resources used
 func (d *DistExecutionTestContext) Close() {
 	d.t.Cleanup(func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
 		gctuner.GlobalMemoryLimitTuner.Stop()
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 		for _, domain := range d.domains {
