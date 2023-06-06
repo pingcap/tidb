@@ -73,7 +73,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 
 	sqlTemplate := "import into t from '/file.csv' with %s"
 	p := parser.New()
-	plan := &Plan{}
+	plan := &Plan{Format: DataFormatCSV}
 	sql := fmt.Sprintf(sqlTemplate, characterSetOption+"='utf8', "+
 		fieldsTerminatedByOption+"='aaa', "+
 		fieldsEnclosedByOption+"='|', "+

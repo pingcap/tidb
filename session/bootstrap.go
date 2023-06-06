@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -1217,6 +1218,15 @@ func syncUpgradeState(s Session) {
 }
 
 func syncNormalRunning(s Session) {
+	failpoint.Inject("mockResumeAllJobsFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			dom := domain.GetDomain(s)
+			//nolint: errcheck
+			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), syncer.NewStateInfo(syncer.StateNormalRunning))
+			failpoint.Return()
+		}
+	})
+
 	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
 	if err != nil {
 		logutil.BgLogger().Warn("[upgrading] resume all paused jobs failed", zap.Error(err))

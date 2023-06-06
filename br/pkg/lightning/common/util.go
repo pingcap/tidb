@@ -361,10 +361,10 @@ func TableExists(ctx context.Context, db utils.QueryExecutor, schema, table stri
 	query := "SELECT 1 from INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
 	var exist string
 	err := db.QueryRowContext(ctx, query, schema, table).Scan(&exist)
-	switch {
-	case err == nil:
+	switch err {
+	case nil:
 		return true, nil
-	case err == sql.ErrNoRows:
+	case sql.ErrNoRows:
 		return false, nil
 	default:
 		return false, errors.Annotatef(err, "check table exists failed")
@@ -376,10 +376,10 @@ func SchemaExists(ctx context.Context, db utils.QueryExecutor, schema string) (b
 	query := "SELECT 1 from INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?"
 	var exist string
 	err := db.QueryRowContext(ctx, query, schema).Scan(&exist)
-	switch {
-	case err == nil:
+	switch err {
+	case nil:
 		return true, nil
-	case err == sql.ErrNoRows:
+	case sql.ErrNoRows:
 		return false, nil
 	default:
 		return false, errors.Annotatef(err, "check schema exists failed")
@@ -540,15 +540,12 @@ func BuildAddIndexSQL(
 	desiredTblInfo *model.TableInfo,
 ) (singleSQL string, multiSQLs []string) {
 	addIndexSpecs := make([]string, 0, len(desiredTblInfo.Indices))
+loop:
 	for _, desiredIdxInfo := range desiredTblInfo.Indices {
-		present := false
 		for _, curIdxInfo := range curTblInfo.Indices {
 			if curIdxInfo.Name.L == desiredIdxInfo.Name.L {
-				present = true
+				continue loop
 			}
-		}
-		if present {
-			continue
 		}
 
 		var buf bytes.Buffer

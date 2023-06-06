@@ -83,6 +83,10 @@ type statsCache struct {
 	minorVersion uint64
 }
 
+func (sc statsCache) len() int {
+	return sc.statsCacheInner.Len()
+}
+
 func (sc statsCache) copy() statsCache {
 	newCache := statsCache{
 		version:      sc.version,

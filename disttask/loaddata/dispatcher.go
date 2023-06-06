@@ -24,6 +24,7 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
@@ -83,6 +83,25 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	logger.Info("process normal flow", zap.Any("task_meta", taskMeta), zap.Any("step", gTask.Step))
 
 	switch gTask.Step {
+	case proto.StepInit:
+		if err := preProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
+			return nil, err
+		}
+		subtaskMetas, err := generateSubtaskMetas(ctx, taskMeta)
+		if err != nil {
+			return nil, err
+		}
+		logger.Info("generate subtasks", zap.Any("subtask_metas", subtaskMetas))
+		metaBytes := make([][]byte, 0, len(subtaskMetas))
+		for _, subtaskMeta := range subtaskMetas {
+			bs, err := json.Marshal(subtaskMeta)
+			if err != nil {
+				return nil, err
+			}
+			metaBytes = append(metaBytes, bs)
+		}
+		gTask.Step = Import
+		return metaBytes, nil
 	case Import:
 		h.switchTiKV2NormalMode(ctx, logutil.BgLogger())
 		if err := postProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
@@ -91,31 +110,8 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		gTask.State = proto.TaskStateSucceed
 		return nil, nil
 	default:
+		return nil, errors.Errorf("unknown step %d", gTask.Step)
 	}
-
-	if err := preProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
-		return nil, err
-	}
-
-	//	schedulers, err := dispatch.GetAllSchedulerIDs(ctx, gTask.ID)
-	//	if err != nil {
-	//		return nil, err
-	//	}
-	subtaskMetas, err := generateSubtaskMetas(ctx, gTask.ID, taskMeta)
-	if err != nil {
-		return nil, err
-	}
-	logger.Info("generate subtasks", zap.Any("subtask_metas", subtaskMetas))
-	metaBytes := make([][]byte, 0, len(subtaskMetas))
-	for _, subtaskMeta := range subtaskMetas {
-		bs, err := json.Marshal(subtaskMeta)
-		if err != nil {
-			return nil, err
-		}
-		metaBytes = append(metaBytes, bs)
-	}
-	gTask.Step = Import
-	return metaBytes, nil
 }
 
 func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
@@ -177,7 +173,7 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 
 // preProcess does the pre processing for the task.
 func preProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) error {
-	logger.Info("pre process", zap.Any("task_meta", taskMeta))
+	logger.Info("pre process", zap.Any("table_info", taskMeta.Plan.TableInfo))
 	if err := dropTableIndexes(ctx, handle, taskMeta, logger); err != nil {
 		return err
 	}
@@ -192,16 +188,11 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 		err = multierr.Append(err, err2)
 	}()
 
-	tableImporter, err := buildTableImporter(ctx, gTask.ID, taskMeta)
+	controller, err := buildController(taskMeta)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		err2 := tableImporter.Close()
-		if err == nil {
-			err = err2
-		}
-	}()
+	// no need and should not call controller.InitDataFiles, files might not exist on this instance.
 
 	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
 	if err != nil {
@@ -218,7 +209,7 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 	}
 
 	logger.Info("post process", zap.Any("task_meta", taskMeta), zap.Any("subtask_metas", subtaskMetas))
-	if err := verifyChecksum(ctx, tableImporter, subtaskMetas, logger); err != nil {
+	if err := verifyChecksum(ctx, controller, subtaskMetas, logger); err != nil {
 		return err
 	}
 
@@ -226,8 +217,8 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 	return updateMeta(gTask, taskMeta)
 }
 
-func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, subtaskMetas []*SubtaskMeta, logger *zap.Logger) error {
-	if tableImporter.Checksum == config.OpLevelOff {
+func verifyChecksum(ctx context.Context, controller *importer.LoadDataController, subtaskMetas []*SubtaskMeta, logger *zap.Logger) error {
+	if controller.Checksum == config.OpLevelOff {
 		return nil
 	}
 	var localChecksum verify.KVChecksum
@@ -236,7 +227,73 @@ func verifyChecksum(ctx context.Context, tableImporter *importer.TableImporter, 
 		localChecksum.Add(&checksum)
 	}
 	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
-	return tableImporter.VerifyChecksum(ctx, localChecksum)
+	return controller.VerifyChecksum(ctx, localChecksum)
+}
+
+func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
+	tblInfo := taskMeta.Plan.TableInfo
+	tableName := common.UniqueTable(taskMeta.Plan.DBName, tblInfo.Name.L)
+
+	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo)
+	for _, idxInfo := range dropIndexes {
+		sqlStr := common.BuildDropIndexSQL(tableName, idxInfo)
+		if err := executeSQL(ctx, handle, logger, sqlStr); err != nil {
+			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
+				switch merr.Number {
+				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
+					remainIndexes = append(remainIndexes, idxInfo)
+					logger.Warn("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
+					continue
+				}
+			}
+			return err
+		}
+	}
+	if len(remainIndexes) < len(tblInfo.Indices) {
+		taskMeta.Plan.TableInfo = taskMeta.Plan.TableInfo.Clone()
+		taskMeta.Plan.TableInfo.Indices = remainIndexes
+	}
+	return nil
+}
+
+func createTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
+	tableName := common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
+	singleSQL, multiSQLs := common.BuildAddIndexSQL(tableName, taskMeta.Plan.TableInfo, taskMeta.Plan.DesiredTableInfo)
+	logger.Info("build add index sql", zap.String("singleSQL", singleSQL), zap.Strings("multiSQLs", multiSQLs))
+	if len(multiSQLs) == 0 {
+		return nil
+	}
+
+	err := executeSQL(ctx, handle, logger, singleSQL)
+	if err == nil {
+		return nil
+	}
+	if !common.IsDupKeyError(err) {
+		// TODO: refine err msg and error code according to spec.
+		return errors.Errorf("Failed to create index: %v, please execute the SQL manually, sql: %s", err, singleSQL)
+	}
+	if len(multiSQLs) == 1 {
+		return nil
+	}
+	logger.Warn("cannot add all indexes in one statement, try to add them one by one", zap.Strings("sqls", multiSQLs), zap.Error(err))
+
+	for i, ddl := range multiSQLs {
+		err := executeSQL(ctx, handle, logger, ddl)
+		if err != nil && !common.IsDupKeyError(err) {
+			// TODO: refine err msg and error code according to spec.
+			return errors.Errorf("Failed to create index: %v, please execute the SQLs manually, sqls: %s", err, strings.Join(multiSQLs[i:], ";"))
+		}
+	}
+	return nil
+}
+
+// TODO: return the result of sql.
+func executeSQL(ctx context.Context, handle dispatcher.TaskHandle, logger *zap.Logger, sql string, args ...interface{}) (err error) {
+	logger.Info("execute sql", zap.String("sql", sql), zap.Any("args", args))
+	return handle.ExecInNewSession(func(se sessionctx.Context) error {
+		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
+		return err
+	})
 }
 
 func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
@@ -322,7 +379,7 @@ func updateMeta(gTask *proto.Task, taskMeta *TaskMeta) error {
 	return nil
 }
 
-func buildTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*importer.TableImporter, error) {
+func buildController(taskMeta *TaskMeta) (*importer.LoadDataController, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
@@ -337,43 +394,48 @@ func buildTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (
 	if err != nil {
 		return nil, err
 	}
-	if err := controller.InitDataFiles(ctx); err != nil {
-		return nil, err
-	}
-
-	return importer.NewTableImporter(&importer.JobImportParam{
-		GroupCtx: ctx,
-		Progress: asyncloaddata.NewProgress(false),
-		Job:      &asyncloaddata.Job{},
-	}, controller, taskID)
+	return controller, nil
 }
 
-func generateSubtaskMetas(ctx context.Context, taskID int64, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {
-	tableImporter, err := buildTableImporter(ctx, taskID, taskMeta)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		err2 := tableImporter.Close()
-		if err == nil {
-			err = err2
-		}
-	}()
-
-	engineCheckpoints, err := tableImporter.PopulateChunks(ctx)
-	if err != nil {
-		return nil, err
-	}
+// todo: converting back and forth, we should unify struct and remove this function later.
+func toChunkMap(engineCheckpoints map[int32]*checkpoints.EngineCheckpoint) map[int32][]Chunk {
+	chunkMap := make(map[int32][]Chunk, len(engineCheckpoints))
 	for id, ecp := range engineCheckpoints {
+		chunkMap[id] = make([]Chunk, 0, len(ecp.Chunks))
+		for _, chunkCheckpoint := range ecp.Chunks {
+			chunkMap[id] = append(chunkMap[id], toChunk(*chunkCheckpoint))
+		}
+	}
+	return chunkMap
+}
+
+func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {
+	var chunkMap map[int32][]Chunk
+	if len(taskMeta.ChunkMap) > 0 {
+		chunkMap = taskMeta.ChunkMap
+	} else {
+		controller, err2 := buildController(taskMeta)
+		if err2 != nil {
+			return nil, err2
+		}
+		if err2 = controller.InitDataFiles(ctx); err2 != nil {
+			return nil, err2
+		}
+
+		engineCheckpoints, err2 := controller.PopulateChunks(ctx)
+		if err2 != nil {
+			return nil, err2
+		}
+		chunkMap = toChunkMap(engineCheckpoints)
+	}
+	for id := range chunkMap {
 		if id == common.IndexEngineID {
 			continue
 		}
 		subtaskMeta := &SubtaskMeta{
-			ID:   id,
-			Plan: taskMeta.Plan,
-		}
-		for _, chunkCheckpoint := range ecp.Chunks {
-			subtaskMeta.Chunks = append(subtaskMeta.Chunks, toChunk(*chunkCheckpoint))
+			ID:     id,
+			Plan:   taskMeta.Plan,
+			Chunks: chunkMap[id],
 		}
 		subtaskMetas = append(subtaskMetas, subtaskMeta)
 	}
