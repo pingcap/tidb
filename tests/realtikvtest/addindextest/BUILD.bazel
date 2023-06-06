@@ -38,6 +38,7 @@ go_test(
         "//ddl",
         "//ddl/ingest",
         "//ddl/testutil",
+        "//errno",
         "//sessionctx/variable",
         "//testkit",
         "//tests/realtikvtest",
