@@ -83,6 +83,25 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	logger.Info("process normal flow", zap.Any("task_meta", taskMeta), zap.Any("step", gTask.Step))
 
 	switch gTask.Step {
+	case proto.StepInit:
+		if err := preProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
+			return nil, err
+		}
+		subtaskMetas, err := generateSubtaskMetas(ctx, taskMeta)
+		if err != nil {
+			return nil, err
+		}
+		logger.Info("generate subtasks", zap.Any("subtask_metas", subtaskMetas))
+		metaBytes := make([][]byte, 0, len(subtaskMetas))
+		for _, subtaskMeta := range subtaskMetas {
+			bs, err := json.Marshal(subtaskMeta)
+			if err != nil {
+				return nil, err
+			}
+			metaBytes = append(metaBytes, bs)
+		}
+		gTask.Step = Import
+		return metaBytes, nil
 	case Import:
 		h.switchTiKV2NormalMode(ctx, logutil.BgLogger())
 		if err := postProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
@@ -91,34 +110,10 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		gTask.State = proto.TaskStateSucceed
 		return nil, nil
 	default:
+		return nil, errors.Errorf("unknown step %d", gTask.Step)
 	}
-
-	if err := preProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
-		return nil, err
-	}
-
-	//	schedulers, err := dispatch.GetAllSchedulerIDs(ctx, gTask.ID)
-	//	if err != nil {
-	//		return nil, err
-	//	}
-	subtaskMetas, err := generateSubtaskMetas(ctx, taskMeta)
-	if err != nil {
-		return nil, err
-	}
-	logger.Info("generate subtasks", zap.Any("subtask_metas", subtaskMetas))
-	metaBytes := make([][]byte, 0, len(subtaskMetas))
-	for _, subtaskMeta := range subtaskMetas {
-		bs, err := json.Marshal(subtaskMeta)
-		if err != nil {
-			return nil, err
-		}
-		metaBytes = append(metaBytes, bs)
-	}
-	gTask.Step = Import
-	return metaBytes, nil
 }
 
-// ProcessErrFlow implements dispatcher.ProcessErrFlow interface.
 func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
 	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
 	logger.Info("process error flow", zap.ByteStrings("error message", receiveErr))
@@ -178,7 +173,7 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 
 // preProcess does the pre processing for the task.
 func preProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) error {
-	logger.Info("pre process", zap.Any("task_meta", taskMeta))
+	logger.Info("pre process", zap.Any("table_info", taskMeta.Plan.TableInfo))
 	if err := dropTableIndexes(ctx, handle, taskMeta, logger); err != nil {
 		return err
 	}
@@ -247,7 +242,7 @@ func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMet
 				switch merr.Number {
 				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
 					remainIndexes = append(remainIndexes, idxInfo)
-					logger.Info("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
+					logger.Warn("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
 					continue
 				}
 			}
@@ -295,7 +290,7 @@ func createTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskM
 // TODO: return the result of sql.
 func executeSQL(ctx context.Context, handle dispatcher.TaskHandle, logger *zap.Logger, sql string, args ...interface{}) (err error) {
 	logger.Info("execute sql", zap.String("sql", sql), zap.Any("args", args))
-	return handle.WithNewSession(func(se sessionctx.Context) error {
+	return handle.ExecInNewSession(func(se sessionctx.Context) error {
 		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
 		return err
 	})
