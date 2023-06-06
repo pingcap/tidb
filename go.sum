@@ -64,6 +64,10 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/BurntSushi/toml v1.2.1 h1:9F2/+DoOYIOksmaJFPw1tGFy1eDnIJXg+UHjuD8lTak=
 github.com/BurntSushi/toml v1.2.1/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbicEuybxQ=
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
+github.com/CabinfeverB/client-go/v2 v2.0.0-20230602095003-9e72e8dd57d9 h1:e6xR0Q/GdE6AWAzf+W7n9br7M7rUg1FV33KwIqmx5zM=
+github.com/CabinfeverB/client-go/v2 v2.0.0-20230602095003-9e72e8dd57d9/go.mod h1:DSHBjSsF/FZ9a30hzcG8RiL4MINCu2d+9BUNU2GjSwk=
+github.com/CabinfeverB/pd/client v0.0.0-20230601154623-a209ebf2b67c h1:rwzgdzfBUFofG6wrzaHLmXNbG8315HZs8QYOZV8I5ns=
+github.com/CabinfeverB/pd/client v0.0.0-20230601154623-a209ebf2b67c/go.mod h1:YmNkj9UT8IjwFov9k3oquH0UgIUHniUaQT3jXKgZYbM=
 github.com/CloudyKit/fastprinter v0.0.0-20170127035650-74b38d55f37a/go.mod h1:EFZQ978U7x8IRnstaskI3IysnWY5Ao3QgZUKOXlsAdw=
 github.com/CloudyKit/jet v2.1.3-0.20180809161101-62edd43e4f88+incompatible/go.mod h1:HPYO+50pSWkPoj9Q/eq0aRGByCL6ScRlUmiEX5Zgm+w=
 github.com/DATA-DOG/go-sqlmock v1.5.0 h1:Shsta01QNfFxHCfpW6YH2STWB0MudeXXEWMr20OEh60=
