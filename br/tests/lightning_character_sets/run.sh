@@ -92,12 +92,11 @@ run_sql 'DROP DATABASE IF EXISTS charsets;'
 
 # latin1
 # wrong encoding will have wrong column name and data
-run_lightning --config "tests/$TEST_NAME/binary.toml" -d "tests/$TEST_NAME/latin1"
-#run_sql 'SELECT sum(`主键`) AS s FROM charsets.utf8mb4'
-#check_contains 's: 1119'
-read -p 123
+run_lightning --config "tests/$TEST_NAME/binary.toml" -d "tests/$TEST_NAME/latin1" 2>&1 | grep -q "unknown columns in header"
 run_sql 'DROP TABLE charsets.latin1;'
-run_lightning --config "tests/$TEST_NAME/utf8mb4.toml" -d "tests/$TEST_NAME/latin1"
+run_lightning --config "tests/$TEST_NAME/utf8mb4.toml" -d "tests/$TEST_NAME/latin1" 2>&1 | grep -q "invalid schema encoding"
+run_lightning --config "tests/$TEST_NAME/latin1.toml" -d "tests/$TEST_NAME/latin1"
+read -p 123
 #run_sql 'SELECT sum(`主键`) AS s FROM charsets.utf8mb4'
 #check_contains 's: 1119'
 #run_sql 'DROP TABLE charsets.utf8mb4;'
