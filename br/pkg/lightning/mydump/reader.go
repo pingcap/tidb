@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/spkg/bom"
 	"go.uber.org/zap"
+	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
@@ -59,6 +60,19 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 		}
 		// check for U+FFFD to see if decoding contains errors.
 		// https://groups.google.com/d/msg/golang-nuts/pENT3i4zJYk/v2X3yyiICwAJ
+		if bytes.ContainsRune(decoded, '\ufffd') {
+			return nil, errInvalidSchemaEncoding
+		}
+		data = decoded
+	case "latin1":
+		// use Windows1252 (not ISO 8859-1) to decode Latin1
+		// https://dev.mysql.com/doc/refman/8.0/en/charset-we-sets.html
+		decoded, err := charmap.Windows1252.NewDecoder().Bytes(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// > Each byte that cannot be transcoded will be represented in the
+		// > output by the UTF-8 encoding of '\uFFFD'
 		if bytes.ContainsRune(decoded, '\ufffd') {
 			return nil, errInvalidSchemaEncoding
 		}
