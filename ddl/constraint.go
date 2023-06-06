@@ -262,10 +262,16 @@ func (w *worker) onAlterCheckConstraintEnforced(d *ddlCtx, t *meta.Meta, job *mo
 			constraintInfo.State = model.StateWriteOnly
 			constraintInfo.Enforced = enforced
 			ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfo.State)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		case model.StateWriteOnly:
 			job.SchemaState = model.StateWriteReorganization
 			constraintInfo.State = model.StateWriteReorganization
 			ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfo.State)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		case model.StateWriteReorganization:
 			// write reorganization -> write only
 			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo, job)
