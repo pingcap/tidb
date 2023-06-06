@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/syncutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -193,7 +194,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		regionSplitSize: int64(config.SplitRegionSize),
 		regionSplitKeys: int64(config.SplitRegionKeys),
 		diskQuota:       adjustDiskQuota(int64(e.DiskQuota), dir, e.logger),
-		diskQuotaLock:   &sync.RWMutex{},
+		diskQuotaLock:   new(syncutil.RWMutex),
 	}, nil
 }
 
@@ -217,7 +218,7 @@ type TableImporter struct {
 	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
 	lastInsertID  uint64
 	diskQuota     int64
-	diskQuotaLock *sync.RWMutex
+	diskQuotaLock *syncutil.RWMutex
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
