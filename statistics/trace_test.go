@@ -247,7 +247,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	// Test using ver2 stats.
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
-		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsSchemaCols[i], tblInfos[i])
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(tblInfos[i], dsSchemaCols[i])
 		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver2")
 		traceInfo := stmtCtx.OptimizerDebugTrace
@@ -271,7 +271,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	stmtCtx.EnableOptimizerDebugTrace = true
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
-		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsSchemaCols[i], tblInfos[i])
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(tblInfos[i], dsSchemaCols[i])
 		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver1")
 		traceInfo := stmtCtx.OptimizerDebugTrace
