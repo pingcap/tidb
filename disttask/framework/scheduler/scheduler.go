@@ -30,7 +30,6 @@ type InternalSchedulerImpl struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	id        string
-	ddlID     string
 	taskID    int64
 	taskTable TaskTable
 	pool      Pool
