@@ -103,7 +103,7 @@ func (b *BuiltinGroupingImplSig) metadata() proto.Message {
 		gm := &tipb.GroupingMark{
 			GroupingNums: make([]uint64, 0, len(groupingMark)),
 		}
-		for k, _ := range groupingMark {
+		for k := range groupingMark {
 			gm.GroupingNums = append(gm.GroupingNums, k)
 		}
 		args.GroupingMarks = append(args.GroupingMarks, gm)
@@ -147,7 +147,7 @@ func (b *BuiltinGroupingImplSig) groupingImplBitAnd(groupingID uint64) int64 {
 	res := uint64(0)
 	for _, groupingMark := range groupingMarks {
 		// for Bit-And mode, there is only one element in groupingMark.
-		for k, _ := range groupingMark {
+		for k := range groupingMark {
 			res <<= 1
 			if groupingID&k <= 0 {
 				// col is not needed, being filled with null and grouped. = 1
@@ -164,7 +164,7 @@ func (b *BuiltinGroupingImplSig) groupingImplNumericCmp(groupingID uint64) int64
 	res := uint64(0)
 	for _, groupingMark := range groupingMarks {
 		// for Num-Cmp mode, there is only one element in groupingMark.
-		for k, _ := range groupingMark {
+		for k := range groupingMark {
 			res <<= 1
 			if groupingID <= k {
 				// col is not needed, being filled with null and grouped. = 1
