@@ -224,7 +224,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	dsColInfos := make([][]*model.ColumnInfo, 0, len(in))
 	dsSchemaCols := make([][]*expression.Column, 0, len(in))
 	selConditions := make([][]expression.Expression, 0, len(in))
-	idxInfos := make([][]*model.IndexInfo, 0, len(in))
+	tblInfos := make([]*model.TableInfo, 0, len(in))
 	for _, sql := range in {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
@@ -240,7 +240,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		dsColInfos = append(dsColInfos, ds.Columns)
 		dsSchemaCols = append(dsSchemaCols, ds.Schema().Columns)
 		selConditions = append(selConditions, sel.Conditions)
-		idxInfos = append(idxInfos, ds.TableInfo().Indices)
+		tblInfos = append(tblInfos, ds.TableInfo())
 	}
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)
@@ -249,7 +249,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	// Test using ver2 stats.
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
-		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsColInfos[i], dsSchemaCols[i], idxInfos[i])
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsColInfos[i], dsSchemaCols[i], tblInfos[i])
 		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver2")
 		traceInfo := stmtCtx.OptimizerDebugTrace
@@ -273,7 +273,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	stmtCtx.EnableOptimizerDebugTrace = true
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
-		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsColInfos[i], dsSchemaCols[i], idxInfos[i])
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsColInfos[i], dsSchemaCols[i], tblInfos[i])
 		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver1")
 		traceInfo := stmtCtx.OptimizerDebugTrace
