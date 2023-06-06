@@ -2203,7 +2203,7 @@ func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 	fn := func() error {
 		switch n.Tp {
 		case RunawayRule:
-			ctx.WriteKeyWord("EXEC_ELAPSED_IN_SEC ")
+			ctx.WriteKeyWord("EXEC_ELAPSED ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
 		case RunawayAction:
@@ -4520,14 +4520,31 @@ func (n *AlterPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+func CheckAppend(ops []*ResourceGroupOption, newOp *ResourceGroupOption) bool {
+	for _, op := range ops {
+		if op.Tp == newOp.Tp {
+			return false
+		}
+	}
+	return true
+}
+
+func CheckRunawayAppend(ops []*ResourceGroupRunawayOption, newOp *ResourceGroupRunawayOption) bool {
+	for _, op := range ops {
+		if op.Tp == newOp.Tp {
+			return false
+		}
+	}
+	return true
+}
+
 // AlterResourceGroupStmt is a statement to alter placement policy option.
 type AlterResourceGroupStmt struct {
 	ddlNode
 
-	ResourceGroupName              model.CIStr
-	IfExists                       bool
-	ResourceGroupOptionList        []*ResourceGroupOption
-	ResourceGroupRunawayOptionList []*ResourceGroupRunawayOption
+	ResourceGroupName       model.CIStr
+	IfExists                bool
+	ResourceGroupOptionList []*ResourceGroupOption
 }
 
 func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
