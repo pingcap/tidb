@@ -1059,7 +1059,7 @@ func (b *builtinReplaceSig) evalString(row chunk.Row) (d string, isNull bool, er
 	if oldStr == "" {
 		return str, false, nil
 	}
-	return strings.Replace(str, oldStr, newStr, -1), false, nil
+	return strings.ReplaceAll(str, oldStr, newStr), false, nil
 }
 
 type convertFunctionClass struct {
@@ -3506,8 +3506,8 @@ func (b *builtinFromBase64Sig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, handleAllowedPacketOverflowed(b.ctx, "from_base64", b.maxAllowedPacket)
 	}
 
-	str = strings.Replace(str, "\t", "", -1)
-	str = strings.Replace(str, " ", "", -1)
+	str = strings.ReplaceAll(str, "\t", "")
+	str = strings.ReplaceAll(str, " ", "")
 	result, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
 		// When error happens, take `from_base64("asc")` as an example, we should return NULL.
