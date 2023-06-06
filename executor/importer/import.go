@@ -146,9 +146,10 @@ type LoadDataReaderInfo struct {
 
 // Plan describes the plan of LOAD DATA.
 type Plan struct {
-	DBName    string
-	DBID      int64
-	TableInfo *model.TableInfo
+	DBName           string
+	DBID             int64
+	TableInfo        *model.TableInfo
+	DesiredTableInfo *model.TableInfo
 
 	Path   string
 	Format string
@@ -334,9 +335,10 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 	}
 
 	p := &Plan{
-		TableInfo: tbl.Meta(),
-		DBName:    plan.Table.Schema.O,
-		DBID:      plan.Table.DBInfo.ID,
+		TableInfo:        tbl.Meta(),
+		DesiredTableInfo: tbl.Meta(),
+		DBName:           plan.Table.Schema.O,
+		DBID:             plan.Table.DBInfo.ID,
 
 		Path:           plan.Path,
 		Format:         format,

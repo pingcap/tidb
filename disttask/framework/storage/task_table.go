@@ -104,7 +104,7 @@ func row2GlobeTask(r chunk.Row) *proto.Task {
 	return task
 }
 
-// WithNewSession executes the fn in a new session.
+// WithNewSession executes the function with a new session.
 func (stm *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) error {
 	se, err := stm.sePool.Get()
 	if err != nil {
