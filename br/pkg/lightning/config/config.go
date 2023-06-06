@@ -679,6 +679,7 @@ type MydumperRuntime struct {
 	//   - utf8mb4
 	//   - GB18030
 	//   - GBK: an extension of the GB2312 character set and is also known as Code Page 936.
+	//   - latin1: IANA Windows1252
 	//   - binary: no attempt to convert the encoding.
 	// Leave DataCharacterSet empty will make it use `binary` by default.
 	DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
