@@ -353,6 +353,36 @@ func TestLeadingJoinHint4OuterJoin(t *testing.T) {
 	runJoinReorderTestData(t, tk, "TestLeadingJoinHint4OuterJoin")
 }
 
+func TestAdditionOtherConditionsRemained4OuterJoin(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `queries_identifier` (\n   `id` int(11) NOT NULL AUTO_INCREMENT,\n   `name` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,\n   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustExec("CREATE TABLE `queries_program` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `identifier_id` int(11) NOT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `identifier_id` (`identifier_id`),\n  CONSTRAINT `queries_program_identifier_id_70ff12a6_fk_queries_identifier_id` FOREIGN KEY (`identifier_id`) REFERENCES `test`.`queries_identifier` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustExec("CREATE TABLE `queries_channel` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `identifier_id` int(11) NOT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `identifier_id` (`identifier_id`),\n  CONSTRAINT `queries_channel_identifier_id_06ac3513_fk_queries_identifier_id` FOREIGN KEY (`identifier_id`) REFERENCES `test`.`queries_identifier` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+
+	tk.MustExec("INSERT  INTO queries_identifier(`id`, `name`) values(13, 'i1'), (14, 'i2'), (15, 'i3');")
+	tk.MustExec("INSERT  INTO queries_program(`id`, `identifier_id`) values(8, 13), (9, 14);")
+	tk.MustExec("INSERT  INTO queries_channel(`id`, `identifier_id`) values(5, 13);")
+
+	tk.MustQuery("SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows("" +
+		"13 i1"))
+	tk.MustQuery("SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` RIGHT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows("" +
+		"13 i1"))
+	tk.MustQuery("explain format = 'brief' SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;").Check(testkit.Rows(""+
+		"Sort 2.50 root  test.queries_identifier.id",
+		"└─Projection 2.50 root  test.queries_identifier.id, test.queries_identifier.name",
+		"  └─Selection 2.50 root  or(and(eq(test.queries_channel.id, 5), eq(test.queries_program.id, 9)), eq(test.queries_program.id, 8))",
+		"    └─IndexJoin 3.12 root  left outer join, inner:IndexReader, outer key:test.queries_identifier.id, inner key:test.queries_channel.identifier_id, equal cond:eq(test.queries_identifier.id, test.queries_channel.identifier_id)",
+		"      ├─IndexHashJoin(Build) 2.50 root  inner join, inner:TableReader, outer key:test.queries_program.identifier_id, inner key:test.queries_identifier.id, equal cond:eq(test.queries_program.identifier_id, test.queries_identifier.id)",
+		"      │ ├─Batch_Point_Get(Build) 2.00 root table:queries_program handle:[8 9], keep order:false, desc:false",
+		"      │ └─TableReader(Probe) 2.00 root  data:TableRangeScan",
+		"      │   └─TableRangeScan 2.00 cop[tikv] table:queries_identifier range: decided by [test.queries_program.identifier_id], keep order:false, stats:pseudo",
+		"      └─IndexReader(Probe) 2.50 root  index:IndexRangeScan",
+		"        └─IndexRangeScan 2.50 cop[tikv] table:queries_channel, index:identifier_id(identifier_id) range: decided by [eq(test.queries_channel.identifier_id, test.queries_identifier.id)], keep order:false, stats:pseudo"))
+}
+
 func TestOuterJoinWIthEqCondCrossInnerJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
