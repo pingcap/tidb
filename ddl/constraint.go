@@ -246,7 +246,7 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 	return ver, nil
 }
 
-func (w *worker) onAlterCheckConstraintEnforced(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onAlterCheckConstraintEnforced(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	dbInfo, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
