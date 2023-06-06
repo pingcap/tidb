@@ -939,7 +939,7 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 }
 
 // GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxIDs and IdxID2ColIDs is built from the given parameter.
-func (coll *HistColl) GenerateHistCollFromColumnInfo(colInfos []*model.ColumnInfo, columns []*expression.Column, tblInfo *model.TableInfo) *HistColl {
+func (coll *HistColl) GenerateHistCollFromColumnInfo(columns []*expression.Column, tblInfo *model.TableInfo) *HistColl {
 	newColHistMap := make(map[int64]*Column)
 	colInfoID2UniqueID := make(map[int64]int64, len(columns))
 	idxID2idxInfo := make(map[int64]*model.IndexInfo)
