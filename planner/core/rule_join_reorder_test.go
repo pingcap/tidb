@@ -216,7 +216,6 @@ func TestJoinOrderHintWithBinding(t *testing.T) {
 	tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
 }
 
-<<<<<<< HEAD
 func TestJoinOrderHint4StaticPartitionTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -352,7 +351,8 @@ func TestLeadingJoinHint4OuterJoin(t *testing.T) {
 	tk.MustExec("create table t8(a int, b int, key(a));")
 	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runJoinReorderTestData(t, tk, "TestLeadingJoinHint4OuterJoin")
-=======
+}
+
 func TestAdditionOtherConditionsRemained4OuterJoin(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -381,7 +381,6 @@ func TestAdditionOtherConditionsRemained4OuterJoin(t *testing.T) {
 		"      │   └─TableRangeScan 2.00 cop[tikv] table:queries_identifier range: decided by [test.queries_program.identifier_id], keep order:false, stats:pseudo",
 		"      └─IndexReader(Probe) 2.50 root  index:IndexRangeScan",
 		"        └─IndexRangeScan 2.50 cop[tikv] table:queries_channel, index:identifier_id(identifier_id) range: decided by [eq(test.queries_channel.identifier_id, test.queries_identifier.id)], keep order:false, stats:pseudo"))
->>>>>>> 0cd5372afb8 (planner: fix join reorder will append remained other condition to an outer join (#44409))
 }
 
 func TestOuterJoinWIthEqCondCrossInnerJoin(t *testing.T) {
