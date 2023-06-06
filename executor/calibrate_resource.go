@@ -197,8 +197,8 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 }
 
 var (
-	errTooFewMetricsPoints = errors.Normalize("There are too few metrics points available in selected time window, %v")
-	errNoCPUQuotaMetrics   = errors.Normalize("There is no CPU quota metrics, %v")
+	errLowUsage          = errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
+	errNoCPUQuotaMetrics = errors.Normalize("There is no CPU quota metrics, %v")
 )
 
 func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
@@ -219,15 +219,15 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	}
 	rus, err := getRUPerSec(ctx, e.ctx, exec, startTime, endTime)
 	if err != nil {
-		return errTooFewMetricsPoints.FastGenByArgs(err.Error())
+		return err
 	}
 	tikvCPUs, err := getComponentCPUUsagePerSec(ctx, e.ctx, exec, "tikv", startTime, endTime)
 	if err != nil {
-		return errTooFewMetricsPoints.FastGenByArgs(err.Error())
+		return err
 	}
 	tidbCPUs, err := getComponentCPUUsagePerSec(ctx, e.ctx, exec, "tidb", startTime, endTime)
 	if err != nil {
-		return errTooFewMetricsPoints.FastGenByArgs(err.Error())
+		return err
 	}
 	quotas := make([]float64, 0)
 	lowCount := 0
@@ -261,7 +261,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		tikvCPUs.next()
 	}
 	if len(quotas) < 5 {
-		return errTooFewMetricsPoints.FastGenByArgs("low usage")
+		return errLowUsage
 	}
 	if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
 		sort.Slice(quotas, func(i, j int) bool {
@@ -276,7 +276,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		quota := sum / float64(upperBound-lowerBound)
 		req.AppendUint64(0, uint64(quota))
 	} else {
-		return errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
+		return errLowUsage
 	}
 	return nil
 }
@@ -395,9 +395,6 @@ func getValuesFromMetrics(ctx context.Context, sctx sessionctx.Context, exec sql
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return nil, errors.Errorf("metrics '%s' is empty", metrics)
 	}
 	ret := make([]*timePointValue, 0, len(rows))
 	for _, row := range rows {

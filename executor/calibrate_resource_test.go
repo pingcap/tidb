@@ -408,7 +408,7 @@ func TestCalibrateResource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(ctx, rs.NewChunk(nil))
-	require.ErrorContains(t, err, "There are too few metrics points available in selected time window, low usage")
+	require.ErrorContains(t, err, "The workload in selected time window is too low")
 
 	ru3 := [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:25:00"), 2200.0),
@@ -448,7 +448,7 @@ func TestCalibrateResource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(ctx, rs.NewChunk(nil))
-	require.ErrorContains(t, err, "There are too few metrics points available in selected time window, low usage")
+	require.ErrorContains(t, err, "The workload in selected time window is too low")
 
 	// flash back to init data.
 	mockData["resource_manager_resource_unit"] = ru1
@@ -559,14 +559,14 @@ func TestCalibrateResource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(ctx, rs.NewChunk(nil))
-	require.ErrorContains(t, err, "There are too few metrics points available in selected time window, low usage")
+	require.ErrorContains(t, err, "The workload in selected time window is too low")
 
 	delete(mockData, "process_cpu_usage")
 	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'")
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(ctx, rs.NewChunk(nil))
-	require.ErrorContains(t, err, "There are too few metrics points available in selected time window, query metric error: pd unavailable")
+	require.ErrorContains(t, err, "query metric error: pd unavailable")
 }
 
 type mockResourceGroupProvider struct {
