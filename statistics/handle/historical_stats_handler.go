@@ -84,7 +84,7 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source
 	if v == nil {
 		return
 	}
-	sc := v.(statsCache)
+	sc := v
 	tbl, ok := sc.Get(tableID)
 	if !ok {
 		return
