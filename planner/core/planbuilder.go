@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -56,6 +57,7 @@ import (
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -491,6 +493,9 @@ type PlanBuilder struct {
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
 	outerCTEs    []*cteInfo
+	// outerBlockExpand register current Expand OP for rollup syntax in every select query block.
+	outerBlockExpand   []*LogicalExpand
+	currentBlockExpand *LogicalExpand
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
@@ -3549,7 +3554,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.BeginStmt:
 		readTS := b.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
 		if raw.AsOf != nil {
-			startTS, err := staleread.CalculateAsOfTsExpr(b.ctx, raw.AsOf.TsExpr)
+			startTS, err := staleread.CalculateAsOfTsExpr(ctx, b.ctx, raw.AsOf.TsExpr)
 			if err != nil {
 				return nil, err
 			}
@@ -4353,10 +4358,21 @@ const DetachedOption = "detached"
 func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (Plan, error) {
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	var (
-		err      error
-		options  = make([]*LoadDataOpt, 0, len(ld.Options))
-		detached = false
+		err              error
+		options          = make([]*LoadDataOpt, 0, len(ld.Options))
+		detached         = false
+		importFromServer bool
 	)
+
+	importFromServer, err = storage.IsLocalPath(ld.Path)
+	if err != nil {
+		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(err.Error())
+	}
+
+	if importFromServer && sem.IsEnabled() {
+		return nil, exeerrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
+	}
+
 	for _, opt := range ld.Options {
 		loadDataOpt := LoadDataOpt{Name: opt.Name}
 		if opt.Value != nil {
@@ -4395,6 +4411,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.O, p.Table.Name.O, "", insertErr)
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.O, p.Table.Name.O, "", deleteErr)
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, p.Table.Schema.O, p.Table.Name.O, "", alterErr)
+	if importFromServer {
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
+	}
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {

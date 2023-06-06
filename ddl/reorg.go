@@ -216,7 +216,7 @@ func deleteETCDRowCntStatIfNecessary(ctx context.Context, reorgInfo *reorgInfo, 
 // the additional ddl round.
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
-func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
+func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 	lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
 	d := reorgInfo.d
@@ -284,7 +284,6 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
 
-		// TODO: should we do this if dbterror.ErrPausedDDLJob ???
 		d.removeReorgCtx(job.ID)
 
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
@@ -349,7 +348,7 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(start) > 0 && len(end) > 0 && pid > 0 {
+	if pid > 0 {
 		reorgInfo.StartKey = start
 		reorgInfo.EndKey = end
 		reorgInfo.PhysicalTableID = pid
@@ -461,7 +460,7 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 
 	if dc.isReorgPaused(jobID) {
 		logutil.BgLogger().Warn("[ddl] job paused by user", zap.String("ID", dc.uuid))
-		return dbterror.ErrPausedDDLJob
+		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(jobID)
 	}
 
 	// If isDistReorg is true, we needn't check if it is owner.

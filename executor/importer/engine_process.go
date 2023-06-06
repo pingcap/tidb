@@ -18,56 +18,11 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"go.uber.org/zap"
 )
-
-// encode and write all data in this engine as sst files, and write index in indexEngine
-// todo: would be better if merge with backend/local/Engine
-type engineProcessor struct {
-	engineID      int32
-	fullTableName string
-	backend       *local.Backend
-	tableInfo     *checkpoints.TidbTableInfo
-	logger        *zap.Logger
-	tableImporter *TableImporter
-	rowOrdered    bool
-	indexEngine   *backend.OpenedEngine
-	chunks        []*checkpoints.ChunkCheckpoint
-}
-
-func (ep *engineProcessor) process(ctx context.Context) (*backend.ClosedEngine, error) {
-	dataEngineCfg := &backend.EngineConfig{
-		TableInfo: ep.tableInfo,
-	}
-	if !ep.rowOrdered {
-		dataEngineCfg.Local.Compact = true
-		dataEngineCfg.Local.CompactConcurrency = 4
-		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
-	}
-	mgr := backend.MakeEngineManager(ep.backend)
-	dataEngine, err := mgr.OpenEngine(ctx, dataEngineCfg, ep.fullTableName, ep.engineID)
-	if err != nil {
-		return nil, err
-	}
-
-	err = ep.localSort(ctx, dataEngine)
-	// ctx maybe canceled, so to avoid Close engine failed, we use `context.Background()` here
-	// todo: remove ctx param in Close()
-	closeCtx := ctx
-	if common.IsContextCanceledError(err) {
-		closeCtx = context.Background()
-	}
-	closedDataEngine, err2 := dataEngine.Close(closeCtx)
-	if err2 != nil {
-		ep.logger.Warn("close data engine failed", zap.Error(err2))
-	}
-	return closedDataEngine, err
-}
 
 // ProcessChunk processes a chunk, and write kv pairs to dataEngine and indexEngine.
 func ProcessChunk(
@@ -147,19 +102,5 @@ func ProcessChunk(
 		return err
 	}
 	tableImporter.setLastInsertID(encoder.GetLastInsertID())
-	return nil
-}
-
-// sort data in all chunks, then close the opened data engine
-func (ep *engineProcessor) localSort(ctx context.Context, dataEngine *backend.OpenedEngine) (err error) {
-	task := log.BeginTask(ep.logger, "encode & sort engine")
-	defer func() {
-		task.End(zap.ErrorLevel, err)
-	}()
-	for _, chunk := range ep.chunks {
-		if err = ProcessChunk(ctx, chunk, ep.tableImporter, dataEngine, ep.indexEngine, ep.tableImporter.Progress, ep.logger); err != nil {
-			return err
-		}
-	}
 	return nil
 }
