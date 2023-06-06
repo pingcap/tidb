@@ -171,13 +171,13 @@ func hasSysDB(job *model.Job) bool {
 
 func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
 	if d.stateSyncer.IsUpgradingState() {
+		if job.IsPaused() {
+			return false, nil
+		}
 		// We need to turn the 'pausing' job to be 'paused' in ddl worker,
 		// and stop the reorganization workers
 		if job.IsPausing() || hasSysDB(job) {
 			return true, nil
-		}
-		if job.IsPaused() {
-			return false, nil
 		}
 		var errs []error
 		// During binary upgrade, pause all running DDL jobs
@@ -200,7 +200,7 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		return false, nil
 	}
 
-	if job.IsPausedBySystem() && !hasSysDB(job) {
+	if job.IsPausedBySystem() {
 		var errs []error
 		errs, err = ResumeJobsBySystem(sess.Session(), []int64{job.ID})
 		if len(errs) > 0 {

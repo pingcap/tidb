@@ -112,6 +112,21 @@ func mockUpgradeToVerLatest(s Session, ver int64) {
 	TestHook.OnBootstrapAfter(s)
 }
 
+// mockSimpleUpgradeToVerLatest mocks a simple bootstrapVersion(make the test faster).
+func mockSimpleUpgradeToVerLatest(s Session, ver int64) {
+	logutil.BgLogger().Info("mock upgrade to ver latest", zap.Int64("old ver", ver), zap.Int64("mock latest ver", mockLatestVer))
+	if ver >= mockLatestVer {
+		return
+	}
+	mustExecute(s, "use mysql")
+	mustExecute(s, `create table if not exists mock_sys_t(
+		c1 int, c2 int, c3 int, c11 tinyint, index fk_c1(c1)
+	);`)
+	mustExecute(s, "alter table mock_sys_t add column mayNullCol bigint default 1")
+	mustExecute(s, "alter table mock_sys_t add index idx_c2(c2)")
+	TestHook.OnBootstrapAfter(s)
+}
+
 // TestHook is exported for testing.
 var TestHook = TestCallback{}
 
@@ -140,13 +155,20 @@ func modifyBootstrapVersionForTest(store kv.Storage, ver int64) int64 {
 	return ver
 }
 
+// MockUpgradeToVerLatestKind is used to indicate the use of different mock bootstrapVersion.
+var MockUpgradeToVerLatestKind = 1
+
 func addMockBootstrapVersionForTest(s Session) {
 	if !*WithMockUpgrade {
 		return
 	}
 
 	TestHook.OnBootstrapBefore(s)
-	bootstrapVersion = append(bootstrapVersion, mockUpgradeToVerLatest)
+	if MockUpgradeToVerLatestKind == 1 {
+		bootstrapVersion = append(bootstrapVersion, mockUpgradeToVerLatest)
+	} else {
+		bootstrapVersion = append(bootstrapVersion, mockSimpleUpgradeToVerLatest)
+	}
 	currentBootstrapVersion++
 }
 
