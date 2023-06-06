@@ -196,6 +196,11 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	return e.staticCalibrate(ctx, req, exec)
 }
 
+var (
+	errTooFewMetricsPoints = errors.Normalize("There are too few metrics points available in selected time window, %v")
+	errNoCPUQuotaMetrics   = errors.Normalize("There is no CPU quota metrics, %v")
+)
+
 func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
 	startTs, endTs, err := e.parseCalibrateDuration(ctx)
 	if err != nil {
@@ -206,23 +211,23 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	rus, err := getRUPerSec(ctx, e.ctx, exec, startTime, endTime)
 	if err != nil {
-		return err
+		return errTooFewMetricsPoints.FastGenByArgs(err.Error())
 	}
 	tikvCPUs, err := getComponentCPUUsagePerSec(ctx, e.ctx, exec, "tikv", startTime, endTime)
 	if err != nil {
-		return err
+		return errTooFewMetricsPoints.FastGenByArgs(err.Error())
 	}
 	tidbCPUs, err := getComponentCPUUsagePerSec(ctx, e.ctx, exec, "tidb", startTime, endTime)
 	if err != nil {
-		return err
+		return errTooFewMetricsPoints.FastGenByArgs(err.Error())
 	}
 	quotas := make([]float64, 0)
 	lowCount := 0
@@ -256,7 +261,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		tikvCPUs.next()
 	}
 	if len(quotas) < 5 {
-		return errors.Errorf("There are too few metrics points available in selected time window")
+		return errTooFewMetricsPoints.FastGenByArgs("low usage")
 	}
 	if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
 		sort.Slice(quotas, func(i, j int) bool {
@@ -287,11 +292,11 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 
 	// The default workload to calculate the RU capacity.
