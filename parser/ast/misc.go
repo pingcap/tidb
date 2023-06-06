@@ -3493,10 +3493,10 @@ func (n *LoadDataActionStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-type ImportIntoActionTp int
+type ImportIntoActionTp string
 
 const (
-	ImportIntoCancel ImportIntoActionTp = iota
+	ImportIntoCancel ImportIntoActionTp = "cancel"
 )
 
 // ImportIntoActionStmt represent CANCEL IMPORT INTO JOB statement.

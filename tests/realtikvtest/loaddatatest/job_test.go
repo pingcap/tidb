@@ -25,9 +25,13 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
@@ -338,4 +342,126 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	jobInfo.Step = importer.JobStepImporting
 	jobInfo.ErrorMessage = `occur an error when sort chunk.*`
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
+}
+
+func (s *mockGCSSuite) TestCancelJob() {
+	s.prepareAndUseDB("test_cancel_job")
+	s.tk.MustExec("CREATE TABLE t1 (i INT PRIMARY KEY);")
+	s.tk.MustExec("CREATE TABLE t2 (i INT PRIMARY KEY);")
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test_cancel_job", Name: "t.csv"},
+		Content:     []byte("1\n2"),
+	})
+	s.T().Cleanup(func() {
+		_ = s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
+	})
+	s.tk.MustExec(`DROP USER IF EXISTS 'test_cancel_job1'@'localhost';`)
+	s.tk.MustExec(`CREATE USER 'test_cancel_job1'@'localhost';`)
+	s.tk.MustExec(`GRANT SELECT,UPDATE,INSERT,DELETE,ALTER on *.* to 'test_cancel_job1'@'localhost'`)
+	s.tk.MustExec(`DROP USER IF EXISTS 'test_cancel_job2'@'localhost';`)
+	s.tk.MustExec(`CREATE USER 'test_cancel_job2'@'localhost';`)
+	s.tk.MustExec(`GRANT SELECT,UPDATE,INSERT,DELETE,ALTER on *.* to 'test_cancel_job2'@'localhost'`)
+	do, err := session.GetDomain(s.store)
+	s.NoError(err)
+	tableID1 := do.MustGetTableID(s.T(), "test_cancel_job", "t1")
+	//tableID2 := do.MustGetTableID(s.T(), "test_cancel_job", "t2")
+
+	// cancel non-exists job
+	err = s.tk.ExecToErr("cancel import job 9999999999")
+	s.ErrorIs(err, exeerrors.ErrLoadDataJobNotFound)
+
+	getTask := func(jobID int64) *proto.Task {
+		globalTaskManager, err := storage.GetTaskManager()
+		s.NoError(err)
+		taskKey := loaddata.TaskKey(jobID)
+		globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+		s.NoError(err)
+		return globalTask
+	}
+
+	// cancel a running job created by self
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/waitBeforeSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/syncAfterJobStarted", "return(true)")
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_cancel_job1", Hostname: "localhost"}, nil, nil, nil))
+	result1 := s.tk.MustQuery(fmt.Sprintf(`import into t1 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
+		gcsEndpoint)).Rows()
+	s.Len(result1, 1)
+	jobID1, err := strconv.Atoi(result1[0][0].(string))
+	s.NoError(err)
+	// wait job started
+	<-loaddata.TestSyncChan
+	// dist framework has bug, the cancelled status might be overridden by running status,
+	// so we wait it turn running before cancel, see https://github.com/pingcap/tidb/issues/44443
+	time.Sleep(3 * time.Second)
+	s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID1))
+	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID1)).Rows()
+	s.Len(rows, 1)
+	jobInfo := &importer.JobInfo{
+		ID:          int64(jobID1),
+		TableSchema: "test_cancel_job",
+		TableName:   "t1",
+		TableID:     tableID1,
+		CreatedBy:   "test_cancel_job1@localhost",
+		Parameters: importer.ImportParameters{
+			FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
+			Format:       importer.DataFormatCSV,
+		},
+		SourceFileSize: 3,
+		Status:         "cancelled",
+		Step:           importer.JobStepImporting,
+		ErrorMessage:   "cancelled by user",
+	}
+	s.compareJobInfoWithoutTime(jobInfo, rows[0])
+	s.Eventually(func() bool {
+		task := getTask(int64(jobID1))
+		return task.State == proto.TaskStateReverted
+	}, 10*time.Second, 500*time.Millisecond)
+
+	// cancel again, should fail
+	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), exeerrors.ErrLoadDataInvalidOperation)
+
+	// cancel a job created by test_cancel_job1 using test_cancel_job2, should fail
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_cancel_job2", Hostname: "localhost"}, nil, nil, nil))
+	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), core.ErrSpecificAccessDenied)
+	// cancel by root, should pass privilege check
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), exeerrors.ErrLoadDataInvalidOperation)
+
+	// todo: enable it when https://github.com/pingcap/tidb/issues/44443 fixed
+	//// cancel a pending job created by test_cancel_job2 using root
+	//s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/loaddata/syncAfterJobStarted"))
+	//s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/syncBeforeJobStarted", "return(true)")
+	//result2 := s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
+	//	gcsEndpoint)).Rows()
+	//s.Len(result2, 1)
+	//jobID2, err := strconv.Atoi(result2[0][0].(string))
+	//s.NoError(err)
+	//// wait job reached to the point before job started
+	//<-loaddata.TestSyncChan
+	//s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	//s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID2))
+	//// resume the job
+	//loaddata.TestSyncChan <- struct{}{}
+	//rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
+	//s.Len(rows, 1)
+	//jobInfo = &importer.JobInfo{
+	//	ID:          int64(jobID2),
+	//	TableSchema: "test_cancel_job",
+	//	TableName:   "t2",
+	//	TableID:     tableID2,
+	//	CreatedBy:   "test_cancel_job2@localhost",
+	//	Parameters: importer.ImportParameters{
+	//		FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
+	//		Format:       importer.DataFormatCSV,
+	//	},
+	//	SourceFileSize: 3,
+	//	Status:         "cancelled",
+	//	Step:           "",
+	//	ErrorMessage:   "cancelled by user",
+	//}
+	//s.compareJobInfoWithoutTime(jobInfo, rows[0])
+	//s.Eventually(func() bool {
+	//	task := getTask(int64(jobID2))
+	//	return task.State == proto.TaskStateReverted
+	//}, 10*time.Second, 500*time.Millisecond)
 }

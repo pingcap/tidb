@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	fstorage "github.com/pingcap/tidb/disttask/framework/storage"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -209,6 +211,12 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	log.L().Info("import into action", zap.Int64("jobID", e.jobID), zap.Any("action", e.tp))
+	// todo: validating step is not run in a subtask, the framework don't support cancel it, we can make it run in a subtask later.
+	// todo: cancel is async operation, we don't wait here now, maybe add a wait syntax later.
+	// todo: after CANCEL, user can see the job status is Canceled immediately, but the job might still running.
+	// and the state of framework task might became finished since framework don't force state change DAG when update task.
+	// todo: add a CANCELLING status?
 	return globalTaskManager.WithNewTxn(func(se sessionctx.Context) error {
 		exec := e.ctx.(sqlexec.SQLExecutor)
 		if err2 := importer.CancelJob(ctx, exec, e.jobID); err2 != nil {

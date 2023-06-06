@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -315,14 +316,22 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas
 }
 
 func startJob(ctx context.Context, taskMeta *TaskMeta) error {
+	failpoint.Inject("syncBeforeJobStarted", func() {
+		TestSyncChan <- struct{}{}
+		<-TestSyncChan
+	})
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
-	return globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+	err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		return importer.StartJob(ctx, exec, taskMeta.JobID)
 	})
+	failpoint.Inject("syncAfterJobStarted", func() {
+		TestSyncChan <- struct{}{}
+	})
+	return err
 }
 
 func job2Step(ctx context.Context, taskMeta *TaskMeta, step string) error {
