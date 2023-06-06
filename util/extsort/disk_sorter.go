@@ -21,10 +21,12 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
+	"io"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/cockroachdb/pebble"
@@ -248,13 +250,16 @@ func newSSTReaderPool(fs vfs.FS, dirname string, cache *pebble.Cache) *sstReader
 }
 
 func (p *sstReaderPool) get(fileNum int) (*sstable.Reader, error) {
-	p.mu.RLock()
-	if v, ok := p.mu.readers[fileNum]; ok {
-		v.refs.Add(1)
-		p.mu.RUnlock()
-		return v.reader, nil
+	var reader *sstable.Reader
+	withLock(p.mu.RLocker(), func() {
+		if v, ok := p.mu.readers[fileNum]; ok {
+			v.refs.Add(1)
+			reader = v.reader
+		}
+	})
+	if reader != nil {
+		return reader, nil
 	}
-	p.mu.RUnlock()
 
 	// Create a new reader. Note that we don't hold the lock here,
 	// since creating a reader can be expensive, and we don't want
@@ -263,42 +268,61 @@ func (p *sstReaderPool) get(fileNum int) (*sstable.Reader, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	reader, err := sstable.NewReader(f, sstable.ReaderOptions{
+	reader, err = sstable.NewReader(f, sstable.ReaderOptions{
 		Cache: p.cache,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	// Someone might have added the reader to the pool.
-	if v, ok := p.mu.readers[fileNum]; ok {
-		_ = reader.Close()
-		v.refs.Add(1)
-		return v.reader, nil
+	var toRet, toClose *sstable.Reader
+	withLock(&p.mu, func() {
+		// Someone might have added the reader to the pool.
+		if v, ok := p.mu.readers[fileNum]; ok {
+			toClose = reader
+			v.refs.Add(1)
+			toRet = v.reader
+			return
+		}
+		refs := new(atomic.Int32)
+		refs.Store(1)
+		p.mu.readers[fileNum] = struct {
+			reader *sstable.Reader
+			refs   *atomic.Int32
+		}{reader: reader, refs: refs}
+		toRet = reader
+	})
+	if toClose != nil {
+		if err := toClose.Close(); err != nil {
+			_ = p.unref(fileNum)
+			return nil, errors.Trace(err)
+		}
 	}
-	refs := new(atomic.Int32)
-	refs.Store(1)
-	p.mu.readers[fileNum] = struct {
-		reader *sstable.Reader
-		refs   *atomic.Int32
-	}{reader: reader, refs: refs}
-	return reader, nil
+	return toRet, nil
 }
 
 func (p *sstReaderPool) unref(fileNum int) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	v, ok := p.mu.readers[fileNum]
-	if !ok {
-		panic(fmt.Sprintf("sstReaderPool: unref a reader that does not exist: %d", fileNum))
-	}
-	if v.refs.Add(-1) == 0 {
-		delete(p.mu.readers, fileNum)
-		return errors.Trace(v.reader.Close())
+	var closer io.Closer
+	withLock(&p.mu, func() {
+		v, ok := p.mu.readers[fileNum]
+		if !ok {
+			panic(fmt.Sprintf("sstReaderPool: unref a reader that does not exist: %d", fileNum))
+		}
+		if v.refs.Add(-1) == 0 {
+			delete(p.mu.readers, fileNum)
+			closer = v.reader
+		}
+	})
+	if closer != nil {
+		return errors.Trace(closer.Close())
 	}
 	return nil
+}
+
+func withLock(l sync.Locker, f func()) {
+	l.Lock()
+	defer l.Unlock()
+	f()
 }
 
 type sstIter struct {
