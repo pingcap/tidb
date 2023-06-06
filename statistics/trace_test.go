@@ -224,7 +224,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	dsColInfos := make([][]*model.ColumnInfo, 0, len(in))
 	dsSchemaCols := make([][]*expression.Column, 0, len(in))
 	selConditions := make([][]expression.Expression, 0, len(in))
-	idxInfos := make([][]*model.IndexInfo,0, len(in))
+	idxInfos := make([][]*model.IndexInfo, 0, len(in))
 	for _, sql := range in {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
