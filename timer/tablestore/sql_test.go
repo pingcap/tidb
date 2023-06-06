@@ -15,6 +15,7 @@
 package tablestore
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -78,6 +79,7 @@ func TestBuildInsertTimerSQL(t *testing.T) {
 	}
 
 	for _, c := range cases {
+		require.Equal(t, strings.Count(c.sql, "%?"), len(c.args))
 		sql, args := buildInsertTimerSQL("db1", "t1", c.record)
 		require.Equal(t, c.sql, sql)
 		require.Equal(t, c.args, args)
@@ -282,6 +284,7 @@ func TestBuildCondCriteria(t *testing.T) {
 	}
 
 	for _, c := range cases {
+		require.Equal(t, strings.Count(c.criteria, "%?"), len(c.args))
 		args := make([]any, 0)
 		criteria, args, err := buildCondCriteria(c.cond, args)
 		require.NoError(t, err)
@@ -333,6 +336,7 @@ func TestBuildSelectTimerSQL(t *testing.T) {
 	}
 
 	for _, c := range cases {
+		require.Equal(t, strings.Count(c.sql, "%?"), len(c.args))
 		sql, args, err := buildSelectTimerSQL("db1", "t1", c.cond)
 		require.NoError(t, err)
 		require.Equal(t, c.sql, sql)
@@ -393,7 +397,7 @@ func TestBuildUpdateCriteria(t *testing.T) {
 			},
 			criteria: "SCHED_POLICY_EXPR = %?, EVENT_ID = %?, EVENT_DATA = %?, " +
 				"EVENT_START = NULL, WATERMARK = NULL, SUMMARY_DATA = %?, VERSION = VERSION + 1",
-			args: []any{"", "", []byte(nil), nil, nil, []byte(nil)},
+			args: []any{"", "", []byte(nil), []byte(nil)},
 		},
 		{
 			update: &api.TimerUpdate{
@@ -406,6 +410,7 @@ func TestBuildUpdateCriteria(t *testing.T) {
 	}
 
 	for _, c := range cases {
+		require.Equal(t, strings.Count(c.criteria, "%?"), len(c.args))
 		criteria, args := buildUpdateCriteria(c.update, []any{})
 		require.Equal(t, c.criteria, criteria)
 		require.Equal(t, c.args, args)
@@ -439,6 +444,7 @@ func TestBuildUpdateTimerSQL(t *testing.T) {
 	}
 
 	for _, c := range cases {
+		require.Equal(t, strings.Count(c.sql, "%?"), len(c.args))
 		sql, args := buildUpdateTimerSQL("db1", "tbl1", timerID, c.update)
 		require.Equal(t, c.sql, sql)
 		require.Equal(t, c.args, args)

@@ -33,11 +33,15 @@ import (
 )
 
 const (
-	notifyTimeout         = 15 * time.Second
-	watchTimerEventCreate = "create"
-	watchTimerEventUpdate = "update"
-	watchTimerEventDelete = "delete"
+	notifyTimeout           = 20 * time.Second
+	minNotifyInterval       = time.Second
+	etcdNotifyKeyTTLSeconds = 60
+	watchTimerEventCreate   = "create"
+	watchTimerEventUpdate   = "update"
+	watchTimerEventDelete   = "delete"
 )
+
+var idleKeepAliveCh = make(<-chan *clientv3.LeaseKeepAliveResponse)
 
 type notifyMessage struct {
 	Events []*notifyEvent `json:"events"`
@@ -224,7 +228,9 @@ func (n *etcdNotifier) notifyLoop() {
 		n.wg.Done()
 	}()
 	var leaseID clientv3.LeaseID
-	var keepAlive <-chan *clientv3.LeaseKeepAliveResponse
+	keepAlive := idleKeepAliveCh
+	lastNotify := time.Now().Add(-time.Second)
+loop:
 	for {
 		select {
 		case <-n.ctx.Done():
@@ -232,63 +238,76 @@ func (n *etcdNotifier) notifyLoop() {
 		case _, ok := <-keepAlive:
 			if !ok {
 				leaseID = 0
-				keepAlive = nil
+				keepAlive = idleKeepAliveCh
+				n.logger.Warn("keep alive failed with etcd", zap.Int64("lease", int64(leaseID)))
 			}
 		case _, ok := <-n.notifyBgChan:
 			if !ok {
 				return
 			}
 
-			n.mu.Lock()
-			var bs []byte
-			var err error
-			if len(n.events) > 0 {
-				message := &notifyMessage{Events: n.events}
-				bs, err = json.Marshal(message)
-				n.events = n.events[:0]
-			}
-			n.mu.Unlock()
-
-			if err != nil {
-				terror.Log(err)
-				continue
+			if interval := time.Since(lastNotify); interval < minNotifyInterval {
+				select {
+				case <-time.After(minNotifyInterval - interval):
+				case <-n.ctx.Done():
+					return
+				}
 			}
 
-			if bs != nil {
-				n.sentEventBytes(bs, leaseID, keepAlive)
+			lastNotify = time.Now()
+			if leaseID == 0 {
+				newLease, newKeepAlive, err := n.newLease()
+				if err != nil {
+					n.logger.Error("create lease failed", zap.Error(err))
+					continue loop
+				}
+				leaseID, keepAlive = newLease, newKeepAlive
 			}
+			n.sendEvents(leaseID)
 		}
 	}
 }
 
-func (n *etcdNotifier) sentEventBytes(bs []byte, leaseID clientv3.LeaseID, keepAlive <-chan *clientv3.LeaseKeepAliveResponse) (clientv3.LeaseID, <-chan *clientv3.LeaseKeepAliveResponse) {
+func (n *etcdNotifier) newLease() (clientv3.LeaseID, <-chan *clientv3.LeaseKeepAliveResponse, error) {
+	resp, err := n.etcd.Grant(n.ctx, etcdNotifyKeyTTLSeconds)
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+
+	ch, err := n.etcd.KeepAlive(n.ctx, resp.ID)
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+
+	return resp.ID, ch, nil
+}
+
+func (n *etcdNotifier) takeEvents() ([]byte, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.events) == 0 {
+		return nil, nil
+	}
+
+	message := &notifyMessage{Events: n.events}
+	bs, err := json.Marshal(message)
+	n.events = n.events[:0]
+	return bs, err
+}
+
+func (n *etcdNotifier) sendEvents(leaseID clientv3.LeaseID) {
+	bs, err := n.takeEvents()
+	if len(bs) == 0 || err != nil {
+		terror.Log(err)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(n.ctx, notifyTimeout)
 	defer cancel()
 
-	if leaseID == 0 {
-		keepAlive = nil
-		resp, err := n.etcd.Grant(ctx, 100)
-		if err != nil {
-			n.logger.Error("failed to grant lease", zap.Error(err))
-			return leaseID, keepAlive
-		}
-		leaseID = resp.ID
-	}
-
-	if keepAlive == nil {
-		ch, err := n.etcd.KeepAlive(n.ctx, leaseID)
-		if err != nil {
-			n.logger.Error("failed to keep alive lease", zap.Error(err), zap.Any("lease", leaseID))
-			return leaseID, keepAlive
-		}
-		keepAlive = ch
-	}
-
-	if _, err := n.etcd.Put(ctx, n.key, string(bs)); err != nil {
+	if _, err := n.etcd.Put(ctx, n.key, string(bs), clientv3.WithLease(leaseID)); err != nil {
 		n.logger.Error("failed to put key", zap.Error(err))
 	}
-
-	return leaseID, keepAlive
 }
 
 func (n *etcdNotifier) Close() {

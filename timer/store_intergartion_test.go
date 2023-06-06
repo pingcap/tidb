@@ -296,7 +296,7 @@ func runTimerStoreWatchTest(t *testing.T, store *api.TimerStore) {
 
 	ch := store.Watch(ctx)
 	assertWatchEvent := func(tp api.WatchTimerEventType, id string) {
-		timeout := time.NewTimer(time.Second)
+		timeout := time.NewTimer(10 * time.Second)
 		defer timeout.Stop()
 		select {
 		case resp, ok := <-ch:
