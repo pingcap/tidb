@@ -347,7 +347,11 @@ func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionS
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
 		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys)
 		if !common.IsRetryableError(err) {
-			task.End(zap.ErrorLevel, err)
+			if common.ErrFoundDuplicateKeys.Equal(err) {
+				task.End(zap.WarnLevel, err)
+			} else {
+				task.End(zap.ErrorLevel, err)
+			}
 			return err
 		}
 		task.Warn("import spuriously failed, going to retry again", log.ShortError(err))
