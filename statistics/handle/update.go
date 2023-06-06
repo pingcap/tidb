@@ -1296,7 +1296,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 
 func (h *Handle) execAutoAnalyze(statsVer int, analyzeSnapshot bool, sql string, params ...interface{}) {
 	startTime := time.Now()
-	autoAnalyzeProcID := util.GetAutoAnalyzeProcID(h.serverIDGetter)
+	autoAnalyzeProcID := h.autoAnalyzeProcIDGetter()
 	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, autoAnalyzeProcID, analyzeSnapshot, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())

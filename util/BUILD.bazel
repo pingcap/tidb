@@ -60,7 +60,6 @@ go_test(
         "main_test.go",
         "misc_test.go",
         "prefix_helper_test.go",
-        "processinfo_test.go",
         "security_test.go",
         "urls_test.go",
         "util_test.go",
@@ -71,7 +70,6 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
-        "//config",
         "//kv",
         "//parser",
         "//parser/model",

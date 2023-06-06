@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -2574,7 +2575,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		return nil
 	}
 
-	connID, isTruncated, err := util.ParseGlobalConnID(s.ConnectionID)
+	gcid, isTruncated, err := globalconn.ParseConnID(s.ConnectionID)
 	if err != nil {
 		err1 := errors.New("Parse ConnectionID failed: " + err.Error())
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
@@ -2590,8 +2591,8 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		return nil
 	}
 
-	if connID.ServerID != sm.ServerID() {
-		if err := killRemoteConn(ctx, e.ctx, &connID, s.Query); err != nil {
+	if gcid.ServerID != sm.ServerID() {
+		if err := killRemoteConn(ctx, e.ctx, &gcid, s.Query); err != nil {
 			err1 := errors.New("KILL remote connection failed: " + err.Error())
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
 		}
@@ -2602,14 +2603,14 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	return nil
 }
 
-func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.GlobalConnID, query bool) error {
-	if connID.ServerID == 0 {
+func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalconn.GCID, query bool) error {
+	if gcid.ServerID == 0 {
 		return errors.New("Unexpected ZERO ServerID. Please file a bug to the TiDB Team")
 	}
 
 	killExec := &tipb.Executor{
 		Tp:   tipb.ExecType_TypeKill,
-		Kill: &tipb.Kill{ConnID: connID.ID(), Query: query},
+		Kill: &tipb.Kill{ConnID: gcid.ToConnID(), Query: query},
 	}
 
 	dagReq := &tipb.DAGRequest{}
@@ -2628,7 +2629,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		SetFromSessionVars(sctx.GetSessionVars()).
 		SetFromInfoSchema(sctx.GetInfoSchema()).
 		SetStoreType(kv.TiDB).
-		SetTiDBServerID(connID.ServerID).
+		SetTiDBServerID(gcid.ServerID).
 		Build()
 	if err != nil {
 		return err
@@ -2639,8 +2640,8 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		return err
 	}
 
-	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", connID.ServerID),
-		zap.Uint64("conn", connID.ID()), zap.Bool("query", query))
+	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", gcid.ServerID),
+		zap.Uint64("conn", gcid.ToConnID()), zap.Bool("query", query))
 	return err
 }
 

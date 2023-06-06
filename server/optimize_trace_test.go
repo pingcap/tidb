@@ -50,6 +50,10 @@ func TestDumpOptimizeTraceAPI(t *testing.T) {
 	require.NoError(t, err)
 	defer server.Close()
 
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
+
 	client.port = getPortFromTCPAddr(server.listener.Addr())
 	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
@@ -58,8 +62,6 @@ func TestDumpOptimizeTraceAPI(t *testing.T) {
 	}()
 	client.waitUntilServerOnline()
 
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
 	statsHandler := &StatsHandler{dom}
 
 	otHandler := &OptimizeTraceHandler{}

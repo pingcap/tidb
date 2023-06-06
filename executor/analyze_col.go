@@ -176,7 +176,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	for {
 		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
 			dom := domain.GetDomain(e.ctx)
-			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
+			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 		})
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			return nil, nil, nil, nil, nil, errors.Trace(exeerrors.ErrQueryInterrupted)
