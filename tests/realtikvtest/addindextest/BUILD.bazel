@@ -41,7 +41,6 @@ go_test(
         "//ddl/util/callback",
         "//errno",
         "//parser/model",
-        "//errno",
         "//sessionctx/variable",
         "//testkit",
         "//tests/realtikvtest",
