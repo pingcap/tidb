@@ -276,7 +276,7 @@ func (s *chunkRestoreSuite) TestEncodeLoop() {
 	require.NoError(s.T(), err)
 	cfg := config.NewConfig()
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
-	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), kvsCh, 2)
 
@@ -339,7 +339,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopWithExtendData() {
 	require.NoError(s.T(), err)
 	cfg := config.NewConfig()
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
-	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), kvsCh, 2)
 
@@ -372,7 +372,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled() {
 	go cancel()
 	cfg := config.NewConfig()
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
-	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	require.Equal(s.T(), context.Canceled, errors.Cause(err))
 	require.Len(s.T(), kvsCh, 0)
 }
@@ -396,7 +396,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError() {
 
 	cfg := config.NewConfig()
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
-	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	require.Regexp(s.T(), `in file .*[/\\]?db\.table\.2\.sql:0 at offset 0:.*file already closed`, err.Error())
 	require.Len(s.T(), kvsCh, 0)
 }
@@ -436,7 +436,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 	require.NoError(s.T(), failpoint.Enable(
 		"github.com/pingcap/tidb/br/pkg/lightning/importer/mock-kv-size", "return(110000000)"))
 	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/importer/mock-kv-size")
-	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	require.NoError(s.T(), err)
 
 	// we have 3 kvs total. after the failpoint injected.
@@ -483,7 +483,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored() {
 	}()
 	cfg := config.NewConfig()
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
-	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	require.Equal(s.T(), "fake deliver error", err.Error())
 	require.Len(s.T(), kvsCh, 0)
 }
@@ -530,7 +530,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 	require.NoError(s.T(), err)
 	defer kvEncoder.Close()
 
-	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	require.Equal(s.T(), "[Lightning:Restore:ErrEncodeKV]encode kv error in file db.table.2.sql:0 at offset 4: column count mismatch, expected 3, got 2", err.Error())
 	require.Len(s.T(), kvsCh, 0)
 }
@@ -629,7 +629,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	require.NoError(s.T(), err)
 	defer kvEncoder.Close()
 
-	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), kvsCh, 2)
 
