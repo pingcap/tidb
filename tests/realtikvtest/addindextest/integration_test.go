@@ -27,10 +27,13 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -410,4 +413,67 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 	ingest.ForceSyncFlagForTest = true
 	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
 	ingest.ForceSyncFlagForTest = false
+
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt=4;")
+}
+
+func TestAddIndexBackfillLostUpdate(t *testing.T) {
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use addindexlit;")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{}
+	var runDML bool
+	callback.OnJobRunAfterExported = func(job *model.Job) {
+		if t.Failed() || runDML {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			_, err := tk1.Exec("insert into t values (1, 1, 1);")
+			assert.NoError(t, err)
+			// row: [h1 -> 1]
+			// idx: []
+			// tmp: [1 -> h1]
+			runDML = true
+		}
+	}
+	ddl.MockDMLExecutionStateBeforeImport = func() {
+		_, err := tk1.Exec("update t set b = 2 where id = 1;")
+		assert.NoError(t, err)
+		// row: [h1 -> 2]
+		// idx: [1 -> h1]
+		// tmp: [1 -> (h1,h1d), 2 -> h1]
+		_, err = tk1.Exec("begin;")
+		assert.NoError(t, err)
+		_, err = tk1.Exec("insert into t values (2, 1, 2);")
+		assert.NoError(t, err)
+		// row: [h1 -> 2, h2 -> 1]
+		// idx: [1 -> h1]
+		// tmp: [1 -> (h1,h1d,h2), 2 -> h1]
+		_, err = tk1.Exec("delete from t where id = 2;")
+		assert.NoError(t, err)
+		// row: [h1 -> 2]
+		// idx: [1 -> h1]
+		// tmp: [1 -> (h1,h1d,h2,h2d), 2 -> h1]
+		_, err = tk1.Exec("commit;")
+		assert.NoError(t, err)
+	}
+	d.SetHook(callback)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateBeforeImport", "1*return"))
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 1"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateBeforeImport"))
 }
