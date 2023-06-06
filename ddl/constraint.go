@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -242,6 +243,59 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func (w *worker) onAlterCheckConstraintEnforced(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	dbInfo, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// enforced will fetch table data and check the constraint.
+	if enforced {
+		originalState := constraintInfo.State
+		switch constraintInfo.State {
+		case model.StatePublic:
+			// public -> write only
+			job.SchemaState = model.StateWriteOnly
+			constraintInfo.State = model.StateWriteOnly
+			constraintInfo.Enforced = enforced
+			ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfo.State)
+		case model.StateWriteOnly:
+			job.SchemaState = model.StateWriteReorganization
+			constraintInfo.State = model.StateWriteReorganization
+			ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfo.State)
+		case model.StateWriteReorganization:
+			// write reorganization -> write only
+			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo, job)
+			if err != nil {
+				// check constraint error will cancel the job, job state has been changed
+				// to cancelled in addTableCheckConstraint.
+				if table.ErrCheckConstraintViolated.Equal(err) {
+					w.sess.GetSessionVars().StmtCtx.AppendError(err)
+					constraintInfo.Enforced = enforced
+					constraintInfo.State = model.StatePublic
+					ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+					if err != nil {
+						// update version and tableInfo error will cause retry.
+						return ver, errors.Trace(err)
+					}
+					job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+				}
+				return ver, errors.Trace(err)
+			}
+		}
+	} else {
+		constraintInfo.Enforced = enforced
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+		if err != nil {
+			// update version and tableInfo error will cause retry.
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+
+	}
 	return ver, nil
 }
 
