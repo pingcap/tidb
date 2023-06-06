@@ -38,7 +38,11 @@ go_test(
         "//ddl",
         "//ddl/ingest",
         "//ddl/testutil",
+<<<<<<< HEAD
         "//domain",
+=======
+        "//ddl/util/callback",
+>>>>>>> e528195120b (table/tables: get temp index value from storage regardless of lazy check (#44452))
         "//errno",
         "//parser/model",
         "//sessionctx/variable",
