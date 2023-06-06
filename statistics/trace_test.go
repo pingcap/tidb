@@ -221,7 +221,6 @@ func TestTraceDebugSelectivity(t *testing.T) {
 
 	// Collect common information for the following tests.
 	p := parser.New()
-	dsColInfos := make([][]*model.ColumnInfo, 0, len(in))
 	dsSchemaCols := make([][]*expression.Column, 0, len(in))
 	selConditions := make([][]expression.Expression, 0, len(in))
 	tblInfos := make([]*model.TableInfo, 0, len(in))
@@ -237,7 +236,6 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		ds := sel.Children()[0].(*plannercore.DataSource)
 
-		dsColInfos = append(dsColInfos, ds.Columns)
 		dsSchemaCols = append(dsSchemaCols, ds.Schema().Columns)
 		selConditions = append(selConditions, sel.Conditions)
 		tblInfos = append(tblInfos, ds.TableInfo())
@@ -249,7 +247,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	// Test using ver2 stats.
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
-		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsColInfos[i], dsSchemaCols[i], tblInfos[i])
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsSchemaCols[i], tblInfos[i])
 		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver2")
 		traceInfo := stmtCtx.OptimizerDebugTrace
@@ -273,7 +271,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	stmtCtx.EnableOptimizerDebugTrace = true
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
-		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsColInfos[i], dsSchemaCols[i], tblInfos[i])
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(dsSchemaCols[i], tblInfos[i])
 		_, _, err = histColl.Selectivity(sctx, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver1")
 		traceInfo := stmtCtx.OptimizerDebugTrace
