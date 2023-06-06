@@ -189,31 +189,6 @@ func (cr *chunkProcessor) process(
 		return err
 	}
 	defer kvEncoder.Close()
-	// create the kvEncoder with original tableInfo if dropIndex
-	originalKVEncoder := kvEncoder
-	if rc.cfg.TikvImporter.AddIndexBySQL {
-		encTable, err := tables.TableFromMeta(t.alloc, t.tableInfo.Desired)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		originalKVEncoder, err = rc.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
-			SessionOptions: encode.SessionOptions{
-				SQLMode:   rc.cfg.TiDB.SQLMode,
-				Timestamp: cr.chunk.Timestamp,
-				SysVars:   rc.sysVars,
-				// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
-				AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
-			},
-			Path:   cr.chunk.Key.Path,
-			Table:  encTable,
-			Logger: logger,
-		})
-		if err != nil {
-			return err
-		}
-		defer originalKVEncoder.Close()
-	}
 
 	kvsCh := make(chan []deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)
@@ -235,7 +210,6 @@ func (cr *chunkProcessor) process(
 		t,
 		logger,
 		kvEncoder,
-		originalKVEncoder,
 		deliverCompleteCh,
 		rc,
 	)
@@ -267,11 +241,37 @@ func (cr *chunkProcessor) encodeLoop(
 	t *TableImporter,
 	logger log.Logger,
 	kvEncoder encode.Encoder,
-	originalKVEncoder encode.Encoder,
 	deliverCompleteCh <-chan deliverResult,
 	rc *Controller,
 ) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
 	defer close(kvsCh)
+
+	// when AddIndexBySQL, the kvEncoder does not have secondary index, so we need
+	// to create a encoder of original table structure.
+	originalTableEncoder := kvEncoder
+	if rc.cfg.TikvImporter.AddIndexBySQL {
+		encTable, err := tables.TableFromMeta(t.alloc, t.tableInfo.Desired)
+		if err != nil {
+			return 0, 0, errors.Trace(err)
+		}
+
+		originalTableEncoder, err = rc.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
+			SessionOptions: encode.SessionOptions{
+				SQLMode:   rc.cfg.TiDB.SQLMode,
+				Timestamp: cr.chunk.Timestamp,
+				SysVars:   rc.sysVars,
+				// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
+				AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
+			},
+			Path:   cr.chunk.Key.Path,
+			Table:  encTable,
+			Logger: logger,
+		})
+		if err != nil {
+			return 0, 0, errors.Trace(err)
+		}
+		defer originalTableEncoder.Close()
+	}
 
 	send := func(kvs []deliveredKVs) error {
 		select {
@@ -423,55 +423,25 @@ func (cr *chunkProcessor) encodeLoop(
 						continue
 					}
 
-					var (
-						conflictMsg string
-						kvs         encode.Row
+					dupMsg := cr.getDuplicateMessage(
+						originalTableEncoder,
+						lastRow,
+						lastOffset,
+						dupIgnoreRowsIter.UnsafeValue(),
+						t.tableInfo.Desired,
+						logger,
 					)
-					_, idxID, err := codec.DecodeVarint(dupIgnoreRowsIter.UnsafeValue())
-					if err != nil {
-						conflictMsg = err.Error()
-						goto conflictMsgDone
-					}
-					kvs, err = originalKVEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, lastOffset)
-					if err != nil {
-						conflictMsg = err.Error()
-						goto conflictMsgDone
-					}
-
-					if idxID == conflictOnHandle {
-						for _, kv := range kvs.(*kv2.Pairs).Pairs {
-							if tablecodec.IsRecordKey(kv.Key) {
-								dupErr := txn.ExtractKeyExistsErrFromHandle(kv.Key, kv.Val, t.encTable.Meta())
-								conflictMsg = dupErr.Error()
-								goto conflictMsgDone
-							}
-						}
-						logger.Warn("fail to find conflict record key",
-							zap.String("file", cr.chunk.FileMeta.Path),
-							zap.Int64("offset", lastOffset),
-							zap.Any("row", lastRow.Row))
-					} else {
-						for _, kv := range kvs.(*kv2.Pairs).Pairs {
-							_, decodedIdxID, isRecordKey, err := tablecodec.DecodeKeyHead(kv.Key)
-							if err != nil {
-								conflictMsg = err.Error()
-								goto conflictMsgDone
-							}
-							if !isRecordKey && decodedIdxID == idxID {
-								dupErr := txn.ExtractKeyExistsErrFromIndex(kv.Key, kv.Val, t.tableInfo.Desired, idxID)
-								conflictMsg = dupErr.Error()
-								goto conflictMsgDone
-							}
-						}
-						logger.Warn("fail to find conflict index key",
-							zap.String("file", cr.chunk.FileMeta.Path),
-							zap.Int64("offset", lastOffset),
-							zap.Any("row", lastRow.Row))
-					}
-
-				conflictMsgDone:
 					rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
-					err = rc.errorMgr.RecordConflictErrorV2(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, conflictMsg, lastRow.RowID, rowText)
+					err = rc.errorMgr.RecordConflictErrorV2(
+						ctx,
+						logger,
+						t.tableName,
+						cr.chunk.Key.Path,
+						newOffset,
+						dupMsg,
+						lastRow.RowID,
+						rowText,
+					)
 					if err != nil {
 						return 0, 0, err
 					}
@@ -541,6 +511,56 @@ func (cr *chunkProcessor) encodeLoop(
 
 	err = send([]deliveredKVs{{offset: cr.chunk.Chunk.EndOffset, realOffset: cr.chunk.FileMeta.FileSize}})
 	return
+}
+
+// getDuplicateMessage gets the duplicate message like a SQL error. When it meets
+// internal error, the error message will be returned instead of the duplicate message.
+// If the index is not found (which is not expected), an empty string will be returned.
+func (cr *chunkProcessor) getDuplicateMessage(
+	kvEncoder encode.Encoder,
+	lastRow mydump.Row,
+	lastOffset int64,
+	encodedIdxID []byte,
+	tableInfo *model.TableInfo,
+	logger log.Logger,
+) string {
+	_, idxID, err := codec.DecodeVarint(encodedIdxID)
+	if err != nil {
+		return err.Error()
+	}
+	kvs, err := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, lastOffset)
+	if err != nil {
+		return err.Error()
+
+	}
+
+	if idxID == conflictOnHandle {
+		for _, kv := range kvs.(*kv2.Pairs).Pairs {
+			if tablecodec.IsRecordKey(kv.Key) {
+				dupErr := txn.ExtractKeyExistsErrFromHandle(kv.Key, kv.Val, tableInfo)
+				return dupErr.Error()
+			}
+		}
+		logger.Warn("fail to find conflict record key",
+			zap.String("file", cr.chunk.FileMeta.Path),
+			zap.Any("row", lastRow.Row))
+	} else {
+		for _, kv := range kvs.(*kv2.Pairs).Pairs {
+			_, decodedIdxID, isRecordKey, err := tablecodec.DecodeKeyHead(kv.Key)
+			if err != nil {
+				return err.Error()
+			}
+			if !isRecordKey && decodedIdxID == idxID {
+				dupErr := txn.ExtractKeyExistsErrFromIndex(kv.Key, kv.Val, tableInfo, idxID)
+				return dupErr.Error()
+			}
+		}
+		logger.Warn("fail to find conflict index key",
+			zap.String("file", cr.chunk.FileMeta.Path),
+			zap.Int64("idxID", idxID),
+			zap.Any("row", lastRow.Row))
+	}
+	return ""
 }
 
 //nolint:nakedret // TODO: refactor
