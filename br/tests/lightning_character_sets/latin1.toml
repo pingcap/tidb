@@ -6,3 +6,4 @@ backend = "local"
 
 [mydumper]
 character-set = "latin1"
+data-character-set = "latin1"
