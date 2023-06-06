@@ -189,6 +189,7 @@ func bootstrapImpl(t testing.TB, store kv.Storage, lease time.Duration, bootstra
 	require.NoError(t, err)
 
 	dom.SetStatsUpdating(true)
+
 	t.Cleanup(func() {
 		dom.Close()
 		view.Stop()
