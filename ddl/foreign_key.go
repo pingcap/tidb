@@ -205,7 +205,7 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 	return checkTableForeignKey(referTblInfo, tbInfo, fk)
 }
 
-func getAndCheckLatestInfoSchema(d *ddlCtx, t *meta.Meta) (infoschema.InfoSchema, error) {
+func getAndCheckLatestInfoSchema(d *ddlCtx, _ *meta.Meta) (infoschema.InfoSchema, error) {
 	// TODO(crazycs520): fix me, need to make sure the `d.infoCache` is the latest infoschema.
 	return d.infoCache.GetLatest(), nil
 }

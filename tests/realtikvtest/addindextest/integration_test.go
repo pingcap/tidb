@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -390,4 +391,23 @@ func TestAddIndexFinishImportError(t *testing.T) {
 	//nolint: forcetypeassert
 	jobTp := rows[0][3].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+}
+
+func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt=1;")
+
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+	tk.MustQuery("split table t by (30000);").Check(testkit.Rows("1 1"))
+	tk.MustExec("insert into t values(1, 1, 1);")
+	tk.MustExec("insert into t values(100000, 1, 1);")
+
+	ingest.ForceSyncFlagForTest = true
+	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
+	ingest.ForceSyncFlagForTest = false
 }

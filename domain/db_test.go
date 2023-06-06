@@ -83,7 +83,6 @@ func TestNormalSessionPool(t *testing.T) {
 	svr, err := server.NewServer(conf, nil)
 	require.NoError(t, err)
 	svr.SetDomain(domain)
-	svr.InitGlobalConnID(domain.ServerID)
 	info.SetSessionManager(svr)
 
 	pool := domain.SysSessionPool()
@@ -117,7 +116,6 @@ func TestAbnormalSessionPool(t *testing.T) {
 	svr, err := server.NewServer(conf, nil)
 	require.NoError(t, err)
 	svr.SetDomain(domain)
-	svr.InitGlobalConnID(domain.ServerID)
 	info.SetSessionManager(svr)
 
 	pool := domain.SysSessionPool()

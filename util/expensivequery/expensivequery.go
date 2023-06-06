@@ -71,7 +71,7 @@ func (eqh *Handle) Run() {
 						zap.Duration("maxExecutionTime", time.Duration(info.MaxExecutionTime)*time.Millisecond), zap.String("processInfo", info.String()))
 					sm.Kill(info.ID, true, true)
 				}
-				if info.ID == util.GetAutoAnalyzeProcID(sm.ServerID) {
+				if info.ID == sm.GetAutoAnalyzeProcID() {
 					maxAutoAnalyzeTime := variable.MaxAutoAnalyzeTime.Load()
 					if maxAutoAnalyzeTime > 0 && costTime > time.Duration(maxAutoAnalyzeTime)*time.Second {
 						logutil.BgLogger().Warn("auto analyze timeout, kill it", zap.Duration("costTime", costTime),
