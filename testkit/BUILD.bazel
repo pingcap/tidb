@@ -35,7 +35,6 @@ go_library(
         "//util/chunk",
         "//util/gctuner",
         "//util/intest",
-        "//util/logutil",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

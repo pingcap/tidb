@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/gctuner"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -76,7 +75,7 @@ type DistExecutionTestContext struct {
 	mu      sync.Mutex
 }
 
-// InitOwner select the last domain as DDL owner in DistExecutionTestContext
+// InitOwner select the last domain as DDL owner
 func (d *DistExecutionTestContext) InitOwner() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -99,7 +98,7 @@ func (d *DistExecutionTestContext) SetOwner(idx int) error {
 	return d.domains[idx].DDL().OwnerManager().CampaignOwner()
 }
 
-// AddServer add 1 server for DistExecutionTestContext
+// AddServer add 1 server which is not ddl owner
 func (d *DistExecutionTestContext) AddServer() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -109,7 +108,7 @@ func (d *DistExecutionTestContext) AddServer() {
 	d.domains = append(d.domains, dom)
 }
 
-// DeleteServer delete 1 server by idx in DistExecutionTestContext
+// DeleteServer delete 1 server by idx, set server0 as ddl owner if the deleted owner is ddl owner
 func (d *DistExecutionTestContext) DeleteServer(idx int) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -119,11 +118,9 @@ func (d *DistExecutionTestContext) DeleteServer(idx int) error {
 	if len(d.domains) == 1 {
 		return errors.New("can't delete server, since server num = 1")
 	}
-	var err error
 	if d.domains[idx].DDL().OwnerManager().IsOwner() {
-		logutil.BgLogger().Info("ywq test delete server")
 		d.mu.Unlock()
-		err = d.SetOwner(0)
+		err := d.SetOwner(0)
 		d.mu.Lock()
 		if err != nil {
 			return err
@@ -131,6 +128,18 @@ func (d *DistExecutionTestContext) DeleteServer(idx int) error {
 	}
 	d.domains = append(d.domains[:idx], d.domains[idx+1:]...)
 	return infosync.MockGlobalServerInfoManagerEntry.Delete(idx)
+}
+
+func (d *DistExecutionTestContext) Close() {
+	d.t.Cleanup(func() {
+		gctuner.GlobalMemoryLimitTuner.Stop()
+		infosync.MockGlobalServerInfoManagerEntry.Close()
+		for _, domain := range d.domains {
+			domain.Close()
+		}
+		err := d.Store.Close()
+		require.NoError(d.t, err)
+	})
 }
 
 // NewDistExecutionTestContext create DistExecutionTestContext for testing
@@ -145,10 +154,7 @@ func NewDistExecutionTestContext(t testing.TB, serverNum int) (*DistExecutionTes
 		domains = append(domains, bootstrap4DistExecution(t, store, 500*time.Millisecond))
 		domains[i].InfoSyncer().SetSessionManager(&sm)
 	}
-	t.Cleanup(func() {
-		gctuner.GlobalMemoryLimitTuner.Stop()
-		infosync.MockGlobalServerInfoManagerEntry.Close()
-	})
+
 	res := DistExecutionTestContext{
 		schematracker.UnwrapStorage(store), domains, t, sync.Mutex{}}
 	err = res.InitOwner()
@@ -173,19 +179,23 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 }
 
 func bootstrap4DistExecution(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
-	return bootstrapImpl(t, store, lease, session.BootstrapSession4DistExecution)
-}
-
-func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
-	return bootstrapImpl(t, store, lease, session.BootstrapSession)
-}
-
-func bootstrapImpl(t testing.TB, store kv.Storage, lease time.Duration, bootstrapSessionImpl func(store kv.Storage) (*domain.Domain, error)) *domain.Domain {
 	session.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()
-	dom, err := bootstrapSessionImpl(store)
+	dom, err := session.BootstrapSession4DistExecution(store)
+	require.NoError(t, err)
+
+	dom.SetStatsUpdating(true)
+	return dom
+}
+
+func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
+	session.SetSchemaLease(lease)
+	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
+	domain.DisableDumpHistoricalStats4Test()
+	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
 	dom.SetStatsUpdating(true)

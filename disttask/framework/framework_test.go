@@ -187,6 +187,7 @@ func TestFrameworkBasic(t *testing.T) {
 	time.Sleep(2 * time.Second) // make sure owner changed
 	DispatchTask("key3", t, &v)
 	DispatchTask("key4", t, &v)
+	testContext.Close()
 }
 
 func TestFramework3Server(t *testing.T) {
@@ -203,6 +204,7 @@ func TestFramework3Server(t *testing.T) {
 	time.Sleep(2 * time.Second) // make sure owner changed
 	DispatchTask("key3", t, &v)
 	DispatchTask("key4", t, &v)
+	testContext.Close()
 }
 
 func TestFrameworkAddServer(t *testing.T) {
@@ -219,6 +221,7 @@ func TestFrameworkAddServer(t *testing.T) {
 	require.NoError(t, err)
 	time.Sleep(2 * time.Second) // make sure owner changed
 	DispatchTask("key3", t, &v)
+	testContext.Close()
 }
 
 func TestFrameworkDeleteServer(t *testing.T) {
@@ -233,6 +236,7 @@ func TestFrameworkDeleteServer(t *testing.T) {
 	require.NoError(t, err)
 	time.Sleep(2 * time.Second) // make sure the owner changed
 	DispatchTask("key2", t, &v)
+	testContext.Close()
 }
 
 func TestFrameworkWithQuery(t *testing.T) {
@@ -255,6 +259,7 @@ func TestFrameworkWithQuery(t *testing.T) {
 	require.Greater(t, len(fields), 0)
 	require.Equal(t, "ifnull(a,b)", rs.Fields()[0].Column.Name.L)
 	require.NoError(t, rs.Close())
+	testContext.Close()
 }
 
 func TestFrameworkCancelGTask(t *testing.T) {
@@ -262,7 +267,8 @@ func TestFrameworkCancelGTask(t *testing.T) {
 	defer scheduler.ClearSchedulers()
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
-	_, err := testkit.NewDistExecutionTestContext(t, 2)
+	testContext, err := testkit.NewDistExecutionTestContext(t, 2)
 	require.NoError(t, err)
 	DispatchAndCancelTask("key1", t, &v)
+	testContext.Close()
 }
