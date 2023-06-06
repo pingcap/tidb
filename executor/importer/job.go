@@ -64,7 +64,7 @@ const (
 	// todo: change to this step when it's implemented.
 	JobStepAddingIndex = "adding-index"
 
-	baseQuerySql = `SELECT
+	baseQuerySQL = `SELECT
 					id, create_time, start_time, end_time,
 					table_schema, table_name, table_id, created_by, parameters, source_file_size,
 					status, step, summary, error_message
@@ -124,7 +124,7 @@ func (j *JobInfo) CanCancel() bool {
 func GetJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, user string, hasSuperPriv bool) (*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 
-	sql := baseQuerySql + ` WHERE id = %?`
+	sql := baseQuerySQL + ` WHERE id = %?`
 	args := []interface{}{jobID}
 	rs, err := conn.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
@@ -277,7 +277,7 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 // GetAllViewableJobs gets all viewable jobs.
 func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) ([]*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	sql := baseQuerySql
+	sql := baseQuerySQL
 	args := []interface{}{}
 	if !hasSuperPriv {
 		sql += " WHERE created_by = %?"

@@ -186,6 +186,7 @@ func (e *ImportIntoExec) doImport(distImporter *loaddata.DistImporter, task *pro
 	return group.Wait()
 }
 
+// ImportIntoActionExec represents a import into action executor.
 type ImportIntoActionExec struct {
 	baseExecutor
 	tp    ast.ImportIntoActionTp
@@ -196,6 +197,7 @@ var (
 	_ Executor = (*ImportIntoActionExec)(nil)
 )
 
+// Next implements the Executor Next interface.
 func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalImportInto)
 
