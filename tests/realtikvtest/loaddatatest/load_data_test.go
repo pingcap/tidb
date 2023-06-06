@@ -916,6 +916,11 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 	))
 
 	// encode error, rollback
+	backup := config.DefaultBatchSize
+	config.DefaultBatchSize = 1
+	s.T().Cleanup(func() {
+		config.DefaultBatchSize = backup
+	})
 	s.tk.MustExec("truncate table load_data.add_index")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
