@@ -109,7 +109,6 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 	// match rf for current scan node
 	cacheBuildNodeIDToRFMode := map[int]RuntimeFilterMode{}
 	var currentRFList []*RuntimeFilter
-	physicalTableScan.ResolveIndices()
 	for _, scanOutputColumn := range physicalTableScan.schema.Columns {
 		currentColumnRFList := generator.columnUniqueIDToRF[scanOutputColumn.UniqueID]
 		for _, runtimeFilter := range currentColumnRFList {
