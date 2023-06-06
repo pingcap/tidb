@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	fstorage "github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -2223,22 +2224,34 @@ func handleImportJobInfo(info *importer.JobInfo, result *chunk.Chunk) error {
 // "Phase", "Status", "Source_File_Size", "Imported_Rows",
 // "Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
 func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
-	exec := e.ctx.(sqlexec.SQLExecutor)
-
 	var hasSuperPriv bool
 	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
 		hasSuperPriv = pm.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
 	}
-
+	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
+	globalTaskManager, err := fstorage.GetTaskManager()
+	if err != nil {
+		return err
+	}
 	if e.ImportJobID != nil {
-		info, err := importer.GetJob(ctx, exec, *e.ImportJobID, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
-		if err != nil {
+		var info *importer.JobInfo
+		if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+			exec := se.(sqlexec.SQLExecutor)
+			var err2 error
+			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
+			return err2
+		}); err != nil {
 			return err
 		}
 		return handleImportJobInfo(info, e.result)
 	}
-	infos, err := importer.GetAllViewableJobs(ctx, exec, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
-	if err != nil {
+	var infos []*importer.JobInfo
+	if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+		exec := se.(sqlexec.SQLExecutor)
+		var err2 error
+		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
+		return err2
+	}); err != nil {
 		return err
 	}
 	for _, info := range infos {

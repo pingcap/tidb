@@ -146,6 +146,7 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	if ti.instance != nil {
 		instances = append(instances, ti.instance)
 	}
+	// we use globalTaskManager to submit task, user might not have the privilege to system tables.
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return 0, nil, err

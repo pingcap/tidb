@@ -97,6 +97,7 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 	sem.Disable()
 	// requires FILE for server file
 	importFromServerSQL := fmt.Sprintf("IMPORT INTO t FROM '%s'", filePath)
+	// NOTE: we must use ExecToErr instead of QueryToErr here, because QueryToErr will cause the case fail always.
 	s.True(terror.ErrorEqual(s.tk.ExecToErr(importFromServerSQL), core.ErrSpecificAccessDenied))
 
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
@@ -262,8 +263,6 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
 		with thread=1`, gcsEndpoint)
 	s.tk.MustQuery(loadDataSQL)
-	s.Equal("Records: 9  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
-	s.Equal(uint64(9), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
 		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
@@ -272,8 +271,6 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
 		with thread=1, skip_rows=1`, gcsEndpoint)
 	s.tk.MustQuery(loadDataSQL)
-	s.Equal("Records: 7  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
-	s.Equal(uint64(7), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"2 test2 22", "3 test3 33", "4 test4 44",
 		"6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
@@ -282,8 +279,6 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
 		with thread=1, skip_rows=3`, gcsEndpoint)
 	s.tk.MustQuery(loadDataSQL)
-	s.Equal("Records: 3  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
-	s.Equal(uint64(3), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"4 test4 44",
 		"8 test8 88", "9 test9 99",

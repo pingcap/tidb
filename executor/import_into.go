@@ -142,10 +142,18 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chunk.Chunk) error {
 	e.dataFilled = true
-
-	sqlExec := e.userSctx.(sqlexec.SQLExecutor)
-	info, err := importer.GetJob(ctx, sqlExec, jobID, e.ctx.GetSessionVars().User.String(), false)
+	// we use globalTaskManager to get job, user might not have the privilege to system tables.
+	globalTaskManager, err := fstorage.GetTaskManager()
 	if err != nil {
+		return err
+	}
+	var info *importer.JobInfo
+	if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+		sqlExec := se.(sqlexec.SQLExecutor)
+		var err2 error
+		info, err2 = importer.GetJob(ctx, sqlExec, jobID, e.ctx.GetSessionVars().User.String(), false)
+		return err2
+	}); err != nil {
 		return err
 	}
 	fillOneImportJobInfo(info, req, 0)
@@ -175,14 +183,7 @@ func (e *ImportIntoExec) getJobImporter(param *importer.JobImportParam) (*loadda
 func (e *ImportIntoExec) doImport(distImporter *loaddata.DistImporter, task *proto.Task) error {
 	distImporter.ImportTask(task)
 	group := distImporter.Param().Group
-	err := group.Wait()
-	if !e.controller.Detached {
-		importResult := distImporter.Result()
-		userStmtCtx := e.userSctx.GetSessionVars().StmtCtx
-		userStmtCtx.SetMessage(importResult.Msg)
-		userStmtCtx.SetAffectedRows(importResult.Affected)
-	}
-	return err
+	return group.Wait()
 }
 
 type ImportIntoActionExec struct {
@@ -202,15 +203,15 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
 		hasSuperPriv = pm.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
 	}
-	if err := e.checkPrivilegeAndStatus(ctx, hasSuperPriv); err != nil {
-		return err
-	}
-
 	// we use sessionCtx from GetTaskManager, user ctx might not have enough privileges.
 	globalTaskManager, err := fstorage.GetTaskManager()
 	if err != nil {
 		return err
 	}
+	if err = e.checkPrivilegeAndStatus(ctx, globalTaskManager, hasSuperPriv); err != nil {
+		return err
+	}
+
 	log.L().Info("import into action", zap.Int64("jobID", e.jobID), zap.Any("action", e.tp))
 	// todo: validating step is not run in a subtask, the framework don't support cancel it, we can make it run in a subtask later.
 	// todo: cancel is async operation, we don't wait here now, maybe add a wait syntax later.
@@ -218,7 +219,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	// and the state of framework task might became finished since framework don't force state change DAG when update task.
 	// todo: add a CANCELLING status?
 	return globalTaskManager.WithNewTxn(func(se sessionctx.Context) error {
-		exec := e.ctx.(sqlexec.SQLExecutor)
+		exec := se.(sqlexec.SQLExecutor)
 		if err2 := importer.CancelJob(ctx, exec, e.jobID); err2 != nil {
 			return err2
 		}
@@ -226,10 +227,14 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	})
 }
 
-func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, hasSuperPriv bool) error {
-	exec := e.ctx.(sqlexec.SQLExecutor)
-	info, err := importer.GetJob(ctx, exec, e.jobID, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
-	if err != nil {
+func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, manager *fstorage.TaskManager, hasSuperPriv bool) error {
+	var info *importer.JobInfo
+	if err := manager.WithNewTxn(func(se sessionctx.Context) error {
+		exec := se.(sqlexec.SQLExecutor)
+		var err2 error
+		info, err2 = importer.GetJob(ctx, exec, e.jobID, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
+		return err2
+	}); err != nil {
 		return err
 	}
 	if !info.CanCancel() {
