@@ -817,7 +817,7 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 	for {
 		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
 			dom := domain.GetDomain(ctx)
-			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
+			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 		})
 		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
 			return errors.Trace(exeerrors.ErrQueryInterrupted)

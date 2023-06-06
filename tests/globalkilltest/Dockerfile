@@ -1,4 +1,4 @@
-# Copyright 2022 PingCAP, Inc.
+# Copyright 2023 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,28 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Builder image
-FROM rockylinux:9 as builder
+FROM rockylinux:9
 
-ENV GOLANG_VERSION 1.20.4
+RUN dnf update -y && dnf groupinstall 'Development Tools' -y
+RUN dnf install procps-ng mysql -y
+
+ENV GOLANG_VERSION 1.20.3
 ENV ARCH amd64
 ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-$ARCH.tar.gz
 ENV GOPATH /go
 ENV GOROOT /usr/local/go
 ENV PATH $GOPATH/bin:$GOROOT/bin:$PATH
-RUN yum update -y && yum groupinstall 'Development Tools' -y \
-    && curl -fsSL "$GOLANG_DOWNLOAD_URL" -o golang.tar.gz \
-	&& tar -C /usr/local -xzf golang.tar.gz \
-	&& rm golang.tar.gz
+RUN curl -fsSL "$GOLANG_DOWNLOAD_URL" -o golang.tar.gz \
+    && tar -C /usr/local -xzf golang.tar.gz \
+    && rm golang.tar.gz
 
-COPY . /tidb
-ARG GOPROXY
-RUN export GOPROXY=${GOPROXY} && cd /tidb && make server
+RUN mkdir -p /go/src/github.com/pingcap/tidb
+WORKDIR /go/src/github.com/pingcap/tidb
 
-FROM rockylinux:9-minimal
-
-COPY --from=builder /tidb/bin/tidb-server /tidb-server
-
-WORKDIR /
-EXPOSE 4000
-ENTRYPOINT ["/tidb-server"]
+COPY go.mod .
+COPY go.sum .
+COPY parser/go.mod parser/go.mod
+COPY parser/go.sum parser/go.sum
+RUN GO111MODULE=on go mod download
