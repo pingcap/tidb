@@ -126,12 +126,6 @@ func newMockTiKVStore(t *testing.T) *mockTiKVStore {
 	return s
 }
 
-func (s *mockTiKVStore) addFullTableRegion(tableID ...int64) *mockTiKVStore {
-	prefix1 := tablecodec.GenTablePrefix(tableID[0])
-	prefix2 := tablecodec.GenTablePrefix(tableID[len(tableID)-1])
-	return s.addRegion(prefix1, prefix2.PrefixNext())
-}
-
 func (s *mockTiKVStore) addRegionBeginWithTablePrefix(tableID int64, handle kv.Handle) *mockTiKVStore {
 	start := tablecodec.GenTablePrefix(tableID)
 	end := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
@@ -204,14 +198,6 @@ func (s *mockTiKVStore) clearRegions() {
 	s.cache.Close()
 	s.cache = tikv.NewRegionCache(s.pdClient)
 	s.refreshCache()
-}
-
-func (s *mockTiKVStore) newCommonHandle(ds ...types.Datum) *kv.CommonHandle {
-	encoded, err := codec.EncodeKey(nil, nil, ds...)
-	require.NoError(s.t, err)
-	h, err := kv.NewCommonHandle(encoded)
-	require.NoError(s.t, err)
-	return h
 }
 
 func (s *mockTiKVStore) GetRegionCache() *tikv.RegionCache {
