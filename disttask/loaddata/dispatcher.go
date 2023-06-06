@@ -290,7 +290,7 @@ func createTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskM
 // TODO: return the result of sql.
 func executeSQL(ctx context.Context, handle dispatcher.TaskHandle, logger *zap.Logger, sql string, args ...interface{}) (err error) {
 	logger.Info("execute sql", zap.String("sql", sql), zap.Any("args", args))
-	return handle.WithNewSession(func(se sessionctx.Context) error {
+	return handle.ExecInNewSession(func(se sessionctx.Context) error {
 		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
 		return err
 	})
