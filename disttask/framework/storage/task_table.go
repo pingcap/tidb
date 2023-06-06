@@ -104,7 +104,8 @@ func row2GlobeTask(r chunk.Row) *proto.Task {
 	return task
 }
 
-func (stm *TaskManager) withNewSession(fn func(se sessionctx.Context) error) error {
+// WithNewSession executes the function with a new session.
+func (stm *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) error {
 	se, err := stm.sePool.Get()
 	if err != nil {
 		return err
@@ -114,7 +115,7 @@ func (stm *TaskManager) withNewSession(fn func(se sessionctx.Context) error) err
 }
 
 func (stm *TaskManager) withNewTxn(fn func(se sessionctx.Context) error) error {
-	return stm.withNewSession(func(se sessionctx.Context) (err error) {
+	return stm.WithNewSession(func(se sessionctx.Context) (err error) {
 		_, err = execSQL(stm.ctx, se, "begin")
 		if err != nil {
 			return err
@@ -142,7 +143,7 @@ func (stm *TaskManager) withNewTxn(fn func(se sessionctx.Context) error) error {
 }
 
 func (stm *TaskManager) executeSQLWithNewSession(ctx context.Context, sql string, args ...interface{}) (rs []chunk.Row, err error) {
-	err = stm.withNewSession(func(se sessionctx.Context) error {
+	err = stm.WithNewSession(func(se sessionctx.Context) error {
 		rs, err = execSQL(ctx, se, sql, args...)
 		return err
 	})
@@ -156,7 +157,7 @@ func (stm *TaskManager) executeSQLWithNewSession(ctx context.Context, sql string
 
 // AddNewGlobalTask adds a new task to global task table.
 func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta []byte) (taskID int64, err error) {
-	err = stm.withNewSession(func(se sessionctx.Context) error {
+	err = stm.WithNewSession(func(se sessionctx.Context) error {
 		_, err = execSQL(stm.ctx, se, "insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, state_update_time) values (%?, %?, %?, %?, %?, %?, %?)", key, tp, proto.TaskStatePending, concurrency, proto.StepInit, meta, time.Now().UTC().String())
 		if err != nil {
 			return err

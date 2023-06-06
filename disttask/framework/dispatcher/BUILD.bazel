@@ -15,6 +15,7 @@ go_library(
         "//domain/infosync",
         "//resourcemanager/pool/spool",
         "//resourcemanager/util",
+        "//sessionctx",
         "//sessionctx/variable",
         "//util",
         "//util/disttask",
