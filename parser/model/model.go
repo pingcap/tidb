@@ -1992,7 +1992,7 @@ func (p *ResourceGroupSettings) String() string {
 		writeSettingItemToBuilder(sb, "BURSTABLE", separatorFn)
 	}
 	if p.Runaway != nil {
-		writeSettingDurationToBuilder(sb, "QUERY_LIMIT=(EXEC_ELAPSED_IN_SEC", time.Duration(p.Runaway.ExecElapsedTimeMs)*time.Millisecond, separatorFn)
+		writeSettingDurationToBuilder(sb, "QUERY_LIMIT=(EXEC_ELAPSED", time.Duration(p.Runaway.ExecElapsedTimeMs)*time.Millisecond, separatorFn)
 		writeSettingItemToBuilder(sb, "ACTION="+p.Runaway.Action.String())
 		if p.Runaway.WatchDurationMs > 0 {
 			writeSettingItemToBuilder(sb, "WATCH="+p.Runaway.WatchType.String())

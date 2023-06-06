@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -2168,4 +2169,57 @@ func TestRemoveOrderbyInSubquery(t *testing.T) {
 		require.NoError(t, err, comment)
 		require.Equal(t, tt.best, ToString(p), comment)
 	}
+}
+
+func TestRollupExpand(t *testing.T) {
+	ctx := context.Background()
+	sql := "select count(a) from t group by a, b with rollup"
+	comment := fmt.Sprintf("for %s", sql)
+	s := createPlannerSuite()
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, comment)
+
+	// manual builder
+	s.ctx.GetSessionVars().PlanID.Store(0)
+	s.ctx.GetSessionVars().PlanColumnID.Store(0)
+	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, &hint.BlockHintProcessor{})
+	p, err := builder.Build(ctx, stmt)
+	require.NoError(t, err)
+
+	// fetch the current
+	require.Equal(t, builder.currentBlockExpand != nil, true)
+	require.Equal(t, builder.currentBlockExpand.GID != nil, true)
+	require.Equal(t, builder.currentBlockExpand.GPos == nil, true)
+	require.Equal(t, builder.currentBlockExpand.LevelExprs == nil, true)
+	require.Equal(t, builder.currentBlockExpand.rollupGroupingSets != nil, true)
+	require.Equal(t, builder.currentBlockExpand.rollupID2GIDS == nil, true)
+	require.Equal(t, builder.currentBlockExpand.rollupGroupingIDs == nil, true)
+	require.Equal(t, builder.currentBlockExpand.GroupingMode == tipb.GroupingMode_ModeBitAnd, true)
+	require.Equal(t, builder.currentBlockExpand.GeneratedColNames[0], "gid")
+	require.Equal(t, builder.currentBlockExpand.distinctSize, 3)
+	require.Equal(t, len(builder.currentBlockExpand.distinctGroupByCol), 2)
+
+	_, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection|flagResolveExpand, p.(LogicalPlan))
+	require.NoError(t, err)
+
+	expand := builder.currentBlockExpand
+	// after logical optimization, the current select block's expand will generate its level-projections.
+	require.Equal(t, builder.currentBlockExpand.LevelExprs != nil, true)
+	require.Equal(t, len(builder.currentBlockExpand.LevelExprs), 3)
+	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[0], expand.schema), "test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")
+	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[1], expand.schema), "test.t.a, Column#13, <nil>->Column#14, 2->gid")
+	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[2], expand.schema), "test.t.a, Column#13, Column#14, 6->gid")
+
+	require.Equal(t, expand.Schema().Len(), 4)
+	// source column a should be kept as real.
+	require.Equal(t, expand.Schema().Columns[0].RetType.GetFlag()&mysql.NotNullFlag, uint(1))
+	require.Equal(t, expand.names[0].String(), "test.t.a")
+	// the grouping column a,b should be changed as nullable.
+	require.Equal(t, expand.Schema().Columns[1].RetType.GetFlag()&mysql.NotNullFlag, uint(0))
+	require.Equal(t, expand.names[1].String(), "test.ex_t.ex_a") // column#13
+	require.Equal(t, expand.Schema().Columns[2].RetType.GetFlag()&mysql.NotNullFlag, uint(0))
+	require.Equal(t, expand.names[2].String(), "test.ex_t.ex_b") // column#14
+	// the gid col
+	require.Equal(t, expand.Schema().Columns[3].RetType.GetFlag()&mysql.NotNullFlag, uint(1))
+	require.Equal(t, expand.names[3].String(), "gid")
 }

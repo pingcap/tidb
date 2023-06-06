@@ -782,7 +782,7 @@ import (
 	low                   "LOW"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
-	execElapsedInSec      "EXEC_ELAPSED_IN_SEC"
+	execElapsed           "EXEC_ELAPSED"
 	dryRun                "DRYRUN"
 	cooldown              "COOLDOWN"
 	watch                 "WATCH"
@@ -1706,8 +1706,7 @@ ResourceGroupOptionList:
 	}
 |	ResourceGroupOptionList DirectResourceGroupOption
 	{
-		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp ||
-			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $2.(*ast.ResourceGroupOption).Tp) {
+		if !ast.CheckAppend($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption)) {
 			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
 			return 1
 		}
@@ -1715,8 +1714,7 @@ ResourceGroupOptionList:
 	}
 |	ResourceGroupOptionList ',' DirectResourceGroupOption
 	{
-		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp ||
-			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $3.(*ast.ResourceGroupOption).Tp) {
+		if !ast.CheckAppend($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption)) {
 			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
 			return 1
 		}
@@ -1744,20 +1742,16 @@ ResourceGroupRunawayOptionList:
 	}
 |	ResourceGroupRunawayOptionList DirectResourceGroupRunawayOption
 	{
-		if $1.([]*ast.ResourceGroupRunawayOption)[0].Tp == $2.(*ast.ResourceGroupRunawayOption).Tp ||
-			(len($1.([]*ast.ResourceGroupRunawayOption)) > 1 && $1.([]*ast.ResourceGroupRunawayOption)[1].Tp == $2.(*ast.ResourceGroupRunawayOption).Tp) ||
-			(len($1.([]*ast.ResourceGroupRunawayOption)) > 2 && $1.([]*ast.ResourceGroupRunawayOption)[2].Tp == $2.(*ast.ResourceGroupRunawayOption).Tp) {
-			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+		if !ast.CheckRunawayAppend($1.([]*ast.ResourceGroupRunawayOption), $2.(*ast.ResourceGroupRunawayOption)) {
+			yylex.AppendError(yylex.Errorf("Dupliated runaway options specified"))
 			return 1
 		}
 		$$ = append($1.([]*ast.ResourceGroupRunawayOption), $2.(*ast.ResourceGroupRunawayOption))
 	}
 |	ResourceGroupRunawayOptionList ',' DirectResourceGroupRunawayOption
 	{
-		if $1.([]*ast.ResourceGroupRunawayOption)[0].Tp == $3.(*ast.ResourceGroupRunawayOption).Tp ||
-			(len($1.([]*ast.ResourceGroupRunawayOption)) > 1 && $1.([]*ast.ResourceGroupRunawayOption)[1].Tp == $3.(*ast.ResourceGroupRunawayOption).Tp) ||
-			(len($1.([]*ast.ResourceGroupRunawayOption)) > 2 && $1.([]*ast.ResourceGroupRunawayOption)[2].Tp == $3.(*ast.ResourceGroupRunawayOption).Tp) {
-			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+		if !ast.CheckRunawayAppend($1.([]*ast.ResourceGroupRunawayOption), $3.(*ast.ResourceGroupRunawayOption)) {
+			yylex.AppendError(yylex.Errorf("Dupliated runaway options specified"))
 			return 1
 		}
 		$$ = append($1.([]*ast.ResourceGroupRunawayOption), $3.(*ast.ResourceGroupRunawayOption))
@@ -1788,11 +1782,11 @@ ResourceGroupRunawayActionOption:
 	}
 
 DirectResourceGroupRunawayOption:
-	"EXEC_ELAPSED_IN_SEC" EqOpt stringLit
+	"EXEC_ELAPSED" EqOpt stringLit
 	{
 		_, err := time.ParseDuration($3)
 		if err != nil {
-			yylex.AppendError(yylex.Errorf("The EXEC_ELAPSED_IN_SEC option is not a valid duration: %s", err.Error()))
+			yylex.AppendError(yylex.Errorf("The EXEC_ELAPSED option is not a valid duration: %s", err.Error()))
 			return 1
 		}
 		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayRule, StrValue: $3}
@@ -6918,7 +6912,7 @@ NotKeywordToken:
 |	"UNTIL_TS"
 |	"RESTORED_TS"
 |	"FULL_BACKUP_STORAGE"
-|	"EXEC_ELAPSED_IN_SEC"
+|	"EXEC_ELAPSED"
 |	"DRYRUN"
 |	"COOLDOWN"
 |	"WATCH"
