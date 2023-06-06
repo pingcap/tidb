@@ -294,7 +294,6 @@ func (w *worker) onAlterCheckConstraintEnforced(d *ddlCtx, t *meta.Meta, job *mo
 			return ver, errors.Trace(err)
 		}
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-
 	}
 	return ver, nil
 }
