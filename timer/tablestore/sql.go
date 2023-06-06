@@ -26,12 +26,12 @@ import (
 func CreateTimerTableSQL(dbName, tableName string) string {
 	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 		ID BIGINT(64) UNSIGNED NOT NULL AUTO_INCREMENT,
-		NAMESPACE VARCHAR(64) NOT NULL,
-		TIMER_KEY VARCHAR(128) NOT NULL,
+		NAMESPACE VARCHAR(256) NOT NULL,
+		TIMER_KEY VARCHAR(256) NOT NULL,
 		TIMER_DATA BLOB,
 		TIMEZONE VARCHAR(64) NOT NULL,
 		SCHED_POLICY_TYPE VARCHAR(32) NOT NULL,
-		SCHED_POLICY_EXPR VARCHAR(128) NOT NULL,
+		SCHED_POLICY_EXPR VARCHAR(256) NOT NULL,
 		HOOK_CLASS VARCHAR(64) NOT NULL,
 		WATERMARK TIMESTAMP DEFAULT NULL,
 		ENABLE TINYINT(2) NOT NULL,
@@ -273,7 +273,6 @@ func buildUpdateCriteria(update *api.TimerUpdate, args []any) (string, []any) {
 	if val, ok := update.EventStart.Get(); ok {
 		if val.IsZero() {
 			updateFields = append(updateFields, "EVENT_START = NULL")
-			args = append(args, nil)
 		} else {
 			updateFields = append(updateFields, "EVENT_START = FROM_UNIXTIME(%?)")
 			args = append(args, val.Unix())
@@ -283,7 +282,6 @@ func buildUpdateCriteria(update *api.TimerUpdate, args []any) (string, []any) {
 	if val, ok := update.Watermark.Get(); ok {
 		if val.IsZero() {
 			updateFields = append(updateFields, "WATERMARK = NULL")
-			args = append(args, nil)
 		} else {
 			updateFields = append(updateFields, "WATERMARK = FROM_UNIXTIME(%?)")
 			args = append(args, val.Unix())

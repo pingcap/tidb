@@ -32,8 +32,13 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
+type sessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
+}
+
 type tableTimerStoreCore struct {
-	pool     *pools.ResourcePool
+	pool     sessionPool
 	dbName   string
 	tblName  string
 	etcd     *clientv3.Client
@@ -41,7 +46,7 @@ type tableTimerStoreCore struct {
 }
 
 // NewTableTimerStore create a new timer store based on table
-func NewTableTimerStore(clusterID uint64, pool *pools.ResourcePool, dbName, tblName string, etcd *clientv3.Client) *api.TimerStore {
+func NewTableTimerStore(clusterID uint64, pool sessionPool, dbName, tblName string, etcd *clientv3.Client) *api.TimerStore {
 	var notifier api.TimerWatchEventNotifier
 	if etcd != nil {
 		notifier = NewEtcdNotifier(clusterID, etcd)
@@ -287,6 +292,10 @@ func (s *tableTimerStoreCore) takeSession() (sessionctx.Context, func(), error) 
 	}
 
 	back := func() {
+		if _, err = executeSQL(context.Background(), sctx, "ROLLBACK"); err != nil {
+			terror.Log(err)
+			return
+		}
 		s.pool.Put(r)
 	}
 
