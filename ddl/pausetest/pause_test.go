@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -444,23 +445,27 @@ func TestResumeJobPositive(t *testing.T) {
 	var pauseRS []sqlexec.RecordSet
 	var resumeRS []sqlexec.RecordSet
 	var resumeErr error
+	var mu sync.Mutex
 	isPaused := false
 	// Test when pause cannot be retried and adding index succeeds.
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		logger.Info("OnJobRunAfterExported, before pause,", zap.Int("Job Type:", int(job.Type)),
-			zap.Int("Job State:", int(job.State)), zap.Int("Job Schema State:", int(job.SchemaState)))
+		mu.Lock()
+		defer mu.Unlock()
+		logger.Info("OnJobRunBeforeExported, before pause,", zap.Int("Job Type", int(job.Type)),
+			zap.Int("Job State", int(job.State)), zap.Int("Job Schema State", int(job.SchemaState)))
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
 			job.SchemaState == model.StateWriteReorganization {
-			logger.Info("Paused by hook.OnGetJobAfterExported")
+			logger.Info("Paused by hook.OnGetJobBeforeExported")
 			jobID = job.ID
 			stmt := fmt.Sprintf("admin pause ddl jobs %d", jobID)
 			pauseRS, pauseErr = tkCommand.Session().Execute(context.Background(), stmt)
-
 			isPaused = true
 		}
 	}
 
 	hook.OnGetJobBeforeExported = func(jobType string) {
+		mu.Lock()
+		defer mu.Unlock()
 		if isPaused {
 			resumeFunc := func() {
 				time.Sleep(1 * time.Second)
