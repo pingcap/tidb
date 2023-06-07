@@ -16,6 +16,7 @@ package extsort
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"math/rand"
 	"sync"
@@ -32,7 +33,9 @@ import (
 
 func TestDiskSorterCommon(t *testing.T) {
 	sorter, err := OpenDiskSorter(t.TempDir(), &DiskSorterOptions{
-		WriterBufferSize: 32 * 1024,
+		WriterBufferSize:    32 * 1024,
+		CompactionThreshold: 4,
+		MaxCompactionDepth:  4,
 	})
 	require.NoError(t, err)
 	runCommonTest(t, sorter)
@@ -43,11 +46,81 @@ func TestDiskSorterCommonParallel(t *testing.T) {
 	sorter, err := OpenDiskSorter(t.TempDir(), &DiskSorterOptions{
 		WriterBufferSize:    32 * 1024,
 		CompactionThreshold: 4,
-		MaxCompactionDepth:  2,
+		MaxCompactionDepth:  4,
 	})
 	require.NoError(t, err)
 	runCommonParallelTest(t, sorter)
 	require.NoError(t, sorter.Close())
+}
+
+func TestDiskSorterReopen(t *testing.T) {
+	dirname := t.TempDir()
+	sorter, err := OpenDiskSorter(dirname, &DiskSorterOptions{
+		WriterBufferSize:    32 * 1024,
+		CompactionThreshold: 4,
+		MaxCompactionDepth:  4,
+	})
+	require.NoError(t, err)
+
+	rng := rand.New(rand.NewSource(0))
+	kvs := genRandomKVs(rng, 2000, 256, 1024)
+	batch1, batch2 := kvs[:1000], kvs[1000:]
+
+	// Write the first batch.
+	w, err := sorter.NewWriter(context.Background())
+	require.NoError(t, err)
+	for _, kv := range batch1 {
+		require.NoError(t, w.Put(kv.key, kv.value))
+	}
+	require.NoError(t, w.Close())
+
+	// Reopen the sorter.
+	require.NoError(t, sorter.Close())
+	sorter, err = OpenDiskSorter(dirname, &DiskSorterOptions{
+		WriterBufferSize:    32 * 1024,
+		CompactionThreshold: 4,
+		MaxCompactionDepth:  4,
+	})
+	require.NoError(t, err)
+	require.False(t, sorter.IsSorted())
+
+	// Write the second batch.
+	w, err = sorter.NewWriter(context.Background())
+	require.NoError(t, err)
+	for _, kv := range batch2 {
+		require.NoError(t, w.Put(kv.key, kv.value))
+	}
+	require.NoError(t, w.Close())
+
+	slices.SortFunc(kvs, func(a, b keyValue) bool {
+		return bytes.Compare(a.key, b.key) < 0
+	})
+	verify := func() {
+		iter, err := sorter.NewIterator(context.Background())
+		require.NoError(t, err)
+		kvCnt := 0
+		for iter.First(); iter.Valid(); iter.Next() {
+			require.Equal(t, kvs[kvCnt].key, iter.UnsafeKey())
+			require.Equal(t, kvs[kvCnt].value, iter.UnsafeValue())
+			kvCnt++
+		}
+		require.Equal(t, len(kvs), kvCnt)
+		require.NoError(t, iter.Close())
+	}
+
+	// Sort and verify.
+	require.NoError(t, sorter.Sort(context.Background()))
+	verify()
+	require.True(t, sorter.IsSorted())
+
+	// Reopen the sorter again.
+	require.NoError(t, sorter.Close())
+	sorter, err = OpenDiskSorter(dirname, &DiskSorterOptions{
+		WriterBufferSize: 32 * 1024,
+	})
+	require.NoError(t, err)
+	require.True(t, sorter.IsSorted())
+	verify()
 }
 
 func TestKVStatsCollector(t *testing.T) {
@@ -538,10 +611,6 @@ func TestMergingIter(t *testing.T) {
 	require.NoError(t, iter.Close())
 	// Check that no iterator is leaked.
 	require.Zero(t, len(readerPool.mu.readers))
-}
-
-func TestCompactFiles(t *testing.T) {
-	// TODO
 }
 
 func TestPickCompactionFiles(t *testing.T) {

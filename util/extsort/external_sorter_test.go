@@ -142,7 +142,7 @@ func genRandomKVs(
 		}
 		rng.Read(kv.key[:keySize-4])
 		rng.Read(kv.value)
-		kv.key = binary.BigEndian.AppendUint32(kv.key[keySize-4:], uint32(i))
+		binary.BigEndian.PutUint32(kv.key[keySize-4:], uint32(i))
 		kvs = append(kvs, kv)
 	}
 	return kvs
