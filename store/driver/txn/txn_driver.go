@@ -333,9 +333,9 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	}
 
 	if isRecord {
-		return extractKeyExistsErrFromHandle(key, value, tblInfo)
+		return ExtractKeyExistsErrFromHandle(key, value, tblInfo)
 	}
-	return extractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
+	return ExtractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
 }
 
 // SetAssertion sets an assertion for the key operation.
