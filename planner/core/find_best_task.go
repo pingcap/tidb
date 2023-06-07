@@ -1551,7 +1551,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	}
 	if candidate.isMatchProp {
 		cop.keepOrder = true
-<<<<<<< HEAD
 		// IndexScan on partition table can't keep order.
 		if ds.tableInfo.GetPartitionInfo() != nil {
 			return invalidTask, nil
@@ -1561,44 +1560,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 			cop.extraHandleCol = col
 			cop.needExtraProj = cop.needExtraProj || isNew
 		}
-=======
-		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
-			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
-			cop.extraHandleCol = col
-			cop.needExtraProj = cop.needExtraProj || isNew
-		}
-
-		if ds.tableInfo.GetPartitionInfo() != nil {
-			// Add sort items for index scan for merge-sort operation between partitions.
-			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
-			for _, si := range prop.SortItems {
-				byItems = append(byItems, &util.ByItems{
-					Expr: si.Col,
-					Desc: si.Desc,
-				})
-			}
-			cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
-			if cop.tablePlan != nil && ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-				if !is.Index.Global {
-					is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
-					is.schema.Append(&expression.Column{
-						RetType:  types.NewFieldType(mysql.TypeLonglong),
-						UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-						ID:       model.ExtraPhysTblID,
-					})
-				}
-				// global index for tableScan with keepOrder also need PhysicalTblID
-				ts := cop.tablePlan.(*PhysicalTableScan)
-				ts.Columns = append(ts.Columns, model.NewExtraPhysTblIDColInfo())
-				ts.schema.Append(&expression.Column{
-					RetType:  types.NewFieldType(mysql.TypeLonglong),
-					UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-					ID:       model.ExtraPhysTblID,
-				})
-				cop.needExtraProj = true
-			}
-		}
->>>>>>> fe40acd803f (*: let handleMap supports partitionHandle (#44360))
 	}
 	if cop.needExtraProj {
 		cop.originSchema = ds.schema

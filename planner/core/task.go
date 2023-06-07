@@ -1210,17 +1210,18 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}
 			newCopSubPlans := p.addPartialLimitForSubScans(clonedPartialPlan, partialScans, selSelectivityOnPartialScan)
 			copTsk.idxMergePartPlans = newCopSubPlans
-			clonedTblScan, err := copTsk.tablePlan.Clone()
+			cloned, err := copTsk.tablePlan.Clone()
 			if err != nil {
 				return nil, false
 			}
+			clonedTblScan := cloned.(*PhysicalTableScan)
 			clonedTblScan.statsInfo().ScaleByExpectCnt(float64(p.Count+p.Offset) * float64(len(copTsk.idxMergePartPlans)))
 			if tblInfo.PKIsHandle {
 				pk := tblInfo.GetPkColInfo()
 				pkCol := expression.ColInfo2Col(tblScan.tblCols, pk)
 				if !clonedTblScan.Schema().Contains(pkCol) {
 					clonedTblScan.Schema().Append(pkCol)
-					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, pk)
+					clonedTblScan.Columns = append(clonedTblScan.Columns, pk)
 					copTsk.needExtraProj = true
 				}
 			} else if tblInfo.IsCommonHandle {
@@ -1229,20 +1230,17 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 					c := tblScan.tblCols[idxCol.Offset]
 					if !clonedTblScan.Schema().Contains(c) {
 						clonedTblScan.Schema().Append(c)
-						clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, c.ToInfo())
+						clonedTblScan.Columns = append(clonedTblScan.Columns, c.ToInfo())
 						copTsk.needExtraProj = true
 					}
 				}
 			} else {
 				if !clonedTblScan.Schema().Contains(tblScan.HandleCols.GetCol(0)) {
 					clonedTblScan.Schema().Append(tblScan.HandleCols.GetCol(0))
-					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, model.NewExtraHandleColInfo())
+					clonedTblScan.Columns = append(clonedTblScan.Columns, model.NewExtraHandleColInfo())
 					copTsk.needExtraProj = true
 				}
 			}
-<<<<<<< HEAD
-			clonedTblScan.(*PhysicalTableScan).HandleCols, err = tblScan.HandleCols.ResolveIndices(clonedTblScan.Schema())
-=======
 			// global index for tableScan with keepOrder also need PhysicalTblID
 			if clonedTblScan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				clonedTblScan.Columns = append(clonedTblScan.Columns, model.NewExtraPhysTblIDColInfo())
@@ -1254,7 +1252,6 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				copTsk.needExtraProj = true
 			}
 			clonedTblScan.HandleCols, err = clonedTblScan.HandleCols.ResolveIndices(clonedTblScan.Schema())
->>>>>>> fe40acd803f (*: let handleMap supports partitionHandle (#44360))
 			if err != nil {
 				return nil, false
 			}
@@ -1323,6 +1320,15 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				ts.Columns = append(ts.Columns, extraInfo)
 				ts.schema.Append(extraCol)
 				ts.HandleIdx = []int{len(ts.Columns) - 1}
+			}
+			if p.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+				ts := idxLookup.TablePlans[0].(*PhysicalTableScan)
+				ts.Columns = append(ts.Columns, model.NewExtraPhysTblIDColInfo())
+				ts.schema.Append(&expression.Column{
+					RetType:  types.NewFieldType(mysql.TypeLonglong),
+					UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+					ID:       model.ExtraPhysTblID,
+				})
 			}
 			return rootTask, true
 		}
