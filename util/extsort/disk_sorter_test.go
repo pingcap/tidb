@@ -32,10 +32,7 @@ import (
 
 func TestDiskSorterCommon(t *testing.T) {
 	sorter, err := OpenDiskSorter(t.TempDir(), &DiskSorterOptions{
-		WriterBufferSize:    32 * 1024,
-		CompactionThreshold: 4,
-		MaxCompactionDepth:  2,
-		MaxCompactionSize:   0,
+		WriterBufferSize: 32 * 1024,
 	})
 	require.NoError(t, err)
 	runCommonTest(t, sorter)
@@ -654,7 +651,92 @@ func TestPickCompactionFiles(t *testing.T) {
 }
 
 func TestSplitCompactionFiles(t *testing.T) {
-	// TODO
+	testCases := []struct {
+		files              []*fileMetadata
+		maxCompactionDepth int
+		expected           [][]*fileMetadata
+	}{
+		{
+			// 1: a---c
+			// 2:   b-------f
+			// 3:       d------g
+			// 4:         e--------i
+			// 5:                h----j
+			files: []*fileMetadata{
+				{fileNum: 1, startKey: []byte("a"), endKey: []byte("c")},
+				{fileNum: 2, startKey: []byte("b"), endKey: []byte("f")},
+				{fileNum: 3, startKey: []byte("d"), endKey: []byte("g")},
+				{fileNum: 4, startKey: []byte("e"), endKey: []byte("i")},
+				{fileNum: 5, startKey: []byte("h"), endKey: []byte("j")},
+			},
+			maxCompactionDepth: 5,
+			expected: [][]*fileMetadata{
+				{
+					{fileNum: 1, startKey: []byte("a"), endKey: []byte("c")},
+					{fileNum: 2, startKey: []byte("b"), endKey: []byte("f")},
+					{fileNum: 3, startKey: []byte("d"), endKey: []byte("g")},
+					{fileNum: 4, startKey: []byte("e"), endKey: []byte("i")},
+					{fileNum: 5, startKey: []byte("h"), endKey: []byte("j")},
+				},
+			},
+		},
+		{
+			// 1: a---c
+			// 2:   b-------f
+			// 3:       d------g
+			// 4:         e--------i
+			// 5:                h----j
+			files: []*fileMetadata{
+				{fileNum: 1, startKey: []byte("a"), endKey: []byte("c")},
+				{fileNum: 2, startKey: []byte("b"), endKey: []byte("f")},
+				{fileNum: 3, startKey: []byte("d"), endKey: []byte("g")},
+				{fileNum: 4, startKey: []byte("e"), endKey: []byte("i")},
+				{fileNum: 5, startKey: []byte("h"), endKey: []byte("j")},
+			},
+			maxCompactionDepth: 4,
+			expected: [][]*fileMetadata{
+				{
+					{fileNum: 1, startKey: []byte("a"), endKey: []byte("c")},
+					{fileNum: 2, startKey: []byte("b"), endKey: []byte("f")},
+					{fileNum: 3, startKey: []byte("d"), endKey: []byte("g")},
+				},
+				{
+					{fileNum: 4, startKey: []byte("e"), endKey: []byte("i")},
+					{fileNum: 5, startKey: []byte("h"), endKey: []byte("j")},
+				},
+			},
+		},
+		{
+			// 1: a---c
+			// 2:   b-------f
+			// 3:       d-e
+			// 4:              g---i
+			// 5:                h----j
+			files: []*fileMetadata{
+				{fileNum: 1, startKey: []byte("a"), endKey: []byte("c")},
+				{fileNum: 2, startKey: []byte("b"), endKey: []byte("f")},
+				{fileNum: 3, startKey: []byte("d"), endKey: []byte("e")},
+				{fileNum: 4, startKey: []byte("g"), endKey: []byte("i")},
+				{fileNum: 5, startKey: []byte("h"), endKey: []byte("j")},
+			},
+			maxCompactionDepth: 3,
+			expected: [][]*fileMetadata{
+				{
+					{fileNum: 1, startKey: []byte("a"), endKey: []byte("c")},
+					{fileNum: 2, startKey: []byte("b"), endKey: []byte("f")},
+					{fileNum: 3, startKey: []byte("d"), endKey: []byte("e")},
+				},
+				{
+					{fileNum: 4, startKey: []byte("g"), endKey: []byte("i")},
+					{fileNum: 5, startKey: []byte("h"), endKey: []byte("j")},
+				},
+			},
+		},
+	}
+	for _, tc := range testCases {
+		actual := splitCompactionFiles(tc.files, tc.maxCompactionDepth)
+		require.Equal(t, tc.expected, actual)
+	}
 }
 
 func TestBuildCompactions(t *testing.T) {

@@ -915,12 +915,12 @@ func (d *DiskSorter) doSort(ctx context.Context) error {
 	slices.SortFunc(d.orderedFiles, func(a, b *fileMetadata) bool {
 		return bytes.Compare(a.startKey, b.startKey) < 0
 	})
-	files := pickCompactionFiles(d.orderedFiles, d.opts.MaxCompactionSize, d.opts.Logger)
+	files := pickCompactionFiles(d.orderedFiles, d.opts.CompactionThreshold, d.opts.Logger)
 	for len(files) > 0 {
 		if err := d.compactFiles(ctx, files); err != nil {
 			return err
 		}
-		files = pickCompactionFiles(d.orderedFiles, d.opts.MaxCompactionSize, d.opts.Logger)
+		files = pickCompactionFiles(d.orderedFiles, d.opts.CompactionThreshold, d.opts.Logger)
 	}
 	return nil
 }
