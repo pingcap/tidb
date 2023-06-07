@@ -876,7 +876,7 @@ type SessionVars struct {
 	// Default value is -1, means that whether to execute the query with pipeline model to is determined by the configuration of the tiflash node.
 	// Value set to 1 means query will be executed with pipeline model.
 	// Value set to 0 means query will not be executed with pipeline model.
-	TiFlashEnablePipelineMode int
+	TiFlashEnablePipelineMode int64
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
