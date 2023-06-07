@@ -58,8 +58,8 @@ var NewTaskRegisterWithTTL = utils.NewTaskRegisterWithTTL
 type taskInfo struct {
 	taskID int64
 
-	sync.RWMutex
-	lastRegisterTime atomic.Time
+	// operation on taskInfo is run inside detect-task goroutine, so no need to synchronize.
+	lastRegisterTime time.Time
 
 	// initialized lazily in register()
 	etcdClient   *etcd.Client
@@ -67,13 +67,11 @@ type taskInfo struct {
 }
 
 func (t *taskInfo) register(ctx context.Context) {
-	if time.Since(t.lastRegisterTime.Load()) < refreshTaskTTLInterval {
+	if time.Since(t.lastRegisterTime) < refreshTaskTTLInterval {
 		return
 	}
 
-	t.Lock()
-	defer t.Unlock()
-	if time.Since(t.lastRegisterTime.Load()) < refreshTaskTTLInterval {
+	if time.Since(t.lastRegisterTime) < refreshTaskTTLInterval {
 		return
 	}
 	logger := logutil.BgLogger().With(zap.Int64("task_id", t.taskID))
@@ -96,12 +94,10 @@ func (t *taskInfo) register(ctx context.Context) {
 	}
 	// we set it even if register failed, TTL is 10min, refresh interval is 3min,
 	// we can try 2 times before the lease is expired.
-	t.lastRegisterTime.Store(time.Now())
+	t.lastRegisterTime = time.Now()
 }
 
 func (t *taskInfo) close(ctx context.Context) {
-	t.Lock()
-	defer t.Unlock()
 	logger := logutil.BgLogger().With(zap.Int64("task_id", t.taskID))
 	if t.taskRegister != nil {
 		timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
@@ -123,10 +119,11 @@ func (t *taskInfo) close(ctx context.Context) {
 
 type flowHandle struct {
 	mu sync.RWMutex
+	// NOTE: there's no need to sync for below 2 fields actually, since we add a restriction that only one
+	// task can be running at a time. but we might support task queuing in the future, leave it for now.
 	// the last time we switch TiKV into IMPORT mode, this is a global operation, do it for one task makes
 	// no difference to do it for all tasks. So we do not need to record the switch time for each task.
 	lastSwitchTime atomic.Time
-
 	// taskInfoMap is a map from taskID to taskInfo
 	taskInfoMap sync.Map
 }
