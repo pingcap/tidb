@@ -31,7 +31,10 @@ import (
 
 func TestDiskSorterCommon(t *testing.T) {
 	sorter, err := OpenDiskSorter(t.TempDir(), &DiskSorterOptions{
-		WriterBufferSize: 32 * 1024,
+		WriterBufferSize:    32 * 1024,
+		CompactionThreshold: 4,
+		MaxCompactionDepth:  2,
+		MaxCompactionSize:   0,
 	})
 	require.NoError(t, err)
 	runCommonTest(t, sorter)
@@ -40,7 +43,9 @@ func TestDiskSorterCommon(t *testing.T) {
 
 func TestDiskSorterCommonParallel(t *testing.T) {
 	sorter, err := OpenDiskSorter(t.TempDir(), &DiskSorterOptions{
-		WriterBufferSize: 32 * 1024,
+		WriterBufferSize:    32 * 1024,
+		CompactionThreshold: 4,
+		MaxCompactionDepth:  2,
 	})
 	require.NoError(t, err)
 	runCommonParallelTest(t, sorter)

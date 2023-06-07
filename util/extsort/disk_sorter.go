@@ -683,6 +683,7 @@ type DiskSorterOptions struct {
 	CompactionThreshold int
 
 	// MaxCompactionDepth is the maximum files involved in a single compaction.
+	// The minimum value is 2. Any value less than 2 will be treated as not set.
 	//
 	// The default value is 64.
 	MaxCompactionDepth int
@@ -709,7 +710,7 @@ func (o *DiskSorterOptions) ensureDefaults() {
 	if o.CompactionThreshold == 0 {
 		o.CompactionThreshold = 16
 	}
-	if o.MaxCompactionDepth == 0 {
+	if o.MaxCompactionDepth < 2 {
 		o.MaxCompactionDepth = 64
 	}
 	if o.MaxCompactionSize == 0 {
