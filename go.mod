@@ -255,10 +255,6 @@ replace (
 	// fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/pingcap/tidb/parser => ./parser
-<<<<<<< Updated upstream
 	github.com/tikv/client-go/v2 => github.com/HuSharp/client-go/v2 v2.0.0-20230607132554-1b7272531b61
-=======
-	github.com/tikv/client-go/v2 => github.com/HuSharp/client-go/v2 v2.0.0-20230523090348-bfb5720d3729
->>>>>>> Stashed changes
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
