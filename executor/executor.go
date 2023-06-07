@@ -2295,10 +2295,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.CurrInsertBatchExtraCols = nil
 	vars.CurrInsertValues = chunk.Row{}
 
-	if variable.EnableResourceControl.Load() {
-		_, planDigest := getPlanDigest(sc)
-		sc.RunawayChecker = domain.GetDomain(ctx).RunawayManager().DeriveChecker(ctx.GetSessionVars().ResourceGroupName, sc.OriginalSQL, planDigest.String())
-	}
 	return
 }
 
