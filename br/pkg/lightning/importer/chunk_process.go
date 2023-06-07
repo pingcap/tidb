@@ -246,8 +246,11 @@ func (cr *chunkProcessor) encodeLoop(
 ) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
 	defer close(kvsCh)
 
-	// when AddIndexBySQL, the kvEncoder does not have secondary index, so we need
-	// to create a encoder of original table structure.
+	// when AddIndexBySQL, we use all PK and UK to run pre-deduplication, and then we
+	// strip almost all secondary index to run encodeLoop. In encodeLoop when we meet
+	// a duplicated row marked by pre-deduplication, we need original table structure
+	// to generate the duplicate error message, so here create a new encoder with
+	// original table structure.
 	originalTableEncoder := kvEncoder
 	if rc.cfg.TikvImporter.AddIndexBySQL {
 		encTable, err := tables.TableFromMeta(t.alloc, t.tableInfo.Desired)
