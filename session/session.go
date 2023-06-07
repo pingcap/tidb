@@ -2720,11 +2720,10 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 		return err
 	}
 
-	// If tidb_resource_control_enable is disabled, set resource group to empty
 	if variable.EnableResourceControl.Load() {
-		s.sessionVars.ResourceGroupName = strings.ToLower(info.ResourceGroupName)
-	} else {
-		s.sessionVars.ResourceGroupName = ""
+		if info.ResourceGroupName != "" {
+			s.sessionVars.ResourceGroupName = strings.ToLower(info.ResourceGroupName)
+		}
 	}
 
 	if info.InSandBoxMode {
