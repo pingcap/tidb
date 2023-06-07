@@ -130,6 +130,9 @@ func SetTiFlashConfVarsInContext(ctx context.Context, sctx sessionctx.Context) c
 	if sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalSort != -1 {
 		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxBytesBeforeTiFlashExternalSort, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalSort, 10))
 	}
+	if sctx.GetSessionVars().TiFlashEnablePipelineMode != -1 {
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashEnablePipelineMode, strconv.FormatInt(sctx.GetSessionVars().TiFlashEnablePipelineMode, 10))
+	}
 	return ctx
 }
 

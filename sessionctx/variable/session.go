@@ -872,6 +872,12 @@ type SessionVars struct {
 	// not limit and spill will never happen
 	TiFlashMaxBytesBeforeExternalSort int64
 
+	// TiFlashEnablePipelineMode means if we should enable tiflash pipeline model to execute query or not.
+	// Default value is -1, means that whether to execute the query with pipeline model to is determined by the configuration of the tiflash node.
+	// Value set to 1 means query will be executed with pipeline model.
+	// Value set to 0 means query will not be executed with pipeline model.
+	TiFlashEnablePipelineMode int
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
