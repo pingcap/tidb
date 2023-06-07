@@ -311,7 +311,7 @@ func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoin
 		}
 		retryTime++
 		if retryTime%60 == 0 {
-			log.FromContext(ctx).Warn("fetch tso from pd failed and retried",
+			log.FromContext(ctx).Warn("fetch tso from pd failed and retrying",
 				zap.Int("retryTime", retryTime),
 				zap.Error(err))
 		}
