@@ -2481,6 +2481,40 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 	return newProp, true
 }
 
+// exhaustPhysicalPlans enumerate all the possible physical plan for expand operator (currently only mpp case is supported)
+func (p *LogicalExpand) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
+	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
+	if !prop.IsSortItemEmpty() {
+		return nil, true, nil
+	}
+	// RootTaskType is the default one, meaning no option. (we can give them a mpp choice)
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
+		return nil, true, nil
+	}
+	// now Expand mode can only be executed on TiFlash node.
+	// Upper layer shouldn't expect any mpp partition from an Expand operator.
+	// todo: data output from Expand operator should keep the origin data mpp partition.
+	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
+		return nil, true, nil
+	}
+	// for property.RootTaskType and property.MppTaskType with no partition option, we can give an MPP Expand.
+	newProps := make([]*property.PhysicalProperty, 0, 1)
+	if p.SCtx().GetSessionVars().IsMPPAllowed() || p.SCtx().GetSessionVars().IsMPPEnforced() {
+		mppProp := prop.CloneEssentialFields()
+		mppProp.TaskTp = property.MppTaskType
+		newProps = append(newProps, mppProp)
+		expand := PhysicalExpand{
+			GroupingSets:      p.rollupGroupingSets,
+			LevelExprs:        p.LevelExprs,
+			GeneratedColNames: p.GeneratedColNames,
+		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, mppProp)
+		expand.SetSchema(p.Schema())
+		return []PhysicalPlan{expand}, true, nil
+	}
+	// if MPP switch is shutdown, nothing can be generated.
+	return nil, true, nil
+}
+
 func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	newProp, ok := p.TryToGetChildProp(prop)
 	if !ok {
@@ -2860,6 +2894,12 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 				return false
 			}
 			ret = ret && c.canPushToCopImpl(storeTp, considerDual)
+		case *LogicalExpand:
+			// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
+			if storeTp != kv.TiFlash {
+				return false
+			}
+			ret = ret && c.canPushToCopImpl(storeTp, considerDual)
 		case *LogicalTableDual:
 			return storeTp == kv.TiFlash && considerDual
 		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *LogicalWindow:
@@ -3089,6 +3129,13 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		// If there are no available partition cols, but still have group by items, that means group by items are all expressions or constants.
 		// To avoid mess, we don't do any one-phase aggregation in this case.
 		// If this is a skew distinct group agg, skip generating 1-phase agg, because skew data will cause performance issue
+		//
+		// Rollup can't be 1-phase agg: cause it will append grouping_id to the schema, and expand each row as multi rows with different grouping_id.
+		// In a general, group items should also append grouping_id as its group layout, let's say 1-phase agg has grouping items as <a,b,c>, and
+		// lower OP can supply <a,b> as original partition layout, when we insert Expand logic between them:
+		// <a,b>             -->    after fill null in Expand    --> and this shown two rows should be shuffled to the same node (the underlying partition is not satisfied yet)
+		// <1,1> in node A           <1,null,gid=1> in node A
+		// <1,2> in node B           <1,null,gid=1> in node B
 		if len(partitionCols) != 0 && !la.ctx.GetSessionVars().EnableSkewDistinctAgg {
 			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)

@@ -1579,11 +1579,18 @@ type PhysicalExpand struct {
 	// GroupingSets is used to define what kind of group layout should the underlying data follow.
 	// For simple case: select count(distinct a), count(distinct b) from t; the grouping expressions are [a] and [b].
 	GroupingSets expression.GroupingSets
+
+	// The level projections is generated from grouping sets，make execution more clearly.
+	LevelExprs [][]expression.Expression
+
+	// The generated column names. Eg: "grouping_id" and so on.
+	GeneratedColNames []string
 }
 
 // Init only assigns type and context.
-func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalExpand {
+func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
+	p.childrenReqProps = props
 	p.stats = stats
 	return &p
 }

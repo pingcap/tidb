@@ -376,6 +376,26 @@ func (p *PhysicalProjection) ExplainInfo() string {
 	return exprStr
 }
 
+func (p *PhysicalExpand) ExplainInfoV2() string {
+	sb := strings.Builder{}
+	for i, oneL := range p.LevelExprs {
+		if i == 0 {
+			sb.WriteString("level-projection:")
+			sb.WriteString("[")
+			sb.WriteString(expression.ExplainExpressionList(oneL, p.schema))
+			sb.WriteString("]")
+		} else {
+			sb.WriteString(",[")
+			sb.WriteString(expression.ExplainExpressionList(oneL, p.schema))
+			sb.WriteString("]")
+		}
+	}
+	sb.WriteString("; schema: [")
+	sb.WriteString(p.schema.String())
+	sb.WriteString("]")
+	return sb.String()
+}
+
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainNormalizedInfo() string {
 	return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
@@ -413,6 +433,9 @@ func (p *PhysicalLimit) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalExpand) ExplainInfo() string {
+	if len(p.LevelExprs) > 0 {
+		return p.ExplainInfoV2()
+	}
 	var str strings.Builder
 	str.WriteString("group set num:")
 	str.WriteString(strconv.FormatInt(int64(len(p.GroupingSets)), 10))

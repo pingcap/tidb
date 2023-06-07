@@ -97,6 +97,16 @@ type ReverseExpr interface {
 	ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
 }
 
+// TraverseDown implementing a pre-order traverse for expression tree.
+type TraverseDown interface {
+	Traverse(TraverseAction) Expression
+}
+
+// TraverseAction define the interface for action when traversing down an expression.
+type TraverseAction interface {
+	Transform(Expression) Expression
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
@@ -104,6 +114,7 @@ type Expression interface {
 	VecExpr
 	ReverseExpr
 	CollationInfo
+	TraverseDown
 
 	// Eval evaluates an expression through a row.
 	Eval(row chunk.Row) (types.Datum, error)
@@ -1268,6 +1279,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.GetFormat:
 		return true
 	case ast.IsIPv4, ast.IsIPv6:
+		return true
+	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}
 	return false

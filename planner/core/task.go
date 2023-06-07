@@ -1346,6 +1346,23 @@ func (p *PhysicalTopN) addPartialLimitForSubScans(copSubPlans []PhysicalPlan, fi
 	return limitAddedPlan
 }
 
+func (p *PhysicalExpand) attach2Task(tasks ...task) task {
+	t := tasks[0].copy()
+	// current expand can only be run in MPP TiFlash mode.
+	if mpp, ok := t.(*mppTask); ok {
+		p.SetChildren(mpp.p)
+		mpp.p = p
+		return mpp
+	}
+	// future code for TiDB self Expand implementation.
+	t = t.convertToRootTask(p.ctx)
+	t = attachPlan2Task(p, t)
+	if root, ok := tasks[0].(*rootTask); ok && root.isEmpty {
+		t.(*rootTask).isEmpty = true
+	}
+	return t
+}
+
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
