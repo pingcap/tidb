@@ -60,8 +60,10 @@ var (
 	ErrResourceGroupConfigUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupConfigUnavailable)
 	// ErrResourceGroupThrottled is the error when resource group is exceeded quota limitation
 	ErrResourceGroupThrottled = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupThrottled)
-	// ErrResourceGroupQuerySlow is the error when resource group query is slow
+	// ErrResourceGroupQueryRunaway is the error when resource group query is slow
 	ErrResourceGroupQueryRunaway = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupQueryRunaway)
+	// ErrResourceGroupQueryRunawayQuarantine is the error when query is in watch list so quarantined by resource runaway settings
+	ErrResourceGroupQueryRunawayQuarantine = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupQueryRunawayQuarantine)
 	// ErrUnknown is the unknow error.
 	ErrUnknown = dbterror.ClassTiKV.NewStd(errno.ErrUnknown)
 )
