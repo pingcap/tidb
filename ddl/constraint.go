@@ -212,40 +212,6 @@ func checkDropCheckConstraint(t *meta.Meta, job *model.Job) (*model.TableInfo, *
 	return tblInfo, constraintInfo, nil
 }
 
-func (w *worker) onAlterCheckConstraint_(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	dbInfo, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	// enforced will fetch table data and check the constraint.
-	if constraintInfo.Enforced != enforced && enforced {
-		skipCheck := false
-		failpoint.Inject("mockPassAlterConstraintCheck", func(val failpoint.Value) {
-			if val.(bool) {
-				skipCheck = true
-			}
-		})
-		if !skipCheck {
-			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo, job)
-			if err != nil {
-				// check constraint error will cancel the job, job state has been changed
-				// to cancelled in addTableCheckConstraint.
-				return ver, errors.Trace(err)
-			}
-		}
-	}
-	constraintInfo.Enforced = enforced
-	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
-	if err != nil {
-		// update version and tableInfo error will cause retry.
-		return ver, errors.Trace(err)
-	}
-
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	return ver, nil
-}
-
 func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	dbInfo, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(t, job)
 	if err != nil {
