@@ -16,6 +16,7 @@ package tablestore
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -91,7 +92,11 @@ func (s *tableTimerStoreCore) Create(ctx context.Context, record *api.TimerRecor
 	}
 	defer back()
 
-	sql, args := buildInsertTimerSQL(s.dbName, s.tblName, record)
+	sql, args, err := buildInsertTimerSQL(s.dbName, s.tblName, record)
+	if err != nil {
+		return "", err
+	}
+
 	_, err = executeSQL(ctx, sctx, sql, args...)
 	if err != nil {
 		return "", err
@@ -113,6 +118,11 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 		return nil, err
 	}
 	defer back()
+
+	if sessVars := sctx.GetSessionVars(); sessVars.GetEnableIndexMerge() {
+		sessVars.SetEnableIndexMerge(true)
+		defer sessVars.SetEnableIndexMerge(false)
+	}
 
 	seTZ := sctx.GetSessionVars().Location()
 	sql, args, err := buildSelectTimerSQL(s.dbName, s.tblName, cond)
@@ -140,27 +150,35 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 			}
 		}
 
+		var ext timerExt
+		if !row.IsNull(10) {
+			extJSON := row.GetJSON(10).String()
+			if err = json.Unmarshal([]byte(extJSON), &ext); err != nil {
+				return nil, err
+			}
+		}
+
 		var eventData []byte
-		if !row.IsNull(12) {
-			eventData = row.GetBytes(12)
+		if !row.IsNull(13) {
+			eventData = row.GetBytes(13)
 		}
 
 		var eventStart time.Time
-		if !row.IsNull(13) {
-			eventStart, err = row.GetTime(13).GoTime(seTZ)
+		if !row.IsNull(14) {
+			eventStart, err = row.GetTime(14).GoTime(seTZ)
 			if err != nil {
 				return nil, err
 			}
 		}
 
 		var summaryData []byte
-		if !row.IsNull(14) {
-			summaryData = row.GetBytes(14)
+		if !row.IsNull(15) {
+			summaryData = row.GetBytes(15)
 		}
 
 		var createTime time.Time
-		if !row.IsNull(15) {
-			createTime, err = row.GetTime(15).GoTime(seTZ)
+		if !row.IsNull(16) {
+			createTime, err = row.GetTime(16).GoTime(seTZ)
 			if err != nil {
 				return nil, err
 			}
@@ -171,6 +189,7 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 			TimerSpec: api.TimerSpec{
 				Namespace:       row.GetString(1),
 				Key:             row.GetString(2),
+				Tags:            ext.Tags,
 				Data:            timerData,
 				SchedPolicyType: api.SchedPolicyType(row.GetString(5)),
 				SchedPolicyExpr: row.GetString(6),
@@ -178,13 +197,13 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 				Watermark:       watermark,
 				Enable:          row.GetInt64(9) != 0,
 			},
-			EventStatus: api.SchedEventStatus(row.GetString(10)),
-			EventID:     row.GetString(11),
+			EventStatus: api.SchedEventStatus(row.GetString(11)),
+			EventID:     row.GetString(12),
 			EventData:   eventData,
 			EventStart:  eventStart,
 			SummaryData: summaryData,
 			CreateTime:  createTime,
-			Version:     row.GetUint64(17),
+			Version:     row.GetUint64(18),
 		}
 		timers = append(timers, timer)
 	}
@@ -226,7 +245,11 @@ func (s *tableTimerStoreCore) Update(ctx context.Context, timerID string, update
 			return err
 		}
 
-		updateSQL, args := buildUpdateTimerSQL(s.dbName, s.tblName, timerID, update)
+		updateSQL, args, err := buildUpdateTimerSQL(s.dbName, s.tblName, timerID, update)
+		if err != nil {
+			return err
+		}
+
 		if _, err = executeSQL(ctx, sctx, updateSQL, args...); err != nil {
 			return err
 		}

@@ -15,12 +15,17 @@
 package tablestore
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/timer/api"
 )
+
+type timerExt struct {
+	Tags []string `json:"tags,omitempty"`
+}
 
 // CreateTimerTableSQL returns a SQL to create timer table
 func CreateTimerTableSQL(dbName, tableName string) string {
@@ -35,6 +40,7 @@ func CreateTimerTableSQL(dbName, tableName string) string {
 		HOOK_CLASS VARCHAR(64) NOT NULL,
 		WATERMARK TIMESTAMP DEFAULT NULL,
 		ENABLE TINYINT(2) NOT NULL,
+        TIMER_EXT JSON NOT NULL,
 		EVENT_STATUS VARCHAR(32) NOT NULL,
 		EVENT_ID VARCHAR(64) NOT NULL,
 		EVENT_DATA BLOB,
@@ -45,6 +51,7 @@ func CreateTimerTableSQL(dbName, tableName string) string {
 		VERSION BIGINT(64) UNSIGNED NOT NULL,
 		PRIMARY KEY (ID),
 		UNIQUE KEY timer_key(NAMESPACE, TIMER_KEY),
+    	KEY tags((CAST(TIMER_EXT->'$.tags' AS CHAR(256) ARRAY))),
 		KEY hook_class(HOOK_CLASS)
 	)`, indentString(dbName, tableName))
 }
@@ -53,7 +60,7 @@ func indentString(dbName, tableName string) string {
 	return fmt.Sprintf("`%s`.`%s`", dbName, tableName)
 }
 
-func buildInsertTimerSQL(dbName, tableName string, record *api.TimerRecord) (string, []any) {
+func buildInsertTimerSQL(dbName, tableName string, record *api.TimerRecord) (string, []any, error) {
 	var watermark, eventStart any
 	watermarkFormat, eventStartFormat := "%?", "%?"
 	if !record.Watermark.IsZero() {
@@ -71,6 +78,15 @@ func buildInsertTimerSQL(dbName, tableName string, record *api.TimerRecord) (str
 		eventStatus = api.SchedEventIdle
 	}
 
+	ext := &timerExt{
+		Tags: record.Tags,
+	}
+
+	extJSON, err := json.Marshal(ext)
+	if err != nil {
+		return "", nil, err
+	}
+
 	sql := fmt.Sprintf("INSERT INTO %s ("+
 		"NAMESPACE, "+
 		"TIMER_KEY, "+
@@ -81,13 +97,14 @@ func buildInsertTimerSQL(dbName, tableName string, record *api.TimerRecord) (str
 		"HOOK_CLASS, "+
 		"WATERMARK, "+
 		"ENABLE, "+
+		"TIMER_EXT, "+
 		"EVENT_ID, "+
 		"EVENT_STATUS, "+
 		"EVENT_START, "+
 		"EVENT_DATA, "+
 		"SUMMARY_DATA, "+
 		"VERSION) "+
-		"VALUES (%%?, %%?, %%?, 'TIDB', %%?, %%?, %%?, %s, %%?, %%?, %%?, %s, %%?, %%?, 1)",
+		"VALUES (%%?, %%?, %%?, 'TIDB', %%?, %%?, %%?, %s, %%?, %%?, %%?, %%?, %s, %%?, %%?, 1)",
 		indentString(dbName, tableName),
 		watermarkFormat,
 		eventStartFormat,
@@ -102,12 +119,13 @@ func buildInsertTimerSQL(dbName, tableName string, record *api.TimerRecord) (str
 		record.HookClass,
 		watermark,
 		record.Enable,
+		json.RawMessage(extJSON),
 		record.EventID,
 		string(eventStatus),
 		eventStart,
 		record.EventData,
 		record.SummaryData,
-	}
+	}, nil
 }
 
 func buildSelectTimerSQL(dbName, tableName string, cond api.Cond) (string, []any, error) {
@@ -127,6 +145,7 @@ func buildSelectTimerSQL(dbName, tableName string, cond api.Cond) (string, []any
 		"HOOK_CLASS, "+
 		"WATERMARK, "+
 		"ENABLE, "+
+		"TIMER_EXT, "+
 		"EVENT_STATUS, "+
 		"EVENT_ID, "+
 		"EVENT_DATA, "+
@@ -149,7 +168,10 @@ func buildCondCriteria(cond api.Cond, args []any) (criteria string, _ []any, err
 
 	switch c := cond.(type) {
 	case *api.TimerCond:
-		criteria, args = buildTimerCondCriteria(c, args)
+		criteria, args, err = buildTimerCondCriteria(c, args)
+		if err != nil {
+			return "", nil, err
+		}
 		return criteria, args, nil
 	case *api.Operator:
 		return buildOperatorCriteria(c, args)
@@ -158,7 +180,7 @@ func buildCondCriteria(cond api.Cond, args []any) (criteria string, _ []any, err
 	}
 }
 
-func buildTimerCondCriteria(cond *api.TimerCond, args []any) (string, []any) {
+func buildTimerCondCriteria(cond *api.TimerCond, args []any) (string, []any, error) {
 	items := make([]string, 0, cap(args)-len(args))
 	if val, ok := cond.ID.Get(); ok {
 		items = append(items, "ID = %?")
@@ -180,11 +202,23 @@ func buildTimerCondCriteria(cond *api.TimerCond, args []any) (string, []any) {
 		}
 	}
 
-	if len(items) == 0 {
-		return "1", args
+	if vals, ok := cond.Tags.Get(); ok && len(vals) > 0 {
+		bs, err := json.Marshal(vals)
+		if err != nil {
+			return "", nil, err
+		}
+		items = append(items,
+			"JSON_EXTRACT(TIMER_EXT, '$.tags') IS NOT NULL",
+			"JSON_CONTAINS((TIMER_EXT->'$.tags'), %?)",
+		)
+		args = append(args, json.RawMessage(bs))
 	}
 
-	return strings.Join(items, " AND "), args
+	if len(items) == 0 {
+		return "1", args, nil
+	}
+
+	return strings.Join(items, " AND "), args, nil
 }
 
 func buildOperatorCriteria(op *api.Operator, args []any) (string, []any, error) {
@@ -232,17 +266,29 @@ func buildOperatorCriteria(op *api.Operator, args []any) (string, []any, error) 
 	return criteria, args, nil
 }
 
-func buildUpdateTimerSQL(dbName, tblName string, timerID string, update *api.TimerUpdate) (string, []any) {
-	criteria, args := buildUpdateCriteria(update, make([]any, 0, 6))
+func buildUpdateTimerSQL(dbName, tblName string, timerID string, update *api.TimerUpdate) (string, []any, error) {
+	criteria, args, err := buildUpdateCriteria(update, make([]any, 0, 6))
+	if err != nil {
+		return "", nil, err
+	}
+
 	sql := fmt.Sprintf("UPDATE %s SET %s WHERE ID = %%?", indentString(dbName, tblName), criteria)
-	return sql, append(args, timerID)
+	return sql, append(args, timerID), nil
 }
 
-func buildUpdateCriteria(update *api.TimerUpdate, args []any) (string, []any) {
+func buildUpdateCriteria(update *api.TimerUpdate, args []any) (string, []any, error) {
 	updateFields := make([]string, 0, cap(args)-len(args))
 	if val, ok := update.Enable.Get(); ok {
 		updateFields = append(updateFields, "ENABLE = %?")
 		args = append(args, val)
+	}
+
+	extFields := make(map[string]any)
+	if val, ok := update.Tags.Get(); ok {
+		if len(val) == 0 {
+			val = nil
+		}
+		extFields["tags"] = val
 	}
 
 	if val, ok := update.SchedPolicyType.Get(); ok {
@@ -293,8 +339,17 @@ func buildUpdateCriteria(update *api.TimerUpdate, args []any) (string, []any) {
 		args = append(args, val)
 	}
 
+	if len(extFields) > 0 {
+		jsonBytes, err := json.Marshal(extFields)
+		if err != nil {
+			return "", nil, err
+		}
+		updateFields = append(updateFields, "TIMER_EXT = JSON_MERGE_PATCH(TIMER_EXT, %?)")
+		args = append(args, json.RawMessage(jsonBytes))
+	}
+
 	updateFields = append(updateFields, "VERSION = VERSION + 1")
-	return strings.Join(updateFields, ", "), args
+	return strings.Join(updateFields, ", "), args, nil
 }
 
 func buildDeleteTimerSQL(dbName, tblName string, timerID string) (string, []any) {
