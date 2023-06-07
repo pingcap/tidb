@@ -152,9 +152,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 			return
 		case <-ticker.C:
 			cnt := d.getRunningGTaskCnt()
-			if cnt >= DefaultDispatchConcurrency {
-				logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency",
-					zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
+			if d.checkConcurrencyOverflow(cnt) {
 				break
 			}
 
@@ -180,9 +178,8 @@ func (d *dispatcher) DispatchTaskLoop() {
 					cnt++
 					continue
 				}
-				if cnt >= DefaultDispatchConcurrency {
-					logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency", zap.Int64("current task ID", gTask.ID),
-						zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
+
+				if d.checkConcurrencyOverflow(cnt) {
 					break
 				}
 
@@ -350,12 +347,18 @@ func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTask
 
 func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
+	// 1. generate the needed global task meta and subTask meta (dist-plan)
 	meta, err := GetTaskFlowHandle(gTask.Type).ProcessErrFlow(d.ctx, d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
 		return err
 	}
 
+	// 2. dispatch revert dist-plan to EligibleInstances
+	return d.dispatchSubTask4Revert(gTask, meta)
+}
+
+func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, meta []byte) error {
 	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, gTask.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("get global task's all instances failed", zap.Error(err))
@@ -371,10 +374,11 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) erro
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, id, meta))
 	}
 	return d.updateTask(gTask, proto.TaskStateReverting, subTasks, retrySQLTimes)
+
 }
 
-func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
-	// Generate the needed global task meta and subTask meta.
+func (d *dispatcher) processNormalFlow(gTask *proto.Task) error {
+	// 1. generate the needed global task meta and subTask meta (dist-plan)
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
 		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
@@ -392,6 +396,11 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),
 		zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Int("subtasks", len(metas)))
 
+	// 2. dispatch dist-plan to EligibleInstances
+	return d.dispatchSubTask(gTask, handle, metas)
+}
+
+func (d *dispatcher) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, metas [][]byte) error {
 	// Adjust the global task's concurrency.
 	if gTask.Concurrency == 0 {
 		gTask.Concurrency = DefaultSubtaskConcurrency
@@ -414,15 +423,14 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	if len(metas) == 0 {
 		gTask.StateUpdateTime = time.Now().UTC()
 		// Write the global task meta into the storage.
-		err = d.updateTask(gTask, proto.TaskStateSucceed, nil, retryTimes)
+		err := d.updateTask(gTask, proto.TaskStateSucceed, nil, retryTimes)
 		if err != nil {
 			logutil.BgLogger().Warn("update global task failed", zap.Error(err))
 			return err
 		}
 		return nil
 	}
-
-	// Generate all available TiDB nodes for this global tasks.
+	// select all available TiDB nodes for this global tasks.
 	serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask)
 	if err1 != nil {
 		return err1
@@ -505,4 +513,13 @@ func (d *dispatcher) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byt
 
 func (d *dispatcher) ExecInNewSession(fn func(se sessionctx.Context) error) error {
 	return d.taskMgr.WithNewSession(fn)
+}
+
+func (d *dispatcher) checkConcurrencyOverflow(cnt int) bool {
+	if cnt >= DefaultDispatchConcurrency {
+		logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency",
+			zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
+		return true
+	}
+	return false
 }
