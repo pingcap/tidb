@@ -26,6 +26,7 @@ import (
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -547,7 +548,109 @@ func TestCompactFiles(t *testing.T) {
 }
 
 func TestPickCompactionFiles(t *testing.T) {
-	// TODO
+	testCases := []struct {
+		allFiles            []*fileMetadata
+		compactionThreshold int
+		expected            []*fileMetadata
+	}{
+		{
+			// maxDepth: 1
+			// 1: a-b
+			// 2:   b-c
+			// 3:     c-d
+			allFiles: []*fileMetadata{
+				{fileNum: 1, startKey: []byte("a"), endKey: []byte("b")},
+				{fileNum: 2, startKey: []byte("b"), endKey: []byte("c")},
+				{fileNum: 3, startKey: []byte("c"), endKey: []byte("d")},
+			},
+			compactionThreshold: 2,
+			expected:            nil,
+		},
+		{
+			// maxDepth: 2
+			// 1: a-b
+			// 2:   b--d
+			// 3:     c--e
+			allFiles: []*fileMetadata{
+				{fileNum: 1, startKey: []byte("a"), endKey: []byte("b")},
+				{fileNum: 2, startKey: []byte("b"), endKey: []byte("d")},
+				{fileNum: 3, startKey: []byte("c"), endKey: []byte("e")},
+			},
+			compactionThreshold: 2,
+			expected: []*fileMetadata{
+				{fileNum: 2, startKey: []byte("b"), endKey: []byte("d")},
+				{fileNum: 3, startKey: []byte("c"), endKey: []byte("e")},
+			},
+		},
+		{
+			// maxDepth: 3
+			// 1: a---c
+			// 2:   b-------f
+			// 3:       d------g
+			// 4:         e--------i
+			// 5:                h----j
+			allFiles: []*fileMetadata{
+				{fileNum: 1, startKey: []byte("a"), endKey: []byte("c")},
+				{fileNum: 2, startKey: []byte("b"), endKey: []byte("f")},
+				{fileNum: 3, startKey: []byte("d"), endKey: []byte("g")},
+				{fileNum: 4, startKey: []byte("e"), endKey: []byte("i")},
+				{fileNum: 5, startKey: []byte("h"), endKey: []byte("j")},
+			},
+			compactionThreshold: 2,
+			expected: []*fileMetadata{
+				{fileNum: 1, startKey: []byte("a"), endKey: []byte("c")},
+				{fileNum: 2, startKey: []byte("b"), endKey: []byte("f")},
+				{fileNum: 3, startKey: []byte("d"), endKey: []byte("g")},
+				{fileNum: 4, startKey: []byte("e"), endKey: []byte("i")},
+				{fileNum: 5, startKey: []byte("h"), endKey: []byte("j")},
+			},
+		},
+		{
+			// maxDepth: 3
+			// 1: a---c
+			// 2:   b-------f
+			// 3:       d------g
+			// 4:         e--------i
+			// 5:                h----j
+			allFiles: []*fileMetadata{
+				{fileNum: 1, startKey: []byte("a"), endKey: []byte("c")},
+				{fileNum: 2, startKey: []byte("b"), endKey: []byte("f")},
+				{fileNum: 3, startKey: []byte("d"), endKey: []byte("g")},
+				{fileNum: 4, startKey: []byte("e"), endKey: []byte("i")},
+				{fileNum: 5, startKey: []byte("h"), endKey: []byte("j")},
+			},
+			compactionThreshold: 3,
+			expected: []*fileMetadata{
+				{fileNum: 2, startKey: []byte("b"), endKey: []byte("f")},
+				{fileNum: 3, startKey: []byte("d"), endKey: []byte("g")},
+				{fileNum: 4, startKey: []byte("e"), endKey: []byte("i")},
+			},
+		},
+		{
+			// maxDepth: 3
+			// 1: a---c
+			// 2:   b-------f
+			// 3:       d------g
+			// 4:         e--------i
+			// 5:                h----j
+			allFiles: []*fileMetadata{
+				{fileNum: 1, startKey: []byte("a"), endKey: []byte("c")},
+				{fileNum: 2, startKey: []byte("b"), endKey: []byte("f")},
+				{fileNum: 3, startKey: []byte("d"), endKey: []byte("g")},
+				{fileNum: 4, startKey: []byte("e"), endKey: []byte("i")},
+				{fileNum: 5, startKey: []byte("h"), endKey: []byte("j")},
+			},
+			compactionThreshold: 4,
+			expected:            nil,
+		},
+	}
+	for _, tc := range testCases {
+		actual := pickCompactionFiles(tc.allFiles, tc.compactionThreshold, zap.NewNop())
+		slices.SortFunc(actual, func(a, b *fileMetadata) bool {
+			return a.fileNum < b.fileNum
+		})
+		require.Equal(t, tc.expected, actual)
+	}
 }
 
 func TestSplitCompactionFiles(t *testing.T) {

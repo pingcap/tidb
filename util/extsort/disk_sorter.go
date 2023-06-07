@@ -673,11 +673,11 @@ type DiskSorterOptions struct {
 	// The overlap depth of these files is 3, because file 0, 1, 2 overlap at
 	// the interval [c, d), and file 1, 2, 3 overlap at the interval [d, e).
 	//
-	// If the overlap depth is larger than CompactionThreshold, the sorter will
-	// compact files to reduce the overlap depth during sorting. The larger the
-	// overlap depth, the larger read amplification will be during iteration.
-	// This is a trade-off between read amplification and sorting cost. Setting
-	// this value to math.MaxInt32 will disable the compaction.
+	// If the overlap depth reached CompactionThreshold, the sorter will compact
+	// files to reduce the overlap depth during sorting. The larger the overlap
+	// depth, the larger read amplification will be during iteration. This is a
+	// trade-off between read amplification and sorting cost. Setting this value
+	// to math.MaxInt will disable the compaction.
 	//
 	// The default value is 16.
 	CompactionThreshold int
@@ -915,12 +915,12 @@ func (d *DiskSorter) doSort(ctx context.Context) error {
 	slices.SortFunc(d.orderedFiles, func(a, b *fileMetadata) bool {
 		return bytes.Compare(a.startKey, b.startKey) < 0
 	})
-	files := d.pickCompactionFiles()
+	files := pickCompactionFiles(d.orderedFiles, d.opts.MaxCompactionSize, d.opts.Logger)
 	for len(files) > 0 {
 		if err := d.compactFiles(ctx, files); err != nil {
 			return err
 		}
-		files = d.pickCompactionFiles()
+		files = pickCompactionFiles(d.orderedFiles, d.opts.MaxCompactionSize, d.opts.Logger)
 	}
 	return nil
 }
@@ -993,7 +993,11 @@ func (d *DiskSorter) compactFiles(ctx context.Context, files []*fileMetadata) er
 	return nil
 }
 
-func (d *DiskSorter) pickCompactionFiles() []*fileMetadata {
+func pickCompactionFiles(
+	allFiles []*fileMetadata,
+	compactionThreshold int,
+	logger *zap.Logger,
+) []*fileMetadata {
 	type interval struct {
 		key   []byte
 		depth int
@@ -1001,8 +1005,8 @@ func (d *DiskSorter) pickCompactionFiles() []*fileMetadata {
 	// intervals is a list of intervals that perfectly overlap file boundaries.
 	// For example, if we have two files [a, c] and [b, d], the intervals will be
 	// [a, b), [b, c), [c, d).
-	intervals := make([]interval, 0, len(d.orderedFiles)*2)
-	for _, file := range d.orderedFiles {
+	intervals := make([]interval, 0, len(allFiles)*2)
+	for _, file := range allFiles {
 		intervals = append(intervals, interval{
 			key:   file.startKey,
 			depth: 1,
@@ -1023,12 +1027,12 @@ func (d *DiskSorter) pickCompactionFiles() []*fileMetadata {
 			maxDepth = intervals[i].depth
 		}
 	}
-	if maxDepth <= d.opts.CompactionThreshold {
+	if maxDepth < compactionThreshold {
 		return nil
 	}
 
 	var files []*fileMetadata
-	for _, file := range d.orderedFiles {
+	for _, file := range allFiles {
 		minIntervalIndex := sort.Search(len(intervals), func(i int) bool {
 			return bytes.Compare(intervals[i].key, file.startKey) >= 0
 		})
@@ -1036,16 +1040,16 @@ func (d *DiskSorter) pickCompactionFiles() []*fileMetadata {
 			return bytes.Compare(intervals[i].key, file.endKey) >= 0
 		})
 		for i := minIntervalIndex; i < maxIntervalIndex; i++ {
-			if intervals[i].depth >= d.opts.CompactionThreshold {
+			if intervals[i].depth >= compactionThreshold {
 				files = append(files, file)
 				break
 			}
 		}
 	}
-	d.opts.Logger.Info(
-		"max overlap depth exceeds the compaction threshold, pick files to compact",
+	logger.Info(
+		"max overlap depth reached the compaction threshold, pick files to compact",
 		zap.Int("maxDepth", maxDepth),
-		zap.Int("threshold", d.opts.CompactionThreshold),
+		zap.Int("threshold", compactionThreshold),
 		zap.Int("fileCount", len(files)),
 	)
 	return files
