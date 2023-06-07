@@ -212,7 +212,7 @@ func (d *Checker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt)
 }
 
 // RecoverSchema implements the DDL interface.
-func (d *Checker) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *ddl.RecoverSchemaInfo) (err error) {
+func (*Checker) RecoverSchema(_ sessionctx.Context, _ *ddl.RecoverSchemaInfo) (err error) {
 	return nil
 }
 
@@ -269,13 +269,13 @@ func (d *Checker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (er
 }
 
 // RecoverTable implements the DDL interface.
-func (d *Checker) RecoverTable(ctx sessionctx.Context, recoverInfo *ddl.RecoverInfo) (err error) {
+func (*Checker) RecoverTable(_ sessionctx.Context, _ *ddl.RecoverInfo) (err error) {
 	//TODO implement me
 	panic("implement me")
 }
 
 // FlashbackCluster implements the DDL interface.
-func (d *Checker) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) (err error) {
+func (*Checker) FlashbackCluster(_ sessionctx.Context, _ uint64) (err error) {
 	//TODO implement me
 	panic("implement me")
 }
@@ -347,7 +347,7 @@ func (d *Checker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt 
 }
 
 // TruncateTable implements the DDL interface.
-func (d *Checker) TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error {
+func (*Checker) TruncateTable(_ sessionctx.Context, _ ast.Ident) error {
 	//TODO implement me
 	panic("implement me")
 }
@@ -386,66 +386,66 @@ func (d *Checker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableNa
 }
 
 // UpdateTableReplicaInfo implements the DDL interface.
-func (d *Checker) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
+func (*Checker) UpdateTableReplicaInfo(_ sessionctx.Context, _ int64, _ bool) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // RepairTable implements the DDL interface.
-func (d *Checker) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
+func (*Checker) RepairTable(_ sessionctx.Context, _ *ast.CreateTableStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // CreateSequence implements the DDL interface.
-func (d *Checker) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
+func (*Checker) CreateSequence(_ sessionctx.Context, _ *ast.CreateSequenceStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // DropSequence implements the DDL interface.
-func (d *Checker) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error) {
+func (*Checker) DropSequence(_ sessionctx.Context, _ *ast.DropSequenceStmt) (err error) {
 	//TODO implement me
 	panic("implement me")
 }
 
 // AlterSequence implements the DDL interface.
-func (d *Checker) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {
+func (*Checker) AlterSequence(_ sessionctx.Context, _ *ast.AlterSequenceStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // CreatePlacementPolicy implements the DDL interface.
-func (d *Checker) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error {
+func (*Checker) CreatePlacementPolicy(_ sessionctx.Context, _ *ast.CreatePlacementPolicyStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // DropPlacementPolicy implements the DDL interface.
-func (d *Checker) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error {
+func (*Checker) DropPlacementPolicy(_ sessionctx.Context, _ *ast.DropPlacementPolicyStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // AlterPlacementPolicy implements the DDL interface.
-func (d *Checker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error {
+func (*Checker) AlterPlacementPolicy(_ sessionctx.Context, _ *ast.AlterPlacementPolicyStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // AddResourceGroup implements the DDL interface.
 // ResourceGroup do not affect the transaction.
-func (d *Checker) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error {
+func (*Checker) AddResourceGroup(_ sessionctx.Context, _ *ast.CreateResourceGroupStmt) error {
 	return nil
 }
 
 // DropResourceGroup implements the DDL interface.
-func (d *Checker) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error {
+func (*Checker) DropResourceGroup(_ sessionctx.Context, _ *ast.DropResourceGroupStmt) error {
 	return nil
 }
 
 // AlterResourceGroup implements the DDL interface.
-func (d *Checker) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error {
+func (*Checker) AlterResourceGroup(_ sessionctx.Context, _ *ast.AlterResourceGroupStmt) error {
 	return nil
 }
 
@@ -465,19 +465,19 @@ func (d *Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInf
 }
 
 // CreateTableWithInfo implements the DDL interface.
-func (d *Checker) CreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ *model.TableInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // BatchCreateTableWithInfo implements the DDL interface.
-func (d *Checker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (*Checker) BatchCreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ []*model.TableInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // CreatePlacementPolicyWithInfo implements the DDL interface.
-func (d *Checker) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist ddl.OnExist) error {
+func (*Checker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *model.PolicyInfo, _ ddl.OnExist) error {
 	//TODO implement me
 	panic("implement me")
 }

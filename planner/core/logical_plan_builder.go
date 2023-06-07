@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 const (
@@ -197,6 +198,108 @@ func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
+func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expression) (LogicalPlan, []expression.Expression, error) {
+	b.optFlag |= flagResolveExpand
+
+	// Rollup syntax require expand OP to do the data expansion, different data replica supply the different grouping layout.
+	distinctGbyExprs, gbyExprsRefPos := expression.DeduplicateGbyExpression(b.ctx, gbyItems)
+	// build another projection below.
+	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, p.Schema().Len()+len(distinctGbyExprs))}.Init(b.ctx, b.getSelectOffset())
+	// project: child's output and distinct GbyExprs in advance. (make every group-by item to be a column)
+	projSchema := p.Schema().Clone()
+	names := p.OutputNames()
+	for _, col := range projSchema.Columns {
+		proj.Exprs = append(proj.Exprs, col)
+	}
+	distinctGbyCols := make([]*expression.Column, 0, len(distinctGbyExprs))
+	for _, expr := range distinctGbyExprs {
+		// distinct group expr has been resolved in resolveGby.
+		proj.Exprs = append(proj.Exprs, expr)
+
+		// add the newly appended names.
+		if c, ok := expr.(*expression.Column); ok {
+			names = append(names, buildExpandFieldName(c, names[p.Schema().ColumnIndex(c)], ""))
+		} else {
+			names = append(names, buildExpandFieldName(expr, nil, ""))
+		}
+
+		// since we will change the nullability of source col, proj it with a new col id.
+		col := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			// clone it rather than using it directly,
+			RetType: expr.GetType().Clone(),
+		}
+
+		projSchema.Append(col)
+		distinctGbyCols = append(distinctGbyCols, col)
+	}
+	proj.SetSchema(projSchema)
+	proj.SetChildren(p)
+	// since expand will ref original col and make some change, do the copy in executor rather than ref the same chunk.column.
+	proj.AvoidColumnEvaluator = true
+	proj.Proj4Expand = true
+	newGbyItems := expression.RestoreGbyExpression(distinctGbyCols, gbyExprsRefPos)
+
+	// build expand.
+	rollupGroupingSets := expression.RollupGroupingSets(newGbyItems)
+	// eg: <a,b,c> with rollup => {},{a},{a,b},{a,b,c}
+	// for every grouping set above, we should individually set those not-needed grouping-set col as null value.
+	// eg: let's say base schema is <a,b,c,d>, d is unrelated col, keep it real in every grouping set projection.
+	// 		for grouping set {a,b,c}, project it as: [a,    b,    c,    d,   gid]
+	//      for grouping set {a,b},   project it as: [a,    b,    null, d,   gid]
+	//      for grouping set {a},     project it as: [a,    null, null, d,   gid]
+	// 		for grouping set {},      project it as: [null, null, null, d,   gid]
+	expandSchema := proj.Schema().Clone()
+	expression.AdjustNullabilityFromGroupingSets(rollupGroupingSets, expandSchema)
+	expand := LogicalExpand{
+		rollupGroupingSets: rollupGroupingSets,
+		distinctGroupByCol: distinctGbyCols,
+		// fill the gen col names when building level projections.
+	}.Init(b.ctx, b.getSelectOffset())
+
+	// if we want to use bitAnd for the quick computation of grouping function, then the maximum capacity of num of grouping is about 64.
+	expand.GroupingMode = tipb.GroupingMode_ModeBitAnd
+	if len(expand.rollupGroupingSets) > 64 {
+		expand.GroupingMode = tipb.GroupingMode_ModeNumericSet
+	}
+
+	expand.distinctSize, expand.rollupGroupingIDs, expand.rollupID2GIDS = expand.rollupGroupingSets.DistinctSize()
+	hasDuplicateGroupingSet := len(expand.rollupGroupingSets) != expand.distinctSize
+	// append the generated column for logical Expand.
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.SetFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
+	gid := &expression.Column{
+		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  tp,
+		OrigName: "gid",
+	}
+	expand.GID = gid
+	expandSchema.Append(gid)
+	expand.GeneratedColNames = append(expand.GeneratedColNames, gid.OrigName)
+	names = append(names, buildExpandFieldName(gid, nil, "gid_"))
+	if hasDuplicateGroupingSet {
+		// the last two col of the schema should be gid & gpos
+		gpos := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  tp.Clone(),
+			OrigName: "gpos",
+		}
+		expand.GPos = gpos
+		expandSchema.Append(gpos)
+		expand.GeneratedColNames = append(expand.GeneratedColNames, gpos.OrigName)
+		names = append(names, buildExpandFieldName(gpos, nil, "gpos_"))
+	}
+	expand.SetChildren(proj)
+	expand.SetSchema(expandSchema)
+	expand.SetOutputNames(names)
+
+	// register current rollup Expand operator in current select block.
+	b.currentBlockExpand = expand
+
+	// defer generating level-projection as last logical optimization rule.
+	return expand, newGbyItems, nil
+}
+
 func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression,
 	correlatedAggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[int]int, error) {
 	b.optFlag |= flagBuildKeyInfo
@@ -212,6 +315,10 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 
 	if b.ctx.GetSessionVars().EnableSkewDistinctAgg {
 		b.optFlag |= flagSkewDistinctAgg
+	}
+	var rollupExpand *LogicalExpand
+	if expand, ok := p.(*LogicalExpand); ok {
+		rollupExpand = expand
 	}
 
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx, b.getSelectOffset())
@@ -345,7 +452,15 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	}
 	plan4Agg.names = names
 	plan4Agg.SetChildren(p)
-	plan4Agg.GroupByItems = gbyItems
+	if rollupExpand != nil {
+		// append gid and gpos as the group keys if any.
+		plan4Agg.GroupByItems = append(gbyItems, rollupExpand.GID)
+		if rollupExpand.GPos != nil {
+			plan4Agg.GroupByItems = append(plan4Agg.GroupByItems, rollupExpand.GPos)
+		}
+	} else {
+		plan4Agg.GroupByItems = gbyItems
+	}
 	plan4Agg.SetSchema(schema4Agg)
 	return plan4Agg, aggIndexMap, nil
 }
@@ -1276,6 +1391,31 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context,
 		fieldName = strings.TrimRight(fieldName, "\t\n )")
 		return model.NewCIStr(fieldName), nil
 	}
+}
+
+func buildExpandFieldName(expr expression.Expression, name *types.FieldName, genName string) *types.FieldName {
+	_, isCol := expr.(*expression.Column)
+	var origTblName, origColName, dbName, colName, tblName model.CIStr
+	if genName != "" {
+		// for case like: gid_, gpos_
+		colName = model.NewCIStr(expr.String())
+	} else if isCol {
+		// col ref to original col, while its nullability may be changed.
+		origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
+		colName = model.NewCIStr("ex_" + name.ColName.O)
+		tblName = model.NewCIStr("ex_" + name.TblName.O)
+	} else {
+		// Other: complicated expression.
+		colName = model.NewCIStr("ex_" + expr.String())
+	}
+	newName := &types.FieldName{
+		TblName:     tblName,
+		OrigTblName: origTblName,
+		ColName:     colName,
+		OrigColName: origColName,
+		DBName:      dbName,
+	}
+	return newName
 }
 
 // buildProjectionField builds the field object according to SelectField in projection.
@@ -2708,6 +2848,7 @@ func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 			outerSchema := r.outerPlan.Schema()
 			r.b.outerSchemas = append(r.b.outerSchemas, outerSchema)
 			r.b.outerNames = append(r.b.outerNames, r.outerPlan.OutputNames())
+			r.b.outerBlockExpand = append(r.b.outerBlockExpand, r.b.currentBlockExpand)
 		}
 		r.err = r.resolveSelect(v)
 		return n, true
@@ -2861,6 +3002,8 @@ func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 		if r.outerPlan != nil {
 			r.b.outerSchemas = r.b.outerSchemas[0 : len(r.b.outerSchemas)-1]
 			r.b.outerNames = r.b.outerNames[0 : len(r.b.outerNames)-1]
+			r.b.currentBlockExpand = r.b.outerBlockExpand[len(r.b.outerBlockExpand)-1]
+			r.b.outerBlockExpand = r.b.outerBlockExpand[0 : len(r.b.outerBlockExpand)-1]
 		}
 	}
 	return n, r.err == nil
@@ -3536,7 +3679,7 @@ func allColFromExprNode(p LogicalPlan, n ast.Node, names map[*types.FieldName]st
 	n.Accept(extractor)
 }
 
-func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, []expression.Expression, error) {
+func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, []expression.Expression, bool, error) {
 	b.curClause = groupByClause
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 	resolver := &gbyResolver{
@@ -3552,7 +3695,7 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *a
 		resolver.isParam = false
 		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
-			return nil, nil, errors.Trace(resolver.err)
+			return nil, nil, false, errors.Trace(resolver.err)
 		}
 		if !resolver.isParam {
 			item.Expr = retExpr.(ast.ExprNode)
@@ -3561,13 +3704,13 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *a
 		itemExpr := retExpr.(ast.ExprNode)
 		expr, np, err := b.rewrite(ctx, itemExpr, p, nil, true)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 
 		exprs = append(exprs, expr)
 		p = np
 	}
-	return p, exprs, nil
+	return p, exprs, gby.Rollup, nil
 }
 
 func (*PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectField) (resultList []*ast.SelectField, err error) {
@@ -3987,6 +4130,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		correlatedAggMap              map[*ast.AggregateFuncExpr]int
 		gbyCols                       []expression.Expression
 		projExprs                     []expression.Expression
+		rollup                        bool
 	)
 
 	// set for update read to true before building result set node
@@ -4052,7 +4196,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.GroupBy != nil {
-		p, gbyCols, err = b.resolveGbyExprs(ctx, p, sel.GroupBy, sel.Fields.Fields)
+		p, gbyCols, rollup, err = b.resolveGbyExprs(ctx, p, sel.GroupBy, sel.Fields.Fields)
 		if err != nil {
 			return nil, err
 		}
@@ -4148,6 +4292,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 	if needBuildAgg {
+		// if rollup syntax is specified, Expand OP is required to replicate the data to feed different grouping layout.
+		if rollup {
+			p, gbyCols, err = b.buildExpand(p, gbyCols)
+			if err != nil {
+				return nil, err
+			}
+		}
 		var aggIndexMap map[int]int
 		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
 		if err != nil {
@@ -4584,8 +4735,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				tblStats := h.GetTableStats(tableInfo)
 				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
 				globalStatsReady := tblStats.IsInitialized()
+				allowDynamicWithoutStats := false
+				fixValue, ok := b.ctx.GetSessionVars().GetOptimizerFixControlValue(variable.TiDBOptFixControl44262)
+				if ok && variable.TiDBOptOn(fixValue) {
+					allowDynamicWithoutStats = true
+				}
+
 				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
-				usePartitionProcessor := !isDynamicEnabled || !globalStatsReady
+				usePartitionProcessor := !isDynamicEnabled || (!globalStatsReady && !allowDynamicWithoutStats)
 
 				failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
 					if val.(bool) {

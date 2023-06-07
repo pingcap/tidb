@@ -1120,9 +1120,14 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		schemaName := dbName.L
 		tblName := tableInfo.Name.L
 		if hypoIndexes[schemaName] != nil && hypoIndexes[schemaName][tblName] != nil {
+			hypoIndexList := make([]*model.IndexInfo, 0, len(hypoIndexes[schemaName][tblName]))
 			for _, index := range hypoIndexes[schemaName][tblName] {
-				publicIndices = append(publicIndices, index)
+				hypoIndexList = append(hypoIndexList, index)
 			}
+			sort.Slice(hypoIndexList, func(i, j int) bool { // to make the result stable
+				return hypoIndexList[i].Name.O < hypoIndexList[j].Name.O
+			})
+			publicIndices = append(publicIndices, hypoIndexList...)
 		}
 	}
 	if len(publicIndices) > 0 {
@@ -1200,6 +1205,25 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		}
 		if fk.Version < model.FKVersion1 {
 			buf.WriteString(" /* FOREIGN KEY INVALID */")
+		}
+	}
+	// add check constraints info
+	publicConstraints := make([]*model.ConstraintInfo, 0, len(tableInfo.Indices))
+	for _, constr := range tableInfo.Constraints {
+		if constr.State == model.StatePublic {
+			publicConstraints = append(publicConstraints, constr)
+		}
+	}
+	if len(publicConstraints) > 0 {
+		buf.WriteString(",\n")
+	}
+	for i, constrInfo := range publicConstraints {
+		fmt.Fprintf(buf, "CONSTRAINT %s CHECK ((%s))", stringutil.Escape(constrInfo.Name.O, sqlMode), constrInfo.ExprString)
+		if !constrInfo.Enforced {
+			buf.WriteString(" /*!80016 NOT ENFORCED */")
+		}
+		if i != len(publicConstraints)-1 {
+			buf.WriteString(",\n")
 		}
 	}
 

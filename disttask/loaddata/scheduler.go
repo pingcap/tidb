@@ -35,6 +35,7 @@ import (
 // ImportScheduler is a scheduler for load data.
 // Scheduler is equivalent to a Lightning instance.
 type ImportScheduler struct {
+	taskID        int64
 	taskMeta      *TaskMeta
 	tableImporter *importer.TableImporter
 	sharedVars    sync.Map
@@ -58,6 +59,7 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// todo: this method will load all files, but we only import files related to current subtask.
 	if err := controller.InitDataFiles(ctx); err != nil {
 		return err
 	}
@@ -65,10 +67,8 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
 		Progress: asyncloaddata.NewProgress(false),
-		Job: &asyncloaddata.Job{
-			ID: s.taskMeta.JobID,
-		},
-	}, controller)
+		Job:      &asyncloaddata.Job{},
+	}, controller, s.taskID)
 	if err != nil {
 		return err
 	}
@@ -183,7 +183,7 @@ func (s *ImportScheduler) Rollback(context.Context) error {
 func init() {
 	scheduler.RegisterSchedulerConstructor(
 		proto.LoadData,
-		func(bs []byte, step int64) (scheduler.Scheduler, error) {
+		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
 			taskMeta := TaskMeta{}
 			if err := json.Unmarshal(bs, &taskMeta); err != nil {
 				return nil, err
@@ -191,6 +191,7 @@ func init() {
 			logger := logutil.BgLogger().With(zap.String("component", "scheduler"), zap.String("type", proto.LoadData), zap.Int64("table_id", taskMeta.Plan.TableInfo.ID))
 			logger.Info("create new load data scheduler", zap.Any("taskMeta", taskMeta))
 			return &ImportScheduler{
+				taskID:   taskID,
 				taskMeta: &taskMeta,
 				logger:   logger,
 			}, nil

@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -209,180 +210,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	}
 	e.rowIdx += retCount
 	return adjustColumns(ret, e.columns, e.table), nil
-}
-
-func getRowCountTables(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (map[int64]uint64, error) {
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	var rows []chunk.Row
-	var err error
-	if len(tableIDs) == 0 {
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, "select table_id, count from mysql.stats_meta")
-	} else {
-		inTblIDs := buildInTableIDsString(tableIDs)
-		sql := "select table_id, count from mysql.stats_meta where " + inTblIDs
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	rowCountMap := make(map[int64]uint64, len(rows))
-	for _, row := range rows {
-		tableID := row.GetInt64(0)
-		rowCnt := row.GetUint64(1)
-		rowCountMap[tableID] = rowCnt
-	}
-	return rowCountMap, nil
-}
-
-func buildInTableIDsString(tableIDs []int64) string {
-	var whereBuilder strings.Builder
-	whereBuilder.WriteString("table_id in (")
-	for i, id := range tableIDs {
-		whereBuilder.WriteString(strconv.FormatInt(id, 10))
-		if i != len(tableIDs)-1 {
-			whereBuilder.WriteString(",")
-		}
-	}
-	whereBuilder.WriteString(")")
-	return whereBuilder.String()
-}
-
-type tableHistID struct {
-	tableID int64
-	histID  int64
-}
-
-func getColLengthTables(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (map[tableHistID]uint64, error) {
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	var rows []chunk.Row
-	var err error
-	if len(tableIDs) == 0 {
-		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0"
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
-	} else {
-		inTblIDs := buildInTableIDsString(tableIDs)
-		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0 and " + inTblIDs
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	colLengthMap := make(map[tableHistID]uint64, len(rows))
-	for _, row := range rows {
-		tableID := row.GetInt64(0)
-		histID := row.GetInt64(1)
-		totalSize := row.GetInt64(2)
-		if totalSize < 0 {
-			totalSize = 0
-		}
-		colLengthMap[tableHistID{tableID: tableID, histID: histID}] = uint64(totalSize)
-	}
-	return colLengthMap, nil
-}
-
-func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64) (uint64, uint64) {
-	columnLength := make(map[string]uint64, len(info.Columns))
-	for _, col := range info.Columns {
-		if col.State != model.StatePublic {
-			continue
-		}
-		length := col.FieldType.StorageLength()
-		if length != types.VarStorageLen {
-			columnLength[col.Name.L] = rowCount * uint64(length)
-		} else {
-			length := tableStatsCache.GetColLength(tableHistID{tableID: physicalID, histID: col.ID})
-			columnLength[col.Name.L] = length
-		}
-	}
-	dataLength, indexLength := uint64(0), uint64(0)
-	for _, length := range columnLength {
-		dataLength += length
-	}
-	for _, idx := range info.Indices {
-		if idx.State != model.StatePublic {
-			continue
-		}
-		for _, col := range idx.Columns {
-			if col.Length == types.UnspecifiedLength {
-				indexLength += columnLength[col.Name.L]
-			} else {
-				indexLength += rowCount * uint64(col.Length)
-			}
-		}
-	}
-	return dataLength, indexLength
-}
-
-type statsCache struct {
-	mu         syncutil.RWMutex
-	modifyTime time.Time
-	tableRows  map[int64]uint64
-	colLength  map[tableHistID]uint64
-	dirtyIDs   []int64
-}
-
-var tableStatsCache = &statsCache{}
-
-// TableStatsCacheExpiry is the expiry time for table stats cache.
-var TableStatsCacheExpiry = 3 * time.Second
-
-func invalidInfoSchemaStatCache(tblID int64) {
-	tableStatsCache.mu.Lock()
-	defer tableStatsCache.mu.Unlock()
-	tableStatsCache.dirtyIDs = append(tableStatsCache.dirtyIDs, tblID)
-}
-
-func (c *statsCache) GetTableRows(id int64) uint64 {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.tableRows[id]
-}
-
-func (c *statsCache) GetColLength(id tableHistID) uint64 {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.colLength[id]
-}
-
-func (c *statsCache) update(ctx context.Context, sctx sessionctx.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
-		if len(c.dirtyIDs) > 0 {
-			tableRows, err := getRowCountTables(ctx, sctx, c.dirtyIDs...)
-			if err != nil {
-				return err
-			}
-			for id, tr := range tableRows {
-				c.tableRows[id] = tr
-			}
-			colLength, err := getColLengthTables(ctx, sctx, c.dirtyIDs...)
-			if err != nil {
-				return err
-			}
-			for id, cl := range colLength {
-				c.colLength[id] = cl
-			}
-			c.dirtyIDs = nil
-		}
-		return nil
-	}
-	tableRows, err := getRowCountTables(ctx, sctx)
-	if err != nil {
-		return err
-	}
-	colLength, err := getColLengthTables(ctx, sctx)
-	if err != nil {
-		return err
-	}
-	c.tableRows = tableRows
-	c.colLength = colLength
-	c.modifyTime = time.Now()
-	c.dirtyIDs = nil
-	return nil
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
@@ -655,7 +482,7 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 }
 
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	err := tableStatsCache.update(ctx, sctx)
+	err := handle.TableRowStatsCache.Update(ctx, sctx)
 	if err != nil {
 		return err
 	}
@@ -697,15 +524,16 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					}
 				}
 
+				cache := handle.TableRowStatsCache
 				var rowCount, dataLength, indexLength uint64
 				if table.GetPartitionInfo() == nil {
-					rowCount = tableStatsCache.GetTableRows(table.ID)
-					dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount)
+					rowCount = cache.GetTableRows(table.ID)
+					dataLength, indexLength = cache.GetDataAndIndexLength(table, table.ID, rowCount)
 				} else {
 					for _, pi := range table.GetPartitionInfo().Definitions {
-						piRowCnt := tableStatsCache.GetTableRows(pi.ID)
+						piRowCnt := cache.GetTableRows(pi.ID)
 						rowCount += piRowCnt
-						parDataLen, parIndexLen := getDataAndIndexLength(table, pi.ID, piRowCnt)
+						parDataLen, parIndexLen := cache.GetDataAndIndexLength(table, pi.ID, piRowCnt)
 						dataLength += parDataLen
 						indexLength += parIndexLen
 					}
@@ -998,6 +826,10 @@ ForColumnsTag:
 				}
 			}
 		}
+		colType := ft.GetType()
+		if colType == mysql.TypeVarString {
+			colType = mysql.TypeVarchar
+		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
 			schema.Name.O,         // TABLE_SCHEMA
@@ -1006,7 +838,7 @@ ForColumnsTag:
 			i,                     // ORDINAL_POSITION
 			columnDefault,         // COLUMN_DEFAULT
 			columnDesc.Null,       // IS_NULLABLE
-			types.TypeToStr(ft.GetType(), ft.GetCharset()), // DATA_TYPE
+			types.TypeToStr(colType, ft.GetCharset()), // DATA_TYPE
 			charMaxLen,           // CHARACTER_MAXIMUM_LENGTH
 			charOctLen,           // CHARACTER_OCTET_LENGTH
 			numericPrecision,     // NUMERIC_PRECISION
@@ -1034,7 +866,8 @@ func calcCharOctLength(lenInChar int, cs string) int {
 }
 
 func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	err := tableStatsCache.update(ctx, sctx)
+	cache := handle.TableRowStatsCache
+	err := cache.Update(ctx, sctx)
 	if err != nil {
 		return err
 	}
@@ -1050,8 +883,8 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 
 			var rowCount, dataLength, indexLength uint64
 			if table.GetPartitionInfo() == nil {
-				rowCount = tableStatsCache.GetTableRows(table.ID)
-				dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount)
+				rowCount = cache.GetTableRows(table.ID)
+				dataLength, indexLength = cache.GetDataAndIndexLength(table, table.ID, rowCount)
 				avgRowLength := uint64(0)
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
@@ -1088,8 +921,8 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				rows = append(rows, record)
 			} else {
 				for i, pi := range table.GetPartitionInfo().Definitions {
-					rowCount = tableStatsCache.GetTableRows(pi.ID)
-					dataLength, indexLength = getDataAndIndexLength(table, pi.ID, rowCount)
+					rowCount = cache.GetTableRows(pi.ID)
+					dataLength, indexLength = cache.GetDataAndIndexLength(table, pi.ID, rowCount)
 
 					avgRowLength := uint64(0)
 					if rowCount != 0 {
@@ -2134,7 +1967,7 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 }
 
 // dataForAnalyzeStatusHelper is a helper function which can be used in show_stats.go
-func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context, isShow bool) (rows [][]types.Datum, err error) {
+func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
 	const maxAnalyzeJobs = 30
 	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
@@ -2182,7 +2015,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context, is
 		}
 
 		var remainDurationStr, progressStr, estimatedRowCntStr interface{}
-		if isShow && state == statistics.AnalyzeRunning {
+		if state == statistics.AnalyzeRunning {
 			startTime, ok := startTime.(types.Time)
 			if !ok {
 				return nil, errors.New("invalid start time")
@@ -2199,39 +2032,22 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context, is
 			progressStr = progress
 			estimatedRowCntStr = int64(estimatedRowCnt)
 		}
-		var row []types.Datum
-		if isShow {
-			row = types.MakeDatums(
-				dbName,             // TABLE_SCHEMA
-				tableName,          // TABLE_NAME
-				partitionName,      // PARTITION_NAME
-				jobInfo,            // JOB_INFO
-				processedRows,      // ROW_COUNT
-				startTime,          // START_TIME
-				endTime,            // END_TIME
-				state,              // STATE
-				failReason,         // FAIL_REASON
-				instance,           // INSTANCE
-				procID,             // PROCESS_ID
-				remainDurationStr,  // REMAINING_SECONDS
-				progressStr,        // PROGRESS
-				estimatedRowCntStr, // ESTIMATED_TOTAL_ROWS
-			)
-		} else {
-			row = types.MakeDatums(
-				dbName,        // TABLE_SCHEMA
-				tableName,     // TABLE_NAME
-				partitionName, // PARTITION_NAME
-				jobInfo,       // JOB_INFO
-				processedRows, // ROW_COUNT
-				startTime,     // START_TIME
-				endTime,       // END_TIME
-				state,         // STATE
-				failReason,    // FAIL_REASON
-				instance,      // INSTANCE
-				procID,        // PROCESS_ID
-			)
-		}
+		row := types.MakeDatums(
+			dbName,             // TABLE_SCHEMA
+			tableName,          // TABLE_NAME
+			partitionName,      // PARTITION_NAME
+			jobInfo,            // JOB_INFO
+			processedRows,      // ROW_COUNT
+			startTime,          // START_TIME
+			endTime,            // END_TIME
+			state,              // STATE
+			failReason,         // FAIL_REASON
+			instance,           // INSTANCE
+			procID,             // PROCESS_ID
+			remainDurationStr,  // REMAINING_SECONDS
+			progressStr,        // PROGRESS
+			estimatedRowCntStr, // ESTIMATED_TOTAL_ROWS
+		)
 		rows = append(rows, row)
 	}
 	return
@@ -2311,7 +2127,7 @@ func calRemainInfoForAnalyzeStatus(ctx context.Context, totalCnt int64, processe
 
 // setDataForAnalyzeStatus gets all the analyze jobs.
 func (e *memtableRetriever) setDataForAnalyzeStatus(ctx context.Context, sctx sessionctx.Context) (err error) {
-	e.rows, err = dataForAnalyzeStatusHelper(ctx, sctx, false)
+	e.rows, err = dataForAnalyzeStatusHelper(ctx, sctx)
 	return
 }
 
@@ -3419,6 +3235,13 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 	return nil
 }
 
+// used in resource_groups
+const (
+	burstableStr      = "YES"
+	burstdisableStr   = "NO"
+	unlimitedFillRate = "UNLIMITED"
+)
+
 func (e *memtableRetriever) setDataFromResourceGroups() error {
 	resourceGroups, err := infosync.ListResourceGroups(context.TODO())
 	if err != nil {
@@ -3427,29 +3250,52 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 	rows := make([][]types.Datum, 0, len(resourceGroups))
 	for _, group := range resourceGroups {
 		//mode := ""
-		burstable := "NO"
+		burstable := burstdisableStr
 		priority := model.PriorityValueToName(uint64(group.Priority))
-		fillrate := "UNLIMITED"
+		fillrate := unlimitedFillRate
 		isDefaultInReservedSetting := group.Name == "default" && group.RUSettings.RU.Settings.FillRate == math.MaxInt32
 		if !isDefaultInReservedSetting {
 			fillrate = strconv.FormatUint(group.RUSettings.RU.Settings.FillRate, 10)
 		}
+		// convert runaway settings
+		queryLimit := ""
+		if setting := group.RunawaySettings; setting != nil {
+			runawayRule, runawayAction, runawayWatch := "", "", ""
+			if setting.Rule == nil {
+				return errors.Errorf("unexpected runaway config in resource group")
+			}
+			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
+			runawayRule = fmt.Sprintf("%s=%s", "EXEC_ELAPSED", dur.String())
+			runawayAction = fmt.Sprintf("%s=%s", "ACTION", model.RunawayActionType(setting.Action).String())
+			if setting.Watch != nil {
+				dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
+				runawayWatch = fmt.Sprintf("%s=%s[%s]", "WATCH", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())
+				queryLimit = fmt.Sprintf("%s, %s, %s", runawayRule, runawayAction, runawayWatch)
+			} else {
+				queryLimit = fmt.Sprintf("%s, %s", runawayRule, runawayAction)
+			}
+		}
 		switch group.Mode {
 		case rmpb.GroupMode_RUMode:
 			if group.RUSettings.RU.Settings.BurstLimit < 0 {
-				burstable = "YES"
+				burstable = burstableStr
 			}
 			row := types.MakeDatums(
 				group.Name,
 				fillrate,
 				priority,
 				burstable,
+				queryLimit,
 			)
+			if len(queryLimit) == 0 {
+				row[4].SetNull()
+			}
 			rows = append(rows, row)
 		default:
 			//mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
 				group.Name,
+				nil,
 				nil,
 				nil,
 				nil,
