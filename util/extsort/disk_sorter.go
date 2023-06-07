@@ -939,7 +939,7 @@ func (d *DiskSorter) compactFiles(ctx context.Context, files []*fileMetadata) er
 		fileRefs[file.fileNum] = new(atomic.Int32)
 	}
 	for _, c := range compactions {
-		for _, file := range c.orderedFiles {
+		for _, file := range c.overlapFiles {
 			fileRefs[file.fileNum].Add(1)
 		}
 	}
@@ -961,7 +961,7 @@ func (d *DiskSorter) compactFiles(ctx context.Context, files []*fileMetadata) er
 				return err
 			}
 			outputCh <- output
-			for _, file := range c.orderedFiles {
+			for _, file := range c.overlapFiles {
 				if fileRefs[file.fileNum].Add(-1) == 0 {
 					_ = d.fs.Remove(makeFilename(d.fs, d.dirname, file.fileNum))
 					removedFileNums.Store(file.fileNum, struct{}{})
@@ -1090,9 +1090,11 @@ func splitCompactionFiles(files []*fileMetadata, maxCompactionDepth int) [][]*fi
 }
 
 type compaction struct {
-	startKey     []byte
-	endKey       []byte
-	orderedFiles []*fileMetadata // ordered by start key
+	startKey []byte
+	endKey   []byte
+	// overlapFiles are files that overlap with the compaction range.
+	// They are ordered by their start keys.
+	overlapFiles []*fileMetadata
 }
 
 func buildCompactions(files []*fileMetadata, maxCompactionSize int) []*compaction {
@@ -1137,10 +1139,10 @@ func buildCompactions(files []*fileMetadata, maxCompactionSize int) []*compactio
 		for _, file := range files {
 			if !(bytes.Compare(file.endKey, c.startKey) <= 0 ||
 				bytes.Compare(file.startKey, c.endKey) >= 0) {
-				c.orderedFiles = append(c.orderedFiles, file)
+				c.overlapFiles = append(c.overlapFiles, file)
 			}
 		}
-		slices.SortFunc(c.orderedFiles, func(a, b *fileMetadata) bool {
+		slices.SortFunc(c.overlapFiles, func(a, b *fileMetadata) bool {
 			return bytes.Compare(a.startKey, b.startKey) < 0
 		})
 	}
@@ -1152,7 +1154,7 @@ func (d *DiskSorter) runCompaction(ctx context.Context, c *compaction) (*fileMet
 		"run compaction",
 		zap.Binary("startKey", c.startKey),
 		zap.Binary("endKey", c.endKey),
-		zap.Int("fileCount", len(c.orderedFiles)),
+		zap.Int("fileCount", len(c.overlapFiles)),
 	)
 
 	var merged *fileMetadata
@@ -1170,7 +1172,7 @@ func (d *DiskSorter) runCompaction(ctx context.Context, c *compaction) (*fileMet
 		}
 	}()
 
-	iter := newMergingIter(c.orderedFiles, d.openIter)
+	iter := newMergingIter(c.overlapFiles, d.openIter)
 	defer func() {
 		_ = iter.Close()
 	}()
