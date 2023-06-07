@@ -15,6 +15,7 @@
 package handle
 
 import (
+	"math/rand"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/model"
@@ -339,4 +340,31 @@ func TestLRUEvictPolicy(t *testing.T) {
 	require.Nil(t, t2.Indices[1].TopN)
 	require.True(t, t2.Indices[1].IsTopNEvicted())
 	require.True(t, t2.Indices[1].IsAllEvicted())
+}
+
+func BenchmarkStatsCacheUpdate(b *testing.B) {
+	pseudo := func(id int64) *statistics.Table {
+		ti := &model.TableInfo{}
+		colInfo := &model.ColumnInfo{
+			ID:        int64(i),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			State:     model.StatePublic,
+		}
+		ti.Columns = append(ti.Columns, colInfo)
+		tbl := statistics.PseudoTable(ti)
+	}
+
+	sc := newStatsCache()
+	for i := 0; i < 10000; i++ {
+		tbl := pseudo(i)
+		sc = sc.update([]*statistics.Table{tbl}, nil, sc.version)
+	}
+
+	tbl := pseudo(0)
+	b.ResetTimer()
+	tbl := statistics.PseudoTable(ti)
+	for i := 0; i < b.N; i++ {
+		tbl.PhysicalID = int64(rand.Intn(20000))
+		sc = sc.update([]*statistics.Table{tbl}, nil, sc.version)
+	}
 }

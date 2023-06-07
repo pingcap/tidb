@@ -18,6 +18,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -102,7 +103,12 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 	for _, opt := range opts {
 		opt(option)
 	}
-	newCache := sc.copy()
+	var newCache statsCache
+	if _, ok := sc.statsCacheInner.(*mapCache); ok && sc.version == newVersion {
+		newCache = sc // Try to avoid a deep copy
+	} else {
+		newCache = sc.copy()
+	}
 	if newVersion == newCache.version {
 		newCache.minorVersion += uint64(1)
 	} else {
@@ -138,6 +144,7 @@ func (c cacheItem) copy() cacheItem {
 }
 
 type mapCache struct {
+	sync.RWMutex
 	tables   map[int64]cacheItem
 	memUsage int64
 }
@@ -149,6 +156,8 @@ func (m *mapCache) GetByQuery(k int64) (*statistics.Table, bool) {
 
 // Get implements statsCacheInner
 func (m *mapCache) Get(k int64) (*statistics.Table, bool) {
+	m.RLock()
+	defer m.RUnlock()
 	v, ok := m.tables[k]
 	return v.value, ok
 }
@@ -160,6 +169,8 @@ func (m *mapCache) PutByQuery(k int64, v *statistics.Table) {
 
 // Put implements statsCacheInner
 func (m *mapCache) Put(k int64, v *statistics.Table) {
+	m.Lock()
+	defer m.Unlock()
 	item, ok := m.tables[k]
 	if ok {
 		oldCost := item.cost
@@ -182,6 +193,8 @@ func (m *mapCache) Put(k int64, v *statistics.Table) {
 
 // Del implements statsCacheInner
 func (m *mapCache) Del(k int64) {
+	m.Lock()
+	defer m.Unlock()
 	item, ok := m.tables[k]
 	if !ok {
 		return
@@ -216,6 +229,8 @@ func (m *mapCache) Values() []*statistics.Table {
 // Map implements statsCacheInner
 func (m *mapCache) Map() map[int64]*statistics.Table {
 	t := make(map[int64]*statistics.Table, len(m.tables))
+	m.RLock()
+	defer m.RUnlock()
 	for k, v := range m.tables {
 		t[k] = v.value
 	}
