@@ -1120,9 +1120,14 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		schemaName := dbName.L
 		tblName := tableInfo.Name.L
 		if hypoIndexes[schemaName] != nil && hypoIndexes[schemaName][tblName] != nil {
+			hypoIndexList := make([]*model.IndexInfo, 0, len(hypoIndexes[schemaName][tblName]))
 			for _, index := range hypoIndexes[schemaName][tblName] {
-				publicIndices = append(publicIndices, index)
+				hypoIndexList = append(hypoIndexList, index)
 			}
+			sort.Slice(hypoIndexList, func(i, j int) bool { // to make the result stable
+				return hypoIndexList[i].Name.O < hypoIndexList[j].Name.O
+			})
+			publicIndices = append(publicIndices, hypoIndexList...)
 		}
 	}
 	if len(publicIndices) > 0 {

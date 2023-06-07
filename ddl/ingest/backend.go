@@ -224,8 +224,11 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 	return true, true, nil
 }
 
+// ForceSyncFlagForTest is a flag to force sync only for test.
+var ForceSyncFlagForTest = false
+
 func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImport bool) {
-	if mode == FlushModeForceGlobal {
+	if mode == FlushModeForceGlobal || ForceSyncFlagForTest {
 		return true, true
 	}
 	if mode == FlushModeForceLocal {

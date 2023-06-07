@@ -76,7 +76,7 @@ type BackfillMinimalTask struct {
 }
 
 // IsMinimalTask implements the MinimalTask interface.
-func (b *BackfillMinimalTask) IsMinimalTask() {
+func (*BackfillMinimalTask) IsMinimalTask() {
 }
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
@@ -346,7 +346,7 @@ type BackFillSubtaskExecutor struct {
 }
 
 // Run implements the Executor interface.
-func (b *BackFillSubtaskExecutor) Run(_ context.Context) error {
+func (*BackFillSubtaskExecutor) Run(_ context.Context) error {
 	return nil
 }
 

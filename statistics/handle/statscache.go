@@ -69,6 +69,7 @@ func newStatsCache() statsCache {
 
 // statsCache caches the tables in memory for Handle.
 type statsCache struct {
+	statsCacheInner
 	// version is the latest version of cache. It is bumped when new records of `mysql.stats_meta` are loaded into cache.
 	version uint64
 	// minorVersion is to differentiate the cache when the version is unchanged while the cache contents are
@@ -80,8 +81,10 @@ type statsCache struct {
 	// This bump / check logic is encapsulated in `statsCache.update` and `updateStatsCache`, callers don't need to care
 	// about this minorVersion actually.
 	minorVersion uint64
+}
 
-	statsCacheInner
+func (sc statsCache) len() int {
+	return sc.statsCacheInner.Len()
 }
 
 func (sc statsCache) copy() statsCache {
@@ -121,8 +124,8 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 }
 
 type cacheItem struct {
-	key   int64
 	value *statistics.Table
+	key   int64
 	cost  int64
 }
 
@@ -258,11 +261,11 @@ var TableRowStatsCache = &StatsTableRowCache{}
 
 // StatsTableRowCache is used to cache the count of table rows.
 type StatsTableRowCache struct {
-	mu         syncutil.RWMutex
 	modifyTime time.Time
 	tableRows  map[int64]uint64
 	colLength  map[tableHistID]uint64
 	dirtyIDs   []int64
+	mu         syncutil.RWMutex
 }
 
 // tableStatsCacheExpiry is the expiry time for table stats cache.
