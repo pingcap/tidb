@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/kv"
@@ -434,6 +435,115 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 		time.Sleep(time.Millisecond * 200)
 	}
 	require.True(t, suc)
+}
+
+func TestUpgradeVersionForResumeJob(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	session.MustExec(t, seV, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", session.CurrentBootstrapVersion-1))
+	session.UnsetStoreBootstrapped(store.UUID())
+	ver, err := session.GetBootstrapVersion(seV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockResumeAllJobsFailed", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/session/mockResumeAllJobsFailed")
+
+	// Add a paused DDL job before upgrade.
+	session.MustExec(t, seV, "create table test.upgrade_tbl(a int, b int)")
+	session.MustExec(t, seV, "create table test.upgrade_tbl1(a int, b int)")
+	ch := make(chan struct{})
+	hook := &callback.TestDDLCallback{}
+	var jobID int64
+	doOnce := true
+	hook.OnGetJobBeforeExported = func(str string) {
+		if jobID == 0 || !doOnce {
+			return
+		}
+
+		for i := 0; i < 50; i++ {
+			sql := fmt.Sprintf("admin show ddl jobs where job_id=%d or job_id=%d", jobID, jobID+1)
+			se := session.CreateSessionAndSetID(t, store)
+			rows, err := execute(context.Background(), se, sql)
+			require.NoError(t, err)
+			if len(rows) == 2 {
+				doOnce = false
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	times := 0
+	hook.OnGetJobAfterExported = func(tp string, job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly && times == 0 {
+			ch <- struct{}{}
+			jobID = job.ID
+			times = 1
+		}
+		// Make sure we do jobID first, then do jobID+1.
+		if job.ID == jobID && job.SchemaState == model.StateWriteReorganization && job.State == model.JobStateQueueing && times == 1 {
+			times = 2
+		}
+		if job.ID == jobID+1 && job.SchemaState == model.StateNone && job.State == model.JobStateQueueing && times == 2 {
+			times = 3
+		}
+		if job.ID == jobID && job.State == model.JobStateDone && job.SchemaState == model.StatePublic {
+			wg.Done()
+		}
+	}
+
+	dom.DDL().SetHook(hook)
+	go func() {
+		// This "add index" job will be paused when upgrading.
+		_, _ = execute(context.Background(), seV, "alter table test.upgrade_tbl add index idx(a)")
+	}()
+
+	<-ch
+	dom.Close()
+	// Make sure upgrade is successful.
+	domLatestV, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domLatestV.Close()
+	domLatestV.DDL().SetHook(hook)
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	// Add a new DDL (an "add index" job uses a different table than the previous DDL job) to the DDL table.
+	session.MustExec(t, seLatestV, "alter table test.upgrade_tbl1 add index idx2(a)")
+	ver, err = session.GetBootstrapVersion(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	wg.Wait()
+	require.Equal(t, 3, times)
+	// Make sure the second add index operation is successful.
+	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_history where job_id=%d or job_id=%d order by job_id", jobID, jobID+1)
+	rows, err := execute(context.Background(), seLatestV, sql)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	var idxFinishTS uint64
+	for i, row := range rows {
+		jobBinary := row.GetBytes(0)
+		runJob := model.Job{}
+		err := runJob.Decode(jobBinary)
+		require.NoError(t, err)
+		require.True(t, strings.Contains(runJob.TableName, "upgrade_tbl"))
+		require.Equal(t, model.JobStateSynced.String(), runJob.State.String())
+		if i == 0 {
+			idxFinishTS = runJob.BinlogInfo.FinishedTS
+		} else {
+			require.Greater(t, runJob.BinlogInfo.FinishedTS, idxFinishTS)
+		}
+	}
 }
 
 func execute(ctx context.Context, s sessionctx.Context, query string) ([]chunk.Row, error) {
