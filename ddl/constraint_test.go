@@ -19,8 +19,11 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/stretchr/testify/require"
@@ -907,4 +910,180 @@ func TestAlterConstraintAddDrop(t *testing.T) {
 	tk.MustExec("alter table t drop constraint cc")
 	require.Errorf(t, err, "[table:3819]Check constraint 'cc' is violated.")
 	tk.MustExec("drop table if exists t")
+}
+
+func TestAlterAddConstraintStateChange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("insert into t values(12)")
+
+	var checkErr error
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &callback.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		originalCallback.OnChanged(nil)
+		if job.SchemaState == model.StateWriteReorganization {
+			// StateNone -> StateWriteOnly -> StatePublic
+			tk1.MustQuery(fmt.Sprintf("select count(1) from `%s`.`%s` where not %s limit 1", "test", "t", "a > 10")).Check(testkit.Rows("0"))
+			// set constraint state
+			constraintTable := external.GetTableByName(t, tk1, "test", "t")
+			tableCommon, ok := constraintTable.(*tables.TableCommon)
+			require.True(t, ok)
+			originCons := tableCommon.Constraints
+			tableCommon.WritableConstraints = []*table.Constraint{}
+			tableCommon.Constraints = []*table.Constraint{}
+			// insert data
+			tk1.MustExec("insert into t values(1)")
+			// recover
+			tableCommon.Constraints = originCons
+			tableCommon.WritableConstraint()
+		}
+	}
+
+	//StatNone  StateWriteReorganization
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockVerifyRemainDataSuccess", "return(true)"))
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+	tk.MustExec("alter table t add constraint c0 check ( a > 10)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("12", "1"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c0` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("alter table t drop constraint c0")
+	tk.MustExec("delete from t where a = 1")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockVerifyRemainDataSuccess"))
+}
+
+func TestAlterAddConstraintStateChange1(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("insert into t values(12)")
+
+	var checkErr error
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &callback.TestDDLCallback{}
+	// StatNone -> StateWriteOnly
+	onJobUpdatedExportedFunc1 := func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		originalCallback.OnChanged(nil)
+		if job.SchemaState == model.StateWriteOnly {
+			// set constraint state
+			constraintTable := external.GetTableByName(t, tk1, "test", "t")
+			tableCommon, ok := constraintTable.(*tables.TableCommon)
+			require.True(t, ok)
+			originCons := tableCommon.Constraints
+			tableCommon.WritableConstraints = []*table.Constraint{}
+			tableCommon.Constraints = []*table.Constraint{}
+			// insert data
+			tk1.MustExec("insert into t values(1)")
+			// recover
+			tableCommon.Constraints = originCons
+			tableCommon.WritableConstraint()
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc1)
+	d.SetHook(callback)
+	tk.MustGetErrMsg("alter table t add constraint c1 check ( a > 10)", "[ddl:3819]Check constraint 'c1' is violated.")
+	tk.MustQuery("select * from t").Check(testkit.Rows("12", "1"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("delete from t where a = 1")
+}
+
+func TestAlterAddConstraintStateChange2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("insert into t values(12)")
+
+	var checkErr error
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &callback.TestDDLCallback{}
+	// StateWriteOnly -> StateWriteReorganization
+	onJobUpdatedExportedFunc2 := func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		originalCallback.OnChanged(nil)
+		if job.SchemaState == model.StateWriteReorganization {
+			// set constraint state
+			constraintTable := external.GetTableByName(t, tk1, "test", "t")
+			tableCommon, ok := constraintTable.(*tables.TableCommon)
+			require.True(t, ok)
+			tableCommon.Constraints[0].State = model.StateWriteOnly
+			tableCommon.WritableConstraints = []*table.Constraint{}
+			// insert data
+			tk1.MustGetErrMsg("insert into t values(1)", "[table:3819]Check constraint 'c2' is violated.")
+			// recover
+			tableCommon.Constraints[0].State = model.StateWriteReorganization
+			tableCommon.WritableConstraint()
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
+	d.SetHook(callback)
+	tk.MustExec("alter table t add constraint c2 check ( a > 10)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c2` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("alter table t drop constraint c2")
+}
+
+func TestAlterAddConstraintStateChange3(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("insert into t values(12)")
+
+	var checkErr error
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &callback.TestDDLCallback{}
+	// StateWriteReorganization -> StatePublic
+	onJobUpdatedExportedFunc3 := func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		originalCallback.OnChanged(nil)
+		if job.SchemaState == model.StatePublic {
+			// set constraint state
+			constraintTable := external.GetTableByName(t, tk1, "test", "t")
+			tableCommon, ok := constraintTable.(*tables.TableCommon)
+			require.True(t, ok)
+			tableCommon.Constraints[0].State = model.StateWriteReorganization
+			tableCommon.WritableConstraints = []*table.Constraint{}
+			// insert data
+			tk1.MustGetErrMsg("insert into t values(1)", "[table:3819]Check constraint 'c3' is violated.")
+			// recover
+			tableCommon.Constraints[0].State = model.StatePublic
+			tableCommon.WritableConstraint()
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc3)
+	d.SetHook(callback)
+	tk.MustExec("alter table t add constraint c3 check ( a > 10)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c3` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }

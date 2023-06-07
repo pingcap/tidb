@@ -97,9 +97,17 @@ func (w *worker) onAddCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfoInMeta.State)
 	case model.StateWriteReorganization:
 		// write only -> public
-		err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfoInMeta, job)
-		if err != nil {
-			return ver, errors.Trace(err)
+		skipCheck := false
+		failpoint.Inject("mockVerifyRemainDataSuccess", func(val failpoint.Value) {
+			if val.(bool) {
+				skipCheck = true
+			}
+		})
+		if !skipCheck {
+			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfoInMeta, job)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		}
 		constraintInfoInMeta.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != constraintInfoInMeta.State)
