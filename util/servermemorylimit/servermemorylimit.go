@@ -138,12 +138,13 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 	if instanceStats.HeapInuse > bt {
 		t := memory.MemUsageTop1Tracker.Load()
 		if t != nil {
+			sessionID := t.SessionID.Load()
 			memUsage := t.BytesConsumed()
 			// If the memory usage of the top1 session is less than tidb_server_memory_limit_sess_min_size, we do not need to kill it.
 			if uint64(memUsage) < limitSessMinSize {
 				memory.MemUsageTop1Tracker.CompareAndSwap(t, nil)
 				t = nil
-			} else if info, ok := sm.GetProcessInfo(t.SessionID); ok {
+			} else if info, ok := sm.GetProcessInfo(sessionID); ok {
 				logutil.BgLogger().Warn("global memory controller tries to kill the top1 memory consumer",
 					zap.Uint64("conn", info.ID),
 					zap.String("sql digest", info.Digest),
@@ -152,7 +153,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 					zap.Uint64("heap inuse", instanceStats.HeapInuse),
 					zap.Int64("sql memory usage", info.MemTracker.BytesConsumed()),
 				)
-				s.sessionID = t.SessionID
+				s.sessionID = sessionID
 				s.sqlStartTime = info.Time
 				s.isKilling = true
 				s.sessionTracker = t

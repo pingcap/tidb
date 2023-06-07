@@ -30,10 +30,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
@@ -51,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -507,44 +504,6 @@ func removeVAndHash(v string) string {
 	v = versionHash.ReplaceAllLiteralString(v, "")
 	v = strings.TrimSuffix(v, "-dirty")
 	return strings.TrimPrefix(v, "v")
-}
-
-// CheckTiKVVersion is used to check the tikv version.
-func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
-	if store, ok := store.(kv.StorageWithPD); ok {
-		pdClient := store.GetPDClient()
-		var stores []*metapb.Store
-		var err error
-		// Wait at most 3 second to make sure pd has updated the store information.
-		for i := 0; i < 60; i++ {
-			stores, err = pdClient.GetAllStores(context.Background(), pd.WithExcludeTombstone())
-			if err == nil {
-				break
-			}
-			time.Sleep(time.Millisecond * 50)
-		}
-
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		for _, s := range stores {
-			// empty version means the store is a mock store. Don't require tiflash version either.
-			if s.Version == "" || engine.IsTiFlash(s) {
-				continue
-			}
-			ver, err := semver.NewVersion(removeVAndHash(s.Version))
-			if err != nil {
-				return errors.Trace(errors.Annotate(err, "invalid TiKV version"))
-			}
-			v := ver.Compare(minVersion)
-			if v < 0 {
-				return errors.New("TiKV version must greater than or equal to " + minVersion.String())
-			}
-		}
-	}
-
-	return nil
 }
 
 func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {
@@ -1219,16 +1178,6 @@ func GetTiFlashGroupRules(ctx context.Context, group string) ([]placement.TiFlas
 		return nil, errors.Trace(err)
 	}
 	return is.tiflashReplicaManager.GetGroupRules(ctx, group)
-}
-
-// PostTiFlashAccelerateSchedule sends `regions/accelerate-schedule` request.
-func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	logutil.BgLogger().Info("PostTiFlashAccelerateSchedule", zap.Int64("tableID", tableID))
-	return is.tiflashReplicaManager.PostAccelerateSchedule(ctx, tableID)
 }
 
 // GetTiFlashRegionCountFromPD is a helper function calling `/stats/region`.

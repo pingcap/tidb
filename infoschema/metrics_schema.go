@@ -101,9 +101,9 @@ func (def *MetricTableDef) genColumnInfos() []columnInfo {
 // GenPromQL generates the promQL.
 func (def *MetricTableDef) GenPromQL(sctx sessionctx.Context, labels map[string]set.StringSet, quantile float64) string {
 	promQL := def.PromQL
-	promQL = strings.Replace(promQL, promQLQuantileKey, strconv.FormatFloat(quantile, 'f', -1, 64), -1)
-	promQL = strings.Replace(promQL, promQLLabelConditionKey, def.genLabelCondition(labels), -1)
-	promQL = strings.Replace(promQL, promQRangeDurationKey, strconv.FormatInt(sctx.GetSessionVars().MetricSchemaRangeDuration, 10)+"s", -1)
+	promQL = strings.ReplaceAll(promQL, promQLQuantileKey, strconv.FormatFloat(quantile, 'f', -1, 64))
+	promQL = strings.ReplaceAll(promQL, promQLLabelConditionKey, def.genLabelCondition(labels))
+	promQL = strings.ReplaceAll(promQL, promQRangeDurationKey, strconv.FormatInt(sctx.GetSessionVars().MetricSchemaRangeDuration, 10)+"s")
 	return promQL
 }
 

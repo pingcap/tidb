@@ -1013,7 +1013,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
-	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+	err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onCreateIndex",
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
@@ -1042,6 +1042,11 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 		return false, ver, errors.Trace(err)
 	}
+	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
+		if MockDMLExecutionStateBeforeImport != nil {
+			MockDMLExecutionStateBeforeImport()
+		}
+	})
 	return true, ver, nil
 }
 
@@ -1795,6 +1800,9 @@ var MockDMLExecutionMerging func()
 
 // MockDMLExecutionStateMerging is only used for test.
 var MockDMLExecutionStateMerging func()
+
+// MockDMLExecutionStateBeforeImport is only used for test.
+var MockDMLExecutionStateBeforeImport func()
 
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {

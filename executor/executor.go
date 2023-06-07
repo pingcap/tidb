@@ -542,7 +542,7 @@ type DDLJobRetriever struct {
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
 	m := meta.NewMeta(txn)
-	jobs, err := ddl.GetAllDDLJobs(sess, m)
+	jobs, err := ddl.GetAllDDLJobs(sess)
 	if err != nil {
 		return err
 	}
@@ -711,7 +711,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	session.GetSessionVars().SetInTxn(true)
 
 	m := meta.NewMeta(txn)
-	jobs, err = ddl.GetAllDDLJobs(session, m)
+	jobs, err = ddl.GetAllDDLJobs(session)
 	if err != nil {
 		return err
 	}
@@ -799,7 +799,7 @@ func (e *ShowDDLJobQueriesWithRangeExec) Open(ctx context.Context) error {
 	session.GetSessionVars().SetInTxn(true)
 
 	m := meta.NewMeta(txn)
-	jobs, err = ddl.GetAllDDLJobs(session, m)
+	jobs, err = ddl.GetAllDDLJobs(session)
 	if err != nil {
 		return err
 	}
@@ -2092,10 +2092,20 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.MemTracker.SetBytesLimit(vars.MemQuotaQuery)
 	vars.MemTracker.ResetMaxConsumed()
 	vars.DiskTracker.ResetMaxConsumed()
-	vars.MemTracker.SessionID = vars.ConnectionID
+	vars.MemTracker.SessionID.Store(vars.ConnectionID)
 	vars.StmtCtx.TableStats = make(map[int64]interface{})
 
-	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
+	isAnalyze := false
+	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
+		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
+		if err != nil {
+			return err
+		}
+		_, isAnalyze = prepareStmt.PreparedAst.Stmt.(*ast.AnalyzeTableStmt)
+	} else if _, ok := s.(*ast.AnalyzeTableStmt); ok {
+		isAnalyze = true
+	}
+	if isAnalyze {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
 		vars.MemTracker.SetBytesLimit(-1)
 		vars.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
@@ -2115,7 +2125,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		action.SetLogHook(logOnQueryExceedMemQuota)
 		vars.MemTracker.SetActionOnExceed(action)
 	}
-	sc.MemTracker.SessionID = vars.ConnectionID
+	sc.MemTracker.SessionID.Store(vars.ConnectionID)
 	sc.MemTracker.AttachTo(vars.MemTracker)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	globalConfig := config.GetGlobalConfig()

@@ -206,3 +206,112 @@ func TestGetAutoRandomColumn(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildAddIndexSQL(t *testing.T) {
+	tests := []struct {
+		table     string
+		current   string
+		desired   string
+		singleSQL string
+		multiSQLs []string
+	}{
+		{
+			table: "`test`.`non_pk_auto_inc`",
+			current: `CREATE TABLE non_pk_auto_inc (
+				pk varchar(255),
+				id int(11) NOT NULL AUTO_INCREMENT,
+				UNIQUE KEY uniq_id (id)
+			)`,
+			desired: `CREATE TABLE non_pk_auto_inc (
+				pk varchar(255) PRIMARY KEY NONCLUSTERED,
+				id int(11) NOT NULL AUTO_INCREMENT,
+				UNIQUE KEY uniq_id (id)
+			)`,
+			singleSQL: "ALTER TABLE `test`.`non_pk_auto_inc` ADD PRIMARY KEY (`pk`)",
+			multiSQLs: []string{"ALTER TABLE `test`.`non_pk_auto_inc` ADD PRIMARY KEY (`pk`)"},
+		},
+		{
+			table: "`test`.`multi_indexes`",
+			current: `
+CREATE TABLE multi_indexes (
+    c1 bigint PRIMARY KEY CLUSTERED,
+    c2 varchar(255) NOT NULL,
+    c3 varchar(255) NOT NULL,
+    c4 varchar(255) NOT NULL,
+    c5 varchar(255) NOT NULL,
+    c6 varchar(255) NOT NULL,
+    c7 varchar(255) NOT NULL,
+    c8 varchar(255) NOT NULL,
+    c9 varchar(255) NOT NULL,
+    c10 varchar(255) NOT NULL,
+    c11 varchar(255) NOT NULL
+)
+`,
+			desired: `
+CREATE TABLE multi_indexes (
+    c1 bigint PRIMARY KEY CLUSTERED,
+    c2 varchar(255) NOT NULL UNIQUE KEY,
+    c3 varchar(255) NOT NULL,
+    c4 varchar(255) NOT NULL,
+    c5 varchar(255) NOT NULL,
+    c6 varchar(255) NOT NULL,
+    c7 varchar(255) NOT NULL,
+    c8 varchar(255) NOT NULL,
+    c9 varchar(255) NOT NULL,
+    c10 varchar(255) NOT NULL,
+    c11 varchar(255) NOT NULL,
+    INDEX idx_c2 (c2) COMMENT 'single column index',
+    INDEX idx_c2_c3(c2, c3) COMMENT 'multiple column index',
+    UNIQUE KEY uniq_c4 (c4) COMMENT 'single column unique key',
+    UNIQUE KEY uniq_c4_c5 (c4, c5) COMMENT 'multiple column unique key',
+    INDEX idx_c6 (c6 ASC)  COMMENT 'single column index with asc order',
+    INDEX idx_c7 (c7 DESC) COMMENT 'single column index with desc order',
+    INDEX idx_c6_c7 (c6 ASC, c7 DESC) COMMENT 'multiple column index with asc and desc order',
+    INDEX idx_c8 (c8) VISIBLE COMMENT 'single column index with visible',
+    INDEX idx_c9 (c9) INVISIBLE COMMENT 'single column index with invisible',
+    INDEX idx_lower_c10 ((lower(c10))) COMMENT 'single column index with function',
+    INDEX idx_prefix_c11 (c11(3)) COMMENT 'single column index with prefix'
+);`,
+			singleSQL: "ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c2`(`c2`) COMMENT 'single column index'" +
+				", ADD KEY `idx_c2_c3`(`c2`,`c3`) COMMENT 'multiple column index'" +
+				", ADD UNIQUE KEY `uniq_c4`(`c4`) COMMENT 'single column unique key'" +
+				", ADD UNIQUE KEY `uniq_c4_c5`(`c4`,`c5`) COMMENT 'multiple column unique key'" +
+				", ADD KEY `idx_c6`(`c6`) COMMENT 'single column index with asc order'" +
+				", ADD KEY `idx_c7`(`c7`) COMMENT 'single column index with desc order'" +
+				", ADD KEY `idx_c6_c7`(`c6`,`c7`) COMMENT 'multiple column index with asc and desc order'" +
+				", ADD KEY `idx_c8`(`c8`) COMMENT 'single column index with visible'" +
+				", ADD KEY `idx_c9`(`c9`) INVISIBLE COMMENT 'single column index with invisible'" +
+				", ADD KEY `idx_lower_c10`((lower(`c10`))) COMMENT 'single column index with function'" +
+				", ADD KEY `idx_prefix_c11`(`c11`(3)) COMMENT 'single column index with prefix'" +
+				", ADD UNIQUE KEY `c2`(`c2`)",
+			multiSQLs: []string{
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c2`(`c2`) COMMENT 'single column index'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c2_c3`(`c2`,`c3`) COMMENT 'multiple column index'",
+				"ALTER TABLE `test`.`multi_indexes` ADD UNIQUE KEY `uniq_c4`(`c4`) COMMENT 'single column unique key'",
+				"ALTER TABLE `test`.`multi_indexes` ADD UNIQUE KEY `uniq_c4_c5`(`c4`,`c5`) COMMENT 'multiple column unique key'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c6`(`c6`) COMMENT 'single column index with asc order'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c7`(`c7`) COMMENT 'single column index with desc order'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c6_c7`(`c6`,`c7`)" +
+					" COMMENT 'multiple column index with asc and desc order'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c8`(`c8`) COMMENT 'single column index with visible'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c9`(`c9`) INVISIBLE COMMENT 'single column index with invisible'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_lower_c10`((lower(`c10`)))" +
+					" COMMENT 'single column index with function'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_prefix_c11`(`c11`(3)) COMMENT 'single column index with prefix'",
+				"ALTER TABLE `test`.`multi_indexes` ADD UNIQUE KEY `c2`(`c2`)",
+			},
+		}}
+
+	p := parser.New()
+
+	for _, tt := range tests {
+		curTblInfo, err := dbutil.GetTableInfoBySQL(tt.current, p)
+		require.NoError(t, err)
+		desiredTblInfo, err := dbutil.GetTableInfoBySQL(tt.desired, p)
+		require.NoError(t, err)
+
+		singleSQL, multiSQLs := common.BuildAddIndexSQL(tt.table, curTblInfo, desiredTblInfo)
+		require.Equal(t, tt.singleSQL, singleSQL)
+		require.Equal(t, tt.multiSQLs, multiSQLs)
+	}
+}
