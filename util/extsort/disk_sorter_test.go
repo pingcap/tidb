@@ -740,5 +740,164 @@ func TestSplitCompactionFiles(t *testing.T) {
 }
 
 func TestBuildCompactions(t *testing.T) {
-	// TODO
+	testCases := []struct {
+		files             []*fileMetadata
+		maxCompactionSize int
+		expected          []*compaction
+	}{
+		{
+			files: []*fileMetadata{
+				{
+					fileNum:  1,
+					startKey: []byte("a"),
+					endKey:   []byte("c"),
+				},
+				{
+					fileNum:  2,
+					startKey: []byte("b"),
+					endKey:   []byte("d"),
+				},
+			},
+			maxCompactionSize: 20,
+			expected: []*compaction{
+				{
+					startKey: []byte("a"),
+					endKey:   []byte("d"),
+					overlapFiles: []*fileMetadata{
+						{fileNum: 1}, {fileNum: 2},
+					},
+				},
+			},
+		},
+		{
+			files: []*fileMetadata{
+				{
+					fileNum:  1,
+					startKey: []byte("a"),
+					endKey:   []byte("e\x00"),
+					kvStats: kvStats{Histogram: []kvStatsBucket{
+						{Size: 20, UpperBound: []byte("b")},
+						{Size: 23, UpperBound: []byte("c")},
+						{Size: 21, UpperBound: []byte("d")},
+						{Size: 25, UpperBound: []byte("e")},
+					}},
+				},
+			},
+			maxCompactionSize: 20,
+			expected: []*compaction{
+				{
+					startKey: []byte("a"),
+					endKey:   []byte("b"),
+					overlapFiles: []*fileMetadata{
+						{fileNum: 1},
+					},
+				},
+				{
+					startKey: []byte("b"),
+					endKey:   []byte("c"),
+					overlapFiles: []*fileMetadata{
+						{fileNum: 1},
+					},
+				},
+				{
+					startKey: []byte("c"),
+					endKey:   []byte("d"),
+					overlapFiles: []*fileMetadata{
+						{fileNum: 1},
+					},
+				},
+				{
+					startKey: []byte("d"),
+					endKey:   []byte("e\x00"),
+					overlapFiles: []*fileMetadata{
+						{fileNum: 1},
+					},
+				},
+			},
+		},
+		{
+			files: []*fileMetadata{
+				{
+					fileNum:  1,
+					startKey: []byte("a"),
+					endKey:   []byte("e\x00"),
+					kvStats: kvStats{Histogram: []kvStatsBucket{
+						{Size: 20, UpperBound: []byte("b")},
+						{Size: 23, UpperBound: []byte("c")},
+						{Size: 17, UpperBound: []byte("d")},
+						{Size: 25, UpperBound: []byte("e")},
+					}},
+				},
+			},
+			maxCompactionSize: 50,
+			expected: []*compaction{
+				{
+					startKey: []byte("a"),
+					endKey:   []byte("d"),
+					overlapFiles: []*fileMetadata{
+						{fileNum: 1},
+					},
+				},
+				{
+					startKey: []byte("d"),
+					endKey:   []byte("e\x00"),
+					overlapFiles: []*fileMetadata{
+						{fileNum: 1},
+					},
+				},
+			},
+		},
+		{
+			files: []*fileMetadata{
+				{
+					fileNum:  1,
+					startKey: []byte("a"),
+					endKey:   []byte("e\x00"),
+					kvStats: kvStats{Histogram: []kvStatsBucket{
+						{Size: 20, UpperBound: []byte("b")},
+						{Size: 23, UpperBound: []byte("c")},
+						{Size: 17, UpperBound: []byte("d")},
+						{Size: 25, UpperBound: []byte("e")},
+					}},
+				},
+				{
+					fileNum:  2,
+					startKey: []byte("c"),
+					endKey:   []byte("g\x00"),
+					kvStats: kvStats{Histogram: []kvStatsBucket{
+						{Size: 21, UpperBound: []byte("d")},
+						{Size: 22, UpperBound: []byte("f")},
+						{Size: 20, UpperBound: []byte("g")},
+					}},
+				},
+			},
+			maxCompactionSize: 50,
+			expected: []*compaction{
+				{
+					startKey: []byte("a"),
+					endKey:   []byte("d"),
+					overlapFiles: []*fileMetadata{
+						{fileNum: 1}, {fileNum: 2},
+					},
+				},
+				{
+					startKey: []byte("d"),
+					endKey:   []byte("g\x00"),
+					overlapFiles: []*fileMetadata{
+						{fileNum: 1}, {fileNum: 2},
+					},
+				},
+			},
+		},
+	}
+	for _, tc := range testCases {
+		actual := buildCompactions(tc.files, tc.maxCompactionSize)
+		require.Equal(t, len(tc.expected), len(actual))
+		for i := range tc.expected {
+			require.Equal(t, len(tc.expected[i].overlapFiles), len(actual[i].overlapFiles))
+			for j := range tc.expected[i].overlapFiles {
+				require.Equal(t, tc.expected[i].overlapFiles[j].fileNum, actual[i].overlapFiles[j].fileNum)
+			}
+		}
+	}
 }

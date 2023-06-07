@@ -1114,15 +1114,46 @@ func buildCompactions(files []*fileMetadata, maxCompactionSize int) []*compactio
 			endKey = file.endKey
 		}
 	}
+	// If there is kv stats, return a single compaction for all files.
+	if len(buckets) == 0 {
+		overlapFiles := slices.Clone(files)
+		slices.SortFunc(overlapFiles, func(a, b *fileMetadata) bool {
+			return bytes.Compare(a.startKey, b.startKey) < 0
+		})
+		return []*compaction{{
+			startKey:     startKey,
+			endKey:       endKey,
+			overlapFiles: overlapFiles,
+		}}
+	}
+
 	slices.SortFunc(buckets, func(a, b kvStatsBucket) bool {
 		return bytes.Compare(a.UpperBound, b.UpperBound) < 0
 	})
+	// Merge buckets with the same upper bound.
+	n := 0
+	for i := 1; i < len(buckets); i++ {
+		if bytes.Equal(buckets[n].UpperBound, buckets[i].UpperBound) {
+			buckets[n].Size += buckets[i].Size
+		} else {
+			n++
+			buckets[n] = buckets[i]
+		}
+	}
+	buckets = buckets[:n+1]
 
 	var (
 		kvSize      int
 		compactions []*compaction
 	)
-	for _, bucket := range buckets {
+	for i, bucket := range buckets {
+		if i+1 == len(buckets) {
+			compactions = append(compactions, &compaction{
+				startKey: startKey,
+				endKey:   endKey,
+			})
+			break
+		}
 		kvSize += bucket.Size
 		if kvSize >= maxCompactionSize {
 			compactions = append(compactions, &compaction{
@@ -1132,12 +1163,6 @@ func buildCompactions(files []*fileMetadata, maxCompactionSize int) []*compactio
 			startKey = bucket.UpperBound
 			kvSize = 0
 		}
-	}
-	if bytes.Compare(startKey, endKey) < 0 {
-		compactions = append(compactions, &compaction{
-			startKey: startKey,
-			endKey:   endKey,
-		})
 	}
 
 	for _, c := range compactions {
