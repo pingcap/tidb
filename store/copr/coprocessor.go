@@ -1209,7 +1209,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = storeAddr
-	failpoint.Inject("sleepCoprRequest", func(v failpoint.Value) {
+	failpoint.Inject("sleepCoprRequest", func(_ failpoint.Value) {
 		time.Sleep(time.Second)
 	})
 	costTime := time.Since(startTime)
@@ -1220,7 +1220,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 	if worker.req.RunawayChecker != nil {
 		worker.req.RunawayChecker.AfterCopRequest()
-	}	
+	}
 
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
 	isInternal := util.IsRequestSourceInternal(&task.requestSource)

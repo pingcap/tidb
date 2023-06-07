@@ -23,6 +23,8 @@ import (
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
+const DefaultResourceGroupName = "default"
+
 type RunawayManager struct {
 	resourceGroupCtl *rmclient.ResourceGroupsController
 	// TODO: add watch records

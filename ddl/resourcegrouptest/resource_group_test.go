@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
@@ -215,6 +216,24 @@ func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name stri
 	return g
 }
 
+func TestResourceGroupRunaway(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/SleepCoprRequest", `return()`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/SleepCoprRequest"))
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+
+	tk.MustExec("set global tidb_enable_resource_control='on'")
+	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED=\"100ms\" ACTION=KILL)")
+	tk.MustGetErrCode("select /*+ resource_group(rg1) */ * from t", mysql.ErrResourceGroupQueryRunaway)
+}
+
 func TestResourceGroupHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -230,9 +249,9 @@ func TestResourceGroupHint(t *testing.T) {
 	tk.MustQuery("select /*+ resource_group(rg1) resource_group(default) */ * from t1")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 RESOURCE_GROUP() is defined more than once, only the last definition takes effect: RESOURCE_GROUP(default)"))
 	tk.MustQuery("select /*+ resource_group(rg1) */ DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test rg1"))
-	tk.MustQuery("select DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test "))
+	tk.MustQuery("select DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test default"))
 	tk.MustExec("set global tidb_enable_resource_control='off'")
-	tk.MustQuery("select /*+ resource_group(rg1) */ DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test "))
+	tk.MustQuery("select /*+ resource_group(rg1) */ DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test default"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8250 Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature"))
 }
 
