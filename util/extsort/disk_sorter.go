@@ -574,6 +574,10 @@ func (m *mergingIter) Last() bool {
 		}
 	}
 	m.heap = nil
+	m.nextFileIndex = len(m.orderedFiles)
+	if m.err != nil {
+		return false
+	}
 
 	// Sort files by last key in reverse order.
 	files := slices.Clone(m.orderedFiles)
@@ -604,14 +608,13 @@ func (m *mergingIter) Last() bool {
 			break
 		}
 		m.err = iter.Error()
+		// If the file is empty, we can close it and continue to open the next file.
 		closeErr := iter.Close()
 		m.err = goerrors.Join(m.err, closeErr)
 		if m.err != nil {
 			return false
 		}
 	}
-	// Force iterating to the end.
-	m.nextFileIndex = len(m.orderedFiles)
 	return m.Valid()
 }
 
@@ -756,7 +759,7 @@ func OpenDiskSorter(dirname string, opts *DiskSorterOptions) (*DiskSorter, error
 		opts:       opts,
 		fs:         fs,
 		dirname:    dirname,
-		cache:      pebble.NewCache(8 << 20),
+		cache:      cache,
 		readerPool: readerPool,
 	}
 	if err := d.init(); err != nil {
