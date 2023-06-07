@@ -139,7 +139,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 	return []*property.PhysicalProperty{lProp, rProp}, true
 }
 
-func (p *LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
+func (*LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
 	// if a left key and its corresponding right key have different collation, don't use MergeJoin since
 	// the their children may sort their records in different ways
 	for i := range leftKeys {
@@ -1022,7 +1022,7 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 func (p *LogicalJoin) constructInnerTableScanTask(
 	wrapper *indexJoinInnerChildWrapper,
 	ranges ranger.Ranges,
-	outerJoinKeys []*expression.Column,
+	_ []*expression.Column,
 	rangeInfo string,
 	keepOrder bool,
 	desc bool,
@@ -1115,7 +1115,7 @@ func (p *LogicalJoin) constructInnerByWrapper(wrapper *indexJoinInnerChildWrappe
 	return child
 }
 
-func (p *LogicalJoin) constructInnerSel(sel *LogicalSelection, child PhysicalPlan) PhysicalPlan {
+func (*LogicalJoin) constructInnerSel(sel *LogicalSelection, child PhysicalPlan) PhysicalPlan {
 	if sel == nil {
 		return child
 	}
@@ -1126,7 +1126,7 @@ func (p *LogicalJoin) constructInnerSel(sel *LogicalSelection, child PhysicalPla
 	return physicalSel
 }
 
-func (p *LogicalJoin) constructInnerProj(proj *LogicalProjection, child PhysicalPlan) PhysicalPlan {
+func (*LogicalJoin) constructInnerProj(proj *LogicalProjection, child PhysicalPlan) PhysicalPlan {
 	if proj == nil {
 		return child
 	}
@@ -1139,7 +1139,7 @@ func (p *LogicalJoin) constructInnerProj(proj *LogicalProjection, child Physical
 	return physicalProj
 }
 
-func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
+func (*LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
 	if us == nil {
 		return reader
 	}
@@ -1153,76 +1153,13 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 	return physicalUnionScan
 }
 
-func getColsNDVLowerBoundFromHistColl(cols []*expression.Column, histColl *statistics.HistColl) int64 {
-	if len(cols) == 0 || histColl == nil {
-		return -1
-	}
-	colUIDs := make([]int64, len(cols))
-	for i, col := range cols {
-		colUIDs[i] = col.UniqueID
-	}
-
-	// Note that we don't need to specially handle prefix index in this function, because the NDV of a prefix index is
-	// equal or less than the corresponding normal index, and that's safe here since we want a lower bound.
-
-	// 1. Try to get NDV from column stats if it's a single column.
-	if len(colUIDs) == 1 && histColl.Columns != nil {
-		uid := colUIDs[0]
-		if colStats, ok := histColl.Columns[uid]; ok && colStats != nil {
-			return colStats.NDV
-		}
-	}
-
-	slices.Sort(colUIDs)
-	if histColl.Indices == nil || histColl.Idx2ColumnIDs == nil {
-		return -1
-	}
-
-	// 2. Try to get NDV from index stats.
-	for idxID, idxCols := range histColl.Idx2ColumnIDs {
-		if len(idxCols) != len(colUIDs) {
-			continue
-		}
-		orderedIdxCols := make([]int64, len(idxCols))
-		copy(orderedIdxCols, idxCols)
-		slices.Sort(orderedIdxCols)
-		if !slices.Equal(orderedIdxCols, colUIDs) {
-			continue
-		}
-		if idxStats, ok := histColl.Indices[idxID]; ok && idxStats != nil {
-			return idxStats.NDV
-		}
-	}
-
-	// TODO: if there's an index that contains the expected columns, we can also make use of its NDV.
-	// For example, NDV(a,b,c) / NDV(c) is a safe lower bound of NDV(a,b).
-
-	// 3. If we still haven't got an NDV, we use the minimal NDV in the column stats as a lower bound.
-	// This would happen when len(cols) > 1 and no proper index stats are available.
-	minNDV := int64(-1)
-	for _, colStats := range histColl.Columns {
-		if colStats == nil || colStats.Info == nil {
-			continue
-		}
-		col := colStats.Info
-		if col.IsGenerated() && !col.GeneratedStored {
-			continue
-		}
-		if (colStats.NDV > 0 && minNDV <= 0) ||
-			colStats.NDV < minNDV {
-			minNDV = colStats.NDV
-		}
-	}
-	return minNDV
-}
-
 // constructInnerIndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
 func (p *LogicalJoin) constructInnerIndexScanTask(
 	wrapper *indexJoinInnerChildWrapper,
 	path *util.AccessPath,
 	ranges ranger.Ranges,
 	filterConds []expression.Expression,
-	innerJoinKeys []*expression.Column,
+	_ []*expression.Column,
 	rangeInfo string,
 	keepOrder bool,
 	desc bool,
@@ -2092,18 +2029,18 @@ func checkChildFitBC(p Plan) bool {
 	return p.SCtx().GetSessionVars().BroadcastJoinThresholdSize == -1 || sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
 
-func calcBroadcastExchangeSize(p Plan, mppStoreCnt int) (float64, float64, bool) {
+func calcBroadcastExchangeSize(p Plan, mppStoreCnt int) (row float64, size float64, hasSize bool) {
 	s := p.statsInfo()
-	row := float64(s.Count()) * float64(mppStoreCnt-1)
+	row = float64(s.Count()) * float64(mppStoreCnt-1)
 	if s.HistColl == nil {
 		return row, 0, false
 	}
 	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
-	size := avg * row
+	size = avg * row
 	return row, size, true
 }
 
-func calcBroadcastExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, float64, bool) {
+func calcBroadcastExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (row float64, size float64, hasSize bool) {
 	row1, size1, hasSize1 := calcBroadcastExchangeSize(p1, mppStoreCnt)
 	row2, size2, hasSize2 := calcBroadcastExchangeSize(p2, mppStoreCnt)
 
@@ -2119,18 +2056,18 @@ func calcBroadcastExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float6
 	return math.Min(row1, row2), 0, false
 }
 
-func calcHashExchangeSize(p Plan, mppStoreCnt int) (float64, float64, bool) {
+func calcHashExchangeSize(p Plan, mppStoreCnt int) (row float64, sz float64, hasSize bool) {
 	s := p.statsInfo()
-	row := float64(s.Count()) * float64(mppStoreCnt-1) / float64(mppStoreCnt)
+	row = float64(s.Count()) * float64(mppStoreCnt-1) / float64(mppStoreCnt)
 	if s.HistColl == nil {
 		return row, 0, false
 	}
 	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
-	sz := avg * row
+	sz = avg * row
 	return row, sz, true
 }
 
-func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, float64, bool) {
+func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (row float64, size float64, hasSize bool) {
 	row1, size1, hasSize1 := calcHashExchangeSize(p1, mppStoreCnt)
 	row2, size2, hasSize2 := calcHashExchangeSize(p2, mppStoreCnt)
 
@@ -2432,6 +2369,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			preferredBuildIndex = 1
 		}
 	}
+
 	if forceLeftToBuild || forceRightToBuild {
 		match := (forceLeftToBuild && preferredBuildIndex == 0) || (forceRightToBuild && preferredBuildIndex == 1)
 		if !match {
@@ -2444,6 +2382,13 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			}
 		}
 	}
+
+	// set preferredBuildIndex for test
+	failpoint.Inject("mockPreferredBuildIndex", func(val failpoint.Value) {
+		if !p.ctx.GetSessionVars().InRestrictedSQL {
+			preferredBuildIndex = val.(int)
+		}
+	})
 
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenProps := make([]*property.PhysicalProperty, 2)
@@ -2859,7 +2804,7 @@ func (lw *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) (
 }
 
 // exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
-func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
+func (*baseLogicalPlan) exhaustPhysicalPlans(*property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
