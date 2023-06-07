@@ -4540,6 +4540,37 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 	for _, pid := range p.GetAllPartitionIDs() {
 		require.True(t, tbl.Meta().TiFlashReplica.IsPartitionAvailable(pid))
 	}
+	tk.MustExec(`alter table t remove partitioning`)
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	require.Nil(t, tbl.GetPartitionedTable())
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.True(t, tbl.Meta().TiFlashReplica.Available)
+	tk.MustExec(`alter table t set tiflash replica 0`)
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	require.Nil(t, tbl.GetPartitionedTable())
+	require.Nil(t, tbl.Meta().TiFlashReplica)
+	tk.MustExec(`alter table t set tiflash replica 1`)
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tbl.Meta().ID, true))
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.True(t, tbl.Meta().TiFlashReplica.Available)
+	require.Nil(t, tbl.GetPartitionedTable())
+	tk.MustExec(`alter table t partition by key(a) partitions 3`)
+	tbl = external.GetTableByName(t, tk, schemaName, "t")
+	p = tbl.GetPartitionedTable()
+	for _, pid := range p.GetAllPartitionIDs() {
+		require.NoError(t, domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), pid, true))
+	}
+	p = tbl.GetPartitionedTable()
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.True(t, tbl.Meta().TiFlashReplica.Available)
+	for _, pid := range p.GetAllPartitionIDs() {
+		require.True(t, tbl.Meta().TiFlashReplica.IsPartitionAvailable(pid))
+	}
+	for _, pid := range p.GetAllPartitionIDs() {
+		require.True(t, tbl.Meta().TiFlashReplica.IsPartitionAvailable(pid))
+	}
 }
 
 func TestDuplicatePartitionNames(t *testing.T) {
