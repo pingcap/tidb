@@ -1159,7 +1159,17 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.GenWithStackByArgs())
 			case ast.ColumnOptionCheck:
-				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("CONSTRAINT CHECK"))
+				// Check the column CHECK constraint dependency lazily, after fill all the name.
+				// Extract column constraint from column option.
+				constraint := &ast.Constraint{
+					Tp:           ast.ConstraintCheck,
+					Expr:         v.Expr,
+					Enforced:     v.Enforced,
+					Name:         v.ConstraintName,
+					InColumn:     true,
+					InColumnName: colDef.Name.Name.O,
+				}
+				constraints = append(constraints, constraint)
 			}
 		}
 	}
@@ -1695,6 +1705,26 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	return nil
 }
 
+func setEmptyCheckConstraintName(tableLowerName string, namesMap map[string]bool, constrs []*ast.Constraint) {
+	cnt := 1
+	constraintPrefix := tableLowerName + "_chk_"
+	for _, constr := range constrs {
+		if constr.Name == "" {
+			constrName := fmt.Sprintf("%s%d", constraintPrefix, cnt)
+			for {
+				// loop until find constrName that haven't been used.
+				if !namesMap[constrName] {
+					namesMap[constrName] = true
+					break
+				}
+				cnt++
+				constrName = fmt.Sprintf("%s%d", constraintPrefix, cnt)
+			}
+			constr.Name = constrName
+		}
+	}
+}
+
 func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 	if constr.Name == "" && len(constr.Keys) > 0 {
 		var colName string
@@ -1722,7 +1752,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 	}
 }
 
-func checkConstraintNames(constraints []*ast.Constraint) error {
+func checkConstraintNames(tableName model.CIStr, constraints []*ast.Constraint) error {
 	constrNames := map[string]bool{}
 	fkNames := map[string]bool{}
 
@@ -1742,12 +1772,19 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	}
 
 	// Set empty constraint names.
+	checkConstraints := make([]*ast.Constraint, 0, len(constraints))
 	for _, constr := range constraints {
 		if constr.Tp != ast.ConstraintForeignKey {
 			setEmptyConstraintName(constrNames, constr)
 		}
+		if constr.Tp == ast.ConstraintCheck {
+			checkConstraints = append(checkConstraints, constr)
+		}
 	}
-
+	// Set check constraint name under its order.
+	if len(checkConstraints) > 0 {
+		setEmptyCheckConstraintName(tableName.L, constrNames, checkConstraints)
+	}
 	return nil
 }
 
@@ -1850,10 +1887,12 @@ func BuildTableInfo(
 		Collate: collate,
 	}
 	tblColumns := make([]*table.Column, 0, len(cols))
+	existedColsMap := make(map[string]struct{}, len(cols))
 	for _, v := range cols {
 		v.ID = AllocateColumnID(tbInfo)
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
 		tblColumns = append(tblColumns, table.ToColumn(v.ToInfo()))
+		existedColsMap[v.Name.L] = struct{}{}
 	}
 	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
@@ -1923,10 +1962,6 @@ func BuildTableInfo(
 			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.GenWithStackByArgs())
 			continue
 		}
-		if constr.Tp == ast.ConstraintCheck {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("CONSTRAINT CHECK"))
-			continue
-		}
 
 		var (
 			indexName       = constr.Name
@@ -1941,6 +1976,58 @@ func BuildTableInfo(
 			indexName = mysql.PrimaryKeyName
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			unique = true
+		}
+
+		// check constraint
+		if constr.Tp == ast.ConstraintCheck {
+			// Since column check constraint dependency has been done in columnDefToCol.
+			// Here do the table check constraint dependency check, table constraint
+			// can only refer the columns in defined columns of the table.
+			// Refer: https://dev.mysql.com/doc/refman/8.0/en/create-table-check-constraints.html
+			if ok, err := table.IsSupportedExpr(constr); !ok {
+				return nil, err
+			}
+			var dependedCols []model.CIStr
+			dependedColsMap := findDependentColsInExpr(constr.Expr)
+			if !constr.InColumn {
+				dependedCols = make([]model.CIStr, 0, len(dependedColsMap))
+				for k := range dependedColsMap {
+					if _, ok := existedColsMap[k]; !ok {
+						// The table constraint depended on a non-existed column.
+						return nil, dbterror.ErrTableCheckConstraintReferUnknown.GenWithStackByArgs(constr.Name, k)
+					}
+					dependedCols = append(dependedCols, model.NewCIStr(k))
+				}
+			} else {
+				// Check the column-type constraint dependency.
+				if len(dependedColsMap) != 1 {
+					return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
+				}
+				if _, ok := dependedColsMap[constr.InColumnName]; !ok {
+					return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
+				}
+				dependedCols = []model.CIStr{model.NewCIStr(constr.InColumnName)}
+			}
+			// check auto-increment column
+			if table.ContainsAutoIncrementCol(dependedCols, tbInfo) {
+				return nil, dbterror.ErrCheckConstraintRefersAutoIncrementColumn.GenWithStackByArgs(constr.Name)
+			}
+			// check foreign key
+			if err := table.HasForeignKeyRefAction(tbInfo.ForeignKeys, constraints, constr, dependedCols); err != nil {
+				return nil, err
+			}
+			// build constraint meta info.
+			constraintInfo, err := buildConstraintInfo(tbInfo, dependedCols, constr, model.StatePublic)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			// check if the expression is bool type
+			if err := table.IfCheckConstraintExprBoolType(constraintInfo, tbInfo); err != nil {
+				return nil, err
+			}
+			constraintInfo.ID = allocateConstraintID(tbInfo)
+			tbInfo.Constraints = append(tbInfo.Constraints, constraintInfo)
+			continue
 		}
 
 		// build index info.
@@ -2213,7 +2300,16 @@ func BuildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInf
 	if referTblInfo.TTLInfo != nil {
 		tblInfo.TTLInfo = referTblInfo.TTLInfo.Clone()
 	}
+	renameCheckConstraint(&tblInfo)
 	return &tblInfo, nil
+}
+
+func renameCheckConstraint(tblInfo *model.TableInfo) {
+	for _, cons := range tblInfo.Constraints {
+		cons.Name = model.NewCIStr("")
+		cons.Table = tblInfo.Name
+	}
+	setNameForConstraintInfo(tblInfo.Name.L, map[string]bool{}, tblInfo.Constraints)
 }
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
@@ -2285,7 +2381,7 @@ func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = checkConstraintNames(newConstraints)
+	err = checkConstraintNames(s.Table.Name, newConstraints)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3470,7 +3566,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			case ast.ConstraintFulltext:
 				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
-				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("ADD CONSTRAINT CHECK"))
+				err = d.CreateCheckConstraint(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint)
 			default:
 				// Nothing to do now.
 			}
@@ -3567,9 +3663,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableIndexInvisible:
 			err = d.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility)
 		case ast.AlterTableAlterCheck:
-			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("ALTER CHECK"))
+			err = d.AlterCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
 		case ast.AlterTableDropCheck:
-			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("DROP CHECK"))
+			err = d.DropCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name))
 		case ast.AlterTableWithValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithValidation)
 		case ast.AlterTableWithoutValidation:
@@ -5484,6 +5580,11 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	if oldCol == nil {
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, ident.Name)
 	}
+	// check if column can rename with check constraint
+	err = IsColumnRenameableWithCheckConstraint(oldCol.Name, tbl.Meta())
+	if err != nil {
+		return err
+	}
 
 	if oldColName.L == newColName.L {
 		return nil
@@ -7224,6 +7325,10 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 	if err != nil {
 		return err
 	}
+	err = IsColumnDroppableWithCheckConstraint(colName, tblInfo)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -8387,4 +8492,135 @@ func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string
 		}
 	}
 	return nil
+}
+
+func (d *ddl) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr, constr *ast.Constraint) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if constraintInfo := t.Meta().FindConstraintInfoByName(constrName.L); constraintInfo != nil {
+		return infoschema.ErrCheckConstraintDupName.GenWithStackByArgs(constrName.L)
+	}
+
+	// allocate the temporary constraint name for dependency-check-error-output below.
+	constrNames := map[string]bool{}
+	for _, constr := range t.Meta().Constraints {
+		constrNames[constr.Name.L] = true
+	}
+	setEmptyCheckConstraintName(t.Meta().Name.L, constrNames, []*ast.Constraint{constr})
+
+	// existedColsMap can be used to check the existence of depended.
+	existedColsMap := make(map[string]struct{})
+	cols := t.Cols()
+	for _, v := range cols {
+		existedColsMap[v.Name.L] = struct{}{}
+	}
+	// check expression if supported
+	if ok, err := table.IsSupportedExpr(constr); !ok {
+		return err
+	}
+
+	dependedColsMap := findDependentColsInExpr(constr.Expr)
+	dependedCols := make([]model.CIStr, 0, len(dependedColsMap))
+	for k := range dependedColsMap {
+		if _, ok := existedColsMap[k]; !ok {
+			// The table constraint depended on a non-existed column.
+			return dbterror.ErrBadField.GenWithStackByArgs(k, "check constraint "+constr.Name+" expression")
+		}
+		dependedCols = append(dependedCols, model.NewCIStr(k))
+	}
+
+	// build constraint meta info.
+	tblInfo := t.Meta()
+
+	// check auto-increment column
+	if table.ContainsAutoIncrementCol(dependedCols, tblInfo) {
+		return dbterror.ErrCheckConstraintRefersAutoIncrementColumn.GenWithStackByArgs(constr.Name)
+	}
+	// check foreign key
+	if err := table.HasForeignKeyRefAction(tblInfo.ForeignKeys, nil, constr, dependedCols); err != nil {
+		return err
+	}
+	constraintInfo, err := buildConstraintInfo(tblInfo, dependedCols, constr, model.StateNone)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// check if the expression is bool type
+	if err := table.IfCheckConstraintExprBoolType(constraintInfo, tblInfo); err != nil {
+		return err
+	}
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAddCheckConstraint,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{constraintInfo},
+		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+	}
+
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) DropCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr) error {
+	is := d.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	}
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+
+	constraintInfo := t.Meta().FindConstraintInfoByName(constrName.L)
+	if constraintInfo == nil {
+		return dbterror.ErrConstraintNotFound.GenWithStackByArgs(constrName)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionDropCheckConstraint,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{constrName},
+	}
+
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr, enforced bool) error {
+	is := d.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	}
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+
+	constraintInfo := t.Meta().FindConstraintInfoByName(constrName.L)
+	if constraintInfo == nil {
+		return dbterror.ErrConstraintNotFound.GenWithStackByArgs(constrName)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterCheckConstraint,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{constrName, enforced},
+	}
+
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
 }
