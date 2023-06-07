@@ -946,7 +946,51 @@ type isUsedLockFunctionClass struct {
 }
 
 func (c *isUsedLockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "IS_USED_LOCK")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinUsedLockSig{bf}
+	bf.tp.SetFlen(1)
+	return sig, nil
+}
+
+type builtinUsedLockSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinUsedLockSig) Clone() builtinFunc {
+	newSig := &builtinUsedLockSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinLockSig.
+// See https://dev.mysql.com/doc/refman/ ...
+func (b *builtinUsedLockSig) evalInt(row chunk.Row) (int64, bool, error) {
+	lockName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil {
+		return 0, isNull, err
+	}
+	// Validate that lockName is NOT NULL or empty string
+	if isNull {
+		return 0, false, errUserLockWrongName.GenWithStackByArgs("NULL")
+	}
+	if lockName == "" || utf8.RuneCountInString(lockName) > 64 {
+		return 0, false, errUserLockWrongName.GenWithStackByArgs(lockName)
+	}
+
+	// Lock names are case insensitive. Because we can't rely on collations
+	// being enabled on the internal table, we have to lower it.
+	lockName = strings.ToLower(lockName)
+	if utf8.RuneCountInString(lockName) > 64 {
+		return 0, false, errIncorrectArgs.GenWithStackByArgs("is_used_lock")
+	}
+	lock := b.ctx.IsUsedAdvisoryLock(lockName)
+	return int64(lock), lock == 0, nil // TODO, uint64
 }
 
 type isUUIDFunctionClass struct {

@@ -1798,13 +1798,34 @@ func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
 		return err
 	}
 	infosync.StoreInternalSession(sess)
-	lock := &advisoryLock{session: sess, ctx: context.TODO()}
+	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.ShowProcess().ID}
 	err = lock.GetLock(lockName, timeout)
 	if err != nil {
 		return err
 	}
 	s.advisoryLocks[lockName] = lock
 	return nil
+}
+
+func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
+	// Same session
+	if lock, ok := s.advisoryLocks[lockName]; ok {
+		return lock.owner
+	}
+
+	// Check for transaction on advisory_locks table
+	sess, err := createSession(s.store)
+	if err != nil {
+		return 0
+	}
+	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.ShowProcess().ID}
+	err = lock.IsUsedLock(lockName)
+	if err != nil {
+		// TODO: Return actual owner pid
+		// TODO: Check for mysql.ErrLockWaitTimeout and DeadLock
+		return 1
+	}
+	return 0
 }
 
 // ReleaseAdvisoryLock releases an advisory locks held by the session.
