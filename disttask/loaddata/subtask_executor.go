@@ -45,6 +45,10 @@ func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
 	failpoint.Inject("errorWhenSortChunk", func() {
 		failpoint.Return(errors.New("occur an error when sort chunk"))
 	})
+	failpoint.Inject("syncBeforeSortChunk", func() {
+		TestSyncChan <- struct{}{}
+		<-TestSyncChan
+	})
 	chunkCheckpoint := toChunkCheckpoint(e.task.Chunk)
 	sharedVars := e.task.SharedVars
 	if err := importer.ProcessChunk(ctx, &chunkCheckpoint, sharedVars.TableImporter, sharedVars.DataEngine, sharedVars.IndexEngine, sharedVars.Progress, logger); err != nil {

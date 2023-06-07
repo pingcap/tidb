@@ -79,6 +79,9 @@ const (
 	wrote         jobStageTp = "wrote"
 	ingested      jobStageTp = "ingested"
 	needRescan    jobStageTp = "needRescan"
+
+	// suppose each KV is about 32 bytes, 16 * units.KiB / 32 = 512
+	defaultKVBatchCount = 512
 )
 
 func (j jobStageTp) String() string {
@@ -178,7 +181,6 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
-	kvBatchCount := local.KVWriteBatchCount
 	kvBatchSize := local.KVWriteBatchSize
 	bufferPool := local.bufferPool
 	writeLimiter := local.writeLimiter
@@ -256,7 +258,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 
 	bytesBuf := bufferPool.NewBuffer()
 	defer bytesBuf.Destroy()
-	pairs := make([]*sst.Pair, 0, kvBatchCount)
+	pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
 	count := 0
 	size := int64(0)
 	totalSize := int64(0)
@@ -308,7 +310,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		size += kvSize
 		totalSize += kvSize
 
-		if count >= kvBatchCount || size >= kvBatchSize {
+		if size >= kvBatchSize {
 			if err := flushKVs(); err != nil {
 				return errors.Trace(err)
 			}

@@ -1308,6 +1308,13 @@ CheckAndInsert:
 		e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
 		err = addRecord(ctx, rows[i])
 		if err != nil {
+			// throw warning when violate check constraint
+			if table.ErrCheckConstraintViolated.Equal(err) {
+				if !sc.InLoadDataStmt {
+					sc.AppendWarning(err)
+				}
+				continue
+			}
 			return err
 		}
 	}

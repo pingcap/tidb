@@ -940,7 +940,7 @@ func (w *worker) countForError(err error, job *model.Job) error {
 		logutil.Logger(w.logCtx).Info("[ddl] DDL job is cancelled normally", zap.Error(err))
 		return nil
 	}
-	logutil.Logger(w.logCtx).Error("[ddl] run DDL job error", zap.Error(err))
+	logutil.Logger(w.logCtx).Warn("[ddl] run DDL job error", zap.Error(err))
 
 	// Load global DDL variables.
 	if err1 := loadDDLVars(w); err1 != nil {
@@ -1130,6 +1130,12 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onTTLInfoChange(d, t, job)
 	case model.ActionAlterTTLRemove:
 		ver, err = onTTLInfoRemove(d, t, job)
+	case model.ActionAddCheckConstraint:
+		ver, err = w.onAddCheckConstraint(d, t, job)
+	case model.ActionDropCheckConstraint:
+		ver, err = onDropCheckConstraint(d, t, job)
+	case model.ActionAlterCheckConstraint:
+		ver, err = w.onAlterCheckConstraint(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

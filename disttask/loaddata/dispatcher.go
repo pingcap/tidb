@@ -17,6 +17,7 @@ package loaddata
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
@@ -37,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/atomic"
@@ -44,18 +47,102 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	registerTaskTTL        = 10 * time.Minute
+	refreshTaskTTLInterval = 3 * time.Minute
+	registerTimeout        = 5 * time.Second
+)
+
+// NewTaskRegisterWithTTL is the ctor for TaskRegister.
+// It is exported for testing.
+var NewTaskRegisterWithTTL = utils.NewTaskRegisterWithTTL
+
+type taskInfo struct {
+	taskID int64
+
+	// operation on taskInfo is run inside detect-task goroutine, so no need to synchronize.
+	lastRegisterTime time.Time
+
+	// initialized lazily in register()
+	etcdClient   *etcd.Client
+	taskRegister utils.TaskRegister
+}
+
+func (t *taskInfo) register(ctx context.Context) {
+	if time.Since(t.lastRegisterTime) < refreshTaskTTLInterval {
+		return
+	}
+
+	if time.Since(t.lastRegisterTime) < refreshTaskTTLInterval {
+		return
+	}
+	logger := logutil.BgLogger().With(zap.Int64("task_id", t.taskID))
+	if t.taskRegister == nil {
+		client, err := importer.GetEtcdClient()
+		if err != nil {
+			logger.Warn("get etcd client failed", zap.Error(err))
+			return
+		}
+		t.etcdClient = client
+		t.taskRegister = NewTaskRegisterWithTTL(client.GetClient(), registerTaskTTL,
+			utils.RegisterImportInto, strconv.FormatInt(t.taskID, 10))
+	}
+	timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
+	defer cancel()
+	if err := t.taskRegister.RegisterTaskOnce(timeoutCtx); err != nil {
+		logger.Warn("register task failed", zap.Error(err))
+	} else {
+		logger.Info("register task to pd or refresh lease success")
+	}
+	// we set it even if register failed, TTL is 10min, refresh interval is 3min,
+	// we can try 2 times before the lease is expired.
+	t.lastRegisterTime = time.Now()
+}
+
+func (t *taskInfo) close(ctx context.Context) {
+	logger := logutil.BgLogger().With(zap.Int64("task_id", t.taskID))
+	if t.taskRegister != nil {
+		timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
+		defer cancel()
+		if err := t.taskRegister.Close(timeoutCtx); err != nil {
+			logger.Warn("unregister task failed", zap.Error(err))
+		} else {
+			logger.Info("unregister task success")
+		}
+		t.taskRegister = nil
+	}
+	if t.etcdClient != nil {
+		if err := t.etcdClient.Close(); err != nil {
+			logger.Warn("close etcd client failed", zap.Error(err))
+		}
+		t.etcdClient = nil
+	}
+}
+
 type flowHandle struct {
 	mu sync.RWMutex
+	// NOTE: there's no need to sync for below 2 fields actually, since we add a restriction that only one
+	// task can be running at a time. but we might support task queuing in the future, leave it for now.
 	// the last time we switch TiKV into IMPORT mode, this is a global operation, do it for one task makes
 	// no difference to do it for all tasks. So we do not need to record the switch time for each task.
 	lastSwitchTime atomic.Time
+	// taskInfoMap is a map from taskID to taskInfo
+	taskInfoMap sync.Map
 }
 
 var _ dispatcher.TaskFlowHandle = (*flowHandle)(nil)
 
 func (h *flowHandle) OnTicker(ctx context.Context, task *proto.Task) {
-	// only switch TiKV mode when task is running and reach the interval
-	if task.State != proto.TaskStateRunning || time.Since(h.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
+	// only switch TiKV mode or register task when task is running
+	if task.State != proto.TaskStateRunning {
+		return
+	}
+	h.switchTiKVMode(ctx, task)
+	h.registerTask(ctx, task)
+}
+
+func (h *flowHandle) switchTiKVMode(ctx context.Context, task *proto.Task) {
+	if time.Since(h.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
 		return
 	}
 
@@ -73,6 +160,19 @@ func (h *flowHandle) OnTicker(ctx context.Context, task *proto.Task) {
 	}
 	switcher.ToImportMode(ctx)
 	h.lastSwitchTime.Store(time.Now())
+}
+
+func (h *flowHandle) registerTask(ctx context.Context, task *proto.Task) {
+	val, _ := h.taskInfoMap.LoadOrStore(task.ID, &taskInfo{taskID: task.ID})
+	info := val.(*taskInfo)
+	info.register(ctx)
+}
+
+func (h *flowHandle) unregisterTask(ctx context.Context, task *proto.Task) {
+	if val, loaded := h.taskInfoMap.LoadAndDelete(task.ID); loaded {
+		info := val.(*taskInfo)
+		info.close(ctx)
+	}
 }
 
 func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (_ [][]byte, err error) {
@@ -120,6 +220,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 			}
 		}()
 		h.switchTiKV2NormalMode(ctx, logutil.BgLogger())
+		defer h.unregisterTask(ctx, gTask)
 		subtaskMetas, err2 := postProcess(ctx, handle, gTask, taskMeta, logger)
 		if err2 != nil {
 			return nil, err2
@@ -151,6 +252,8 @@ func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskH
 		return nil, err
 	}
 	h.switchTiKV2NormalMode(ctx, logger)
+	h.unregisterTask(ctx, gTask)
+
 	gTask.Error = receiveErr[0]
 
 	errStr := string(receiveErr[0])
