@@ -655,7 +655,19 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalTableScan) ResolveIndices() (err error) {
-	return p.physicalSchemaProducer.ResolveIndices()
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
+}
+
+// ResolveIndicesItself implements PhysicalTableScan interface.
+func (p *PhysicalTableScan) ResolveIndicesItself() (err error) {
+	for i, column := range p.schema.Columns {
+		column.Index = i
+	}
+	return
 }
 
 // ResolveIndices implements Plan interface.
