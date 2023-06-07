@@ -92,24 +92,15 @@ func (w *worker) onAddCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfoInMeta.State)
 	case model.StateWriteOnly:
 		// write only -> public
-		skipCheck := false
-		failpoint.Inject("mockPassAddConstraintCheck", func(val failpoint.Value) {
-			if val.(bool) {
-				skipCheck = true
-			}
-		})
-		if !skipCheck {
-			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfoInMeta, job)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
+		err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfoInMeta, job)
+		if err != nil {
+			return ver, errors.Trace(err)
 		}
 		constraintInfoInMeta.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != constraintInfoInMeta.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
@@ -167,7 +158,7 @@ func onDropCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.StateWriteOnly:
 		// write only -> None
 		// write only state constraint will still take effect to check the newly inserted data.
-		// So the depended column shouldn't be dropped even in this intermediate state.
+		// So the dependent column shouldn't be dropped even in this intermediate state.
 		constraintInfo.State = model.StateNone
 		// remove the constraint from tableInfo.
 		for i, constr := range tblInfo.Constraints {
@@ -179,7 +170,6 @@ func onDropCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
@@ -206,7 +196,7 @@ func checkDropCheckConstraint(t *meta.Meta, job *model.Job) (*model.TableInfo, *
 		return nil, nil, errors.Trace(err)
 	}
 
-	// do the double-check with constraint existence.
+	// double check with constraint existence.
 	constraintInfo := tblInfo.FindConstraintInfoByName(constrName.L)
 	if constraintInfo == nil {
 		job.State = model.JobStateCancelled
@@ -223,19 +213,11 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 
 	// enforced will fetch table data and check the constraint.
 	if constraintInfo.Enforced != enforced && enforced {
-		skipCheck := false
-		failpoint.Inject("mockPassAlterConstraintCheck", func(val failpoint.Value) {
-			if val.(bool) {
-				skipCheck = true
-			}
-		})
-		if !skipCheck {
-			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo, job)
-			if err != nil {
-				// check constraint error will cancel the job, job state has been changed
-				// to cancelled in addTableCheckConstraint.
-				return ver, errors.Trace(err)
-			}
+		err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo, job)
+		if err != nil {
+			// check constraint error will cancel the job, job state has been changed
+			// to cancelled in addTableCheckConstraint.
+			return ver, errors.Trace(err)
 		}
 	}
 	constraintInfo.Enforced = enforced
@@ -244,7 +226,6 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 		// update version and tableInfo error will cause retry.
 		return ver, errors.Trace(err)
 	}
-
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
@@ -270,7 +251,7 @@ func checkAlterCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *mo
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
-	// do the double-check with constraint existence.
+	// do the double check with constraint existence.
 	constraintInfo := tblInfo.FindConstraintInfoByName(constrName.L)
 	if constraintInfo == nil {
 		job.State = model.JobStateCancelled
