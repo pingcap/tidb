@@ -37,6 +37,8 @@ type IDPool interface {
 	// Len returns length of available id's in pool.
 	// Note that Len() would return -1 when this method is NOT supported.
 	Len() int
+	// Cap returns the capacity of pool.
+	Cap() int
 	// Put puts value to pool. "ok" is false when pool is full.
 	Put(val uint64) (ok bool)
 	// Get gets value from pool. "ok" is false when pool is empty.
@@ -116,6 +118,11 @@ func (p *AutoIncPool) Len() int {
 	return -1
 }
 
+// Cap implements IDPool interface.
+func (p *AutoIncPool) Cap() int {
+	return int(p.cap)
+}
+
 // String implements IDPool interface.
 func (p AutoIncPool) String() string {
 	return fmt.Sprintf("lastID: %v", p.lastID)
@@ -188,6 +195,11 @@ func (p *LockFreeCircularPool) InitForTest(head uint32, fillCount uint32) {
 // Len implements IDPool interface.
 func (p *LockFreeCircularPool) Len() int {
 	return int(p.tail.Load() - p.head.Load())
+}
+
+// Cap implements IDPool interface.
+func (p *LockFreeCircularPool) Cap() int {
+	return int(p.cap - 1)
 }
 
 // String implements IDPool interface.

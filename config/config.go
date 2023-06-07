@@ -868,6 +868,8 @@ type Experimental struct {
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
+	// Whether enable 32bits global kill.
+	EnableGlobalKill32Bits bool `toml:"enable-global-kill-32bits" json:"enable-global-kill-32bits"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()

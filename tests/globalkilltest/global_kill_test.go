@@ -64,6 +64,8 @@ const (
 // GlobakKillSuite is used for automated test of "Global Kill" feature.
 // See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
 type GlobalKillSuite struct {
+	enable32Bits bool
+
 	pdCli *clientv3.Client
 	pdErr error
 
@@ -72,8 +74,10 @@ type GlobalKillSuite struct {
 	tikvProc  *exec.Cmd
 }
 
-func createGloabalKillSuite(t *testing.T) *GlobalKillSuite {
+func createGlobalKillSuite(t *testing.T, enable32bits bool) *GlobalKillSuite {
 	s := new(GlobalKillSuite)
+	s.enable32Bits = enable32bits
+
 	err := logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: *logLevel}})
 	require.NoError(t, err)
 
@@ -205,6 +209,13 @@ func (s *GlobalKillSuite) cleanCluster() (err error) {
 	return nil
 }
 
+func (s *GlobalKillSuite) getTiDBConfigPath() string {
+	if s.enable32Bits {
+		return "./config-32.toml"
+	}
+	return "./config.toml"
+}
+
 func (s *GlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd *exec.Cmd, err error) {
 	cmd = exec.Command(*tidbBinaryPath,
 		"--store=mocktikv",
@@ -214,7 +225,7 @@ func (s *GlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd *exe
 		fmt.Sprintf("--status=%d", statusPort),
 		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port),
 		fmt.Sprintf("--log-slow-query=%s/tidb-slow%d.log", *tmpPath, port),
-		fmt.Sprintf("--config=%s", "./config.toml"))
+		fmt.Sprintf("--config=%s", s.getTiDBConfigPath()))
 	log.Info("starting tidb", zap.Any("cmd", cmd))
 	err = cmd.Start()
 	if err != nil {
@@ -233,7 +244,7 @@ func (s *GlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath strin
 		fmt.Sprintf("--status=%d", statusPort),
 		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port),
 		fmt.Sprintf("--log-slow-query=%s/tidb-slow%d.log", *tmpPath, port),
-		fmt.Sprintf("--config=%s", "./config.toml"))
+		fmt.Sprintf("--config=%s", s.getTiDBConfigPath()))
 	log.Info("starting tidb", zap.Any("cmd", cmd))
 	err = cmd.Start()
 	if err != nil {
@@ -333,7 +344,7 @@ type sleepResult struct {
 	err     error
 }
 
-func (s *GlobalKillSuite) killByCtrlC(t *testing.T, port int, sleepTime int) time.Duration {
+func (s *GlobalKillSuite) testKillByCtrlC(t *testing.T, port int, sleepTime int) time.Duration {
 	cli := exec.Command("mysql",
 		"-h127.0.0.1",
 		fmt.Sprintf("-P%d", port),
@@ -361,6 +372,11 @@ func (s *GlobalKillSuite) killByCtrlC(t *testing.T, port int, sleepTime int) tim
 
 	r := <-ch
 	require.NoError(t, err)
+	if s.enable32Bits {
+		require.Less(t, r.elapsed, time.Duration(sleepTime)*time.Second)
+	} else {
+		require.GreaterOrEqual(t, r.elapsed, time.Duration(sleepTime)*time.Second)
+	}
 	return r.elapsed
 }
 
@@ -432,7 +448,15 @@ func (s *GlobalKillSuite) killByKillStatement(t *testing.T, db1 *sql.DB, db2 *sq
 
 // [Test Scenario 1] A TiDB without PD, killed by Ctrl+C, and killed by KILL.
 func TestWithoutPD(t *testing.T) {
-	s := createGloabalKillSuite(t)
+	doTestWithoutPD(t, false)
+}
+
+func TestWithoutPD32(t *testing.T) {
+	doTestWithoutPD(t, true)
+}
+
+func doTestWithoutPD(t *testing.T, enable32Bits bool) {
+	s := createGlobalKillSuite(t, enable32Bits)
 	var err error
 	port := *tidbStartPort
 	tidb, err := s.startTiDBWithoutPD(port, *tidbStatusPort)
@@ -448,17 +472,24 @@ func TestWithoutPD(t *testing.T) {
 
 	// Test mysql client CTRL-C
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
-	elapsed := s.killByCtrlC(t, port, 2)
-	require.GreaterOrEqual(t, elapsed, 2*time.Second)
+	s.testKillByCtrlC(t, port, 2)
 
 	// Test KILL statement
-	elapsed = s.killByKillStatement(t, db, db, 2)
+	elapsed := s.killByKillStatement(t, db, db, 2)
 	require.Less(t, elapsed, 2*time.Second)
 }
 
 // [Test Scenario 2] One TiDB with PD, killed by Ctrl+C, and killed by KILL.
 func TestOneTiDB(t *testing.T) {
-	s := createGloabalKillSuite(t)
+	doTestOneTiDB(t, false)
+}
+
+func TestOneTiDB32(t *testing.T) {
+	doTestOneTiDB(t, true)
+}
+
+func doTestOneTiDB(t *testing.T, enable32Bits bool) {
+	s := createGlobalKillSuite(t, enable32Bits)
 	port := *tidbStartPort + 1
 	tidb, err := s.startTiDBWithPD(port, *tidbStatusPort+1, *pdClientPath)
 	require.NoError(t, err)
@@ -476,17 +507,24 @@ func TestOneTiDB(t *testing.T) {
 	// Test mysql client CTRL-C
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
 	// see TiDB's logging for the truncation warning.
-	elapsed := s.killByCtrlC(t, port, sleepTime)
-	require.GreaterOrEqual(t, elapsed, sleepTime*time.Second)
+	s.testKillByCtrlC(t, port, sleepTime)
 
 	// Test KILL statement
-	elapsed = s.killByKillStatement(t, db, db, sleepTime)
+	elapsed := s.killByKillStatement(t, db, db, sleepTime)
 	require.Less(t, elapsed, sleepTime*time.Second)
 }
 
 // [Test Scenario 3] Multiple TiDB nodes, killed {local,remote} by {Ctrl-C,KILL}.
 func TestMultipleTiDB(t *testing.T) {
-	s := createGloabalKillSuite(t)
+	doTestMultipleTiDB(t, false)
+}
+
+func TestMultipleTiDB32(t *testing.T) {
+	doTestMultipleTiDB(t, true)
+}
+
+func doTestMultipleTiDB(t *testing.T, enable32Bits bool) {
+	s := createGlobalKillSuite(t, enable32Bits)
 	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1 & conn1a,conn1b
@@ -519,8 +557,7 @@ func TestMultipleTiDB(t *testing.T) {
 	// kill local by CTRL-C
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
 	// see TiDB's logging for the truncation warning.
-	elapsed = s.killByCtrlC(t, port1, sleepTime)
-	require.GreaterOrEqual(t, elapsed, sleepTime*time.Second)
+	s.testKillByCtrlC(t, port1, sleepTime)
 
 	// kill local by KILL
 	elapsed = s.killByKillStatement(t, db1a, db1b, sleepTime)
@@ -532,7 +569,15 @@ func TestMultipleTiDB(t *testing.T) {
 }
 
 func TestLostConnection(t *testing.T) {
-	s := createGloabalKillSuite(t)
+	doTestLostConnection(t, false)
+}
+
+func TestLostConnection32(t *testing.T) {
+	doTestLostConnection(t, true)
+}
+
+func doTestLostConnection(t *testing.T, enable32Bits bool) {
+	s := createGlobalKillSuite(t, enable32Bits)
 	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1
@@ -633,3 +678,5 @@ func TestLostConnection(t *testing.T) {
 		require.Less(t, elapsed, 2*time.Second)
 	}
 }
+
+// TODO: test for upgrade 32 -> 64 & downgrade 64 -> 32

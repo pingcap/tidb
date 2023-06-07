@@ -1143,28 +1143,6 @@ func (do *Domain) Init(
 		do.ddl = checker
 	}
 
-	if config.GetGlobalConfig().EnableGlobalKill {
-		do.connIDAllocator = globalconn.NewGlobalAllocator(do.ServerID)
-
-		if do.etcdClient != nil {
-			err := do.acquireServerID(ctx)
-			if err != nil {
-				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
-				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
-			} else {
-				do.isLostConnectionToPD.Store(0)
-			}
-
-			do.wg.Add(1)
-			go do.serverIDKeeper()
-		} else {
-			// set serverID for standalone deployment to enable 'KILL'.
-			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
-		}
-	} else {
-		do.connIDAllocator = globalconn.NewSimpleAllocator()
-	}
-
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli := do.GetPDClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
@@ -1179,13 +1157,40 @@ func (do *Domain) Init(
 	if err != nil {
 		return err
 	}
-	// step 2: domain reload the infoSchema.
+
+	// step 2: initialize the global kill, which depends on `globalInfoSyncer`.`
+	if config.GetGlobalConfig().EnableGlobalKill {
+		do.connIDAllocator = globalconn.NewGlobalAllocator(do.ServerID, config.GetGlobalConfig().Experimental.EnableGlobalKill32Bits)
+
+		if do.etcdClient != nil {
+			err := do.acquireServerID(ctx)
+			if err != nil {
+				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
+				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
+			} else {
+				if err := do.info.StoreServerInfo(context.Background()); err != nil {
+					return errors.Trace(err)
+				}
+				do.isLostConnectionToPD.Store(0)
+			}
+
+			do.wg.Add(1)
+			go do.serverIDKeeper()
+		} else {
+			// set serverID for standalone deployment to enable 'KILL'.
+			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
+		}
+	} else {
+		do.connIDAllocator = globalconn.NewSimpleAllocator()
+	}
+
+	// step 3: domain reload the infoSchema.
 	err = do.Reload()
 	if err != nil {
 		return err
 	}
 
-	// step 3: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
+	// step 4: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
 	err = do.ddl.Start(sysCtxPool)
 	if err != nil {
 		return err
@@ -2570,6 +2575,8 @@ const (
 	acquireServerIDTimeout         = 10 * time.Second
 	retrieveServerIDSessionTimeout = 10 * time.Second
 
+	acquire32BitsServerIDRetryCnt = 3
+
 	// reservedConnXXX must be within [0, globalconn.ReservedCount)
 	reservedConnAnalyze = 0
 )
@@ -2664,10 +2671,20 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 		return err
 	}
 
+	conflictCnt := 0
 	for {
-		// get a random serverID: [1, MaxServerID64]
-		randServerID := rand.Int63n(int64(globalconn.MaxServerID64)) + 1 // #nosec G404
-		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, randServerID)
+		var proposeServerID uint64
+		if config.GetGlobalConfig().Experimental.EnableGlobalKill32Bits {
+			proposeServerID, err = do.proposeServerID(ctx, conflictCnt)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			// get a random serverID: [1, MaxServerID64]
+			proposeServerID = uint64(rand.Int63n(int64(globalconn.MaxServerID64)) + 1) // #nosec G404
+		}
+
+		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, proposeServerID)
 		cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
 		value := "0"
 
@@ -2680,16 +2697,52 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 			return err
 		}
 		if !resp.Succeeded {
-			logutil.BgLogger().Info("proposed random serverID exists, will randomize again", zap.Int64("randServerID", randServerID))
+			logutil.BgLogger().Info("propose serverID exists, try again", zap.Uint64("proposeServerID", proposeServerID))
 			time.Sleep(acquireServerIDRetryInterval)
+			conflictCnt++
 			continue
 		}
 
-		atomic.StoreUint64(&do.serverID, uint64(randServerID))
+		atomic.StoreUint64(&do.serverID, proposeServerID)
 		logutil.BgLogger().Info("acquireServerID", zap.Uint64("serverID", do.ServerID()),
 			zap.String("lease id", strconv.FormatInt(int64(session.Lease()), 16)))
 		return nil
 	}
+}
+
+// propose server ID by random.
+func (do *Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64, error) {
+	// get a random server ID in range [min, max]
+	randomServerID := func(min uint64, max uint64) uint64 {
+		return uint64(rand.Int63n(int64(max-min+1)) + int64(min)) // #nosec G404
+	}
+
+	if conflictCnt < acquire32BitsServerIDRetryCnt {
+		// get existing server IDs.
+		allServerInfo, err := infosync.GetAllServerInfo(ctx)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if float32(len(allServerInfo)) < 0.9*globalconn.MaxServerID32 {
+			serverIDs := make(map[uint64]struct{}, len(allServerInfo))
+			for _, info := range allServerInfo {
+				serverID := info.ServerIDGetter()
+				if serverID <= globalconn.MaxServerID32 {
+					serverIDs[serverID] = struct{}{}
+				}
+			}
+
+			for retry := 0; retry < 15; retry++ {
+				randServerID := randomServerID(1, globalconn.MaxServerID32)
+				if _, ok := serverIDs[randServerID]; !ok {
+					return randServerID, nil
+				}
+			}
+		}
+	}
+
+	// upgrade to 64 bits.
+	return randomServerID(globalconn.MaxServerID32+1, globalconn.MaxServerID64), nil
 }
 
 func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
