@@ -40,6 +40,12 @@ var (
 			return derr.ErrResourceGroupQueryRunaway
 		},
 	}
+	RunawayActionWatchKillWorker *RunawayWorker = &RunawayWorker{
+		actionType: rmpb.RunawayAction_Kill,
+		action: func() error {
+			return derr.ErrResourceGroupQueryRunawayQuarantine
+		},
+	}
 	// Todo: add function for dryrun.
 )
 

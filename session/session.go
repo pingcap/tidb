@@ -2231,7 +2231,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if variable.EnableResourceControl.Load() {
 		planNormalized, _ := executor.GetPlanDigest(sessVars.StmtCtx)
 		sessVars.StmtCtx.RunawayChecker = domain.GetDomain(s).RunawayManager().DeriveChecker(sessVars.ResourceGroupName, sessVars.StmtCtx.OriginalSQL, planNormalized)
-		if err := sessVars.StmtCtx.RunawayChecker.BeforeCopRequest(copr.RunawayActionKillWorker); err != nil {
+		if err := sessVars.StmtCtx.RunawayChecker.BeforeCopRequest(copr.RunawayActionWatchKillWorker); err != nil {
 			return nil, err
 		}
 	}

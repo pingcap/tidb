@@ -117,10 +117,7 @@ func (r *RunawayChecker) markRunaway() {
 	if r.setttings.Watch == nil {
 		return
 	}
-	if !r.marked.Load() && r.deadline.Before(time.Now()) {
-		r.marked.Store(true)
-		r.manager.MarkRunaway(r.resourceGroupName, r.convict, time.Duration(r.setttings.Watch.LastingDurationMs)*time.Millisecond)
-	}
+	r.manager.MarkRunaway(r.resourceGroupName, r.convict, time.Duration(r.setttings.Watch.LastingDurationMs)*time.Millisecond)
 }
 
 func getConvictName(settings *rmpb.RunawaySettings, originalSql string, planDigest string) string {
