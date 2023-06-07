@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/parser/terror"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -288,6 +290,14 @@ func (w *ttlDeleteWorker) loop() error {
 	}
 
 	ctx := metrics.CtxWithPhaseTracer(w.baseWorker.ctx, tracer)
+	if _, err = se.ExecuteSQL(ctx, "SET RESOURCE GROUP "+sqlbuilder.DeleteResourceGroup); err != nil {
+		return err
+	}
+
+	defer func() {
+		_, err = se.ExecuteSQL(ctx, "SET RESOURCE GROUP `default`")
+		terror.Log(err)
+	}()
 
 	doNormalBufferRetry := func(task *ttlDeleteTask) [][]types.Datum {
 		retryRows, infiniteRetryRows := task.doDelete(ctx, se)
