@@ -242,9 +242,9 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 			// write reorganization -> write only
 			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo, job)
 			if err == nil {
+				constraintInfo.State = model.StatePublic
 				ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
 				if err != nil {
-					// update version and tableInfo error will cause retry.
 					return ver, errors.Trace(err)
 				}
 				job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
@@ -255,7 +255,6 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 				constraintInfo.State = model.StatePublic
 				ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
 				if err != nil {
-					// update version and tableInfo error will cause retry.
 					return ver, errors.Trace(err) // todo: append err
 				}
 				job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
