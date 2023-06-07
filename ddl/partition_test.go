@@ -308,3 +308,37 @@ PARTITION pmax VALUES LESS THAN MAXVALUE
 PARTITION p3 VALUES LESS THAN (1247688000),
 PARTITION pmax VALUES LESS THAN MAXVALUE)`)
 }
+
+func TestRemovePartitioningSinglePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dbName := "RemovePartitioning"
+	tk.MustExec("create schema " + dbName)
+	tk.MustExec("use " + dbName)
+	tk.MustExec(`CREATE TABLE t (
+a int NOT NULL primary key ,
+b varchar(100),
+key (b)
+)
+PARTITION BY hash (a) PARTITIONS 1`)
+	tk.MustExec(`insert into t values (1,"a"),(2,"bye"),(3,"Hi")`)
+
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(100) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 1"))
+
+	tk.MustExec(`ALTER TABLE t REMOVE PARTITIONING`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(100) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 a", "2 bye", "3 Hi"))
+}
