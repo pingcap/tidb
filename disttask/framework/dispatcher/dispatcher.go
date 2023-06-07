@@ -200,6 +200,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 	// TODO: Consider putting the following operations into a transaction.
 	// TODO: Consider collect some information about the tasks.
 	if gTask.State != proto.TaskStateReverting {
+		// check if global task cancelling
 		cancelling, err := d.taskMgr.IsGlobalTaskCancelling(gTask.ID)
 		if err != nil {
 			logutil.BgLogger().Warn("check task cancelling failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
@@ -209,7 +210,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		if cancelling {
 			return false, [][]byte{[]byte("cancel")}
 		}
-
+		// check subtasks failed
 		cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateFailed)
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
@@ -223,7 +224,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 			}
 			return false, subTaskErr
 		}
-
+		// check subtasks pending or running
 		cnt, err = d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStatePending, proto.TaskStateRunning)
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
@@ -236,6 +237,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		return true, nil
 	}
 
+	// if gTask.State == TaskStateReverting, if will not convert to TaskStateCancelling again
 	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateRevertPending, proto.TaskStateReverting)
 	if err != nil {
 		logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
@@ -282,9 +284,11 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 				break
 			}
 
-			if isFinished := d.processFlow(gTask, errStr); isFinished {
-				logutil.BgLogger().Info("detect task, this task is finished",
+			err := d.processFlow(gTask, errStr)
+			if err == nil && gTask.IsFinished() {
+				logutil.BgLogger().Info("detect task, task is finished",
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
+				d.delRunningGTask(gTask.ID)
 				return
 			}
 			if !d.isRunningGTask(gTask.ID) {
@@ -295,31 +299,23 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 	}
 }
 
-func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) bool {
-	var err error
+func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) error {
 	if len(errStr) > 0 {
 		// Found an error when task is running.
 		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("taskID", gTask.ID), zap.Any("err msg", errStr))
-		err = d.processErrFlow(gTask, errStr)
+		return d.processErrFlow(gTask, errStr)
 	} else {
+		// previous step is finished
 		if gTask.State == proto.TaskStateReverting {
 			// Finish the rollback step.
 			logutil.BgLogger().Info("process flow, update the task to reverted", zap.Int64("taskID", gTask.ID))
-			err = d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
+			return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 		} else {
 			// Finish the normal step.
 			logutil.BgLogger().Info("process flow, process normal", zap.Int64("taskID", gTask.ID))
-			err = d.processNormalFlow(gTask)
+			return d.processNormalFlow(gTask)
 		}
 	}
-
-	if err == nil && gTask.IsFinished() {
-		logutil.BgLogger().Info("process flow, task is finished", zap.Int64("taskID", gTask.ID))
-		d.delRunningGTask(gTask.ID)
-		return true
-	}
-
-	return false
 }
 
 func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
