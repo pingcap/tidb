@@ -2170,9 +2170,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InExplainStmt = true
 		sc.InVerboseExplain = strings.ToLower(explainForStmt.Format) == types.ExplainFormatVerbose
 	}
-	// FIXME: perform plan digest generation only when necessary, and heres plan digest maybe empty
-	_, planDigest := sc.GetPlanDigest()
-	sc.RunawayChecker = domain.GetDomain(ctx).RunawayManager().DeriveChecker(ctx.GetSessionVars().ResourceGroupName, sc.OriginalSQL, planDigest.String())
 
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
@@ -2297,6 +2294,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DurationWaitTS = 0
 	vars.CurrInsertBatchExtraCols = nil
 	vars.CurrInsertValues = chunk.Row{}
+
+	// FIXME: perform plan digest generation only when necessary
+	if variable.EnableResourceControl.Load() {
+		_, planDigest := getPlanDigest(sc)
+		sc.RunawayChecker = domain.GetDomain(ctx).RunawayManager().DeriveChecker(ctx.GetSessionVars().ResourceGroupName, sc.OriginalSQL, planDigest.String())
+	}
 	return
 }
 

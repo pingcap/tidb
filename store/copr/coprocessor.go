@@ -1169,8 +1169,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
-	if err := worker.req.RunawayChecker.BeforeCopRequest(req); err != nil {
-		return nil, err
+	if worker.req.RunawayChecker != nil {
+		if err := worker.req.RunawayChecker.BeforeCopRequest(req); err != nil {
+			return nil, err
+		}
 	}
 	req.StoreTp = getEndPointType(task.storeType)
 	startTime := time.Now()
@@ -1207,13 +1209,18 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = storeAddr
+	failpoint.Inject("sleepCoprRequest", func(v failpoint.Value) {
+		time.Sleep(time.Second)
+	})
 	costTime := time.Since(startTime)
 	copResp := resp.Resp.(*coprocessor.Response)
 
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, copResp)
 	}
-	worker.req.RunawayChecker.AfterCopRequest()
+	if worker.req.RunawayChecker != nil {
+		worker.req.RunawayChecker.AfterCopRequest()
+	}	
 
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
 	isInternal := util.IsRequestSourceInternal(&task.requestSource)
