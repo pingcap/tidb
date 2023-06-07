@@ -15,14 +15,18 @@
 package extsort
 
 import (
+	"bytes"
 	"encoding/json"
+	"math/rand"
 	"sync"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func TestDiskSorterCommon(t *testing.T) {
@@ -312,7 +316,9 @@ func TestSSTReaderPoolParallel(t *testing.T) {
 	writeSSTFile(t, fs, dirname, 2, nil)
 	writeSSTFile(t, fs, dirname, 3, nil)
 
-	pool := newSSTReaderPool(fs, dirname, pebble.NewCache(8<<20))
+	cache := pebble.NewCache(8 << 20)
+	defer cache.Unref()
+	pool := newSSTReaderPool(fs, dirname, cache)
 
 	var wg sync.WaitGroup
 	for i := 0; i <= 16; i++ {
@@ -329,20 +335,24 @@ func TestSSTReaderPoolParallel(t *testing.T) {
 	wg.Wait()
 }
 
-// touchSSTFile creates an empty SST file.
+// writeSSTFile writes an SST file with the given key/value pairs.
 func writeSSTFile(
 	t *testing.T,
 	fs vfs.FS,
 	dirname string,
 	fileNum int,
 	kvs []keyValue,
-) {
-	sw, err := newSSTWriter(fs, dirname, fileNum, 8, func(meta *fileMetadata) {})
+) *fileMetadata {
+	var file *fileMetadata
+	sw, err := newSSTWriter(fs, dirname, fileNum, 8, func(meta *fileMetadata) {
+		file = meta
+	})
 	require.NoError(t, err)
 	for _, kv := range kvs {
 		require.NoError(t, sw.Set(kv.key, kv.value))
 	}
 	require.NoError(t, sw.Close())
+	return file
 }
 
 func TestSSTIter(t *testing.T) {
@@ -389,7 +399,142 @@ func TestSSTIter(t *testing.T) {
 }
 
 func TestMergingIter(t *testing.T) {
-	// TODO
+	fs := vfs.Default
+	dirname := t.TempDir()
+
+	cache := pebble.NewCache(8 << 20)
+	defer cache.Unref()
+	readerPool := newSSTReaderPool(fs, dirname, cache)
+	openIter := func(file *fileMetadata) (Iterator, error) {
+		reader, err := readerPool.get(file.fileNum)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		iter, err := reader.NewIter(nil, nil)
+		if err != nil {
+			_ = reader.Close()
+			return nil, errors.Trace(err)
+		}
+		return &sstIter{
+			iter: iter,
+			onClose: func() error {
+				return readerPool.unref(file.fileNum)
+			},
+		}, nil
+	}
+
+	files := []*fileMetadata{
+		writeSSTFile(t, fs, dirname, 1, []keyValue{
+			{[]byte("a0"), []byte("va0")},
+			{[]byte("a1"), []byte("va1")},
+			{[]byte("e0"), []byte("ve0")},
+			{[]byte("e1"), []byte("ve1")},
+		}),
+		writeSSTFile(t, fs, dirname, 2, []keyValue{
+			{[]byte("b0"), []byte("vb0")},
+			{[]byte("b1"), []byte("vb1")},
+			{[]byte("d0"), []byte("vd0")},
+			{[]byte("d1"), []byte("vd1")},
+		}),
+		writeSSTFile(t, fs, dirname, 3, []keyValue{
+			{[]byte("c0"), []byte("vc0")},
+			{[]byte("c1"), []byte("vc1")},
+			{[]byte("g0"), []byte("vg0")},
+			{[]byte("g1"), []byte("vg1")},
+		}),
+		writeSSTFile(t, fs, dirname, 4, []keyValue{
+			{[]byte("f0"), []byte("vf0")},
+			{[]byte("f1"), []byte("vf1")},
+			{[]byte("h1"), []byte("vh1")},
+		}),
+		writeSSTFile(t, fs, dirname, 5, []keyValue{
+			{[]byte("f0"), []byte("vf0")}, // duplicate key with file 4
+			{[]byte("f2"), []byte("vf2")},
+			{[]byte("h0"), []byte("vh0")},
+		}),
+		writeSSTFile(t, fs, dirname, 6, []keyValue{
+			{[]byte("i0"), []byte("vi0")},
+			{[]byte("i1"), []byte("vi1")},
+			{[]byte("j0"), []byte("vj0")},
+			{[]byte("j1"), []byte("vj1")},
+		}),
+	}
+	slices.SortFunc(files, func(a, b *fileMetadata) bool {
+		return bytes.Compare(a.startKey, b.startKey) < 0
+	})
+
+	iter := newMergingIter(files, openIter)
+	var allKVs []keyValue
+	for iter.First(); iter.Valid(); iter.Next() {
+		allKVs = append(allKVs, keyValue{
+			key:   slices.Clone(iter.UnsafeKey()),
+			value: slices.Clone(iter.UnsafeValue()),
+		})
+	}
+	require.NoError(t, iter.Error())
+
+	require.Equal(t, []keyValue{
+		{[]byte("a0"), []byte("va0")},
+		{[]byte("a1"), []byte("va1")},
+		{[]byte("b0"), []byte("vb0")},
+		{[]byte("b1"), []byte("vb1")},
+		{[]byte("c0"), []byte("vc0")},
+		{[]byte("c1"), []byte("vc1")},
+		{[]byte("d0"), []byte("vd0")},
+		{[]byte("d1"), []byte("vd1")},
+		{[]byte("e0"), []byte("ve0")},
+		{[]byte("e1"), []byte("ve1")},
+		{[]byte("f0"), []byte("vf0")},
+		{[]byte("f1"), []byte("vf1")},
+		{[]byte("f2"), []byte("vf2")},
+		{[]byte("g0"), []byte("vg0")},
+		{[]byte("g1"), []byte("vg1")},
+		{[]byte("h0"), []byte("vh0")},
+		{[]byte("h1"), []byte("vh1")},
+		{[]byte("i0"), []byte("vi0")},
+		{[]byte("i1"), []byte("vi1")},
+		{[]byte("j0"), []byte("vj0")},
+		{[]byte("j1"), []byte("vj1")},
+	}, allKVs)
+
+	// Seek to the first key.
+	require.True(t, iter.Seek(nil))
+	require.Equal(t, []byte("a0"), iter.UnsafeKey())
+	require.Equal(t, []byte("va0"), iter.UnsafeValue())
+
+	// Seek to the key after the last key.
+	require.False(t, iter.Seek([]byte("k")))
+	require.NoError(t, iter.Error())
+
+	// Randomly seek to keys and check the result.
+	seekIndexes := make([]int, len(allKVs))
+	for i := range seekIndexes {
+		seekIndexes[i] = i
+	}
+	rand.Shuffle(len(seekIndexes), func(i, j int) {
+		seekIndexes[i], seekIndexes[j] = seekIndexes[j], seekIndexes[i]
+	})
+	for _, i := range seekIndexes {
+		require.True(t, iter.Seek(allKVs[i].key))
+		require.Equal(t, allKVs[i].key, iter.UnsafeKey())
+		require.Equal(t, allKVs[i].value, iter.UnsafeValue())
+	}
+
+	// Test Last.
+	require.True(t, iter.Last())
+	require.Equal(t, []byte("j1"), iter.UnsafeKey())
+	require.Equal(t, []byte("vj1"), iter.UnsafeValue())
+	require.False(t, iter.Next())
+	require.NoError(t, iter.Error())
+
+	// Then moving to First should be ok.
+	require.True(t, iter.First())
+	require.Equal(t, []byte("a0"), iter.UnsafeKey())
+	require.Equal(t, []byte("va0"), iter.UnsafeValue())
+
+	require.NoError(t, iter.Close())
+	// Check that no iterator is leaked.
+	require.Zero(t, len(readerPool.mu.readers))
 }
 
 func TestCompactFiles(t *testing.T) {
