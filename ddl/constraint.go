@@ -212,7 +212,7 @@ func checkDropCheckConstraint(t *meta.Meta, job *model.Job) (*model.TableInfo, *
 	return tblInfo, constraintInfo, nil
 }
 
-func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onAlterCheckConstraint_(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -246,7 +246,7 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 	return ver, nil
 }
 
-func (w *worker) onAlterCheckConstraintEnforced(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	dbInfo, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -258,38 +258,35 @@ func (w *worker) onAlterCheckConstraintEnforced(d *ddlCtx, t *meta.Meta, job *mo
 		switch constraintInfo.State {
 		case model.StatePublic:
 			// public -> write only
-			job.SchemaState = model.StateWriteOnly
-			constraintInfo.State = model.StateWriteOnly
-			constraintInfo.Enforced = enforced
-			ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfo.State)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
-		case model.StateWriteOnly:
 			job.SchemaState = model.StateWriteReorganization
 			constraintInfo.State = model.StateWriteReorganization
+			constraintInfo.Enforced = enforced
 			ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfo.State)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
 		case model.StateWriteReorganization:
+			job.SchemaState = model.StateWriteOnly
+			constraintInfo.State = model.StateWriteOnly
+			ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfo.State)
+		case model.StateWriteOnly:
 			// write reorganization -> write only
 			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo, job)
-			if err != nil {
-				// check constraint error will cancel the job, job state has been changed
-				// to cancelled in addTableCheckConstraint.
-				if table.ErrCheckConstraintViolated.Equal(err) {
-					w.sess.GetSessionVars().StmtCtx.AppendError(err)
-					constraintInfo.Enforced = enforced
-					constraintInfo.State = model.StatePublic
-					ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
-					if err != nil {
-						// update version and tableInfo error will cause retry.
-						return ver, errors.Trace(err)
-					}
-					job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			if err == nil {
+				ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+				if err != nil {
+					// update version and tableInfo error will cause retry.
+					return ver, errors.Trace(err)
 				}
-				return ver, errors.Trace(err)
+				job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			}
+			if table.ErrCheckConstraintViolated.Equal(err) {
+				// back to not enforced
+				constraintInfo.Enforced = !enforced
+				constraintInfo.State = model.StatePublic
+				ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+				if err != nil {
+					// update version and tableInfo error will cause retry.
+					return ver, errors.Trace(err) // todo: append err
+				}
+				job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 			}
 		}
 	} else {
@@ -301,7 +298,7 @@ func (w *worker) onAlterCheckConstraintEnforced(d *ddlCtx, t *meta.Meta, job *mo
 		}
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	}
-	return ver, nil
+	return ver, err
 }
 
 func checkAlterCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, bool, error) {
