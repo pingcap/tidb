@@ -1386,8 +1386,9 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	// consider hypo-indexes
 	hypoIndexes := ctx.GetSessionVars().HypoIndexes
 	if hypoIndexes != nil {
-		if hypoIndexes[dbName.L] != nil && hypoIndexes[dbName.L][tblName.L] != nil {
-			for _, index := range hypoIndexes[dbName.L][tblName.L] {
+		originalTableName := tblInfo.Name.L
+		if hypoIndexes[dbName.L] != nil && hypoIndexes[dbName.L][originalTableName] != nil {
+			for _, index := range hypoIndexes[dbName.L][originalTableName] {
 				publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 			}
 		}
