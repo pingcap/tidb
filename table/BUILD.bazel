@@ -4,6 +4,7 @@ go_library(
     name = "table",
     srcs = [
         "column.go",
+        "constraint.go",
         "index.go",
         "table.go",
     ],
@@ -27,6 +28,7 @@ go_library(
         "//util/dbterror",
         "//util/hack",
         "//util/logutil",
+        "//util/mock",
         "//util/sqlexec",
         "//util/timeutil",
         "//util/tracing",
