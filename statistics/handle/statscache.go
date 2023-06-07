@@ -115,6 +115,9 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 		newCache.version = newVersion
 		newCache.minorVersion = uint64(0)
 	}
+	for _, id := range deletedIDs {
+		newCache.Del(id)
+	}
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
 		if option.byQuery {
@@ -122,9 +125,6 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 		} else {
 			newCache.Put(id, tbl)
 		}
-	}
-	for _, id := range deletedIDs {
-		newCache.Del(id)
 	}
 	return newCache
 }
