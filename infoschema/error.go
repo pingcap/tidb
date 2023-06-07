@@ -102,4 +102,6 @@ var (
 	ErrForeignKeyColumnNotNull = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyColumnNotNull)
 	// ErrResourceGroupSupportDisabled returns for resource group feature is disabled
 	ErrResourceGroupSupportDisabled = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupSupportDisabled)
+	// ErrCheckConstraintDupName returns for duplicate constraint names.
+	ErrCheckConstraintDupName = dbterror.ClassSchema.NewStd(mysql.ErrCheckConstraintDupName)
 )

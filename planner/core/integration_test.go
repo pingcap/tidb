@@ -5057,17 +5057,6 @@ func TestOuterJoinEliminationForIssue18216(t *testing.T) {
 	tk.MustQuery("select group_concat(c order by (select group_concat(c order by c) from t2 where a=t1.a), c desc) from t1;").Check(testkit.Rows("2,1,4,3"))
 }
 
-func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE t (
-		id INTEGER NOT NULL AUTO_INCREMENT,
-		CHECK (id IN (0, 1)),
-		KEY idx_autoinc_id (id)
-	)`)
-}
-
 // https://github.com/pingcap/tidb/issues/36888.
 func TestIssue36888(t *testing.T) {
 	store := testkit.CreateMockStore(t)

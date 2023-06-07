@@ -209,7 +209,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		}
 
 		sc := e.ctx.GetSessionVars().StmtCtx
-		if kv.ErrKeyExists.Equal(err1) && sc.DupKeyAsWarning {
+		if (kv.ErrKeyExists.Equal(err1) || table.ErrCheckConstraintViolated.Equal(err1)) && sc.DupKeyAsWarning {
 			sc.AppendWarning(err1)
 			continue
 		}

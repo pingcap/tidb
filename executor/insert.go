@@ -198,7 +198,8 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 	}
 
 	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch)
-	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
+	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && (kv.ErrKeyExists.Equal(err) ||
+		table.ErrCheckConstraintViolated.Equal(err)) {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
 	}
