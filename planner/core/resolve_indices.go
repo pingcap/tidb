@@ -654,6 +654,26 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
+<<<<<<< HEAD
+=======
+func (p *PhysicalTableScan) ResolveIndices() (err error) {
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
+}
+
+// ResolveIndicesItself implements PhysicalTableScan interface.
+func (p *PhysicalTableScan) ResolveIndicesItself() (err error) {
+	for i, column := range p.schema.Columns {
+		column.Index = i
+	}
+	return
+}
+
+// ResolveIndices implements Plan interface.
+>>>>>>> 604033c8878 (planner, runtimefilter: resolve column index for table scan (#44458))
 func (p *Update) ResolveIndices() (err error) {
 	err = p.baseSchemaProducer.ResolveIndices()
 	if err != nil {
