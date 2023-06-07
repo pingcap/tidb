@@ -243,7 +243,7 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo, job)
 			if err == nil {
 				constraintInfo.State = model.StatePublic
-				ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+				ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfo.State)
 				if err != nil {
 					return ver, errors.Trace(err)
 				}
@@ -253,7 +253,7 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 				// back to not enforced
 				constraintInfo.Enforced = !enforced
 				constraintInfo.State = model.StatePublic
-				ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+				ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfo.State)
 				if err != nil {
 					return ver, errors.Trace(err) // todo: append err
 				}
