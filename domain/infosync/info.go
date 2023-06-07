@@ -121,7 +121,7 @@ type InfoSyncer struct {
 	placementManager      PlacementManager
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
-	resourceManagerClient  pd.ResourceManagerClient
+	resourceManagerClient pd.ResourceManagerClient
 }
 
 // ServerInfo is server static information.

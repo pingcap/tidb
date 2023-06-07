@@ -87,6 +87,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
@@ -94,7 +95,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 var (
@@ -149,20 +149,20 @@ type Domain struct {
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
 	// TODO: use Run for each process in future pr
-	wg                    *util.WaitGroupEnhancedWrapper
-	statsUpdating         atomicutil.Int32
-	cancel                context.CancelFunc
-	indexUsageSyncLease   time.Duration
-	dumpFileGcChecker     *dumpFileGcChecker
-	planReplayerHandle    *planReplayerHandle
-	extractTaskHandle     *ExtractHandle
-	expiredTimeStamp4PC   types.Time
-	logBackupAdvancer     *daemon.OwnerDaemon
-	historicalStatsWorker *HistoricalStatsWorker
-	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
-	runawayManager 			*resourcegroup.RunawayManager
+	wg                       *util.WaitGroupEnhancedWrapper
+	statsUpdating            atomicutil.Int32
+	cancel                   context.CancelFunc
+	indexUsageSyncLease      time.Duration
+	dumpFileGcChecker        *dumpFileGcChecker
+	planReplayerHandle       *planReplayerHandle
+	extractTaskHandle        *ExtractHandle
+	expiredTimeStamp4PC      types.Time
+	logBackupAdvancer        *daemon.OwnerDaemon
+	historicalStatsWorker    *HistoricalStatsWorker
+	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
+	runawayManager           *resourcegroup.RunawayManager
 	resourceGroupsController *rmclient.ResourceGroupsController
-	
+
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
@@ -1226,7 +1226,7 @@ func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose
 }
 
-func (do *Domain) initResourceGroupsController(ctx context.Context,	pdCli pd.Client) error {
+func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.Client) error {
 	if pdClient == nil {
 		return errors.New("cannot setup up resource controller, should use tikv storage")
 	}
@@ -1235,9 +1235,10 @@ func (do *Domain) initResourceGroupsController(ctx context.Context,	pdCli pd.Cli
 	if err != nil {
 		return err
 	}
+	control.Start(ctx)
 	tikv.SetResourceControlInterceptor(control)
 	do.runawayManager = resourcegroup.NewRunawayManager(control)
-	do.resourceGroupsController= control
+	do.resourceGroupsController = control
 	return nil
 }
 
@@ -1843,6 +1844,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.
 		}
 	}, "handleEvolvePlanTasksLoop")
 }
+
 // TelemetryReportLoop create a goroutine that reports usage data in a loop, it should be called only once
 // in BootstrapSession.
 func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
@@ -1927,7 +1929,7 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 	}
 }
 
-func (do *Domain) RunawayManager() *RunawayManager {
+func (do *Domain) RunawayManager() *resourcegroup.RunawayManager {
 	return do.runawayManager
 }
 

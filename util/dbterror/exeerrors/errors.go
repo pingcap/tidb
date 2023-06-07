@@ -15,6 +15,7 @@
 package exeerrors
 
 import (
+	"github.com/pingcap/tidb/errno"
 	mysql "github.com/pingcap/tidb/errno"
 	parser_mysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -51,6 +52,7 @@ var (
 	ErrDeadlock                      = dbterror.ClassExecutor.NewStd(mysql.ErrLockDeadlock)
 	ErrQueryInterrupted              = dbterror.ClassExecutor.NewStd(mysql.ErrQueryInterrupted)
 	ErrMaxExecTimeExceeded           = dbterror.ClassExecutor.NewStd(mysql.ErrMaxExecTimeExceeded)
+	ErrResourceGroupQueryRunaway     = dbterror.ClassExecutor.NewStd(errno.ErrResourceGroupQueryRunaway)
 	ErrDynamicPrivilegeNotRegistered = dbterror.ClassExecutor.NewStd(mysql.ErrDynamicPrivilegeNotRegistered)
 	ErrIllegalPrivilegeLevel         = dbterror.ClassExecutor.NewStd(mysql.ErrIllegalPrivilegeLevel)
 	ErrInvalidSplitRegionRanges      = dbterror.ClassExecutor.NewStd(mysql.ErrInvalidSplitRegionRanges)

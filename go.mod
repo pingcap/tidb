@@ -294,7 +294,7 @@ replace (
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/parser => ./parser
-	github.com/tikv/client-go/v2 => github.com/nolouch/client-go/v2 v2.0.0-alpha.0.20230531074744-3b9cd9b3c8a6
-	github.com/tikv/pd/client => github.com/CabinfeverB/pd/client v0.0.0-20230530064228-755c2e52a8cc
+	github.com/tikv/client-go/v2 => github.com/CabinfeverB/client-go/v2 v2.0.0-20230602095003-9e72e8dd57d9
+	github.com/tikv/pd/client => github.com/CabinfeverB/pd/client v0.0.0-20230601154623-a209ebf2b67c
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
