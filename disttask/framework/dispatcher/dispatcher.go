@@ -304,18 +304,16 @@ func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) error {
 		// Found an error when task is running.
 		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("taskID", gTask.ID), zap.Any("err msg", errStr))
 		return d.processErrFlow(gTask, errStr)
-	} else {
-		// previous step is finished
-		if gTask.State == proto.TaskStateReverting {
-			// Finish the rollback step.
-			logutil.BgLogger().Info("process flow, update the task to reverted", zap.Int64("taskID", gTask.ID))
-			return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
-		} else {
-			// Finish the normal step.
-			logutil.BgLogger().Info("process flow, process normal", zap.Int64("taskID", gTask.ID))
-			return d.processNormalFlow(gTask)
-		}
 	}
+	// previous step is finished
+	if gTask.State == proto.TaskStateReverting {
+		// Finish the rollback step.
+		logutil.BgLogger().Info("process flow, update the task to reverted", zap.Int64("taskID", gTask.ID))
+		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
+	}
+	// Finish the normal step.
+	logutil.BgLogger().Info("process flow, process normal", zap.Int64("taskID", gTask.ID))
+	return d.processNormalFlow(gTask)
 }
 
 func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
@@ -370,7 +368,6 @@ func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, meta []byte) erro
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, id, meta))
 	}
 	return d.updateTask(gTask, proto.TaskStateReverting, subTasks, retrySQLTimes)
-
 }
 
 func (d *dispatcher) processNormalFlow(gTask *proto.Task) error {
@@ -511,7 +508,7 @@ func (d *dispatcher) ExecInNewSession(fn func(se sessionctx.Context) error) erro
 	return d.taskMgr.WithNewSession(fn)
 }
 
-func (d *dispatcher) checkConcurrencyOverflow(cnt int) bool {
+func (_ *dispatcher) checkConcurrencyOverflow(cnt int) bool {
 	if cnt >= DefaultDispatchConcurrency {
 		logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency",
 			zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
