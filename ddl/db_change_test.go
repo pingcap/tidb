@@ -744,7 +744,7 @@ func TestDeleteOnlyForDropColumns(t *testing.T) {
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
-		errors.Errorf("[ddl:1054]Unknown column 'c1' in 'field list'")}
+		errors.Errorf("[planner:1054]Unknown column 'c1' in 'field list'")}
 	dropColumnsSQL := "alter table t drop column c1, drop column c3"
 	runTestInSchemaState(t, tk, store, dom, model.StateDeleteOnly, true, dropColumnsSQL, sqls, nil)
 }
