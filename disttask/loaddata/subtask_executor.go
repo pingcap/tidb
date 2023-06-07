@@ -27,6 +27,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// TestSyncChan is used to test.
+var TestSyncChan = make(chan struct{})
+
 // ImportMinimalTaskExecutor is a subtask executor for load data.
 type ImportMinimalTaskExecutor struct {
 	task *MinimalTaskMeta
@@ -39,6 +42,10 @@ func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
 	failpoint.Inject("errorWhenSortChunk", func() {
 		time.Sleep(3 * time.Second) // wait ToImportMode called
 		failpoint.Return(errors.New("occur an error when sort chunk"))
+	})
+	failpoint.Inject("syncBeforeSortChunk", func() {
+		TestSyncChan <- struct{}{}
+		<-TestSyncChan
 	})
 	chunkCheckpoint := toChunkCheckpoint(e.task.Chunk)
 	sharedVars := e.task.SharedVars

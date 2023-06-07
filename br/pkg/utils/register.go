@@ -34,6 +34,7 @@ type RegisterTaskType int
 const (
 	RegisterRestore RegisterTaskType = iota
 	RegisterLightning
+	RegisterImportInto
 )
 
 func (tp RegisterTaskType) String() string {
@@ -42,20 +43,40 @@ func (tp RegisterTaskType) String() string {
 		return "restore"
 	case RegisterLightning:
 		return "lightning"
+	case RegisterImportInto:
+		return "import-into"
 	}
 	return "default"
 }
 
 // The key format should be {RegisterImportTaskPrefix}/{RegisterTaskType}/{taskName}
 const (
+	// RegisterImportTaskPrefix is the prefix of the key for task register
+	// todo: remove "/import" suffix, it's confusing to have a key like "/tidb/brie/import/restore/restore-xxx"
 	RegisterImportTaskPrefix = "/tidb/brie/import"
 
 	RegisterRetryInternal  = 10 * time.Second
 	defaultTaskRegisterTTL = 3 * time.Minute // 3 minutes
 )
 
-// TaskRegister can register the task to PD with a lease, and keepalive it in the background
-type TaskRegister struct {
+// TaskRegister can register the task to PD with a lease.
+type TaskRegister interface {
+	// Close closes the background task if using RegisterTask
+	// and revoke the lease.
+	// NOTE: we don't close the etcd client here, call should do it.
+	Close(ctx context.Context) (err error)
+	// RegisterTask firstly put its key to PD with a lease,
+	// and start to keepalive the lease in the background.
+	// DO NOT mix calls to RegisterTask and RegisterTaskOnce.
+	RegisterTask(c context.Context) error
+	// RegisterTaskOnce put its key to PD with a lease if the key does not exist,
+	// else we refresh the lease.
+	// you have to call this method periodically to keep the lease alive.
+	// DO NOT mix calls to RegisterTask and RegisterTaskOnce.
+	RegisterTaskOnce(ctx context.Context) error
+}
+
+type taskRegister struct {
 	client    *clientv3.Client
 	ttl       time.Duration
 	secondTTL int64
@@ -68,8 +89,8 @@ type TaskRegister struct {
 }
 
 // NewTaskRegisterWithTTL build a TaskRegister with key format {RegisterTaskPrefix}/{RegisterTaskType}/{taskName}
-func NewTaskRegisterWithTTL(client *clientv3.Client, ttl time.Duration, tp RegisterTaskType, taskName string) *TaskRegister {
-	return &TaskRegister{
+func NewTaskRegisterWithTTL(client *clientv3.Client, ttl time.Duration, tp RegisterTaskType, taskName string) TaskRegister {
+	return &taskRegister{
 		client:    client,
 		ttl:       ttl,
 		secondTTL: int64(ttl / time.Second),
@@ -80,13 +101,16 @@ func NewTaskRegisterWithTTL(client *clientv3.Client, ttl time.Duration, tp Regis
 }
 
 // NewTaskRegister build a TaskRegister with key format {RegisterTaskPrefix}/{RegisterTaskType}/{taskName}
-func NewTaskRegister(client *clientv3.Client, tp RegisterTaskType, taskName string) *TaskRegister {
+func NewTaskRegister(client *clientv3.Client, tp RegisterTaskType, taskName string) TaskRegister {
 	return NewTaskRegisterWithTTL(client, defaultTaskRegisterTTL, tp, taskName)
 }
 
-// Close closes the background task of taskRegister
-func (tr *TaskRegister) Close(ctx context.Context) (err error) {
-	tr.cancel()
+// Close implements the TaskRegister interface
+func (tr *taskRegister) Close(ctx context.Context) (err error) {
+	// not needed if using RegisterTaskOnce
+	if tr.cancel != nil {
+		tr.cancel()
+	}
 	tr.wg.Wait()
 	if tr.curLeaseID != clientv3.NoLease {
 		_, err = tr.client.Lease.Revoke(ctx, tr.curLeaseID)
@@ -97,7 +121,7 @@ func (tr *TaskRegister) Close(ctx context.Context) (err error) {
 	return err
 }
 
-func (tr *TaskRegister) grant(ctx context.Context) (*clientv3.LeaseGrantResponse, error) {
+func (tr *taskRegister) grant(ctx context.Context) (*clientv3.LeaseGrantResponse, error) {
 	lease, err := tr.client.Lease.Grant(ctx, tr.secondTTL)
 	if err != nil {
 		return nil, err
@@ -108,9 +132,36 @@ func (tr *TaskRegister) grant(ctx context.Context) (*clientv3.LeaseGrantResponse
 	return lease, nil
 }
 
-// RegisterTask firstly put its key to PD with a lease,
-// and start to keepalive the lease in the background.
-func (tr *TaskRegister) RegisterTask(c context.Context) error {
+// RegisterTaskOnce implements the TaskRegister interface
+func (tr *taskRegister) RegisterTaskOnce(ctx context.Context) error {
+	resp, err := tr.client.Get(ctx, tr.key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(resp.Kvs) == 0 {
+		lease, err2 := tr.grant(ctx)
+		if err2 != nil {
+			return errors.Annotatef(err2, "failed grant a lease")
+		}
+		tr.curLeaseID = lease.ID
+		_, err2 = tr.client.KV.Put(ctx, tr.key, "", clientv3.WithLease(lease.ID))
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+	} else {
+		// if the task is run distributively, like IMPORT INTO, we should refresh the lease ID,
+		// in case the owner changed during the registration, and the new owner create the key.
+		tr.curLeaseID = clientv3.LeaseID(resp.Kvs[0].Lease)
+		_, err2 := tr.client.Lease.KeepAliveOnce(ctx, tr.curLeaseID)
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+	}
+	return nil
+}
+
+// RegisterTask implements the TaskRegister interface
+func (tr *taskRegister) RegisterTask(c context.Context) error {
 	cctx, cancel := context.WithCancel(c)
 	tr.cancel = cancel
 	lease, err := tr.grant(cctx)
@@ -133,7 +184,7 @@ func (tr *TaskRegister) RegisterTask(c context.Context) error {
 	return nil
 }
 
-func (tr *TaskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.LeaseKeepAliveResponse) {
+func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.LeaseKeepAliveResponse) {
 	defer tr.wg.Done()
 	const minTimeLeftThreshold time.Duration = 20 * time.Second
 	var (
