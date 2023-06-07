@@ -132,6 +132,10 @@ func (h *errorOnDup) Begin(key []byte) error {
 }
 
 func (h *errorOnDup) Append(keyID []byte) error {
+	if len(h.keyIDs) >= 2 {
+		// we only need 2 keyIDs to report the error.
+		return nil
+	}
 	h.keyIDs = append(h.keyIDs, slices.Clone(keyID))
 	return nil
 }

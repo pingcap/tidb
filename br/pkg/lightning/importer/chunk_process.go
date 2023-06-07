@@ -543,6 +543,7 @@ func (cr *chunkProcessor) getDuplicateMessage(
 				return dupErr.Error()
 			}
 		}
+		// should not happen
 		logger.Warn("fail to find conflict record key",
 			zap.String("file", cr.chunk.FileMeta.Path),
 			zap.Any("row", lastRow.Row))
@@ -557,6 +558,7 @@ func (cr *chunkProcessor) getDuplicateMessage(
 				return dupErr.Error()
 			}
 		}
+		// should not happen
 		logger.Warn("fail to find conflict index key",
 			zap.String("file", cr.chunk.FileMeta.Path),
 			zap.Int64("idxID", idxID),
