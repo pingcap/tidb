@@ -1059,7 +1059,7 @@ func splitCompactionFiles(files []*fileMetadata, maxCompactionDepth int) [][]*fi
 	curGroup := []*fileMetadata{files[0]}
 	maxEndKey := files[0].endKey
 	for _, file := range files[1:] {
-		if bytes.Compare(file.startKey, maxEndKey) > 0 {
+		if bytes.Compare(file.startKey, maxEndKey) >= 0 {
 			groups = append(groups, curGroup)
 			curGroup = []*fileMetadata{file}
 		} else {
