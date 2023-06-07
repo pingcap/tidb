@@ -2551,10 +2551,13 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		}
 		checkOnce = true
 
+		tblQuery := fmt.Sprintf("select /*+ read_from_storage(tikv[%s.%s]) */ bit_xor(%s), %s, count(*) from %s.%s use index() where %s = 0 group by %s", w.e.dbName, w.e.table.Meta().Name, md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, whereKey, groupByKey)
+		idxQuery := fmt.Sprintf("select bit_xor(%s), %s, count(*) from %s.%s use index(%s) where %s = 0 group by %s", md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, whereKey, groupByKey)
+
+		logutil.BgLogger().Info("fast check table by group", zap.String("table name", w.table.Meta().Name.String()), zap.String("index name", idxInfo.Name.String()), zap.Int("times", times), zap.Int("current offset", offset), zap.Int("current mod", mod), zap.String("table sql", tblQuery), zap.String("index sql", idxQuery))
+
 		// compute table side checksum.
-		sql := fmt.Sprintf("select /*+ read_from_storage(tikv[%s.%s]) */ bit_xor(%s), %s, count(*) from %s.%s use index() where %s = 0 group by %s", w.e.dbName, w.e.table.Meta().Name, md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, whereKey, groupByKey)
-		logutil.BgLogger().Info("check table index on table side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
-		tableChecksum, err := getCheckSum(w.e.contextCtx, se, sql)
+		tableChecksum, err := getCheckSum(w.e.contextCtx, se, tblQuery)
 		if err != nil {
 			trySaveErr(err)
 			return
@@ -2564,9 +2567,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		})
 
 		// compute index side checksum.
-		sql = fmt.Sprintf("select bit_xor(%s), %s, count(*) from %s.%s use index(%s) where %s = 0 group by %s", md5HandleAndIndexCol.String(), groupByKey, w.e.dbName, w.e.table.Meta().Name, idxInfo.Name, whereKey, groupByKey)
-		logutil.BgLogger().Info("check table index on index side", zap.String("index name", idxInfo.Name.String()), zap.String("sql", sql))
-		indexChecksum, err := getCheckSum(w.e.contextCtx, se, sql)
+		indexChecksum, err := getCheckSum(w.e.contextCtx, se, idxQuery)
 		if err != nil {
 			trySaveErr(err)
 			return
