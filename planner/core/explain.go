@@ -376,7 +376,7 @@ func (p *PhysicalProjection) ExplainInfo() string {
 	return exprStr
 }
 
-func (p *PhysicalExpand) ExplainInfoV2() string {
+func (p *PhysicalExpand) explainInfoV2() string {
 	sb := strings.Builder{}
 	for i, oneL := range p.LevelExprs {
 		if i == 0 {
@@ -434,7 +434,7 @@ func (p *PhysicalLimit) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalExpand) ExplainInfo() string {
 	if len(p.LevelExprs) > 0 {
-		return p.ExplainInfoV2()
+		return p.explainInfoV2()
 	}
 	var str strings.Builder
 	str.WriteString("group set num:")

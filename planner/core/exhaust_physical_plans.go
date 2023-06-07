@@ -2498,11 +2498,9 @@ func (p *LogicalExpand) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		return nil, true, nil
 	}
 	// for property.RootTaskType and property.MppTaskType with no partition option, we can give an MPP Expand.
-	newProps := make([]*property.PhysicalProperty, 0, 1)
 	if p.SCtx().GetSessionVars().IsMPPAllowed() || p.SCtx().GetSessionVars().IsMPPEnforced() {
 		mppProp := prop.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
-		newProps = append(newProps, mppProp)
 		expand := PhysicalExpand{
 			GroupingSets:      p.rollupGroupingSets,
 			LevelExprs:        p.LevelExprs,
