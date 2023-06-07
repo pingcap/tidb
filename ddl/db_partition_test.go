@@ -1589,7 +1589,7 @@ func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec(`CREATE TABLE t1 (id int, c varchar(128), key c(c)) partition by range (id) (
-		partition p0 values less than (10), 
+		partition p0 values less than (10),
 		partition p1 values less than MAXVALUE)`)
 	re := tk.MustQuery("show table t1 regions")
 	rows := re.Rows()
@@ -3779,6 +3779,17 @@ func TestAddHashPartition(t *testing.T) {
 	)
 	partition by hash(store_id)
 	partitions 4`)
+	tk.MustExec(`insert into t values (1,"one", "two","1999-01-04", null, 1, 1), (2, "Who", "Else", '2020-12-02', '2022-12-31', 2, 2)`)
+	tk.MustExec(`insert into t select id + 2, fname, lname, hired, separated, job_code, store_id + 2 from t`)
+	tk.MustExec(`insert into t select id + 4, fname, lname, hired, separated, job_code, store_id + 4 from t`)
+	tk.MustExec(`insert into t select id + 8, fname, lname, hired, separated, job_code, store_id + 8 from t`)
+	tk.MustExec(`insert into t select id + 16, fname, lname, hired, separated, job_code, store_id + 16 from t`)
+	tk.MustExec(`insert into t select id + 32, fname, lname, hired, separated, job_code, store_id + 32 from t`)
+	tk.MustExec(`insert into t select id + 64, fname, lname, hired, separated, job_code, store_id + 64 from t`)
+	tk.MustExec(`insert into t select id + 128, fname, lname, hired, separated, job_code, store_id + 128 from t`)
+	tk.MustExec(`insert into t select id + 256, fname, lname, hired, separated, job_code, store_id + 256 from t`)
+	tk.MustExec(`insert into t select id + 512, fname, lname, hired, separated, job_code, store_id + 512 from t`)
+	tk.MustQuery(`select sum(store_id), avg(store_id), max(store_id), min(store_id), sum(id) from t`).Check(testkit.Rows("524800 512.5000 1024 1 524800"))
 	// TiDB does not support system versioned tables / SYSTEM_TIME
 	// also the error is slightly wrong with 'VALUES HISTORY'
 	// instead of just 'HISTORY'
@@ -3786,6 +3797,7 @@ func TestAddHashPartition(t *testing.T) {
 	tk.MustContainErrMsg(`alter table t add partition (partition pList values in (22))`, "[ddl:1480]Only LIST PARTITIONING can use VALUES IN in partition definition")
 	tk.MustContainErrMsg(`alter table t add partition (partition pRange values less than (22))`, "[ddl:1480]Only RANGE PARTITIONING can use VALUES LESS THAN in partition definition")
 	tk.MustExec(`insert into t values (20, "Joe", "Doe", '2020-01-05', null, 1,1), (21, "Jane", "Doe", '2021-07-05', null, 2,1)`)
+	tk.MustQuery(`select sum(store_id), avg(store_id), max(store_id), min(store_id), sum(id) from t`).Check(testkit.Rows("524802 511.5029 1024 1 524841"))
 	tk.MustExec("alter table t add partition partitions 8")
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
@@ -3879,6 +3891,47 @@ func TestAddHashPartition(t *testing.T) {
 		"  `store_id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (`store_id`) PARTITIONS 12"))
+	tk.MustExec(`alter table t add partition (partition p12 comment 'p12' placement policy tworeplicas)`)
+	tk.MustExec("alter table t placement policy fourreplicas")
+	tk.MustExec(`alter table t add partition partitions 1`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`fourreplicas` */\n" +
+		"PARTITION BY HASH (`store_id`)\n" +
+		"(PARTITION `p0`,\n" +
+		" PARTITION `p1`,\n" +
+		" PARTITION `p2`,\n" +
+		" PARTITION `p3`,\n" +
+		" PARTITION `p4`,\n" +
+		" PARTITION `p5`,\n" +
+		" PARTITION `p6`,\n" +
+		" PARTITION `p7`,\n" +
+		" PARTITION `p8`,\n" +
+		" PARTITION `p9`,\n" +
+		" PARTITION `p10`,\n" +
+		" PARTITION `p11`,\n" +
+		" PARTITION `p12` COMMENT 'p12' /*T![placement] PLACEMENT POLICY=`tworeplicas` */,\n" +
+		" PARTITION `p13`)"))
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`fourreplicas` */"))
+	tk.MustQuery(`select sum(store_id), avg(store_id), max(store_id), min(store_id), sum(id) from t`).Check(testkit.Rows("524802 511.5029 1024 1 524841"))
+	tk.MustExec("alter table t placement policy default")
 	tk.MustExec(`drop placement policy tworeplicas`)
 	tk.MustExec(`drop placement policy threereplicas`)
 	tk.MustExec(`drop placement policy fourreplicas`)
