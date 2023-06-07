@@ -928,7 +928,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
 	// better start a cluster without TiDB instance.
 	sql := fmt.Sprintf(`IMPORT INTO load_data.register_task FROM 'gs://test-load/register_task-*.tsv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.register_task;").Sort().Check(testkit.Rows("1 11 111"))
 	s.Greater(unregisterTime, registerTime)
 
@@ -937,12 +937,14 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	taskRegister.EXPECT().RegisterTaskOnce(gomock.Any()).DoAndReturn(mockedRegister).Times(1)
 	taskRegister.EXPECT().Close(gomock.Any()).DoAndReturn(mockedClose).Times(1)
 	s.tk.MustExec("truncate table load_data.register_task;")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/waitBeforeSortChunk", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk", "return(true)")
-	err := s.tk.ExecToErr(sql)
+	err := s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(unregisterTime, registerTime)
 
 	loaddata.NewTaskRegisterWithTTL = backup
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/loaddata/waitBeforeSortChunk"))
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk"))
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/syncBeforeSortChunk", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
@@ -950,7 +952,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		s.tk.MustExec(sql)
+		s.tk.MustQuery(sql)
 	}()
 	// wait for the task to be registered
 	<-loaddata.TestSyncChan
