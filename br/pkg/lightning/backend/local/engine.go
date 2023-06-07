@@ -66,6 +66,13 @@ const (
 	importMutexStateReadLock
 )
 
+const (
+	// DupDetectDirSuffix is used by pre-deduplication to store the encoded index KV.
+	DupDetectDirSuffix = ".dupdetect"
+	// DupResultDirSuffix is used by pre-deduplication to store the duplicated row ID.
+	DupResultDirSuffix = ".dupresult"
+)
+
 // engineMeta contains some field that is necessary to continue the engine restore/import process.
 // These field should be written to disk when we update chunk checkpoint
 type engineMeta struct {
@@ -159,14 +166,21 @@ func (e *Engine) Close() error {
 	return err
 }
 
-// Cleanup remove meta and db files
+// Cleanup remove meta, db and duplicate detection files
 func (e *Engine) Cleanup(dataDir string) error {
 	if err := os.RemoveAll(e.sstDir); err != nil {
 		return errors.Trace(err)
 	}
+	uuid := e.UUID.String()
+	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupDetectDirSuffix)); err != nil {
+		return errors.Trace(err)
+	}
+	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupResultDirSuffix)); err != nil {
+		return errors.Trace(err)
+	}
 
-	dbPath := filepath.Join(dataDir, e.UUID.String())
-	return os.RemoveAll(dbPath)
+	dbPath := filepath.Join(dataDir, uuid)
+	return errors.Trace(os.RemoveAll(dbPath))
 }
 
 // Exist checks if db folder existing (meta sometimes won't flush before lightning exit)
