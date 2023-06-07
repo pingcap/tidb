@@ -835,7 +835,7 @@ func (job *Job) IsRollbackable() bool {
 		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
 	case ActionRebaseAutoID, ActionShardRowID,
-		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
+		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable,
 		ActionModifyTableCharsetAndCollate, ActionTruncateTablePartition,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
 		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement:
