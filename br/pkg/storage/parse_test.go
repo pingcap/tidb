@@ -260,3 +260,36 @@ func TestParseRawURL(t *testing.T) {
 		require.Equal(t, c.secretAccessKey, secretAccessKey)
 	}
 }
+
+func TestIsLocal(t *testing.T) {
+	type args struct {
+		path string
+	}
+	tests := []struct {
+		name   string
+		args   args
+		want   bool
+		errStr string
+	}{
+		{"local", args{":"}, false, "missing protocol scheme"},
+		{"local", args{"~/tmp/file"}, true, ""},
+		{"local", args{"."}, true, ""},
+		{"local", args{".."}, true, ""},
+		{"local", args{"./tmp/file"}, true, ""},
+		{"local", args{"/tmp/file"}, true, ""},
+		{"local", args{"local:///tmp/file"}, true, ""},
+		{"local", args{"file:///tmp/file"}, true, ""},
+		{"local", args{"s3://bucket/tmp/file"}, false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := IsLocalPath(tt.args.path)
+			if tt.errStr != "" {
+				require.ErrorContains(t, err, tt.errStr)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, got, tt.want)
+		})
+	}
+}

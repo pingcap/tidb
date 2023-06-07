@@ -321,7 +321,7 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 		configWaitTime = time.Millisecond * 200
 	})
 
-	for retry := 0; retry < configRetry; retry += 1 {
+	for retry := 0; retry < configRetry; retry++ {
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", schemaID), zap.Uint32("isKilled", killed))
@@ -370,8 +370,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		return errors.Trace(err)
 	}
 
-	var originVersion int64 = 0
-	var pendingCount uint32 = 0
+	var originVersion int64
+	var pendingCount uint32
 	forceCheck := false
 
 	logutil.BgLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
@@ -387,14 +387,14 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		tbReplicaInfo := tbl.TiFlashReplica
 		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
 			logutil.BgLogger().Info("skip repeated processing table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
-			skip += 1
+			skip++
 			continue
 		}
 
 		// Ban setting replica count for tables in system database.
 		if tbl.TempTableType != model.TempTableNone {
 			logutil.BgLogger().Info("skip processing temporary table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
-			skip += 1
+			skip++
 			continue
 		}
 
@@ -409,7 +409,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		}
 		if !charsetOk {
 			logutil.BgLogger().Info("skip processing schema table, unsupported charset", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
-			skip += 1
+			skip++
 			continue
 		}
 
@@ -437,10 +437,10 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		err = d.callHookOnChanged(job, err)
 		if err != nil {
 			oneFail = tbl.ID
-			fail += 1
+			fail++
 			logutil.BgLogger().Info("processing schema table error", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()), zap.Error(err))
 		} else {
-			succ += 1
+			succ++
 		}
 	}
 	failStmt := ""
@@ -512,7 +512,7 @@ func checkAndNormalizePlacementPolicy(ctx sessionctx.Context, placementPolicyRef
 	return placementPolicyRef, nil
 }
 
-func checkMultiSchemaSpecs(_sctx sessionctx.Context, specs []*ast.DatabaseOption) error {
+func checkMultiSchemaSpecs(_ sessionctx.Context, specs []*ast.DatabaseOption) error {
 	hasSetTiFlashReplica := false
 	if len(specs) == 1 {
 		return nil
@@ -778,7 +778,7 @@ func buildColumnsAndConstraints(
 // ResolveCharsetCollation will resolve the charset and collate by the order of parameters:
 // * If any given ast.CharsetOpt is not empty, the resolved charset and collate will be returned.
 // * If all ast.CharsetOpts are empty, the default charset and collate will be returned.
-func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (string, string, error) {
+func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (chs string, coll string, err error) {
 	for _, v := range charsetOpts {
 		if v.Col != "" {
 			collation, err := collate.GetCollationByName(v.Col)
@@ -798,7 +798,7 @@ func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (string, string, err
 			return v.Chs, coll, err
 		}
 	}
-	chs, coll := charset.GetDefaultCharsetAndCollate()
+	chs, coll = charset.GetDefaultCharsetAndCollate()
 	return chs, coll, nil
 }
 
@@ -1885,7 +1885,7 @@ func BuildTableInfo(
 			if model.FindFKInfoByName(tbInfo.ForeignKeys, fkName.L) != nil {
 				return nil, infoschema.ErrCannotAddForeign
 			}
-			fk, err := buildFKInfo(ctx, fkName, constr.Keys, constr.Refer, cols)
+			fk, err := buildFKInfo(fkName, constr.Keys, constr.Refer, cols)
 			if err != nil {
 				return nil, err
 			}
@@ -2392,7 +2392,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist)
 }
 
-func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+func setTemporaryType(_ sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
 	switch s.TemporaryKeyword {
 	case ast.TemporaryGlobal:
 		tbInfo.TempTableType = model.TempTableGlobal
@@ -2592,7 +2592,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 
 		duplication[info.Name.L] = struct{}{}
 
-		totalID += 1
+		totalID++
 		parts := info.GetPartitionInfo()
 		if parts != nil {
 			totalID += len(parts.Definitions)
@@ -2841,7 +2841,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 }
 
 // BuildViewInfo builds a ViewInfo structure from an ast.CreateViewStmt.
-func BuildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, error) {
+func BuildViewInfo(_ sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, error) {
 	// Always Use `format.RestoreNameBackQuotes` to restore `SELECT` statement despite the `ANSI_QUOTES` SQL Mode is enabled or not.
 	restoreFlag := format.RestoreStringSingleQuotes | format.RestoreKeyWordUppercase | format.RestoreNameBackQuotes
 	var sb strings.Builder
@@ -3058,30 +3058,66 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 }
 
 // SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
-func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, typ ast.ResourceUnitType, stringVal string, uintVal uint64, boolValue bool) error {
-	switch typ {
+func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupOption) error {
+	switch opt.Tp {
 	case ast.ResourceRURate:
-		resourceGroupSettings.RURate = uintVal
+		resourceGroupSettings.RURate = opt.UintValue
 	case ast.ResourcePriority:
-		resourceGroupSettings.Priority = uintVal
+		resourceGroupSettings.Priority = opt.UintValue
 	case ast.ResourceUnitCPU:
-		resourceGroupSettings.CPULimiter = stringVal
+		resourceGroupSettings.CPULimiter = opt.StrValue
 	case ast.ResourceUnitIOReadBandwidth:
-		resourceGroupSettings.IOReadBandwidth = stringVal
+		resourceGroupSettings.IOReadBandwidth = opt.StrValue
 	case ast.ResourceUnitIOWriteBandwidth:
-		resourceGroupSettings.IOWriteBandwidth = stringVal
+		resourceGroupSettings.IOWriteBandwidth = opt.StrValue
 	case ast.ResourceBurstableOpiton:
 		// Some about BurstLimit(b):
 		//   - If b == 0, that means the limiter is unlimited capacity. default use in resource controller (burst with a rate within a unlimited capacity).
 		//   - If b < 0, that means the limiter is unlimited capacity and fillrate(r) is ignored, can be seen as r == Inf (burst with a inf rate within a unlimited capacity).
 		//   - If b > 0, that means the limiter is limited capacity. (current not used).
 		limit := int64(0)
-		if boolValue {
+		if opt.BoolValue {
 			limit = -1
 		}
 		resourceGroupSettings.BurstLimit = limit
+	case ast.ResourceGroupRunaway:
+		for _, opt := range opt.ResourceGroupRunawayOptionList {
+			err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue)
+			if err != nil {
+				return err
+			}
+		}
 	default:
 		return errors.Trace(errors.New("unknown resource unit type"))
+	}
+	return nil
+}
+
+// SetDirectResourceGroupRunawayOption tries to set runaway part of the ResourceGroupSettings.
+func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGroupSettings, typ ast.RunawayOptionType, stringVal string, intVal int32) error {
+	if resourceGroupSettings.Runaway == nil {
+		resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{}
+	}
+	settings := resourceGroupSettings.Runaway
+	switch typ {
+	case ast.RunawayRule:
+		// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
+		dur, err := time.ParseDuration(stringVal)
+		if err != nil {
+			return err
+		}
+		settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
+	case ast.RunawayAction:
+		settings.Action = model.RunawayActionType(intVal)
+	case ast.RunawayWatch:
+		settings.WatchType = model.RunawayWatchType(intVal)
+		dur, err := time.ParseDuration(stringVal)
+		if err != nil {
+			return err
+		}
+		settings.WatchDurationMs = uint64(dur.Milliseconds())
+	default:
+		return errors.Trace(errors.New("unknown runaway option type"))
 	}
 	return nil
 }
@@ -3737,11 +3773,11 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		return nil, dbterror.ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
 
-	return CreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
+	return CreateNewColumn(ctx, schema, spec, t, specNewColumn)
 }
 
 // CreateNewColumn creates a new column according to the column information.
-func CreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
+func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
 	// If new column is a generated column, do validation.
 	// NOTE: we do check whether the column refers other generated
 	// columns occurring later in a table, but we don't handle the col offset.
@@ -3988,9 +4024,9 @@ func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartId
 	return tmpDefs
 }
 
-func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int, int, map[int]struct{}, error) {
-	idMap := make(map[int]struct{})
-	var firstPartIdx, lastPartIdx = -1, -1
+func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (firstPartIdx int, lastPartIdx int, idMap map[int]struct{}, err error) {
+	idMap = make(map[int]struct{})
+	firstPartIdx, lastPartIdx = -1, -1
 	for _, name := range names {
 		partIdx := pi.FindPartitionDefinitionByName(name.L)
 		if partIdx == -1 {
@@ -4734,7 +4770,7 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 // checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
 // or change by reorg. It returns error if the two types are incompatible and correlated change are not
 // supported. However, even the two types can be change, if the "origin" type contains primary key, error will be returned.
-func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
+func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
 	canReorg, err := types.CheckModifyTypeCompatible(origin, to)
 	if err != nil {
 		if !canReorg {
@@ -5059,7 +5095,7 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(sctx, &col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
+	if err = checkModifyTypes(&col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		if strings.Contains(err.Error(), "Unsupported modifying collation") {
 			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
 			err = dbterror.ErrUnsupportedModifyCollation.GenWithStack(colErrMsg, col.Name.L, col.GetCollate(), newCol.GetCollate())
@@ -6723,7 +6759,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) err
 }
 
 // addHypoIndexIntoCtx adds this index as a hypo-index into this ctx.
-func (d *ddl) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName model.CIStr, indexInfo *model.IndexInfo) error {
+func (*ddl) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName model.CIStr, indexInfo *model.IndexInfo) error {
 	sctx := ctx.GetSessionVars()
 	indexName := indexInfo.Name
 
@@ -6844,7 +6880,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	chs, coll := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -6860,8 +6896,8 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
-		Charset:  charset,
-		Collate:  collate,
+		Charset:  chs,
+		Collate:  coll,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6874,7 +6910,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	return errors.Trace(err)
 }
 
-func buildFKInfo(ctx sessionctx.Context, fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
+func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
 	if len(keys) != len(refer.IndexPartSpecifications) {
 		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs(fkName, "Key reference and table reference don't match")
 	}
@@ -6992,7 +7028,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	if err != nil {
 		return err
 	}
-	fkInfo, err := buildFKInfo(ctx, fkName, keys, refer, t.Cols())
+	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -7073,7 +7109,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 }
 
 // dropHypoIndexFromCtx drops this hypo-index from this ctx.
-func (d *ddl) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, index model.CIStr) bool {
+func (*ddl) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, index model.CIStr) bool {
 	sctx := ctx.GetSessionVars()
 	if sctx.HypoIndexes != nil &&
 		sctx.HypoIndexes[schema.L] != nil &&
@@ -7537,7 +7573,7 @@ type LockTablesArg struct {
 	IsCleanup     bool
 }
 
-func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
+func (d *ddl) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStmt) error {
 	// Existence of DB and table has been checked in the preprocessor.
 	oldTableInfo, ok := (ctx.Value(domainutil.RepairedTable)).(*model.TableInfo)
 	if !ok || oldTableInfo == nil {
@@ -8029,7 +8065,7 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 	return err
 }
 
-func (d *ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) error {
+func (*ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) error {
 	_, err := resourcegroup.NewGroupFromOptions(groupInfo.Name.L, groupInfo.ResourceGroupSettings)
 	return err
 }
@@ -8078,7 +8114,7 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
 	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
 	for _, opt := range options {
-		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue, opt.BoolValue)
+		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt)
 		if err != nil {
 			return nil, err
 		}

@@ -66,6 +66,7 @@ go_library(
         "//util/execdetails",
         "//util/expensivequery",
         "//util/gctuner",
+        "//util/globalconn",
         "//util/intest",
         "//util/logutil",
         "//util/memory",

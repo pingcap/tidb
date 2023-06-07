@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
@@ -65,6 +66,8 @@ type TaskHandle interface {
 	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error)
+	// ExecInNewSession executes the function with a new session.
+	ExecInNewSession(fn func(se sessionctx.Context) error) error
 }
 
 func (d *dispatcher) getRunningGTaskCnt() int {
@@ -498,4 +501,8 @@ func (d *dispatcher) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byt
 		previousSubtaskMetas = append(previousSubtaskMetas, subtask.Meta)
 	}
 	return previousSubtaskMetas, nil
+}
+
+func (d *dispatcher) ExecInNewSession(fn func(se sessionctx.Context) error) error {
+	return d.taskMgr.WithNewSession(fn)
 }

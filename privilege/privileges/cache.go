@@ -746,8 +746,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.ResultField) error {
 	var value globalPrivRecord
 	for i, f := range fs {
-		switch {
-		case f.ColumnAsName.L == "priv":
+		if f.ColumnAsName.L == "priv" {
 			privData := row.GetString(i)
 			if len(privData) > 0 {
 				var privValue GlobalPrivValue
@@ -770,7 +769,7 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.Resul
 					}
 				}
 			}
-		default:
+		} else {
 			value.assignUserOrHost(row, i, f)
 		}
 	}
@@ -784,10 +783,10 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.Resul
 func (p *MySQLPrivilege) decodeGlobalGrantsTableRow(row chunk.Row, fs []*ast.ResultField) error {
 	var value dynamicPrivRecord
 	for i, f := range fs {
-		switch {
-		case f.ColumnAsName.L == "priv":
+		switch f.ColumnAsName.L {
+		case "priv":
 			value.PrivilegeName = strings.ToUpper(row.GetString(i))
-		case f.ColumnAsName.L == "with_grant_option":
+		case "with_grant_option":
 			value.GrantOption = row.GetEnum(i).String() == "Y"
 		default:
 			value.assignUserOrHost(row, i, f)
@@ -827,14 +826,14 @@ func (p *MySQLPrivilege) decodeDBTableRow(row chunk.Row, fs []*ast.ResultField) 
 func (p *MySQLPrivilege) decodeTablesPrivTableRow(row chunk.Row, fs []*ast.ResultField) error {
 	var value tablesPrivRecord
 	for i, f := range fs {
-		switch {
-		case f.ColumnAsName.L == "db":
+		switch f.ColumnAsName.L {
+		case "db":
 			value.DB = row.GetString(i)
-		case f.ColumnAsName.L == "table_name":
+		case "table_name":
 			value.TableName = row.GetString(i)
-		case f.ColumnAsName.L == "table_priv":
+		case "table_priv":
 			value.TablePriv = decodeSetToPrivilege(row.GetSet(i))
-		case f.ColumnAsName.L == "column_priv":
+		case "column_priv":
 			value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
 		default:
 			value.assignUserOrHost(row, i, f)
@@ -847,14 +846,14 @@ func (p *MySQLPrivilege) decodeTablesPrivTableRow(row chunk.Row, fs []*ast.Resul
 func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*ast.ResultField) error {
 	var fromUser, fromHost, toHost, toUser string
 	for i, f := range fs {
-		switch {
-		case f.ColumnAsName.L == "from_host":
+		switch f.ColumnAsName.L {
+		case "from_host":
 			fromHost = row.GetString(i)
-		case f.ColumnAsName.L == "from_user":
+		case "from_user":
 			fromUser = row.GetString(i)
-		case f.ColumnAsName.L == "to_host":
+		case "to_host":
 			toHost = row.GetString(i)
-		case f.ColumnAsName.L == "to_user":
+		case "to_user":
 			toUser = row.GetString(i)
 		}
 	}
@@ -872,10 +871,10 @@ func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*ast.ResultFie
 func (p *MySQLPrivilege) decodeDefaultRoleTableRow(row chunk.Row, fs []*ast.ResultField) error {
 	var value defaultRoleRecord
 	for i, f := range fs {
-		switch {
-		case f.ColumnAsName.L == "default_role_host":
+		switch f.ColumnAsName.L {
+		case "default_role_host":
 			value.DefaultRoleHost = row.GetString(i)
-		case f.ColumnAsName.L == "default_role_user":
+		case "default_role_user":
 			value.DefaultRoleUser = row.GetString(i)
 		default:
 			value.assignUserOrHost(row, i, f)
@@ -888,20 +887,20 @@ func (p *MySQLPrivilege) decodeDefaultRoleTableRow(row chunk.Row, fs []*ast.Resu
 func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row chunk.Row, fs []*ast.ResultField) error {
 	var value columnsPrivRecord
 	for i, f := range fs {
-		switch {
-		case f.ColumnAsName.L == "db":
+		switch f.ColumnAsName.L {
+		case "db":
 			value.DB = row.GetString(i)
-		case f.ColumnAsName.L == "table_name":
+		case "table_name":
 			value.TableName = row.GetString(i)
-		case f.ColumnAsName.L == "column_name":
+		case "column_name":
 			value.ColumnName = row.GetString(i)
-		case f.ColumnAsName.L == "timestamp":
+		case "timestamp":
 			var err error
 			value.Timestamp, err = row.GetTime(i).GoTime(time.Local)
 			if err != nil {
 				return errors.Trace(err)
 			}
-		case f.ColumnAsName.L == "column_priv":
+		case "column_priv":
 			value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
 		default:
 			value.assignUserOrHost(row, i, f)
