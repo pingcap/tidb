@@ -87,7 +87,6 @@ func (w *worker) onAddCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	originalState := constraintInfoInMeta.State
 	switch constraintInfoInMeta.State {
 	case model.StateNone:
-		// none -> write only
 		job.SchemaState = model.StateWriteOnly
 		constraintInfoInMeta.State = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfoInMeta.State)
@@ -163,12 +162,10 @@ func onDropCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	originalState := constraintInfo.State
 	switch constraintInfo.State {
 	case model.StatePublic:
-		// public -> write only
 		job.SchemaState = model.StateWriteOnly
 		constraintInfo.State = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfo.State)
 	case model.StateWriteOnly:
-		// write only -> None
 		// write only state constraint will still take effect to check the newly inserted data.
 		// So the dependent column shouldn't be dropped even in this intermediate state.
 		constraintInfo.State = model.StateNone
@@ -228,7 +225,6 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 		originalState := constraintInfo.State
 		switch constraintInfo.State {
 		case model.StatePublic:
-			// public -> write only
 			job.SchemaState = model.StateWriteReorganization
 			constraintInfo.State = model.StateWriteReorganization
 			constraintInfo.Enforced = enforced
@@ -238,7 +234,6 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 			constraintInfo.State = model.StateWriteOnly
 			ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfo.State)
 		case model.StateWriteOnly:
-			// write reorganization -> write only
 			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo, job)
 			if err == nil {
 				constraintInfo.State = model.StatePublic

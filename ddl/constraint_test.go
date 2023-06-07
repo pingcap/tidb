@@ -933,7 +933,6 @@ func TestAlterAddConstraintStateChange(t *testing.T) {
 		}
 		originalCallback.OnChanged(nil)
 		if job.SchemaState == model.StateWriteReorganization {
-			// StateNone -> StateWriteOnly -> StatePublic
 			tk1.MustQuery(fmt.Sprintf("select count(1) from `%s`.`%s` where not %s limit 1", "test", "t", "a > 10")).Check(testkit.Rows("0"))
 			// set constraint state
 			constraintTable := external.GetTableByName(t, tk1, "test", "t")
@@ -1086,4 +1085,44 @@ func TestAlterAddConstraintStateChange3(t *testing.T) {
 	tk.MustExec("alter table t add constraint c3 check ( a > 10)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c3` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestAlterEnforcedConstraintStateChange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, constraint c1 check (a > 10) not enforced)")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("insert into t values(12)")
+
+	var checkErr error
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &callback.TestDDLCallback{}
+	// StateWriteReorganization -> StatePublic
+	onJobUpdatedExportedFunc3 := func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		originalCallback.OnChanged(nil)
+		if job.SchemaState == model.StateWriteReorganization {
+			// set constraint state
+			constraintTable := external.GetTableByName(t, tk1, "test", "t")
+			tableCommon, ok := constraintTable.(*tables.TableCommon)
+			require.True(t, ok)
+			tableCommon.Constraints[0].State = model.StateWriteOnly
+			tableCommon.WritableConstraints = []*table.Constraint{}
+			// insert data
+			tk1.MustGetErrMsg("insert into t values(1)", "[table:3819]Check constraint 'c1' is violated.")
+			// recover
+			tableCommon.Constraints[0].State = model.StateWriteReorganization
+			tableCommon.WritableConstraint()
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc3)
+	d.SetHook(callback)
+	tk.MustExec("alter table t alter constraint c1 enforced")
+	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
 }
