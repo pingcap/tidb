@@ -451,7 +451,7 @@ func TestMiscellaneousBuiltin(t *testing.T) {
 	result = tk.MustQuery(`SELECT GET_LOCK('test_lock2', 10);`)
 	result.Check(testkit.Rows("1"))
 
-	result = tk.MustQuery(`SELECT IS_USED_LOCK('test_lock1') > 0;`)
+	result = tk.MustQuery(`SELECT IS_USED_LOCK('test_lock1') = CONNECTION_ID();`)
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`SELECT IS_USED_LOCK('foobar');`)
 	result.Check(testkit.Rows("<nil>"))
