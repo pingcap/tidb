@@ -19,6 +19,7 @@ import (
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
@@ -73,11 +74,18 @@ func newRunawayChecker(manager *RunawayManager, setting *rmpb.RunawaySettings, o
 func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 	marked := r.marked.Load()
 	if !marked {
+		until := time.Until(r.deadline)
 		// execution time exceeds the threshold, mark the query as runaway
-		if r.deadline.Before(time.Now()) {
+		if until <= 0 {
 			r.marked.Store(true)
 			r.manager.MarkRunaway(r.originalSql, r.planDigest)
 		} else {
+			if r.action == rmpb.RunawayAction_Kill {
+				// if the execution time is close to the threshold, set a timeout
+				if until < tikv.ReadTimeoutMedium {
+					req.Context.MaxExecutionDurationMs = uint64(until.Milliseconds())
+				}
+			}
 			return nil
 		}
 	}

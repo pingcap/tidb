@@ -1169,6 +1169,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
+	failpoint.Inject("sleepCoprRequest", func(_ failpoint.Value) {
+		time.Sleep(time.Second)
+	})
 	if worker.req.RunawayChecker != nil {
 		if err := worker.req.RunawayChecker.BeforeCopRequest(req); err != nil {
 			return nil, err
@@ -1209,9 +1212,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = storeAddr
-	failpoint.Inject("sleepCoprRequest", func(_ failpoint.Value) {
-		time.Sleep(time.Second)
-	})
+
 	costTime := time.Since(startTime)
 	copResp := resp.Resp.(*coprocessor.Response)
 
