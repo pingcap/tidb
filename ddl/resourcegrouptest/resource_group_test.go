@@ -217,10 +217,6 @@ func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name stri
 }
 
 func TestResourceGroupRunaway(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/SleepCoprRequest", `return()`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/SleepCoprRequest"))
-	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
@@ -230,8 +226,13 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.MustExec("insert into t values(1)")
 
 	tk.MustExec("set global tidb_enable_resource_control='on'")
-	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED=\"100ms\" ACTION=KILL)")
-	tk.MustGetErrCode("select /*+ resource_group(rg1) */ * from t", mysql.ErrResourceGroupQueryRunaway)
+	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='100ms' ACTION=KILL)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/sleepCoprRequest", `sleep(500)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/sleepCoprRequest"))
+	}()
+	err := tk.QueryToErr("select /*+ resource_group(rg1) */ * from t")
+	require.ErrorContains(t, err, "[executor:8253]Query execution was interrupted, identified as runaway query")
 }
 
 func TestResourceGroupHint(t *testing.T) {

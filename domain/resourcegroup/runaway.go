@@ -38,11 +38,11 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController) *Run
 }
 
 func (rm *RunawayManager) DeriveChecker(resourceGroupName string, originalSql string, planDigest string) *RunawayChecker {
-	setting, err := rm.resourceGroupCtl.RunawaySettings(resourceGroupName)
-	if err != nil || setting == nil {
+	group, err := rm.resourceGroupCtl.GetResourceGroup(resourceGroupName)
+	if err != nil || group == nil || group.RunawaySettings == nil {
 		return nil
 	}
-	return newRunawayChecker(rm, setting, originalSql, planDigest)
+	return newRunawayChecker(rm, group.RunawaySettings, originalSql, planDigest)
 }
 
 func (rm *RunawayManager) MarkRunaway(originalSql string, planDigest string) {
