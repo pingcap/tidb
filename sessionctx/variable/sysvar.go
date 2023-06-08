@@ -169,6 +169,10 @@ var defaultSysVars = []*SysVar{
 		s.TiFlashMaxBytesBeforeExternalSort = TidbOptInt64(val, DefTiFlashMaxBytesBeforeExternalSort)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashPipelineMode, Type: TypeBool, Value: BoolToOnOff(DefTiDBEnableTiFlashPipelineMode), SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashEnablePipelineMode = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBSnapshot, Value: "", skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		err := setSnapshotTS(s, val)
 		if err != nil {
