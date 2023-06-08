@@ -505,6 +505,16 @@ func (m *mergingIter) Seek(key []byte) bool {
 			}
 		}
 	}
+	// Although we have opened all files whose range contains the seek key,
+	// it is possible the seeked key is greater than the original seek key.
+	// So we need to check if the next file needs to be opened.
+	// Consider the following case:
+	//  file 1: a--------f
+	//  file 2:   b------f
+	//  file 3:       d--f
+	// If we seek to "c", we will open file 1 and file 2 first. However, the
+	// smallest key which is greater than "c" is "e", so we need to open file 3
+	// to check if it has keys less than "e".
 	return m.maybeOpenNextFiles()
 }
 
@@ -1031,12 +1041,21 @@ func pickCompactionFiles(
 	// Compute the maximum overlap depth of each interval.
 	// See https://en.wikipedia.org/wiki/Sweep_line_algorithm.
 	maxDepth := 0
+	n := 0
 	for i := 1; i < len(intervals); i++ {
-		intervals[i].depth += intervals[i-1].depth
+		intervals[i].depth += intervals[n].depth
 		if intervals[i].depth > maxDepth {
 			maxDepth = intervals[i].depth
 		}
+		// Merge adjacent intervals with the same key.
+		if bytes.Equal(intervals[i].key, intervals[n].key) {
+			intervals[n] = intervals[i]
+		} else {
+			n++
+			intervals[n] = intervals[i]
+		}
 	}
+	intervals = intervals[:n+1]
 	if maxDepth < compactionThreshold {
 		return nil
 	}
@@ -1124,7 +1143,7 @@ func buildCompactions(files []*fileMetadata, maxCompactionSize int) []*compactio
 			endKey = file.endKey
 		}
 	}
-	// If there is kv stats, return a single compaction for all files.
+	// If there is no kv stats, return a single compaction for all files.
 	if len(buckets) == 0 {
 		overlapFiles := slices.Clone(files)
 		slices.SortFunc(overlapFiles, func(a, b *fileMetadata) bool {
