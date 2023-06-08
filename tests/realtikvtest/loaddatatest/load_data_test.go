@@ -23,6 +23,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
@@ -1035,4 +1036,34 @@ func (s *mockGCSSuite) TestDiskQuota() {
 	s.tk.MustQuery("SELECT count(1) FROM load_test_disk_quota.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
+}
+
+func (s *mockGCSSuite) TestAnalyze() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
+	s.tk.MustExec("CREATE DATABASE load_data;")
+
+	// test auto analyze
+	s.tk.MustExec("create table load_data.analyze_table(a int, b int, c int, index idx_ac(a,c), index idx_b(b))")
+	lineCount := 10000
+	data := make([]byte, 0, 1<<13)
+	for i := 0; i < lineCount; i++ {
+		data = append(data, []byte(fmt.Sprintf("1,%d,1\n", i))...)
+	}
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "analyze-1.tsv"},
+		Content:     data,
+	})
+
+	// without analyze, use idx_ac
+	s.tk.MustExec("SET GLOBAL tidb_enable_auto_analyze=ON;")
+	s.tk.MustQuery("EXPLAIN SELECT * FROM load_data.analyze_table WHERE a=1 and b=1 and c=1;").CheckContain("idx_ac(a, c)")
+	s.tk.MustQuery("SHOW ANALYZE STATUS;").CheckNotContain("analyze_table")
+
+	sql := fmt.Sprintf(`IMPORT INTO load_data.analyze_table FROM 'gs://test-load/analyze-1.tsv?endpoint=%s'`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	require.Eventually(s.T(), func() bool {
+		result := s.tk.MustQuery("EXPLAIN SELECT * FROM load_data.analyze_table WHERE a=1 and b=1 and c=1;")
+		return strings.Contains(result.Rows()[1][3].(string), "idx_b(b)")
+	}, 60*time.Second, time.Second)
+	s.tk.MustQuery("SHOW ANALYZE STATUS;").CheckContain("analyze_table")
 }

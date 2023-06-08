@@ -121,8 +121,9 @@ func (ti *DistImporter) Result(task *proto.Task) importer.JobImportResult {
 	// we can have it when there's duplicate detection.
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
 	return importer.JobImportResult{
-		Msg:      msg,
-		Affected: taskMeta.Result.ReadRowCnt,
+		Msg:        msg,
+		Affected:   taskMeta.Result.ReadRowCnt,
+		ColSizeMap: taskMeta.Result.ColSizeMap,
 	}
 }
 

@@ -28,10 +28,13 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -113,11 +116,17 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	}
 
 	if e.controller.Detached {
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalImportInto)
+		se, err := CreateSession(e.userSctx)
+		if err != nil {
+			return err
+		}
 		go func() {
+			defer CloseSession(se)
 			// todo: there's no need to wait for the import to finish, we can just return here.
 			// error is stored in system table, so we can ignore it here
 			//nolint: errcheck
-			_ = e.doImport(distImporter, task)
+			_ = e.doImport(ctx, se, distImporter, task)
 			failpoint.Inject("testDetachedTaskFinished", func() {
 				TestDetachedTaskFinished.Store(true)
 			})
@@ -126,7 +135,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		e.detachHandled = true
 		return nil
 	}
-	return e.doImport(distImporter, task)
+	return e.doImport(ctx, e.userSctx, distImporter, task)
 }
 
 func (e *ImportIntoExec) getJobImporter(param *importer.JobImportParam) (*loaddata.DistImporter, error) {
@@ -149,7 +158,7 @@ func (e *ImportIntoExec) getJobImporter(param *importer.JobImportParam) (*loadda
 	return loaddata.NewDistImporterCurrNode(param, e.importPlan, e.stmt)
 }
 
-func (e *ImportIntoExec) doImport(distImporter *loaddata.DistImporter, task *proto.Task) error {
+func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, distImporter *loaddata.DistImporter, task *proto.Task) error {
 	distImporter.ImportTask(task)
 	group := distImporter.Param().Group
 	err := group.Wait()
@@ -159,5 +168,21 @@ func (e *ImportIntoExec) doImport(distImporter *loaddata.DistImporter, task *pro
 		userStmtCtx.SetMessage(importResult.Msg)
 		userStmtCtx.SetAffectedRows(importResult.Affected)
 	}
+	if err2 := flushStats(ctx, se, e.importPlan.TableInfo.ID, distImporter.Result(task)); err2 != nil {
+		logutil.BgLogger().Error("flush stats failed", zap.Error(err2))
+	}
 	return err
+}
+
+// flushStats flushes the stats of the table.
+func flushStats(ctx context.Context, se sessionctx.Context, tableID int64, result importer.JobImportResult) error {
+	if err := sessiontxn.NewTxn(ctx, se); err != nil {
+		return err
+	}
+	sessionVars := se.GetSessionVars()
+	sessionVars.TxnCtxMu.Lock()
+	defer sessionVars.TxnCtxMu.Unlock()
+	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected), result.ColSizeMap)
+	se.StmtCommit(ctx)
+	return se.CommitTxn(ctx)
 }

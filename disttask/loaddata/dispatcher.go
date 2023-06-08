@@ -297,10 +297,15 @@ func executeSQL(ctx context.Context, handle dispatcher.TaskHandle, logger *zap.L
 }
 
 func updateResult(taskMeta *TaskMeta, subtaskMetas []*SubtaskMeta, logger *zap.Logger) {
+	columnSizeMap := make(map[int64]int64)
 	for _, subtaskMeta := range subtaskMetas {
 		taskMeta.Result.ReadRowCnt += subtaskMeta.Result.ReadRowCnt
 		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
+		for key, val := range subtaskMeta.Result.ColSizeMap {
+			columnSizeMap[key] += val
+		}
 	}
+	taskMeta.Result.ColSizeMap = columnSizeMap
 	logger.Info("update result", zap.Any("task_meta", taskMeta))
 }
 

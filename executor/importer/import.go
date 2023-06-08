@@ -1047,6 +1047,7 @@ type JobImportResult struct {
 	LastInsertID uint64
 	Affected     uint64
 	Warnings     []stmtctx.SQLWarn
+	ColSizeMap   map[int64]int64
 }
 
 // JobImporter is the interface for importing a job.
