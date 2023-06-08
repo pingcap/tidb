@@ -89,6 +89,9 @@ func newKVStatsCollector(bucketSize int) *kvStatsCollector {
 	}
 }
 
+// Add is called when a key-value pair is added to the sstable.
+// In our case, it's guaranteed that the key-value pairs are added in order,
+// and key.Trailer must be sstable.InternalKeyKindSet.
 func (c *kvStatsCollector) Add(key sstable.InternalKey, value []byte) error {
 	c.curSize += len(key.UserKey) + len(value)
 	c.lastKey = append(c.lastKey[:0], key.UserKey...)
@@ -377,8 +380,13 @@ func (si *sstIter) Close() error {
 }
 
 type mergingIter struct {
-	heap          mergingIterHeap
-	orderedFiles  []*fileMetadata // ordered by start key
+	heap mergingIterHeap
+	// orderedFiles is the files to be merged. It is ordered by start key.
+	orderedFiles []*fileMetadata
+	// nextFileIndex is the index of the next file to be read.
+	// mergingIter only maintains minimum set of opened files.
+	// If current key is less than the start key of next file,
+	// the next file does not need to be opened.
 	nextFileIndex int
 	openIter      openIterFunc
 	curKey        []byte // only used in Next() to avoid alloc
@@ -1020,6 +1028,8 @@ func pickCompactionFiles(
 		return bytes.Compare(a.key, b.key) < 0
 	})
 
+	// Compute the maximum overlap depth of each interval.
+	// See https://en.wikipedia.org/wiki/Sweep_line_algorithm.
 	maxDepth := 0
 	for i := 1; i < len(intervals); i++ {
 		intervals[i].depth += intervals[i-1].depth
