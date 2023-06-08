@@ -480,7 +480,7 @@
         "Plan": [
           "TableReader_37 10000.00 root  MppVersion: 1, data:ExchangeSender_36",
           "└─ExchangeSender_36 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_10 10000.00 mpp[tiflash]  Column#8, Column#7",
+          "  └─Projection_10 10000.00 mpp[tiflash]  Column#8->Column#9, Column#7->Column#10",
           "    └─Window_35 10000.00 mpp[tiflash]  row_number()->Column#8 over(order by test.employee.deptid rows between current row and current row)",
           "      └─Sort_20 10000.00 mpp[tiflash]  test.employee.deptid",
           "        └─ExchangeReceiver_19 10000.00 mpp[tiflash]  ",

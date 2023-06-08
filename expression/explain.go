@@ -110,6 +110,22 @@ func ExplainExpressionList(exprs []Expression, schema *Schema) string {
 		switch expr.(type) {
 		case *Column, *CorrelatedColumn:
 			builder.WriteString(expr.String())
+			proj := false
+			if col, ok := expr.(*Column); ok {
+				if col.UniqueID != schema.Columns[i].UniqueID {
+					// simple col projected again with another uniqueID.
+					proj = true
+				}
+			} else if cCol, ok := expr.(*CorrelatedColumn); ok {
+				if cCol.UniqueID != schema.Columns[i].UniqueID {
+					// simple correlated col projected again with another uniqueID.
+					proj = true
+				}
+			}
+			if proj {
+				builder.WriteString("->")
+				builder.WriteString(schema.Columns[i].String())
+			}
 		case *Constant:
 			v := expr.String()
 			length := 64
