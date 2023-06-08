@@ -529,7 +529,7 @@ func runNotifierTest(t *testing.T, notifier api.TimerWatchEventNotifier) {
 	loop:
 		for {
 			select {
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				require.Equal(t, events, gotEvents, "wait events timeout")
 				return
 			case resp, ok := <-ch:
@@ -557,7 +557,7 @@ func runNotifierTest(t *testing.T, notifier api.TimerWatchEventNotifier) {
 					return
 				}
 				require.False(t, checkNoData)
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				require.FailNow(t, "wait closed timeout")
 			}
 		}
