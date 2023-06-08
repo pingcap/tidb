@@ -3443,8 +3443,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:GBlml2UIrI9IR3DdBnUWNeXizK4PwJhYPO7eWgCNErg=",
-        version = "v0.0.0-20230530111525-e4919c190b46",
+        sum = "h1:ruBY/Ea07iozAm0iapRtzSK4/UjNujSoilV/rMHQTsQ=",
+        version = "v0.0.0-20230601080418-b8e6dcdd1030",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -4202,9 +4202,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        replace = "github.com/CabinfeverB/client-go/v2",
-        sum = "h1:e6xR0Q/GdE6AWAzf+W7n9br7M7rUg1FV33KwIqmx5zM=",
-        version = "v2.0.0-20230602095003-9e72e8dd57d9",
+        sum = "h1:kSK7fBLEsGUf4Yn2nAl6f9lQ4Sp2yHwRFsq+fNAQyBY=",
+        version = "v2.0.8-0.20230608074729-5ddc523cfc46",
     )
     go_repository(
         name = "com_github_tikv_pd",
@@ -4218,9 +4217,8 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        replace = "github.com/CabinfeverB/pd/client",
-        sum = "h1:rwzgdzfBUFofG6wrzaHLmXNbG8315HZs8QYOZV8I5ns=",
-        version = "v0.0.0-20230601154623-a209ebf2b67c",
+        sum = "h1:GZdnq41Gs/Zxz0Ne/cZ/rKual+GD8F3h434OwhZogfA=",
+        version = "v0.0.0-20230608061541-026ddf08a351",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
@@ -6008,9 +6006,24 @@ def go_deps():
         name = "org_golang_google_genproto",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/genproto",
-        sum = "h1:KpwkzHKEF7B9Zxg18WzOa7djJ+Ha5DzthMyZYQfEn2A=",
-        version = "v0.0.0-20230410155749-daa745c078e1",
+        sum = "h1:x1vNwUhVOcsYoKyEGCZBH694SBmmBjA2EfauFVEI2+M=",
+        version = "v0.0.0-20230525234025-438c736192d0",
     )
+    go_repository(
+        name = "org_golang_google_genproto_googleapis_api",
+        build_file_proto_mode = "disable",
+        importpath = "google.golang.org/genproto/googleapis/api",
+        sum = "h1:HiYVD+FGJkTo+9zj1gqz0anapsa1JxjiSrN+BJKyUmE=",
+        version = "v0.0.0-20230525234020-1aefcd67740a",
+    )
+    go_repository(
+        name = "org_golang_google_genproto_googleapis_rpc",
+        build_file_proto_mode = "disable",
+        importpath = "google.golang.org/genproto/googleapis/rpc",
+        sum = "h1:XSJ8Vk1SWuNr8S18z1NZSziL0CPIXLCCMDOEFtHBOFc=",
+        version = "v0.0.0-20230530153820-e85fd2cbaebc",
+    )
+
     go_repository(
         name = "org_golang_google_grpc",
         build_file_proto_mode = "disable_global",
