@@ -212,7 +212,7 @@ func TestFrameworkAddServer(t *testing.T) {
 	defer scheduler.ClearSchedulers()
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
-	testContext, err := testkit.NewDistExecutionTestContext(t, 1)
+	testContext, err := testkit.NewDistExecutionTestContext(t, 2)
 	require.NoError(t, err)
 	DispatchTask("key1", t, &v)
 	testContext.AddServer()
@@ -222,6 +222,8 @@ func TestFrameworkAddServer(t *testing.T) {
 	time.Sleep(2 * time.Second) // make sure owner changed
 	DispatchTask("key3", t, &v)
 	testContext.Close()
+	testContext.AddServer()
+	DispatchTask("key4", t, &v)
 }
 
 func TestFrameworkDeleteServer(t *testing.T) {
