@@ -83,7 +83,7 @@ const (
 type Config struct {
 	storage.BackendOptions
 
-	specifiedTables          bool
+	SpecifiedTables          bool
 	AllowCleartextPasswords  bool
 	SortByPk                 bool
 	NoViews                  bool
@@ -192,7 +192,7 @@ func DefaultConfig() *Config {
 		OutputFileTemplate:  DefaultOutputFileTemplate,
 		PosAfterConnect:     false,
 		CollationCompatible: LooseCollationCompatible,
-		specifiedTables:     false,
+		SpecifiedTables:     false,
 		PromFactory:         promutil.NewDefaultFactory(),
 		PromRegistry:        promutil.NewDefaultRegistry(),
 	}
@@ -496,7 +496,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	conf.specifiedTables = len(tablesList) > 0
+	conf.SpecifiedTables = len(tablesList) > 0
 	conf.Tables, err = GetConfTables(tablesList)
 	if err != nil {
 		return errors.Trace(err)
