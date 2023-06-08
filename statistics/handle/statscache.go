@@ -205,12 +205,16 @@ func (m *mapCache) Del(k int64) {
 
 // Cost implements statsCacheInner
 func (m *mapCache) Cost() int64 {
+	m.RLock()
+	defer m.RUnlock()
 	return m.memUsage
 }
 
 // Keys implements statsCacheInner
 func (m *mapCache) Keys() []int64 {
 	ks := make([]int64, 0, len(m.tables))
+	m.RLock()
+	defer m.RUnlock()
 	for k := range m.tables {
 		ks = append(ks, k)
 	}
@@ -220,6 +224,8 @@ func (m *mapCache) Keys() []int64 {
 // Values implements statsCacheInner
 func (m *mapCache) Values() []*statistics.Table {
 	vs := make([]*statistics.Table, 0, len(m.tables))
+	m.RLock()
+	defer m.RUnlock()
 	for _, v := range m.tables {
 		vs = append(vs, v.value)
 	}
@@ -239,11 +245,15 @@ func (m *mapCache) Map() map[int64]*statistics.Table {
 
 // Len implements statsCacheInner
 func (m *mapCache) Len() int {
+	m.RLock()
+	defer m.RUnlock()
 	return len(m.tables)
 }
 
 // FreshMemUsage implements statsCacheInner
 func (m *mapCache) FreshMemUsage() {
+	m.RLock()
+	defer m.RUnlock()
 	for _, v := range m.tables {
 		oldCost := v.cost
 		newCost := v.value.MemoryUsage().TotalMemUsage
