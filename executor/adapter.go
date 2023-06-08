@@ -178,8 +178,11 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	err = a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
-	return err
+	err1 := a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
+	if err != nil {
+		return err
+	}
+	return err1
 }
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
@@ -743,9 +746,6 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		if handled && sc != nil && rs == nil {
 			sc.DetachMemDiskTracker()
 			cteErr := resetCTEStorageMap(a.Ctx)
-			if cteErr != nil {
-				logutil.BgLogger().Error("got error when reset cte storage", zap.Error(cteErr))
-			}
 			if err == nil {
 				// Only overwrite err when it's nil.
 				err = cteErr
@@ -1431,7 +1431,7 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) error {
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
-	return lastErr
+	return cteErr
 }
 
 // Clean CTE storage shared by different CTEFullScan executor within a SQL stmt.
