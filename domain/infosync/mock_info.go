@@ -37,13 +37,6 @@ type MockGlobalServerInfoManager struct {
 	mockServerPort uint // used to mock ServerInfo, then every mock server will have different port
 }
 
-// Inited check if MockGlobalServerInfoManager inited for Distributed unit tests
-func (m *MockGlobalServerInfoManager) Inited() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.infos) >= 2
-}
-
 // Add one mock ServerInfo
 func (m *MockGlobalServerInfoManager) Add(id string, serverIDGetter func() uint64) {
 	m.mu.Lock()
