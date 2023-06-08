@@ -1,4 +1,4 @@
-# Pause/Resume DDL jobs
+# IMPORT INTO statement
 
 - Author: [D3Hunter](https://github.com/D3Hunter)
 - Tracking Issue: [#42930](https://github.com/pingcap/tidb/issues/42930)
