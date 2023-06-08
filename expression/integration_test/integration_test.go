@@ -451,6 +451,16 @@ func TestMiscellaneousBuiltin(t *testing.T) {
 	result = tk.MustQuery(`SELECT GET_LOCK('test_lock2', 10);`)
 	result.Check(testkit.Rows("1"))
 
+	result = tk.MustQuery(`SELECT IS_USED_LOCK('test_lock1') > 0;`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`SELECT IS_USED_LOCK('foobar');`)
+	result.Check(testkit.Rows("<nil>"))
+
+	result = tk.MustQuery(`SELECT IS_FREE_LOCK('test_lock1');`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`SELECT IS_FREE_LOCK('foobar');`)
+	result.Check(testkit.Rows("1"))
+
 	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock2');`)
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock1');`)
