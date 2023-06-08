@@ -508,10 +508,13 @@ func (m *mergingIter) Seek(key []byte) bool {
 	// Although we have opened all files whose range contains the seek key,
 	// it is possible the seeked key is greater than the original seek key.
 	// So we need to check if the next file needs to be opened.
+	//
 	// Consider the following case:
-	//  file 1: a--------f
-	//  file 2:   b------f
-	//  file 3:       d--f
+	//
+	// file 1: a--------f
+	// file 2:   b------f
+	// file 3:       d--f
+	//
 	// If we seek to "c", we will open file 1 and file 2 first. However, the
 	// smallest key which is greater than "c" is "e", so we need to open file 3
 	// to check if it has keys less than "e".
@@ -1175,6 +1178,20 @@ func buildCompactions(files []*fileMetadata, maxCompactionSize int) []*compactio
 		kvSize      int
 		compactions []*compaction
 	)
+	// We assume that data is uniformly distributed in each file as well as
+	// each bucket range. So we can simply merge buckets of different files.
+	// Although the adjacent buckets may not be of the same file, the current
+	// bucket size is approximately the size of kv pairs between the previous
+	// bucket's upper bound and the current bucket's upper bound.
+	//
+	// Consider the following example:
+	//
+	// file 1 buckets: (a, 10),          (c, 10),          (e, 10)
+	// file 2 buckets:          (b, 10),          (d, 10),          (f, 10)
+	// merged buckets: (a, 10), (b, 10), (c, 10), (d, 10), (e, 10), (f, 10).
+	//
+	// For the adjacent buckets (b, 10) and (c, 10), the size of kv pairs
+	// between b and c is approximately 10 (5 from file 1 and 5 from file 2).
 	for i, bucket := range buckets {
 		if i+1 == len(buckets) {
 			compactions = append(compactions, &compaction{
