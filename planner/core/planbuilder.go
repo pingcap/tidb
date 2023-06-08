@@ -1384,6 +1384,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	}
 
 	// consider hypo-indexes
+	// TODO: only explain can see these hypo-indexes
 	hypoIndexes := ctx.GetSessionVars().HypoIndexes
 	if hypoIndexes != nil {
 		originalTableName := tblInfo.Name.L
