@@ -15,6 +15,7 @@ go_library(
         "//disttask/framework/proto",
         "//resourcemanager/pool/spool",
         "//resourcemanager/util",
+        "//util",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//mock",
