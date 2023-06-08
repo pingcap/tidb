@@ -1937,12 +1937,19 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 	}
 }
 
+// RunawayManager returns the runaway manager.
 func (do *Domain) RunawayManager() *resourcegroup.RunawayManager {
 	return do.runawayManager
 }
 
+// ResourceGroupsController returns the resource groups controller.
 func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController {
 	return do.resourceGroupsController
+}
+
+// SetResourceGroupsController is only used in test.
+func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroupsController) {
+	do.resourceGroupsController = controller
 }
 
 // SetupHistoricalStatsWorker setups worker
