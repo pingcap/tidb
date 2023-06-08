@@ -233,6 +233,12 @@ func TestResourceGroupRunaway(t *testing.T) {
 	}()
 	err := tk.QueryToErr("select /*+ resource_group(rg1) */ * from t")
 	require.ErrorContains(t, err, "[executor:8253]Query execution was interrupted, identified as runaway query")
+
+	tk.MustExec("alter resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='100ms' ACTION=COOLDOWN)")
+	tk.MustQuery("select /*+ resource_group(rg1) */ * from t")
+
+	tk.MustExec("alter resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='100ms' ACTION=DRYRUN)")
+	tk.MustQuery("select /*+ resource_group(rg1) */ * from t")
 }
 
 func TestResourceGroupHint(t *testing.T) {
