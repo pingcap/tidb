@@ -3513,6 +3513,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		require.NotNil(t, p)
 
 		// This for loop level traverses the plan tree to get which operators are covered.
+		var hasCTE bool
 		for child := []plannercore.PhysicalPlan{p.(plannercore.PhysicalPlan)}; len(child) != 0; {
 			newChild := make([]plannercore.PhysicalPlan, 0, len(child))
 			for _, ch := range child {
@@ -3529,6 +3530,7 @@ func TestUnreasonablyClose(t *testing.T) {
 				case *plannercore.PhysicalCTE:
 					newChild = append(newChild, x.RecurPlan)
 					newChild = append(newChild, x.SeedPlan)
+					hasCTE = true
 					continue
 				case *plannercore.PhysicalShuffle:
 					newChild = append(newChild, x.DataSources...)
@@ -3540,6 +3542,12 @@ func TestUnreasonablyClose(t *testing.T) {
 			child = newChild
 		}
 
+		if hasCTE {
+			// Normally CTEStorages will be setup in ResetContextOfStmt.
+			// But the following case call e.Close() directly, instead of calling session.ExecStmt(), which calls ResetContextOfStmt.
+			// So need to setup CTEStorages manually.
+			tk.Session().GetSessionVars().StmtCtx.CTEStorageMap = map[int]*executor.CTEStorages{}
+		}
 		e := executorBuilder.Build(p)
 
 		func() {
