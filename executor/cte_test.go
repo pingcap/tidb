@@ -470,3 +470,18 @@ func TestCTEPanic(t *testing.T) {
 	require.Contains(t, err.Error(), fp)
 	require.NoError(t, failpoint.Disable(fpPathPrefix+fp))
 }
+
+func TestCTEDelSpillFile(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(c1 int, c2 int);")
+	tk.MustExec("create table t2(c1 int);")
+	tk.MustExec("set @@cte_max_recursion_depth = 1000000;")
+	tk.MustExec("set global tidb_mem_oom_action = 'log';")
+	tk.MustExec("set @@tidb_mem_quota_query = 100;")
+	tk.MustExec("insert into t2 values(1);")
+	tk.MustExec("insert into t1 (c1, c2) with recursive cte1 as (select c1 from t2 union select cte1.c1 + 1 from cte1 where cte1.c1 < 100000) select cte1.c1, cte1.c1+1 from cte1;")
+	require.Nil(t, tk.Session().GetSessionVars().StmtCtx.CTEStorageMap)
+}
