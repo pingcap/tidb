@@ -126,8 +126,12 @@ func NewDispatcher(ctx context.Context, taskTable *storage.TaskManager) (Dispatc
 
 // Start implements Dispatch.Start interface.
 func (d *dispatcher) Start() {
-	d.wg.Run(d.DispatchTaskLoop)
-	d.wg.Run(d.DetectTaskLoop)
+	d.wg.RunWithRecover(func() {
+		d.DispatchTaskLoop(nil)
+	}, d.DispatchTaskLoop)
+	d.wg.RunWithRecover(func() {
+		d.DetectTaskLoop(nil)
+	}, d.DetectTaskLoop)
 }
 
 // Stop implements Dispatch.Stop interface.
@@ -138,7 +142,10 @@ func (d *dispatcher) Stop() {
 }
 
 // DispatchTaskLoop dispatches the global tasks.
-func (d *dispatcher) DispatchTaskLoop() {
+func (d *dispatcher) DispatchTaskLoop(r interface{}) {
+	if r != nil {
+		logutil.BgLogger().Warn("dispatch task loop run into panic, restart it", zap.String("error", errors.Errorf("%v", r).Error()))
+	}
 	logutil.BgLogger().Info("dispatch task loop start")
 	ticker := time.NewTicker(checkTaskRunningInterval)
 	defer ticker.Stop()
@@ -248,7 +255,10 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 }
 
 // DetectTaskLoop monitors the status of the subtasks and processes them.
-func (d *dispatcher) DetectTaskLoop() {
+func (d *dispatcher) DetectTaskLoop(r interface{}) {
+	if r != nil {
+		logutil.BgLogger().Warn("dispatch task loop run into panic, restart it", zap.String("error", errors.Errorf("%v", r).Error()))
+	}
 	logutil.BgLogger().Info("detect task loop start")
 	for {
 		select {

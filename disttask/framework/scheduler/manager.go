@@ -116,8 +116,12 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 
 // Start starts the Manager.
 func (m *Manager) Start() {
-	m.wg.Run(m.fetchAndHandleRunnableTasks)
-	m.wg.Run(m.fetchAndFastCancelTasks)
+	m.wg.RunWithRecover(func() {
+		m.fetchAndHandleRunnableTasks(nil)
+	}, m.fetchAndHandleRunnableTasks)
+	m.wg.RunWithRecover(func() {
+		m.fetchAndFastCancelTasks(nil)
+	}, m.fetchAndFastCancelTasks)
 }
 
 // Stop stops the Manager.
@@ -131,7 +135,10 @@ func (m *Manager) Stop() {
 }
 
 // fetchAndHandleRunnableTasks fetches the runnable tasks from the global task table and handles them.
-func (m *Manager) fetchAndHandleRunnableTasks() {
+func (m *Manager) fetchAndHandleRunnableTasks(r interface{}) {
+	if r != nil {
+		logutil.BgLogger().Warn("fetchAndHandleRunnableTasks loop run into panic, restart it", zap.String("error", errors.Errorf("%v", r).Error()))
+	}
 	ticker := time.NewTicker(checkTime)
 	for {
 		select {
@@ -150,7 +157,10 @@ func (m *Manager) fetchAndHandleRunnableTasks() {
 }
 
 // fetchAndFastCancelTasks fetches the reverting tasks from the global task table and fast cancels them.
-func (m *Manager) fetchAndFastCancelTasks() {
+func (m *Manager) fetchAndFastCancelTasks(r interface{}) {
+	if r != nil {
+		logutil.BgLogger().Warn("fetchAndFastCancelTasks loop run into panic, restart it", zap.String("error", errors.Errorf("%v", r).Error()))
+	}
 	ticker := time.NewTicker(checkTime)
 	for {
 		select {
