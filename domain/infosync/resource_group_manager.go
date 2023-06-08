@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -34,8 +35,8 @@ func NewMockResourceGroupManager() pd.ResourceManagerClient {
 	mockMgr := &mockResourceGroupManager{
 		groups: make(map[string]*rmpb.ResourceGroup),
 	}
-	mockMgr.groups["default"] = &rmpb.ResourceGroup{
-		Name: "default",
+	mockMgr.groups[resourcegroup.DefaultResourceGroupName] = &rmpb.ResourceGroup{
+		Name: resourcegroup.DefaultResourceGroupName,
 		Mode: rmpb.GroupMode_RUMode,
 		RUSettings: &rmpb.GroupRequestUnitSettings{
 			RU: &rmpb.TokenBucket{
@@ -67,7 +68,7 @@ func (m *mockResourceGroupManager) GetResourceGroup(ctx context.Context, name st
 	defer m.RUnlock()
 	group, ok := m.groups[name]
 	if !ok {
-		return nil, nil
+		return nil, fmt.Errorf("the group %s does not exist", name)
 	}
 	return group, nil
 }
