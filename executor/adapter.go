@@ -742,6 +742,10 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// `rs.Close` in `handleStmt`
 		if handled && sc != nil && rs == nil {
 			sc.DetachMemDiskTracker()
+			resetCTEStorageMap(a.Ctx)
+			if err != nil {
+				logutil.BgLogger().Error("", zap.Error(err))
+			}
 		}
 	}()
 
@@ -1416,6 +1420,42 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
+	err := resetCTEStorageMap(a.Ctx)
+	if err != nil {
+		logutil.BgLogger().Error("", zap.Error(err))
+	}
+}
+
+// Clean CTE storage shared by different CTEFullScan executor within a SQL stmt.
+// Will return err in two situations:
+// 1. Got err when remove disk spill file.
+// 2. Some logical error like ref count of CTEStorage is less than 0.
+func resetCTEStorageMap(se sessionctx.Context) error {
+	tmp := se.GetSessionVars().StmtCtx.CTEStorageMap
+	if tmp == nil {
+		// Close() is already called, so no need to reset. Such as TraceExec.
+		return nil
+	}
+	storageMap, ok := tmp.(map[int]*CTEStorages)
+	if !ok {
+		return errors.New("type assertion for CTEStorageMap failed")
+	}
+	for _, v := range storageMap {
+		v.ResTbl.Lock()
+		err1 := v.ResTbl.DerefAndClose()
+		// Make sure we do not hold the lock for longer than necessary.
+		v.ResTbl.Unlock()
+		// No need to lock IterInTbl.
+		err2 := v.IterInTbl.DerefAndClose()
+		if err1 != nil {
+			return err1
+		}
+		if err2 != nil {
+			return err2
+		}
+	}
+	se.GetSessionVars().StmtCtx.CTEStorageMap = nil
+	return nil
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
