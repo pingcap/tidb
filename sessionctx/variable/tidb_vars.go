@@ -546,6 +546,9 @@ const (
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
 
+	// TiDBExpensiveTxnTimeThreshold indicates the time threshold of expensive transaction.
+	TiDBExpensiveTxnTimeThreshold = "tidb_expensive_txn_time_threshold"
+
 	// TiDBEnableIndexMerge indicates to generate IndexMergePath.
 	TiDBEnableIndexMerge = "tidb_enable_index_merge"
 
@@ -1160,7 +1163,8 @@ const (
 	DefTiDBDDLSlowOprThreshold                     = 300
 	DefTiDBUseFastAnalyze                          = false
 	DefTiDBSkipIsolationLevelCheck                 = false
-	DefTiDBExpensiveQueryTimeThreshold             = 60 // 60s
+	DefTiDBExpensiveQueryTimeThreshold             = 60      // 60s
+	DefTiDBExpensiveTxnTimeThreshold               = 60 * 10 // 10 minutes
 	DefTiDBScatterRegion                           = false
 	DefTiDBWaitSplitRegionFinish                   = true
 	DefWaitSplitRegionTimeout                      = 300 // 300s
@@ -1278,6 +1282,7 @@ const (
 	MaxDDLReorgBatchSize                  int32  = 10240
 	MinDDLReorgBatchSize                  int32  = 32
 	MinExpensiveQueryTimeThreshold        uint64 = 10 // 10s
+	MinExpensiveTxnTimeThreshold          uint64 = 60 // 60s
 	DefTiDBAutoBuildStatsConcurrency             = 1
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
@@ -1365,6 +1370,7 @@ var (
 	ForcePriority                        = int32(DefTiDBForcePriority)
 	MaxOfMaxAllowedPacket         uint64 = 1073741824
 	ExpensiveQueryTimeThreshold   uint64 = DefTiDBExpensiveQueryTimeThreshold
+	ExpensiveTxnTimeThreshold     uint64 = DefTiDBExpensiveTxnTimeThreshold
 	MemoryUsageAlarmRatio                = atomic.NewFloat64(DefMemoryUsageAlarmRatio)
 	MemoryUsageAlarmKeepRecordNum        = atomic.NewInt64(DefMemoryUsageAlarmKeepRecordNum)
 	EnableLocalTxn                       = atomic.NewBool(DefTiDBEnableLocalTxn)
