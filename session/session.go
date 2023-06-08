@@ -1546,8 +1546,10 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	// Because the select statement and other statements need this timestamp to read data,
 	// after the transaction is committed. e.g. SHOW MASTER STATUS;
 	var curTxnStartTS uint64
+	var curTxnCreateTime time.Time
 	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
 		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
+		curTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
 	}
 	// Set curTxnStartTS to SnapshotTS directly when the session is trying to historic read.
 	// It will avoid the session meet GC lifetime too short error.
@@ -1571,6 +1573,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		State:                 s.Status(),
 		Info:                  sql,
 		CurTxnStartTS:         curTxnStartTS,
+		CurTxnCreateTime:      curTxnCreateTime,
 		StmtCtx:               s.sessionVars.StmtCtx,
 		RefCountOfStmtCtx:     &s.sessionVars.RefCountOfStmtCtx,
 		MemTracker:            s.sessionVars.MemTracker,
@@ -1595,6 +1598,10 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if oldPi != nil && oldPi.Info == pi.Info && oldPi.Command == pi.Command {
 		pi.Time = oldPi.Time
 	}
+	if oldPi != nil && oldPi.CurTxnStartTS != 0 && oldPi.CurTxnStartTS == pi.CurTxnStartTS {
+		// Keep the last expensive txn log time, avoid print too many expensive txn logs.
+		pi.ExpensiveTxnLogTime = oldPi.ExpensiveTxnLogTime
+	}
 	_, digest := s.sessionVars.StmtCtx.SQLDigest()
 	pi.Digest = digest.String()
 	// DO NOT reset the currentPlan to nil until this query finishes execution, otherwise reentrant calls
@@ -1617,6 +1624,7 @@ func (s *session) UpdateProcessInfo() {
 	}
 	// Update the current transaction start timestamp.
 	pi.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	pi.CurTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
 }
 
 func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
