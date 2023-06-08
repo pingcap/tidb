@@ -3292,7 +3292,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 // BootstrapSession4DistExecution bootstrap session and dom for Distributed execution test, only for unit testing
 func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
-	return bootstrapSessionImpl(store, createSessions4DistExecutuon)
+	return bootstrapSessionImpl(store, createSessions4DistExecution)
 }
 
 func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
