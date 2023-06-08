@@ -267,6 +267,8 @@ func (m *mapCache) Copy() statsCacheInner {
 		tables:   make(map[int64]cacheItem, len(m.tables)),
 		memUsage: m.memUsage,
 	}
+	m.RLock()
+	defer m.RUnlock()
 	for k, v := range m.tables {
 		newM.tables[k] = v.copy()
 	}
