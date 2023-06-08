@@ -1807,6 +1807,7 @@ func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
 	return nil
 }
 
+// IsUsedAdvisoryLock checks if a lockName is already in use
 func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
 	// Same session
 	if lock, ok := s.advisoryLocks[lockName]; ok {

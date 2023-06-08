@@ -969,7 +969,7 @@ func (b *builtinUsedLockSig) Clone() builtinFunc {
 }
 
 // evalInt evals a builtinLockSig.
-// See https://dev.mysql.com/doc/refman/ ...
+// See https://dev.mysql.com/doc/refman/8.0/en/locking-functions.html#function_is-used-lock
 func (b *builtinUsedLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 	lockName, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil {
