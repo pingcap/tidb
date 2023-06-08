@@ -346,23 +346,22 @@ func BenchmarkStatsCacheUpdate(b *testing.B) {
 	pseudo := func(id int64) *statistics.Table {
 		ti := &model.TableInfo{}
 		colInfo := &model.ColumnInfo{
-			ID:        int64(i),
+			ID:        id,
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			State:     model.StatePublic,
 		}
 		ti.Columns = append(ti.Columns, colInfo)
-		tbl := statistics.PseudoTable(ti)
+		return statistics.PseudoTable(ti)
 	}
 
 	sc := newStatsCache()
 	for i := 0; i < 10000; i++ {
-		tbl := pseudo(i)
+		tbl := pseudo(int64(i))
 		sc = sc.update([]*statistics.Table{tbl}, nil, sc.version)
 	}
 
 	tbl := pseudo(0)
 	b.ResetTimer()
-	tbl := statistics.PseudoTable(ti)
 	for i := 0; i < b.N; i++ {
 		tbl.PhysicalID = int64(rand.Intn(20000))
 		sc = sc.update([]*statistics.Table{tbl}, nil, sc.version)

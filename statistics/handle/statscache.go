@@ -144,9 +144,9 @@ func (c cacheItem) copy() cacheItem {
 }
 
 type mapCache struct {
-	sync.RWMutex
 	tables   map[int64]cacheItem
 	memUsage int64
+	sync.RWMutex
 }
 
 // GetByQuery implements statsCacheInner
