@@ -15,11 +15,7 @@
 # Builder image
 FROM rockylinux:9 as builder
 
-<<<<<<< HEAD
-ENV GOLANG_VERSION 1.19.3
-=======
 ENV GOLANG_VERSION 1.20.5
->>>>>>> f29b5d31d70 (*: upgrade go1.20.5 (#44475))
 ENV ARCH amd64
 ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-$ARCH.tar.gz
 ENV GOPATH /go
