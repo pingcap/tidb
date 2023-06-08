@@ -25,7 +25,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -126,7 +125,7 @@ type Domain struct {
 	infoCache       *infoschema.InfoCache
 	privHandle      *privileges.Handle
 	bindHandle      atomic.Pointer[bindinfo.BindHandle]
-	statsHandle     unsafe.Pointer
+	statsHandle     atomic.Pointer[handle.Handle]
 	statsLease      time.Duration
 	ddl             ddl.DDL
 	info            *infosync.InfoSyncer
@@ -2069,7 +2068,7 @@ func (do *Domain) StartHistoricalStatsWorker() {
 
 // StatsHandle returns the statistic handle.
 func (do *Domain) StatsHandle() *handle.Handle {
-	return (*handle.Handle)(atomic.LoadPointer(&do.statsHandle))
+	return do.statsHandle.Load()
 }
 
 // CreateStatsHandle is used only for test.
@@ -2078,7 +2077,7 @@ func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error 
 	if err != nil {
 		return err
 	}
-	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(h))
+	do.statsHandle.Store(h)
 	return nil
 }
 
@@ -2154,7 +2153,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	if err != nil {
 		return err
 	}
-	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
+	do.statsHandle.Store(statsHandle)
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
