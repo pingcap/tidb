@@ -1866,6 +1866,7 @@ const (
 	RunawayActionDryRun RunawayActionType = iota
 	RunawayActionCooldown
 	RunawayActionKill
+	RunawayNoneAction
 )
 
 // RunawayWatchType is the type of runaway watch.

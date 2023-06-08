@@ -44,7 +44,7 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 			return nil, ErrInvalidResourceGroupRunawayExecElapsedTime
 		}
 		runaway.Rule.ExecElapsedTimeMs = options.Runaway.ExecElapsedTimeMs
-		if options.Runaway.Action == 0 {
+		if options.Runaway.Action == model.RunawayNoneAction {
 			return nil, ErrUnknownResourceGroupRunawayAction
 		}
 		runaway.Action = rmpb.RunawayAction(options.Runaway.Action)
