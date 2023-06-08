@@ -3552,6 +3552,9 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 
 	dom := domain.GetDomain(s)
 	dom.Close()
+	if intest.InTest {
+		infosync.MockGlobalServerInfoManagerEntry.Close()
+	}
 	domap.Delete(store)
 }
 
