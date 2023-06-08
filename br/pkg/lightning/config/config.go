@@ -71,7 +71,6 @@ const (
 	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint
 	ErrorOnDup = "error"
 
-	KVWriteBatchCount = 32768
 	// KVWriteBatchSize batch size when write to TiKV.
 	// this is the default value of linux send buffer size(net.ipv4.tcp_wmem) too.
 	KVWriteBatchSize        = 16 * units.KiB
@@ -679,6 +678,7 @@ type MydumperRuntime struct {
 	//   - utf8mb4
 	//   - GB18030
 	//   - GBK: an extension of the GB2312 character set and is also known as Code Page 936.
+	//   - latin1: IANA Windows1252
 	//   - binary: no attempt to convert the encoding.
 	// Leave DataCharacterSet empty will make it use `binary` by default.
 	DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
@@ -748,10 +748,11 @@ type FileRouteRule struct {
 // TikvImporter is the config for tikv-importer.
 type TikvImporter struct {
 	// Deprecated: only used to keep the compatibility.
-	Addr                    string                       `toml:"addr" json:"addr"`
-	Backend                 string                       `toml:"backend" json:"backend"`
-	OnDuplicate             string                       `toml:"on-duplicate" json:"on-duplicate"`
-	MaxKVPairs              int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	Addr        string `toml:"addr" json:"addr"`
+	Backend     string `toml:"backend" json:"backend"`
+	OnDuplicate string `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs  int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	// deprecated
 	SendKVPairs             int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
 	SendKVSize              ByteSize                     `toml:"send-kv-size" json:"send-kv-size"`
 	CompressKVPairs         CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
@@ -959,7 +960,7 @@ func NewConfig() *Config {
 		TikvImporter: TikvImporter{
 			Backend:                 "",
 			MaxKVPairs:              4096,
-			SendKVPairs:             KVWriteBatchCount,
+			SendKVPairs:             32768,
 			SendKVSize:              KVWriteBatchSize,
 			RegionSplitSize:         0,
 			RegionSplitBatchSize:    DefaultRegionSplitBatchSize,

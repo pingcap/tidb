@@ -20,24 +20,35 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"path"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/golang/mock/gomock"
 	"github.com/ngaut/pools"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -49,14 +60,17 @@ func (s *mockGCSSuite) prepareAndUseDB(db string) {
 
 // NOTE: for negative cases, see TestImportIntoPrivilegeNegativeCase in privileges_test.go
 func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
+	content := []byte("1,test1,11\n2,test2,22")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "privilege-test",
 			Name:       "db.tbl.001.csv",
 		},
-		Content: []byte("1,test1,11\n" +
-			"2,test2,22"),
+		Content: content,
 	})
+	tempDir := s.T().TempDir()
+	filePath := path.Join(tempDir, "file.csv")
+	s.NoError(os.WriteFile(filePath, content, 0644))
 	s.prepareAndUseDB("import_into")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
@@ -71,10 +85,32 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 		_ = s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
 	})
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	// enough for gs storage
 	sql := fmt.Sprintf(`import into t FROM 'gs://privilege-test/db.tbl.*.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustExec(sql)
-	s.tk.MustQuery("select * from t").Check(testkit.Rows(
-		"1 test1 11", "2 test2 22"))
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
+	// works even SEM enabled
+	sem.Enable()
+	s.T().Cleanup(func() {
+		sem.Disable()
+	})
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustExec("truncate table t")
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
+
+	sem.Disable()
+	// requires FILE for server file
+	importFromServerSQL := fmt.Sprintf("IMPORT INTO t FROM '%s'", filePath)
+	s.True(terror.ErrorEqual(s.tk.ExecToErr(importFromServerSQL), core.ErrSpecificAccessDenied))
+
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustExec(`GRANT FILE on *.* to 'test_import_into'@'localhost'`)
+	s.tk.MustExec("truncate table t")
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustExec(importFromServerSQL)
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
 }
 
 func (s *mockGCSSuite) TestBasicImportInto() {
@@ -466,24 +502,24 @@ func (s *mockGCSSuite) TestMixedCompression() {
 func (s *mockGCSSuite) TestLoadSQLDump() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
-	s.tk.MustExec("CREATE TABLE load_csv.t (" +
-		"id INT, c VARCHAR(20));")
+	s.tk.MustExec("CREATE TABLE load_csv.t (id INT, c VARCHAR(20));")
 
+	content := `insert into tbl values (1, 'a'), (2, 'b');`
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-load-parquet",
-			Name:       "p",
-		},
-		Content: []byte(`insert into tbl values (1, 'a'), (2, 'b');`),
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load-parquet", Name: "p"},
+		Content:     []byte(content),
 	})
+	tempDir := s.T().TempDir()
+	s.NoError(os.WriteFile(path.Join(tempDir, "test.sql"), []byte(content), 0o644))
 
-	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p?endpoint=%s'
-		FORMAT 'SQL';`, gcsEndpoint)
+	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p?endpoint=%s' FORMAT 'SQL';`, gcsEndpoint)
 	s.tk.MustExec(sql)
-	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
-		"1 a",
-		"2 b",
-	))
+	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
+
+	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
+	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s' FORMAT 'SQL';`, path.Join(tempDir, "test.sql"))
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
 }
 
 func (s *mockGCSSuite) TestGBK() {
@@ -848,4 +884,213 @@ func (s *mockGCSSuite) TestImportMode() {
 	err := s.tk.ExecToErr(sql)
 	s.Error(err)
 	s.Greater(intoNormalTime, intoImportTime)
+}
+
+func (s *mockGCSSuite) TestRegisterTask() {
+	var registerTime, unregisterTime time.Time
+	var taskID atomic.String
+	controller := gomock.NewController(s.T())
+	taskRegister := mock.NewMockTaskRegister(controller)
+	mockedRegister := func(ctx context.Context) error {
+		log.L().Info("register task", zap.String("task_id", taskID.Load()))
+		registerTime = time.Now()
+		return nil
+	}
+	mockedClose := func(ctx context.Context) error {
+		log.L().Info("unregister task", zap.String("task_id", taskID.Load()))
+		unregisterTime = time.Now()
+		return nil
+	}
+	taskRegister.EXPECT().RegisterTaskOnce(gomock.Any()).DoAndReturn(mockedRegister).Times(1)
+	taskRegister.EXPECT().Close(gomock.Any()).DoAndReturn(mockedClose).Times(1)
+	backup := loaddata.NewTaskRegisterWithTTL
+	loaddata.NewTaskRegisterWithTTL = func(_ *clientv3.Client, _ time.Duration, _ utils.RegisterTaskType, name string) utils.TaskRegister {
+		// we use taskID as the task name
+		taskID.Store(name)
+		return taskRegister
+	}
+	s.T().Cleanup(func() {
+		loaddata.NewTaskRegisterWithTTL = backup
+	})
+
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
+	s.tk.MustExec("CREATE DATABASE load_data;")
+	s.tk.MustExec(`CREATE TABLE load_data.register_task (a INT, b INT, c int);`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "register_task-1.tsv"},
+		Content:     []byte("1,11,111"),
+	})
+
+	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
+	// better start a cluster without TiDB instance.
+	sql := fmt.Sprintf(`IMPORT INTO load_data.register_task FROM 'gs://test-load/register_task-*.tsv?endpoint=%s'`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM load_data.register_task;").Sort().Check(testkit.Rows("1 11 111"))
+	s.Greater(unregisterTime, registerTime)
+
+	// on error, we should also unregister the task
+	registerTime, unregisterTime = time.Time{}, time.Time{}
+	taskRegister.EXPECT().RegisterTaskOnce(gomock.Any()).DoAndReturn(mockedRegister).Times(1)
+	taskRegister.EXPECT().Close(gomock.Any()).DoAndReturn(mockedClose).Times(1)
+	s.tk.MustExec("truncate table load_data.register_task;")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk", "return(true)")
+	err := s.tk.ExecToErr(sql)
+	s.Error(err)
+	s.Greater(unregisterTime, registerTime)
+
+	loaddata.NewTaskRegisterWithTTL = backup
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk"))
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/syncBeforeSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.tk.MustExec(sql)
+	}()
+	// wait for the task to be registered
+	<-loaddata.TestSyncChan
+	client, err := importer.GetEtcdClient()
+	s.NoError(err)
+	s.T().Cleanup(func() {
+		_ = client.Close()
+	})
+	etcdKey := fmt.Sprintf("/tidb/brie/import/import-into/%d", storage.TestLastTaskID.Load())
+	s.Eventually(func() bool {
+		resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+		s.NoError(err2)
+		return len(resp.Kvs) == 1
+	}, 5*time.Second, 300*time.Millisecond)
+	// continue the execution
+	loaddata.TestSyncChan <- struct{}{}
+	wg.Wait()
+	s.tk.MustQuery("SELECT * FROM load_data.register_task;").Sort().Check(testkit.Rows("1 11 111"))
+
+	// the task should be unregistered
+	resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+	s.NoError(err2)
+	s.Len(resp.Kvs, 0)
+}
+
+func (s *mockGCSSuite) TestAddIndexBySQL() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
+	s.tk.MustExec("CREATE DATABASE load_data;")
+	s.tk.MustExec(`CREATE TABLE load_data.add_index (a INT, b INT, c INT, PRIMARY KEY (a), unique key b(b), key c_1(c));`)
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-1.tsv"},
+		Content:     []byte("1,11,111\n2,22,222\n3,33,333\n4,44,444\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-2.tsv"},
+		Content:     []byte("5,55,555,\n6,66,666\n7,77,777"),
+	})
+	sql := fmt.Sprintf(`IMPORT INTO load_data.add_index FROM 'gs://test-load/add_index-*.tsv?endpoint=%s'`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM load_data.add_index;").Sort().Check(testkit.Rows(
+		"1 11 111",
+		"2 22 222",
+		"3 33 333",
+		"4 44 444",
+		"5 55 555",
+		"6 66 666",
+		"7 77 777",
+	))
+	s.tk.MustQuery("SHOW CREATE TABLE load_data.add_index;").Check(testkit.Rows(
+		"add_index CREATE TABLE `add_index` (\n" +
+			"  `a` int(11) NOT NULL,\n" +
+			"  `b` int(11) DEFAULT NULL,\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  UNIQUE KEY `b` (`b`),\n" +
+			"  KEY `c_1` (`c`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	// encode error, rollback
+	backup := config.DefaultBatchSize
+	config.DefaultBatchSize = 1
+	s.T().Cleanup(func() {
+		config.DefaultBatchSize = backup
+	})
+	s.tk.MustExec("truncate table load_data.add_index")
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
+		Content:     []byte("8,8|8,888\n"),
+	})
+	err := s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "Truncated incorrect DOUBLE value")
+	s.tk.MustQuery("SHOW CREATE TABLE load_data.add_index;").Check(testkit.Rows(
+		"add_index CREATE TABLE `add_index` (\n" +
+			"  `a` int(11) NOT NULL,\n" +
+			"  `b` int(11) DEFAULT NULL,\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  UNIQUE KEY `b` (`b`),\n" +
+			"  KEY `c_1` (`c`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	s.tk.MustQuery("SELECT COUNT(1) FROM load_data.add_index;").Sort().Check(testkit.Rows(
+		"0",
+	))
+	config.DefaultBatchSize = backup
+
+	// checksum error
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
+		Content:     []byte("7,88,888\n"),
+	})
+	err = s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "checksum mismatched")
+	s.tk.MustQuery("SELECT COUNT(1) FROM load_data.add_index;").Sort().Check(testkit.Rows(
+		"7",
+	))
+	s.tk.MustQuery("SHOW CREATE TABLE load_data.add_index;").Check(testkit.Rows(
+		"add_index CREATE TABLE `add_index` (\n" +
+			"  `a` int(11) NOT NULL,\n" +
+			"  `b` int(11) DEFAULT NULL,\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  UNIQUE KEY `b` (`b`),\n" +
+			"  KEY `c_1` (`c`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	// duplicate key error, return add index sql
+	s.tk.MustExec("truncate table load_data.add_index")
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
+		Content:     []byte("8,77,777\n"),
+	})
+	err = s.tk.ExecToErr(sql)
+	require.EqualError(s.T(), err, "Failed to create index: [kv:1062]Duplicate entry '77' for key 'add_index.b'"+
+		", please execute the SQL manually, sql: ALTER TABLE `load_data`.`add_index` ADD UNIQUE KEY `b`(`b`), ADD KEY `c_1`(`c`)")
+	s.tk.MustQuery("SHOW CREATE TABLE load_data.add_index;").Check(testkit.Rows(
+		"add_index CREATE TABLE `add_index` (\n" +
+			"  `a` int(11) NOT NULL,\n" +
+			"  `b` int(11) DEFAULT NULL,\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	// checksum error, duplicate key error, return add index sql
+	s.tk.MustExec("drop table load_data.add_index")
+	s.tk.MustExec(`CREATE TABLE load_data.add_index (a INT, b INT, c INT, PRIMARY KEY (a), unique key b(b), key c_1(c));`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
+		Content:     []byte("7,77,777\n8,77,777\n"),
+	})
+	err = s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "checksum mismatched")
+	require.ErrorContains(s.T(), err, "Failed to create index: [kv:1062]Duplicate entry '77' for key 'add_index.b'"+
+		", please execute the SQL manually, sql: ALTER TABLE `load_data`.`add_index` ADD UNIQUE KEY `b`(`b`), ADD KEY `c_1`(`c`)")
+	s.tk.MustQuery("SHOW CREATE TABLE load_data.add_index;").Check(testkit.Rows(
+		"add_index CREATE TABLE `add_index` (\n" +
+			"  `a` int(11) NOT NULL,\n" +
+			"  `b` int(11) DEFAULT NULL,\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }

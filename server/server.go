@@ -135,9 +135,8 @@ type Server struct {
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
 
-	capability   uint32
-	dom          *domain.Domain
-	globalConnID util.GlobalConnID
+	capability uint32
+	dom        *domain.Domain
 
 	statusAddr     string
 	statusListener net.Listener
@@ -181,11 +180,6 @@ func (s *Server) SetDomain(dom *domain.Domain) {
 	s.dom = dom
 }
 
-// InitGlobalConnID initialize global connection id.
-func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
-	s.globalConnID = util.NewGlobalConnIDWithGetter(serverIDGetter, true)
-}
-
 // newConn creates a new *clientConn from a net.Conn.
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
@@ -210,7 +204,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
-		globalConnID:      util.NewGlobalConnID(0, true),
 		internalSessions:  make(map[interface{}]struct{}, 100),
 		health:            uatomic.NewBool(true),
 		inShutdownMode:    uatomic.NewBool(false),
@@ -940,6 +933,11 @@ func (s *Server) ServerID() uint64 {
 	return s.dom.ServerID()
 }
 
+// GetAutoAnalyzeProcID implements SessionManager interface.
+func (s *Server) GetAutoAnalyzeProcID() uint64 {
+	return s.dom.GetAutoAnalyzeProcID()
+}
+
 // StoreInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
 func (s *Server) StoreInternalSession(se interface{}) {
@@ -961,7 +959,7 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	s.sessionMapMutex.Lock()
 	defer s.sessionMapMutex.Unlock()
 	tsList := make([]uint64, 0, len(s.internalSessions))
-	analyzeProcID := util.GetAutoAnalyzeProcID(s.ServerID)
+	analyzeProcID := s.GetAutoAnalyzeProcID()
 	for se := range s.internalSessions {
 		if ts, processInfoID := session.GetStartTSFromSession(se); ts != 0 {
 			if processInfoID == analyzeProcID {
