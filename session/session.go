@@ -1903,12 +1903,10 @@ func (rs *execStmtResult) Close() error {
 	if err := rs.RecordSet.Close(); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
-	if err := resetCTEStorageMap(se); err != nil {
-		return finishStmt(context.Background(), se, err, rs.sql)
-	}
 	return finishStmt(context.Background(), se, nil, rs.sql)
 }
 
+<<<<<<< HEAD
 func resetCTEStorageMap(se *session) error {
 	tmp := se.GetSessionVars().StmtCtx.CTEStorageMap
 	if tmp == nil {
@@ -1936,6 +1934,8 @@ func resetCTEStorageMap(se *session) error {
 	return nil
 }
 
+=======
+>>>>>>> 437157e7209 (*: fix cte miss cleaning spilled-disk file (#44501))
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
 func (s *session) rollbackOnError(ctx context.Context) {
 	if !s.sessionVars.InTxn() {
