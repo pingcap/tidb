@@ -14,6 +14,7 @@
 package resourcegroup
 
 import (
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -37,11 +38,12 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController) *Run
 }
 
 func (rm *RunawayManager) DeriveChecker(resourceGroupName string, originalSql string, planDigest string) *RunawayChecker {
-	setting, err := rm.resourceGroupCtl.RunawaySettings(resourceGroupName)
-	if err != nil || setting == nil {
+	meta, err := rm.resourceGroupCtl.GetResourceGroup(resourceGroupName)
+	if err != nil || meta == nil || meta.RunawaySettings == nil {
 		return nil
 	}
-	return newRunawayChecker(rm, resourceGroupName, setting, originalSql, planDigest)
+
+	return newRunawayChecker(rm, resourceGroupName, meta.RunawaySettings, originalSql, planDigest)
 }
 
 func (rm *RunawayManager) MarkRunaway(resourceGroupName string, convict string, ttl time.Duration) {
@@ -84,16 +86,19 @@ func (r *RunawayChecker) BeforeCopRequest(candidateActions ...RunawayActionWorke
 		return nil
 	}
 	marked := r.marked.Load()
+	fmt.Println("############", time.Now(), r.deadline)
 	if !marked {
 		// execution time exceeds the threshold, mark the query as runaway
 		if r.deadline.Before(time.Now()) {
 			r.marked.Store(true)
 			r.markRunaway()
+			fmt.Println("r.marked.Store(true)")
 		} else {
 			return nil
 		}
 	}
 	for _, ac := range candidateActions {
+		fmt.Println(ac.Type())
 		if ac.Type() == r.setttings.Action {
 			return ac.Action()()
 		}

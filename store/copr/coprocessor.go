@@ -99,6 +99,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
 	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
+	fmt.Println("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
 	return it
 }
 
@@ -1134,6 +1135,11 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
 		}
+	})
+	failpoint.Inject("sleepCoprRequest", func(v failpoint.Value) {
+		fmt.Println("&&&&&&&&&&&&", time.Now(), v.(int))
+		time.Sleep(time.Millisecond * time.Duration(v.(int)))
+		fmt.Println("&&&&&&&&&&&&2", time.Now(), v.(int))
 	})
 
 	if task.paging {
