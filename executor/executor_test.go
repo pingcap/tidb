@@ -3527,8 +3527,8 @@ func TestUnreasonablyClose(t *testing.T) {
 
 		if hasCTE {
 			// Normally CTEStorages will be setup in ResetContextOfStmt.
-			// But the following case call e.Close() directly, it doesn't use session.ExecStmt(), which calls ResetContextOfStmt.
-			// So we need to setup CTEStorages manually.
+			// But the following case call e.Close() directly, instead of calling session.ExecStmt(), which calls ResetContextOfStmt.
+			// So need to setup CTEStorages manually.
 			tk.Session().GetSessionVars().StmtCtx.CTEStorageMap = map[int]*executor.CTEStorages{}
 		}
 		e := executorBuilder.Build(p)
