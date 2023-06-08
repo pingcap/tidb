@@ -3114,7 +3114,7 @@ func (p *mockProxyProtocolProxy) generateProxyProtocolHeaderV2(network, srcAddr,
 
 func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	cfg := newTestConfig()
-	cfg.Port = 4999
+	cfg.Port = 0
 	cfg.Status.ReportStatus = false
 	// Setup proxy protocol config
 	cfg.ProxyProtocol.Networks = "*"
