@@ -267,6 +267,7 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 	case isBadNullValue:
 		err = col.HandleBadNull(&value, e.SessionCtx.Vars.StmtCtx, 0)
 	default:
+		// copy from the following GetColDefaultValue function, when this is true it will use getColDefaultExprValue
 		if col.DefaultIsExpr {
 			// the expression rewriter requires a non-nil TxnCtx.
 			e.SessionCtx.Vars.TxnCtx = new(variable.TransactionContext)
