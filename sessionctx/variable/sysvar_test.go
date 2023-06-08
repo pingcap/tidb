@@ -336,6 +336,10 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), val)
 
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBExpensiveTxnTimeThreshold)
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveTxnTimeThreshold)), val)
+
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBMemoryUsageAlarmRatio)
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), val)

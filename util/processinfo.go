@@ -41,6 +41,8 @@ type OOMAlarmVariablesInfo struct {
 type ProcessInfo struct {
 	Time                  time.Time
 	ExpensiveLogTime      time.Time
+	ExpensiveTxnLogTime   time.Time
+	CurTxnCreateTime      time.Time
 	Plan                  interface{}
 	StmtCtx               *stmtctx.StatementContext
 	RefCountOfStmtCtx     *stmtctx.ReferenceCount
