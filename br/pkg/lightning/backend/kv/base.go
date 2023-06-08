@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -266,6 +267,13 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 	case isBadNullValue:
 		err = col.HandleBadNull(&value, e.SessionCtx.Vars.StmtCtx, 0)
 	default:
+		if col.DefaultIsExpr {
+			// the expression rewriter requires a non-nil TxnCtx.
+			e.SessionCtx.Vars.TxnCtx = new(variable.TransactionContext)
+			defer func() {
+				e.SessionCtx.Vars.TxnCtx = nil
+			}()
+		}
 		value, err = table.GetColDefaultValue(e.SessionCtx, col.ToInfo())
 	}
 	return value, err
