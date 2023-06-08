@@ -3559,7 +3559,7 @@ func createSessions(store kv.Storage, cnt int) ([]*session, error) {
 	return createSessionsImpl(store, cnt, createSession)
 }
 
-func createSessions4DistExecutuon(store kv.Storage, cnt int) ([]*session, error) {
+func createSessions4DistExecution(store kv.Storage, cnt int) ([]*session, error) {
 	domap.Delete(store)
 
 	return createSessionsImpl(store, cnt, createSession4DistExecution)
