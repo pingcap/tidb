@@ -17,7 +17,6 @@ package importer
 import (
 	"context"
 	"io"
-	"sync"
 	"time"
 
 	"github.com/docker/go-units"
@@ -31,6 +30,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -107,7 +107,7 @@ type chunkProcessor struct {
 	chunkInfo     *checkpoints.ChunkCheckpoint
 	logger        *zap.Logger
 	kvsCh         chan []deliveredRow
-	diskQuotaLock *sync.RWMutex
+	diskQuotaLock *syncutil.RWMutex
 	dataWriter    backend.EngineWriter
 	indexWriter   backend.EngineWriter
 

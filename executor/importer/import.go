@@ -69,7 +69,7 @@ const (
 	DataFormatParquet = "parquet"
 
 	// DefaultDiskQuota is the default disk quota for IMPORT INTO
-	DefaultDiskQuota = config.ByteSize(10 << 50) // 50GiB
+	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
 
 	// 0 means no limit
 	unlimitedWriteSpeed = config.ByteSize(0)
