@@ -1429,7 +1429,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) error {
 	cteErr := resetCTEStorageMap(a.Ctx)
 	if cteErr != nil {
-		logutil.BgLogger().Error("got error when reset cte storage", zap.Error(cteErr))
+		logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
 	}
 	if lastErr == nil {
 		// Only overwrite err when it's nil.
