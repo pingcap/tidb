@@ -97,11 +97,6 @@ type ReverseExpr interface {
 	ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
 }
 
-// TraverseDown implementing a pre-order traverse for expression tree.
-type TraverseDown interface {
-	Traverse(TraverseAction) Expression
-}
-
 // TraverseAction define the interface for action when traversing down an expression.
 type TraverseAction interface {
 	Transform(Expression) Expression
@@ -114,7 +109,8 @@ type Expression interface {
 	VecExpr
 	ReverseExpr
 	CollationInfo
-	TraverseDown
+
+	Traverse(TraverseAction) Expression
 
 	// Eval evaluates an expression through a row.
 	Eval(row chunk.Row) (types.Datum, error)
