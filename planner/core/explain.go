@@ -391,7 +391,11 @@ func (p *PhysicalExpand) explainInfoV2() string {
 		}
 	}
 	sb.WriteString("; schema: [")
-	sb.WriteString(p.schema.String())
+	colStrs := make([]string, 0, len(p.schema.Columns))
+	for _, col := range p.schema.Columns {
+		colStrs = append(colStrs, col.String())
+	}
+	sb.WriteString(strings.Join(colStrs, ","))
 	sb.WriteString("]")
 	return sb.String()
 }
