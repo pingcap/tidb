@@ -506,6 +506,11 @@ error = '''
 system requirement not met
 '''
 
+["Lightning:PreDedup:ErrDuplicateKey"]
+error = '''
+duplicate key detected on indexID %d of KeyID: %v
+'''
+
 ["Lightning:Restore:ErrAddIndexFailed"]
 error = '''
 add index on table %s failed
