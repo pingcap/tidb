@@ -76,7 +76,7 @@ func (s *mockGCSSuite) TestPreCheckCDCPiTRTasks() {
 		s.NoError(err2)
 	})
 	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://precheck-cdc-pitr/file.csv?endpoint=%s'`, gcsEndpoint)
-	err = s.tk.ExecToErr(sql)
+	err = s.tk.QueryToErr(sql)
 	log.Error("error", zap.Error(err))
 	s.ErrorIs(err, exeerrors.ErrLoadDataPreCheckFailed)
 	s.ErrorContains(err, "found PiTR log streaming task(s): [dummy-task],")
@@ -90,7 +90,7 @@ func (s *mockGCSSuite) TestPreCheckCDCPiTRTasks() {
 		_, err2 := client.GetClient().Delete(context.Background(), cdcKey)
 		s.NoError(err2)
 	})
-	err = s.tk.ExecToErr(sql)
+	err = s.tk.QueryToErr(sql)
 	s.ErrorIs(err, exeerrors.ErrLoadDataPreCheckFailed)
 	s.ErrorContains(err, "found CDC changefeed(s): cluster/namespace: cluster-123/test changefeed(s): [feed-test]")
 }
