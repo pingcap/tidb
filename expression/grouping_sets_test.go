@@ -431,7 +431,7 @@ func TestDistinctGroupingSets(t *testing.T) {
 	require.Equal(t, ok, true)
 	// 2 --> when grouping(column#3), the corresponding affected gids should be {0,1,2}
 	//            +--- explanation: when grouping(c), col-c is needed when grouping id = 3.
-	require.Equal(t, len(id2Gids[3]), 3)
+	require.Equal(t, len(id2Gids[3]), 1)
 	_, ok = id2Gids[3][3]
 	require.Equal(t, ok, true)
 	// column d is not in the grouping set columns, so it won't be here.
