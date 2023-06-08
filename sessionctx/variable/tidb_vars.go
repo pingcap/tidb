@@ -398,10 +398,9 @@ const (
 	// TiDBMaxBytesBeforeTiFlashExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
 	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
 
-	// TiDBEnablelTiFlashPipelineMode means if we should enable tiflash pipeline model to execute query or not.
-	// Default value is -1, means that whether to execute the query with pipeline model to is determined by the configuration of the tiflash node.
-	// Value set to 1 means query will be executed with pipeline model.
-	// Value set to 0 means query will not be executed with pipeline model.
+	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
+	// Default value is `false`, means never use pipeline model in tiflash.
+	// Value set to `true` means try to execute query with pipeline model in tiflash.
 	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
 
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
@@ -1135,7 +1134,7 @@ const (
 	DefTiFlashMaxBytesBeforeExternalJoin           = -1
 	DefTiFlashMaxBytesBeforeExternalGroupBy        = -1
 	DefTiFlashMaxBytesBeforeExternalSort           = -1
-	DefTiDBEnableTiFlashPipelineMode               = -1
+	DefTiDBEnableTiFlashPipelineMode               = false
 	DefTiDBMPPStoreFailTTL                         = "60s"
 	DefTiDBTxnMode                                 = ""
 	DefTiDBRowFormatV1                             = 1
