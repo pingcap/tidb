@@ -94,6 +94,6 @@ for BACKEND in 'local' 'tidb'; do
     check_contains 'b: CDSFDS'
 
     run_sql 'ADMIN CHECK TABLE gencol.uuid'
-    run_sql 'SELECT /*+ use_index(gencol.uuid, c) */ COUNT(b) FROM gencol.uuid'
+    run_sql 'SELECT /*+ use_index(gencol.uuid, c) */ COUNT(DISTINCT(b)) FROM gencol.uuid'
     check_contains '4'
 done
