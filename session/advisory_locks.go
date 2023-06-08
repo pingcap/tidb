@@ -92,6 +92,7 @@ func (a *advisoryLock) GetLock(lockName string, timeout int64) error {
 
 // IsUsedLock checks if a lockName is already in use
 func (a *advisoryLock) IsUsedLock(lockName string) error {
+	defer a.Close() // Rollback
 	a.ctx = kv.WithInternalSourceType(a.ctx, kv.InternalTxnOthers)
 	_, err := a.session.ExecuteInternal(a.ctx, "SET innodb_lock_wait_timeout = 1")
 	if err != nil {
@@ -103,9 +104,7 @@ func (a *advisoryLock) IsUsedLock(lockName string) error {
 	}
 	_, err = a.session.ExecuteInternal(a.ctx, "INSERT INTO mysql.advisory_locks (lock_name) VALUES (%?)", lockName)
 	if err != nil {
-		a.Close()
 		return err
 	}
-	a.Close() // Rollback
 	return nil
 }
