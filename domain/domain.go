@@ -1406,6 +1406,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	}, "distTaskFrameworkLoop")
 	return nil
 }
+
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
 	schedulerManager.Start()
 	logutil.BgLogger().Info("dist task scheduler started")

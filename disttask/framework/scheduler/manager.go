@@ -115,7 +115,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 
 // Start starts the Manager.
 func (m *Manager) Start() {
-	logutil.Logger(m.logCtx).Debug("Manager start")
+	logutil.Logger(m.logCtx).Debug("manager start")
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
