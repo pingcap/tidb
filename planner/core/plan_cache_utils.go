@@ -337,10 +337,6 @@ type PlanCacheValue struct {
 	matchOpts *utilpc.PlanCacheMatchOpts
 }
 
-func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
-	return checkTypesCompatibility4PC(v.matchOpts.ParamTypes, txtVarTps)
-}
-
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
 // 100 KiB is approximate consumption of a plan from our internal tests
 const unKnownMemoryUsage = int64(50 * size.KB)

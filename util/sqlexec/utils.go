@@ -123,7 +123,7 @@ func escapeSQL(sql string, args ...interface{}) ([]byte, error) {
 				return nil, errors.Errorf("expect a string identifier, got %v", arg)
 			}
 			buf = append(buf, '`')
-			buf = append(buf, strings.Replace(v, "`", "``", -1)...)
+			buf = append(buf, strings.ReplaceAll(v, "`", "``")...)
 			buf = append(buf, '`')
 			i++ // skip specifier
 		case '?':
