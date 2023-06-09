@@ -1184,7 +1184,7 @@ func (*HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, concu
 		totalTaskNum += w.TaskNum
 	}
 	buf.WriteString(prefix)
-	fmt.Fprintf(buf, "concurrency:%d, wall_time:%s, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s",
+	fmt.Fprintf(buf, "_worker:{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s",
 		time.Duration(wallTime), concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime))
 	n := len(workerStats)
 	if n > 0 {
