@@ -53,10 +53,6 @@ go_test(
     embed = [":kv"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-=======
-    shard_count = 16,
->>>>>>> 33236ef1e43 (lightning: fix uuid panic when expression index enabled (#44516))
     deps = [
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/log",
