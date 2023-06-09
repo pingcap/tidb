@@ -175,6 +175,13 @@ func Row2KvPairs(row encode.Row) []common.KvPair {
 	return row.(*Pairs).Pairs
 }
 
+// ClearRow recycles the memory used by the row.
+func ClearRow(row encode.Row) {
+	if pairs, ok := row.(*Pairs); ok {
+		pairs.Clear()
+	}
+}
+
 // Encode a row of data into KV pairs.
 //
 // See comments in `(*TableRestore).initializeColumns` for the meaning of the
