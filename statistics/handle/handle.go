@@ -467,7 +467,9 @@ func (h *Handle) Clear() {
 	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
 	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
 	h.mu.ctx.GetSessionVars().SetProjectionConcurrency(0)
+	h.listHead.Lock()
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
+	h.listHead.Unlock()
 	h.globalMap.Lock()
 	h.globalMap.data = make(tableDeltaMap)
 	h.globalMap.Unlock()
