@@ -1,7 +1,9 @@
 #!/bin/bash
 
+CWD=$(dirname $(readlink -f "$0"))
+
 # check whether the go is patched, the patched-go can build this file, otherwise not
-go build check.go 2> /dev/null;
+go build $CWD/check.go 2> /dev/null;
 
 if [ $? -eq 0 ] && [ $# -eq 0 ]  ; then
     echo "go is patched already"
@@ -9,7 +11,6 @@ if [ $? -eq 0 ] && [ $# -eq 0 ]  ; then
     exit 0; # patched already
 fi
 
-CWD=$(dirname $(readlink -f "$0"))
 VERSION=$(go version | grep -o 'go[1-9]\.[0-9]*\.[0-9]*')
 # VERSION=$(go env GOVERSION)
 
