@@ -286,7 +286,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 			offset := processor.GetHintOffset(tblHint.QBName, curOffset)
 			if offset < 0 || !processor.checkTableQBName(tblHint.Tables) {
 				hintStr := RestoreTableOptimizerHint(tblHint)
-				return nil, nil, nil, fmt.Errorf("Unknown query block name in hint %s", hintStr)
+				return nil, nil, nil, fmt.Errorf("unknown query block name in hint %s", hintStr)
 			}
 			tblHint.QBName, err = GenerateQBName(topNodeType, offset)
 			if err != nil {
@@ -377,7 +377,7 @@ func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHin
 		}
 		if qbName != "" {
 			if p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("There are more than two query names in same query block, using the first one %s", qbName))
+				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("there are more than two query names in same query block, using the first one %s", qbName))
 			}
 		} else {
 			qbName = hint.QBName.L
@@ -391,7 +391,7 @@ func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHin
 	}
 	if _, ok := p.QbNameMap[qbName]; ok {
 		if p.Ctx != nil {
-			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Duplicate query block name %s, only the first one is effective", qbName))
+			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("duplicate query block name %s, only the first one is effective", qbName))
 		}
 	} else {
 		p.QbNameMap[qbName] = offset
@@ -420,7 +420,7 @@ func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint, of
 		}
 		if _, ok := p.QbNameMap4View[qbName]; ok {
 			if p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Duplicate query block name %s for view's query block hint, only the first one is effective", qbName))
+				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("duplicate query block name %s for view's query block hint, only the first one is effective", qbName))
 			}
 		} else {
 			if offset != 1 {
@@ -457,7 +457,7 @@ func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint, of
 					}
 				}
 				if !ok {
-					p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Only one query block name is allowed in a view hint, otherwise the hint will be invalid"))
+					p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("only one query block name is allowed in a view hint, otherwise the hint will be invalid"))
 					usedHints[i] = true
 				}
 			}
@@ -486,7 +486,7 @@ func (p *BlockHintProcessor) HandleUnusedViewHints() {
 		for qbName := range p.QbNameMap4View {
 			_, ok := p.QbNameUsed4View[qbName]
 			if !ok && p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("The qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
+				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("the qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
 			}
 		}
 	}
@@ -598,7 +598,7 @@ func (p *BlockHintProcessor) GetCurrentStmtHints(hints []*ast.TableOptimizerHint
 		offset := p.GetHintOffset(hint.QBName, currentOffset)
 		if offset < 0 || !p.checkTableQBName(hint.Tables) {
 			hintStr := RestoreTableOptimizerHint(hint)
-			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Hint %s is ignored due to unknown query block name", hintStr))
+			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("hint %s is ignored due to unknown query block name", hintStr))
 			continue
 		}
 		p.QbHints[offset] = append(p.QbHints[offset], hint)
@@ -615,7 +615,7 @@ func GenerateQBName(nodeType NodeType, blockOffset int) (model.CIStr, error) {
 		if nodeType == TypeUpdate {
 			return model.NewCIStr(defaultUpdateBlockName), nil
 		}
-		return model.NewCIStr(""), fmt.Errorf("Unexpected NodeType %d when block offset is 0", nodeType)
+		return model.NewCIStr(""), fmt.Errorf("unexpected NodeType %d when block offset is 0", nodeType)
 	}
 	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset)), nil
 }
