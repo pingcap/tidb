@@ -69,13 +69,13 @@ func loadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 		return res, err
 	}
 	if len(res.input) != len(res.output) {
-		return res, fmt.Errorf("Number of test input cases %d does not match test output cases %d", len(res.input), len(res.output))
+		return res, fmt.Errorf("number of test input cases %d does not match test output cases %d", len(res.input), len(res.output))
 	}
 	res.funcMap = make(map[string]int, len(res.input))
 	for i, test := range res.input {
 		res.funcMap[test.Name] = i
 		if test.Name != res.output[i].Name {
-			return res, fmt.Errorf("Input name of the %d-case %s does not match output %s", i, test.Name, res.output[i].Name)
+			return res, fmt.Errorf("input name of the %d-case %s does not match output %s", i, test.Name, res.output[i].Name)
 		}
 	}
 	return res, nil
