@@ -988,6 +988,7 @@ func TestQuickBinding(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`drop session binding for %s`, firstSQL))
 	}
 
+	// test with DML and sub-query
 	for _, tc := range testCases {
 		for _, temp := range tc.dmlAndSubqueryTemplates {
 			temp = fmt.Sprintf(temp, tc.template)
@@ -1008,6 +1009,8 @@ func TestQuickBinding(t *testing.T) {
 				// has the same plan-digest
 				tk.MustQuery(fmt.Sprintf(`select plan_digest from information_schema.statements_summary where digest='%v'`, sqlDigest)).Check(testkit.Rows(planDigest))
 			}
+
+			tk.MustExec(fmt.Sprintf(`drop session binding for %s`, firstSQL))
 		}
 	}
 }
