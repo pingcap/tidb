@@ -1546,7 +1546,7 @@ func (e *joinRuntimeStats) String() string {
 	buf.WriteString(e.RuntimeStatsWithConcurrencyInfo.String())
 	if e.applyCache {
 		if e.cache.useCache {
-			buf.WriteString(fmt.Sprintf(", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100))
+			fmt.Fprintf(buf, ", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100)
 		} else {
 			buf.WriteString(", cache:OFF")
 		}

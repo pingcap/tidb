@@ -428,7 +428,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		var sb strings.Builder
 		if selected.IsTablePath() {
 			// TODO: primary key / handle / real name?
-			sb.WriteString(fmt.Sprintf("handle of %s is selected since the path only has point ranges", tableName))
+			fmt.Fprintf(&sb, "handle of %s is selected since the path only has point ranges", tableName)
 		} else {
 			if selected.Index.Unique {
 				sb.WriteString("unique ")

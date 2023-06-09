@@ -613,12 +613,12 @@ func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, ag
 	}
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v pushed down across %v_%v, ", oldAgg.TP(), oldAgg.ID(), join.TP(), join.ID()))
-		buffer.WriteString(fmt.Sprintf("and %v_%v %v path becomes %v_%v", join.TP(), join.ID(), func() string {
+		fmt.Fprintf(buffer, "and %v_%v %v path becomes %v_%v", join.TP(), join.ID(), func() string {
 			if childIdx == 0 {
 				return "left"
 			}
 			return "right"
-		}(), newAgg.TP(), newAgg.ID()))
+		}(), newAgg.TP(), newAgg.ID())
 		return buffer.String()
 	}
 	opt.appendStepToCurrent(join.ID(), join.TP(), reason, action)
@@ -651,7 +651,7 @@ func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalA
 			}
 			buffer.WriteString(aggFunc.String())
 		}
-		buffer.WriteString(fmt.Sprintf("] are decomposable with %v_%v", union.TP(), union.ID()))
+		fmt.Fprintf(buffer, "] are decomposable with %v_%v", union.TP(), union.ID())
 		return buffer.String()
 	}
 	action := func() string {
@@ -660,7 +660,7 @@ func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalA
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(fmt.Sprintf("%v_%v", child.TP(), child.ID()))
+			fmt.Fprintf(buffer, "%v_%v", child.TP(), child.ID())
 		}
 		buffer.WriteString("]")
 		return buffer.String()

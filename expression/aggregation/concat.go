@@ -41,7 +41,7 @@ func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datu
 	if val.Kind() == types.KindBytes {
 		evalCtx.Buffer.Write(val.GetBytes())
 	} else {
-		evalCtx.Buffer.WriteString(fmt.Sprintf("%v", val.GetValue()))
+		fmt.Fprintf(evalCtx.Buffer, "%v", val.GetValue())
 	}
 }
 

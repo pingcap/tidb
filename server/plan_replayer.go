@@ -191,7 +191,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 	// we can't find dump file in any tidb-server, return 404 directly
 	logutil.BgLogger().Info("can't find dump file in any remote server", zap.String("filename", name))
 	w.WriteHeader(http.StatusNotFound)
-	_, err = w.Write([]byte(fmt.Sprintf("can't find dump file %s in any remote server", name)))
+	_, err = fmt.Fprintf(w, "can't find dump file %s in any remote server", name)
 	writeError(w, err)
 }
 

@@ -3756,7 +3756,7 @@ func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 			fmt.Fprintf(buf, " VALUES IN (%s)", values.String())
 		}
 		if len(def.Comment) > 0 {
-			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(def.Comment)))
+			fmt.Fprintf(buf, " COMMENT '%s'", format.OutputFormat(def.Comment))
 		}
 		if def.PlacementPolicyRef != nil {
 			// add placement ref info here

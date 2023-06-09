@@ -501,7 +501,7 @@ func appendModifyAggTraceStep(outerPlan LogicalPlan, p *LogicalApply, agg *Logic
 			}
 			buffer.WriteString(f.String())
 		}
-		buffer.WriteString(fmt.Sprintf("], and %v_%v's conditions added [", p.TP(), p.ID()))
+		fmt.Fprintf(buffer, "], and %v_%v's conditions added [", p.TP(), p.ID())
 		for i, cond := range eqCondWithCorCol {
 			if i > 0 {
 				buffer.WriteString(",")
@@ -519,8 +519,8 @@ func appendModifyAggTraceStep(outerPlan LogicalPlan, p *LogicalApply, agg *Logic
 			}
 			buffer.WriteString(cond.String())
 		}
-		buffer.WriteString(fmt.Sprintf("] are correlated to %v_%v and pulled up as %v_%v's join key",
-			outerPlan.TP(), outerPlan.ID(), p.TP(), p.ID()))
+		fmt.Fprintf(buffer, "] are correlated to %v_%v and pulled up as %v_%v's join key",
+			outerPlan.TP(), outerPlan.ID(), p.TP(), p.ID())
 		return buffer.String()
 	}
 	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)

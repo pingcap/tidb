@@ -114,11 +114,11 @@ func (e *ShowBaseExtractor) explainInfo() string {
 
 	r := new(bytes.Buffer)
 	if len(e.field) > 0 {
-		r.WriteString(fmt.Sprintf("%s:[%s], ", key, e.field))
+		fmt.Fprintf(r, "%s:[%s], ", key, e.field)
 	}
 
 	if len(e.fieldPattern) > 0 {
-		r.WriteString(fmt.Sprintf("%s_pattern:[%s], ", key, e.fieldPattern))
+		fmt.Fprintf(r, "%s_pattern:[%s], ", key, e.fieldPattern)
 	}
 
 	// remove the last ", " in the message info

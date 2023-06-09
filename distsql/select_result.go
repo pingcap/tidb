@@ -738,7 +738,7 @@ func (s *selectResultRuntimeStats) String() string {
 	if len(s.copRespTime) > 0 {
 		size := len(s.copRespTime)
 		if size == 1 {
-			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(s.copRespTime[0]), s.procKeys[0]))
+			fmt.Fprintf(buf, "cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(s.copRespTime[0]), s.procKeys[0])
 		} else {
 			slices.Sort(s.copRespTime)
 			vMax, vMin := s.copRespTime[size-1], s.copRespTime[0]
@@ -752,9 +752,9 @@ func (s *selectResultRuntimeStats) String() string {
 			slices.Sort(s.procKeys)
 			keyMax := s.procKeys[size-1]
 			keyP95 := s.procKeys[size*19/20]
-			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,
+			fmt.Fprintf(buf, "cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,
 				execdetails.FormatDuration(vMax), execdetails.FormatDuration(vMin),
-				execdetails.FormatDuration(vAvg), execdetails.FormatDuration(vP95)))
+				execdetails.FormatDuration(vAvg), execdetails.FormatDuration(vP95))
 			if keyMax > 0 {
 				buf.WriteString(", max_proc_keys: ")
 				buf.WriteString(strconv.FormatInt(keyMax, 10))
@@ -780,8 +780,8 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(execdetails.FormatDuration(time.Duration(copRPC.Consume)))
 		}
 		if config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB > 0 {
-			buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
-				strconv.FormatFloat(s.calcCacheHit(), 'f', 2, 64)))
+			fmt.Fprintf(buf, ", copr_cache_hit_ratio: %v",
+				strconv.FormatFloat(s.calcCacheHit(), 'f', 2, 64))
 		} else {
 			buf.WriteString(", copr_cache: disabled")
 		}
@@ -822,7 +822,7 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(", ")
 			}
 			idx++
-			buf.WriteString(fmt.Sprintf("%s: %s", k, execdetails.FormatDuration(d)))
+			fmt.Fprintf(buf, "%s: %s", k, execdetails.FormatDuration(d))
 		}
 		buf.WriteString("}")
 	}

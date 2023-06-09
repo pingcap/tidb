@@ -1184,13 +1184,13 @@ func (*HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, concu
 		totalTaskNum += w.TaskNum
 	}
 	buf.WriteString(prefix)
-	buf.WriteString(fmt.Sprintf("_worker:{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s",
-		time.Duration(wallTime), concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime)))
+	fmt.Fprintf(buf, "_worker:{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s",
+		time.Duration(wallTime), concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime))
 	n := len(workerStats)
 	if n > 0 {
 		slices.SortFunc(workerStats, func(i, j *AggWorkerStat) bool { return i.WorkerTime < j.WorkerTime })
-		buf.WriteString(fmt.Sprintf(", max:%v, p95:%v",
-			time.Duration(workerStats[n-1].WorkerTime), time.Duration(workerStats[n*19/20].WorkerTime)))
+		fmt.Fprintf(buf, ", max:%v, p95:%v",
+			time.Duration(workerStats[n-1].WorkerTime), time.Duration(workerStats[n*19/20].WorkerTime))
 	}
 	buf.WriteString("}")
 }

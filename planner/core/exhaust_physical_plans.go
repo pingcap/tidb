@@ -1004,7 +1004,7 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		} else {
 			isFirst = false
 		}
-		buffer.WriteString(fmt.Sprintf("eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
+		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff])
 	}
 	for _, access := range ijHelper.chosenAccess {
 		if !isFirst {
@@ -1012,7 +1012,7 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		} else {
 			isFirst = false
 		}
-		buffer.WriteString(fmt.Sprintf("%v", access))
+		fmt.Fprintf(buffer, "%v", access)
 	}
 	buffer.WriteString("]")
 	return buffer.String()
@@ -1407,7 +1407,7 @@ func (cwc *ColWithCmpFuncManager) resolveIndices(schema *expression.Schema) (err
 func (cwc *ColWithCmpFuncManager) String() string {
 	buffer := bytes.NewBufferString("")
 	for i := range cwc.OpType {
-		buffer.WriteString(fmt.Sprintf("%v(%v, %v)", cwc.OpType[i], cwc.TargetCol, cwc.opArg[i]))
+		fmt.Fprintf(buffer, "%v(%v, %v)", cwc.OpType[i], cwc.TargetCol, cwc.opArg[i])
 		if i < len(cwc.OpType)-1 {
 			buffer.WriteString(" ")
 		}
