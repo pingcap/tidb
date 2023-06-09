@@ -214,6 +214,9 @@ func (sw *sstWriter) Close() (retErr error) {
 		largest := writerMeta.Largest(pebble.DefaultComparer.Compare)
 		meta.startKey = slices.Clone(smallest.UserKey)
 		meta.lastKey = slices.Clone(largest.UserKey)
+		// Make endKey is exclusive. To avoid unnecessary overlap,
+		// we append 0 to make endKey is the smallest key which is
+		// greater than the last key.
 		meta.endKey = append(meta.lastKey, 0)
 		prop, ok := writerMeta.Properties.UserProperties[kvStatsPropKey]
 		if ok {
@@ -880,6 +883,9 @@ func (d *DiskSorter) readFileMetadata(fileNum int) (*fileMetadata, error) {
 	lastKey, _ := iter.Last()
 	if lastKey != nil {
 		meta.lastKey = slices.Clone(lastKey.UserKey)
+		// Make endKey is exclusive. To avoid unnecessary overlap,
+		// we append 0 to make endKey is the smallest key which is
+		// greater than the last key.
 		meta.endKey = append(meta.lastKey, 0)
 	} else if err := iter.Error(); err != nil {
 		return nil, errors.Trace(err)
