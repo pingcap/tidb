@@ -13,6 +13,7 @@ go_library(
         "//disttask/framework/proto",
         "//disttask/framework/storage",
         "//domain/infosync",
+        "//metrics",
         "//resourcemanager/pool/spool",
         "//resourcemanager/util",
         "//sessionctx/variable",

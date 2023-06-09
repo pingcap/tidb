@@ -13,6 +13,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//disttask/framework/proto",
+        "//metrics",
         "//resourcemanager/pool/spool",
         "//resourcemanager/util",
         "//util",
