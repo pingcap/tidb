@@ -353,7 +353,7 @@ func BuildStringFromLabels(labels map[string]string) string {
 	r := new(bytes.Buffer)
 	// visit labels by sorted key in order to make sure that result should be consistency
 	for _, key := range s {
-		r.WriteString(fmt.Sprintf("%s=%s,", key, labels[key]))
+		fmt.Fprintf(r, "%s=%s,", key, labels[key])
 	}
 	returned := r.String()
 	return returned[:len(returned)-1]
