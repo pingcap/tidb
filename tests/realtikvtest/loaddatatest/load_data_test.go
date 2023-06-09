@@ -1100,3 +1100,37 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 }
+
+func (s *mockGCSSuite) TestDiskQuota() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_disk_quota;")
+	s.tk.MustExec("CREATE DATABASE load_test_disk_quota;")
+	s.tk.MustExec(`CREATE TABLE load_test_disk_quota.t(a int, b int)`)
+
+	lineCount := 10000
+	data := make([]byte, 0, 1<<13)
+	for i := 0; i < lineCount; i++ {
+		data = append(data, []byte(fmt.Sprintf("%d,%d\n", i, i))...)
+	}
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load",
+			Name:       "diskquota-test.csv",
+		},
+		Content: data,
+	})
+
+	backup := importer.CheckDiskQuotaInterval
+	importer.CheckDiskQuotaInterval = time.Millisecond
+	defer func() {
+		importer.CheckDiskQuotaInterval = backup
+	}()
+
+	// the encoded KV size is about 347440 bytes
+	sql := fmt.Sprintf(`IMPORT INTO load_test_disk_quota.t FROM 'gs://test-load/diskquota-test.csv?endpoint=%s'
+		with disk_quota='1b'`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT count(1) FROM load_test_disk_quota.t;").Check(testkit.Rows(
+		strconv.Itoa(lineCount),
+	))
+}
