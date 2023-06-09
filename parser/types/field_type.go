@@ -41,14 +41,6 @@ var (
 
 // FieldType records field type information.
 type FieldType struct {
-	// tp is type of the field
-	tp byte
-	// flag represent NotNull, Unsigned, PriKey flags etc.
-	flag uint
-	// flen represent size of bytes of the field
-	flen int
-	// decimal represent decimal length of the field
-	decimal int
 	// charset represent character set
 	charset string
 	// collate represent collate rules of the charset
@@ -56,7 +48,15 @@ type FieldType struct {
 	// elems is the element list for enum and set type.
 	elems            []string
 	elemsIsBinaryLit []bool
-	array            bool
+	// flag represent NotNull, Unsigned, PriKey flags etc.
+	flag uint
+	// flen represent size of bytes of the field
+	flen int
+	// decimal represent decimal length of the field
+	decimal int
+	// tp is type of the field
+	tp    byte
+	array bool
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
@@ -625,14 +625,14 @@ func HasCharset(ft *FieldType) bool {
 
 // for json
 type jsonFieldType struct {
-	Tp               byte
-	Flag             uint
-	Flen             int
-	Decimal          int
 	Charset          string
 	Collate          string
 	Elems            []string
 	ElemsIsBinaryLit []bool
+	Flag             uint
+	Flen             int
+	Decimal          int
+	Tp               byte
 	Array            bool
 }
 
