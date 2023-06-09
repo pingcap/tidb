@@ -826,6 +826,8 @@ func (d *ddl) DisableDDL() error {
 
 // GetNextDDLSeqNum return the next DDL seq num.
 func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
+	d.ddlSeqNumMu.Lock()
+	defer d.ddlSeqNumMu.Unlock()
 	var count uint64
 	ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
