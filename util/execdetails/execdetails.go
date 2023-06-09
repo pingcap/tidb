@@ -456,7 +456,7 @@ func (crs *CopRuntimeStats) String() string {
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
-		buf.WriteString(fmt.Sprintf("%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(procTimes[0]), totalLoops))
+		fmt.Fprintf(buf, "%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(procTimes[0]), totalLoops)
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
 			if !totalTiFlashScanContext.Empty() {
@@ -468,11 +468,11 @@ func (crs *CopRuntimeStats) String() string {
 	} else {
 		n := len(procTimes)
 		slices.Sort(procTimes)
-		buf.WriteString(fmt.Sprintf("%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
+		fmt.Fprintf(buf, "%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
 			crs.storeType, FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]), FormatDuration(avgTime),
-			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalLoops, totalTasks))
+			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalLoops, totalTasks)
 		if isTiFlashCop {
-			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
+			fmt.Fprintf(buf, ", threads:%d}", totalThreads)
 			if !totalTiFlashScanContext.Empty() {
 				buf.WriteString(", " + totalTiFlashScanContext.String())
 			}
@@ -585,7 +585,7 @@ func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 
 // Empty check whether TiFlashScanContext is Empty, if scan no pack and skip no pack, we regard it as empty
 func (context *TiFlashScanContext) Empty() bool {
-	res := (context.totalDmfileScannedPacks == 0 && context.totalDmfileSkippedPacks == 0)
+	res := context.totalDmfileScannedPacks == 0 && context.totalDmfileSkippedPacks == 0
 	return res
 }
 
