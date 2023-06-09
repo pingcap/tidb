@@ -458,7 +458,7 @@ func (crs *CopRuntimeStats) String() string {
 	if totalTasks == 1 {
 		fmt.Fprintf(buf, "%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(procTimes[0]), totalLoops)
 		if isTiFlashCop {
-			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
+			fmt.Fprintf(buf, ", threads:%d}", totalThreads)
 			if !totalTiFlashScanContext.Empty() {
 				buf.WriteString(", " + totalTiFlashScanContext.String())
 			}
