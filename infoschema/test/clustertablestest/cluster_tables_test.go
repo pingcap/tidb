@@ -892,6 +892,7 @@ func TestQuickBinding(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec(`create table t1 (pk int, a int, b int, c int, primary key(pk), key k_a(a), key k_bc(b, c))`)
+	tk.MustExec(`create table t2 (a int, b int, c int, key k_a(a), key k_bc(b, c))`) // no primary key
 
 	type testCase struct {
 		template                string
@@ -904,12 +905,12 @@ func TestQuickBinding(t *testing.T) {
 		// TODO: more templates
 	}
 	testCases := []testCase{
-		{`select /*+ use_index(t1, k_a) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` `k_a`)", defaultDMLAndSubqueryTemplates},
-		{`select /*+ use_index(t1, k_a) */ * from t1 where a<?`, "use_index(@`sel_1` `test`.`t1` `k_a`)", defaultDMLAndSubqueryTemplates},
-		{`select /*+ use_index(t1, k_a) */ * from t1 where a in (?, ?, ?) and b<?`, "use_index(@`sel_1` `test`.`t1` `k_a`)", defaultDMLAndSubqueryTemplates},
-		{`select /*+ use_index(t1, k_bc) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` `k_bc`)", defaultDMLAndSubqueryTemplates},
-		{`select /*+ use_index(t1, k_bc) */ * from t1 where a<?`, "use_index(@`sel_1` `test`.`t1` `k_bc`)", defaultDMLAndSubqueryTemplates},
-		{`select /*+ use_index(t1, k_bc) */ * from t1 where a in (?, ?, ?) and b<?`, "use_index(@`sel_1` `test`.`t1` `k_bc`)", defaultDMLAndSubqueryTemplates},
+		// access path selection with use_index
+		{`select /*+ use_index(t1, k_a) */ * from t1 where b=?`, "use_index(@`sel_1` `test`.`t1` `k_a`)", defaultDMLAndSubqueryTemplates},
+		{`select /*+ use_index(t1, k_bc) */ * from t1 where a=?`, "use_index(@`sel_1` `test`.`t1` `k_bc`)", defaultDMLAndSubqueryTemplates},
+		{`select /*+ use_index(t1, primary) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` )", defaultDMLAndSubqueryTemplates},
+		{`select /*+ use_index(t1) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` )", defaultDMLAndSubqueryTemplates},
+		{`select /*+ use_index(t2) */ * from t2 where a=? and b=?`, "use_index(@`sel_1` `test`.`t2` )", nil},
 	}
 
 	removeHint := func(sql string) string {
