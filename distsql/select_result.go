@@ -780,8 +780,8 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(execdetails.FormatDuration(time.Duration(copRPC.Consume)))
 		}
 		if config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB > 0 {
-			buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
-				strconv.FormatFloat(s.calcCacheHit(), 'f', 2, 64)))
+			fmt.Fprintf(buf, ", copr_cache_hit_ratio: %v",
+				strconv.FormatFloat(s.calcCacheHit(), 'f', 2, 64))
 		} else {
 			buf.WriteString(", copr_cache: disabled")
 		}
@@ -822,7 +822,7 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(", ")
 			}
 			idx++
-			buf.WriteString(fmt.Sprintf("%s: %s", k, execdetails.FormatDuration(d)))
+			fmt.Fprintf(buf, "%s: %s", k, execdetails.FormatDuration(d))
 		}
 		buf.WriteString("}")
 	}
