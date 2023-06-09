@@ -996,14 +996,14 @@ func TestQuickBinding(t *testing.T) {
 		for _, temp := range tc.dmlAndSubqueryTemplates {
 			temp = fmt.Sprintf(temp, tc.template)
 			stmtsummary.StmtSummaryByDigestMap.Clear()
-			firstSQL := fillValues(tc.template)
+			firstSQL := fillValues(temp)
 			tk.MustExec(firstSQL)
 			result := tk.MustQuery(`select plan_hint, digest, plan_digest from information_schema.statements_summary`).Rows()
 			_, sqlDigest, planDigest := result[0][0].(string), result[0][1].(string), result[0][2].(string)
 			tk.MustExec(fmt.Sprintf(`create session binding from history using plan digest '%v'`, planDigest))
 
 			// normal test
-			sqlWithoutHint := removeHint(tc.template)
+			sqlWithoutHint := removeHint(temp)
 			for i := 0; i < 5; i++ {
 				stmtsummary.StmtSummaryByDigestMap.Clear()
 				testSQL := fillValues(sqlWithoutHint)
