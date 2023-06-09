@@ -755,6 +755,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
 	d.ownerManager.SetBeOwnerHook(func() {
 		var err error
+		d.ddlSeqNumMu.Lock()
+		defer d.ddlSeqNumMu.Unlock()
 		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
 		if err != nil {
 			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
@@ -826,8 +828,6 @@ func (d *ddl) DisableDDL() error {
 
 // GetNextDDLSeqNum return the next DDL seq num.
 func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
-	d.ddlSeqNumMu.Lock()
-	defer d.ddlSeqNumMu.Unlock()
 	var count uint64
 	ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
