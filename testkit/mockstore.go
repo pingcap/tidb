@@ -102,7 +102,7 @@ func (d *DistExecutionTestContext) SetOwner(idx int) error {
 func (d *DistExecutionTestContext) AddServer() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	dom := bootstrap4DistExecution(d.t, d.Store, 500*time.Microsecond)
+	dom := bootstrap4DistExecution(d.t, d.Store, 500*time.Millisecond)
 	dom.InfoSyncer().SetSessionManager(d.domains[0].InfoSyncer().GetSessionManager())
 	dom.DDL().OwnerManager().RetireOwner()
 	d.domains = append(d.domains, dom)
