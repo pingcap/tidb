@@ -919,6 +919,18 @@ func TestQuickBinding(t *testing.T) {
 		{`select /*+ stream_agg(), use_index(t1, primary) */ count(*) from t1 where a<?`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
 		{`select /*+ stream_agg(), use_index(t1, primary) */ count(*), b from t1 where a<? group by b`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
 		{`select a+b+? from (select /*+ stream_agg() */ count(*) as a from t1) tt1, (select /*+ hash_agg() */ count(*) as b from t1) tt2`, "stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t1` `k_a`), hash_agg(@`sel_3`), use_index(@`sel_3` `test`.`t1` `k_a`)", nil},
+
+		// 2-way hash joins
+		{`select /*+ hash_join(t1, t2), use_index(t1), use_index(t2) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
+		// not support, fix them later on
+		//{`select /*+ hash_join_build(t1), use_index(t1), use_index(t2) */ * from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join_build(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
+		//{`select /*+ hash_join_build(t2), use_index(t1), use_index(t2) */ * from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join_build(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
+		//{`select /*+ hash_join_probe(t1), use_index(t1), use_index(t2) */ * from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join_build(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
+		//{`select /*+ hash_join_probe(t2), use_index(t1), use_index(t2) */ * from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join_build(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
+
+		// 2-way merge joins
+		{`select /*+ merge_join(t1, t2), use_index(t1), use_index(t2) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`, "merge_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
+		{`select /*+ merge_join(t1, t2), use_index(t1, k_a), use_index(t2, k_a) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`, "merge_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `k_a`), use_index(@`sel_1` `test`.`t2` `k_a`)", nil},
 	}
 
 	removeHint := func(sql string) string {
