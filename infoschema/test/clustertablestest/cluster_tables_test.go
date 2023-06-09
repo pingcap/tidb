@@ -905,10 +905,11 @@ func TestQuickBinding(t *testing.T) {
 		// TODO: more templates
 	}
 	testCases := []testCase{
-		// access path selection with use_index
+		// access path selection with use_index / ignore_index
 		{`select /*+ use_index(t1, k_a) */ * from t1 where b=?`, "use_index(@`sel_1` `test`.`t1` `k_a`)", defaultDMLAndSubqueryTemplates},
 		{`select /*+ use_index(t1, k_bc) */ * from t1 where a=?`, "use_index(@`sel_1` `test`.`t1` `k_bc`)", defaultDMLAndSubqueryTemplates},
 		{`select /*+ use_index(t1, primary) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` )", defaultDMLAndSubqueryTemplates},
+		{`select /*+ ignore_index(t1, k_a, k_bc) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` ), ignore_index(`t1` `k_a`, `k_bc`)", defaultDMLAndSubqueryTemplates},
 		{`select /*+ use_index(t1) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` )", defaultDMLAndSubqueryTemplates},
 		{`select /*+ use_index(t2) */ * from t2 where a=? and b=?`, "use_index(@`sel_1` `test`.`t2` )", nil},
 	}
