@@ -110,7 +110,7 @@ func (w *WaitGroupEnhancedWrapper) RunWithRecover(exec func(), recoverFn func(r 
 		defer func() {
 			r := recover()
 			if r != nil && recoverFn != nil {
-				logutil.BgLogger().Info("WaitGroupEnhancedWrapper exec panic recovered", zap.String("process", label))
+				logutil.BgLogger().Info("WaitGroupEnhancedWrapper exec panic recovered", zap.String("process", label), zap.Stack(string(debug.Stack())))
 				recoverFn(r)
 			}
 			w.onExit(label)
@@ -167,7 +167,7 @@ func (w *WaitGroupWrapper) RunWithRecover(exec func(), recoverFn func(r interfac
 			r := recover()
 			if recoverFn != nil {
 				if r != nil {
-					debug.PrintStack()
+					logutil.BgLogger().Info("WaitGroupWrapper exec panic recovered", zap.Stack(string(debug.Stack())))
 				}
 				recoverFn(r)
 			}
