@@ -145,9 +145,9 @@ const (
 
 // jsonPathLeg is only used by JSONPathExpression.
 type jsonPathLeg struct {
-	typ            jsonPathLegType
 	arraySelection jsonPathArraySelection // if typ is jsonPathLegArraySelection, the value should be parsed into here.
 	dotKey         string                 // if typ is jsonPathLegKey, the key should be parsed into here.
+	typ            jsonPathLegType
 }
 
 // jsonPathExpressionFlag holds attributes of JSONPathExpression
@@ -193,8 +193,8 @@ func (key jsonPathExpressionKey) Hash() []byte {
 
 // JSONPathExpressionCache is a cache for JSONPathExpression.
 type JSONPathExpressionCache struct {
-	mu    sync.Mutex
 	cache *kvcache.SimpleLRUCache
+	mu    sync.Mutex
 }
 
 // popOneLeg returns a jsonPathLeg, and a child JSONPathExpression without that leg.

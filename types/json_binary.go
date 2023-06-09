@@ -127,8 +127,8 @@ const maxJSONDepth = 100
 // BinaryJSON represents a binary encoded JSON object.
 // It can be randomly accessed without deserialization.
 type BinaryJSON struct {
-	TypeCode JSONTypeCode
 	Value    []byte
+	TypeCode JSONTypeCode
 }
 
 // String implements fmt.Stringer interface.
@@ -217,10 +217,10 @@ func (bj BinaryJSON) GetString() []byte {
 
 // Opaque represents a raw binary type
 type Opaque struct {
-	// TypeCode is the same with database type code
-	TypeCode byte
 	// Buf is the underlying bytes of the data
 	Buf []byte
+	// TypeCode is the same with database type code
+	TypeCode byte
 }
 
 // GetOpaque gets the opaque value
@@ -818,8 +818,8 @@ func appendBinaryValElem(buf []byte, docOff, valEntryOff int, val interface{}) (
 }
 
 type field struct {
-	key string
 	val interface{}
+	key string
 }
 
 func appendBinaryObject(buf []byte, x map[string]interface{}) ([]byte, error) {

@@ -497,10 +497,10 @@ func (bj BinaryJSON) Remove(pathExprList []JSONPathExpression) (BinaryJSON, erro
 }
 
 type binaryModifier struct {
-	bj          BinaryJSON
-	modifyPtr   *byte
-	modifyValue BinaryJSON
 	err         error
+	modifyPtr   *byte
+	bj          BinaryJSON
+	modifyValue BinaryJSON
 }
 
 func (bm *binaryModifier) set(path JSONPathExpression, newBj BinaryJSON) BinaryJSON {

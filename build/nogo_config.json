@@ -171,6 +171,7 @@
       ".*_test\\.go$": "ignore test code"
     },
     "only_files": {
+      "types/": "types code",
       "statistics/handle": "statistics/handle code",
       "util/checksum": "util/checksum code",
       "util/processinfo.go": "util/processinfo.go code",

@@ -69,8 +69,8 @@ var (
 
 // ValueExpr is the simple value expression.
 type ValueExpr struct {
-	ast.TexprNode
 	types.Datum
+	ast.TexprNode
 	projectionOffset int
 }
 

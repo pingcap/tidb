@@ -63,13 +63,13 @@ const (
 // Datum is a data box holds different kind of data.
 // It has better performance and is easier to use than `interface{}`.
 type Datum struct {
-	k         byte        // datum kind.
-	decimal   uint16      // decimal can hold uint16 values.
-	length    uint32      // length can hold uint32 values.
-	i         int64       // i can hold int64 uint64 float64 values.
+	x         interface{} // x hold all other types.
 	collation string      // collation hold the collation information for string value.
 	b         []byte      // b can hold string or []byte values.
-	x         interface{} // x hold all other types.
+	i         int64       // i can hold int64 uint64 float64 values.
+	length    uint32      // length can hold uint32 values.
+	decimal   uint16      // decimal can hold uint16 values.
+	k         byte        // datum kind.
 }
 
 // EmptyDatumSize is the size of empty datum.
@@ -2068,14 +2068,14 @@ func (d *Datum) MemUsage() (sum int64) {
 }
 
 type jsonDatum struct {
-	K         byte       `json:"k"`
-	Decimal   uint16     `json:"decimal,omitempty"`
-	Length    uint32     `json:"length,omitempty"`
-	I         int64      `json:"i,omitempty"`
+	MyDecimal *MyDecimal `json:"mydecimal,omitempty"`
 	Collation string     `json:"collation,omitempty"`
 	B         []byte     `json:"b,omitempty"`
+	I         int64      `json:"i,omitempty"`
 	Time      Time       `json:"time,omitempty"`
-	MyDecimal *MyDecimal `json:"mydecimal,omitempty"`
+	Length    uint32     `json:"length,omitempty"`
+	Decimal   uint16     `json:"decimal,omitempty"`
+	K         byte       `json:"k"`
 }
 
 // MarshalJSON implements Marshaler.MarshalJSON interface.
@@ -2261,9 +2261,9 @@ func SortDatums(sc *stmtctx.StatementContext, datums []Datum) error {
 }
 
 type datumsSorter struct {
-	datums []Datum
-	sc     *stmtctx.StatementContext
 	err    error
+	sc     *stmtctx.StatementContext
+	datums []Datum
 }
 
 func (ds *datumsSorter) Len() int {
