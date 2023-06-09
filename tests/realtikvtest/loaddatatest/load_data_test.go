@@ -1129,7 +1129,7 @@ func (s *mockGCSSuite) TestDiskQuota() {
 	// the encoded KV size is about 347440 bytes
 	sql := fmt.Sprintf(`IMPORT INTO load_test_disk_quota.t FROM 'gs://test-load/diskquota-test.csv?endpoint=%s'
 		with disk_quota='1b'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT count(1) FROM load_test_disk_quota.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
