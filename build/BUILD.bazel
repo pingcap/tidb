@@ -80,6 +80,7 @@ STATICHECK_ANALYZERS = [
     "SA6001",
     "SA6002",
     "SA6005",
+    "ST1005",
     "QF1002",
     "QF1004",
     "U1000",
