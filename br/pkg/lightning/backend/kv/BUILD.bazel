@@ -64,6 +64,7 @@ go_test(
         "//parser/ast",
         "//parser/model",
         "//parser/mysql",
+        "//planner/core",
         "//sessionctx",
         "//table",
         "//table/tables",

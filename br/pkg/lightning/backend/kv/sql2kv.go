@@ -511,6 +511,14 @@ func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDa
 	case isBadNullValue:
 		err = col.HandleBadNull(&value, kvcodec.se.vars.StmtCtx)
 	default:
+		// copy from the following GetColDefaultValue function, when this is true it will use getColDefaultExprValue
+		if col.DefaultIsExpr {
+			// the expression rewriter requires a non-nil TxnCtx.
+			kvcodec.se.vars.TxnCtx = new(variable.TransactionContext)
+			defer func() {
+				kvcodec.se.vars.TxnCtx = nil
+			}()
+		}
 		value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
 	}
 	return value, err
