@@ -822,7 +822,7 @@ func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions [
 				}
 				buffer.WriteString(cond.String())
 			}
-			buffer.WriteString(fmt.Sprintf("] in %v_%v are pushed down", p.TP(), p.ID()))
+			fmt.Fprintf(buffer, "] in %v_%v are pushed down", p.TP(), p.ID())
 			return buffer.String()
 		}
 	}
@@ -844,7 +844,7 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *logicalOpti
 			}
 			buffer.WriteString(cond.String())
 		}
-		buffer.WriteString(fmt.Sprintf("] are pushed down across %v_%v", ds.TP(), ds.ID()))
+		fmt.Fprintf(buffer, "] are pushed down across %v_%v", ds.TP(), ds.ID())
 		return buffer.String()
 	}
 	opt.appendStepToCurrent(ds.ID(), ds.TP(), reason, action)
