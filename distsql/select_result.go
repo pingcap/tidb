@@ -738,7 +738,7 @@ func (s *selectResultRuntimeStats) String() string {
 	if len(s.copRespTime) > 0 {
 		size := len(s.copRespTime)
 		if size == 1 {
-			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(s.copRespTime[0]), s.procKeys[0]))
+			fmt.Fprintf(buf, "cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(s.copRespTime[0]), s.procKeys[0])
 		} else {
 			slices.Sort(s.copRespTime)
 			vMax, vMin := s.copRespTime[size-1], s.copRespTime[0]
@@ -752,9 +752,9 @@ func (s *selectResultRuntimeStats) String() string {
 			slices.Sort(s.procKeys)
 			keyMax := s.procKeys[size-1]
 			keyP95 := s.procKeys[size*19/20]
-			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,
+			fmt.Fprintf(buf, "cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,
 				execdetails.FormatDuration(vMax), execdetails.FormatDuration(vMin),
-				execdetails.FormatDuration(vAvg), execdetails.FormatDuration(vP95)))
+				execdetails.FormatDuration(vAvg), execdetails.FormatDuration(vP95))
 			if keyMax > 0 {
 				buf.WriteString(", max_proc_keys: ")
 				buf.WriteString(strconv.FormatInt(keyMax, 10))
