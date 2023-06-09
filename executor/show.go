@@ -2201,7 +2201,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	e.appendRow([]interface{}{stateJSON, tokenJSON})
 	return nil
 }
-func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount uint64) {
+func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount int64) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
 	result.AppendString(1, info.Parameters.FileLocation)
@@ -2212,15 +2212,23 @@ func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 	result.AppendString(6, units.HumanSize(float64(info.SourceFileSize)))
 	if info.Summary != nil {
 		result.AppendUint64(7, info.Summary.ImportedRows)
-	} else if importedRowCount > 0 {
-		result.AppendUint64(7, importedRowCount)
+	} else if importedRowCount >= 0 {
+		result.AppendUint64(7, uint64(importedRowCount))
 	} else {
 		result.AppendNull(7)
 	}
 	result.AppendString(8, info.ErrorMessage)
 	result.AppendTime(9, info.CreateTime)
-	result.AppendTime(10, info.StartTime)
-	result.AppendTime(11, info.EndTime)
+	if info.StartTime.IsZero() {
+		result.AppendNull(10)
+	} else {
+		result.AppendTime(10, info.StartTime)
+	}
+	if info.EndTime.IsZero() {
+		result.AppendNull(11)
+	} else {
+		result.AppendTime(11, info.EndTime)
+	}
 	result.AppendString(12, info.CreatedBy)
 }
 
@@ -2234,7 +2242,7 @@ func handleImportJobInfo(info *importer.JobInfo, result *chunk.Chunk) error {
 		}
 		importedRowCount = rows
 	}
-	fillOneImportJobInfo(info, result, importedRowCount)
+	fillOneImportJobInfo(info, result, int64(importedRowCount))
 	return nil
 }
 
