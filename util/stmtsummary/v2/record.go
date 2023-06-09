@@ -566,7 +566,10 @@ func formatSQL(sql string) string {
 	maxSQLLength := int(maxSQLLength())
 	length := len(sql)
 	if length > maxSQLLength {
-		sql = fmt.Sprintf("%.*s(len:%d)", maxSQLLength, sql, length)
+		var result strings.Builder
+		result.WriteString(sql[:maxSQLLength])
+		result.WriteString(fmt.Sprintf("(len:%d)", length))
+		return result.String()
 	}
 	return sql
 }
