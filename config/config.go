@@ -1234,7 +1234,7 @@ func (c *Config) RemovedVariableCheck(confFile string) error {
 	}
 	if len(removed) > 0 {
 		sort.Strings(removed) // deterministic for tests
-		return fmt.Errorf("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: %s", strings.Join(removed, ", "))
+		return fmt.Errorf("the following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: %s", strings.Join(removed, ", "))
 	}
 	return nil
 }
