@@ -15,6 +15,7 @@
 package util
 
 import (
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -165,6 +166,9 @@ func (w *WaitGroupWrapper) RunWithRecover(exec func(), recoverFn func(r interfac
 		defer func() {
 			r := recover()
 			if recoverFn != nil {
+				if r != nil {
+					debug.PrintStack()
+				}
 				recoverFn(r)
 			}
 			w.Done()
