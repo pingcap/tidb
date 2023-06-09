@@ -436,29 +436,25 @@ func TestEncodeExpressionColumn(t *testing.T) {
 	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
 
-	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
-		Table: tbl,
-		SessionOptions: encode.SessionOptions{
-			SQLMode: mysql.ModeStrictAllTables,
-			SysVars: map[string]string{
-				"tidb_row_format_version": "2",
-			},
+	encoder, err := lkv.NewTableKVEncoder(tbl, &lkv.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+		SysVars: map[string]string{
+			"tidb_row_format_version": "2",
 		},
-		Logger: log.L(),
-	}, nil)
+	}, nil, log.L())
 	require.NoError(t, err)
 
 	strDatumForID := types.NewStringDatum("1")
-	actualDatum, err := lkv.GetActualDatum(encoder, tbl.Cols()[0], 70, &strDatumForID)
+	actualDatum, err := lkv.GetActualDatum(encoder, 70, 0, &strDatumForID)
 	require.NoError(t, err)
 	require.Equal(t, strDatumForID, actualDatum)
 
-	actualDatum, err = lkv.GetActualDatum(encoder, tbl.Cols()[0], 70, nil)
+	actualDatum, err = lkv.GetActualDatum(encoder, 70, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, types.KindString, actualDatum.Kind())
 	require.Len(t, actualDatum.GetString(), 36) // uuid length
 
-	actualDatum2, err := lkv.GetActualDatum(encoder, tbl.Cols()[0], 70, nil)
+	actualDatum2, err := lkv.GetActualDatum(encoder, 70, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, types.KindString, actualDatum2.Kind())
 	require.Len(t, actualDatum2.GetString(), 36)
