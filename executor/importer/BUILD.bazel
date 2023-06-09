@@ -54,6 +54,7 @@ go_library(
         "//util/logutil",
         "//util/sqlexec",
         "//util/stringutil",
+        "//util/syncutil",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
@@ -74,7 +75,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/config",
@@ -82,8 +83,10 @@ go_test(
         "//parser",
         "//parser/ast",
         "//planner/core",
+        "//util/logutil",
         "//util/mock",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )

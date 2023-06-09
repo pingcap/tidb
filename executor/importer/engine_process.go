@@ -85,15 +85,16 @@ func ProcessChunk(
 	}()
 
 	cp := &chunkProcessor{
-		parser:      parser,
-		chunkInfo:   chunk,
-		logger:      logger.With(zap.String("key", chunk.GetKey())),
-		kvsCh:       make(chan []deliveredRow, maxKVQueueSize),
-		dataWriter:  dataWriter,
-		indexWriter: indexWriter,
-		encoder:     encoder,
-		kvCodec:     tableImporter.kvStore.GetCodec(),
-		progress:    progress,
+		parser:        parser,
+		chunkInfo:     chunk,
+		logger:        logger.With(zap.String("key", chunk.GetKey())),
+		kvsCh:         make(chan []deliveredRow, maxKVQueueSize),
+		dataWriter:    dataWriter,
+		indexWriter:   indexWriter,
+		encoder:       encoder,
+		kvCodec:       tableImporter.kvStore.GetCodec(),
+		progress:      progress,
+		diskQuotaLock: tableImporter.diskQuotaLock,
 	}
 	// todo: process in parallel
 	err = cp.process(ctx)

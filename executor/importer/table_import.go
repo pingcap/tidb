@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/syncutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -49,6 +51,12 @@ import (
 
 // NewTiKVModeSwitcher make it a var, so we can mock it in tests.
 var NewTiKVModeSwitcher = local.NewTiKVModeSwitcher
+
+var (
+	// CheckDiskQuotaInterval is the default time interval to check disk quota.
+	// TODO: make it dynamically adjusting according to the speed of import and the disk size.
+	CheckDiskQuotaInterval = time.Minute
+)
 
 func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
 	tidbCfg := tidb.GetGlobalConfig()
@@ -185,6 +193,8 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		logger:          e.logger,
 		regionSplitSize: int64(config.SplitRegionSize),
 		regionSplitKeys: int64(config.SplitRegionKeys),
+		diskQuota:       adjustDiskQuota(int64(e.DiskQuota), dir, e.logger),
+		diskQuotaLock:   new(syncutil.RWMutex),
 	}, nil
 }
 
@@ -206,7 +216,9 @@ type TableImporter struct {
 	regionSplitKeys int64
 	// the smallest auto-generated ID in current import.
 	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
-	lastInsertID uint64
+	lastInsertID  uint64
+	diskQuota     int64
+	diskQuotaLock *syncutil.RWMutex
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
@@ -494,5 +506,103 @@ func (ti *TableImporter) setLastInsertID(id uint64) {
 	}
 	if ti.lastInsertID == 0 || id < ti.lastInsertID {
 		ti.lastInsertID = id
+	}
+}
+
+// CheckDiskQuota checks disk quota.
+func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
+	var locker sync.Locker
+	lockDiskQuota := func() {
+		if locker == nil {
+			ti.diskQuotaLock.Lock()
+			locker = ti.diskQuotaLock
+		}
+	}
+	unlockDiskQuota := func() {
+		if locker != nil {
+			locker.Unlock()
+			locker = nil
+		}
+	}
+
+	defer unlockDiskQuota()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(CheckDiskQuotaInterval):
+		}
+
+		largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := local.CheckDiskQuota(ti.backend, ti.diskQuota)
+		if len(largeEngines) == 0 && inProgressLargeEngines == 0 {
+			unlockDiskQuota()
+			continue
+		}
+
+		ti.logger.Warn("disk quota exceeded",
+			zap.Int64("diskSize", totalDiskSize),
+			zap.Int64("memSize", totalMemSize),
+			zap.Int64("quota", ti.diskQuota),
+			zap.Int("largeEnginesCount", len(largeEngines)),
+			zap.Int("inProgressLargeEnginesCount", inProgressLargeEngines))
+
+		lockDiskQuota()
+
+		if len(largeEngines) == 0 {
+			ti.logger.Warn("all large engines are already importing, keep blocking all writes")
+			continue
+		}
+
+		if err := ti.backend.FlushAllEngines(ctx); err != nil {
+			ti.logger.Error("flush engine for disk quota failed, check again later", log.ShortError(err))
+			unlockDiskQuota()
+			continue
+		}
+
+		// at this point, all engines are synchronized on disk.
+		// we then import every large engines one by one and complete.
+		// if any engine failed to import, we just try again next time, since the data are still intact.
+		var importErr error
+		for _, engine := range largeEngines {
+			// Use a larger split region size to avoid split the same region by many times.
+			if err := ti.backend.UnsafeImportAndReset(
+				ctx,
+				engine,
+				ti.regionSplitSize*int64(config.MaxSplitRegionSizeRatio),
+				ti.regionSplitKeys*int64(config.MaxSplitRegionSizeRatio),
+			); err != nil {
+				importErr = multierr.Append(importErr, err)
+			}
+		}
+		if importErr != nil {
+			// discuss: should we return the error and cancel the import?
+			ti.logger.Error("import large engines failed, check again later", log.ShortError(importErr))
+		}
+		unlockDiskQuota()
+	}
+}
+
+func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 {
+	sz, err := common.GetStorageSize(sortDir)
+	if err != nil {
+		logger.Warn("failed to get storage size", zap.Error(err))
+		if diskQuota != 0 {
+			return diskQuota
+		}
+		logger.Info("use default quota instead", zap.Int64("quota", int64(DefaultDiskQuota)))
+		return int64(DefaultDiskQuota)
+	}
+
+	maxDiskQuota := int64(float64(sz.Capacity) * 0.8)
+	switch {
+	case diskQuota == 0:
+		logger.Info("use 0.8 of the storage size as default disk quota", zap.Int64("quota", maxDiskQuota))
+		return maxDiskQuota
+	case diskQuota > maxDiskQuota:
+		logger.Warn("disk quota is larger than 0.8 of the storage size, use 0.8 of the storage size instead", zap.Int64("quota", maxDiskQuota))
+		return maxDiskQuota
+	default:
+		return diskQuota
 	}
 }

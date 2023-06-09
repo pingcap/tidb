@@ -68,9 +68,11 @@ const (
 	// DataFormatParquet represents the data source file of IMPORT INTO is parquet.
 	DataFormatParquet = "parquet"
 
+	// DefaultDiskQuota is the default disk quota for IMPORT INTO
+	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
+
 	// 0 means no limit
 	unlimitedWriteSpeed = config.ByteSize(0)
-	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
 
 	characterSetOption        = "character_set"
 	fieldsTerminatedByOption  = "fields_terminated_by"
@@ -452,7 +454,6 @@ func (p *Plan) initDefaultOptions() {
 		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
 	}
 
-	_ = p.DiskQuota.UnmarshalText([]byte("50GiB")) // todo confirm with pm
 	p.Checksum = config.OpLevelRequired
 	p.Analyze = config.OpLevelOptional
 	p.ThreadCnt = int64(threadCnt)
@@ -629,9 +630,6 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 }
 
 func (p *Plan) adjustOptions() {
-	if p.DiskQuota < minDiskQuota {
-		p.DiskQuota = minDiskQuota
-	}
 	// max value is cpu-count
 	numCPU := int64(runtime.NumCPU())
 	if p.ThreadCnt > numCPU {
