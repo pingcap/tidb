@@ -394,7 +394,7 @@ func (p *PhysicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	buffer = explainByItems(buffer, p.ByItems)
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 	return buffer.String()
 }
@@ -456,7 +456,7 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 		}
 	}
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		builder.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+		fmt.Fprintf(builder, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 	return builder.String()
 }
@@ -617,7 +617,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 		buffer.Write(sortedExplainExpressionList(p.OtherConditions))
 	}
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 
 	// for runtime filter
@@ -802,7 +802,7 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	}
 	buffer.WriteString(")")
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 	return buffer.String()
 }
@@ -938,7 +938,7 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		fmt.Fprintf(buffer, "]")
 	}
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 	return buffer.String()
 }

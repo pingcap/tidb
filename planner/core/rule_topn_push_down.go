@@ -271,7 +271,7 @@ func appendSortPassByItemsTraceStep(sort *LogicalSort, topN *LogicalTopN, opt *l
 			}
 			buffer.WriteString(item.String())
 		}
-		buffer.WriteString(fmt.Sprintf("] to %v_%v", topN.TP(), topN.ID()))
+		fmt.Fprintf(buffer, "] to %v_%v", topN.TP(), topN.ID())
 		return buffer.String()
 	}
 	reason := func() string {

@@ -1478,21 +1478,21 @@ func (e *InsertRuntimeStat) String() string {
 		buf.WriteString(", ")
 	}
 	if e.Prefetch > 0 {
-		buf.WriteString(fmt.Sprintf("check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
+		fmt.Fprintf(buf, "check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
 			execdetails.FormatDuration(e.CheckInsertTime),
 			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
-			execdetails.FormatDuration(e.Prefetch)))
+			execdetails.FormatDuration(e.Prefetch))
 		if e.FKCheckTime > 0 {
-			buf.WriteString(fmt.Sprintf(", fk_check: %v", execdetails.FormatDuration(e.FKCheckTime)))
+			fmt.Fprintf(buf, ", fk_check: %v", execdetails.FormatDuration(e.FKCheckTime))
 		}
 		if e.SnapshotRuntimeStats != nil {
 			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
-				buf.WriteString(fmt.Sprintf(", rpc:{%s}", rpc))
+				fmt.Fprintf(buf, ", rpc:{%s}", rpc)
 			}
 		}
 		buf.WriteString("}")
 	} else {
-		buf.WriteString(fmt.Sprintf("insert:%v", execdetails.FormatDuration(e.CheckInsertTime)))
+		fmt.Fprintf(buf, "insert:%v", execdetails.FormatDuration(e.CheckInsertTime))
 	}
 	return buf.String()
 }

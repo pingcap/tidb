@@ -3284,9 +3284,7 @@ NEXTSQL:
 				if indexInfo.Name.O == sql.IndexName {
 					// find the same name index, but not the same index id,
 					// which means the repaired index id is created
-					if _, err := console.Out().Write(
-						[]byte(fmt.Sprintf("%s ... %s\n", progressTitle, color.HiGreenString("SKIPPED DUE TO CHECKPOINT MODE"))),
-					); err != nil {
+					if _, err := fmt.Fprintf(console.Out(), "%s ... %s\n", progressTitle, color.HiGreenString("SKIPPED DUE TO CHECKPOINT MODE")); err != nil {
 						return errors.Trace(err)
 					}
 					continue NEXTSQL

@@ -1967,7 +1967,7 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 				}
 				newDS := child.(*DataSource)
 				newDS.id = origin.SCtx().GetSessionVars().AllocNewPlanID()
-				buffer.WriteString(fmt.Sprintf("%s_%v", child.TP(), newDS.ID()))
+				fmt.Fprintf(buffer, "%s_%v", child.TP(), newDS.ID())
 			}
 			buffer.WriteString("]")
 			return buffer.String()
