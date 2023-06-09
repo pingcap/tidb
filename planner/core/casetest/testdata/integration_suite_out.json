@@ -735,45 +735,33 @@
       {
         "SQL": "explain format = 'brief' select * from t where a in (1, 2,'11')",
         "Plan": [
-          "PartitionUnion 60.00 root  ",
-          "├─TableReader 30.00 root  data:Selection",
-          "│ └─Selection 30.00 cop[tikv]  in(test.t.a, 1, 2, 11)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "└─TableReader 30.00 root  data:Selection",
-          "  └─Selection 30.00 cop[tikv]  in(test.t.a, 1, 2, 11)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "TableReader 30.00 root partition:p0,p2 data:Selection",
+          "└─Selection 30.00 cop[tikv]  in(test.t.a, 1, 2, 11)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a in (17, null)",
         "Plan": [
-          "PartitionUnion 20.00 root  ",
-          "├─TableReader 10.00 root  data:Selection",
-          "│ └─Selection 10.00 cop[tikv]  in(test.t.a, 17, NULL)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "└─TableReader 10.00 root  data:Selection",
-          "  └─Selection 10.00 cop[tikv]  in(test.t.a, 17, NULL)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "TableReader 10.00 root partition:p0,p2 data:Selection",
+          "└─Selection 10.00 cop[tikv]  in(test.t.a, 17, NULL)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a in (16, 'abc')",
         "Plan": [
-          "PartitionUnion 40.00 root  ",
-          "├─TableReader 20.00 root  data:Selection",
-          "│ └─Selection 20.00 cop[tikv]  in(test.t.a, 16, 0)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "└─TableReader 20.00 root  data:Selection",
-          "  └─Selection 20.00 cop[tikv]  in(test.t.a, 16, 0)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "TableReader 20.00 root partition:p0,p2 data:Selection",
+          "└─Selection 20.00 cop[tikv]  in(test.t.a, 16, 0)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a in (15, 0.12, 3.47)",
         "Plan": [
-          "TableReader 10.00 root  data:Selection",
+          "TableReader 10.00 root partition:p2 data:Selection",
           "└─Selection 10.00 cop[tikv]  or(eq(test.t.a, 15), 0)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -785,28 +773,17 @@
       {
         "SQL": "explain format = 'brief' select * from t where a in (14, floor(3.47))",
         "Plan": [
-          "PartitionUnion 40.00 root  ",
-          "├─TableReader 20.00 root  data:Selection",
-          "│ └─Selection 20.00 cop[tikv]  in(test.t.a, 14, 3)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "└─TableReader 20.00 root  data:Selection",
-          "  └─Selection 20.00 cop[tikv]  in(test.t.a, 14, 3)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "TableReader 20.00 root partition:p0,p2 data:Selection",
+          "└─Selection 20.00 cop[tikv]  in(test.t.a, 14, 3)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where b in (3, 4)",
         "Plan": [
-          "PartitionUnion 60.00 root  ",
-          "├─TableReader 20.00 root  data:Selection",
-          "│ └─Selection 20.00 cop[tikv]  in(test.t.b, 3, 4)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 20.00 root  data:Selection",
-          "│ └─Selection 20.00 cop[tikv]  in(test.t.b, 3, 4)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 20.00 root  data:Selection",
-          "  └─Selection 20.00 cop[tikv]  in(test.t.b, 3, 4)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "TableReader 20.00 root partition:all data:Selection",
+          "└─Selection 20.00 cop[tikv]  in(test.t.b, 3, 4)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
