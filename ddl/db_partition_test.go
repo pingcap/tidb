@@ -898,7 +898,7 @@ func generatePartitionTableByNum(num int) string {
 		if i > 0 {
 			buf.WriteString(",")
 		}
-		buf.WriteString(fmt.Sprintf("partition p%v values in (%v)", i, i))
+		fmt.Fprintf(buf, "partition p%v values in (%v)", i, i)
 	}
 	buf.WriteString(")")
 	return buf.String()
