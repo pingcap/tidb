@@ -822,7 +822,7 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	}, 1, 1, time.Second)
 	defer pool.Close()
 	taskManager := storage.NewTaskManager(context.Background(), pool)
-	subtasks, err := taskManager.GetSucceedSubtasksByStep(storage.TestLastTaskID.Load(), loaddata.Import)
+	subtasks, err := taskManager.GetSucceedSubtasksByStep(storage.TestLastTaskID.Load(), loaddata.StepImport)
 	s.NoError(err)
 	s.Len(subtasks, 1)
 	serverInfo, err := infosync.GetServerInfo()

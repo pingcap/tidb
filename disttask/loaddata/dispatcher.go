@@ -176,13 +176,18 @@ func (h *flowHandle) unregisterTask(ctx context.Context, task *proto.Task) {
 }
 
 func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (_ [][]byte, err error) {
-	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
+	logger := logutil.BgLogger().With(
+		zap.String("component", "dispatcher"),
+		zap.String("type", gTask.Type),
+		zap.Int64("ID", gTask.ID),
+		zap.String("step", stepStr(gTask.Step)),
+	)
 	taskMeta := &TaskMeta{}
 	err = json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("process normal flow", zap.Any("task_meta", taskMeta), zap.Any("step", gTask.Step))
+	logger.Info("process normal flow", zap.Any("task_meta", taskMeta))
 
 	switch gTask.Step {
 	case proto.StepInit:
@@ -192,7 +197,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		if err = startJob(ctx, handle, taskMeta); err != nil {
 			return nil, err
 		}
-		subtaskMetas, err := generateSubtaskMetas(ctx, taskMeta)
+		subtaskMetas, err := generateImportStepMetas(ctx, taskMeta)
 		if err != nil {
 			return nil, err
 		}
@@ -205,29 +210,26 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 			}
 			metaBytes = append(metaBytes, bs)
 		}
-		gTask.Step = Import
+		gTask.Step = StepImport
 		return metaBytes, nil
-	case Import:
-		defer func() {
-			if err == nil {
-				err = finishJob(ctx, handle, taskMeta, &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt})
-			} else {
-				// todo: we're not running in a transaction with task update, there might be case
-				// failJob return error, but task update succeed.
-				if err2 := failJob(ctx, handle, taskMeta, err.Error()); err2 != nil {
-					logger.Error("call failJob failed", zap.Error(err2))
-				}
-			}
-		}()
-		h.switchTiKV2NormalMode(ctx, logutil.BgLogger())
-		defer h.unregisterTask(ctx, gTask)
-		subtaskMetas, err2 := postProcess(ctx, handle, gTask, taskMeta, logger)
+	case StepImport:
+		stepMeta, err2 := toPostProcessStep(handle, gTask, taskMeta)
 		if err2 != nil {
 			return nil, err2
 		}
-		updateResult(taskMeta, subtaskMetas, logger)
-		if err2 = updateMeta(gTask, taskMeta); err2 != nil {
-			return nil, err2
+		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result),
+			zap.Any("step_meta", stepMeta))
+		bs, err := json.Marshal(stepMeta)
+		if err != nil {
+			return nil, err
+		}
+		gTask.Step = StepPostProcess
+		return [][]byte{bs}, nil
+	case StepPostProcess:
+		h.switchTiKV2NormalMode(ctx, logutil.BgLogger())
+		defer h.unregisterTask(ctx, gTask)
+		if err = finishJob(ctx, handle, taskMeta, &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}); err != nil {
+			return nil, err
 		}
 		gTask.State = proto.TaskStateSucceed
 		return nil, nil
@@ -262,15 +264,12 @@ func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskH
 		return nil, nil
 	}
 
-	// Actually, `processErrFlow` will only be called when there is a failure in the import step.
-	if gTask.Step != Import {
-		return nil, nil
-	}
-
-	err = rollback(ctx, handle, gTask, logger)
-	if err != nil {
-		// TODO: add error code according to spec.
-		gTask.Error = []byte(errStr + ", " + err.Error())
+	if gTask.Step == StepImport {
+		err = rollback(ctx, handle, gTask, logger)
+		if err != nil {
+			// TODO: add error code according to spec.
+			gTask.Error = []byte(errStr + ", " + err.Error())
+		}
 	}
 	return nil, err
 }
@@ -317,7 +316,7 @@ func preProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.
 }
 
 // postProcess does the post-processing for the task.
-func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) (_ []*SubtaskMeta, err error) {
+func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) (_ []*ImportStepMeta, err error) {
 	// create table indexes even if the post process is failed.
 	defer func() {
 		err2 := createTableIndexes(ctx, handle, taskMeta, logger)
@@ -338,9 +337,9 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 		return nil, err
 	}
 
-	subtaskMetas := make([]*SubtaskMeta, 0, len(metas))
+	subtaskMetas := make([]*ImportStepMeta, 0, len(metas))
 	for _, bs := range metas {
-		var subtaskMeta SubtaskMeta
+		var subtaskMeta ImportStepMeta
 		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
 			return nil, err
 		}
@@ -355,7 +354,7 @@ func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto
 	return subtaskMetas, nil
 }
 
-func verifyChecksum(ctx context.Context, controller *importer.LoadDataController, subtaskMetas []*SubtaskMeta, logger *zap.Logger) error {
+func verifyChecksum(ctx context.Context, controller *importer.LoadDataController, subtaskMetas []*ImportStepMeta, logger *zap.Logger) error {
 	if controller.Checksum == config.OpLevelOff {
 		return nil
 	}
@@ -434,14 +433,6 @@ func executeSQL(ctx context.Context, handle dispatcher.TaskHandle, logger *zap.L
 	})
 }
 
-func updateResult(taskMeta *TaskMeta, subtaskMetas []*SubtaskMeta, logger *zap.Logger) {
-	for _, subtaskMeta := range subtaskMetas {
-		taskMeta.Result.ReadRowCnt += subtaskMeta.Result.ReadRowCnt
-		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
-	}
-	logger.Info("update result", zap.Any("task_meta", taskMeta))
-}
-
 func updateMeta(gTask *proto.Task, taskMeta *TaskMeta) error {
 	bs, err := json.Marshal(taskMeta)
 	if err != nil {
@@ -481,7 +472,7 @@ func toChunkMap(engineCheckpoints map[int32]*checkpoints.EngineCheckpoint) map[i
 	return chunkMap
 }
 
-func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas []*SubtaskMeta, err error) {
+func generateImportStepMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas []*ImportStepMeta, err error) {
 	var chunkMap map[int32][]Chunk
 	if len(taskMeta.ChunkMap) > 0 {
 		chunkMap = taskMeta.ChunkMap
@@ -504,7 +495,7 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas
 		if id == common.IndexEngineID {
 			continue
 		}
-		subtaskMeta := &SubtaskMeta{
+		subtaskMeta := &ImportStepMeta{
 			ID:     id,
 			Plan:   taskMeta.Plan,
 			Chunks: chunkMap[id],
@@ -512,6 +503,40 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas
 		subtaskMetas = append(subtaskMetas, subtaskMeta)
 	}
 	return subtaskMetas, nil
+}
+
+func toPostProcessStep(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) (*PostProcessStepMeta, error) {
+	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
+	if err != nil {
+		return nil, err
+	}
+
+	subtaskMetas := make([]*ImportStepMeta, 0, len(metas))
+	for _, bs := range metas {
+		var subtaskMeta ImportStepMeta
+		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
+			return nil, err
+		}
+		subtaskMetas = append(subtaskMetas, &subtaskMeta)
+	}
+	var localChecksum verify.KVChecksum
+	for _, subtaskMeta := range subtaskMetas {
+		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
+		localChecksum.Add(&checksum)
+
+		taskMeta.Result.ReadRowCnt += subtaskMeta.Result.ReadRowCnt
+		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
+	}
+	if err2 := updateMeta(gTask, taskMeta); err2 != nil {
+		return nil, err2
+	}
+	return &PostProcessStepMeta{
+		Checksum: Checksum{
+			Size: localChecksum.SumSize(),
+			KVs:  localChecksum.SumKVS(),
+			Sum:  localChecksum.Sum(),
+		},
+	}, nil
 }
 
 func startJob(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta) error {
@@ -580,6 +605,19 @@ func rollback(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Ta
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
 	// truncate the table
 	return executeSQL(ctx, handle, logger, "TRUNCATE "+tableName)
+}
+
+func stepStr(step int64) string {
+	switch step {
+	case proto.StepInit:
+		return "init"
+	case StepImport:
+		return "import"
+	case StepPostProcess:
+		return "postprocess"
+	default:
+		return "unknown"
+	}
 }
 
 func init() {

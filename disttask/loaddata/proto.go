@@ -25,10 +25,15 @@ import (
 	"github.com/pingcap/tidb/executor/importer"
 )
 
-// TaskStep of LoadData.
+// Steps of IMPORT INTO, each step is represented by one or multiple subtasks.
+// the initial step is StepInit(-1)
+// steps are processed in the following order: StepInit -> StepImport -> StepPostProcess
 const (
-	// Import we sort source data and ingest it into TiKV in this step.
-	Import int64 = 1
+	// StepImport we sort source data and ingest it into TiKV in this step.
+	StepImport int64 = 1
+	// StepPostProcess we verify checksum and add index in this step.
+	// todo: might split into StepValidate and StepAddIndex later.
+	StepPostProcess int64 = 2
 )
 
 // TaskMeta is the task of LoadData.
@@ -50,16 +55,22 @@ type TaskMeta struct {
 	ChunkMap map[int32][]Chunk
 }
 
-// SubtaskMeta is the subtask of LoadData.
+// ImportStepMeta is the meta of import step.
 // Dispatcher will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
-type SubtaskMeta struct {
+type ImportStepMeta struct {
 	Plan importer.Plan
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
 	Chunks   []Chunk
 	Checksum Checksum
 	Result   Result
+}
+
+// PostProcessStepMeta is the meta of post process step.
+type PostProcessStepMeta struct {
+	// accumulated checksum of all subtasks in import step.
+	Checksum Checksum
 }
 
 // SharedVars is the shared variables between subtask and minimal tasks.

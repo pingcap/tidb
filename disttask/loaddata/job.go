@@ -94,7 +94,7 @@ func (ti *DistImporter) Param() *importer.JobImportParam {
 	return ti.JobImportParam
 }
 
-// Import implements JobImporter.Import.
+// StepImport implements JobImporter.StepImport.
 func (*DistImporter) Import() {
 	// todo: remove it
 }
@@ -240,13 +240,13 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 	if globalTask == nil {
 		return 0, errors.Errorf("cannot find global task with key %s", taskKey)
 	}
-	subtasks, err := globalTaskManager.GetSubtasksByStep(globalTask.ID, Import)
+	subtasks, err := globalTaskManager.GetSubtasksByStep(globalTask.ID, StepImport)
 	if err != nil {
 		return 0, err
 	}
 	var importedRows uint64
 	for _, subtask := range subtasks {
-		var subtaskMeta SubtaskMeta
+		var subtaskMeta ImportStepMeta
 		if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
 			return 0, err2
 		}

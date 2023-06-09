@@ -90,7 +90,7 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 // SplitSubtask implements the Scheduler.SplitSubtask interface.
 func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
 	s.logger.Info("SplitSubtask", zap.Any("taskMeta", s.taskMeta))
-	var subtaskMeta SubtaskMeta
+	var subtaskMeta ImportStepMeta
 	err := json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
 		return nil, err
@@ -133,7 +133,7 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 // OnSubtaskFinished implements the Scheduler.OnSubtaskFinished interface.
 func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
 	s.logger.Info("OnSubtaskFinished", zap.Any("taskMeta", s.taskMeta))
-	var subtaskMeta SubtaskMeta
+	var subtaskMeta ImportStepMeta
 	if err := json.Unmarshal(subtaskMetaBytes, &subtaskMeta); err != nil {
 		return nil, err
 	}
