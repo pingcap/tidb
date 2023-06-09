@@ -61,13 +61,29 @@ type tidbSession struct {
 
 // GetDomain implements glue.Glue.
 func (Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
+	existDom, _ := session.GetDomain(nil)
+	initStatsSe, err := session.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	se, err := session.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	dom, err := session.GetDomain(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = session.InitMDLVariable(store)
-	if err != nil {
-		return nil, err
+	if existDom == nil {
+		err = session.InitMDLVariable(store)
+		if err != nil {
+			return nil, err
+		}
+		// create stats handler for backup and restore.
+		err = dom.UpdateTableStatsLoop(se, initStatsSe)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	return dom, nil
 }
