@@ -551,8 +551,7 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 }
 
 func job2SchemaNames(job *model.Job) []string {
-	switch job.Type {
-	case model.ActionRenameTable:
+	if job.Type == model.ActionRenameTable {
 		var oldSchemaID int64
 		var oldSchemaName model.CIStr
 		var tableName model.CIStr
@@ -562,11 +561,9 @@ func job2SchemaNames(job *model.Job) []string {
 		names = append(names, strings.ToLower(job.SchemaName))
 		names = append(names, oldSchemaName.O)
 		return names
-	case model.ActionRenameTables:
-		// TODO: Get this action's schema names.
-	case model.ActionExchangeTablePartition:
-		// TODO: Get this action's schema names.
 	}
+	// TODO: consider about model.ActionRenameTables and model.ActionExchangeTablePartition, which need to get the schema names.
+
 	return []string{job.SchemaName}
 }
 

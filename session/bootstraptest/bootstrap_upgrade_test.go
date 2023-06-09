@@ -363,10 +363,12 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	require.True(t, suc)
 }
 
+// TestUpgradeVersionForSystemPausedJob tests mock the first upgrade failed, and it has a mock system DDL in queue.
+// Then we do re-upgrade(This operation will pause all DDL jobs by the system).
 func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	// Mock a general and a reorg job in boostrap.
 	*session.WithMockUpgrade = true
-	session.MockUpgradeToVerLatestKind++
+	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
 
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()

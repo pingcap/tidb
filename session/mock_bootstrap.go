@@ -155,8 +155,14 @@ func modifyBootstrapVersionForTest(store kv.Storage, ver int64) int64 {
 	return ver
 }
 
+const (
+	defaultMockUpgradeToVerLatest = 0
+	// MockSimpleUpgradeToVerLatest is used to indicate the use of the simple mock bootstrapVersion.
+	MockSimpleUpgradeToVerLatest = 1
+)
+
 // MockUpgradeToVerLatestKind is used to indicate the use of different mock bootstrapVersion.
-var MockUpgradeToVerLatestKind = 1
+var MockUpgradeToVerLatestKind = defaultMockUpgradeToVerLatest
 
 func addMockBootstrapVersionForTest(s Session) {
 	if !*WithMockUpgrade {
@@ -164,7 +170,7 @@ func addMockBootstrapVersionForTest(s Session) {
 	}
 
 	TestHook.OnBootstrapBefore(s)
-	if MockUpgradeToVerLatestKind == 1 {
+	if MockUpgradeToVerLatestKind == defaultMockUpgradeToVerLatest {
 		bootstrapVersion = append(bootstrapVersion, mockUpgradeToVerLatest)
 	} else {
 		bootstrapVersion = append(bootstrapVersion, mockSimpleUpgradeToVerLatest)
