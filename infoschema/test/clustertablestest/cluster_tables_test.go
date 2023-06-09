@@ -912,6 +912,12 @@ func TestQuickBinding(t *testing.T) {
 		{`select /*+ ignore_index(t1, k_a, k_bc) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` ), ignore_index(`t1` `k_a`, `k_bc`)", defaultDMLAndSubqueryTemplates},
 		{`select /*+ use_index(t1) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` )", defaultDMLAndSubqueryTemplates},
 		{`select /*+ use_index(t2) */ * from t2 where a=? and b=?`, "use_index(@`sel_1` `test`.`t2` )", nil},
+
+		// aggregation
+		{`select /*+ hash_agg(), use_index(t1, primary) */ count(*) from t1 where a<?`, "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
+		{`select /*+ hash_agg(), use_index(t1, primary) */ count(*), b from t1 where a<? group by b`, "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
+		{`select /*+ stream_agg(), use_index(t1, primary) */ count(*) from t1 where a<?`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
+		{`select /*+ stream_agg(), use_index(t1, primary) */ count(*), b from t1 where a<? group by b`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
 	}
 
 	removeHint := func(sql string) string {
