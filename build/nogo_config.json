@@ -165,6 +165,7 @@
   "fieldalignment": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
+      "store/pdtypes/": "store/pdtypes/ code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code",
