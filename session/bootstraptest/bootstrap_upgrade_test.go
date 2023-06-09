@@ -344,11 +344,15 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 
 	// Resume the DDL job, then add index operation can be executed successfully.
 	session.MustExec(t, seLatestV, fmt.Sprintf("admin resume ddl jobs %d", jobID))
+	checkDDLJobExecSucc(t, seLatestV, jobID)
+}
+
+// checkDDLJobExecSucc is used to make sure the DDL operation is successful.
+func checkDDLJobExecSucc(t *testing.T, se session.Session, jobID int64) {
 	sql := fmt.Sprintf(" admin show ddl jobs where job_id=%d", jobID)
-	// Make sure the add index operation is successful.
 	suc := false
 	for i := 0; i < 20; i++ {
-		rows, err := execute(context.Background(), seLatestV, sql)
+		rows, err := execute(context.Background(), se, sql)
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
 		require.Equal(t, rows[0].GetString(2), "upgrade_tbl")
@@ -420,23 +424,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
 
-	sql := fmt.Sprintf(" admin show ddl jobs where job_id=%d", jobID)
-	// Make sure the add index operation is successful.
-	suc := false
-	for i := 0; i < 20; i++ {
-		rows, err := execute(context.Background(), seLatestV, sql)
-		require.NoError(t, err)
-		require.Len(t, rows, 1)
-		require.Equal(t, rows[0].GetString(2), "upgrade_tbl")
-
-		state := rows[0].GetString(11)
-		if state == "synced" {
-			suc = true
-			break
-		}
-		time.Sleep(time.Millisecond * 200)
-	}
-	require.True(t, suc)
+	checkDDLJobExecSucc(t, seLatestV, jobID)
 }
 
 func TestUpgradeVersionForResumeJob(t *testing.T) {
