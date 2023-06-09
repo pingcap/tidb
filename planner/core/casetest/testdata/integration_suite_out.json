@@ -1228,161 +1228,130 @@
       {
         "SQL": "select * from pt where c > 10",
         "Plan": [
-          "TableDual_7 0.00 root  rows:0"
+          "TableReader_7 3333.33 root partition:dual data:Selection_6",
+          "└─Selection_6 3333.33 cop[tikv]  gt(test.pt.c, 10)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from pt where c > 8",
         "Plan": [
-          "TableReader_9 3333.33 root  data:Selection_8",
-          "└─Selection_8 3333.33 cop[tikv]  gt(test.pt.c, 8)",
-          "  └─TableFullScan_7 10000.00 cop[tikv] table:pt, partition:p2 keep order:false, stats:pseudo"
+          "TableReader_7 3333.33 root partition:p2 data:Selection_6",
+          "└─Selection_6 3333.33 cop[tikv]  gt(test.pt.c, 8)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from pt where c < 2 or c >= 9",
         "Plan": [
-          "PartitionUnion_9 13313.33 root  ",
-          "├─TableReader_12 6656.67 root  data:Selection_11",
-          "│ └─Selection_11 6656.67 cop[tikv]  or(lt(test.pt.c, 2), ge(test.pt.c, 9))",
-          "│   └─TableFullScan_10 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
-          "└─TableReader_18 6656.67 root  data:Selection_17",
-          "  └─Selection_17 6656.67 cop[tikv]  or(lt(test.pt.c, 2), ge(test.pt.c, 9))",
-          "    └─TableFullScan_16 10000.00 cop[tikv] table:pt, partition:p2 keep order:false, stats:pseudo"
+          "TableReader_7 6656.67 root partition:p0,p2 data:Selection_6",
+          "└─Selection_6 6656.67 cop[tikv]  or(lt(test.pt.c, 2), ge(test.pt.c, 9))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select c from pt",
         "Plan": [
-          "PartitionUnion_9 30000.00 root  ",
-          "├─IndexReader_13 10000.00 root  index:IndexFullScan_12",
-          "│ └─IndexFullScan_12 10000.00 cop[tikv] table:pt, partition:p0, index:i_c(c) keep order:false, stats:pseudo",
-          "├─IndexReader_17 10000.00 root  index:IndexFullScan_16",
-          "│ └─IndexFullScan_16 10000.00 cop[tikv] table:pt, partition:p1, index:i_c(c) keep order:false, stats:pseudo",
-          "└─IndexReader_21 10000.00 root  index:IndexFullScan_20",
-          "  └─IndexFullScan_20 10000.00 cop[tikv] table:pt, partition:p2, index:i_c(c) keep order:false, stats:pseudo"
+          "IndexReader_7 10000.00 root partition:all index:IndexFullScan_6",
+          "└─IndexFullScan_6 10000.00 cop[tikv] table:pt, index:i_c(c) keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select c from pt where c > 10",
         "Plan": [
-          "TableDual_7 0.00 root  rows:0"
+          "IndexReader_6 3333.33 root partition:dual index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 3333.33 cop[tikv] table:pt, index:i_c(c) range:(10,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select c from pt where c > 8",
         "Plan": [
-          "IndexReader_8 3333.33 root  index:IndexRangeScan_7",
-          "└─IndexRangeScan_7 3333.33 cop[tikv] table:pt, partition:p2, index:i_c(c) range:(8,+inf], keep order:false, stats:pseudo"
+          "IndexReader_6 3333.33 root partition:p2 index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 3333.33 cop[tikv] table:pt, index:i_c(c) range:(8,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select c from pt where c < 2 or c >= 9",
         "Plan": [
-          "PartitionUnion_9 13313.33 root  ",
-          "├─IndexReader_11 6656.67 root  index:IndexRangeScan_10",
-          "│ └─IndexRangeScan_10 6656.67 cop[tikv] table:pt, partition:p0, index:i_c(c) range:[-inf,2), [9,+inf], keep order:false, stats:pseudo",
-          "└─IndexReader_13 6656.67 root  index:IndexRangeScan_12",
-          "  └─IndexRangeScan_12 6656.67 cop[tikv] table:pt, partition:p2, index:i_c(c) range:[-inf,2), [9,+inf], keep order:false, stats:pseudo"
+          "IndexReader_6 6656.67 root partition:p0,p2 index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 6656.67 cop[tikv] table:pt, index:i_c(c) range:[-inf,2), [9,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index(pt, i_id) */ * from pt",
         "Plan": [
-          "PartitionUnion_9 30000.00 root  ",
-          "├─IndexLookUp_12 10000.00 root  ",
-          "│ ├─IndexFullScan_10(Build) 10000.00 cop[tikv] table:pt, partition:p0, index:i_id(id) keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan_11(Probe) 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
-          "├─IndexLookUp_15 10000.00 root  ",
-          "│ ├─IndexFullScan_13(Build) 10000.00 cop[tikv] table:pt, partition:p1, index:i_id(id) keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan_14(Probe) 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo",
-          "└─IndexLookUp_18 10000.00 root  ",
-          "  ├─IndexFullScan_16(Build) 10000.00 cop[tikv] table:pt, partition:p2, index:i_id(id) keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_17(Probe) 10000.00 cop[tikv] table:pt, partition:p2 keep order:false, stats:pseudo"
+          "IndexLookUp_6 10000.00 root partition:all ",
+          "├─IndexFullScan_4(Build) 10000.00 cop[tikv] table:pt, index:i_id(id) keep order:false, stats:pseudo",
+          "└─TableRowIDScan_5(Probe) 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index(pt, i_id) */ * from pt where id < 4 and c > 10",
         "Plan": [
-          "TableDual_7 0.00 root  rows:0"
+          "IndexLookUp_8 1107.78 root partition:dual ",
+          "├─IndexRangeScan_5(Build) 3323.33 cop[tikv] table:pt, index:i_id(id) range:[-inf,4), keep order:false, stats:pseudo",
+          "└─Selection_7(Probe) 1107.78 cop[tikv]  gt(test.pt.c, 10)",
+          "  └─TableRowIDScan_6 3323.33 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c > 8",
         "Plan": [
-          "IndexLookUp_10 1107.78 root  ",
-          "├─IndexRangeScan_7(Build) 3323.33 cop[tikv] table:pt, partition:p2, index:i_id(id) range:[-inf,10), keep order:false, stats:pseudo",
-          "└─Selection_9(Probe) 1107.78 cop[tikv]  gt(test.pt.c, 8)",
-          "  └─TableRowIDScan_8 3323.33 cop[tikv] table:pt, partition:p2 keep order:false, stats:pseudo"
+          "IndexLookUp_8 1107.78 root partition:p2 ",
+          "├─IndexRangeScan_5(Build) 3323.33 cop[tikv] table:pt, index:i_id(id) range:[-inf,10), keep order:false, stats:pseudo",
+          "└─Selection_7(Probe) 1107.78 cop[tikv]  gt(test.pt.c, 8)",
+          "  └─TableRowIDScan_6 3323.33 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c < 2 or c >= 9",
         "Plan": [
-          "PartitionUnion_9 10650.67 root  ",
-          "├─IndexLookUp_13 5325.33 root  ",
-          "│ ├─IndexFullScan_10(Build) 10000.00 cop[tikv] table:pt, partition:p0, index:i_id(id) keep order:false, stats:pseudo",
-          "│ └─Selection_12(Probe) 5325.33 cop[tikv]  or(and(lt(test.pt.id, 10), lt(test.pt.c, 2)), ge(test.pt.c, 9))",
-          "│   └─TableRowIDScan_11 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
-          "└─IndexLookUp_17 5325.33 root  ",
-          "  ├─IndexFullScan_14(Build) 10000.00 cop[tikv] table:pt, partition:p2, index:i_id(id) keep order:false, stats:pseudo",
-          "  └─Selection_16(Probe) 5325.33 cop[tikv]  or(and(lt(test.pt.id, 10), lt(test.pt.c, 2)), ge(test.pt.c, 9))",
-          "    └─TableRowIDScan_15 10000.00 cop[tikv] table:pt, partition:p2 keep order:false, stats:pseudo"
+          "IndexLookUp_8 5325.33 root partition:p0,p2 ",
+          "├─IndexFullScan_5(Build) 10000.00 cop[tikv] table:pt, index:i_id(id) keep order:false, stats:pseudo",
+          "└─Selection_7(Probe) 5325.33 cop[tikv]  or(and(lt(test.pt.id, 10), lt(test.pt.c, 2)), ge(test.pt.c, 9))",
+          "  └─TableRowIDScan_6 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from pt partition (p0) where c > 8",
         "Plan": [
-          "TableDual_7 0.00 root  rows:0"
+          "TableReader_7 3333.33 root partition:dual data:Selection_6",
+          "└─Selection_6 3333.33 cop[tikv]  gt(test.pt.c, 8)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select c from pt partition (p0, p2) where c > 8",
         "Plan": [
-          "IndexReader_8 3333.33 root  index:IndexRangeScan_7",
-          "└─IndexRangeScan_7 3333.33 cop[tikv] table:pt, partition:p2, index:i_c(c) range:(8,+inf], keep order:false, stats:pseudo"
+          "IndexReader_6 3333.33 root partition:p2 index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 3333.33 cop[tikv] table:pt, index:i_c(c) range:(8,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index(pt, i_id) */ * from pt partition (p1, p2) where c < 3 and id = 5",
         "Plan": [
-          "TableDual_7 0.00 root  rows:0"
+          "IndexLookUp_8 3.32 root partition:dual ",
+          "├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:pt, index:i_id(id) range:[5,5], keep order:false, stats:pseudo",
+          "└─Selection_7(Probe) 3.32 cop[tikv]  lt(test.pt.c, 3)",
+          "  └─TableRowIDScan_6 10.00 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from pt where id = 4 or c < 7",
         "Plan": [
-          "PartitionUnion_10 9990.03 root  ",
-          "├─IndexMerge_17 3330.01 root  type: union",
-          "│ ├─IndexRangeScan_14(Build) 10.00 cop[tikv] table:pt, partition:p0, index:i_id(id) range:[4,4], keep order:false, stats:pseudo",
-          "│ ├─IndexRangeScan_15(Build) 3323.33 cop[tikv] table:pt, partition:p0, index:i_c(c) range:[-inf,7), keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan_16(Probe) 3330.01 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
-          "├─IndexMerge_24 3330.01 root  type: union",
-          "│ ├─IndexRangeScan_21(Build) 10.00 cop[tikv] table:pt, partition:p1, index:i_id(id) range:[4,4], keep order:false, stats:pseudo",
-          "│ ├─IndexRangeScan_22(Build) 3323.33 cop[tikv] table:pt, partition:p1, index:i_c(c) range:[-inf,7), keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan_23(Probe) 3330.01 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo",
-          "└─IndexMerge_31 3330.01 root  type: union",
-          "  ├─IndexRangeScan_28(Build) 10.00 cop[tikv] table:pt, partition:p2, index:i_id(id) range:[4,4], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan_29(Build) 3323.33 cop[tikv] table:pt, partition:p2, index:i_c(c) range:[-inf,7), keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_30(Probe) 3330.01 cop[tikv] table:pt, partition:p2 keep order:false, stats:pseudo"
+          "IndexMerge_11 3330.01 root partition:all type: union",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:pt, index:i_id(id) range:[4,4], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_9(Build) 3323.33 cop[tikv] table:pt, index:i_c(c) range:[-inf,7), keep order:false, stats:pseudo",
+          "└─TableRowIDScan_10(Probe) 3330.01 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from pt where id > 4 or c = 7",
         "Plan": [
-          "PartitionUnion_10 10020.00 root  ",
-          "├─IndexMerge_17 3340.00 root  type: union",
-          "│ ├─IndexRangeScan_14(Build) 3333.33 cop[tikv] table:pt, partition:p0, index:i_id(id) range:(4,+inf], keep order:false, stats:pseudo",
-          "│ ├─IndexRangeScan_15(Build) 10.00 cop[tikv] table:pt, partition:p0, index:i_c(c) range:[7,7], keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan_16(Probe) 3340.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
-          "├─IndexMerge_24 3340.00 root  type: union",
-          "│ ├─IndexRangeScan_21(Build) 3333.33 cop[tikv] table:pt, partition:p1, index:i_id(id) range:(4,+inf], keep order:false, stats:pseudo",
-          "│ ├─IndexRangeScan_22(Build) 10.00 cop[tikv] table:pt, partition:p1, index:i_c(c) range:[7,7], keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan_23(Probe) 3340.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo",
-          "└─IndexMerge_31 3340.00 root  type: union",
-          "  ├─IndexRangeScan_28(Build) 3333.33 cop[tikv] table:pt, partition:p2, index:i_id(id) range:(4,+inf], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan_29(Build) 10.00 cop[tikv] table:pt, partition:p2, index:i_c(c) range:[7,7], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_30(Probe) 3340.00 cop[tikv] table:pt, partition:p2 keep order:false, stats:pseudo"
+          "IndexMerge_11 3340.00 root partition:all type: union",
+          "├─IndexRangeScan_8(Build) 3333.33 cop[tikv] table:pt, index:i_id(id) range:(4,+inf], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_9(Build) 10.00 cop[tikv] table:pt, index:i_c(c) range:[7,7], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_10(Probe) 3340.00 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -8933,9 +8902,9 @@
         "Plan": [
           "TableReader 7992.00 root  MppVersion: 1, data:ExchangeSender",
           "└─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 7992.00 mpp[tiflash]  semi join, equal:[eq(test.tt.b1, test.t.c3)]",
-          "    ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c3, collate: binary]",
+          "  └─HashJoin 7992.00 mpp[tiflash]  semi join, equal:[eq(test.tt.b1, test.t.c3)], stream_count: 8",
+          "    ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  stream_count: 8",
+          "    │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c3, collate: binary], stream_count: 8",
           "    │   └─Projection 8000.00 mpp[tiflash]  test.t.c3",
           "    │     └─Selection 8000.00 mpp[tiflash]  lt(test.t.c1, test.t.c2)",
           "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
@@ -8951,9 +8920,9 @@
           "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  Column#3",
-          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.b1, funcs:sum(Column#7)->Column#3",
-          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tt.b1, collate: binary]",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.b1, funcs:sum(Column#7)->Column#3, stream_count: 8",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  stream_count: 8",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tt.b1, collate: binary], stream_count: 8",
           "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.b1, funcs:count(1)->Column#7",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:tt keep order:false, stats:pseudo"
         ]
@@ -10682,59 +10651,41 @@
       {
         "SQL": "explain format = 'brief' select * from rp_t where a = 1 or a = 20",
         "Plan": [
-          "PartitionUnion 40.00 root  ",
-          "├─TableReader 20.00 root  data:Selection",
-          "│ └─Selection 20.00 batchCop[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
-          "│   └─TableFullScan 10000.00 batchCop[tiflash] table:rp_t, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
-          "└─TableReader 20.00 root  data:Selection",
-          "  └─Selection 20.00 batchCop[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:rp_t, partition:p3 pushed down filter:empty, keep order:false, stats:pseudo"
+          "TableReader 20.00 root partition:p0,p3 MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 20.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 20.00 mpp[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:rp_t pushed down filter:empty, keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from hp_t where a = 1 or a = 20",
         "Plan": [
-          "PartitionUnion 40.00 root  ",
-          "├─TableReader 20.00 root  data:Selection",
-          "│ └─Selection 20.00 batchCop[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
-          "│   └─TableFullScan 10000.00 batchCop[tiflash] table:hp_t, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
-          "└─TableReader 20.00 root  data:Selection",
-          "  └─Selection 20.00 batchCop[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
-          "    └─TableFullScan 10000.00 batchCop[tiflash] table:hp_t, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "TableReader 20.00 root partition:p0,p1 MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 20.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 20.00 mpp[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:hp_t pushed down filter:empty, keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from rp_t where a = 1 or a = 20",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#4)->Column#3",
-          "└─PartitionUnion 2.00 root  ",
-          "  ├─StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
-          "  │ └─TableReader 1.00 root  data:StreamAgg",
-          "  │   └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
-          "  │     └─Selection 20.00 batchCop[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
-          "  │       └─TableFullScan 10000.00 batchCop[tiflash] table:rp_t, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
-          "  └─StreamAgg 1.00 root  funcs:count(Column#8)->Column#4",
-          "    └─TableReader 1.00 root  data:StreamAgg",
-          "      └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#8",
-          "        └─Selection 20.00 batchCop[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
-          "          └─TableFullScan 10000.00 batchCop[tiflash] table:rp_t, partition:p3 pushed down filter:empty, keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#3",
+          "└─TableReader 1.00 root partition:p0,p3 MppVersion: 1, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#5",
+          "      └─Selection 20.00 mpp[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:rp_t pushed down filter:empty, keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       },
       {
         "SQL": "explain format = 'brief' select count(*) from hp_t where a = 1 or a = 20",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#4)->Column#3",
-          "└─PartitionUnion 2.00 root  ",
-          "  ├─StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
-          "  │ └─TableReader 1.00 root  data:StreamAgg",
-          "  │   └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
-          "  │     └─Selection 20.00 batchCop[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
-          "  │       └─TableFullScan 10000.00 batchCop[tiflash] table:hp_t, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
-          "  └─StreamAgg 1.00 root  funcs:count(Column#8)->Column#4",
-          "    └─TableReader 1.00 root  data:StreamAgg",
-          "      └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#8",
-          "        └─Selection 20.00 batchCop[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
-          "          └─TableFullScan 10000.00 batchCop[tiflash] table:hp_t, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#3",
+          "└─TableReader 1.00 root partition:p0,p1 MppVersion: 1, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#5",
+          "      └─Selection 20.00 mpp[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:hp_t pushed down filter:empty, keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       }
     ]
