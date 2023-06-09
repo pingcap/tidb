@@ -1448,7 +1448,7 @@ func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 	}
 	buf := bytes.NewBuffer(nil)
 	if !e.Digests.Empty() {
-		buf.WriteString(fmt.Sprintf("digests: [%s], ", extractStringFromStringSet(e.Digests)))
+		fmt.Fprintf(buf, "digests: [%s], ", extractStringFromStringSet(e.Digests))
 	}
 	if e.CoarseTimeRange != nil && p.ctx.GetSessionVars() != nil && p.ctx.GetSessionVars().StmtCtx != nil {
 		stmtCtx := p.ctx.GetSessionVars().StmtCtx
@@ -1456,7 +1456,7 @@ func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 		endTime := e.CoarseTimeRange.EndTime.In(stmtCtx.TimeZone)
 		startTimeStr := types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String()
 		endTimeStr := types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String()
-		buf.WriteString(fmt.Sprintf("start_time:%v, end_time:%v, ", startTimeStr, endTimeStr))
+		fmt.Fprintf(buf, "start_time: %v, end_time: %v, ", startTimeStr, endTimeStr)
 	}
 	// remove the last ", " in the message info
 	s := buf.String()

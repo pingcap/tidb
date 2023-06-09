@@ -456,7 +456,7 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 		}
 	}
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		builder.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+		fmt.Fprintf(builder, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 	return builder.String()
 }
