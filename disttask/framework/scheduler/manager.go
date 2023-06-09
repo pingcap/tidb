@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -116,12 +117,8 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 
 // Start starts the Manager.
 func (m *Manager) Start() {
-	m.wg.RunWithRecover(func() {
-		m.fetchAndHandleRunnableTasks(nil)
-	}, m.fetchAndHandleRunnableTasks)
-	m.wg.RunWithRecover(func() {
-		m.fetchAndFastCancelTasks(nil)
-	}, m.fetchAndFastCancelTasks)
+	m.wg.Run(m.fetchAndHandleRunnableTasks)
+	m.wg.Run(m.fetchAndFastCancelTasks)
 }
 
 // Stop stops the Manager.
@@ -135,10 +132,8 @@ func (m *Manager) Stop() {
 }
 
 // fetchAndHandleRunnableTasks fetches the runnable tasks from the global task table and handles them.
-func (m *Manager) fetchAndHandleRunnableTasks(r interface{}) {
-	if r != nil {
-		logutil.BgLogger().Warn("fetchAndHandleRunnableTasks loop run into panic, restart it", zap.String("error", errors.Errorf("%v", r).Error()))
-	}
+func (m *Manager) fetchAndHandleRunnableTasks() {
+	defer tidbutil.Recover(metrics.LabelDomain, "fetchAndHandleRunnableTasks", m.fetchAndHandleRunnableTasks, false)
 	ticker := time.NewTicker(checkTime)
 	for {
 		select {
@@ -157,10 +152,8 @@ func (m *Manager) fetchAndHandleRunnableTasks(r interface{}) {
 }
 
 // fetchAndFastCancelTasks fetches the reverting tasks from the global task table and fast cancels them.
-func (m *Manager) fetchAndFastCancelTasks(r interface{}) {
-	if r != nil {
-		logutil.BgLogger().Warn("fetchAndFastCancelTasks loop run into panic, restart it", zap.String("error", errors.Errorf("%v", r).Error()))
-	}
+func (m *Manager) fetchAndFastCancelTasks() {
+	defer tidbutil.Recover(metrics.LabelDomain, "fetchAndFastCancelTasks", m.fetchAndFastCancelTasks, false)
 	ticker := time.NewTicker(checkTime)
 	for {
 		select {

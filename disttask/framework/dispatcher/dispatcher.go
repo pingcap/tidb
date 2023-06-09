@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -126,12 +127,8 @@ func NewDispatcher(ctx context.Context, taskTable *storage.TaskManager) (Dispatc
 
 // Start implements Dispatch.Start interface.
 func (d *dispatcher) Start() {
-	d.wg.RunWithRecover(func() {
-		d.DispatchTaskLoop(nil)
-	}, d.DispatchTaskLoop)
-	d.wg.RunWithRecover(func() {
-		d.DetectTaskLoop(nil)
-	}, d.DetectTaskLoop)
+	d.wg.Run(d.DispatchTaskLoop)
+	d.wg.Run(d.DetectTaskLoop)
 }
 
 // Stop implements Dispatch.Stop interface.
@@ -142,10 +139,8 @@ func (d *dispatcher) Stop() {
 }
 
 // DispatchTaskLoop dispatches the global tasks.
-func (d *dispatcher) DispatchTaskLoop(r interface{}) {
-	if r != nil {
-		logutil.BgLogger().Warn("dispatch task loop run into panic, restart it", zap.String("error", errors.Errorf("%v", r).Error()))
-	}
+func (d *dispatcher) DispatchTaskLoop() {
+	defer tidbutil.Recover(metrics.LabelDomain, "DispatchTaskLoop", d.DispatchTaskLoop, false)
 	logutil.BgLogger().Info("dispatch task loop start")
 	ticker := time.NewTicker(checkTaskRunningInterval)
 	defer ticker.Stop()
@@ -255,10 +250,8 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 }
 
 // DetectTaskLoop monitors the status of the subtasks and processes them.
-func (d *dispatcher) DetectTaskLoop(r interface{}) {
-	if r != nil {
-		logutil.BgLogger().Warn("dispatch task loop run into panic, restart it", zap.String("error", errors.Errorf("%v", r).Error()))
-	}
+func (d *dispatcher) DetectTaskLoop() {
+	defer tidbutil.Recover(metrics.LabelDomain, "DetectTaskLoop", d.DetectTaskLoop, false)
 	logutil.BgLogger().Info("detect task loop start")
 	for {
 		select {
