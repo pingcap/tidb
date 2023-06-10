@@ -254,6 +254,37 @@ func testInsertOnDuplicateKey(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec(`insert into t1 set c1 = 0.1`)
 	tk.MustExec(`insert into t1 set c1 = 0.1 on duplicate key update c1 = 1`)
 	tk.MustQuery(`select * from t1 use index(primary)`).Check(testkit.Rows(`1.0000`))
+
+	// fix issue https://github.com/pingcap/tidb/issues/29261
+	tk.MustExec("DROP TABLE if exists t0, t1,t2;")
+	tk.MustExec("CREATE TABLE t0 (k INTEGER PRIMARY KEY);")
+	tk.MustExec("CREATE TABLE t1(a INTEGER);")
+	tk.MustExec("CREATE TABLE t2(a INTEGER);")
+	tk.MustExec("INSERT INTO t1 VALUES (1), (2);")
+	tk.MustExec("INSERT INTO t2 VALUES (1), (3);")
+	tk.MustExec("INSERT INTO t0 SELECT a FROM t1 ON DUPLICATE KEY UPDATE k= a + t1.a + 10;")
+	tk.MustQuery("SELECT * FROM t0 order by k").Check(testkit.Rows("1", "2"))
+	tk.MustExec("INSERT INTO t0 SELECT a FROM t1 JOIN t2 USING (a) ON DUPLICATE KEY UPDATE k= t1.a + t2.a + 10; ")
+	tk.MustQuery("SELECT * FROM t0 order by k").Check(testkit.Rows("2", "12"))
+	err = tk.ExecToErr("INSERT INTO t0 SELECT a FROM t1 JOIN t2 on(t1.a=t2.a) ON DUPLICATE KEY UPDATE k= t1.a + t2.a + 10; ")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1052]Column 'a' in field list is ambiguous")
+	// duplicate clause doesn't allow column alias.
+	err = tk.ExecToErr("INSERT INTO t0 SELECT a as x FROM t1 JOIN t2 USING (a) ON DUPLICATE KEY UPDATE k= x + t2.a + 10; ")
+	fmt.Println(err.Error())
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1054]Unknown column 'x' in 'field list'")
+	// duplicate clause does allow the origin column name.
+	tk.MustExec("INSERT INTO t0 SELECT a as x FROM t1 JOIN t2 USING (a) ON DUPLICATE KEY UPDATE k= a + t2.a + 10; ")
+	tk.MustQuery("SELECT * FROM t0 order by k").Check(testkit.Rows("1", "2", "12"))
+
+	// duplicate clause doesn't allow origin table name.
+	err = tk.ExecToErr("INSERT INTO t0 SELECT a FROM t1 x JOIN t2 y USING (a) ON DUPLICATE KEY UPDATE k= t1.a + t2.a + 10;")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1054]Unknown column 't1.a' in 'field list'")
+	// duplicate clause does allow table alias.
+	tk.MustExec("INSERT INTO t0 SELECT a FROM t1 x JOIN t2 y USING (a) ON DUPLICATE KEY UPDATE k= x.a + y.a + 100; ")
+	tk.MustQuery("SELECT * FROM t0 order by k").Check(testkit.Rows("2", "12", "102"))
 }
 
 func TestClusterIndexInsertOnDuplicateKey(t *testing.T) {

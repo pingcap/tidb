@@ -85,9 +85,17 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	return newExpr, nil
 }
 
-func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
+func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert, colMapper map[*ast.ColumnNameExpr]int) (expression.Expression, error) {
 	b.rewriterCounter++
-	defer func() { b.rewriterCounter-- }()
+	for K, V := range colMapper {
+		b.colMapper[K] = V
+	}
+	defer func() {
+		b.rewriterCounter--
+		for K := range colMapper {
+			delete(b.colMapper, K)
+		}
+	}()
 
 	b.curClause = fieldList
 	rewriter := b.getExpressionRewriter(ctx, mockPlan)

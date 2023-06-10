@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -3875,6 +3876,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return n
 	}
 
+	var colMapper map[*ast.ColumnNameExpr]int
 	if len(insert.Setlist) > 0 {
 		// Branch for `INSERT ... SET ...`.
 		err := b.buildSetValuesOfInsert(ctx, insert, insertPlan, mockTablePlan, checkRefColumn)
@@ -3889,7 +3891,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 	} else {
 		// Branch for `INSERT ... SELECT ...`.
-		err := b.buildSelectPlanOfInsert(ctx, insert, insertPlan)
+		colMapper, err = b.buildSelectPlanOfInsert(ctx, insert, insertPlan)
 		if err != nil {
 			return nil, err
 		}
@@ -3899,7 +3901,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	mockTablePlan.names = insertPlan.names4OnDuplicate
 
 	onDupColSet, err := insertPlan.resolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
-		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
+		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan, colMapper)
 	})
 	if err != nil {
 		return nil, err
@@ -3913,6 +3915,15 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 
+	// Notes:
+	// the interesting is since we have build the insertPlan.Schema4OnDuplicate in the sequence of tableSchema(len1) + extraCol(len2) + insertNewRow(len3),
+	// the later execution we will compose the collected data into the row in the same sequence, for the sake of expression evaluation.
+	// there are some implementation is based on the origin tableCol(len1) eg: asgn.Col.ResolveIndices(tableSchema), in which the col inside will be resolved with index in [0, len1).
+	// there are also some resolution is based on insertPlan.Schema4OnDuplicate eg: asgn.Expr.ResolveIndices(p.Schema4OnDuplicate), in which the same col above will surely be guaranteed with index in [0, len1) too.
+	//
+	// Note: Essentially we couldn't mix the sequence of insertPlan.Schema4OnDuplicate, for example like: extraCol(len2) + tableSchema(len1) + insertNewRow(len3), consequently leading the col in tableSchema (tagged
+	// with target assignment col) with index [len2, len2 + len1). This is fatal because some implementation is on the simple precondition that the new assignment col index is just like [0, len(writableCols)), eg:
+	// vassignFlag := make([]bool, len(e.Table.WritableCols())).
 	err = insertPlan.ResolveIndices()
 	if err != nil {
 		return nil, err
@@ -4148,7 +4159,31 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 }
 
 type colNameInOnDupExtractor struct {
-	colNameMap map[types.FieldName]*ast.ColumnNameExpr
+	// since x.OriginTextPosition() doesn't work here, use the in-order traversal sequence of OnDupExpr instead.
+	cnt        int
+	colNameMap map[types.FieldName]*columnNameWithPos
+}
+
+type columnNameWithPos struct {
+	cn  *ast.ColumnNameExpr
+	pos int
+}
+
+// columnNameWithPosSorter implements the sort.Interface interface.
+type columnNameWithPosSorter struct {
+	cNamesPos []*columnNameWithPos
+}
+
+func (s *columnNameWithPosSorter) Swap(i, j int) {
+	s.cNamesPos[i], s.cNamesPos[j] = s.cNamesPos[j], s.cNamesPos[i]
+}
+
+func (s *columnNameWithPosSorter) Len() int {
+	return len(s.cNamesPos)
+}
+
+func (s *columnNameWithPosSorter) Less(i, j int) bool {
+	return s.cNamesPos[i].pos < s.cNamesPos[j].pos
 }
 
 func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
@@ -4159,7 +4194,8 @@ func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
 			TblName: x.Name.Table,
 			ColName: x.Name.Name,
 		}
-		c.colNameMap[fieldName] = x
+		c.colNameMap[fieldName] = &columnNameWithPos{x, c.cnt}
+		c.cnt++
 		return node, true
 	// We don't extract the column names from the sub select.
 	case *ast.SelectStmt, *ast.SetOprStmt:
@@ -4173,13 +4209,17 @@ func (*colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
 	return node, true
 }
 
-func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert) error {
+func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert) (map[*ast.ColumnNameExpr]int, error) {
 	b.isForUpdateRead = true
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	actualColLen := -1
+	var (
+		selectPlan   Plan
+		actualColLen = -1
+		colMapper    = make(map[*ast.ColumnNameExpr]int)
+	)
 	// For MYSQL, it handles the case that the columns in ON DUPLICATE UPDATE is not the project column of the SELECT clause
 	// but just in the table occurs in the SELECT CLAUSE.
 	//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; the `y` is not a column of select's output.
@@ -4198,29 +4238,63 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 				}
 			}
 			if !hasWildCard {
-				colExtractor := &colNameInOnDupExtractor{colNameMap: make(map[types.FieldName]*ast.ColumnNameExpr)}
+				colExtractor := &colNameInOnDupExtractor{colNameMap: make(map[types.FieldName]*columnNameWithPos)}
 				for _, assign := range insert.OnDuplicate {
 					assign.Expr.Accept(colExtractor)
 				}
 				actualColLen = len(sel.Fields.Fields)
+				// build the plan first to detect the full path of the output name.
+				// Only resolveFromSelectFields couldn't cover the situation here when the ColumnNameExpr contains table name.
+				selectPlan, err = b.Build(ctx, insert.Select)
+				if err != nil {
+					return nil, err
+				}
+				// clean the auxiliary field.
+				sel.Fields.Fields = sel.Fields.Fields[:actualColLen]
+
+				// collect the colName in OnDup.
+				colNameInOnDupSlice := make([]*columnNameWithPos, 0, len(colExtractor.colNameMap))
 				for _, colName := range colExtractor.colNameMap {
+					colNameInOnDupSlice = append(colNameInOnDupSlice, colName)
+				}
+				// use the sorter to maintain the correct error message when errors.
+				colNameInOnDupSorter := columnNameWithPosSorter{colNameInOnDupSlice}
+				sort.Sort(&colNameInOnDupSorter)
+
+				for _, colNamePos := range colNameInOnDupSorter.cNamesPos {
+					colName := colNamePos.cn
 					// If we found the name from the INSERT's table columns, we don't try to find it in select field anymore.
 					if insertPlan.tableColNames.FindAstColName(colName.Name) {
 						continue
 					}
 					found := false
-					for _, field := range sel.Fields.Fields {
-						if colField, ok := field.Expr.(*ast.ColumnNameExpr); ok &&
-							(colName.Name.Schema.L == "" || colField.Name.Schema.L == "" || colName.Name.Schema.L == colField.Name.Schema.L) &&
-							(colName.Name.Table.L == "" || colField.Name.Table.L == "" || colName.Name.Table.L == colField.Name.Table.L) &&
-							colName.Name.Name.L == colField.Name.Name.L {
-							found = true
-							break
+					// use the full path name to check expr's name in duplicate clause.
+					sNames := selectPlan.OutputNames()
+					for i, field := range sel.Fields.Fields[:len(sNames)] {
+						sName := sNames[i]
+						// find the origin column name.
+						if _, ok := field.Expr.(*ast.ColumnNameExpr); ok &&
+							(colName.Name.Schema.L == "" || sName.DBName.L == "" || colName.Name.Schema.L == sName.DBName.L) &&
+							(colName.Name.Table.L == "" || sName.TblName.L == "" || colName.Name.Table.L == sName.TblName.L) &&
+							colName.Name.Name.L == sName.ColName.L {
+							if field.AsName.L == "" {
+								found = true
+								break
+							}
+							// here means there is a column alias name.
+							// duplicate clause can't use the column alias name, so we still need to append the select fields.
 						}
 					}
 					if found {
 						continue
 					}
+					// why we use colMapper here?
+					// take example: INSERT INTO t0 SELECT a as x FROM t1 JOIN t2 USING (a) ON DUPLICATE KEY UPDATE k= a + t2.a + 10;
+					// the final mockPlan will be: [test.t0.k, test.t2.a, test.t1.a, test.t1.x], the middle two is appended from here.
+					// when we try to resolve duplicate clause encountering `a`, it has two options to choose, leading ambiguous error.
+					// the appended field `test.t1.a` should be bound with *ast.ColumnNameExpr `a`, so did `t2.a`, a sort of approach
+					// also adopted in plan building phase.
+					colMapper[colName] = len(sel.Fields.Fields)
 					sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{Expr: colName, Offset: len(sel.Fields.Fields)})
 				}
 				defer func(originSelFieldLen int) {
@@ -4231,14 +4305,16 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 			}
 		}
 	}
-	selectPlan, err := b.Build(ctx, insert.Select)
+
+	// build the plan again since we have appended some new fields.
+	selectPlan, err = b.Build(ctx, insert.Select)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Check to guarantee that the length of the row returned by select is equal to that of affectedValuesCols.
 	if (actualColLen == -1 && selectPlan.Schema().Len() != len(affectedValuesCols)) || (actualColLen != -1 && actualColLen != len(affectedValuesCols)) {
-		return ErrWrongValueCountOnRow.GenWithStackByArgs(1)
+		return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 	}
 
 	// Check to guarantee that there's no generated column.
@@ -4250,14 +4326,14 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	// that there's a generated column in the column list.
 	for _, col := range affectedValuesCols {
 		if col.IsGenerated() {
-			return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+			return nil, ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
 		}
 	}
 
 	names := selectPlan.OutputNames()
 	insertPlan.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(LogicalPlan))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if actualColLen == -1 {
@@ -4291,7 +4367,13 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	insertPlan.Schema4OnDuplicate.Append(schema4NewRow.Columns...)
 	insertPlan.names4OnDuplicate = append(insertPlan.tableColNames.Shallow(), names[actualColLen:]...)
 	insertPlan.names4OnDuplicate = append(insertPlan.names4OnDuplicate, names4NewRow...)
-	return nil
+	// adjusting the col mapper for outer mock plan.
+	offset := len(insertPlan.tableSchema.Columns)
+	for k := range colMapper {
+		colMapper[k] -= actualColLen
+		colMapper[k] += offset
+	}
+	return colMapper, nil
 }
 
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (Plan, error) {
