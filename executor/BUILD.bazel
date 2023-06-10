@@ -361,6 +361,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":executor"],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//config",
