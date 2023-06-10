@@ -81,7 +81,7 @@ var allRules = append([]lint.Rule{
 	&rule.UnusedReceiverRule{},
 	//&rule.UnhandledErrorRule{},
 	//&rule.CognitiveComplexityRule{},
-	//&rule.EarlyReturnRule{},
+	&rule.EarlyReturnRule{},
 	&rule.UnexportedNamingRule{},
 	//&rule.FunctionLength{},
 	//&rule.NestedStructs{},
