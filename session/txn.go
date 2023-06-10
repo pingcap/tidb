@@ -520,18 +520,18 @@ func (txn *LazyTxn) CancelFairLocking(ctx context.Context) error {
 func (txn *LazyTxn) DoneFairLocking(ctx context.Context) error {
 	if txn.Valid() {
 		return txn.Transaction.DoneFairLocking(ctx)
-	} else if txn.pending() {
-		if !txn.enterFairLockingOnValid {
-			err := errors.New("trying to finish fair locking when it's not started")
-			logutil.BgLogger().Error("unexpected error when finishing fair locking")
-			return err
-		}
-		txn.enterFairLockingOnValid = false
-	} else {
+	}
+	if !txn.pending() {
 		err := errors.New("trying to cancel fair locking on a transaction in invalid state")
 		logutil.BgLogger().Error("unexpected error when finishing fair locking")
 		return err
 	}
+	if !txn.enterFairLockingOnValid {
+		err := errors.New("trying to finish fair locking when it's not started")
+		logutil.BgLogger().Error("unexpected error when finishing fair locking")
+		return err
+	}
+	txn.enterFairLockingOnValid = false
 	return nil
 }
 
