@@ -1704,6 +1704,14 @@ var defaultSysVars = []*SysVar{
 		s.EnableListTablePartition = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableRemovePartitioning, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableRemovePartitioning = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAlterPartitionBy, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableAlterPartitionBy = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashJoinConcurrency, Value: strconv.Itoa(DefTiDBHashJoinConcurrency), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
 		s.hashJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 		return nil

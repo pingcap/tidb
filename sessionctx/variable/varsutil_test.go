@@ -277,6 +277,22 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "ON", val)
 	require.True(t, v.EnableListTablePartition)
 
+	require.False(t, v.EnableRemovePartitioning)
+	err = v.SetSystemVar(TiDBEnableRemovePartitioning, "on")
+	require.NoError(t, err)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableRemovePartitioning)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+	require.True(t, v.EnableRemovePartitioning)
+
+	require.False(t, v.EnableAlterPartitionBy)
+	err = v.SetSystemVar(TiDBEnableAlterPartitionBy, "on")
+	require.NoError(t, err)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableAlterPartitionBy)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+	require.True(t, v.EnableAlterPartitionBy)
+
 	require.Equal(t, DefTiDBOptJoinReorderThreshold, v.TiDBOptJoinReorderThreshold)
 	err = v.SetSystemVar(TiDBOptJoinReorderThreshold, "5")
 	require.NoError(t, err)
@@ -498,6 +514,12 @@ func TestValidate(t *testing.T) {
 		{TiDBEnableListTablePartition, "ON", false},
 		{TiDBEnableListTablePartition, "OFF", false},
 		{TiDBEnableListTablePartition, "list", true},
+		{TiDBEnableRemovePartitioning, "ON", false},
+		{TiDBEnableRemovePartitioning, "OFF", false},
+		{TiDBEnableRemovePartitioning, "list", true},
+		{TiDBEnableAlterPartitionBy, "ON", false},
+		{TiDBEnableAlterPartitionBy, "OFF", false},
+		{TiDBEnableAlterPartitionBy, "list", true},
 		{TiDBOptCorrelationExpFactor, "a", true},
 		{TiDBOptCorrelationExpFactor, "-10", false},
 		{TiDBOptCorrelationThreshold, "a", true},
@@ -564,6 +586,12 @@ func TestValidate(t *testing.T) {
 		{TiDBEnableListTablePartition, "ON", false},
 		{TiDBEnableListTablePartition, "OFF", false},
 		{TiDBEnableListTablePartition, "list", true},
+		{TiDBEnableRemovePartitioning, "ON", false},
+		{TiDBEnableRemovePartitioning, "OFF", false},
+		{TiDBEnableRemovePartitioning, "list", true},
+		{TiDBEnableAlterPartitionBy, "ON", false},
+		{TiDBEnableAlterPartitionBy, "OFF", false},
+		{TiDBEnableAlterPartitionBy, "list", true},
 		{TiDBIsolationReadEngines, "", true},
 		{TiDBIsolationReadEngines, "tikv", false},
 		{TiDBIsolationReadEngines, "TiKV,tiflash", false},

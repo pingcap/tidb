@@ -256,6 +256,8 @@ func TestAlterPartitionBy(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d,'filler%d')`, i, i/3))
 	}
+	tk.MustContainErrMsg(`alter table t partition by range (a) (partition p0 values less than (1000000), partition p1 values less than (2000000), partition pMax values less than (maxvalue))`, "[ddl:8200]Unsupported PARTITION BY, tidb_enable_alter_partition_by is not enabled")
+	tk.MustExec(`set tidb_enable_alter_partition_by = 1`)
 	tk.MustExec(`alter table t partition by range (a) (partition p0 values less than (1000000), partition p1 values less than (2000000), partition pMax values less than (maxvalue))`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
@@ -332,6 +334,8 @@ PARTITION BY hash (a) PARTITIONS 1`)
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 1"))
 
+	tk.MustContainErrMsg(`ALTER TABLE t REMOVE PARTITIONING`, "[ddl:8200]Unsupported REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
+	tk.MustExec(`set @@session.tidb_enable_remove_partitioning = "ON"`)
 	tk.MustExec(`ALTER TABLE t REMOVE PARTITIONING`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +

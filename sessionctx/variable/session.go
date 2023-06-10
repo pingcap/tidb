@@ -1480,6 +1480,14 @@ type SessionVars struct {
 
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+
+	// EnableRemovePartitioning for ALTER TABLE t REMOVE PARTITIONING
+	EnableRemovePartitioning bool
+
+	// EnableAlterPartitionBy for ALTER TABLE t PARTITION BY
+	// both for partition a non-partitioned table as well as
+	// change the partitioning type/schema
+	EnableAlterPartitionBy bool
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session

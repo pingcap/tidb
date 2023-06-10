@@ -4042,6 +4042,9 @@ func getPartitionInfoTypeNone() *model.PartitionInfo {
 
 // AlterTablePartitioning reorganize one set of partitions to a new set of partitions.
 func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if !ctx.GetSessionVars().EnableAlterPartitionBy {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("PARTITION BY, tidb_enable_alter_partition_by is not enabled")
+	}
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
@@ -4180,6 +4183,9 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 
 // RemovePartitioning removes partitioning from a table.
 func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if !ctx.GetSessionVars().EnableRemovePartitioning {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
+	}
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
