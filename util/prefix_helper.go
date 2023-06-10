@@ -34,7 +34,7 @@ func ScanMetaWithPrefix(retriever kv.Retriever, prefix kv.Key, filter func(kv.Ke
 	defer iter.Close()
 
 	for {
-		if !iter.Valid() && iter.Key().HasPrefix(prefix) {
+		if !(iter.Valid() && iter.Key().HasPrefix(prefix)) {
 			break
 		}
 		if !filter(iter.Key(), iter.Value()) {
