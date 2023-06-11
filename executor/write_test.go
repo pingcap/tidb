@@ -4097,3 +4097,14 @@ func testEqualDatumsAsBinary(c *C, a []interface{}, b []interface{}, same bool) 
 	c.Assert(err, IsNil)
 	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
 }
+
+func TestHandleColumnWithOnUpdateCurrentTimestamp(t *testing.T) {
+	// Test https://github.com/pingcap/tidb/issues/44565
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a timestamp on update current_timestamp(0), b int, primary key (a), key idx (a))")
+	tk.MustExec("insert into t values ('2023-06-11 10:00:00', 1)")
+	tk.MustExec("update t force index(primary) set b = 10 where a = '2023-06-11 10:00:00'")
+	tk.MustExec("admin check table t")
+}
