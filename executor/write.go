@@ -162,6 +162,14 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			if v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, int8(col.Decimal)); err == nil {
 				newData[i] = v
 				modified[i] = true
+				// Only TIMESTAMP and DATETIME columns can be automatically updated, so it cannot be PKIsHandle.
+				// Ref: https://dev.mysql.com/doc/refman/8.0/en/timestamp-initialization.html
+				if col.IsPKHandleColumn(t.Meta()) {
+					return false, errors.Errorf("on-update-now column should never be pk-is-handle")
+				}
+				if col.IsCommonHandleColumn(t.Meta()) {
+					handleChanged = true
+				}
 			} else {
 				return false, err
 			}
