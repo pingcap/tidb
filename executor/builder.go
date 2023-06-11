@@ -5297,12 +5297,11 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 
 	tblInfo := v.TableInfo.Meta()
 	if tblInfo.TempTableType != model.TempTableNone {
-		if tblInfo.TempTableType == model.TempTableGlobal {
-			e.sampler = &emptySampler{}
-		} else {
+		if tblInfo.TempTableType != model.TempTableGlobal {
 			b.err = errors.New("TABLESAMPLE clause can not be applied to local temporary tables")
 			return nil
 		}
+		e.sampler = &emptySampler{}
 	} else if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
 		e.sampler = newTableRegionSampler(
 			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),

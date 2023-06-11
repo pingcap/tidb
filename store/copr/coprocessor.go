@@ -1518,20 +1518,19 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 	}
 	if regionErr := resp.GetRegionError(); regionErr != nil && regionErr.ServerIsBusy != nil &&
 		regionErr.ServerIsBusy.EstimatedWaitMs > 0 && len(remainTasks) != 0 {
-		if len(batchResps) == 0 {
-			busyThresholdFallback = true
-			handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower)
-			for _, task := range remainTasks {
-				// do not set busy threshold again.
-				task.busyThreshold = 0
-				if err = handler.handle(task); err != nil {
-					return nil, err
-				}
-			}
-			remainTasks = handler.build()
-		} else {
+		if len(batchResps) != 0 {
 			return nil, errors.New("store batched coprocessor with server is busy error shouldn't contain responses")
 		}
+		busyThresholdFallback = true
+		handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower)
+		for _, task := range remainTasks {
+			// do not set busy threshold again.
+			task.busyThreshold = 0
+			if err = handler.handle(task); err != nil {
+				return nil, err
+			}
+		}
+		remainTasks = handler.build()
 	}
 	return remainTasks, nil
 }

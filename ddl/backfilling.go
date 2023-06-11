@@ -896,13 +896,13 @@ func (n *doneTaskKeeper) updateNextKey(doneTaskID int, next kv.Key) {
 		n.current++
 		n.nextKey = next
 		for {
-			if nKey, ok := n.doneTaskNextKey[n.current]; ok {
-				delete(n.doneTaskNextKey, n.current)
-				n.current++
-				n.nextKey = nKey
-			} else {
+			nKey, ok := n.doneTaskNextKey[n.current]
+			if !ok {
 				break
 			}
+			delete(n.doneTaskNextKey, n.current)
+			n.current++
+			n.nextKey = nKey
 		}
 		return
 	}

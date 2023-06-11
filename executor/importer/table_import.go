@@ -297,9 +297,7 @@ func (e *LoadDataController) VerifyChecksum(ctx context.Context, localChecksum v
 	if err2 != nil {
 		return err2
 	}
-	if remoteChecksum.IsEqual(&localChecksum) {
-		e.logger.Info("checksum pass", zap.Object("local", &localChecksum))
-	} else {
+	if !remoteChecksum.IsEqual(&localChecksum) {
 		err3 := common.ErrChecksumMismatch.GenWithStackByArgs(
 			remoteChecksum.Checksum, localChecksum.Sum(),
 			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
@@ -311,6 +309,7 @@ func (e *LoadDataController) VerifyChecksum(ctx context.Context, localChecksum v
 		}
 		return err3
 	}
+	e.logger.Info("checksum pass", zap.Object("local", &localChecksum))
 	return nil
 }
 
