@@ -105,7 +105,7 @@ func (m *mockResourceGroupManager) WatchResourceGroup(ctx context.Context, revis
 	return nil, nil
 }
 
-func (c *mockResourceGroupManager) Watch(ctx context.Context, key []byte, opts ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
+func (m *mockResourceGroupManager) Watch(ctx context.Context, key []byte, opts ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
 	return nil, nil
 }
 
