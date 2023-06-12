@@ -3514,11 +3514,10 @@ func (n *ImportIntoActionStmt) Accept(v Visitor) (Node, bool) {
 }
 
 func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
-	if n.Tp == ImportIntoCancel {
-		ctx.WriteKeyWord("CANCEL IMPORT JOB ")
-	} else {
+	if n.Tp != ImportIntoCancel {
 		return errors.Errorf("invalid IMPORT INTO action type: %s", n.Tp)
 	}
+	ctx.WriteKeyWord("CANCEL IMPORT JOB ")
 	ctx.WritePlainf("%d", n.JobID)
 	return nil
 }
