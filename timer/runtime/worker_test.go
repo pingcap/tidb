@@ -141,6 +141,7 @@ func TestWorkerProcessIdleTimerSuccess(t *testing.T) {
 	defer cancel()
 
 	store := api.NewMemoryTimerStore()
+	defer store.Close()
 	cli := api.NewDefaultTimerClient(store)
 	respChan := make(chan *triggerEventResponse)
 	timer := prepareTimer(t, cli)
@@ -210,6 +211,7 @@ func TestWorkerProcessTriggeredTimerSuccess(t *testing.T) {
 	defer cancel()
 
 	store := api.NewMemoryTimerStore()
+	defer store.Close()
 	cli := api.NewDefaultTimerClient(store)
 	respChan := make(chan *triggerEventResponse)
 	timer := prepareTimer(t, cli)
@@ -270,6 +272,7 @@ func TestWorkerProcessDelayOrErr(t *testing.T) {
 	defer cancel()
 
 	store := api.NewMemoryTimerStore()
+	defer store.Close()
 	cli := api.NewDefaultTimerClient(store)
 	respChan := make(chan *triggerEventResponse)
 	timer := prepareTimer(t, cli)

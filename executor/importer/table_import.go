@@ -58,10 +58,10 @@ var (
 	CheckDiskQuotaInterval = time.Minute
 )
 
-func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
+func prepareSortDir(e *LoadDataController, taskID int64) (string, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
-	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix, strconv.FormatInt(jobID, 10))
+	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix, strconv.FormatInt(taskID, 10))
 
 	if info, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
