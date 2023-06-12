@@ -168,10 +168,7 @@ func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta [
 			return err
 		}
 
-		taskID, err = strconv.ParseInt(rs[0].GetString(0), 10, 64)
-		if err != nil {
-			return err
-		}
+		taskID = int64(rs[0].GetUint64(0))
 		failpoint.Inject("testSetLastTaskID", func() { TestLastTaskID.Store(taskID) })
 
 		return nil
