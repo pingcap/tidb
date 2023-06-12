@@ -518,6 +518,7 @@ func (sv *SysVar) checkBoolSystemVar(value string, vars *SessionVars) (string, e
 }
 
 // GetNativeValType attempts to convert the val to the approx MySQL non-string type
+// TODO: only return 3 types now, support others like DOUBLE, TIME later
 func (sv *SysVar) GetNativeValType(val string) (types.Datum, byte, uint) {
 	switch sv.Type {
 	case TypeUnsigned:
@@ -525,13 +526,13 @@ func (sv *SysVar) GetNativeValType(val string) (types.Datum, byte, uint) {
 		if err != nil {
 			u = 0
 		}
-		return types.NewUintDatum(u), mysql.TypeLonglong, mysql.UnsignedFlag
+		return types.NewUintDatum(u), mysql.TypeLonglong, mysql.UnsignedFlag | mysql.BinaryFlag
 	case TypeBool:
 		optVal := int64(0) // OFF
 		if TiDBOptOn(val) {
 			optVal = 1
 		}
-		return types.NewIntDatum(optVal), mysql.TypeLong, 0
+		return types.NewIntDatum(optVal), mysql.TypeLonglong, mysql.BinaryFlag
 	}
 	return types.NewStringDatum(val), mysql.TypeVarString, 0
 }
