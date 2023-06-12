@@ -51,5 +51,5 @@ func TestFormatSQL(t *testing.T) {
 	require.Equal(t, "aaaaaaaaaaaaaaaaaaaa", val.String())
 	variable.QueryLogMaxLen.Store(5)
 	val = executor.FormatSQL("aaaaaaaaaaaaaaaaaaaa")
-	require.Equal(t, "\"aaaaa\"(len:20)", val.String())
+	require.Equal(t, "aaaaa(len:20)", val.String())
 }
