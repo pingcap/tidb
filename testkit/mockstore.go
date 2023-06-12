@@ -136,7 +136,6 @@ func (d *DistExecutionTestContext) Close() {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		gctuner.GlobalMemoryLimitTuner.Stop()
-		infosync.MockGlobalServerInfoManagerEntry.Close()
 		for _, domain := range d.domains {
 			domain.Close()
 		}

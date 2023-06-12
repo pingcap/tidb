@@ -1005,6 +1005,12 @@ func (do *Domain) Close() {
 	}
 	gctuner.WaitMemoryLimitTunerExitInTest()
 	close(do.mdlCheckCh)
+
+	// close MockGlobalServerInfoManagerEntry in order to refresh mock server info.
+	if intest.InTest {
+		infosync.MockGlobalServerInfoManagerEntry.Close()
+	}
+
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
