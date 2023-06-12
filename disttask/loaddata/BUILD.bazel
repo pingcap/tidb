@@ -55,6 +55,7 @@ go_test(
     deps = [
         "//disttask/framework/proto",
         "//domain/infosync",
+        "//executor/importer",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
