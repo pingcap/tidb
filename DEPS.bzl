@@ -1676,8 +1676,8 @@ def go_deps():
         name = "com_github_golangci_golangci_lint",
         build_file_proto_mode = "disable",
         importpath = "github.com/golangci/golangci-lint",
-        sum = "h1:UigoFKBXwmoJVNWeht27A0jnuZjdOIV4lvMYuA9naj4=",
-        version = "v1.53.0",
+        sum = "h1:52pgJKXiAuyfcOa8HJPIrZk1oMgpyXeN8TUxpcteweM=",
+        version = "v1.53.2",
     )
     go_repository(
         name = "com_github_golangci_gosec",
@@ -3268,8 +3268,8 @@ def go_deps():
         name = "com_github_openpeedeep_depguard_v2",
         build_file_proto_mode = "disable",
         importpath = "github.com/OpenPeeDeeP/depguard/v2",
-        sum = "h1:yr9ZswukmNxl/hmJHEoLEjCF1d+f2pQrC0m1jzVljAE=",
-        version = "v2.0.1",
+        sum = "h1:aQl70G173h/GZYhWf36aE5H0KaujXfVMnn/f1kSDVYY=",
+        version = "v2.1.0",
     )
 
     go_repository(
@@ -3846,22 +3846,22 @@ def go_deps():
         name = "com_github_shirou_gopsutil_v3",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/shirou/gopsutil/v3",
-        sum = "h1:hZwmDxZs7Ewt75DV81r4pFMqbq+di2cbt9FsQBqLD2o=",
-        version = "v3.23.4",
+        sum = "h1:5SgDCeQ0KW0S4N0znjeM/eFHXXOKyv2dVNgRq/c9P6Y=",
+        version = "v3.23.5",
     )
     go_repository(
         name = "com_github_shoenig_go_m1cpu",
         build_file_proto_mode = "disable",
         importpath = "github.com/shoenig/go-m1cpu",
-        sum = "h1:LF57Z/Fpb/WdGLjt2HZilNnmZOxg/q2bSKTQhgbrLrQ=",
-        version = "v0.1.5",
+        sum = "h1:nxdKQNcEB6vzgA2E2bvzKIYRuNj7XNJ4S/aRSwKzFtM=",
+        version = "v0.1.6",
     )
     go_repository(
         name = "com_github_shoenig_test",
         build_file_proto_mode = "disable",
         importpath = "github.com/shoenig/test",
-        sum = "h1:GVXWJFk9PiOjN0KoJ7VrJGH6uLPnqxR7/fe3HUPfE0c=",
-        version = "v0.6.3",
+        sum = "h1:kVTaSd7WLz5WZ2IaoM0RSzRsUD+m8wRR+5qvntpn4LU=",
+        version = "v0.6.4",
     )
 
     go_repository(
@@ -4600,8 +4600,8 @@ def go_deps():
         name = "com_github_yusufpapurcu_wmi",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/yusufpapurcu/wmi",
-        sum = "h1:KBNDSne4vP5mbSWnJbO+51IMOXJB67QiYCSBrubbPRg=",
-        version = "v1.2.2",
+        sum = "h1:E1ctvB7uKFMOJw3fdOW32DwGE9I7t++CRUEMKvFoFiw=",
+        version = "v1.2.3",
     )
     go_repository(
         name = "com_gitlab_bosi_decorder",

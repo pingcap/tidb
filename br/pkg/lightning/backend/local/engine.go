@@ -64,6 +64,8 @@ const (
 	// and add isImportingAtomic with this value. In other state, we directly store with the state value.
 	// so this must always the last value of this enum.
 	importMutexStateReadLock
+	// we need to lock the engine when it's open as we do when it's close, otherwise GetEngienSize may race with OpenEngine
+	importMutexStateOpen
 )
 
 const (
@@ -481,6 +483,8 @@ func (e *Engine) getEngineFileSize() backend.EngineFileSize {
 	var memSize int64
 	e.localWriters.Range(func(k, v interface{}) bool {
 		w := k.(*Writer)
+		w.Lock()
+		defer w.Unlock()
 		if w.writer != nil {
 			memSize += int64(w.writer.writer.EstimatedSize())
 		} else {
@@ -620,22 +624,20 @@ func (e *Engine) ingestSSTLoop() {
 						finSeq = metas.seq
 						finMetaSeq := metasMaxSeq
 						for len(inSyncSeqs.arr) > 0 {
-							if inSyncSeqs.arr[0].flushSeq == finSeq+1 {
-								finSeq++
-								finMetaSeq = inSyncSeqs.arr[0].metaSeq
-								heap.Remove(inSyncSeqs, 0)
-							} else {
+							if inSyncSeqs.arr[0].flushSeq != finSeq+1 {
 								break
 							}
+							finSeq++
+							finMetaSeq = inSyncSeqs.arr[0].metaSeq
+							heap.Remove(inSyncSeqs, 0)
 						}
 
 						var flushChans []chan struct{}
 						for _, seq := range flushQueue {
-							if seq.seq <= finSeq {
-								flushChans = append(flushChans, seq.ch)
-							} else {
+							if seq.seq > finSeq {
 								break
 							}
+							flushChans = append(flushChans, seq.ch)
 						}
 						flushQueue = flushQueue[len(flushChans):]
 						finishedSeq.Store(finSeq)

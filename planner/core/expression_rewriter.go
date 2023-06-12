@@ -1664,11 +1664,10 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 			}
 			tp := er.ctxStack[i].GetType().Clone()
 			if er.ctxStack[i].GetType().Hybrid() {
-				if expression.GetAccurateCmpType(er.ctxStack[stkLen-elemCnt-1], er.ctxStack[i]) == types.ETString {
-					tp = types.NewFieldType(mysql.TypeVarString)
-				} else {
+				if !(expression.GetAccurateCmpType(er.ctxStack[stkLen-elemCnt-1], er.ctxStack[i]) == types.ETString) {
 					continue
 				}
+				tp = types.NewFieldType(mysql.TypeVarString)
 			} else if coll.Charset == charset.CharsetBin {
 				// When cast character string to binary string, if we still use fixed length representation,
 				// then 0 padding will be used, which can affect later execution.

@@ -963,11 +963,10 @@ var defaultSysVars = []*SysVar{
 			intVal, err := strconv.ParseUint(normalizedValue, 10, 64)
 			if err != nil {
 				bt, str := parseByteSize(normalizedValue)
-				if str != "" {
-					intVal = bt
-				} else {
+				if str == "" {
 					return "", err
 				}
+				intVal = bt
 			}
 			if intVal > 0 && intVal < 128 { // 128 Bytes
 				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitSessMinSize, originalValue))
@@ -992,11 +991,10 @@ var defaultSysVars = []*SysVar{
 			floatValue, err := strconv.ParseFloat(normalizedValue, 64)
 			if err != nil {
 				perc, str := parsePercentage(normalizedValue)
-				if len(str) != 0 {
-					floatValue = float64(perc) / 100
-				} else {
+				if len(str) == 0 {
 					return "", err
 				}
+				floatValue = float64(perc) / 100
 			}
 			gogcTunerThreshold := GOGCTunerThreshold.Load()
 			if floatValue < 0.51 || floatValue > 1 { // 51% ~ 100%
