@@ -187,5 +187,4 @@ func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {
 	for _, f := range z.File {
 		fn(f)
 	}
-	return
 }
