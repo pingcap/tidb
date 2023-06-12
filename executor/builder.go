@@ -827,7 +827,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		GlobalScope:           v.GlobalScope,
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
-		LoadDataJobID:         v.LoadDataJobID,
+		ImportJobID:           v.ImportJobID,
 	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
@@ -877,6 +877,12 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 		}
 	case *ast.LoadDataActionStmt:
 		return &LoadDataActionExec{
+			baseExecutor: newBaseExecutor(b.ctx, nil, 0),
+			tp:           s.Tp,
+			jobID:        s.JobID,
+		}
+	case *ast.ImportIntoActionStmt:
+		return &ImportIntoActionExec{
 			baseExecutor: newBaseExecutor(b.ctx, nil, 0),
 			tp:           s.Tp,
 			jobID:        s.JobID,

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
@@ -205,6 +206,31 @@ func FormatBackendURL(backend *backuppb.StorageBackend) (u url.URL) {
 		u.Path = b.AzureBlobStorage.Prefix
 	}
 	return
+}
+
+// RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
+func RedactURL(str string) (string, error) {
+	u, err := ParseRawURL(str)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	scheme := u.Scheme
+	failpoint.Inject("forceRedactURL", func() {
+		scheme = "s3"
+	})
+	if strings.ToLower(scheme) == "s3" {
+		values := u.Query()
+		for k := range values {
+			// see below on why we normalize key
+			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
+			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
+			if normalizedKey == "access-key" || normalizedKey == "secret-access-key" {
+				values[k] = []string{"redacted"}
+			}
+		}
+		u.RawQuery = values.Encode()
+	}
+	return u.String(), nil
 }
 
 // IsLocalPath returns true if the path is a local file path.

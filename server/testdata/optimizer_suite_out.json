@@ -71,7 +71,7 @@
                   "Version": 440930000000000000
                 },
                 "TableName": "t",
-                "TblInfoID": 88,
+                "TblInfoID": 90,
                 "Uninitialized": true,
                 "UsePartitionStats": false
               }
@@ -139,7 +139,7 @@
                                 "Version": 440930000000000000
                               },
                               "TableName": "t",
-                              "TblInfoID": 88,
+                              "TblInfoID": 90,
                               "Uninitialized": true,
                               "UsePartitionStats": false
                             }
@@ -379,7 +379,7 @@
                             "Version": 440930000000000000
                           },
                           "TableName": "t",
-                          "TblInfoID": 88,
+                          "TblInfoID": 90,
                           "Uninitialized": true,
                           "UsePartitionStats": false
                         }
@@ -550,7 +550,7 @@
                   "Version": 440930000000000000
                 },
                 "TableName": "t",
-                "TblInfoID": 88,
+                "TblInfoID": 90,
                 "Uninitialized": true,
                 "UsePartitionStats": false
               }
@@ -618,7 +618,7 @@
                                 "Version": 440930000000000000
                               },
                               "TableName": "t",
-                              "TblInfoID": 88,
+                              "TblInfoID": 90,
                               "Uninitialized": true,
                               "UsePartitionStats": false
                             }

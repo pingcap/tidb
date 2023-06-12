@@ -1034,7 +1034,7 @@ import (
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
 	PauseLoadDataStmt          "PAUSE LOAD DATA JOB statement"
 	ResumeLoadDataStmt         "RESUME LOAD DATA JOB statement"
-	CancelLoadDataStmt         "CANCEL LOAD DATA JOB statement"
+	CancelImportStmt           "CANCEL IMPORT JOB statement"
 	DropLoadDataStmt           "DROP LOAD DATA JOB statement"
 	ProcedureUnlabeledBlock    "The statement block without label in procedure"
 	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
@@ -5726,12 +5726,12 @@ ResumeLoadDataStmt:
 		}
 	}
 
-CancelLoadDataStmt:
-	"CANCEL" "LOAD" "DATA" "JOB" Int64Num
+CancelImportStmt:
+	"CANCEL" "IMPORT" "JOB" Int64Num
 	{
-		$$ = &ast.LoadDataActionStmt{
-			Tp:    ast.LoadDataCancel,
-			JobID: $5.(int64),
+		$$ = &ast.ImportIntoActionStmt{
+			Tp:    ast.ImportIntoCancel,
+			JobID: $4.(int64),
 		}
 	}
 
@@ -11192,12 +11192,12 @@ ShowStmt:
 	{
 		$$ = $4.(*ast.ShowStmt)
 	}
-|	"SHOW" "LOAD" "DATA" "JOB" Int64Num
+|	"SHOW" "IMPORT" "JOB" Int64Num
 	{
-		v := $5.(int64)
+		v := $4.(int64)
 		$$ = &ast.ShowStmt{
-			Tp:            ast.ShowLoadDataJobs,
-			LoadDataJobID: &v,
+			Tp:          ast.ShowImportJobs,
+			ImportJobID: &v,
 		}
 	}
 |	"SHOW" "CREATE" "PROCEDURE" TableName
@@ -11546,9 +11546,9 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
 	}
-|	"LOAD" "DATA" "JOBS"
+|	"IMPORT" "JOBS"
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowLoadDataJobs}
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
 	}
 
 ShowLikeOrWhereOpt:
@@ -11862,7 +11862,7 @@ Statement:
 |	NonTransactionalDMLStmt
 |	PauseLoadDataStmt
 |	ResumeLoadDataStmt
-|	CancelLoadDataStmt
+|	CancelImportStmt
 |	DropLoadDataStmt
 
 TraceableStmt:
