@@ -576,7 +576,7 @@ type LogicalExpand struct {
 	LevelExprs [][]expression.Expression
 
 	// The generated column names. Eg: "grouping_id" and so on.
-	GeneratedColNames []string
+	ExtraGroupingColNames []string
 
 	// GroupingMode records the grouping id allocation mode.
 	GroupingMode tipb.GroupingMode
@@ -669,7 +669,7 @@ func (p *LogicalExpand) GenLevelProjections() {
 
 // GenerateGroupingMarks generate the groupingMark for the source column specified in grouping function.
 func (p *LogicalExpand) GenerateGroupingMarks(sourceCols []*expression.Column) []map[uint64]struct{} {
-	// since grouping function may have multi args like grouping(a,b), so the source columns may greater than 1.
+	// Since grouping function may have multi args like grouping(a,b), so the source columns may greater than 1.
 	// reference: https://dev.mysql.com/blog-archive/mysql-8-0-grouping-function/
 	// Let's say GROUPING(b,a) group by a,b with rollup. (Note the b,a sequence is reversed from gby item)
 	// if GROUPING (b,a) returns 3, it means that NULL in column “b” and NULL in column “a” for that row is

@@ -1584,7 +1584,7 @@ type PhysicalExpand struct {
 	LevelExprs [][]expression.Expression
 
 	// The generated column names. Eg: "grouping_id" and so on.
-	GeneratedColNames []string
+	ExtraGroupingColNames []string
 }
 
 // Init only assigns type and context.

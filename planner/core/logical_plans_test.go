@@ -2195,7 +2195,7 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, builder.currentBlockExpand.rollupID2GIDS == nil, true)
 	require.Equal(t, builder.currentBlockExpand.rollupGroupingIDs == nil, true)
 	require.Equal(t, builder.currentBlockExpand.GroupingMode == tipb.GroupingMode_ModeBitAnd, true)
-	require.Equal(t, builder.currentBlockExpand.GeneratedColNames[0], "gid")
+	require.Equal(t, builder.currentBlockExpand.ExtraGroupingColNames[0], "gid")
 	require.Equal(t, builder.currentBlockExpand.distinctSize, 3)
 	require.Equal(t, len(builder.currentBlockExpand.distinctGroupByCol), 2)
 

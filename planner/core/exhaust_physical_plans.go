@@ -2485,7 +2485,8 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 func (p *LogicalExpand) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
 	if !prop.IsSortItemEmpty() {
-		return nil, true, nil
+		// false, meaning we can add a sort enforcer.
+		return nil, false, nil
 	}
 	// RootTaskType is the default one, meaning no option. (we can give them a mpp choice)
 	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
@@ -2498,13 +2499,13 @@ func (p *LogicalExpand) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		return nil, true, nil
 	}
 	// for property.RootTaskType and property.MppTaskType with no partition option, we can give an MPP Expand.
-	if p.SCtx().GetSessionVars().IsMPPAllowed() || p.SCtx().GetSessionVars().IsMPPEnforced() {
+	if p.SCtx().GetSessionVars().IsMPPAllowed() {
 		mppProp := prop.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
 		expand := PhysicalExpand{
-			GroupingSets:      p.rollupGroupingSets,
-			LevelExprs:        p.LevelExprs,
-			GeneratedColNames: p.GeneratedColNames,
+			GroupingSets:          p.rollupGroupingSets,
+			LevelExprs:            p.LevelExprs,
+			ExtraGroupingColNames: p.ExtraGroupingColNames,
 		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, mppProp)
 		expand.SetSchema(p.Schema())
 		return []PhysicalPlan{expand}, true, nil

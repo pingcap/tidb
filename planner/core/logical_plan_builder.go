@@ -279,7 +279,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	}
 	expand.GID = gid
 	expandSchema.Append(gid)
-	expand.GeneratedColNames = append(expand.GeneratedColNames, gid.OrigName)
+	expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gid.OrigName)
 	names = append(names, buildExpandFieldName(gid, nil, "gid_"))
 	if hasDuplicateGroupingSet {
 		// the last two col of the schema should be gid & gpos
@@ -290,7 +290,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 		}
 		expand.GPos = gpos
 		expandSchema.Append(gpos)
-		expand.GeneratedColNames = append(expand.GeneratedColNames, gpos.OrigName)
+		expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gpos.OrigName)
 		names = append(names, buildExpandFieldName(gpos, nil, "gpos_"))
 	}
 	expand.SetChildren(proj)
