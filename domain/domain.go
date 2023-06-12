@@ -1213,11 +1213,9 @@ func (do *Domain) Init(
 	return nil
 }
 
-// InitInfo4Test init infosync for distributed execution test
+// InitInfo4Test init infosync for distributed execution test.
 func (do *Domain) InitInfo4Test() {
-	if intest.InTest {
-		infosync.MockGlobalServerInfoManagerEntry.Add(do.ddl.GetID(), do.ServerID)
-	}
+	infosync.MockGlobalServerInfoManagerEntry.Add(do.ddl.GetID(), do.ServerID)
 }
 
 // SetOnClose used to set do.onClose func.
@@ -1383,6 +1381,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
 	var serverID string
 	if intest.InTest {
+		do.InitInfo4Test()
 		serverID = disttaskutil.GenerateSubtaskExecID4Test(do.ddl.GetID())
 	} else {
 		serverID = disttaskutil.GenerateSubtaskExecID(ctx, do.ddl.GetID())

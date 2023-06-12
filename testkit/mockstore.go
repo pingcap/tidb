@@ -67,7 +67,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 }
 
 // DistExecutionTestContext is the context
-// that used in Distributed execution test for Dist task framework and DDL
+// that used in Distributed execution test for Dist task framework and DDL.
 type DistExecutionTestContext struct {
 	Store   kv.Storage
 	domains []*domain.Domain
@@ -75,7 +75,7 @@ type DistExecutionTestContext struct {
 	mu      sync.Mutex
 }
 
-// InitOwner select the last domain as DDL owner
+// InitOwner select the last domain as DDL owner.
 func (d *DistExecutionTestContext) InitOwner() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -85,7 +85,7 @@ func (d *DistExecutionTestContext) InitOwner() error {
 	return d.domains[len(d.domains)-1].DDL().OwnerManager().CampaignOwner()
 }
 
-// SetOwner set one mock domain to DDL Owner by idx
+// SetOwner set one mock domain to DDL Owner by idx.
 func (d *DistExecutionTestContext) SetOwner(idx int) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -98,7 +98,7 @@ func (d *DistExecutionTestContext) SetOwner(idx int) error {
 	return d.domains[idx].DDL().OwnerManager().CampaignOwner()
 }
 
-// AddServer add 1 server which is not ddl owner
+// AddServer add 1 server which is not ddl owner.
 func (d *DistExecutionTestContext) AddServer() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -108,7 +108,7 @@ func (d *DistExecutionTestContext) AddServer() {
 	d.domains = append(d.domains, dom)
 }
 
-// DeleteServer delete 1 server by idx, set server0 as ddl owner if the deleted owner is ddl owner
+// DeleteServer delete 1 server by idx, set server0 as ddl owner if the deleted owner is ddl owner.
 func (d *DistExecutionTestContext) DeleteServer(idx int) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -130,7 +130,7 @@ func (d *DistExecutionTestContext) DeleteServer(idx int) error {
 	return infosync.MockGlobalServerInfoManagerEntry.Delete(idx)
 }
 
-// Close cleanup running goroutines, release resources used
+// Close cleanup running goroutines, release resources used.
 func (d *DistExecutionTestContext) Close() {
 	d.t.Cleanup(func() {
 		d.mu.Lock()
@@ -145,7 +145,7 @@ func (d *DistExecutionTestContext) Close() {
 	})
 }
 
-// NewDistExecutionTestContext create DistExecutionTestContext for testing
+// NewDistExecutionTestContext create DistExecutionTestContext for testing.
 func NewDistExecutionTestContext(t testing.TB, serverNum int) (*DistExecutionTestContext, error) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)

@@ -30,21 +30,21 @@ var MockGlobalServerInfoManagerEntry = &MockGlobalServerInfoManager{
 	mockServerPort: 4000,
 }
 
-// MockGlobalServerInfoManager manages serverInfos in Distributed unit tests
+// MockGlobalServerInfoManager manages serverInfos in Distributed unit tests.
 type MockGlobalServerInfoManager struct {
 	infos          []*ServerInfo
 	mu             sync.Mutex
 	mockServerPort uint // used to mock ServerInfo, then every mock server will have different port
 }
 
-// Add one mock ServerInfo
+// Add one mock ServerInfo.
 func (m *MockGlobalServerInfoManager) Add(id string, serverIDGetter func() uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.infos = append(m.infos, m.getServerInfo(id, serverIDGetter))
 }
 
-// Delete one mock ServerInfo by idx
+// Delete one mock ServerInfo by idx.
 func (m *MockGlobalServerInfoManager) Delete(idx int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -55,7 +55,7 @@ func (m *MockGlobalServerInfoManager) Delete(idx int) error {
 	return nil
 }
 
-// GetAllServerInfo return all serverInfo in a map
+// GetAllServerInfo return all serverInfo in a map.
 func (m *MockGlobalServerInfoManager) GetAllServerInfo() map[string]*ServerInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -90,7 +90,7 @@ func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter fu
 	return info
 }
 
-// Close reset MockGlobalServerInfoManager
+// Close reset MockGlobalServerInfoManager.
 func (m *MockGlobalServerInfoManager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
