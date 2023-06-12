@@ -27,5 +27,6 @@ if [ "$before_checksum" != "$after_checksum" ]
 then
   echo "Please run \`make bazel_prepare\` to update \`.bazel\` files"
   diff <(echo "$before_checksum") <(echo "$after_checksum")
+  git diff
   exit 1
 fi

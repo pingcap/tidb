@@ -113,6 +113,10 @@ func (c *pdClient) WatchGlobalConfig(ctx context.Context, configPath string, rev
 	return globalConfigWatcherCh, nil
 }
 
+func (c *pdClient) LoadResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, int64, error) {
+	panic("unimplemented")
+}
+
 func (c *pdClient) GetLocalTS(ctx context.Context, dcLocation string) (int64, int64, error) {
 	return c.GetTS(ctx)
 }
@@ -123,6 +127,10 @@ func (c *pdClient) GetTSAsync(ctx context.Context) pd.TSFuture {
 
 func (c *pdClient) GetLocalTSAsync(ctx context.Context, dcLocation string) pd.TSFuture {
 	return &mockTSFuture{c, ctx, false}
+}
+
+func (c *pdClient) GetMinTS(ctx context.Context) (int64, int64, error) {
+	panic("unimplemented")
 }
 
 type mockTSFuture struct {
@@ -321,4 +329,19 @@ func (c *pdClient) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*m
 
 func (c *pdClient) Put(ctx context.Context, key []byte, value []byte, opts ...pd.OpOption) (*meta_storagepb.PutResponse, error) {
 	return nil, nil
+}
+
+func (c *pdClient) UpdateGCSafePointV2(ctx context.Context, keyspaceID uint32, safePoint uint64) (uint64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (c *pdClient) UpdateServiceSafePointV2(ctx context.Context, keyspaceID uint32, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (c *pdClient) WatchGCSafePointV2(ctx context.Context, revision int64) (chan []*pdpb.SafePointEvent, error) {
+	//TODO implement me
+	panic("implement me")
 }
