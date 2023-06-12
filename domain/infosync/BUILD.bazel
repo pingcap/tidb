@@ -19,6 +19,7 @@ go_library(
         "//ddl/label",
         "//ddl/placement",
         "//ddl/util",
+        "//domain/resourcegroup",
         "//errno",
         "//kv",
         "//metrics",
