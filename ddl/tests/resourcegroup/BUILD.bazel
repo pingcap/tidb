@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "resourcegroup_test",
+    timeout = "short",
     srcs = ["resource_group_test.go"],
+    flaky = True,
+    shard_count = 5,
     deps = [
         "//ddl/resourcegroup",
         "//ddl/util/callback",
