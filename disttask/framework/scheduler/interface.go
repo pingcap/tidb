@@ -56,6 +56,7 @@ type Scheduler interface {
 	CleanupSubtaskExecEnv(context.Context) error
 	// OnSubtaskFinished is used to handle the subtask when it is finished.
 	// return the result of the subtask.
+	// MUST return subtask meta back on success.
 	OnSubtaskFinished(ctx context.Context, subtask []byte) ([]byte, error)
 	// Rollback is used to rollback all subtasks.
 	Rollback(context.Context) error
@@ -66,4 +67,48 @@ type Scheduler interface {
 // todo: rename to minimal task executor.
 type SubtaskExecutor interface {
 	Run(ctx context.Context) error
+}
+
+// EmptyScheduler is an empty scheduler.
+// it can be used for the task that does not need to split into subtasks.
+type EmptyScheduler struct {
+}
+
+var _ Scheduler = &EmptyScheduler{}
+
+// InitSubtaskExecEnv implements the Scheduler interface.
+func (*EmptyScheduler) InitSubtaskExecEnv(context.Context) error {
+	return nil
+}
+
+// SplitSubtask implements the Scheduler interface.
+func (*EmptyScheduler) SplitSubtask(context.Context, []byte) ([]proto.MinimalTask, error) {
+	return nil, nil
+}
+
+// CleanupSubtaskExecEnv implements the Scheduler interface.
+func (*EmptyScheduler) CleanupSubtaskExecEnv(context.Context) error {
+	return nil
+}
+
+// OnSubtaskFinished implements the Scheduler interface.
+func (*EmptyScheduler) OnSubtaskFinished(_ context.Context, metaBytes []byte) ([]byte, error) {
+	return metaBytes, nil
+}
+
+// Rollback implements the Scheduler interface.
+func (*EmptyScheduler) Rollback(context.Context) error {
+	return nil
+}
+
+// EmptyExecutor is an empty minimal task executor.
+// it can be used for the task that does not need to split into minimal tasks.
+type EmptyExecutor struct {
+}
+
+var _ SubtaskExecutor = &EmptyExecutor{}
+
+// Run implements the SubtaskExecutor interface.
+func (*EmptyExecutor) Run(context.Context) error {
+	return nil
 }

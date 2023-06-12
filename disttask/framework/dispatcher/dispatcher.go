@@ -66,8 +66,7 @@ type TaskHandle interface {
 	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error)
-	// ExecInNewSession executes the function with a new session.
-	ExecInNewSession(fn func(se sessionctx.Context) error) error
+	storage.SessionExecutor
 }
 
 func (d *dispatcher) getRunningGTaskCnt() int {
@@ -505,7 +504,7 @@ func (d *dispatcher) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byt
 	return previousSubtaskMetas, nil
 }
 
-func (d *dispatcher) ExecInNewSession(fn func(se sessionctx.Context) error) error {
+func (d *dispatcher) WithNewSession(fn func(se sessionctx.Context) error) error {
 	return d.taskMgr.WithNewSession(fn)
 }
 

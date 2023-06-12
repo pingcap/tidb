@@ -691,16 +691,12 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 
 	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
 	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
-		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
-			return &BackFillSubtaskExecutor{
-				Task: minimalTask,
-			}, nil
+		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
+			return &scheduler.EmptyExecutor{}, nil
 		})
 	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
-		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
-			return &BackFillSubtaskExecutor{
-				Task: minimalTask,
-			}, nil
+		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
+			return &scheduler.EmptyExecutor{}, nil
 		})
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.

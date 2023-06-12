@@ -306,7 +306,7 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 	h.lastSwitchTime.Store(time.Time{})
 }
 
-// preProcess does the pre processing for the task.
+// preProcess does the pre-processing for the task.
 func preProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) error {
 	logger.Info("pre process", zap.Any("table_info", taskMeta.Plan.TableInfo))
 	if err := dropTableIndexes(ctx, handle, taskMeta, logger); err != nil {
@@ -316,53 +316,39 @@ func preProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.
 }
 
 // postProcess does the post-processing for the task.
-func postProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) (_ []*ImportStepMeta, err error) {
+func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
+	globalTaskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
 	// create table indexes even if the post process is failed.
 	defer func() {
-		err2 := createTableIndexes(ctx, handle, taskMeta, logger)
+		err2 := createTableIndexes(ctx, globalTaskManager, taskMeta, logger)
 		err = multierr.Append(err, err2)
 	}()
 	if err = job2Step(ctx, taskMeta, importer.JobStepValidating); err != nil {
-		return nil, err
+		return err
 	}
 
 	controller, err := buildController(taskMeta)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// no need and should not call controller.InitDataFiles, files might not exist on this instance.
 
-	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
-	if err != nil {
-		return nil, err
+	logger.Info("post process")
+	if err := verifyChecksum(ctx, controller, subtaskMeta.Checksum, logger); err != nil {
+		return err
 	}
 
-	subtaskMetas := make([]*ImportStepMeta, 0, len(metas))
-	for _, bs := range metas {
-		var subtaskMeta ImportStepMeta
-		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
-			return nil, err
-		}
-		subtaskMetas = append(subtaskMetas, &subtaskMeta)
-	}
-
-	logger.Info("post process", zap.Any("task_meta", taskMeta), zap.Any("subtask_metas", subtaskMetas))
-	if err := verifyChecksum(ctx, controller, subtaskMetas, logger); err != nil {
-		return nil, err
-	}
-
-	return subtaskMetas, nil
+	return nil
 }
 
-func verifyChecksum(ctx context.Context, controller *importer.LoadDataController, subtaskMetas []*ImportStepMeta, logger *zap.Logger) error {
+func verifyChecksum(ctx context.Context, controller *importer.LoadDataController, checksum Checksum, logger *zap.Logger) error {
 	if controller.Checksum == config.OpLevelOff {
 		return nil
 	}
-	var localChecksum verify.KVChecksum
-	for _, subtaskMeta := range subtaskMetas {
-		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
-		localChecksum.Add(&checksum)
-	}
+	localChecksum := verify.MakeKVChecksum(checksum.Size, checksum.KVs, checksum.Sum)
 	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 	return controller.VerifyChecksum(ctx, localChecksum)
 }
@@ -393,7 +379,7 @@ func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMet
 	return nil
 }
 
-func createTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
+func createTableIndexes(ctx context.Context, executor storage.SessionExecutor, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
 	singleSQL, multiSQLs := common.BuildAddIndexSQL(tableName, taskMeta.Plan.TableInfo, taskMeta.Plan.DesiredTableInfo)
 	logger.Info("build add index sql", zap.String("singleSQL", singleSQL), zap.Strings("multiSQLs", multiSQLs))
@@ -401,7 +387,7 @@ func createTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskM
 		return nil
 	}
 
-	err := executeSQL(ctx, handle, logger, singleSQL)
+	err := executeSQL(ctx, executor, logger, singleSQL)
 	if err == nil {
 		return nil
 	}
@@ -415,7 +401,7 @@ func createTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskM
 	logger.Warn("cannot add all indexes in one statement, try to add them one by one", zap.Strings("sqls", multiSQLs), zap.Error(err))
 
 	for i, ddl := range multiSQLs {
-		err := executeSQL(ctx, handle, logger, ddl)
+		err := executeSQL(ctx, executor, logger, ddl)
 		if err != nil && !common.IsDupKeyError(err) {
 			// TODO: refine err msg and error code according to spec.
 			return errors.Errorf("Failed to create index: %v, please execute the SQLs manually, sqls: %s", err, strings.Join(multiSQLs[i:], ";"))
@@ -425,9 +411,9 @@ func createTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskM
 }
 
 // TODO: return the result of sql.
-func executeSQL(ctx context.Context, handle dispatcher.TaskHandle, logger *zap.Logger, sql string, args ...interface{}) (err error) {
+func executeSQL(ctx context.Context, executor storage.SessionExecutor, logger *zap.Logger, sql string, args ...interface{}) (err error) {
 	logger.Info("execute sql", zap.String("sql", sql), zap.Any("args", args))
-	return handle.ExecInNewSession(func(se sessionctx.Context) error {
+	return executor.WithNewSession(func(se sessionctx.Context) error {
 		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
 		return err
 	})
@@ -505,6 +491,7 @@ func generateImportStepMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMe
 	return subtaskMetas, nil
 }
 
+// we will update taskMeta in place and make gTask.Meta point to the new taskMeta.
 func toPostProcessStep(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) (*PostProcessStepMeta, error) {
 	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
 	if err != nil {

@@ -62,8 +62,7 @@ func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
 }
 
 func init() {
-	scheduler.RegisterSubtaskExectorConstructor(
-		proto.ImportInto, StepImport,
+	scheduler.RegisterSubtaskExectorConstructor(proto.ImportInto, StepImport,
 		// The order of the subtask executors is the same as the order of the subtasks.
 		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
 			task, ok := minimalTask.(MinimalTaskMeta)
@@ -71,6 +70,11 @@ func init() {
 				return nil, errors.Errorf("invalid task type %T", minimalTask)
 			}
 			return &ImportMinimalTaskExecutor{task: &task}, nil
+		},
+	)
+	scheduler.RegisterSubtaskExectorConstructor(proto.ImportInto, StepPostProcess,
+		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
+			return &scheduler.EmptyExecutor{}, nil
 		},
 	)
 }
