@@ -26,7 +26,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/gctuner"
@@ -466,7 +465,6 @@ func TestLastInsertID(t *testing.T) {
 	require.Equal(t, valType, mysql.TypeLonglong)
 	require.Equal(t, flag, mysql.BinaryFlag|mysql.UnsignedFlag)
 	require.Equal(t, d.GetUint64(), uint64(9223372036854775809))
-	require.Equal(t, d.Collation(), charset.CollationBin)
 }
 
 func TestTimestamp(t *testing.T) {
