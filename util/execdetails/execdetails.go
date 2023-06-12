@@ -490,6 +490,7 @@ func (p *Percentile[valueType]) MergePercentile(p2 *Percentile[valueType]) {
 	p.size += p2.size
 	if p.dt == nil {
 		p.dt = p2.dt
+		p2.dt = nil
 		for _, v := range p.values {
 			p.dt.Add(v.GetFloat64(), 1)
 		}
