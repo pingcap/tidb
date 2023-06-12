@@ -2852,13 +2852,13 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 		Args: []interface{}{
 			flashbackTS,
 			map[string]interface{}{},
-			true,           /* tidb_gc_enable */
-			variable.On,    /* tidb_enable_auto_analyze */
-			variable.Off,   /* tidb_super_read_only */
-			0,              /* totalRegions */
-			0,              /* startTS */
-			0,              /* commitTS */
-			variable.On,    /* tidb_ttl_job_enable */
+			true,         /* tidb_gc_enable */
+			variable.On,  /* tidb_enable_auto_analyze */
+			variable.Off, /* tidb_super_read_only */
+			0,            /* totalRegions */
+			0,            /* startTS */
+			0,            /* commitTS */
+			variable.On,  /* tidb_ttl_job_enable */
 			[]kv.KeyRange{} /* flashback key_ranges */},
 	}
 	err = d.DoDDLJob(ctx, job)
