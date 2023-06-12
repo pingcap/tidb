@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"go.uber.org/atomic"
+	"golang.org/x/exp/maps"
 )
 
 // LogicalImportProgress is the progress info of the logical import mode.
@@ -90,14 +91,9 @@ func (p *Progress) AddColSize(colSizeMap map[int64]int64) {
 
 // GetColSize returns the size of the column.
 func (p *Progress) GetColSize() map[int64]int64 {
-	colSizeMap := make(map[int64]int64)
 	p.colSizeMu.Lock()
 	defer p.colSizeMu.Unlock()
-
-	for key, value := range p.colSizeMap {
-		colSizeMap[key] = value
-	}
-	return colSizeMap
+	return maps.Clone(p.colSizeMap)
 }
 
 // String implements the fmt.Stringer interface.
