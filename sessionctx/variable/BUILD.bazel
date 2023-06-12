@@ -96,6 +96,7 @@ go_test(
         "//kv",
         "//parser",
         "//parser/auth",
+        "//parser/charset",
         "//parser/mysql",
         "//parser/terror",
         "//planner/core",

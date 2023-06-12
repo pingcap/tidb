@@ -1427,10 +1427,19 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 	nativeVal, nativeType, nativeFlag := sysVar.GetNativeValType(val)
 	e := expression.DatumToConstant(nativeVal, nativeType, nativeFlag)
-	charset, _ := sessionVars.GetSystemVar(variable.CharacterSetConnection)
-	e.GetType().SetCharset(charset)
-	collate, _ := sessionVars.GetSystemVar(variable.CollationConnection)
-	e.GetType().SetCollate(collate)
+	switch nativeType {
+	case mysql.TypeVarString:
+		charset, _ := sessionVars.GetSystemVar(variable.CharacterSetConnection)
+		e.GetType().SetCharset(charset)
+		collate, _ := sessionVars.GetSystemVar(variable.CollationConnection)
+		e.GetType().SetCollate(collate)
+	case mysql.TypeLong, mysql.TypeLonglong:
+		e.GetType().SetCharset(charset.CharsetBin)
+		e.GetType().SetCollate(charset.CollationBin)
+	default:
+		er.err = errors.Errorf("Not support type(%x) in sysVar", nativeType)
+		return
+	}
 	er.ctxStackAppend(e, types.EmptyName)
 }
 
