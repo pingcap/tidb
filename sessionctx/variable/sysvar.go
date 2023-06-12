@@ -108,25 +108,11 @@ var defaultSysVars = []*SysVar{
 		return strconv.FormatUint(s.StmtCtx.PrevLastInsertID, 10), nil
 	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
 		return "", false, nil
-	}, SetSession: func(sv *SessionVars, s string) error {
-		lastInsertID, err := strconv.ParseUint(s, 10, 64)
-		if err != nil {
-			return err
-		}
-		sv.StmtCtx.PrevLastInsertID = lastInsertID
-		return nil
 	}},
 	{Scope: ScopeSession, Name: Identity, Value: "0", Type: TypeUnsigned, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxUint64, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(s.StmtCtx.PrevLastInsertID, 10), nil
 	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
 		return "", false, nil
-	}, SetSession: func(sv *SessionVars, s string) error {
-		lastInsertID, err := strconv.ParseUint(s, 10, 64)
-		if err != nil {
-			return err
-		}
-		sv.StmtCtx.PrevLastInsertID = lastInsertID
-		return nil
 	}},
 	/* TiDB specific variables */
 	// TODO: TiDBTxnScope is hidden because local txn feature is not done.
