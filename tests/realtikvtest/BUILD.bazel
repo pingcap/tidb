@@ -8,7 +8,6 @@ go_library(
     deps = [
         "//config",
         "//domain",
-        "//domain/infosync",
         "//kv",
         "//session",
         "//sessionctx/variable",
