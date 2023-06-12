@@ -64,6 +64,7 @@ const (
 	// and add isImportingAtomic with this value. In other state, we directly store with the state value.
 	// so this must always the last value of this enum.
 	importMutexStateReadLock
+	// we need to lock the engine when it's open as we do when it's close, otherwise GetEngienSize may race with OpenEngine
 	importMutexStateOpen
 )
 

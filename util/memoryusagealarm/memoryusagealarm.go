@@ -285,13 +285,13 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 		for _, field := range fields {
 			switch field.Type {
 			case zapcore.StringType:
-				buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.String))
+				fmt.Fprintf(&buf, "%v: %v", field.Key, field.String)
 			case zapcore.Uint8Type, zapcore.Uint16Type, zapcore.Uint32Type, zapcore.Uint64Type:
-				buf.WriteString(fmt.Sprintf("%v: %v", field.Key, uint64(field.Integer)))
+				fmt.Fprintf(&buf, "%v: %v", field.Key, uint64(field.Integer))
 			case zapcore.Int8Type, zapcore.Int16Type, zapcore.Int32Type, zapcore.Int64Type:
-				buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.Integer))
+				fmt.Fprintf(&buf, "%v: %v", field.Key, field.Integer)
 			case zapcore.BoolType:
-				buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.Integer == 1))
+				fmt.Fprintf(&buf, "%v: %v", field.Key, field.Integer == 1)
 			}
 			buf.WriteString("\n")
 		}
