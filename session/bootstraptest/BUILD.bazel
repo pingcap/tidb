@@ -8,7 +8,11 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 7,
+=======
+    shard_count = 10,
+>>>>>>> c18e60f46be (ddl, session: fix re-upgrade issues (#44469))
     deps = [
         "//config",
         "//ddl",
