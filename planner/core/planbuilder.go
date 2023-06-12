@@ -1352,6 +1352,17 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
 	}
 
+	// consider hypo TiFlash replicas
+	if ctx.GetSessionVars().StmtCtx.InExplainStmt && ctx.GetSessionVars().HypoTiFlashReplicas != nil {
+		hypoReplicas := ctx.GetSessionVars().HypoTiFlashReplicas
+		originalTableName := tblInfo.Name.L
+		if hypoReplicas[dbName.L] != nil {
+			if _, ok := hypoReplicas[dbName.L][originalTableName]; ok {
+				publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
+			}
+		}
+	}
+
 	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 
 	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)

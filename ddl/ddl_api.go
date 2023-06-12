@@ -2852,13 +2852,13 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 		Args: []interface{}{
 			flashbackTS,
 			map[string]interface{}{},
-			true,         /* tidb_gc_enable */
-			variable.On,  /* tidb_enable_auto_analyze */
-			variable.Off, /* tidb_super_read_only */
-			0,            /* totalRegions */
-			0,            /* startTS */
-			0,            /* commitTS */
-			variable.On,  /* tidb_ttl_job_enable */
+			true,           /* tidb_gc_enable */
+			variable.On,    /* tidb_enable_auto_analyze */
+			variable.Off,   /* tidb_super_read_only */
+			0,              /* totalRegions */
+			0,              /* startTS */
+			0,              /* commitTS */
+			variable.On,    /* tidb_ttl_job_enable */
 			[]kv.KeyRange{} /* flashback key_ranges */},
 	}
 	err = d.DoDDLJob(ctx, job)
@@ -5844,6 +5844,23 @@ func shouldModifyTiFlashReplica(tbReplicaInfo *model.TiFlashReplicaInfo, replica
 	return true
 }
 
+// addHypoTiFlashReplicaIntoCtx adds this hypothetical tiflash replica into this ctx.
+func (*ddl) setHypoTiFlashReplica(ctx sessionctx.Context, schemaName, tableName model.CIStr, replicaInfo *ast.TiFlashReplicaSpec) error {
+	sctx := ctx.GetSessionVars()
+	if sctx.HypoTiFlashReplicas == nil {
+		sctx.HypoTiFlashReplicas = make(map[string]map[string]struct{})
+	}
+	if sctx.HypoTiFlashReplicas[schemaName.L] == nil {
+		sctx.HypoTiFlashReplicas[schemaName.L] = make(map[string]struct{})
+	}
+	if replicaInfo.Count > 0 { // add replicas
+		sctx.HypoTiFlashReplicas[schemaName.L][tableName.L] = struct{}{}
+	} else { // delete replicas
+		delete(sctx.HypoTiFlashReplicas[schemaName.L], tableName.L)
+	}
+	return nil
+}
+
 // AlterTableSetTiFlashReplica sets the TiFlash replicas info.
 func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
@@ -5859,6 +5876,10 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if !shouldModifyTiFlashReplica(tbReplicaInfo, replicaInfo) {
 		return nil
+	}
+
+	if replicaInfo.Hypo {
+		return d.setHypoTiFlashReplica(ctx, schema.Name, tb.Meta().Name, replicaInfo)
 	}
 
 	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
