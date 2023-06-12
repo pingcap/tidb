@@ -70,7 +70,11 @@ go_test(
     ],
     embed = [":infoschema"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 50,
+=======
+    shard_count = 10,
+>>>>>>> 5d05714eae5 (infoschema: update raw args to make it drop correct table in `RENAME TABLE` (#44585))
     deps = [
         "//config",
         "//ddl/placement",
