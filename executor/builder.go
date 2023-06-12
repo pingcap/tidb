@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/util/tiflash"
 	"math"
 	"strconv"
 	"strings"
@@ -68,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	clientkv "github.com/tikv/client-go/v2/kv"

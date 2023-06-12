@@ -14,12 +14,12 @@
 
 package tiflash
 
-// TiflashReplicaRead is the policy to select TiFlash nodes.
-type TiflashReplicaRead int
+// ReplicaRead is the policy to select TiFlash nodes.
+type ReplicaRead int
 
 const (
 	// AllReplicas  means using all the available nodes to do analytic computing, regardless of local zone or other zones.
-	AllReplicas TiflashReplicaRead = iota
+	AllReplicas ReplicaRead = iota
 	// ClosetAdaptive means using the nodes in the same zone as the entry TiDB. If not all the tiflash data can be accessed, the query will involve the tiflash nodes from other zones.
 	ClosetAdaptive
 	// ClosetReplicas means using only the nodes in the same zone as the entry TiDB. If not all the tiflash data can be accessed, the query will report an error, and show an error message. Because of the feature of TiFlash remote read, a small number of regions  in other zones is acceptable, but performance will be affected. The threshold is fixed, 3 regions per tiflash node.
@@ -36,17 +36,17 @@ const (
 )
 
 // IsPolicyAllReplicas return whether the policy is AllReplicas.
-func (policy TiflashReplicaRead) IsPolicyAllReplicas() bool {
+func (policy ReplicaRead) IsPolicyAllReplicas() bool {
 	return policy == AllReplicas
 }
 
 // IsPolicyClosetReplicas return whether the policy is ClosetReplicas.
-func (policy TiflashReplicaRead) IsPolicyClosetReplicas() bool {
+func (policy ReplicaRead) IsPolicyClosetReplicas() bool {
 	return policy == ClosetReplicas
 }
 
 // GetTiflashReplicaRead return corresponding policy string in integer.
-func GetTiflashReplicaRead(policy TiflashReplicaRead) string {
+func GetTiflashReplicaRead(policy ReplicaRead) string {
 	switch policy {
 	case AllReplicas:
 		return AllReplicaStr
@@ -60,7 +60,7 @@ func GetTiflashReplicaRead(policy TiflashReplicaRead) string {
 }
 
 // GetTiflashReplicaReadByStr return corresponding policy in string.
-func GetTiflashReplicaReadByStr(str string) TiflashReplicaRead {
+func GetTiflashReplicaReadByStr(str string) ReplicaRead {
 	switch str {
 	case AllReplicaStr:
 		return AllReplicas
