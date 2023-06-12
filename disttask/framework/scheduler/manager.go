@@ -64,6 +64,7 @@ type Manager struct {
 	taskTable     TaskTable
 	schedulerPool Pool
 	// taskType -> subtaskExecutorPool
+	// shared by subtasks of all task steps
 	subtaskExecutorPools map[string]Pool
 	mu                   struct {
 		sync.RWMutex
@@ -99,9 +100,9 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 	}
 	m.schedulerPool = schedulerPool
 
-	for taskType := range subtaskExecutorConstructors {
+	for taskType, opt := range taskTypes {
 		poolSize := subtaskExecutorPoolSize
-		if opt, ok := subtaskExecutorOptions[taskType]; ok && opt.PoolSize > 0 {
+		if opt.PoolSize > 0 {
 			poolSize = opt.PoolSize
 		}
 		subtaskExecutorPool, err := m.newPool(taskType+"_pool", poolSize, util.DistTask)

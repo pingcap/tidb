@@ -678,17 +678,30 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
-	scheduler.RegisterSchedulerConstructor("backfill",
+	scheduler.RegisterTaskType("backfill")
+	scheduler.RegisterSchedulerConstructor("backfill", proto.StepOne,
+		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
+		})
+
+	scheduler.RegisterSchedulerConstructor("backfill", proto.StepTwo,
 		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
 			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
 		})
 
 	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
-	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
-		return &BackFillSubtaskExecutor{
-			Task: minimalTask,
-		}, nil
-	})
+	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
+		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
+			return &BackFillSubtaskExecutor{
+				Task: minimalTask,
+			}, nil
+		})
+	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
+		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
+			return &BackFillSubtaskExecutor{
+				Task: minimalTask,
+			}, nil
+		})
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL

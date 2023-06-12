@@ -63,6 +63,7 @@ type Scheduler interface {
 
 // SubtaskExecutor defines the interface of a subtask executor.
 // User should implement this interface to define their own subtask executor.
+// todo: rename to minimal task executor.
 type SubtaskExecutor interface {
 	Run(ctx context.Context) error
 }

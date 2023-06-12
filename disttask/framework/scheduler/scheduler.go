@@ -130,7 +130,8 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 	}
 
 	concurrentSubtask := false
-	if opts, ok := schedulerOptions[task.Type]; ok && opts.ConcurrentSubtask {
+	key := getKey(task.Type, task.Step)
+	if opts, ok := schedulerOptions[key]; ok && opts.ConcurrentSubtask {
 		concurrentSubtask = true
 	}
 	for {
@@ -307,17 +308,19 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 }
 
 func createScheduler(task *proto.Task) (Scheduler, error) {
-	constructor, ok := schedulerConstructors[task.Type]
+	key := getKey(task.Type, task.Step)
+	constructor, ok := schedulerConstructors[key]
 	if !ok {
-		return nil, errors.Errorf("constructor of scheduler for type %s not found", task.Type)
+		return nil, errors.Errorf("ctor of scheduler for key %s not found", key)
 	}
 	return constructor(task.ID, task.Meta, task.Step)
 }
 
 func createSubtaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (SubtaskExecutor, error) {
-	constructor, ok := subtaskExecutorConstructors[tp]
+	key := getKey(tp, step)
+	constructor, ok := subtaskExecutorConstructors[key]
 	if !ok {
-		return nil, errors.Errorf("constructor of subtask executor for type %s not found", tp)
+		return nil, errors.Errorf("ctor of subtask executor for key %s not found", key)
 	}
 	return constructor(minimalTask, step)
 }

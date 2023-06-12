@@ -194,8 +194,9 @@ func (s *ImportScheduler) Rollback(context.Context) error {
 }
 
 func init() {
+	scheduler.RegisterTaskType(proto.ImportInto)
 	scheduler.RegisterSchedulerConstructor(
-		proto.ImportInto,
+		proto.ImportInto, StepImport,
 		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
 			taskMeta := TaskMeta{}
 			if err := json.Unmarshal(bs, &taskMeta); err != nil {

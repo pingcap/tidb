@@ -63,7 +63,7 @@ func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
 
 func init() {
 	scheduler.RegisterSubtaskExectorConstructor(
-		proto.ImportInto,
+		proto.ImportInto, StepImport,
 		// The order of the subtask executors is the same as the order of the subtasks.
 		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
 			task, ok := minimalTask.(MinimalTaskMeta)
