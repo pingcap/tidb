@@ -215,6 +215,7 @@ go_library(
         "//util/stringutil",
         "//util/syncutil",
         "//util/table-filter",
+        "//util/tiflash",
         "//util/timeutil",
         "//util/tls",
         "//util/topsql",
