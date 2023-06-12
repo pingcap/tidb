@@ -15,6 +15,8 @@
 package core
 
 import (
+	"bytes"
+	"fmt"
 	"math"
 	"unsafe"
 
@@ -559,6 +561,10 @@ type LogicalExpand struct {
 
 	// distinct group by columns. (maybe projected below if it's a non-col)
 	distinctGroupByCol []*expression.Column
+	// keep the old gbyExprs for resolve cases like grouping(a+b), the args:
+	// a+b should be resolved to new projected gby col according to ref pos.
+	distinctGbyExprs []expression.Expression
+	gbyExprsRefPos   []int
 
 	// rollup grouping sets.
 	distinctSize       int
@@ -570,7 +576,7 @@ type LogicalExpand struct {
 	LevelExprs [][]expression.Expression
 
 	// The generated column names. Eg: "grouping_id" and so on.
-	GeneratedColNames []string
+	ExtraGroupingColNames []string
 
 	// GroupingMode records the grouping id allocation mode.
 	GroupingMode tipb.GroupingMode
@@ -662,23 +668,102 @@ func (p *LogicalExpand) GenLevelProjections() {
 }
 
 // GenerateGroupingMarks generate the groupingMark for the source column specified in grouping function.
-func (p *LogicalExpand) GenerateGroupingMarks(sourceCol *expression.Column) (resMap map[uint64]struct{}) {
+func (p *LogicalExpand) GenerateGroupingMarks(sourceCols []*expression.Column) []map[uint64]struct{} {
+	// Since grouping function may have multi args like grouping(a,b), so the source columns may greater than 1.
+	// reference: https://dev.mysql.com/blog-archive/mysql-8-0-grouping-function/
+	// Let's say GROUPING(b,a) group by a,b with rollup. (Note the b,a sequence is reversed from gby item)
+	// if GROUPING (b,a) returns 3, it means that NULL in column “b” and NULL in column “a” for that row is
+	// produce by a ROLLUP operation. If result is 2, NULL in column “a” alone is a result of ROLLUP operation.
+	//
+	// Formula: GROUPING(x,y,z) = GROUPING(x) << 2 + GROUPING(y) << 1 + GROUPING(z)
+	//
+	// so for the multi args GROUPING FUNCTION, we should return all the simple col grouping marks. When evaluating,
+	// after all grouping marks are & with gid in sequence, the final res is derived as the formula said. This also
+	// means that the grouping function accepts a maximum of 64 parameters.
+	resSliceMap := make([]map[uint64]struct{}, 0, len(sourceCols))
 	if p.GroupingMode == tipb.GroupingMode_ModeBitAnd {
-		resMap = make(map[uint64]struct{}, 1)
-		res := uint64(0)
-		// from high pos to low pos.
-		for i := len(p.distinctGroupByCol) - 1; i >= 0; i-- {
-			if p.distinctGroupByCol[i].UniqueID == sourceCol.UniqueID {
-				// col is needed, fill the corresponding pos as 1.
-				res = res | 1
+		for _, oneCol := range sourceCols {
+			resMap := make(map[uint64]struct{}, 1)
+			res := uint64(0)
+			// from high pos to low pos.
+			for i := len(p.distinctGroupByCol) - 1; i >= 0; i-- {
+				// left shift.
+				res = res << 1
+				if p.distinctGroupByCol[i].UniqueID == oneCol.UniqueID {
+					// fill the corresponding col pos as 1 as bitMark.
+					// eg: say distinctGBY [x,y,z] and GROUPING(x) with '100'.
+					// When any groupingID & 100 > 0 means the source column x
+					// is needed in this grouping set and is not grouped, so res = 0.
+					res = res | 1
+				}
 			}
-			// left shift.
-			res = res << 1
+			resMap[res] = struct{}{}
+			resSliceMap = append(resSliceMap, resMap)
 		}
-		return resMap
+		return resSliceMap
 	}
-	// for tipb.GroupingMode_ModeNumericSet.
-	return p.rollupID2GIDS[int(sourceCol.UniqueID)]
+	// For GroupingMode_ModeNumericSet mode, for every simple col, its grouping marks is an id slice rather than a bit map.
+	// For example, GROUPING(x,y,z) returns 6 it means: GROUPING(x) is 1, GROUPING(y) is 1 and GROUPING(z) is 0, in which
+	// we should also return all these three single column grouping marks as function meta to GROUPING FUNCTION.
+	for _, oneCol := range sourceCols {
+		resSliceMap = append(resSliceMap, p.rollupID2GIDS[int(oneCol.UniqueID)])
+	}
+	return resSliceMap
+}
+
+func (p *LogicalExpand) trySubstituteExprWithGroupingSetCol(expr expression.Expression) (expression.Expression, bool) {
+	sc := p.SCtx().GetSessionVars().StmtCtx
+	sc.CanonicalHashCode = true
+	defer func() {
+		sc.CanonicalHashCode = false
+	}()
+
+	// since all the original group items has been projected even single col,
+	// let's check the origin gby expression here, and map it to new gby col.
+	for i, oneExpr := range p.distinctGbyExprs {
+		if bytes.Equal(expr.HashCode(sc), oneExpr.HashCode(sc)) {
+			// found
+			for originIdx, ref := range p.gbyExprsRefPos {
+				if ref == i {
+					return p.distinctGroupByCol[originIdx], true
+				}
+			}
+		}
+	}
+	// not found.
+	return expr, false
+}
+
+// CheckGroupingFuncArgsInGroupBy checks whether grouping function args is in grouping items.
+func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expression.Expression) ([]*expression.Column, error) {
+	sc := p.SCtx().GetSessionVars().StmtCtx
+	sc.CanonicalHashCode = true
+	defer func() {
+		sc.CanonicalHashCode = false
+	}()
+	var refPos int
+	rewrittenArgCols := make([]*expression.Column, 0, len(groupingFuncArgs))
+	for argIdx, oneArg := range groupingFuncArgs {
+		refPos = -1
+		// since all the original group items has been projected even single col,
+		// let's check the origin gby expression here, and map it to new gby col.
+		for i, oneExpr := range p.distinctGbyExprs {
+			if bytes.Equal(oneArg.HashCode(sc), oneExpr.HashCode(sc)) {
+				refPos = i
+				break
+			}
+		}
+		if refPos == -1 {
+			return nil, ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(fmt.Sprintf("#%d", argIdx))
+		}
+		for originIdx, ref := range p.gbyExprsRefPos {
+			if ref == refPos {
+				rewrittenArgCols = append(rewrittenArgCols, p.distinctGroupByCol[originIdx])
+				break
+			}
+		}
+	}
+	return rewrittenArgCols, nil
 }
 
 // GenerateGroupingIDModeBitAnd is used to generate convenient groupingID for quick computation of grouping function.
@@ -695,12 +780,12 @@ func (p *LogicalExpand) GenerateGroupingIDModeBitAnd(oneSet expression.GroupingS
 	res := uint64(0)
 	// from high pos to low pos.
 	for i := len(p.distinctGroupByCol) - 1; i >= 0; i-- {
+		// left shift.
+		res = res << 1
 		if idsNeeded.Has(int(p.distinctGroupByCol[i].UniqueID)) {
 			// col is needed, fill the corresponding pos as 1.
 			res = res | 1
 		}
-		// left shift.
-		res = res << 1
 	}
 	// how to use it, eg: when encountering a grouping function like: grouping(a), we can know the column a's pos index in distinctGbyCols
 	// is about 0, then we can get the mask as 001 which will be returned back as this grouping function's meta when rewriting it, then we
