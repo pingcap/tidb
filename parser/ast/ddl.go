@@ -2977,6 +2977,7 @@ type AlterTableSpec struct {
 type TiFlashReplicaSpec struct {
 	Count  uint64
 	Labels []string
+	Hypo   bool // hypothetical replica is used by index advisor
 }
 
 // AlterOrderItem represents an item in order by at alter table stmt.

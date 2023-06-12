@@ -151,30 +151,7 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 	ranges := detachedResult.Ranges
 	used := make([]int, 0, len(ranges))
 	for _, r := range ranges {
-		if r.IsPointNullable(ctx) {
-			if !r.HighVal[0].IsNull() {
-				if len(r.HighVal) != len(partCols) {
-					used = []int{-1}
-					break
-				}
-			}
-			highLowVals := make([]types.Datum, 0, len(r.HighVal)+len(r.LowVal))
-			highLowVals = append(highLowVals, r.HighVal...)
-			highLowVals = append(highLowVals, r.LowVal...)
-			pos, isNull, err := hashExpr.EvalInt(ctx, chunk.MutRowFromDatums(highLowVals).ToRow())
-			if err != nil {
-				// If we failed to get the point position, we can just skip and ignore it.
-				continue
-			}
-			if isNull {
-				pos = 0
-			}
-			idx := mathutil.Abs(pos % int64(pi.Num))
-			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
-				continue
-			}
-			used = append(used, int(idx))
-		} else {
+		if !r.IsPointNullable(ctx) {
 			// processing hash partition pruning. eg:
 			// create table t2 (a int, b bigint, index (a), index (b)) partition by hash(a) partitions 10;
 			// desc select * from t2 where t2.a between 10 and 15;
@@ -238,6 +215,28 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 			used = []int{FullRange}
 			break
 		}
+		if !r.HighVal[0].IsNull() {
+			if len(r.HighVal) != len(partCols) {
+				used = []int{-1}
+				break
+			}
+		}
+		highLowVals := make([]types.Datum, 0, len(r.HighVal)+len(r.LowVal))
+		highLowVals = append(highLowVals, r.HighVal...)
+		highLowVals = append(highLowVals, r.LowVal...)
+		pos, isNull, err := hashExpr.EvalInt(ctx, chunk.MutRowFromDatums(highLowVals).ToRow())
+		if err != nil {
+			// If we failed to get the point position, we can just skip and ignore it.
+			continue
+		}
+		if isNull {
+			pos = 0
+		}
+		idx := mathutil.Abs(pos % int64(pi.Num))
+		if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+			continue
+		}
+		used = append(used, int(idx))
 	}
 	return used, detachedResult.RemainedConds, nil
 }
@@ -257,25 +256,7 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 	used := make([]int, 0, len(ranges))
 
 	for _, r := range ranges {
-		if r.IsPointNullable(ctx) {
-			if len(r.HighVal) != len(partCols) {
-				used = []int{FullRange}
-				break
-			}
-
-			colVals := make([]types.Datum, 0, len(r.HighVal))
-			colVals = append(colVals, r.HighVal...)
-			idx, err := pe.LocateKeyPartition(pi.Num, colVals)
-			if err != nil {
-				// If we failed to get the point position, we can just skip and ignore it.
-				continue
-			}
-
-			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
-				continue
-			}
-			used = append(used, idx)
-		} else {
+		if !r.IsPointNullable(ctx) {
 			if len(partCols) == 1 && partCols[0].RetType.EvalType() == types.ETInt {
 				col := partCols[0]
 				posHigh, highIsNull, err := col.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
@@ -323,6 +304,23 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 			used = []int{FullRange}
 			break
 		}
+		if len(r.HighVal) != len(partCols) {
+			used = []int{FullRange}
+			break
+		}
+
+		colVals := make([]types.Datum, 0, len(r.HighVal))
+		colVals = append(colVals, r.HighVal...)
+		idx, err := pe.LocateKeyPartition(pi.Num, colVals)
+		if err != nil {
+			// If we failed to get the point position, we can just skip and ignore it.
+			continue
+		}
+
+		if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+			continue
+		}
+		used = append(used, idx)
 	}
 	return used, detachedResult.RemainedConds, nil
 }
@@ -693,25 +691,24 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 	}
 	used := make(map[int]struct{}, len(ranges))
 	for _, r := range ranges {
-		if r.IsPointNullable(l.ctx) {
-			if len(r.HighVal) != len(exprCols) {
-				return l.fullRange, nil
-			}
-			value, isNull, err := pruneExpr.EvalInt(l.ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
-			if err != nil {
-				return nil, err
-			}
-			partitionIdx := l.listPrune.LocatePartition(value, isNull)
-			if partitionIdx == -1 {
-				continue
-			}
-			if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[partitionIdx].Name.L) {
-				continue
-			}
-			used[partitionIdx] = struct{}{}
-		} else {
+		if !r.IsPointNullable(l.ctx) {
 			return l.fullRange, nil
 		}
+		if len(r.HighVal) != len(exprCols) {
+			return l.fullRange, nil
+		}
+		value, isNull, err := pruneExpr.EvalInt(l.ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+		if err != nil {
+			return nil, err
+		}
+		partitionIdx := l.listPrune.LocatePartition(value, isNull)
+		if partitionIdx == -1 {
+			continue
+		}
+		if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[partitionIdx].Name.L) {
+			continue
+		}
+		used[partitionIdx] = struct{}{}
 	}
 	return used, nil
 }
@@ -1053,21 +1050,21 @@ func minCmp(ctx sessionctx.Context, lowVal []types.Datum, columnsPruner *rangeCo
 				// MAXVALUE
 				return true
 			}
-			if con, ok := (*expr).(*expression.Constant); ok {
-				// Add Null as point here?
-				cmp, err := con.Value.Compare(ctx.GetSessionVars().StmtCtx, &lowVal[j], comparer[j])
-				if err != nil {
-					*gotError = true
-				}
-				if cmp > 0 {
-					return true
-				}
-				if cmp < 0 {
-					return false
-				}
-			} else {
+			con, ok := (*expr).(*expression.Constant)
+			if !ok {
 				// Not a constant, pruning not possible, so value is considered less than all partitions
 				return true
+			}
+			// Add Null as point here?
+			cmp, err := con.Value.Compare(ctx.GetSessionVars().StmtCtx, &lowVal[j], comparer[j])
+			if err != nil {
+				*gotError = true
+			}
+			if cmp > 0 {
+				return true
+			}
+			if cmp < 0 {
+				return false
 			}
 		}
 		if len(lowVal) < len(columnsPruner.lessThan[i]) {
@@ -1132,21 +1129,21 @@ func maxCmp(ctx sessionctx.Context, hiVal []types.Datum, columnsPruner *rangeCol
 				// MAXVALUE
 				return true
 			}
-			if con, ok := (*expr).(*expression.Constant); ok {
-				// Add Null as point here?
-				cmp, err := con.Value.Compare(ctx.GetSessionVars().StmtCtx, &hiVal[j], comparer[j])
-				if err != nil {
-					*gotError = true
-					// error pushed, we will still use the cmp value
-				}
-				if cmp > 0 {
-					return true
-				}
-				if cmp < 0 {
-					return false
-				}
-			} else {
+			con, ok := (*expr).(*expression.Constant)
+			if !ok {
 				// Not a constant, include every partition, i.e. value is not less than any partition
+				return false
+			}
+			// Add Null as point here?
+			cmp, err := con.Value.Compare(ctx.GetSessionVars().StmtCtx, &hiVal[j], comparer[j])
+			if err != nil {
+				*gotError = true
+				// error pushed, we will still use the cmp value
+			}
+			if cmp > 0 {
+				return true
+			}
+			if cmp < 0 {
 				return false
 			}
 		}
@@ -1967,7 +1964,7 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 				}
 				newDS := child.(*DataSource)
 				newDS.id = origin.SCtx().GetSessionVars().AllocNewPlanID()
-				buffer.WriteString(fmt.Sprintf("%s_%v", child.TP(), newDS.ID()))
+				fmt.Fprintf(buffer, "%s_%v", child.TP(), newDS.ID())
 			}
 			buffer.WriteString("]")
 			return buffer.String()

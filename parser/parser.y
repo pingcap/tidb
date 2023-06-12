@@ -2043,6 +2043,18 @@ AlterTableSpec:
 			TiFlashReplica: tiflashReplicaSpec,
 		}
 	}
+|	"SET" "HYPO" "TIFLASH" "REPLICA" LengthNum LocationLabelList
+	{
+		tiflashReplicaSpec := &ast.TiFlashReplicaSpec{
+			Count:  $5.(uint64),
+			Labels: $6.([]string),
+			Hypo:   true,
+		}
+		$$ = &ast.AlterTableSpec{
+			Tp:             ast.AlterTableSetTiFlashReplica,
+			TiFlashReplica: tiflashReplicaSpec,
+		}
+	}
 |	"CONVERT" "TO" CharsetKw CharsetName OptCollate
 	{
 		op := &ast.AlterTableSpec{
