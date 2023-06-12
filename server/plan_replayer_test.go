@@ -15,11 +15,13 @@
 package server
 
 import (
+	"archive/zip"
 	"bytes"
 	"database/sql"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
@@ -28,7 +30,25 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
+
+var expectedFilesInReplayer = []string{
+	"config.toml",
+	"debug_trace/debug_trace0.json",
+	"explain.txt",
+	"global_bindings.sql",
+	"meta.txt",
+	"schema/planreplayer.t.schema.txt",
+	"schema/schema_meta.txt",
+	"session_bindings.sql",
+	"sql/sql0.sql",
+	"sql_meta.toml",
+	"stats/planreplayer.t.json",
+	"statsMem/planreplayer.t.txt",
+	"table_tiflash_replica.txt",
+	"variables.toml",
+}
 
 func TestDumpPlanReplayerAPI(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -72,6 +92,18 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 
 	body, err := io.ReadAll(resp0.Body)
 	require.NoError(t, err)
+
+	var filesInReplayer []string
+	collectFileNameAndAssertFileSize := func(f *zip.File) {
+		filesInReplayer = append(filesInReplayer, f.Name)
+		if !strings.Contains(f.Name, "table_tiflash_replica.txt") &&
+			!strings.Contains(f.Name, "bindings.sql") {
+			require.NotZero(t, f.UncompressedSize64, f.Name)
+		}
+	}
+	forEachFileInZipBytes(t, body, collectFileNameAndAssertFileSize)
+	slices.Sort(filesInReplayer)
+	require.Equal(t, expectedFilesInReplayer, filesInReplayer)
 
 	path := "/tmp/plan_replayer.zip"
 	fp, err := os.Create(path)
@@ -146,4 +178,14 @@ func prepareData4PlanReplayer(t *testing.T, client *testServerClient, statHandle
 	rows.Close()
 	require.Equal(t, filename, filename2)
 	return filename
+}
+
+func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {
+	br := bytes.NewReader(b)
+	z, err := zip.NewReader(br, int64(len(b)))
+	require.NoError(t, err)
+	for _, f := range z.File {
+		fn(f)
+	}
+	return
 }
