@@ -234,9 +234,6 @@ func (s *SessionStatsCollector) UpdateColStatsUsage(colMap colStatsUsageMap) {
 
 // NewSessionStatsCollector allocates a stats collector for a session.
 func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
@@ -315,8 +312,6 @@ func (s *SessionIndexUsageCollector) Delete() {
 // idxUsageListHead always points to an empty SessionIndexUsageCollector as a sentinel node. So we let idxUsageListHead.next
 // points to new item. It's helpful to sweepIdxUsageList.
 func (h *Handle) NewSessionIndexUsageCollector() *SessionIndexUsageCollector {
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.idxUsageListHead.Lock()
 	defer h.idxUsageListHead.Unlock()
 	newCollector := &SessionIndexUsageCollector{
@@ -1296,7 +1291,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 
 func (h *Handle) execAutoAnalyze(statsVer int, analyzeSnapshot bool, sql string, params ...interface{}) {
 	startTime := time.Now()
-	autoAnalyzeProcID := util.GetAutoAnalyzeProcID(h.serverIDGetter)
+	autoAnalyzeProcID := h.autoAnalyzeProcIDGetter()
 	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, autoAnalyzeProcID, analyzeSnapshot, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())

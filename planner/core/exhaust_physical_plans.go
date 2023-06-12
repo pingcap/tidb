@@ -79,11 +79,10 @@ func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Colu
 	for _, candidateKeys := range candidates {
 		matchedLen := 0
 		for i := range keys {
-			if i < len(candidateKeys) && keys[i].Equal(nil, candidateKeys[i]) {
-				matchedLen++
-			} else {
+			if !(i < len(candidateKeys) && keys[i].Equal(nil, candidateKeys[i])) {
 				break
 			}
+			matchedLen++
 		}
 		if matchedLen > maxLen {
 			maxLen = matchedLen
@@ -1004,7 +1003,7 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		} else {
 			isFirst = false
 		}
-		buffer.WriteString(fmt.Sprintf("eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
+		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff])
 	}
 	for _, access := range ijHelper.chosenAccess {
 		if !isFirst {
@@ -1012,7 +1011,7 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		} else {
 			isFirst = false
 		}
-		buffer.WriteString(fmt.Sprintf("%v", access))
+		fmt.Fprintf(buffer, "%v", access)
 	}
 	buffer.WriteString("]")
 	return buffer.String()
@@ -1407,7 +1406,7 @@ func (cwc *ColWithCmpFuncManager) resolveIndices(schema *expression.Schema) (err
 func (cwc *ColWithCmpFuncManager) String() string {
 	buffer := bytes.NewBufferString("")
 	for i := range cwc.OpType {
-		buffer.WriteString(fmt.Sprintf("%v(%v, %v)", cwc.OpType[i], cwc.TargetCol, cwc.opArg[i]))
+		fmt.Fprintf(buffer, "%v(%v, %v)", cwc.OpType[i], cwc.TargetCol, cwc.opArg[i])
 		if i < len(cwc.OpType)-1 {
 			buffer.WriteString(" ")
 		}
@@ -2121,19 +2120,18 @@ func (p *LogicalJoin) preferMppBCJ() bool {
 		// TODO: always use broadcast way to exchange data if there is only ONE mpp store.
 
 		if err == nil && mppStoreCnt > 0 {
-			if onlyCheckChild1 || onlyCheckChild0 {
-				if mppStoreCnt > 1 {
-					if onlyCheckChild1 {
-						return isJoinChildFitMPPBCJ(p, 1, mppStoreCnt)
-					} else if onlyCheckChild0 {
-						return isJoinChildFitMPPBCJ(p, 0, mppStoreCnt)
-					}
-				}
-				// If mppStoreCnt is ONE and only need to check one child plan, rollback to original way.
-				// Otherwise, the plan of tpch q4 may be unexpected.
-			} else {
+			if !(onlyCheckChild1 || onlyCheckChild0) {
 				return isJoinFitMPPBCJ(p, mppStoreCnt)
 			}
+			if mppStoreCnt > 1 {
+				if onlyCheckChild1 {
+					return isJoinChildFitMPPBCJ(p, 1, mppStoreCnt)
+				} else if onlyCheckChild0 {
+					return isJoinChildFitMPPBCJ(p, 0, mppStoreCnt)
+				}
+			}
+			// If mppStoreCnt is ONE and only need to check one child plan, rollback to original way.
+			// Otherwise, the plan of tpch q4 may be unexpected.
 		}
 	}
 
@@ -2405,11 +2403,11 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			if preferredBuildIndex == 1 {
 				hashKeys = lPartitionKeys
 			}
-			if matches := prop.IsSubsetOf(hashKeys); len(matches) != 0 {
-				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.HashType, MPPPartitionCols: prop.MPPPartitionCols, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
-			} else {
+			matches := prop.IsSubsetOf(hashKeys)
+			if len(matches) == 0 {
 				return nil
 			}
+			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.HashType, MPPPartitionCols: prop.MPPPartitionCols, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
 		} else {
 			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.AnyType, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
 		}
@@ -2720,6 +2718,9 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
 			}
+			lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+				"MPP mode may be blocked because window function frame can't be pushed down, because TiFlash does not support range frame type yet.")
+			return nil
 		}
 	}
 
@@ -2742,12 +2743,12 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		partitionCols := lw.GetPartitionKeys()
 		// trying to match the required partitions.
 		if prop.MPPPartitionTp == property.HashType {
-			if matches := prop.IsSubsetOf(partitionCols); len(matches) != 0 {
-				partitionCols = choosePartitionKeys(partitionCols, matches)
-			} else {
+			matches := prop.IsSubsetOf(partitionCols)
+			if len(matches) == 0 {
 				// do not satisfy the property of its parent, so return empty
 				return nil
 			}
+			partitionCols = choosePartitionKeys(partitionCols, matches)
 		}
 		childProperty.MPPPartitionTp = property.HashType
 		childProperty.MPPPartitionCols = partitionCols
@@ -2845,31 +2846,27 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 				return false
 			}
 		case *LogicalUnionAll:
-			if storeTp == kv.TiFlash {
-				ret = ret && c.canPushToCopImpl(storeTp, true)
-			} else {
+			if storeTp != kv.TiFlash {
 				return false
 			}
+			ret = ret && c.canPushToCopImpl(storeTp, true)
 		case *LogicalSort:
-			if storeTp == kv.TiFlash {
-				ret = ret && c.canPushToCopImpl(storeTp, true)
-			} else {
+			if storeTp != kv.TiFlash {
 				return false
 			}
+			ret = ret && c.canPushToCopImpl(storeTp, true)
 		case *LogicalProjection:
-			if storeTp == kv.TiFlash {
-				ret = ret && c.canPushToCopImpl(storeTp, considerDual)
-			} else {
+			if storeTp != kv.TiFlash {
 				return false
 			}
+			ret = ret && c.canPushToCopImpl(storeTp, considerDual)
 		case *LogicalTableDual:
 			return storeTp == kv.TiFlash && considerDual
 		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *LogicalWindow:
-			if storeTp == kv.TiFlash {
-				ret = ret && c.canPushToCop(storeTp)
-			} else {
+			if storeTp != kv.TiFlash {
 				return false
 			}
+			ret = ret && c.canPushToCop(storeTp)
 		// These operators can be partially push down to TiFlash, so we don't raise warning for them.
 		case *LogicalLimit, *LogicalTopN:
 			return false
@@ -3078,12 +3075,12 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		// trying to match the required partitions.
 		if prop.MPPPartitionTp == property.HashType {
 			// partition key required by upper layer is subset of current layout.
-			if matches := prop.IsSubsetOf(partitionCols); len(matches) != 0 {
-				partitionCols = choosePartitionKeys(partitionCols, matches)
-			} else {
+			matches := prop.IsSubsetOf(partitionCols)
+			if len(matches) == 0 {
 				// do not satisfy the property of its parent, so return empty
 				return nil
 			}
+			partitionCols = choosePartitionKeys(partitionCols, matches)
 		} else if prop.MPPPartitionTp != property.AnyType {
 			return nil
 		}

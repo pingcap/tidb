@@ -64,6 +64,15 @@ const (
 	// and add isImportingAtomic with this value. In other state, we directly store with the state value.
 	// so this must always the last value of this enum.
 	importMutexStateReadLock
+	// we need to lock the engine when it's open as we do when it's close, otherwise GetEngienSize may race with OpenEngine
+	importMutexStateOpen
+)
+
+const (
+	// DupDetectDirSuffix is used by pre-deduplication to store the encoded index KV.
+	DupDetectDirSuffix = ".dupdetect"
+	// DupResultDirSuffix is used by pre-deduplication to store the duplicated row ID.
+	DupResultDirSuffix = ".dupresult"
 )
 
 // engineMeta contains some field that is necessary to continue the engine restore/import process.
@@ -159,14 +168,21 @@ func (e *Engine) Close() error {
 	return err
 }
 
-// Cleanup remove meta and db files
+// Cleanup remove meta, db and duplicate detection files
 func (e *Engine) Cleanup(dataDir string) error {
 	if err := os.RemoveAll(e.sstDir); err != nil {
 		return errors.Trace(err)
 	}
+	uuid := e.UUID.String()
+	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupDetectDirSuffix)); err != nil {
+		return errors.Trace(err)
+	}
+	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupResultDirSuffix)); err != nil {
+		return errors.Trace(err)
+	}
 
-	dbPath := filepath.Join(dataDir, e.UUID.String())
-	return os.RemoveAll(dbPath)
+	dbPath := filepath.Join(dataDir, uuid)
+	return errors.Trace(os.RemoveAll(dbPath))
 }
 
 // Exist checks if db folder existing (meta sometimes won't flush before lightning exit)
@@ -467,6 +483,8 @@ func (e *Engine) getEngineFileSize() backend.EngineFileSize {
 	var memSize int64
 	e.localWriters.Range(func(k, v interface{}) bool {
 		w := k.(*Writer)
+		w.Lock()
+		defer w.Unlock()
 		if w.writer != nil {
 			memSize += int64(w.writer.writer.EstimatedSize())
 		} else {
@@ -606,22 +624,20 @@ func (e *Engine) ingestSSTLoop() {
 						finSeq = metas.seq
 						finMetaSeq := metasMaxSeq
 						for len(inSyncSeqs.arr) > 0 {
-							if inSyncSeqs.arr[0].flushSeq == finSeq+1 {
-								finSeq++
-								finMetaSeq = inSyncSeqs.arr[0].metaSeq
-								heap.Remove(inSyncSeqs, 0)
-							} else {
+							if inSyncSeqs.arr[0].flushSeq != finSeq+1 {
 								break
 							}
+							finSeq++
+							finMetaSeq = inSyncSeqs.arr[0].metaSeq
+							heap.Remove(inSyncSeqs, 0)
 						}
 
 						var flushChans []chan struct{}
 						for _, seq := range flushQueue {
-							if seq.seq <= finSeq {
-								flushChans = append(flushChans, seq.ch)
-							} else {
+							if seq.seq > finSeq {
 								break
 							}
+							flushChans = append(flushChans, seq.ch)
 						}
 						flushQueue = flushQueue[len(flushChans):]
 						finishedSeq.Store(finSeq)

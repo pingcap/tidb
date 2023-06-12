@@ -103,6 +103,9 @@ func (s *memoryStoreCore) Create(_ context.Context, record *TimerRecord) (string
 }
 
 func (s *memoryStoreCore) List(_ context.Context, cond Cond) ([]*TimerRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	result := make([]*TimerRecord, 0, 1)
 	for _, ns := range s.namespaces {
 		for _, t := range ns {

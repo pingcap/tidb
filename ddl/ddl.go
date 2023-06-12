@@ -550,7 +550,7 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc := dc.getReorgCtx(job.ID)
 	if rc == nil {
-		logutil.BgLogger().Error("cannot find reorgCtx", zap.Int64("jobID", job.ID))
+		logutil.BgLogger().Warn("cannot find reorgCtx", zap.Int64("jobID", job.ID))
 		return
 	}
 	logutil.BgLogger().Info("[ddl] notify reorg worker the job's state",
@@ -628,7 +628,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
-		manager = owner.NewMockManager(ctx, id)
+		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
 		schemaSyncer = NewMockSchemaSyncer()
 		stateSyncer = NewMockStateSyncer()
 	} else {
@@ -755,6 +755,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
 	d.ownerManager.SetBeOwnerHook(func() {
 		var err error
+		d.ddlSeqNumMu.Lock()
+		defer d.ddlSeqNumMu.Unlock()
 		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
 		if err != nil {
 			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))

@@ -116,7 +116,8 @@ func ExplainExpressionList(exprs []Expression, schema *Schema) string {
 			if len(v) < length {
 				builder.WriteString(v)
 			} else {
-				builder.WriteString(fmt.Sprintf("%s(len:%d)", v[:length], len(v)))
+				builder.WriteString(v[:length])
+				fmt.Fprintf(builder, "(len:%d)", len(v))
 			}
 			builder.WriteString("->")
 			builder.WriteString(schema.Columns[i].String())

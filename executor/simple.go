@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -296,21 +297,20 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 		for _, role := range s.RoleList {
 			checker := privilege.GetPrivilegeManager(e.ctx)
 			ok := checker.FindEdge(e.ctx, role, user)
-			if ok {
-				sql.Reset()
-				sqlexec.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles values(%?, %?, %?, %?);", user.Hostname, user.Username, role.Hostname, role.Username)
-				if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
-					logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
-					if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
-						return rollbackErr
-					}
-					return err
-				}
-			} else {
+			if !ok {
 				if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 					return rollbackErr
 				}
 				return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(role.String(), user.String())
+			}
+			sql.Reset()
+			sqlexec.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles values(%?, %?, %?, %?);", user.Hostname, user.Username, role.Hostname, role.Username)
+			if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
+				logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+				if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
+					return rollbackErr
+				}
+				return err
 			}
 		}
 	}
@@ -2183,15 +2183,14 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 		}
 	}
 
-	if failedUser == "" {
-		if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
-			return err
-		}
-	} else {
+	if failedUser != "" {
 		if _, err := sqlExecutor.ExecuteInternal(ctx, "rollback"); err != nil {
 			return err
 		}
 		return exeerrors.ErrCannotUser.GenWithStackByArgs("RENAME USER", failedUser)
+	}
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+		return err
 	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
@@ -2248,12 +2247,11 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			return err
 		}
 		if !exists {
-			if s.IfExists {
-				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.GenWithStackByArgs(user))
-			} else {
+			if !s.IfExists {
 				failedUsers = append(failedUsers, user.String())
 				break
 			}
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.GenWithStackByArgs(user))
 		}
 
 		// Certain users require additional privileges in order to be modified.
@@ -2368,18 +2366,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 		} // TODO: need delete columns_priv once we implement columns_priv functionality.
 	}
 
-	if len(failedUsers) == 0 {
-		if _, err := sqlExecutor.ExecuteInternal(internalCtx, "commit"); err != nil {
-			return err
-		}
-		if s.IsDropRole {
-			// apply new activeRoles
-			if ok, roleName := checker.ActiveRoles(e.ctx, activeRoles); !ok {
-				u := e.ctx.GetSessionVars().User
-				return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
-			}
-		}
-	} else {
+	if len(failedUsers) != 0 {
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 			return err
 		}
@@ -2387,6 +2374,16 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			return exeerrors.ErrCannotUser.GenWithStackByArgs("DROP ROLE", strings.Join(failedUsers, ","))
 		}
 		return exeerrors.ErrCannotUser.GenWithStackByArgs("DROP USER", strings.Join(failedUsers, ","))
+	}
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "commit"); err != nil {
+		return err
+	}
+	if s.IsDropRole {
+		// apply new activeRoles
+		if ok, roleName := checker.ActiveRoles(e.ctx, activeRoles); !ok {
+			u := e.ctx.GetSessionVars().User
+			return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+		}
 	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
@@ -2468,12 +2465,11 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return errors.Trace(exeerrors.ErrPasswordNoMatch)
 	}
 	if e.ctx.InSandBoxMode() {
-		if s.User == nil || s.User.CurrentUser ||
-			e.ctx.GetSessionVars().User.AuthUsername == u && e.ctx.GetSessionVars().User.AuthHostname == strings.ToLower(h) {
-			disableSandboxMode = true
-		} else {
+		if !(s.User == nil || s.User.CurrentUser ||
+			e.ctx.GetSessionVars().User.AuthUsername == u && e.ctx.GetSessionVars().User.AuthHostname == strings.ToLower(h)) {
 			return exeerrors.ErrMustChangePassword.GenWithStackByArgs()
 		}
+		disableSandboxMode = true
 	}
 
 	authplugin, err := privilege.GetPrivilegeManager(e.ctx).GetAuthPlugin(u, h)
@@ -2574,7 +2570,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		return nil
 	}
 
-	connID, isTruncated, err := util.ParseGlobalConnID(s.ConnectionID)
+	gcid, isTruncated, err := globalconn.ParseConnID(s.ConnectionID)
 	if err != nil {
 		err1 := errors.New("Parse ConnectionID failed: " + err.Error())
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
@@ -2590,8 +2586,8 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		return nil
 	}
 
-	if connID.ServerID != sm.ServerID() {
-		if err := killRemoteConn(ctx, e.ctx, &connID, s.Query); err != nil {
+	if gcid.ServerID != sm.ServerID() {
+		if err := killRemoteConn(ctx, e.ctx, &gcid, s.Query); err != nil {
 			err1 := errors.New("KILL remote connection failed: " + err.Error())
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
 		}
@@ -2602,14 +2598,14 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	return nil
 }
 
-func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.GlobalConnID, query bool) error {
-	if connID.ServerID == 0 {
+func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalconn.GCID, query bool) error {
+	if gcid.ServerID == 0 {
 		return errors.New("Unexpected ZERO ServerID. Please file a bug to the TiDB Team")
 	}
 
 	killExec := &tipb.Executor{
 		Tp:   tipb.ExecType_TypeKill,
-		Kill: &tipb.Kill{ConnID: connID.ID(), Query: query},
+		Kill: &tipb.Kill{ConnID: gcid.ToConnID(), Query: query},
 	}
 
 	dagReq := &tipb.DAGRequest{}
@@ -2628,7 +2624,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		SetFromSessionVars(sctx.GetSessionVars()).
 		SetFromInfoSchema(sctx.GetInfoSchema()).
 		SetStoreType(kv.TiDB).
-		SetTiDBServerID(connID.ServerID).
+		SetTiDBServerID(gcid.ServerID).
 		Build()
 	if err != nil {
 		return err
@@ -2639,8 +2635,8 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		return err
 	}
 
-	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", connID.ServerID),
-		zap.Uint64("conn", connID.ID()), zap.Bool("query", query))
+	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", gcid.ServerID),
+		zap.Uint64("conn", gcid.ToConnID()), zap.Bool("query", query))
 	return err
 }
 

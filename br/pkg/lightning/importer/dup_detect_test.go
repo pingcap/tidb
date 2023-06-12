@@ -18,18 +18,45 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/duplicate"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbutil"
 	"github.com/pingcap/tidb/util/extsort"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
 
+var (
+	exampleHandleKey = tablecodec.EncodeRowKeyWithHandle(121, kv.IntHandle(22))
+	exampleIndexID   = int64(23)
+	exampleIndexKey  = tablecodec.EncodeIndexSeekKey(122, exampleIndexID, nil)
+)
+
 func TestErrorOnDup(t *testing.T) {
 	h := &errorOnDup{}
-	err := h.Begin([]byte("key"))
-	require.Error(t, err)
+	require.NoError(t, h.Begin(exampleHandleKey))
+	require.NoError(t, h.Append([]byte{1}))
+	require.NoError(t, h.Append([]byte{2}))
+	err := h.End()
+	require.ErrorIs(t, err, ErrDuplicateKey)
+	dupErr := errors.Cause(err).(*errors.Error)
+	require.Equal(t, conflictOnHandle, dupErr.Args()[0])
+	require.Equal(t, [][]byte{{1}, {2}}, dupErr.Args()[1])
+	require.NoError(t, h.Close())
+
+	h = &errorOnDup{}
+	require.NoError(t, h.Begin(exampleIndexKey))
+	require.NoError(t, h.Append([]byte{11}))
+	require.NoError(t, h.Append([]byte{12}))
+	err = h.End()
+	require.ErrorIs(t, err, ErrDuplicateKey)
+	dupErr = errors.Cause(err).(*errors.Error)
+	require.Equal(t, int64(23), dupErr.Args()[0])
+	require.Equal(t, [][]byte{{11}, {12}}, dupErr.Args()[1])
 	require.NoError(t, h.Close())
 }
 
@@ -37,9 +64,12 @@ func TestReplaceOnDup(t *testing.T) {
 	runDupHandlerTest(t,
 		func(w extsort.Writer) duplicate.Handler { return &replaceOnDup{w: w} },
 		[]dupRecord{{
-			[]byte("key1"), [][]byte{[]byte("01"), []byte("02"), []byte("03")}},
-			{[]byte("key2"), [][]byte{[]byte("11"), []byte("12"), []byte("13")}}},
-		[][]byte{[]byte("01"), []byte("02"), []byte("11"), []byte("12")},
+			exampleHandleKey, [][]byte{[]byte("01"), []byte("02"), []byte("03")}},
+			{exampleIndexKey, [][]byte{[]byte("11"), []byte("12"), []byte("13")}}},
+		map[int64][][]byte{
+			conflictOnHandle: {[]byte("01"), []byte("02")},
+			exampleIndexID:   {[]byte("11"), []byte("12")},
+		},
 	)
 }
 
@@ -47,9 +77,12 @@ func TestIgnoreOnDup(t *testing.T) {
 	runDupHandlerTest(t,
 		func(w extsort.Writer) duplicate.Handler { return &ignoreOnDup{w: w} },
 		[]dupRecord{{
-			[]byte("key1"), [][]byte{[]byte("01"), []byte("02"), []byte("03")}},
-			{[]byte("key2"), [][]byte{[]byte("11"), []byte("12"), []byte("13")}}},
-		[][]byte{[]byte("02"), []byte("03"), []byte("12"), []byte("13")},
+			exampleHandleKey, [][]byte{[]byte("01"), []byte("02"), []byte("03")}},
+			{exampleIndexKey, [][]byte{[]byte("11"), []byte("12"), []byte("13")}}},
+		map[int64][][]byte{
+			conflictOnHandle: {[]byte("02"), []byte("03")},
+			exampleIndexID:   {[]byte("12"), []byte("13")},
+		},
 	)
 }
 
@@ -62,7 +95,7 @@ func runDupHandlerTest(
 	t *testing.T,
 	makeHandler func(w extsort.Writer) duplicate.Handler,
 	input []dupRecord,
-	ignoredRowIDs [][]byte,
+	ignoredRowIDs map[int64][][]byte,
 ) {
 	ignoreRows, err := extsort.OpenDiskSorter(t.TempDir(), nil)
 	require.NoError(t, err)
@@ -86,9 +119,11 @@ func runDupHandlerTest(
 	it, err := ignoreRows.NewIterator(ctx)
 	require.NoError(t, err)
 
-	var rowIDs [][]byte
+	rowIDs := map[int64][][]byte{}
 	for it.First(); it.Valid(); it.Next() {
-		rowIDs = append(rowIDs, slices.Clone(it.UnsafeKey()))
+		_, idxID, err := codec.DecodeVarint(it.UnsafeValue())
+		require.NoError(t, err)
+		rowIDs[idxID] = append(rowIDs[idxID], slices.Clone(it.UnsafeKey()))
 	}
 	require.NoError(t, it.Error())
 	require.NoError(t, it.Close())
@@ -122,31 +157,40 @@ func TestSimplifyTable(t *testing.T) {
 			expTable:   "CREATE TABLE t(a int UNIQUE KEY, b int, c int, UNIQUE INDEX idx_bc(b, c))",
 			expColPerm: []int{0, 1, 2, 10},
 		},
+		{
+			table:      "CREATE TABLE t(a int, b int, c int, d int, INDEX idx_b(b), INDEX idx_c(c), UNIQUE INDEX idx_cd(c, d))",
+			colPerm:    []int{0, 1, 2, 3, 10},
+			expTable:   "CREATE TABLE t(c int, d int, UNIQUE INDEX idx_cd(c, d))",
+			expColPerm: []int{2, 3, 10},
+		},
 	}
 	for _, tc := range testCases {
 		p := parser.New()
-		tblInfo, err := dbutil.GetTableInfoBySQL(tc.table, p)
+		originalTblInfo, err := dbutil.GetTableInfoBySQL(tc.table, p)
 		require.NoError(t, err)
-		actualTblInfo, actualColPerm := simplifyTable(tblInfo, tc.colPerm)
 
-		if tc.expTableHasNoCols {
-			require.Empty(t, actualTblInfo.Columns)
-		} else {
-			expTblInfo, err := dbutil.GetTableInfoBySQL(tc.expTable, p)
-			require.NoError(t, err)
+		// run twice to make sure originalTblInfo is not changed
+		for i := 0; i < 2; i++ {
+			actualTblInfo, actualColPerm := simplifyTable(originalTblInfo, tc.colPerm)
+			if tc.expTableHasNoCols {
+				require.Empty(t, actualTblInfo.Columns)
+			} else {
+				expTblInfo, err := dbutil.GetTableInfoBySQL(tc.expTable, p)
+				require.NoError(t, err)
 
-			require.Equal(t, len(expTblInfo.Columns), len(actualTblInfo.Columns))
-			for i, col := range actualTblInfo.Columns {
-				require.Equal(t, expTblInfo.Columns[i].Name, col.Name)
-				require.Equal(t, expTblInfo.Columns[i].Offset, col.Offset)
+				require.Equal(t, len(expTblInfo.Columns), len(actualTblInfo.Columns))
+				for i, col := range actualTblInfo.Columns {
+					require.Equal(t, expTblInfo.Columns[i].Name, col.Name)
+					require.Equal(t, expTblInfo.Columns[i].Offset, col.Offset)
+				}
+
+				require.Equal(t, len(expTblInfo.Indices), len(actualTblInfo.Indices))
+				for i, idxInfo := range actualTblInfo.Indices {
+					require.Equal(t, expTblInfo.Indices[i].Name, idxInfo.Name)
+					require.Equal(t, expTblInfo.Indices[i].Columns, idxInfo.Columns)
+				}
 			}
-
-			require.Equal(t, len(expTblInfo.Indices), len(actualTblInfo.Indices))
-			for i, idxInfo := range actualTblInfo.Indices {
-				require.Equal(t, expTblInfo.Indices[i].Name, idxInfo.Name)
-				require.Equal(t, expTblInfo.Indices[i].Columns, idxInfo.Columns)
-			}
+			require.Equal(t, tc.expColPerm, actualColPerm)
 		}
-		require.Equal(t, tc.expColPerm, actualColPerm)
 	}
 }
