@@ -78,7 +78,6 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/store/copr"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
@@ -2231,7 +2230,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if variable.EnableResourceControl.Load() && len(sessVars.ResourceGroupName) > 0 {
 		planNormalized, _ := executor.GetPlanDigest(sessVars.StmtCtx)
 		sessVars.StmtCtx.RunawayChecker = domain.GetDomain(s).RunawayManager().DeriveChecker(sessVars.ResourceGroupName, sessVars.StmtCtx.OriginalSQL, planNormalized)
-		if err := sessVars.StmtCtx.RunawayChecker.BeforeCopRequest(copr.RunawayActionWatchKillWorker); err != nil {
+		if err := sessVars.StmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
 			return nil, err
 		}
 	}

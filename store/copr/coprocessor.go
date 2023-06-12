@@ -1175,7 +1175,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
-	if err := worker.req.RunawayChecker.BeforeCopRequest(RunawayActionKillWorker, createCooldownWorker(req)); err != nil {
+	if err := worker.req.RunawayChecker.BeforeCopRequest(req); err != nil {
 		return nil, err
 	}
 	req.StoreTp = getEndPointType(task.storeType)

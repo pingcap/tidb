@@ -20,6 +20,9 @@ import (
 
 	"github.com/jellydator/ttlcache/v3"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
@@ -62,48 +65,76 @@ type RunawayChecker struct {
 	manager           *RunawayManager
 	resourceGroupName string
 	convict           string
-	setttings         *rmpb.RunawaySettings
+	setting           *rmpb.RunawaySettings
 	deadline          time.Time
 	marked            atomic.Bool
 }
 
 func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSql string, planDigest string) *RunawayChecker {
-	marked := atomic.Bool{}
 	convict := getConvictName(setting, originalSql, planDigest)
-	marked.Store(manager.ExamineWatchList(resourceGroupName, convict))
 	return &RunawayChecker{
 		manager:           manager,
 		resourceGroupName: resourceGroupName,
 		convict:           convict,
 		deadline:          time.Now().Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond),
-		setttings:         setting,
-		marked:            marked,
+		setting:           setting,
+		marked:            atomic.Bool{},
 	}
 }
 
-func (r *RunawayChecker) BeforeCopRequest(candidateActions ...RunawayActionWorker) error {
+// BeforeExecutor checks whether query is in watch list before executing and after compiling.
+func (r *RunawayChecker) BeforeExecutor() error {
+	result := r.manager.ExamineWatchList(r.resourceGroupName, r.convict)
+	if result {
+		r.marked.Store(result)
+		switch r.setting.Action {
+		case rmpb.RunawayAction_Kill:
+			return exeerrors.ErrResourceGroupQueryRunawayQuarantine
+		case rmpb.RunawayAction_CoolDown:
+			return nil
+		case rmpb.RunawayAction_DryRun:
+			return nil
+		default:
+		}
+	}
+	return nil
+}
+
+// BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.
+func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 	if r == nil {
 		return nil
 	}
 	marked := r.marked.Load()
 	fmt.Println("############", time.Now(), r.deadline)
 	if !marked {
+		until := time.Until(r.deadline)
 		// execution time exceeds the threshold, mark the query as runaway
-		if r.deadline.Before(time.Now()) {
+		if until <= 0 {
 			r.marked.Store(true)
 			r.markRunaway()
 			fmt.Println("r.marked.Store(true)")
 		} else {
+			if r.setting.Action == rmpb.RunawayAction_Kill {
+				// if the execution time is close to the threshold, set a timeout
+				if until < tikv.ReadTimeoutMedium {
+					req.Context.MaxExecutionDurationMs = uint64(until.Milliseconds())
+				}
+			}
 			return nil
 		}
 	}
-	for _, ac := range candidateActions {
-		fmt.Println(ac.Type())
-		if ac.Type() == r.setttings.Action {
-			return ac.Action()()
-		}
+	switch r.setting.Action {
+	case rmpb.RunawayAction_Kill:
+		return exeerrors.ErrResourceGroupQueryRunaway
+	case rmpb.RunawayAction_CoolDown:
+		req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
+		return nil
+	case rmpb.RunawayAction_DryRun:
+		return nil
+	default:
+		return nil
 	}
-	return nil
 }
 
 func (r *RunawayChecker) AfterCopRequest() {
@@ -119,10 +150,10 @@ func (r *RunawayChecker) AfterCopRequest() {
 }
 
 func (r *RunawayChecker) markRunaway() {
-	if r.setttings.Watch == nil {
+	if r.setting.Watch == nil {
 		return
 	}
-	r.manager.MarkRunaway(r.resourceGroupName, r.convict, time.Duration(r.setttings.Watch.LastingDurationMs)*time.Millisecond)
+	r.manager.MarkRunaway(r.resourceGroupName, r.convict, time.Duration(r.setting.Watch.LastingDurationMs)*time.Millisecond)
 }
 
 func getConvictName(settings *rmpb.RunawaySettings, originalSql string, planDigest string) string {
