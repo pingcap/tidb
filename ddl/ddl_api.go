@@ -3099,9 +3099,7 @@ func SetDirectResourceGroupSettings(resourceGroupSettings *model.ResourceGroupSe
 // SetDirectResourceGroupRunawayOption tries to set runaway part of the ResourceGroupSettings.
 func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGroupSettings, typ ast.RunawayOptionType, stringVal string, intVal int32) error {
 	if resourceGroupSettings.Runaway == nil {
-		resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{
-			Action: model.RunawayNoneAction,
-		}
+		resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{}
 	}
 	settings := resourceGroupSettings.Runaway
 	switch typ {

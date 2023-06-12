@@ -1863,10 +1863,11 @@ type RunawayActionType int32
 
 //revive:disable:exported
 const (
-	RunawayActionDryRun RunawayActionType = iota
+	// Note: RunawayActionNone is only defined in tidb, so take care of converting.
+	RunawayActionNone RunawayActionType = iota
+	RunawayActionDryRun
 	RunawayActionCooldown
 	RunawayActionKill
-	RunawayNoneAction
 )
 
 // RunawayWatchType is the type of runaway watch.
