@@ -74,11 +74,10 @@ func tryMakeImage(opts ...mockstore.MockTiKVStoreOption) {
 	retry, err := false, error(nil)
 	for err == nil {
 		retry, err = tryMakeImageOnce()
-		if retry {
-			time.Sleep(100 * time.Millisecond)
-		} else {
+		if !retry {
 			break
 		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
