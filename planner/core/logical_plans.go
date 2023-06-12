@@ -1573,8 +1573,13 @@ func (ds *DataSource) detachCondAndBuildRangeForPath(path *util.AccessPath, cond
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.ctx, path.Index.ID, path.Ranges)
-	return err
+
+	sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, path.AccessConds, ds.possibleAccessPaths)
+	if err != nil {
+		return err
+	}
+	path.CountAfterAccess = sel * float64(ds.tableStats.HistColl.RealtimeCount)
+	return nil
 }
 
 func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) error {
