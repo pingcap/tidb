@@ -4550,10 +4550,9 @@ func CheckRunawayAppend(ops []*ResourceGroupRunawayOption, newOp *ResourceGroupR
 type AlterResourceGroupStmt struct {
 	ddlNode
 
-	ResourceGroupName              model.CIStr
-	IfExists                       bool
-	ResourceGroupOptionList        []*ResourceGroupOption
-	ResourceGroupRunawayOptionList []*ResourceGroupRunawayOption
+	ResourceGroupName       model.CIStr
+	IfExists                bool
+	ResourceGroupOptionList []*ResourceGroupOption
 }
 
 func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {

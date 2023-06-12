@@ -1828,11 +1828,11 @@ DirectResourceGroupOption:
 	}
 |	"QUERY_LIMIT" EqOpt '(' ')'
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: make([]*ast.ResourceGroupRunawayOption, 0)}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: nil}
 	}
 |	"QUERY_LIMIT" EqOpt "NULL"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: make([]*ast.ResourceGroupRunawayOption, 0)}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: nil}
 	}
 
 PlacementOptionList:
