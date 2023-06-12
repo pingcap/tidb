@@ -1034,7 +1034,7 @@ import (
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
 	PauseLoadDataStmt          "PAUSE LOAD DATA JOB statement"
 	ResumeLoadDataStmt         "RESUME LOAD DATA JOB statement"
-	CancelImportStmt           "CANCEL LOAD DATA JOB statement"
+	CancelImportStmt           "CANCEL IMPORT JOB statement"
 	DropLoadDataStmt           "DROP LOAD DATA JOB statement"
 	ProcedureUnlabeledBlock    "The statement block without label in procedure"
 	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
