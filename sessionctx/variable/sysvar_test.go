@@ -454,6 +454,17 @@ func TestLastInsertID(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), LastInsertID)
 	require.NoError(t, err)
 	require.Equal(t, val, "21")
+
+	vars.StmtCtx.PrevLastInsertID = 9223372036854775809
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), LastInsertID)
+	require.NoError(t, err)
+	require.Equal(t, val, "9223372036854775809")
+
+	f := GetSysVar("last_insert_id")
+	d, valType, flag := f.GetNativeValType(val)
+	require.Equal(t, valType, mysql.TypeLonglong)
+	require.True(t, mysql.HasUnsignedFlag(flag))
+	require.Equal(t, d.GetUint64(), uint64(9223372036854775809))
 }
 
 func TestTimestamp(t *testing.T) {
