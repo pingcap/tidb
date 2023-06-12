@@ -323,7 +323,6 @@ func (c *pdClient) Put(ctx context.Context, key []byte, value []byte, opts ...pd
 	return nil, nil
 }
 
-// GetMinTS returns the minimal ts.
 func (c *pdClient) GetMinTS(ctx context.Context) (int64, int64, error) {
 	return 0, 0, nil
 }
