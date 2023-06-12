@@ -86,7 +86,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 
 	if kvReq.StoreType == kv.TiFlash {
 		ctx = SetTiFlashConfVarsInContext(ctx, sctx)
-		option.TiflashNodeSelectionPolicy = sctx.GetSessionVars().TiflashNodeSelectionPolicy
+		option.TiflashReplicaRead = sctx.GetSessionVars().TiflashReplicaRead
 		option.AppendWarning = sctx.GetSessionVars().StmtCtx.AppendWarning
 	}
 

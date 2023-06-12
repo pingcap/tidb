@@ -498,7 +498,7 @@ func buildBatchCopTasksForNonPartitionedTable(
 	balanceWithContinuity bool,
 	balanceContinuousRegionCount int64,
 	dispatchPolicy tiflashcompute.DispatchPolicy,
-	nodeSelectionPolicy tiflash.NodeSelectionPolicy,
+	nodeSelectionPolicy tiflash.TiflashReplicaRead,
 	appendWarning func(error)) ([]*batchCopTask, error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		if config.GetGlobalConfig().UseAutoScaler {
@@ -521,7 +521,7 @@ func buildBatchCopTasksForPartitionedTable(
 	balanceContinuousRegionCount int64,
 	partitionIDs []int64,
 	dispatchPolicy tiflashcompute.DispatchPolicy,
-	nodeSelectionPolicy tiflash.NodeSelectionPolicy,
+	nodeSelectionPolicy tiflash.TiflashReplicaRead,
 	appendWarning func(error)) (batchTasks []*batchCopTask, err error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		if config.GetGlobalConfig().UseAutoScaler {
@@ -804,8 +804,8 @@ func failpointCheckWhichPolicy(act tiflashcompute.DispatchPolicy) {
 	})
 }
 
-func filterAllStoresAccordingToNodeSelectionPolicy(allStores []uint64, aliveStoreIDsInTiDBZone map[uint64]struct{}, isTiDBZoneSet bool, policy tiflash.NodeSelectionPolicy) (storesMatchedPolicy []uint64, needsCrossZoneAccess bool) {
-	if policy == tiflash.AllNodes || !isTiDBZoneSet {
+func filterAllStoresAccordingToTiflashReplicaRead(allStores []uint64, aliveStoreIDsInTiDBZone map[uint64]struct{}, isTiDBZoneSet bool, policy tiflash.TiflashReplicaRead) (storesMatchedPolicy []uint64, needsCrossZoneAccess bool) {
+	if policy == tiflash.AllReplicas || !isTiDBZoneSet {
 		return allStores, false
 	}
 	// Check whether exists available stores in TiDB zone. If so, we only need to access TiFlash stores in TiDB zone.
@@ -819,11 +819,11 @@ func filterAllStoresAccordingToNodeSelectionPolicy(allStores []uint64, aliveStor
 		// needsCrossZoneAccess indicates whether we need to access(directly read or remote read) TiFlash stores in other zones.
 		needsCrossZoneAccess = true
 
-		if policy == tiflash.PriorityLocalZoneNodes {
-			// If the policy is `PriorityLocalZoneNodes`, we can dispatch tasks to the TiFlash stores in other zones.
+		if policy == tiflash.ClosetAdaptive {
+			// If the policy is `ClosetAdaptive`, we can dispatch tasks to the TiFlash stores in other zones.
 			storesMatchedPolicy = allStores
-		} else if policy == tiflash.OnlyLocalZoneNodes {
-			// If the policy is `OnlyLocalZoneNodes`, we dispatch tasks to the TiFlash stores in TiDB zone and remote read from other zones.
+		} else if policy == tiflash.ClosetReplicas {
+			// If the policy is `ClosetReplicas`, we dispatch tasks to the TiFlash stores in TiDB zone and remote read from other zones.
 			for id := range aliveStoreIDsInTiDBZone {
 				storesMatchedPolicy = append(storesMatchedPolicy, id)
 			}
@@ -835,7 +835,7 @@ func filterAllStoresAccordingToNodeSelectionPolicy(allStores []uint64, aliveStor
 // When `partitionIDs != nil`, it means that buildBatchCopTasksCore is constructing a batch cop tasks for PartitionTableScan.
 // At this time, `len(rangesForEachPhysicalTable) == len(partitionIDs)` and `rangesForEachPhysicalTable[i]` is for partition `partitionIDs[i]`.
 // Otherwise, `rangesForEachPhysicalTable[0]` indicates the range for the single physical table.
-func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType, isMPP bool, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64, nodeSelectionPolicy tiflash.NodeSelectionPolicy, appendWarning func(error)) ([]*batchCopTask, error) {
+func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType, isMPP bool, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64, nodeSelectionPolicy tiflash.TiflashReplicaRead, appendWarning func(error)) ([]*batchCopTask, error) {
 	cache := store.GetRegionCache()
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
@@ -868,12 +868,10 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			}
 		}
 
-		if !nodeSelectionPolicy.IsPolicyAllNodes() && isTiDBLabelZoneSet {
+		if isMPP && !nodeSelectionPolicy.IsPolicyAllReplicas() && isTiDBLabelZoneSet {
 			allTiflashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 			aliveStores = allTiflashStores
-			if isMPP {
-				aliveStores = filterAliveStores(bo.GetCtx(), allTiflashStores, ttl, store)
-			}
+			aliveStores = filterAliveStores(bo.GetCtx(), allTiflashStores, ttl, store)
 			aliveStoreIDsInTiDBZone = make(map[uint64]struct{}, len(aliveStores))
 			for _, as := range aliveStores {
 				// If the `zone` label of the TiFlash store is not set, we treat it as a TiFlash store in other zones.
@@ -881,8 +879,8 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 					aliveStoreIDsInTiDBZone[as.StoreID()] = struct{}{}
 				}
 			}
-			if nodeSelectionPolicy.IsPolicyOnlyLocalZoneNodes() {
-				maxRemoteReadCountAllowed = len(aliveStores) * tiflash.MaxRemoteReadCountPerNodeForOnlyLocalZone
+			if nodeSelectionPolicy.IsPolicyClosetReplicas() {
+				maxRemoteReadCountAllowed = len(aliveStores) * tiflash.MaxRemoteReadCountPerNodeForClosetReplicas
 			}
 		}
 		var batchTasks []*batchCopTask
@@ -907,12 +905,12 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			}
 			needCrossZoneAccess := false
 			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store, tikv.LabelFilterNoTiFlashWriteNode)
-			allStores, needCrossZoneAccess = filterAllStoresAccordingToNodeSelectionPolicy(allStores, aliveStoreIDsInTiDBZone, isTiDBLabelZoneSet, nodeSelectionPolicy)
-			if needCrossZoneAccess && !nodeSelectionPolicy.IsPolicyAllNodes() {
+			allStores, needCrossZoneAccess = filterAllStoresAccordingToTiflashReplicaRead(allStores, aliveStoreIDsInTiDBZone, isTiDBLabelZoneSet, nodeSelectionPolicy)
+			if needCrossZoneAccess && !nodeSelectionPolicy.IsPolicyAllReplicas() {
 				regionsInOtherZones = append(regionsInOtherZones, task.region.GetID())
-				if nodeSelectionPolicy.IsPolicyOnlyLocalZoneNodes() && len(regionsInOtherZones) > maxRemoteReadCountAllowed {
+				if nodeSelectionPolicy.IsPolicyClosetReplicas() && len(regionsInOtherZones) > maxRemoteReadCountAllowed {
 					regionIDErrMsg := ""
-					for i := 0; i < 3 || i < len(regionsInOtherZones); i++ {
+					for i := 0; i < 3 && i < len(regionsInOtherZones); i++ {
 						regionIDErrMsg += fmt.Sprintf("%d, ", regionsInOtherZones[i])
 					}
 					return nil, errors.Errorf("no less than %d region(s) can not be accessed by TiFlash in the zone [%s]: %setc", len(regionsInOtherZones), tidbZone, regionIDErrMsg)
@@ -943,7 +941,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		if len(regionsInOtherZones) != 0 {
 			warningMsg := fmt.Sprintf("total %d region(s) can not be accessed by TiFlash in the zone [%s]:", len(regionsInOtherZones), tidbZone)
 			regionIDErrMsg := ""
-			for i := 0; i < 3 || i < len(regionsInOtherZones); i++ {
+			for i := 0; i < 3 && i < len(regionsInOtherZones); i++ {
 				regionIDErrMsg += fmt.Sprintf("%d, ", regionsInOtherZones[i])
 			}
 			warningMsg += regionIDErrMsg + "etc"
@@ -1027,11 +1025,11 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 			keyRanges = append(keyRanges, NewKeyRanges(pi.KeyRanges))
 			partitionIDs = append(partitionIDs, pi.ID)
 		}
-		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store.kvStore, keyRanges, req.StoreType, false, 0, false, 0, partitionIDs, tiflashcompute.DispatchPolicyInvalid, option.TiflashNodeSelectionPolicy, option.AppendWarning)
+		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store.kvStore, keyRanges, req.StoreType, false, 0, false, 0, partitionIDs, tiflashcompute.DispatchPolicyInvalid, option.TiflashReplicaRead, option.AppendWarning)
 	} else {
 		// TODO: merge the if branch.
 		ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
-		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store.kvStore, ranges, req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid, option.TiflashNodeSelectionPolicy, option.AppendWarning)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store.kvStore, ranges, req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid, option.TiflashReplicaRead, option.AppendWarning)
 	}
 
 	if err != nil {
@@ -1044,7 +1042,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		vars:                       vars,
 		rpcCancel:                  tikv.NewRPCanceller(),
 		enableCollectExecutionInfo: option.EnableCollectExecutionInfo,
-		tiflashNodeSelectionPolicy: option.TiflashNodeSelectionPolicy,
+		tiflashNodeSelectionPolicy: option.TiflashReplicaRead,
 		appendWarning:              option.AppendWarning,
 	}
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
@@ -1075,7 +1073,7 @@ type batchCopIterator struct {
 	closed uint32
 
 	enableCollectExecutionInfo bool
-	tiflashNodeSelectionPolicy tiflash.NodeSelectionPolicy
+	tiflashNodeSelectionPolicy tiflash.TiflashReplicaRead
 	appendWarning              func(error)
 }
 

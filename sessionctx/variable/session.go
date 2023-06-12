@@ -1485,8 +1485,8 @@ type SessionVars struct {
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
 
-	// TiflashNodeSelectionPolicy indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
-	TiflashNodeSelectionPolicy tiflash.NodeSelectionPolicy
+	// TiflashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
+	TiflashReplicaRead tiflash.TiflashReplicaRead
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session

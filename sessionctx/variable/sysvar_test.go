@@ -1239,41 +1239,41 @@ func TestTiDBEnableRowLevelChecksum(t *testing.T) {
 	require.Equal(t, Off, val)
 }
 
-func TestTiDBTiflashNodeSelectionPolicy(t *testing.T) {
+func TestTiDBTiflashReplicaRead(t *testing.T) {
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
 	// Test tidb_server_memory_limit
-	tidbTiFlashNodeSelectionPolicy := GetSysVar(TiDBTiflashNodeSelectionPolicy)
+	tidbTiFlashReplicaRead := GetSysVar(TiDBTiflashReplicaRead)
 	// Check default value
-	require.Equal(t, DefTiDBTiflashNodeSelectionPolicy, tidbTiFlashNodeSelectionPolicy.Value)
+	require.Equal(t, DefTiflashReplicaRead, tidbTiFlashReplicaRead.Value)
 
-	err := mock.SetGlobalSysVar(context.Background(), TiDBTiflashNodeSelectionPolicy, "all_nodes")
+	err := mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, "all_replicas")
 	require.NoError(t, err)
-	val, err := mock.GetGlobalSysVar(TiDBTiflashNodeSelectionPolicy)
+	val, err := mock.GetGlobalSysVar(TiDBTiflashReplicaRead)
 	require.NoError(t, err)
-	require.Equal(t, DefTiDBTiflashNodeSelectionPolicy, val)
+	require.Equal(t, DefTiflashReplicaRead, val)
 
-	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashNodeSelectionPolicy, "priority_local_zone_nodes")
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, "closet_adaptive")
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBTiflashNodeSelectionPolicy)
+	val, err = mock.GetGlobalSysVar(TiDBTiflashReplicaRead)
 	require.NoError(t, err)
-	require.Equal(t, "priority_local_zone_nodes", val)
+	require.Equal(t, "closet_adaptive", val)
 
 	// Test MaxValue
-	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashNodeSelectionPolicy, "only_local_zone_nodes")
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, "closet_replicas")
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBTiflashNodeSelectionPolicy)
+	val, err = mock.GetGlobalSysVar(TiDBTiflashReplicaRead)
 	require.NoError(t, err)
-	require.Equal(t, "only_local_zone_nodes", val)
+	require.Equal(t, "closet_replicas", val)
 
 	// Test Normal Value
-	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashNodeSelectionPolicy, DefTiDBTiflashNodeSelectionPolicy)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, DefTiflashReplicaRead)
 	require.NoError(t, err)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashNodeSelectionPolicy, "random")
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, "random")
 	require.Error(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBTiflashNodeSelectionPolicy)
+	val, err = mock.GetGlobalSysVar(TiDBTiflashReplicaRead)
 	require.NoError(t, err)
-	require.Equal(t, DefTiDBTiflashNodeSelectionPolicy, val)
+	require.Equal(t, DefTiflashReplicaRead, val)
 }

@@ -308,7 +308,7 @@ type ClientSendOption struct {
 	EnabledRateLimitAction     bool
 	EventCb                    trxevents.EventCallback
 	EnableCollectExecutionInfo bool
-	TiflashNodeSelectionPolicy tiflash.NodeSelectionPolicy
+	TiflashReplicaRead         tiflash.TiflashReplicaRead
 	AppendWarning              func(warn error)
 }
 

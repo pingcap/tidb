@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/util/tiflash"
 	"math"
 	"strconv"
 	"strings"
@@ -3405,6 +3406,9 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 }
 
 func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Executor {
+	if _, isTiDBZoneLabelSet := config.GetGlobalConfig().Labels[placement.DCLabelKey]; b.ctx.GetSessionVars().TiflashReplicaRead != tiflash.AllReplicas && !isTiDBZoneLabelSet {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The variable tiflash_replica_read is ignored"))
+	}
 	startTs, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err

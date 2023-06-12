@@ -14,66 +14,66 @@
 
 package tiflash
 
-// NodeSelectionPolicy is the policy to select TiFlash nodes.
-type NodeSelectionPolicy int
+// TiflashReplicaRead is the policy to select TiFlash nodes.
+type TiflashReplicaRead int
 
 const (
-	// AllNodes  means using all the available nodes to do analytic computing, regardless of local zone or other zones.
-	AllNodes NodeSelectionPolicy = iota
-	// PriorityLocalZoneNodes means using the nodes in the same zone as the entry TiDB. If not all the tiflash data can be accessed, the query will involve the tiflash nodes from other zones.
-	PriorityLocalZoneNodes
-	// OnlyLocalZoneNodes means using only the nodes in the same zone as the entry TiDB. If not all the tiflash data can be accessed, the query will report an error, and show an error message. Because of the feature of TiFlash remote read, a small number of regions  in other zones is acceptable, but performance will be affected. The threshold is fixed, 3 regions per tiflash node.
-	OnlyLocalZoneNodes
+	// AllReplicas  means using all the available nodes to do analytic computing, regardless of local zone or other zones.
+	AllReplicas TiflashReplicaRead = iota
+	// ClosetAdaptive means using the nodes in the same zone as the entry TiDB. If not all the tiflash data can be accessed, the query will involve the tiflash nodes from other zones.
+	ClosetAdaptive
+	// ClosetReplicas means using only the nodes in the same zone as the entry TiDB. If not all the tiflash data can be accessed, the query will report an error, and show an error message. Because of the feature of TiFlash remote read, a small number of regions  in other zones is acceptable, but performance will be affected. The threshold is fixed, 3 regions per tiflash node.
+	ClosetReplicas
 )
 
 const (
-	// AllNodesStr is the string value of AllNodes.
-	AllNodesStr = "all_nodes"
-	// PriorityLocalZoneNodesStr is the string value of PriorityLocalZoneNodes.
-	PriorityLocalZoneNodesStr = "priority_local_zone_nodes"
-	// OnlyLocalZoneNodesStr is the string value of OnlyLocalZoneNodes.
-	OnlyLocalZoneNodesStr = "only_local_zone_nodes"
+	// AllReplicaStr is the string value of AllReplicas.
+	AllReplicaStr = "all_replicas"
+	// ClosetAdaptiveStr is the string value of ClosetAdaptive.
+	ClosetAdaptiveStr = "closet_adaptive"
+	// ClosetReplicasStr is the string value of ClosetReplicas.
+	ClosetReplicasStr = "closet_replicas"
 )
 
-// IsPolicyAllNodes return whether the policy is AllNodes.
-func (policy NodeSelectionPolicy) IsPolicyAllNodes() bool {
-	return policy == AllNodes
+// IsPolicyAllReplicas return whether the policy is AllReplicas.
+func (policy TiflashReplicaRead) IsPolicyAllReplicas() bool {
+	return policy == AllReplicas
 }
 
-// IsPolicyOnlyLocalZoneNodes return whether the policy is OnlyLocalZoneNodes.
-func (policy NodeSelectionPolicy) IsPolicyOnlyLocalZoneNodes() bool {
-	return policy == OnlyLocalZoneNodes
+// IsPolicyClosetReplicas return whether the policy is ClosetReplicas.
+func (policy TiflashReplicaRead) IsPolicyClosetReplicas() bool {
+	return policy == ClosetReplicas
 }
 
-// GetNodeSelectionPolicy return corresponding policy string in integer.
-func GetNodeSelectionPolicy(policy NodeSelectionPolicy) string {
+// GetTiflashReplicaRead return corresponding policy string in integer.
+func GetTiflashReplicaRead(policy TiflashReplicaRead) string {
 	switch policy {
-	case AllNodes:
-		return AllNodesStr
-	case PriorityLocalZoneNodes:
-		return PriorityLocalZoneNodesStr
-	case OnlyLocalZoneNodes:
-		return OnlyLocalZoneNodesStr
+	case AllReplicas:
+		return AllReplicaStr
+	case ClosetAdaptive:
+		return ClosetAdaptiveStr
+	case ClosetReplicas:
+		return ClosetReplicasStr
 	default:
-		return AllNodesStr
+		return AllReplicaStr
 	}
 }
 
-// GetNodeSelectionPolicyByStr return corresponding policy in string.
-func GetNodeSelectionPolicyByStr(str string) NodeSelectionPolicy {
+// GetTiflashReplicaReadByStr return corresponding policy in string.
+func GetTiflashReplicaReadByStr(str string) TiflashReplicaRead {
 	switch str {
-	case AllNodesStr:
-		return AllNodes
-	case PriorityLocalZoneNodesStr:
-		return PriorityLocalZoneNodes
-	case OnlyLocalZoneNodesStr:
-		return OnlyLocalZoneNodes
+	case AllReplicaStr:
+		return AllReplicas
+	case ClosetAdaptiveStr:
+		return ClosetAdaptive
+	case ClosetReplicasStr:
+		return ClosetReplicas
 	default:
-		return AllNodes
+		return AllReplicas
 	}
 }
 
 const (
-	// MaxRemoteReadCountPerNodeForOnlyLocalZone is the max remote read count per node for only local zone.
-	MaxRemoteReadCountPerNodeForOnlyLocalZone = 3
+	// MaxRemoteReadCountPerNodeForClosetReplicas is the max remote read count per node for only local zone.
+	MaxRemoteReadCountPerNodeForClosetReplicas = 3
 )
