@@ -745,7 +745,6 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// `rs.Close` in `handleStmt`
 		if handled && sc != nil && rs == nil {
 			sc.DetachMemDiskTracker()
-			sc.ClearRuntimeInfo()
 			cteErr := resetCTEStorageMap(a.Ctx)
 			if err == nil {
 				// Only overwrite err when it's nil.
@@ -1436,7 +1435,6 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) error {
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
-	a.Ctx.GetSessionVars().StmtCtx.ClearRuntimeInfo()
 	return cteErr
 }
 

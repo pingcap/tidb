@@ -1204,16 +1204,6 @@ func (sc *StatementContext) DetachMemDiskTracker() {
 	}
 }
 
-// ClearRuntimeInfo clears the runtime info.
-func (sc *StatementContext) ClearRuntimeInfo() {
-	if sc == nil {
-		return
-	}
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	sc.mu.detailsSummary = execdetails.P90Summary{}
-}
-
 // SetStaleTSOProvider sets the stale TSO provider.
 func (sc *StatementContext) SetStaleTSOProvider(eval func() (uint64, error)) {
 	sc.StaleTSOProvider.Lock()

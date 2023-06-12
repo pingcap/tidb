@@ -2122,7 +2122,6 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 		// will not be detached. We need to detach them manually.
 		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
 			sv.StmtCtx.DetachMemDiskTracker()
-			sv.StmtCtx.ClearRuntimeInfo()
 		}
 		return true, err
 	}
