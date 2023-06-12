@@ -217,6 +217,9 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		if err2 != nil {
 			return nil, err2
 		}
+		if err = job2Step(ctx, taskMeta, importer.JobStepValidating); err != nil {
+			return nil, err
+		}
 		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result),
 			zap.Any("step_meta", stepMeta))
 		bs, err := json.Marshal(stepMeta)
@@ -317,6 +320,10 @@ func preProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.
 
 // postProcess does the post-processing for the task.
 func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
+	failpoint.Inject("syncBeforePostProcess", func() {
+		TestSyncChan <- struct{}{}
+		<-TestSyncChan
+	})
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
@@ -326,9 +333,6 @@ func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProce
 		err2 := createTableIndexes(ctx, globalTaskManager, taskMeta, logger)
 		err = multierr.Append(err, err2)
 	}()
-	if err = job2Step(ctx, taskMeta, importer.JobStepValidating); err != nil {
-		return err
-	}
 
 	controller, err := buildController(taskMeta)
 	if err != nil {

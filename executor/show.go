@@ -2233,16 +2233,16 @@ func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 }
 
 func handleImportJobInfo(info *importer.JobInfo, result *chunk.Chunk) error {
-	var importedRowCount uint64
+	var importedRowCount int64 = -1
 	if info.Summary == nil && info.Status == importer.JobStatusRunning {
 		// for running jobs, need get from distributed framework.
 		rows, err := loaddata.GetTaskImportedRows(info.ID)
 		if err != nil {
 			return err
 		}
-		importedRowCount = rows
+		importedRowCount = int64(rows)
 	}
-	fillOneImportJobInfo(info, result, int64(importedRowCount))
+	fillOneImportJobInfo(info, result, importedRowCount)
 	return nil
 }
 

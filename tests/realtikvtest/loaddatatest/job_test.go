@@ -23,6 +23,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/disttask/framework/proto"
@@ -365,7 +366,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	do, err := session.GetDomain(s.store)
 	s.NoError(err)
 	tableID1 := do.MustGetTableID(s.T(), "test_cancel_job", "t1")
-	//tableID2 := do.MustGetTableID(s.T(), "test_cancel_job", "t2")
+	tableID2 := do.MustGetTableID(s.T(), "test_cancel_job", "t2")
 
 	// cancel non-exists job
 	err = s.tk.ExecToErr("cancel import job 9999999999")
@@ -427,6 +428,60 @@ func (s *mockGCSSuite) TestCancelJob() {
 	// cancel by root, should pass privilege check
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), exeerrors.ErrLoadDataInvalidOperation)
+
+	// cancel job in post-process phase, using test_cancel_job2
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_cancel_job2", Hostname: "localhost"}, nil, nil, nil))
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/loaddata/waitBeforeSortChunk"))
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/loaddata/syncAfterJobStarted"))
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/syncBeforePostProcess", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/waitCtxDone", "return(true)")
+	result2 := s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
+		gcsEndpoint)).Rows()
+	s.Len(result2, 1)
+	jobID2, err := strconv.Atoi(result2[0][0].(string))
+	s.NoError(err)
+	// wait job reach post-process phase
+	<-loaddata.TestSyncChan
+	s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID2))
+	// resume the job
+	loaddata.TestSyncChan <- struct{}{}
+	rows2 := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
+	s.Len(rows2, 1)
+	jobInfo = &importer.JobInfo{
+		ID:          int64(jobID2),
+		TableSchema: "test_cancel_job",
+		TableName:   "t2",
+		TableID:     tableID2,
+		CreatedBy:   "test_cancel_job2@localhost",
+		Parameters: importer.ImportParameters{
+			FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
+			Format:       importer.DataFormatCSV,
+		},
+		SourceFileSize: 3,
+		Status:         "cancelled",
+		Step:           importer.JobStepValidating,
+		ErrorMessage:   "cancelled by user",
+	}
+	s.compareJobInfoWithoutTime(jobInfo, rows2[0])
+	globalTaskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	taskKey := loaddata.TaskKey(int64(jobID2))
+	s.NoError(err)
+	s.Eventually(func() bool {
+		globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
+		s.NoError(err2)
+		subtasks, err2 := globalTaskManager.GetSubtasksByStep(globalTask.ID, loaddata.StepPostProcess)
+		s.NoError(err2)
+		s.Len(subtasks, 2) // framework will generate a subtask when canceling
+		var cancelled bool
+		for _, st := range subtasks {
+			if st.State == proto.TaskStateCanceled {
+				cancelled = true
+				break
+			}
+		}
+		return globalTask.State == proto.TaskStateReverted && cancelled
+	}, 5*time.Second, 1*time.Second)
 
 	// todo: enable it when https://github.com/pingcap/tidb/issues/44443 fixed
 	//// cancel a pending job created by test_cancel_job2 using root
