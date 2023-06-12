@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -584,7 +586,7 @@ rowLoop:
 				continue rowLoop
 			case common.IsRetryableError(err):
 				// retry next loop
-			case be.errorMgr.TypeErrorsRemain() > 0:
+			default:
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
 				// we need to redo the writing row-by-row to find where the error locates (and skip it correctly in future).
 				if err = be.WriteRowsToDB(ctx, tableName, columnNames, r); err != nil {
@@ -593,8 +595,6 @@ rowLoop:
 					return errors.Annotatef(err, "[%s] write rows reach max error count %d", tableName, 0)
 				}
 				continue rowLoop
-			default:
-				return err
 			}
 		}
 		return errors.Annotatef(err, "[%s] batch write rows reach max retry %d and still failed", tableName, writeRowsMaxRetryTimes)
@@ -705,7 +705,30 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 					continue
 				}
 				firstRow := stmtTask.rows[0]
-				err = be.errorMgr.RecordTypeError(ctx, log.FromContext(ctx), tableName, firstRow.path, firstRow.offset, firstRow.insertStmt, err)
+
+				if isDupEntryError(err) {
+					// rowID is ignored in tidb backend
+					err = be.errorMgr.RecordConflictErrorV2(
+						ctx,
+						log.FromContext(ctx),
+						tableName,
+						firstRow.path,
+						firstRow.offset,
+						err.Error(),
+						0,
+						firstRow.insertStmt,
+					)
+				} else {
+					err = be.errorMgr.RecordTypeError(
+						ctx,
+						log.FromContext(ctx),
+						tableName,
+						firstRow.path,
+						firstRow.offset,
+						firstRow.insertStmt,
+						err,
+					)
+				}
 				if err == nil {
 					// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
 					break
@@ -720,6 +743,14 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
 	})
 	return nil
+}
+
+func isDupEntryError(err error) bool {
+	merr, ok := errors.Cause(err).(*gmysql.MySQLError)
+	if !ok {
+		return false
+	}
+	return merr.Number == errno.ErrDupEntry
 }
 
 // FlushEngine flushes the data in the engine to the underlying storage.
