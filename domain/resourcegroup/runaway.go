@@ -85,8 +85,9 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 		until := time.Until(r.deadline)
 		// execution time exceeds the threshold, mark the query as runaway
 		if until <= 0 {
-			r.marked.Store(true)
-			r.manager.MarkRunaway(r.originalSQL, r.planDigest)
+			if r.marked.CompareAndSwap(false, true) {
+				r.manager.MarkRunaway(r.originalSQL, r.planDigest)
+			}
 		} else {
 			if r.action == rmpb.RunawayAction_Kill {
 				// if the execution time is close to the threshold, set a timeout
@@ -115,7 +116,8 @@ func (r *RunawayChecker) AfterCopRequest() {
 	// Do not perform action here as it may be the last cop request and just let it finish. If it's not the last cop request, action would be performed in `BeforeCopRequest` when handling the next cop request.
 	// Here only marks the query as runaway
 	if !r.marked.Load() && r.deadline.Before(time.Now()) {
-		r.marked.Store(true)
-		r.manager.MarkRunaway(r.originalSQL, r.planDigest)
+		if r.marked.CompareAndSwap(false, true) {
+			r.manager.MarkRunaway(r.originalSQL, r.planDigest)
+		}
 	}
 }
