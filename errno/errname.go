@@ -885,6 +885,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWindowNoGroupOrderUnused:                              mysql.Message("ASC or DESC with GROUP BY isn't allowed with window functions; put ASC or DESC in ORDER BY", nil),
 	ErrWindowExplainJSON:                                     mysql.Message("To get information about window functions use EXPLAIN FORMAT=JSON", nil),
 	ErrWindowFunctionIgnoresFrame:                            mysql.Message("Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition", nil),
+	ErrInvalidNumberOfArgs:                                   mysql.Message("Too many arguments for function %s; maximum allowed is %d", nil),
+	ErrFieldInGroupingNotGroupBy:                             mysql.Message("Argument %s of GROUPING function is not in GROUP BY", nil),
 	ErrRoleNotGranted:                                        mysql.Message("%s is not granted to %s", nil),
 	ErrMaxExecTimeExceeded:                                   mysql.Message("Query execution was interrupted, maximum statement execution time exceeded", nil),
 	ErrLockAcquireFailAndNoWaitSet:                           mysql.Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),

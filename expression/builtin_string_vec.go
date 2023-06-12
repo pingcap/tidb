@@ -3066,16 +3066,15 @@ func (b *builtinTranslateBinarySig) vecEvalString(input *chunk.Chunk, result *ch
 	_, isFromConst := b.args[1].(*Constant)
 	_, isToConst := b.args[2].(*Constant)
 	if isFromConst && isToConst {
-		if ExprNotNull(b.args[1]) && ExprNotNull(b.args[2]) {
-			useCommonMap = true
-			fromBytes, toBytes := []byte(buf1.GetString(0)), []byte(buf2.GetString(0))
-			mp = buildTranslateMap4Binary(fromBytes, toBytes)
-		} else {
+		if !(ExprNotNull(b.args[1]) && ExprNotNull(b.args[2])) {
 			for i := 0; i < n; i++ {
 				result.AppendNull()
 			}
 			return nil
 		}
+		useCommonMap = true
+		fromBytes, toBytes := []byte(buf1.GetString(0)), []byte(buf2.GetString(0))
+		mp = buildTranslateMap4Binary(fromBytes, toBytes)
 	}
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
@@ -3140,16 +3139,15 @@ func (b *builtinTranslateUTF8Sig) vecEvalString(input *chunk.Chunk, result *chun
 	_, isFromConst := b.args[1].(*Constant)
 	_, isToConst := b.args[2].(*Constant)
 	if isFromConst && isToConst {
-		if ExprNotNull(b.args[1]) && ExprNotNull(b.args[2]) {
-			useCommonMap = true
-			fromRunes, toRunes := []rune(buf1.GetString(0)), []rune(buf2.GetString(0))
-			mp = buildTranslateMap4UTF8(fromRunes, toRunes)
-		} else {
+		if !(ExprNotNull(b.args[1]) && ExprNotNull(b.args[2])) {
 			for i := 0; i < n; i++ {
 				result.AppendNull()
 			}
 			return nil
 		}
+		useCommonMap = true
+		fromRunes, toRunes := []rune(buf1.GetString(0)), []rune(buf2.GetString(0))
+		mp = buildTranslateMap4UTF8(fromRunes, toRunes)
 	}
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {

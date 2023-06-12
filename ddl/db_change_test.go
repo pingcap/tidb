@@ -1687,11 +1687,10 @@ func TestCreateExpressionIndex(t *testing.T) {
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
-			if reorgTime < 2 {
-				reorgTime++
-			} else {
+			if reorgTime >= 2 {
 				return
 			}
+			reorgTime++
 			for _, sql := range stateWriteReorganizationSQLs {
 				_, checkErr = tk1.Exec(sql)
 				if checkErr != nil {
@@ -1783,11 +1782,10 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
-			if reorgTime < 2 {
-				reorgTime++
-			} else {
+			if reorgTime >= 2 {
 				return
 			}
+			reorgTime++
 			_, checkErr = tk1.Exec("insert into t values (10, 10) on duplicate key update a = 11")
 			if checkErr != nil {
 				return
@@ -1922,11 +1920,10 @@ func TestParallelRenameTable(t *testing.T) {
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateNone:
-			if firstDDL {
-				firstDDL = false
-			} else {
+			if !firstDDL {
 				return
 			}
+			firstDDL = false
 			wg.Add(1)
 			go func() {
 				if concurrentDDLQueryPre != "" {
