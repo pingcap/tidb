@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 go_test(
     name = "importintotest_test",
     timeout = "long",
-    race = "on",
     srcs = [
         "detach_test.go",
         "from_server_test.go",
@@ -18,6 +17,7 @@ go_test(
     ],
     embedsrcs = ["test.parquet"],
     flaky = True,
+    race = "on",
     deps = [
         "//br/pkg/lightning/backend/local",
         "//br/pkg/lightning/common",

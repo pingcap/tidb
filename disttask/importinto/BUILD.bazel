@@ -10,8 +10,8 @@ go_library(
         "subtask_executor.go",
         "wrapper.go",
     ],
-    race = "on",
     importpath = "github.com/pingcap/tidb/disttask/importinto",
+    race = "on",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/backend",
