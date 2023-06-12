@@ -181,10 +181,7 @@ func (stm *TaskManager) AddGlobalTaskWithSession(se sessionctx.Context, key, tp 
 		return 0, err
 	}
 
-	taskID, err = strconv.ParseInt(rs[0].GetString(0), 10, 64)
-	if err != nil {
-		return 0, err
-	}
+	taskID = int64(rs[0].GetUint64(0))
 	failpoint.Inject("testSetLastTaskID", func() { TestLastTaskID.Store(taskID) })
 
 	return taskID, nil

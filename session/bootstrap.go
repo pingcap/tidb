@@ -1190,7 +1190,8 @@ func upgrade(s Session) {
 }
 
 func syncUpgradeState(s Session) {
-	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
+	totalInterval := time.Duration(internalSQLTimeout) * time.Second
+	ctx, cancelFunc := context.WithTimeout(context.Background(), totalInterval)
 	defer cancelFunc()
 	dom := domain.GetDomain(s)
 	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
@@ -1198,8 +1199,8 @@ func syncUpgradeState(s Session) {
 		logutil.BgLogger().Fatal("[upgrading] update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
 	}
 
-	retryTimes := 10
 	interval := 200 * time.Millisecond
+	retryTimes := int(totalInterval / interval)
 	for i := 0; i < retryTimes; i++ {
 		op, err := owner.GetOwnerOpValue(ctx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
 		if err == nil && op.String() == owner.OpGetUpgradingState.String() {
@@ -1208,7 +1209,9 @@ func syncUpgradeState(s Session) {
 		if i == retryTimes-1 {
 			logutil.BgLogger().Fatal("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
 		}
-		logutil.BgLogger().Warn("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
+		if i%10 == 0 {
+			logutil.BgLogger().Warn("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
+		}
 		time.Sleep(interval)
 	}
 

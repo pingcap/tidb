@@ -940,7 +940,6 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		Table:                     v.Table,
 		Columns:                   v.Columns,
 		Lists:                     v.Lists,
-		SetList:                   v.SetList,
 		GenExprs:                  v.GenCols.Exprs,
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		hasRefCols:                v.NeedFillDefaultValue,
