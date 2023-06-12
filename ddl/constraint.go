@@ -95,17 +95,9 @@ func (w *worker) onAddCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		constraintInfoInMeta.State = model.StateWriteReorganization
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfoInMeta.State)
 	case model.StateWriteReorganization:
-		skipCheck := false
-		failpoint.Inject("mockVerifyRemainDataSuccess", func(val failpoint.Value) {
-			if val.(bool) {
-				skipCheck = true
-			}
-		})
-		if !skipCheck {
-			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfoInMeta, job)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
+		err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfoInMeta, job)
+		if err != nil {
+			return ver, errors.Trace(err)
 		}
 		constraintInfoInMeta.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != constraintInfoInMeta.State)
@@ -351,6 +343,12 @@ func findDependentColsInExpr(expr ast.ExprNode) map[string]struct{} {
 }
 
 func (w *worker) verifyRemainRecordsForCheckConstraint(dbInfo *model.DBInfo, tableInfo *model.TableInfo, constr *model.ConstraintInfo, job *model.Job) error {
+	// Inject a fail-point to skip the remaining records check.
+	failpoint.Inject("mockVerifyRemainDataSuccess", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil)
+		}
+	})
 	// Get sessionctx from ddl context resource pool in ddl worker.
 	var sctx sessionctx.Context
 	sctx, err := w.sessPool.Get()

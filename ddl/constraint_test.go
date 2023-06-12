@@ -896,10 +896,7 @@ func TestAlterConstraintAddDrop(t *testing.T) {
 		}
 		originalCallback.OnChanged(nil)
 		if job.SchemaState == model.StateWriteOnly {
-			// StateNone -> StateWriteOnly -> StatePublic
-			// Node in StateWriteOnly and StatePublic should check the constraint check.
 			_, checkErr = tk1.Exec("insert into t (a, b) values(5,6) ")
-			// Don't do the assert in the callback function.
 		}
 	}
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
