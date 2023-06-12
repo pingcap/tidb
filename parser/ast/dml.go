@@ -30,6 +30,7 @@ var (
 	_ DMLNode = &CallStmt{}
 	_ DMLNode = &ShowStmt{}
 	_ DMLNode = &LoadDataStmt{}
+	_ DMLNode = &ImportIntoStmt{}
 	_ DMLNode = &SplitRegionStmt{}
 	_ DMLNode = &NonTransactionalDMLStmt{}
 
@@ -141,11 +142,11 @@ func NewCrossJoin(left, right ResultSetNode) (n *Join) {
 			leftMostLeafFatherOfRight.Tp = LeftJoin
 		}
 		leftChild := leftMostLeafFatherOfRight.Left
-		if join, ok := leftChild.(*Join); ok && join.Right != nil {
-			leftMostLeafFatherOfRight = join
-		} else {
+		join, ok := leftChild.(*Join)
+		if !(ok && join.Right != nil) {
 			break
 		}
+		leftMostLeafFatherOfRight = join
 	}
 
 	newCrossJoin := &Join{Left: left, Right: leftMostLeafFatherOfRight.Left, Tp: CrossJoin}
@@ -845,7 +846,8 @@ func (n *ByItem) Accept(v Visitor) (Node, bool) {
 // GroupByClause represents group by clause.
 type GroupByClause struct {
 	node
-	Items []*ByItem
+	Items  []*ByItem
+	Rollup bool
 }
 
 // Restore implements Node interface.
@@ -858,6 +860,9 @@ func (n *GroupByClause) Restore(ctx *format.RestoreCtx) error {
 		if err := v.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore GroupByClause.Items[%d]", i)
 		}
+	}
+	if n.Rollup {
+		ctx.WriteKeyWord(" WITH ROLLUP")
 	}
 	return nil
 }
@@ -2057,6 +2062,105 @@ func (n *LinesClause) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// ImportIntoStmt represents a IMPORT INTO statement node.
+// this statement is used to import data into TiDB using lightning local mode.
+// see  https://github.com/pingcap/tidb/issues/42930
+type ImportIntoStmt struct {
+	dmlNode
+
+	Table              *TableName
+	ColumnsAndUserVars []*ColumnNameOrUserVar
+	ColumnAssignments  []*Assignment
+	Path               string
+	Format             *string
+	Options            []*LoadDataOpt
+}
+
+// Restore implements Node interface.
+func (n *ImportIntoStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("IMPORT INTO ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.Table")
+	}
+	if len(n.ColumnsAndUserVars) != 0 {
+		ctx.WritePlain(" (")
+		for i, c := range n.ColumnsAndUserVars {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			if err := c.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.ColumnsAndUserVars")
+			}
+		}
+		ctx.WritePlain(")")
+	}
+
+	if n.ColumnAssignments != nil {
+		ctx.WriteKeyWord(" SET")
+		for i, assign := range n.ColumnAssignments {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain(" ")
+			if err := assign.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.ColumnAssignments")
+			}
+		}
+	}
+	ctx.WriteKeyWord(" FROM ")
+	ctx.WriteString(n.Path)
+	if n.Format != nil {
+		ctx.WriteKeyWord(" FORMAT ")
+		ctx.WriteString(*n.Format)
+	}
+
+	if len(n.Options) > 0 {
+		ctx.WriteKeyWord(" WITH")
+		for i, option := range n.Options {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain(" ")
+			if err := option.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore ImportIntoStmt.Options")
+			}
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ImportIntoStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+
+	for i, cuVars := range n.ColumnsAndUserVars {
+		node, ok := cuVars.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ColumnsAndUserVars[i] = node.(*ColumnNameOrUserVar)
+	}
+	for i, assignment := range n.ColumnAssignments {
+		node, ok := assignment.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ColumnAssignments[i] = node.(*Assignment)
+	}
+	return v.Leave(n)
+}
+
 // CallStmt represents a call procedure query node.
 // See https://dev.mysql.com/doc/refman/5.7/en/call.html
 type CallStmt struct {
@@ -2107,7 +2211,7 @@ type InsertStmt struct {
 	Table       *TableRefsClause
 	Columns     []*ColumnName
 	Lists       [][]ExprNode
-	Setlist     []*Assignment
+	Setlist     bool
 	Priority    mysql.PriorityEnum
 	OnDuplicate []*Assignment
 	Select      ResultSetNode
@@ -2161,38 +2265,60 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WritePlain(")")
 	}
-	if n.Columns != nil {
-		ctx.WritePlain(" (")
-		for i, v := range n.Columns {
+	if n.Setlist {
+		if len(n.Lists) != 1 {
+			return errors.Errorf("Expect len(InsertStmt.Lists)[%d] == 1 for SET x=y", len(n.Lists))
+		}
+		if len(n.Lists[0]) != len(n.Columns) {
+			return errors.Errorf("Expect len(InsertStmt.Columns)[%d] == len(InsertStmt.Lists[0])[%d] for SET x=y", len(n.Columns), len(n.Lists[0]))
+		}
+		ctx.WriteKeyWord(" SET ")
+		for i, v := range n.Lists[0] {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(v.OriginalText()) > 0 {
-				ctx.WritePlain(v.OriginalText())
-			} else {
-				if err := v.Restore(ctx); err != nil {
-					return errors.Annotatef(err, "An error occurred while restore InsertStmt.Columns[%d]", i)
-				}
+			v := &Assignment{
+				Column: n.Columns[i],
+				Expr:   v,
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore InsertStmt.Set (Columns = Expr)[%d]", i)
 			}
 		}
-		ctx.WritePlain(")")
-	}
-	if n.Lists != nil {
-		ctx.WriteKeyWord(" VALUES ")
-		for i, row := range n.Lists {
-			if i != 0 {
-				ctx.WritePlain(",")
-			}
-			ctx.WritePlain("(")
-			for j, v := range row {
-				if j != 0 {
+	} else {
+		if n.Columns != nil {
+			ctx.WritePlain(" (")
+			for i, v := range n.Columns {
+				if i != 0 {
 					ctx.WritePlain(",")
 				}
-				if err := v.Restore(ctx); err != nil {
-					return errors.Annotatef(err, "An error occurred while restore InsertStmt.Lists[%d][%d]", i, j)
+				if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(v.OriginalText()) > 0 {
+					ctx.WritePlain(v.OriginalText())
+				} else {
+					if err := v.Restore(ctx); err != nil {
+						return errors.Annotatef(err, "An error occurred while restore InsertStmt.Columns[%d]", i)
+					}
 				}
 			}
 			ctx.WritePlain(")")
+		}
+		if n.Lists != nil {
+			ctx.WriteKeyWord(" VALUES ")
+			for i, row := range n.Lists {
+				if i != 0 {
+					ctx.WritePlain(",")
+				}
+				ctx.WritePlain("(")
+				for j, v := range row {
+					if j != 0 {
+						ctx.WritePlain(",")
+					}
+					if err := v.Restore(ctx); err != nil {
+						return errors.Annotatef(err, "An error occurred while restore InsertStmt.Lists[%d][%d]", i, j)
+					}
+				}
+				ctx.WritePlain(")")
+			}
 		}
 	}
 	if n.Select != nil {
@@ -2204,17 +2330,6 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		default:
 			return errors.Errorf("Incorrect type for InsertStmt.Select: %T", v)
-		}
-	}
-	if n.Setlist != nil {
-		ctx.WriteKeyWord(" SET ")
-		for i, v := range n.Setlist {
-			if i != 0 {
-				ctx.WritePlain(",")
-			}
-			if err := v.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore InsertStmt.Setlist[%d]", i)
-			}
 		}
 	}
 	if n.OnDuplicate != nil {
@@ -2269,13 +2384,6 @@ func (n *InsertStmt) Accept(v Visitor) (Node, bool) {
 			}
 			n.Lists[i][j] = node.(ExprNode)
 		}
-	}
-	for i, val := range n.Setlist {
-		node, ok := val.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Setlist[i] = node.(*Assignment)
 	}
 	for i, val := range n.OnDuplicate {
 		node, ok := val.Accept(v)

@@ -336,6 +336,10 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), val)
 
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBExpensiveTxnTimeThreshold)
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveTxnTimeThreshold)), val)
+
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBMemoryUsageAlarmRatio)
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), val)
@@ -450,6 +454,17 @@ func TestLastInsertID(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), LastInsertID)
 	require.NoError(t, err)
 	require.Equal(t, val, "21")
+
+	vars.StmtCtx.PrevLastInsertID = 9223372036854775809
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), LastInsertID)
+	require.NoError(t, err)
+	require.Equal(t, val, "9223372036854775809")
+
+	f := GetSysVar("last_insert_id")
+	d, valType, flag := f.GetNativeValType(val)
+	require.Equal(t, valType, mysql.TypeLonglong)
+	require.Equal(t, flag, mysql.BinaryFlag|mysql.UnsignedFlag)
+	require.Equal(t, d.GetUint64(), uint64(9223372036854775809))
 }
 
 func TestTimestamp(t *testing.T) {
@@ -1210,4 +1225,31 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 	require.NoError(t, err1)
 	require.Equal(t, On, val)
 	require.Equal(t, enable, true)
+}
+
+func TestTiDBEnableRowLevelChecksum(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	// default to false
+	val, err := mock.GetGlobalSysVar(TiDBEnableRowLevelChecksum)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+
+	// enable
+	err = mock.SetGlobalSysVar(ctx, TiDBEnableRowLevelChecksum, On)
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBEnableRowLevelChecksum)
+	require.NoError(t, err)
+	require.Equal(t, On, val)
+
+	// disable
+	err = mock.SetGlobalSysVar(ctx, TiDBEnableRowLevelChecksum, Off)
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBEnableRowLevelChecksum)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
 }

@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/topsql"
@@ -96,12 +97,15 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		return nil, nil, false, nil
 	}
 
-	paramSQL, params, err := core.GetParamSQLFromAST(ctx, sctx, stmt)
+	paramSQL, paramsVals, err := core.GetParamSQLFromAST(sctx, stmt)
 	if err != nil {
 		return nil, nil, false, err
 	}
+	if intest.InTest && ctx.Value(core.PlanCacheKeyTestIssue43667) != nil { // update the AST in the middle of the process
+		ctx.Value(core.PlanCacheKeyTestIssue43667).(func(stmt ast.StmtNode))(stmt)
+	}
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
-	paramExprs := core.Params2Expressions(params)
+	paramExprs := core.Params2Expressions(paramsVals)
 
 	if val == nil {
 		// Create a new AST upon this parameterized SQL instead of using the original AST.
@@ -176,17 +180,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	for name, val := range originStmtHints.SetVars {
 		err := sessVars.SetStmtVar(name, val)
 		if err != nil {
-			sessVars.StmtCtx.AppendWarning(err)
-		}
-	}
-
-	// Override the resource group if necessary
-	// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
-	if originStmtHints.HasResourceGroup {
-		if variable.EnableResourceControl.Load() {
-			sessVars.ResourceGroupName = originStmtHints.ResourceGroup
-		} else {
-			err := infoschema.ErrResourceGroupSupportDisabled
 			sessVars.StmtCtx.AppendWarning(err)
 		}
 	}
@@ -315,6 +308,18 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		// Restore the hint to avoid changing the stmt node.
 		hint.BindHint(stmtNode, originHints)
 	}
+
+	// Override the resource group if necessary
+	// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
+	if sessVars.StmtCtx.StmtHints.HasResourceGroup {
+		if variable.EnableResourceControl.Load() {
+			sessVars.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
+		} else {
+			err := infoschema.ErrResourceGroupSupportDisabled
+			sessVars.StmtCtx.AppendWarning(err)
+		}
+	}
+
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {
 		core.DebugTraceBestBinding(sctx, chosenBinding.Hint)
 	}

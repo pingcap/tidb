@@ -78,9 +78,10 @@ const (
 	flagSkipCheckPath     = "skip-check-path"
 	flagDryRun            = "dry-run"
 	// TODO used for local test, should be removed later
-	flagSkipAWS             = "skip-aws"
-	flagCloudAPIConcurrency = "cloud-api-concurrency"
-	flagWithSysTable        = "with-sys-table"
+	flagSkipAWS                       = "skip-aws"
+	flagCloudAPIConcurrency           = "cloud-api-concurrency"
+	flagWithSysTable                  = "with-sys-table"
+	flagOperatorPausedGCAndSchedulers = "operator-paused-gc-and-scheduler"
 
 	defaultSwitchInterval       = 5 * time.Minute
 	defaultGRPCKeepaliveTime    = 10 * time.Second
@@ -136,6 +137,15 @@ func (tls *TLSConfig) ToTLSConfig() (*tls.Config, error) {
 		return nil, errors.Trace(err)
 	}
 	return tlsConfig, nil
+}
+
+// Convert the TLS config to the PD security option.
+func (tls *TLSConfig) ToPDSecurityOption() pd.SecurityOption {
+	securityOption := pd.SecurityOption{}
+	securityOption.CAPath = tls.CA
+	securityOption.CertPath = tls.Cert
+	securityOption.KeyPath = tls.Key
+	return securityOption
 }
 
 // ParseFromFlags parses the TLS config from the flag set.
@@ -647,26 +657,25 @@ func ReadBackupMeta(
 	}
 	metaData, err := s.ReadFile(ctx, fileName)
 	if err != nil {
-		if gcsObjectNotFound(err) {
-			// change gcs://bucket/abc/def to gcs://bucket/abc and read defbackupmeta
-			oldPrefix := u.GetGcs().GetPrefix()
-			newPrefix, file := path.Split(oldPrefix)
-			newFileName := file + fileName
-			u.GetGcs().Prefix = newPrefix
-			s, err = storage.New(ctx, u, storageOpts(cfg))
-			if err != nil {
-				return nil, nil, nil, errors.Trace(err)
-			}
-			log.Info("retry load metadata in gcs", zap.String("newPrefix", newPrefix), zap.String("newFileName", newFileName))
-			metaData, err = s.ReadFile(ctx, newFileName)
-			if err != nil {
-				return nil, nil, nil, errors.Trace(err)
-			}
-			// reset prefix for tikv download sst file correctly.
-			u.GetGcs().Prefix = oldPrefix
-		} else {
+		if !gcsObjectNotFound(err) {
 			return nil, nil, nil, errors.Annotate(err, "load backupmeta failed")
 		}
+		// change gcs://bucket/abc/def to gcs://bucket/abc and read defbackupmeta
+		oldPrefix := u.GetGcs().GetPrefix()
+		newPrefix, file := path.Split(oldPrefix)
+		newFileName := file + fileName
+		u.GetGcs().Prefix = newPrefix
+		s, err = storage.New(ctx, u, storageOpts(cfg))
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		log.Info("retry load metadata in gcs", zap.String("newPrefix", newPrefix), zap.String("newFileName", newFileName))
+		metaData, err = s.ReadFile(ctx, newFileName)
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		// reset prefix for tikv download sst file correctly.
+		u.GetGcs().Prefix = oldPrefix
 	}
 
 	// the prefix of backupmeta file is iv(16 bytes) if encryption method is valid

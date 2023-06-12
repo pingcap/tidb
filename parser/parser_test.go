@@ -99,7 +99,7 @@ func TestSimple(t *testing.T) {
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "p", "shard_row_id_bits", "pre_split_regions",
 		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement", "attributes", "attribute", "resource",
-		"burstable", "calibrate",
+		"burstable", "calibrate", "rollup",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -687,6 +687,16 @@ func TestDMLStmt(t *testing.T) {
 		{"load data infile '/tmp/t.csv' into table `t` with threads=10", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` WITH threads=10"},
 		{"load data infile '/tmp/t.csv' into table `t` with threads=10, detached", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` WITH threads=10, detached"},
 
+		// IMPORT INTO
+		{"import into t from '/file.csv'", true, "IMPORT INTO `t` FROM '/file.csv'"},
+		{"import into t (a,b) from '/file.csv'", true, "IMPORT INTO `t` (`a`,`b`) FROM '/file.csv'"},
+		{"import into t (a,@1) from '/file.csv'", true, "IMPORT INTO `t` (`a`,@`1`) FROM '/file.csv'"},
+		{"import into t (a,@1) set b=@1+100 from '/file.csv'", true, "IMPORT INTO `t` (`a`,@`1`) SET `b`=@`1`+100 FROM '/file.csv'"},
+		{"import into t from '/file.csv' format 'sql file'", true, "IMPORT INTO `t` FROM '/file.csv' FORMAT 'sql file'"},
+		{"import into t from '/file.csv' with detached", true, "IMPORT INTO `t` FROM '/file.csv' WITH detached"},
+		{"import into `t` from '/file.csv' with thread=1", true, "IMPORT INTO `t` FROM '/file.csv' WITH thread=1"},
+		{"import into `t` from '/file.csv' with detached, thread=1", true, "IMPORT INTO `t` FROM '/file.csv' WITH detached, thread=1"},
+
 		// select for update/share
 		{"select * from t for update", true, "SELECT * FROM `t` FOR UPDATE"},
 		{"select * from t for share", true, "SELECT * FROM `t` FOR SHARE"},
@@ -826,6 +836,14 @@ func TestDMLStmt(t *testing.T) {
 		{"admin checksum table t1, t2;", true, "ADMIN CHECKSUM TABLE `t1`, `t2`"},
 		{"admin cancel ddl jobs 1", true, "ADMIN CANCEL DDL JOBS 1"},
 		{"admin cancel ddl jobs 1, 2", true, "ADMIN CANCEL DDL JOBS 1, 2"},
+		{"admin pause ddl jobs 1, 3", true, "ADMIN PAUSE DDL JOBS 1, 3"},
+		{"admin pause ddl jobs 5", true, "ADMIN PAUSE DDL JOBS 5"},
+		{"admin pause ddl jobs", false, "ADMIN PAUSE DDL JOBS"},
+		{"admin pause ddl jobs str_not_num", false, "ADMIN PAUSE DDL JOBS str_not_num"},
+		{"admin resume ddl jobs 1, 2", true, "ADMIN RESUME DDL JOBS 1, 2"},
+		{"admin resume ddl jobs 3", true, "ADMIN RESUME DDL JOBS 3"},
+		{"admin resume ddl jobs", false, "ADMIN RESUME DDL JOBS"},
+		{"admin resume ddl jobs str_not_num", false, "ADMIN RESUME DDL JOBS str_not_num"},
 		{"admin recover index t1 idx_a", true, "ADMIN RECOVER INDEX `t1` idx_a"},
 		{"admin cleanup index t1 idx_a", true, "ADMIN CLEANUP INDEX `t1` idx_a"},
 		{"admin show slow top 3", true, "ADMIN SHOW SLOW TOP 3"},
@@ -1077,6 +1095,7 @@ AAAAAAAAAAAA5gm5Mg==
 		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'"},
 		{"calibrate resource START_TIME '2023-04-01 13:00:00',END_TIME='2023-04-01 16:00:00'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'"},
 		{"calibrate resource START_TIME '2023-04-01 13:00:00',DURATION='20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' DURATION '20m'"},
+		{"calibrate resource DURATION='20m' START_TIME '2023-04-01 13:00:00'", true, "CALIBRATE RESOURCE DURATION '20m' START_TIME '2023-04-01 13:00:00'"},
 		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME='2023-04-01 16:00:00',DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'"},
 		{"calibrate resource workload", false, ""},
 		{"calibrate resource workload tpcc", true, "CALIBRATE RESOURCE WORKLOAD TPCC"},
@@ -3687,23 +3706,52 @@ func TestDDL(t *testing.T) {
 		{"create resource group x ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 2000"},
 		{"create resource group x ru_per_sec=200000", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 200000"},
 		{"create resource group x followers=0", false, ""},
-		{"create resource group x ru_per_sec=1000, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000 BURSTABLE"},
-		{"create resource group x burstable, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 2000"},
-		{"create resource group x ru_per_sec=3000 burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 3000 BURSTABLE"},
-		{"create resource group x burstable ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 4000"},
-		{"create resource group x ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 20 PRIORITY = LOW BURSTABLE"},
+		{"create resource group x ru_per_sec=1000, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE"},
+		{"create resource group x burstable, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE, RU_PER_SEC = 2000"},
+		{"create resource group x ru_per_sec=3000 burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 3000, BURSTABLE"},
+		{"create resource group x burstable ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE, RU_PER_SEC = 4000"},
+		{"create resource group x ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION DRYRUN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = DRYRUN)"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10m' ACTION=COOLDOWN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10m' ACTION = COOLDOWN)"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (ACTION KILL EXEC_ELAPSED='10m')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (ACTION = KILL EXEC_ELAPSED = '10m')"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' WATCH=SIMILAR DURATION '10m' ACTION COOLDOWN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' WATCH = SIMILAR DURATION = '10m' ACTION = COOLDOWN)"},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED \"10s\" ACTION COOLDOWN WATCH EXACT DURATION='10m')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m')"},
+		// This case is expected in parser test but not in actual ddl job.
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s')"},
+		{"create resource group x ru_per_sec=1000 QUERY=(EXEC_ELAPSED '10s')", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=EXEC_ELAPSED '10s'", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s'", false, ""},
+		{"create resource group x ru_per_sec=1000 LIMIT=(EXEC_ELAPSED '10s')", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION DRYRUN ACTION KILL)", false, ""},
+		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION COOLDOWN WATCH EXACT)", false, ""},
 
 		{"alter resource group x cpu ='8c'", false, ""},
 		{"alter resource group x region ='us, 3'", false, ""},
 		{"alter resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", false, ""},
 		{"alter resource group x ru_per_sec=1000", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000"},
-		{"alter resource group x ru_per_sec=2000, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000 BURSTABLE"},
-		{"alter resource group x BURSTABLE, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 3000"},
-		{"alter resource group x BURSTABLE ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 4000"},
-		{"alter resource group x ru_per_sec=200000 BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000 BURSTABLE"},
+		{"alter resource group x ru_per_sec=2000, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE"},
+		{"alter resource group x BURSTABLE, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE, RU_PER_SEC = 3000"},
+		{"alter resource group x BURSTABLE ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE, RU_PER_SEC = 4000"},
+		// This case is expected in parser test but not in actual ddl job.
+		// Todo: support patch setting(not cover all).
+		{"alter resource group x BURSTABLE", true, "ALTER RESOURCE GROUP `x` BURSTABLE"},
+		{"alter resource group x ru_per_sec=200000 BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000, BURSTABLE"},
 		{"alter resource group x followers=0", false, ""},
 		{"alter resource group x ru_per_sec=20 priority=MID BURSTABLE", false, ""},
-		{"alter resource group x ru_per_sec=20 priority=HIGH BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 20 PRIORITY = HIGH BURSTABLE"},
+		{"alter resource group x ru_per_sec=20 priority=HIGH BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = HIGH, BURSTABLE"},
+		{"alter resource group x ru_per_sec=20 priority=HIGH BURSTABLE (EXEC_ELAPSED '10s' ACTION DRYRUN) priority=LOW", false, ""},
+
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION DRYRUN)", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = DRYRUN)"},
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10m' ACTION COOLDOWN)", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10m' ACTION = COOLDOWN)"},
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = ( ACTION KILL EXEC_ELAPSED '10m')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (ACTION = KILL EXEC_ELAPSED = '10m')"},
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' WATCH SIMILAR DURATION '10m' ACTION COOLDOWN)", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' WATCH = SIMILAR DURATION = '10m' ACTION = COOLDOWN)"},
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION COOLDOWN WATCH EXACT DURATION '10m')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m')"},
+		// This case is expected in parser test but not in actual ddl job.
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s')"},
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT EXEC_ELAPSED '10s'", false, ""},
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION DRYRUN ACTION KILL)", false, ""},
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION COOLDOWN WATCH EXACT)", false, ""},
+		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION DRYRUN WATCH SIMILAR DURATION '10m' ACTION COOLDOWN)", false, ""},
 
 		{"drop resource group x;", true, "DROP RESOURCE GROUP `x`"},
 		{"drop resource group if exists x;", true, "DROP RESOURCE GROUP IF EXISTS `x`"},
@@ -4994,6 +5042,17 @@ func TestLockUnlockTables(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+func TestWithRollup(t *testing.T) {
+	table := []testCase{
+		{`select * from t group by a, b rollup`, false, ""},
+		{`select * from t group by a, b with rollup`, true, "SELECT * FROM `t` GROUP BY `a`,`b` WITH ROLLUP"},
+		// should be ERROR 1241 (21000): Operand should contain 1 column(s) in runtime.
+		{`select * from t group by (a, b) with rollup`, true, "SELECT * FROM `t` GROUP BY ROW(`a`,`b`) WITH ROLLUP"},
+		{`select * from t group by (a+b) with rollup`, true, "SELECT * FROM `t` GROUP BY (`a`+`b`) WITH ROLLUP"},
+	}
+	RunTest(t, table, false)
+}
+
 func TestIndexHint(t *testing.T) {
 	table := []testCase{
 		{`select * from t use index (primary)`, true, "SELECT * FROM `t` USE INDEX (`primary`)"},
@@ -5697,6 +5756,13 @@ func TestGeneratedColumn(t *testing.T) {
 			require.Error(t, err)
 		}
 	}
+
+	_, _, err := p.Parse("create table t1 (a int, b int as (a + 1) default 10);", "", "")
+	require.Equal(t, err.Error(), "[ddl:1221]Incorrect usage of DEFAULT and generated column")
+	_, _, err = p.Parse("create table t1 (a int, b int as (a + 1) on update now());", "", "")
+	require.Equal(t, err.Error(), "[ddl:1221]Incorrect usage of ON UPDATE and generated column")
+	_, _, err = p.Parse("create table t1 (a int, b int as (a + 1) auto_increment);", "", "")
+	require.Equal(t, err.Error(), "[ddl:1221]Incorrect usage of AUTO_INCREMENT and generated column")
 }
 
 func TestSetTransaction(t *testing.T) {

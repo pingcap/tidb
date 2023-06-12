@@ -108,13 +108,13 @@ func (h *chunkRowHeap) Pop() interface{} {
 }
 
 // NewSortedSelectResults is only for partition table
-// When pids != nil, the pid will be set in the last column of each chunk.Rows.
-func NewSortedSelectResults(selectResult []SelectResult, pids []int64, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
+// If schema == nil, sort by first few columns.
+func NewSortedSelectResults(selectResult []SelectResult, schema *expression.Schema, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
 	s := &sortedSelectResults{
+		schema:       schema,
 		selectResult: selectResult,
 		byItems:      byitems,
 		memTracker:   memTracker,
-		pids:         pids,
 	}
 	s.initCompareFuncs()
 	s.buildKeyColumns()
@@ -124,6 +124,7 @@ func NewSortedSelectResults(selectResult []SelectResult, pids []int64, byitems [
 }
 
 type sortedSelectResults struct {
+	schema       *expression.Schema
 	selectResult []SelectResult
 	compareFuncs []chunk.CompareFunc
 	byItems      []*util.ByItems
@@ -133,7 +134,6 @@ type sortedSelectResults struct {
 	rowPtrs      []chunk.RowPtr
 	heap         *chunkRowHeap
 
-	pids       []int64
 	memTracker *memory.Tracker
 }
 
@@ -160,9 +160,13 @@ func (ssr *sortedSelectResults) initCompareFuncs() {
 
 func (ssr *sortedSelectResults) buildKeyColumns() {
 	ssr.keyColumns = make([]int, 0, len(ssr.byItems))
-	for _, by := range ssr.byItems {
+	for i, by := range ssr.byItems {
 		col := by.Expr.(*expression.Column)
-		ssr.keyColumns = append(ssr.keyColumns, col.Index)
+		if ssr.schema == nil {
+			ssr.keyColumns = append(ssr.keyColumns, i)
+		} else {
+			ssr.keyColumns = append(ssr.keyColumns, ssr.schema.ColumnIndex(col))
+		}
 	}
 }
 
@@ -191,13 +195,6 @@ func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err e
 	for i := range ssr.cachedChunks {
 		if ssr.cachedChunks[i] == nil {
 			ssr.cachedChunks[i] = c.CopyConstruct()
-			if len(ssr.pids) != 0 {
-				r := make([]int, c.NumCols()-1)
-				for i := range r {
-					r[i] = i
-				}
-				ssr.cachedChunks[i] = ssr.cachedChunks[i].Prune(r)
-			}
 			ssr.memTracker.Consume(ssr.cachedChunks[i].MemoryUsage())
 		}
 	}
@@ -217,10 +214,6 @@ func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err e
 
 		idx := heap.Pop(ssr.heap).(chunk.RowPtr)
 		c.AppendRow(ssr.cachedChunks[idx.ChkIdx].GetRow(int(idx.RowIdx)))
-		if len(ssr.pids) != 0 {
-			c.AppendInt64(c.NumCols()-1, ssr.pids[idx.ChkIdx])
-		}
-
 		if int(idx.RowIdx) >= ssr.cachedChunks[idx.ChkIdx].NumRows()-1 {
 			if err = ssr.updateCachedChunk(ctx, idx.ChkIdx); err != nil {
 				return err
@@ -565,12 +558,11 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	if hasExecutor {
 		var recorededPlanIDs = make(map[int]int)
-		for i, detail := range r.selectResp.GetExecutionSummaries() {
+		for _, detail := range r.selectResp.GetExecutionSummaries() {
 			if detail != nil && detail.TimeProcessedNs != nil &&
 				detail.NumProducedRows != nil && detail.NumIterations != nil {
-				planID := r.copPlanIDs[i]
 				recorededPlanIDs[r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-					RecordOneCopTask(planID, r.storeType.Name(), callee, detail)] = 0
+					RecordOneCopTask(-1, r.storeType.Name(), callee, detail)] = 0
 			}
 		}
 		num := uint64(0)
@@ -746,7 +738,7 @@ func (s *selectResultRuntimeStats) String() string {
 	if len(s.copRespTime) > 0 {
 		size := len(s.copRespTime)
 		if size == 1 {
-			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(s.copRespTime[0]), s.procKeys[0]))
+			fmt.Fprintf(buf, "cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(s.copRespTime[0]), s.procKeys[0])
 		} else {
 			slices.Sort(s.copRespTime)
 			vMax, vMin := s.copRespTime[size-1], s.copRespTime[0]
@@ -760,9 +752,9 @@ func (s *selectResultRuntimeStats) String() string {
 			slices.Sort(s.procKeys)
 			keyMax := s.procKeys[size-1]
 			keyP95 := s.procKeys[size*19/20]
-			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,
+			fmt.Fprintf(buf, "cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,
 				execdetails.FormatDuration(vMax), execdetails.FormatDuration(vMin),
-				execdetails.FormatDuration(vAvg), execdetails.FormatDuration(vP95)))
+				execdetails.FormatDuration(vAvg), execdetails.FormatDuration(vP95))
 			if keyMax > 0 {
 				buf.WriteString(", max_proc_keys: ")
 				buf.WriteString(strconv.FormatInt(keyMax, 10))
@@ -788,8 +780,8 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(execdetails.FormatDuration(time.Duration(copRPC.Consume)))
 		}
 		if config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB > 0 {
-			buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
-				strconv.FormatFloat(s.calcCacheHit(), 'f', 2, 64)))
+			fmt.Fprintf(buf, ", copr_cache_hit_ratio: %v",
+				strconv.FormatFloat(s.calcCacheHit(), 'f', 2, 64))
 		} else {
 			buf.WriteString(", copr_cache: disabled")
 		}
@@ -830,7 +822,7 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(", ")
 			}
 			idx++
-			buf.WriteString(fmt.Sprintf("%s: %s", k, execdetails.FormatDuration(d)))
+			fmt.Fprintf(buf, "%s: %s", k, execdetails.FormatDuration(d))
 		}
 		buf.WriteString("}")
 	}

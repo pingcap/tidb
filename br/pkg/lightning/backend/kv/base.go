@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -266,6 +267,14 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 	case isBadNullValue:
 		err = col.HandleBadNull(&value, e.SessionCtx.Vars.StmtCtx, 0)
 	default:
+		// copy from the following GetColDefaultValue function, when this is true it will use getColDefaultExprValue
+		if col.DefaultIsExpr {
+			// the expression rewriter requires a non-nil TxnCtx.
+			e.SessionCtx.Vars.TxnCtx = new(variable.TransactionContext)
+			defer func() {
+				e.SessionCtx.Vars.TxnCtx = nil
+			}()
+		}
 		value, err = table.GetColDefaultValue(e.SessionCtx, col.ToInfo())
 	}
 	return value, err
@@ -320,6 +329,11 @@ func (e *BaseKVEncoder) LogEvalGenExprFailed(row []types.Datum, colInfo *model.C
 		"failed to evaluate generated column expression for column `%s`",
 		colInfo.Name.O,
 	)
+}
+
+// TruncateWarns resets the warnings in session context.
+func (e *BaseKVEncoder) TruncateWarns() {
+	e.SessionCtx.Vars.StmtCtx.TruncateWarnings(0)
 }
 
 func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Column,

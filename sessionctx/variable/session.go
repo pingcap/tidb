@@ -75,6 +75,10 @@ var (
 	enableAdaptiveReplicaRead uint32 = 1
 )
 
+// ConnStatusShutdown indicates that the connection status is closed by server.
+// This code is put here because of package imports, and this value is the original server.connStatusShutdown.
+const ConnStatusShutdown int32 = 2
+
 // SetEnableAdaptiveReplicaRead set `enableAdaptiveReplicaRead` with given value.
 // return true if the value is changed.
 func SetEnableAdaptiveReplicaRead(enabled bool) bool {
@@ -246,6 +250,12 @@ type TxnCtxNoNeedToRestore struct {
 	// fair locking mode, and it takes effect (which is determined according to whether lock-with-conflict
 	// has occurred during execution of any statement).
 	FairLockingEffective bool
+
+	// CurrentStmtPessimisticLockCache is the cache for pessimistic locked keys in the current statement.
+	// It is merged into `pessimisticLockCache` after a statement finishes.
+	// Read results cannot be directly written into pessimisticLockCache because failed statement need to rollback
+	// its pessimistic locks.
+	CurrentStmtPessimisticLockCache map[string][]byte
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -317,22 +327,32 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 
 // GetKeyInPessimisticLockCache gets a key in pessimistic lock cache.
 func (tc *TransactionContext) GetKeyInPessimisticLockCache(key kv.Key) (val []byte, ok bool) {
-	if tc.pessimisticLockCache == nil {
+	if tc.pessimisticLockCache == nil && tc.CurrentStmtPessimisticLockCache == nil {
 		return nil, false
 	}
-	val, ok = tc.pessimisticLockCache[string(key)]
-	if ok {
-		tc.PessimisticCacheHit++
+	if tc.CurrentStmtPessimisticLockCache != nil {
+		val, ok = tc.CurrentStmtPessimisticLockCache[string(key)]
+		if ok {
+			tc.PessimisticCacheHit++
+			return
+		}
+	}
+	if tc.pessimisticLockCache != nil {
+		val, ok = tc.pessimisticLockCache[string(key)]
+		if ok {
+			tc.PessimisticCacheHit++
+		}
 	}
 	return
 }
 
-// SetPessimisticLockCache sets a key value pair into pessimistic lock cache.
+// SetPessimisticLockCache sets a key value pair in pessimistic lock cache.
+// The value is buffered in the statement cache until the current statement finishes.
 func (tc *TransactionContext) SetPessimisticLockCache(key kv.Key, val []byte) {
-	if tc.pessimisticLockCache == nil {
-		tc.pessimisticLockCache = map[string][]byte{}
+	if tc.CurrentStmtPessimisticLockCache == nil {
+		tc.CurrentStmtPessimisticLockCache = make(map[string][]byte)
 	}
-	tc.pessimisticLockCache[string(key)] = val
+	tc.CurrentStmtPessimisticLockCache[string(key)] = val
 }
 
 // Cleanup clears up transaction info that no longer use.
@@ -345,6 +365,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.relatedTableForMDL = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
+	tc.CurrentStmtPessimisticLockCache = nil
 	tc.IsStaleness = false
 	tc.Savepoints = nil
 	tc.EnableMDL = false
@@ -380,6 +401,8 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	}
 	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
 	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
+	CurrentStmtPessimisticLockCache := make(map[string][]byte, len(tc.CurrentStmtPessimisticLockCache))
+	maps.Copy(CurrentStmtPessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
 	cachedTables := make(map[int64]interface{}, len(tc.CachedTables))
 	maps.Copy(cachedTables, tc.CachedTables)
 	return TxnCtxNeedToRestore{
@@ -446,6 +469,21 @@ func (tc *TransactionContext) RollbackToSavepoint(name string) *SavepointRecord 
 		}
 	}
 	return nil
+}
+
+// FlushStmtPessimisticLockCache merges the current statement pessimistic lock cache into transaction pessimistic lock
+// cache. The caller may need to clear the stmt cache itself.
+func (tc *TransactionContext) FlushStmtPessimisticLockCache() {
+	if tc.CurrentStmtPessimisticLockCache == nil {
+		return
+	}
+	if tc.pessimisticLockCache == nil {
+		tc.pessimisticLockCache = make(map[string][]byte)
+	}
+	for key, val := range tc.CurrentStmtPessimisticLockCache {
+		tc.pessimisticLockCache[key] = val
+	}
+	tc.CurrentStmtPessimisticLockCache = nil
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
@@ -834,6 +872,11 @@ type SessionVars struct {
 	// not limit and spill will never happen
 	TiFlashMaxBytesBeforeExternalSort int64
 
+	// TiFlashEnablePipelineMode means if we should use pipeline model to execute query or not in tiflash.
+	// Default value is `false`, means never use pipeline model in tiflash.
+	// Value set to `true` means try to execute query with pipeline model in tiflash.
+	TiFlashEnablePipelineMode bool
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -1017,6 +1060,9 @@ type SessionVars struct {
 
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
+
+	// ConnectionStatus indicates current connection status.
+	ConnectionStatus int32
 
 	// ConnectionInfo indicates current connection info used by current session.
 	ConnectionInfo *ConnectionInfo
@@ -1312,6 +1358,13 @@ type SessionVars struct {
 	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	EnableNonPreparedPlanCache bool
 
+	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
+	EnableNonPreparedPlanCacheForDML bool
+
+	// PlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
+	// related stats are analyzed after the plan cache is generated.
+	PlanCacheInvalidationOnFreshStats bool
+
 	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
 	NonPreparedPlanCacheSize uint64
 
@@ -1408,6 +1461,9 @@ type SessionVars struct {
 	// Enable late materialization: push down some selection condition to tablescan.
 	EnableLateMaterialization bool
 
+	// EnableRowLevelChecksum indicates whether row level checksum is enabled.
+	EnableRowLevelChecksum bool
+
 	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
 	// Only for disaggregated-tiflash mode.
 	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
@@ -1424,8 +1480,41 @@ type SessionVars struct {
 	// use the ExpectedCnt to adjust the estimated row count for index scan.
 	OptOrderingIdxSelThresh float64
 
+	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
+	EnableMPPSharedCTEExecution bool
+
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
+
+	// HypoIndexes are for the Index Advisor.
+	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+	// HypoTiFlashReplicas are for the Index Advisor.
+	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
+
+	// Runtime Filter Group
+	// Runtime filter type: only support IN or MIN_MAX now.
+	// Runtime filter type can take multiple values at the same time.
+	runtimeFilterTypes []RuntimeFilterType
+	// Runtime filter mode: only support OFF, LOCAL now
+	runtimeFilterMode RuntimeFilterMode
+}
+
+var (
+	// variables below are for the optimizer fix control.
+
+	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
+	TiDBOptFixControl44262 uint64 = 44262
+	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
+	TiDBOptFixControl44389 uint64 = 44389
+)
+
+// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
+	if s.OptimizerFixControl == nil {
+		return "", false
+	}
+	value, exist = s.OptimizerFixControl[key]
+	return
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1610,6 +1699,12 @@ func (s *SessionVars) IsDynamicPartitionPruneEnabled() bool {
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
+// IsRowLevelChecksumEnabled indicates whether row level checksum is enabled for current session, that is
+// tidb_enable_row_level_checksum is on and tidb_row_format_version is 2 and it's not a internal session.
+func (s *SessionVars) IsRowLevelChecksumEnabled() bool {
+	return s.EnableRowLevelChecksum && s.RowEncoder.Enable && !s.InRestrictedSQL
+}
+
 // BuildParserConfig generate parser.ParserConfig for initial parser
 func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	return parser.ParserConfig{
@@ -1740,11 +1835,13 @@ type ConnectionInfo struct {
 	SSLVersion        string
 	PID               int
 	DB                string
+	AuthMethod        string
+	Attributes        map[string]string
 }
 
 const (
 	// ConnTypeSocket indicates socket without TLS.
-	ConnTypeSocket string = "Socket"
+	ConnTypeSocket string = "TCP"
 	// ConnTypeUnixSocket indicates Unix Socket.
 	ConnTypeUnixSocket string = "UnixSocket"
 	// ConnTypeTLS indicates socket with TLS.
@@ -1859,7 +1956,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
 		MaxAllowedPacket:              DefMaxAllowedPacket,
 		TiFlashFastScan:               DefTiFlashFastScan,
-		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
+		EnableTiFlashReadForWriteStmt: true,
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
@@ -1907,6 +2004,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxBytesBeforeExternalJoin = DefTiFlashMaxBytesBeforeExternalJoin
 	vars.TiFlashMaxBytesBeforeExternalGroupBy = DefTiFlashMaxBytesBeforeExternalGroupBy
 	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
+	vars.TiFlashEnablePipelineMode = DefTiDBEnableTiFlashPipelineMode
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
@@ -1924,6 +2022,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	if !EnableLocalTxn.Load() {
 		vars.TxnScope = kv.NewGlobalTxnScopeVar()
+	}
+	if EnableRowLevelChecksum.Load() {
+		vars.EnableRowLevelChecksum = true
 	}
 	vars.systems[CharacterSetConnection], vars.systems[CollationConnection] = charset.GetDefaultCharsetAndCollate()
 	return vars
@@ -3347,4 +3448,121 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
+}
+
+// IsRuntimeFilterEnabled return runtime filter mode whether OFF
+func (s *SessionVars) IsRuntimeFilterEnabled() bool {
+	return s.runtimeFilterMode != RFOff
+}
+
+// GetRuntimeFilterTypes return the session variable runtimeFilterTypes
+func (s *SessionVars) GetRuntimeFilterTypes() []RuntimeFilterType {
+	return s.runtimeFilterTypes
+}
+
+// GetRuntimeFilterMode return the session variable runtimeFilterMode
+func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
+	return s.runtimeFilterMode
+}
+
+// RuntimeFilterType type of runtime filter "IN"
+type RuntimeFilterType int64
+
+// In type of runtime filter, like "t.k1 in (?)"
+// MinMax type of runtime filter, like "t.k1 < ? and t.k1 > ?"
+const (
+	In RuntimeFilterType = iota
+	MinMax
+	// todo BloomFilter, bf/in
+)
+
+// String convert Runtime Filter Type to String name
+func (rfType RuntimeFilterType) String() string {
+	switch rfType {
+	case In:
+		return "IN"
+	case MinMax:
+		return "MIN_MAX"
+	default:
+		return ""
+	}
+}
+
+// RuntimeFilterTypeStringToType convert RuntimeFilterTypeNameString to RuntimeFilterType
+// If name is legal, it will return Runtime Filter Type and true
+// Else, it will return -1 and false
+// The second param means the convert is ok or not. Ture is ok, false means it is illegal name
+// At present, we only support two names: "IN" and "MIN_MAX"
+func RuntimeFilterTypeStringToType(name string) (RuntimeFilterType, bool) {
+	switch name {
+	case "IN":
+		return In, true
+	case "MIN_MAX":
+		return MinMax, true
+	default:
+		return -1, false
+	}
+}
+
+// ToRuntimeFilterType convert session var value to RuntimeFilterType list
+// If sessionVarValue is legal, it will return RuntimeFilterType list and true
+// The second param means the convert is ok or not. Ture is ok, false means it is illegal value
+// The legal value should be comma-separated, eg: "IN,MIN_MAX"
+func ToRuntimeFilterType(sessionVarValue string) ([]RuntimeFilterType, bool) {
+	typeNameList := strings.Split(sessionVarValue, ",")
+	rfTypeMap := make(map[RuntimeFilterType]bool)
+	for _, typeName := range typeNameList {
+		rfType, ok := RuntimeFilterTypeStringToType(strings.ToUpper(typeName))
+		if !ok {
+			return nil, ok
+		}
+		rfTypeMap[rfType] = true
+	}
+	rfTypeList := make([]RuntimeFilterType, 0, len(rfTypeMap))
+	for rfType := range rfTypeMap {
+		rfTypeList = append(rfTypeList, rfType)
+	}
+	return rfTypeList, true
+}
+
+// RuntimeFilterMode the mode of runtime filter "OFF", "LOCAL"
+type RuntimeFilterMode int64
+
+// RFOff disable runtime filter
+// RFLocal enable local runtime filter
+// RFGlobal enable local and global runtime filter
+const (
+	RFOff RuntimeFilterMode = iota + 1
+	RFLocal
+	RFGlobal
+)
+
+// String convert Runtime Filter Mode to String name
+func (rfMode RuntimeFilterMode) String() string {
+	switch rfMode {
+	case RFOff:
+		return "OFF"
+	case RFLocal:
+		return "LOCAL"
+	case RFGlobal:
+		return "GLOBAL"
+	default:
+		return ""
+	}
+}
+
+// RuntimeFilterModeStringToMode convert RuntimeFilterModeString to RuntimeFilterMode
+// If name is legal, it will return Runtime Filter Mode and true
+// Else, it will return -1 and false
+// The second param means the convert is ok or not. Ture is ok, false means it is illegal name
+// At present, we only support one name: "OFF", "LOCAL"
+func RuntimeFilterModeStringToMode(name string) (RuntimeFilterMode, bool) {
+	switch name {
+	case "OFF":
+		return RFOff, true
+	case "LOCAL":
+		return RFLocal, true
+	default:
+		return -1, false
+	}
 }

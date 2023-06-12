@@ -24,10 +24,10 @@ import (
 )
 
 type statsInnerCache struct {
-	sync.RWMutex
 	elements map[int64]*lruMapElement
 	// lru maintains item lru cache
 	lru *innerItemLruCache
+	sync.RWMutex
 }
 
 func newStatsLruCache(c int64) *statsInnerCache {
@@ -40,12 +40,12 @@ func newStatsLruCache(c int64) *statsInnerCache {
 }
 
 type innerItemLruCache struct {
+	// elements maintains tableID -> isIndex -> columnID/indexID -> *lruCacheItem
+	elements     map[int64]map[bool]map[int64]*list.Element
+	cache        *list.List
+	onEvict      func(tblID int64)
 	capacity     int64
 	trackingCost int64
-	// elements maintains tableID -> isIndex -> columnID/indexID -> *lruCacheItem
-	elements map[int64]map[bool]map[int64]*list.Element
-	cache    *list.List
-	onEvict  func(tblID int64)
 }
 
 func newInnerLruCache(c int64) *innerItemLruCache {
@@ -61,11 +61,11 @@ func newInnerLruCache(c int64) *innerItemLruCache {
 }
 
 type lruCacheItem struct {
-	tblID         int64
-	isIndex       bool
-	id            int64
 	innerItem     statistics.TableCacheItem
 	innerMemUsage statistics.CacheItemMemoryUsage
+	tblID         int64
+	id            int64
+	isIndex       bool
 }
 
 type lruMapElement struct {
@@ -289,11 +289,6 @@ func (s *statsInnerCache) SetCapacity(c int64) {
 	s.Lock()
 	defer s.Unlock()
 	s.lru.setCapacity(c)
-}
-
-// EnableQuota implements statsCacheInner
-func (s *statsInnerCache) EnableQuota() bool {
-	return true
 }
 
 // Front implements statsCacheInner

@@ -462,11 +462,10 @@ func setDatumValue(d *types.Datum, v reflect.Value, meta *parquet.SchemaElement,
 	case reflect.Float32, reflect.Float64:
 		d.SetFloat64(v.Float())
 	case reflect.Ptr:
-		if v.IsNil() {
-			d.SetNull()
-		} else {
+		if !v.IsNil() {
 			return setDatumValue(d, v.Elem(), meta, logger)
 		}
+		d.SetNull()
 	default:
 		logger.Error("unknown value", zap.Stringer("kind", v.Kind()),
 			zap.String("type", v.Type().Name()), zap.Reflect("value", v.Interface()))
@@ -543,7 +542,7 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) error {
 		dotIndex := len(val) - int(*meta.Scale)
 		d.SetString(val[:dotIndex]+"."+val[dotIndex:], "utf8mb4_bin")
 	case logicalType.DATE != nil:
-		dateStr := time.Unix(v*86400, 0).Format("2006-01-02")
+		dateStr := time.Unix(v*86400, 0).Format(time.DateOnly)
 		d.SetString(dateStr, "utf8mb4_bin")
 	case logicalType.TIMESTAMP != nil:
 		// convert all timestamp types (datetime/timestamp) to string

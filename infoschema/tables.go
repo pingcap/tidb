@@ -997,6 +997,9 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "FAIL_REASON", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 512},
 	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "Remaining_seconds", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "Progress", tp: mysql.TypeVarchar, size: 20},
+	{name: "Estimated_total_rows", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 }
 
 // TableTiKVRegionStatusCols is TiKV region status mem table columns.
@@ -1490,6 +1493,7 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: txninfo.DBStr, tp: mysql.TypeVarchar, size: 64, comment: "The schema this transaction works on"},
 	{name: txninfo.AllSQLDigestsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
 	{name: txninfo.RelatedTableIDsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the table IDs that the transaction has accessed"},
+	{name: txninfo.WaitingTimeStr, tp: mysql.TypeDouble, size: 22, comment: "Current lock waiting time"},
 }
 
 var tableDeadlocksCols = []columnInfo{
@@ -1597,6 +1601,7 @@ var tableResourceGroupsCols = []columnInfo{
 	{name: "RU_PER_SEC", tp: mysql.TypeVarchar, size: 21},
 	{name: "PRIORITY", tp: mysql.TypeVarchar, size: 6},
 	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 3},
+	{name: "QUERY_LIMIT", tp: mysql.TypeVarchar, size: 256},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1742,8 +1747,8 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
 			ServerType:     "tidb",
-			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
-			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
+			Address:        net.JoinHostPort(node.IP, strconv.Itoa(int(node.Port))),
+			StatusAddr:     net.JoinHostPort(node.IP, strconv.Itoa(int(node.StatusPort))),
 			Version:        FormatTiDBVersion(node.Version, isDefaultVersion),
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,

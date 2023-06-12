@@ -93,9 +93,9 @@ func (s *mockGCSSuite) simpleShowLoadDataJobs(importMode string) {
 	})
 
 	resultMessage := "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
-	withOptions := "WITH DETACHED"
-	if importMode == importer.PhysicalImportMode {
-		withOptions = "WITH DETACHED, import_mode='PHYSICAL'"
+	withOptions := "WITH thread=1, DETACHED"
+	if importMode == "physical" {
+		withOptions = "WITH thread=1, DETACHED, import_mode='PHYSICAL'"
 	}
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
@@ -128,9 +128,9 @@ func (s *mockGCSSuite) simpleShowLoadDataJobs(importMode string) {
 }
 
 func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
-	s.simpleShowLoadDataJobs(importer.PhysicalImportMode)
-
-	s.simpleShowLoadDataJobs(importer.LogicalImportMode)
+	s.T().Skip("WITH detached is removed in LOAD DATA")
+	//s.simpleShowLoadDataJobs("physical)
+	s.simpleShowLoadDataJobs("logical")
 
 	user := &auth.UserIdentity{
 		AuthUsername: "test-load-2",
@@ -145,7 +145,7 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	require.ErrorContains(s.T(), err, "Job ID 999999999 doesn't exist")
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
-		INTO TABLE test_show.t WITH DETACHED;`, gcsEndpoint)
+		INTO TABLE test_show.t WITH thread=1, DETACHED;`, gcsEndpoint)
 	// repeat LOAD DATA, will get duplicate entry error
 	rows := s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
@@ -175,7 +175,7 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 
 	// test IGNORE
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
-		IGNORE INTO TABLE test_show.t WITH DETACHED;`, gcsEndpoint)
+		IGNORE INTO TABLE test_show.t WITH thread=1, DETACHED;`, gcsEndpoint)
 	rows = s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
 	row = rows[0]
@@ -203,7 +203,7 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 
 	// test REPLACE
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
-		REPLACE INTO TABLE test_show.t WITH DETACHED;`, gcsEndpoint)
+		REPLACE INTO TABLE test_show.t WITH thread=1, DETACHED;`, gcsEndpoint)
 	rows = s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
 	row = rows[0]
@@ -220,8 +220,9 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 }
 
 func (s *mockGCSSuite) TestInternalStatus() {
-	s.testInternalStatus(importer.LogicalImportMode)
-	s.testInternalStatus(importer.PhysicalImportMode)
+	s.T().Skip("WITH detached is removed in LOAD DATA")
+	s.testInternalStatus("logical")
+	//s.testInternalStatus("physical)
 }
 
 func (s *mockGCSSuite) testInternalStatus(importMode string) {
@@ -254,11 +255,11 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	tk3.Session().GetSessionVars().User = user
 
 	resultMessage := "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
-	withOptions := "WITH DETACHED, batch_size=1"
+	withOptions := "WITH thread=1, DETACHED, batch_size=1"
 	progressAfterFirstBatch := `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":1}`
 	progressAfterAll := `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
-	if importMode == importer.PhysicalImportMode {
-		withOptions = fmt.Sprintf("WITH DETACHED, import_mode='%s'", importMode)
+	if importMode == "physical" {
+		withOptions = fmt.Sprintf("WITH thread=1, DETACHED, import_mode='%s'", importMode)
 		progressAfterFirstBatch = `{"SourceFileSize":2,"ReadRowCnt":1,"EncodeFileSize":1,"LoadedRowCnt":1}`
 		progressAfterAll = `{"SourceFileSize":2,"ReadRowCnt":2,"EncodeFileSize":2,"LoadedRowCnt":2}`
 	}
@@ -431,7 +432,7 @@ func (s *mockGCSSuite) testInternalStatus(importMode string) {
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SaveLastLoadDataJobID", `return`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SyncAfterCreateLoadDataJob", `return`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/asyncloaddata/SyncAfterStartJob", `return`)
-	if importMode == importer.LogicalImportMode {
+	if importMode == "logical" {
 		s.enableFailpoint("github.com/pingcap/tidb/executor/SyncAfterCommitOneTask", `return`)
 	} else {
 		s.enableFailpoint("github.com/pingcap/tidb/executor/importer/SyncAfterImportDataEngine", `return`)

@@ -487,6 +487,13 @@ func (store *MVCCStore) CheckTxnStatus(reqCtx *requestCtx,
 	lock := store.getLock(reqCtx, req.PrimaryKey)
 	batch := store.dbWriter.NewWriteBatch(req.LockTs, 0, reqCtx.rpcCtx)
 	if lock != nil && lock.StartTS == req.LockTs {
+		if !bytes.Equal(req.PrimaryKey, lock.Primary) {
+			return TxnStatus{}, &kverrors.ErrPrimaryMismatch{
+				Key:  req.PrimaryKey,
+				Lock: lock,
+			}
+		}
+
 		// For an async-commit lock, never roll it back or push forward it MinCommitTS.
 		if lock.UseAsyncCommit && !req.ForceSyncCommit {
 			log.S().Debugf("async commit startTS=%v secondaries=%v minCommitTS=%v", lock.StartTS, lock.Secondaries, lock.MinCommitTS)
@@ -583,19 +590,7 @@ func (store *MVCCStore) CheckSecondaryLocks(reqCtx *requestCtx, keys [][]byte, s
 	locks := make([]*kvrpcpb.LockInfo, 0, len(keys))
 	for i, key := range keys {
 		lock := store.getLock(reqCtx, key)
-		if lock != nil && lock.StartTS == startTS {
-			if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) {
-				batch.Rollback(key, true)
-				err := store.dbWriter.Write(batch)
-				if err != nil {
-					return SecondaryLocksStatus{}, err
-				}
-				store.lockWaiterManager.WakeUp(startTS, 0, []uint64{hashVals[i]})
-				store.DeadlockDetectCli.CleanUp(startTS)
-				return SecondaryLocksStatus{commitTS: 0}, nil
-			}
-			locks = append(locks, lock.ToLockInfo(key))
-		} else {
+		if !(lock != nil && lock.StartTS == startTS) {
 			commitTS, err := store.checkCommitted(reqCtx.getDBReader(), key, startTS)
 			if err != nil {
 				return SecondaryLocksStatus{}, err
@@ -613,6 +608,17 @@ func (store *MVCCStore) CheckSecondaryLocks(reqCtx *requestCtx, keys [][]byte, s
 			}
 			return SecondaryLocksStatus{commitTS: 0}, err
 		}
+		if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) {
+			batch.Rollback(key, true)
+			err := store.dbWriter.Write(batch)
+			if err != nil {
+				return SecondaryLocksStatus{}, err
+			}
+			store.lockWaiterManager.WakeUp(startTS, 0, []uint64{hashVals[i]})
+			store.DeadlockDetectCli.CleanUp(startTS)
+			return SecondaryLocksStatus{commitTS: 0}, nil
+		}
+		locks = append(locks, lock.ToLockInfo(key))
 	}
 	return SecondaryLocksStatus{locks: locks}, nil
 }
@@ -665,11 +671,10 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 
 				if req.GetWakeUpMode() == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeNormal {
 					return nil, 0, writeConflictError
-				} else if req.GetWakeUpMode() == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
-					lockedWithConflictTS = userMeta.CommitTS()
-				} else {
+				} else if req.GetWakeUpMode() != kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
 					panic("unreachable")
 				}
+				lockedWithConflictTS = userMeta.CommitTS()
 			}
 		}
 		if m.Assertion == kvrpcpb.Assertion_NotExist && !item.IsEmpty() {
@@ -1144,10 +1149,6 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 				Key:         key,
 			}
 		}
-		if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) {
-			log.Warn("commit a pessimistic lock with Lock type", zap.Binary("key", key), zap.Uint64("start ts", startTS), zap.Uint64("commit ts", commitTS))
-			lock.Op = uint8(kvrpcpb.Op_Lock)
-		}
 		isPessimisticTxn = lock.ForUpdateTS > 0
 		tmpDiff += len(key) + len(lock.Value)
 		batch.Commit(key, &lock)
@@ -1423,12 +1424,7 @@ func (store *MVCCStore) Cleanup(reqCtx *requestCtx, key []byte, startTS, current
 func (store *MVCCStore) appendScannedLock(locks []*kvrpcpb.LockInfo, it *lockstore.Iterator, maxTS uint64) []*kvrpcpb.LockInfo {
 	lock := mvcc.DecodeLock(it.Value())
 	if lock.StartTS < maxTS {
-		locks = append(locks, &kvrpcpb.LockInfo{
-			PrimaryLock: lock.Primary,
-			LockVersion: lock.StartTS,
-			Key:         safeCopy(it.Key()),
-			LockTtl:     uint64(lock.TTL),
-		})
+		locks = append(locks, lock.ToLockInfo(append([]byte{}, it.Key()...)))
 	}
 	return locks
 }

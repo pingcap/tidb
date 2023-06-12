@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -33,8 +34,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
-	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -61,6 +61,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -622,7 +623,11 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	switch indexInfo.State {
 	case model.StateNone:
 		// none -> delete only
-		reorgTp := pickBackfillType(job)
+		var reorgTp model.ReorgType
+		reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique, d)
+		if err != nil {
+			break
+		}
 		if reorgTp.NeedMergeProcess() {
 			// Increase telemetryAddIndexIngestUsage
 			telemetryAddIndexIngestUsage.Inc()
@@ -661,10 +666,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
-
-		if job.MultiSchemaInfo == nil && tblInfo.GetPartitionInfo() != nil {
-			initDistReorg(job.ReorgMeta)
-		}
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		tbl, err := getTable(d.store, schemaID, tblInfo)
@@ -697,7 +698,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.Args = []interface{}{indexInfo.ID, false /*if exists*/, getPartitionIDs(tbl.Meta())}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
 		logutil.BgLogger().Info("[ddl] run add index job done",
@@ -711,39 +712,61 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 }
 
 // pickBackfillType determines which backfill process will be used.
-func pickBackfillType(job *model.Job) model.ReorgType {
+func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCtx) (model.ReorgType, error) {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
-		// Don't switch the backfill process.
-		return job.ReorgMeta.ReorgTp
+		// Don't change the backfill type.
+		return job.ReorgMeta.ReorgTp, nil
 	}
-	if IsEnableFastReorg() {
-		var useIngest bool
-		if ingest.LitInitialized && ingest.LitBackCtxMgr.Available() {
-			cleanupSortPath(job.ID)
-			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			return model.ReorgTypeLitMerge
+	if !IsEnableFastReorg() {
+		job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+		return model.ReorgTypeTxn, nil
+	}
+	if ingest.LitInitialized {
+		available, err := ingest.LitBackCtxMgr.CheckAvailable()
+		if err != nil {
+			return model.ReorgTypeNone, err
 		}
-		// The lightning environment is unavailable, but we can still use the txn-merge backfill.
-		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process",
-			zap.Bool("lightning env initialized", ingest.LitInitialized),
-			zap.Bool("can use ingest", useIngest))
-		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
-		return model.ReorgTypeTxnMerge
+		if available {
+			err = cleanupSortPath(job.ID)
+			if err != nil {
+				return model.ReorgTypeNone, err
+			}
+			if variable.EnableDistTask.Load() {
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli)
+			} else {
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil)
+			}
+			if err != nil {
+				return model.ReorgTypeNone, err
+			}
+			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
+			if variable.EnableDistTask.Load() {
+				job.ReorgMeta.IsDistReorg = true
+			}
+			return model.ReorgTypeLitMerge, nil
+		}
 	}
-	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
-	return model.ReorgTypeTxn
+	// The lightning environment is unavailable, but we can still use the txn-merge backfill.
+	logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process",
+		zap.Bool("lightning env initialized", ingest.LitInitialized))
+	job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
+	return model.ReorgTypeTxnMerge, nil
 }
 
 // cleanupSortPath is used to clean up the temp data of the previous jobs.
 // Because we don't remove all the files after the support of checkpoint,
 // there maybe some stale files in the sort path if TiDB is killed during the backfill process.
-func cleanupSortPath(currentJobID int64) {
+func cleanupSortPath(currentJobID int64) error {
 	sortPath := ingest.ConfigSortPath()
+	err := os.MkdirAll(sortPath, 0700)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	entries, err := os.ReadDir(sortPath)
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
-		return
+		logutil.BgLogger().Warn("[ddl-ingest] cannot read sort path", zap.Error(err))
+		return errors.Trace(err)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -754,18 +777,24 @@ func cleanupSortPath(currentJobID int64) {
 			logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
 			continue
 		}
-		// For now, there is only one task using ingest at the same time,
-		// so we can remove all the temp data of the previous jobs.
+		if _, ok := ingest.LitBackCtxMgr.Load(jobID); ok {
+			// The job is still running, skip it.
+			logutil.BgLogger().Warn("[ddl-ingest] the job is still running, skip removing it",
+				zap.Int64("running job ID", jobID))
+			continue
+		}
+		// Remove all the temp data of the previous done jobs.
 		if jobID < currentJobID {
 			logutil.BgLogger().Info("[ddl-ingest] remove stale temp index data",
 				zap.Int64("jobID", jobID), zap.Int64("currentJobID", currentJobID))
 			err := os.RemoveAll(filepath.Join(sortPath, entry.Name()))
 			if err != nil {
 				logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
-				return
+				return nil
 			}
 		}
 	}
+	return nil
 }
 
 // IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
@@ -794,18 +823,6 @@ func IngestJobsNotExisted(ctx sessionctx.Context) bool {
 	return true
 }
 
-// tryFallbackToTxnMerge changes the reorg type to txn-merge if the lightning backfill meets something wrong.
-func tryFallbackToTxnMerge(job *model.Job, err error) error {
-	if job.State != model.JobStateRollingback {
-		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process", zap.Error(err))
-		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
-		job.SnapshotVer = 0
-		job.RowCount = 0
-		return nil
-	}
-	return err
-}
-
 func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
@@ -824,17 +841,21 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
-	bfProcess := pickBackfillType(job)
-	if !bfProcess.NeedMergeProcess() {
+	var reorgTp model.ReorgType
+	reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique, d)
+	if err != nil {
+		return false, ver, err
+	}
+	if !reorgTp.NeedMergeProcess() {
 		return runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	}
 	switch indexInfo.BackfillState {
 	case model.BackfillStateRunning:
 		logutil.BgLogger().Info("[ddl] index backfill state running",
 			zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
-			zap.Bool("ingest mode", bfProcess == model.ReorgTypeLitMerge),
+			zap.Bool("ingest mode", reorgTp == model.ReorgTypeLitMerge),
 			zap.String("index", indexInfo.Name.O))
-		switch bfProcess {
+		switch reorgTp {
 		case model.ReorgTypeLitMerge:
 			if job.ReorgMeta.IsDistReorg {
 				done, ver, err = runIngestReorgJobDist(w, d, t, job, tbl, indexInfo)
@@ -854,7 +875,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		logutil.BgLogger().Info("[ddl] index backfill state ready to merge", zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O), zap.String("index", indexInfo.Name.O))
 		indexInfo.BackfillState = model.BackfillStateMerging
-		if bfProcess == model.ReorgTypeLitMerge {
+		if reorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
 		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.
@@ -892,15 +913,18 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if ok && bc.Done() {
 		return true, 0, nil
 	}
-	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID)
+	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, nil)
 	if err != nil {
-		err = tryFallbackToTxnMerge(job, err)
+		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 		return false, ver, errors.Trace(err)
 	}
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	if err != nil {
-		ingest.LitBackCtxMgr.Unregister(job.ID)
-		err = tryFallbackToTxnMerge(job, err)
+		if !errorIsRetryable(err, job) {
+			logutil.BgLogger().Warn("[ddl] run reorg job failed, convert job to rollback",
+				zap.String("job", job.String()), zap.Error(err))
+			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
+		}
 		return false, ver, errors.Trace(err)
 	}
 	if !done {
@@ -916,13 +940,28 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 		} else {
 			logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
-			err = tryFallbackToTxnMerge(job, err)
+			if !errorIsRetryable(err, job) {
+				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
+			}
 		}
-		ingest.LitBackCtxMgr.Unregister(job.ID)
 		return false, ver, errors.Trace(err)
 	}
 	bc.SetDone()
 	return true, ver, nil
+}
+
+func errorIsRetryable(err error, job *model.Job) bool {
+	if job.ErrorCount+1 >= variable.GetDDLErrorCountLimit() {
+		return false
+	}
+	originErr := errors.Cause(err)
+	if tErr, ok := originErr.(*terror.Error); ok {
+		sqlErr := terror.ToSQLError(tErr)
+		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
+		return ok
+	}
+	// For the unknown errors, we should retry.
+	return true
 }
 
 func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
@@ -970,7 +1009,11 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		// and then run the reorg next time.
 		return false, ver, errors.Trace(err)
 	}
-	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+	err = overwriteReorgInfoFromGlobalCheckpoint(w, rh.s, job, reorgInfo)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+	err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onCreateIndex",
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
@@ -978,6 +1021,9 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return w.addTableIndex(tbl, reorgInfo)
 	})
 	if err != nil {
+		if dbterror.ErrPausedDDLJob.Equal(err) {
+			return false, ver, nil
+		}
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return false, ver, nil
@@ -985,7 +1031,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
 		}
-		if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) ||
+		if !errorIsRetryable(err, job) ||
 			// TODO: Remove this check make it can be retry. Related test is TestModifyColumnReorgInfo.
 			job.ReorgMeta.IsDistReorg {
 			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
@@ -996,6 +1042,11 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 		return false, ver, errors.Trace(err)
 	}
+	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
+		if MockDMLExecutionStateBeforeImport != nil {
+			MockDMLExecutionStateBeforeImport()
+		}
+	})
 	return true, ver, nil
 }
 
@@ -1065,9 +1116,6 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-				ingest.LitBackCtxMgr.Unregister(job.ID)
-			}
 			job.Args[0] = indexInfo.ID
 		} else {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
@@ -1372,10 +1420,7 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, rawRecord []byte) error {
 	sysZone := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
 	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, sysZone, w.rowMap)
-	if err != nil {
-		return errors.Trace(dbterror.ErrCantDecodeRecord.GenWithStackByArgs("index", err))
-	}
-	return nil
+	return errors.Trace(err)
 }
 
 // fetchRowColVals fetch w.batchCnt count records that need to reorganize indices, and build the corresponding indexRecord slice.
@@ -1571,6 +1616,7 @@ type addIndexIngestWorker struct {
 	writer           ingest.Writer
 	copReqSenderPool *copReqSenderPool
 	checkpointMgr    *ingest.CheckpointManager
+	flushLock        *sync.RWMutex
 
 	resultCh   chan *backfillResult
 	jobID      int64
@@ -1628,6 +1674,8 @@ func writeChunkToLocal(writer ingest.Writer,
 	handleDataBuf := make([]types.Datum, len(copCtx.handleOutputOffsets))
 	count := 0
 	var lastHandle kv.Handle
+	unlock := writer.LockForWrite()
+	defer unlock()
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		idxDataBuf, handleDataBuf = idxDataBuf[:0], handleDataBuf[:0]
 		idxDataBuf = extractDatumByOffsets(row, copCtx.idxColOutputOffsets, copCtx.expColInfos, idxDataBuf)
@@ -1656,10 +1704,16 @@ func writeOneKVToLocal(writer ingest.Writer,
 		if err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.Inject("mockLocalWriterPanic", func() {
+			panic("mock panic")
+		})
 		err = writer.WriteRow(key, idxVal, handle)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.Inject("mockLocalWriterError", func() {
+			failpoint.Return(errors.New("mock engine error"))
+		})
 		writeBufs.IndexKeyBuf = key
 	}
 	return nil
@@ -1747,6 +1801,9 @@ var MockDMLExecutionMerging func()
 // MockDMLExecutionStateMerging is only used for test.
 var MockDMLExecutionStateMerging func()
 
+// MockDMLExecutionStateBeforeImport is only used for test.
+var MockDMLExecutionStateBeforeImport func()
+
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		logutil.BgLogger().Info("[ddl] start to merge temp index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
@@ -1761,7 +1818,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			err := executeDistGlobalTask(reorgInfo)
+			err := w.executeDistGlobalTask(reorgInfo)
 			if err != nil {
 				return err
 			}
@@ -1770,7 +1827,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 				return errors.New("unexpected error, can't find index info")
 			}
 			if indexInfo.Unique {
-				bc, err := ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, reorgInfo.ID)
+				bc, err := ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, reorgInfo.ID, nil)
 				if err != nil {
 					return err
 				}
@@ -1797,6 +1854,10 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			// Every time we finish a partition, we update the progress of the job.
+			if rc := w.getReorgCtx(reorgInfo.Job.ID); rc != nil {
+				reorgInfo.Job.SetRowCount(rc.getRowCount())
+			}
 		}
 	} else {
 		//nolint:forcetypeassert
@@ -1806,12 +1867,13 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	return errors.Trace(err)
 }
 
-func executeDistGlobalTask(reorgInfo *reorgInfo) error {
+func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
 	}
 
 	taskType := BackfillTaskType
+	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
 	taskMeta := &BackfillGlobalMeta{
 		Job:        *reorgInfo.Job.Clone(),
 		EleID:      reorgInfo.currElement.ID,
@@ -1823,67 +1885,37 @@ func executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		return err
 	}
 
-	globalTaskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
+	done := make(chan struct{})
+	g, ctx := errgroup.WithContext(context.Background())
 
-	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
-	if err != nil {
-		return err
-	}
+	g.Go(func() error {
+		defer close(done)
+		return handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
+	})
 
-	if globalTask == nil {
-		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, distPhysicalTableConcurrency, metaData)
-		if err != nil {
-			return nil
+	g.Go(func() error {
+		ticker := time.NewTicker(CheckBackfillJobFinishInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return nil
+			case <-ticker.C:
+				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+					if !dbterror.ErrCancelledDDLJob.Equal(err) {
+						return errors.Trace(err)
+					}
+
+					if err = handle.CancelGlobalTask(taskKey); err != nil {
+						logutil.BgLogger().Error("[ddl] cancel global task error", zap.String("task_key", taskKey), zap.Error(err))
+						// continue to cancel global task
+						continue
+					}
+				}
+			}
 		}
-
-		globalTask, err = globalTaskManager.GetGlobalTaskByID(taskID)
-		if err != nil {
-			return err
-		}
-
-		if globalTask == nil {
-			return errors.Errorf("cannot find global task with ID %d", taskID)
-		}
-	}
-
-	ticker := time.NewTicker(CheckBackfillJobFinishInterval)
-	defer ticker.Stop()
-
-	for {
-		<-ticker.C
-		// TODO: handle cancel correctly.
-		if reorgInfo.Job.IsCancelling() {
-			return dbterror.ErrCancelledDDLJob
-		}
-
-		found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
-		if err != nil {
-			logutil.BgLogger().Info("[ddl] get global task error", zap.Int64("taskID", globalTask.ID), zap.Error(err))
-			continue
-		}
-
-		if found == nil {
-			return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
-		}
-
-		if found.State == proto.TaskStateSucceed {
-			return nil
-		}
-
-		if found.State == proto.TaskStateReverted {
-			logutil.BgLogger().Error("[ddl] global task reverted", zap.Int64("taskID", globalTask.ID), zap.String("error", string(found.Error)))
-			return errors.New(string(found.Error))
-		}
-
-		// TODO: get the original error message.
-		if found.State == proto.TaskStateFailed || found.State == proto.TaskStateCanceled {
-			return errors.Errorf("ddl task stopped with state %s, err %s", found.State, found.Error)
-		}
-	}
+	})
+	return g.Wait()
 }
 
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {

@@ -86,6 +86,8 @@ const (
 	DefDDLSlowOprThreshold = 300
 	// DefExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	DefExpensiveQueryTimeThreshold = 60
+	// DefExpensiveTxnTimeThreshold indicates the time threshold of expensive txn.
+	DefExpensiveTxnTimeThreshold = 600
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 	DefMemoryUsageAlarmRatio = 0.8
 	// DefTempDir is the default temporary directory path for TiDB.
@@ -504,6 +506,8 @@ type Instance struct {
 	DDLSlowOprThreshold uint32 `toml:"ddl_slow_threshold" json:"ddl_slow_threshold"`
 	// ExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	ExpensiveQueryTimeThreshold uint64 `toml:"tidb_expensive_query_time_threshold" json:"tidb_expensive_query_time_threshold"`
+	// ExpensiveTxnTimeThreshold indicates the time threshold of expensive transaction.
+	ExpensiveTxnTimeThreshold uint64 `toml:"tidb_expensive_txn_time_threshold" json:"tidb_expensive_txn_time_threshold"`
 	// StmtSummaryEnablePersistent indicates whether to enable file persistence for stmtsummary.
 	StmtSummaryEnablePersistent bool `toml:"tidb_stmt_summary_enable_persistent" json:"tidb_stmt_summary_enable_persistent"`
 	// StmtSummaryFilename indicates the file name written by stmtsummary
@@ -719,6 +723,11 @@ type Performance struct {
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
 
 	LiteInitStats bool `toml:"lite-init-stats" json:"lite-init-stats"`
+
+	// If ForceInitStats is true, when tidb starts up, it doesn't provide service until init stats is finished.
+	// If ForceInitStats is false, tidb can provide service before init stats is finished. Note that during the period
+	// of init stats the optimizer may make bad decisions due to pseudo stats.
+	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -923,6 +932,7 @@ var defaultConf = Config{
 		EnablePProfSQLCPU:           false,
 		DDLSlowOprThreshold:         DefDDLSlowOprThreshold,
 		ExpensiveQueryTimeThreshold: DefExpensiveQueryTimeThreshold,
+		ExpensiveTxnTimeThreshold:   DefExpensiveTxnTimeThreshold,
 		StmtSummaryEnablePersistent: false,
 		StmtSummaryFilename:         "tidb-statements.log",
 		StmtSummaryFileMaxDays:      3,
@@ -984,7 +994,8 @@ var defaultConf = Config{
 		EnableStatsCacheMemQuota:          false,
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
-		LiteInitStats:                     false,
+		LiteInitStats:                     true,
+		ForceInitStats:                    true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -1483,17 +1494,14 @@ func GetJSONConfig() (string, error) {
 			if i == len(s)-1 {
 				delete(curValue, key)
 			}
-
-			if curValue[key] != nil {
-				mapValue, ok := curValue[key].(map[string]interface{})
-				if !ok {
-					break
-				}
-
-				curValue = mapValue
-			} else {
+			if curValue[key] == nil {
 				break
 			}
+			mapValue, ok := curValue[key].(map[string]interface{})
+			if !ok {
+				break
+			}
+			curValue = mapValue
 		}
 	}
 

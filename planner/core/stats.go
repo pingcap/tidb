@@ -137,7 +137,7 @@ func (p *baseLogicalPlan) recursiveDeriveStats(colGroups [][]*expression.Column)
 }
 
 // ExtractColGroups implements LogicalPlan ExtractColGroups interface.
-func (p *baseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
+func (*baseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
 	return nil
 }
 
@@ -428,7 +428,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		var sb strings.Builder
 		if selected.IsTablePath() {
 			// TODO: primary key / handle / real name?
-			sb.WriteString(fmt.Sprintf("handle of %s is selected since the path only has point ranges", tableName))
+			fmt.Fprintf(&sb, "handle of %s is selected since the path only has point ranges", tableName)
 		} else {
 			if selected.Index.Unique {
 				sb.WriteString("unique ")
@@ -655,21 +655,21 @@ func getGroupNDV4Cols(cols []*expression.Column, stats *property.StatsInfo) *pro
 // If the columns match any GroupNDV maintained by child operator, we can get an accurate NDV.
 // Otherwise, we simply return the max NDV among the columns, which is a lower bound.
 func getColsNDVWithMatchedLen(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
-	NDV := 1.0
+	ndv := 1.0
 	if groupNDV := getGroupNDV4Cols(cols, profile); groupNDV != nil {
-		return math.Max(groupNDV.NDV, NDV), len(groupNDV.Cols)
+		return math.Max(groupNDV.NDV, ndv), len(groupNDV.Cols)
 	}
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
 		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
-		return NDV, 1
+		return ndv, 1
 	}
 	for _, idx := range indices {
 		// It is a very naive estimation.
 		col := schema.Columns[idx]
-		NDV = math.Max(NDV, profile.ColNDVs[col.UniqueID])
+		ndv = math.Max(ndv, profile.ColNDVs[col.UniqueID])
 	}
-	return NDV, 1
+	return ndv, 1
 }
 
 func getColsDNVWithMatchedLenFromUniqueIDs(ids []int64, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
@@ -767,7 +767,7 @@ func (p *LogicalProjection) ExtractColGroups(colGroups [][]*expression.Column) [
 	return extracted
 }
 
-func (la *LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, gbyCols []*expression.Column) []property.GroupNDV {
+func (*LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, gbyCols []*expression.Column) []property.GroupNDV {
 	if len(colGroups) == 0 {
 		return nil
 	}
@@ -795,14 +795,14 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 		la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
 		return la.stats, nil
 	}
-	NDV, _ := getColsNDVWithMatchedLen(gbyCols, childSchema[0], childProfile)
+	ndv, _ := getColsNDVWithMatchedLen(gbyCols, childSchema[0], childProfile)
 	la.stats = &property.StatsInfo{
-		RowCount: NDV,
+		RowCount: ndv,
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	}
 	// We cannot estimate the ColNDVs for every output, so we use a conservative strategy.
 	for _, col := range selfSchema.Columns {
-		la.stats.ColNDVs[col.UniqueID] = NDV
+		la.stats.ColNDVs[col.UniqueID] = ndv
 	}
 	la.inputCount = childProfile.RowCount
 	la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
@@ -1046,7 +1046,7 @@ func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expr
 	return p.stats, nil
 }
 
-func (p *LogicalWindow) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
+func (*LogicalWindow) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
 	if len(colGroups) > 0 {
 		return childStats[0].GroupNDVs
 	}
@@ -1108,11 +1108,15 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.cte.seedPartLogicalPlan.SelectBlockOffset())
 			newSel.SetChildren(p.cte.seedPartLogicalPlan)
 			p.cte.seedPartLogicalPlan = newSel
+			p.cte.optFlag |= flagPredicatePushDown
 		}
-		p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
+		p.cte.seedPartLogicalPlan, p.cte.seedPartPhysicalPlan, _, err = DoOptimizeAndLogicAsRet(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
 		if err != nil {
 			return nil, err
 		}
+	}
+	if p.onlyUsedAsStorage {
+		p.SetChildren(p.cte.seedPartLogicalPlan)
 	}
 	resStat := p.cte.seedPartPhysicalPlan.Stats()
 	// Changing the pointer so that seedStat in LogicalCTETable can get the new stat.
@@ -1150,5 +1154,11 @@ func (p *LogicalCTETable) DeriveStats(_ []*property.StatsInfo, _ *expression.Sch
 		return p.stats, nil
 	}
 	p.stats = p.seedStat
+	return p.stats, nil
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+	p.stats = childStats[len(childStats)-1]
 	return p.stats, nil
 }

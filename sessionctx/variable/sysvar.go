@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	_ "github.com/pingcap/tidb/types/parser_driver" // for parser driver
@@ -64,7 +65,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
 	{Scope: ScopeNone, Name: Port, Value: "4000", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint16},
 	{Scope: ScopeNone, Name: LogBin, Value: Off, Type: TypeBool},
-	{Scope: ScopeNone, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 5.7 compatible"},
+	{Scope: ScopeNone, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 8.0 compatible"},
 	{Scope: ScopeNone, Name: Version, Value: mysql.ServerVersion},
 	{Scope: ScopeNone, Name: DataDir, Value: "/usr/local/mysql/data/"},
 	{Scope: ScopeNone, Name: Socket, Value: ""},
@@ -103,12 +104,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: ErrorCount, Value: "0", ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.Itoa(int(s.SysErrorCount)), nil
 	}},
-	{Scope: ScopeSession, Name: LastInsertID, Value: "0", Type: TypeInt, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxInt64, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: LastInsertID, Value: "0", Type: TypeUnsigned, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxUint64, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(s.StmtCtx.PrevLastInsertID, 10), nil
 	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
 		return "", false, nil
 	}},
-	{Scope: ScopeSession, Name: Identity, Value: "0", Type: TypeInt, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxInt64, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: Identity, Value: "0", Type: TypeUnsigned, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxUint64, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(s.StmtCtx.PrevLastInsertID, 10), nil
 	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
 		return "", false, nil
@@ -143,7 +144,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBReadStaleness, Value: strconv.Itoa(DefTiDBReadStaleness), Type: TypeInt, MinValue: math.MinInt32, MaxValue: 0, AllowEmpty: true, Hidden: false, SetSession: func(s *SessionVars, val string) error {
 		return setReadStaleness(s, val)
 	}},
-	{Scope: ScopeSession, Name: TiDBEnforceMPPExecution, Type: TypeBool, Value: BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnforceMPPExecution, Type: TypeBool, Value: BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if TiDBOptOn(normalizedValue) && !vars.allowMPPExecution {
 			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs("tidb_enforce_mpp", "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.")
 		}
@@ -166,6 +167,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxBytesBeforeTiFlashExternalSort, Type: TypeInt, Value: strconv.Itoa(DefTiFlashMaxBytesBeforeExternalSort), MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.TiFlashMaxBytesBeforeExternalSort = TidbOptInt64(val, DefTiFlashMaxBytesBeforeExternalSort)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashPipelineMode, Type: TypeBool, Value: BoolToOnOff(DefTiDBEnableTiFlashPipelineMode), SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashEnablePipelineMode = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBSnapshot, Value: "", skipInit: true, SetSession: func(s *SessionVars, val string) error {
@@ -285,7 +290,8 @@ var defaultSysVars = []*SysVar{
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBIsolationReadEngines, Value: strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ","), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	// todo changed
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIsolationReadEngines, Value: strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ","), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		engines := strings.Split(normalizedValue, ",")
 		var formatVal string
 		for i, engine := range engines {
@@ -462,6 +468,12 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatUint(atomic.LoadUint64(&ExpensiveQueryTimeThreshold), 10), nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBExpensiveTxnTimeThreshold, Value: strconv.Itoa(DefTiDBExpensiveTxnTimeThreshold), Type: TypeUnsigned, MinValue: int64(MinExpensiveTxnTimeThreshold), MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		atomic.StoreUint64(&ExpensiveTxnTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveTxnTimeThreshold)))
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatUint(atomic.LoadUint64(&ExpensiveTxnTimeThreshold), 10), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBEnableCollectExecutionInfo, Value: BoolToOnOff(DefTiDBEnableCollectExecutionInfo), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		oldConfig := config.GetGlobalConfig()
@@ -869,7 +881,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: SkipNameResolve, Value: Off, Type: TypeBool},
-	{Scope: ScopeGlobal, Name: DefaultAuthPlugin, Value: mysql.AuthNativePassword, Type: TypeEnum, PossibleValues: []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password}},
+	{Scope: ScopeGlobal, Name: DefaultAuthPlugin, Value: mysql.AuthNativePassword, Type: TypeEnum, PossibleValues: []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthLDAPSASL, mysql.AuthLDAPSimple}},
 	{Scope: ScopeGlobal, Name: TiDBPersistAnalyzeOptions, Value: BoolToOnOff(DefTiDBPersistAnalyzeOptions), Type: TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(PersistAnalyzeOptions.Load()), nil
@@ -951,11 +963,10 @@ var defaultSysVars = []*SysVar{
 			intVal, err := strconv.ParseUint(normalizedValue, 10, 64)
 			if err != nil {
 				bt, str := parseByteSize(normalizedValue)
-				if str != "" {
-					intVal = bt
-				} else {
+				if str == "" {
 					return "", err
 				}
+				intVal = bt
 			}
 			if intVal > 0 && intVal < 128 { // 128 Bytes
 				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitSessMinSize, originalValue))
@@ -980,11 +991,10 @@ var defaultSysVars = []*SysVar{
 			floatValue, err := strconv.ParseFloat(normalizedValue, 64)
 			if err != nil {
 				perc, str := parsePercentage(normalizedValue)
-				if len(str) != 0 {
-					floatValue = float64(perc) / 100
-				} else {
+				if len(str) == 0 {
 					return "", err
 				}
+				floatValue = float64(perc) / 100
 			}
 			gogcTunerThreshold := GOGCTunerThreshold.Load()
 			if floatValue < 0.51 || floatValue > 1 { // 51% ~ 100%
@@ -1097,7 +1107,7 @@ var defaultSysVars = []*SysVar{
 		s.EnablePreparedPlanCache = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPrepPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBPrepPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPrepPlanCacheSize, Aliases: []string{TiDBSessionPlanCacheSize}, Value: strconv.FormatUint(uint64(DefTiDBPrepPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
 		uVal, err := strconv.ParseUint(val, 10, 64)
 		if err == nil {
 			s.PreparedPlanCacheSize = uVal
@@ -1124,6 +1134,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableNonPreparedPlanCache = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNonPreparedPlanCacheForDML, Value: BoolToOnOff(DefTiDBEnableNonPreparedPlanCacheForDML), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableNonPreparedPlanCacheForDML = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBNonPreparedPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBNonPreparedPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
 		uVal, err := strconv.ParseUint(val, 10, 64)
 		if err == nil {
@@ -1141,7 +1155,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return err
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSessionPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBSessionPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSessionPlanCacheSize, Aliases: []string{TiDBPrepPlanCacheSize}, Value: strconv.FormatUint(uint64(DefTiDBSessionPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
 		uVal, err := strconv.ParseUint(val, 10, 64)
 		if err == nil {
 			s.SessionPlanCacheSize = uVal
@@ -1300,6 +1314,15 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableRowLevelChecksum, Value: BoolToOnOff(DefTiDBEnableRowLevelChecksum), Type: TypeBool,
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableRowLevelChecksum.Load()), nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			EnableRowLevelChecksum.Store(TiDBOptOn(s))
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		result, err := strconv.ParseUint(val, 10, 64)
 		if err != nil {
@@ -2003,11 +2026,17 @@ var defaultSysVars = []*SysVar{
 		s.MultiStatementMode = TiDBOptOnOffWarn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableExchangePartition, Value: BoolToOnOff(DefTiDBEnableExchangePartition), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.StmtCtx.AppendWarning(errors.New("tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
-		s.TiDBEnableExchangePartition = DefTiDBEnableExchangePartition
-		return nil
-	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableExchangePartition, Value: On, Type: TypeBool,
+		Validation: func(vars *SessionVars, s string, s2 string, flag ScopeFlag) (string, error) {
+			if s == Off {
+				vars.StmtCtx.AppendWarning(errors.New("tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
+			}
+			return On, nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.TiDBEnableExchangePartition = true
+			return nil
+		}},
 	// It's different from tmp_table_size or max_heap_table_size. See https://github.com/pingcap/tidb/issues/28691.
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTmpTableMaxSize, Value: strconv.Itoa(DefTiDBTmpTableMaxSize), Type: TypeUnsigned, MinValue: 1 << 20, MaxValue: 1 << 37, SetSession: func(s *SessionVars, val string) error {
 		s.TMPTableSize = TidbOptInt64(val, DefTiDBTmpTableMaxSize)
@@ -2199,11 +2228,17 @@ var defaultSysVars = []*SysVar{
 			}
 			return nil
 		}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashReadForWriteStmt, Value: BoolToOnOff(DefTiDBEnableTiFlashReadForWriteStmt), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.StmtCtx.AppendWarning(errors.New("tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases"))
-		s.EnableTiFlashReadForWriteStmt = DefTiDBEnableTiFlashReadForWriteStmt
-		return nil
-	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashReadForWriteStmt, Value: On, Type: TypeBool,
+		Validation: func(vars *SessionVars, s string, s2 string, flag ScopeFlag) (string, error) {
+			if s == Off {
+				vars.StmtCtx.AppendWarning(errors.New("tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases"))
+			}
+			return On, nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableTiFlashReadForWriteStmt = true
+			return nil
+		}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableUnsafeSubstitute, Value: BoolToOnOff(false), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableUnsafeSubstitute = TiDBOptOn(val)
 		return nil
@@ -2462,6 +2497,10 @@ var defaultSysVars = []*SysVar{
 			s.OptOrderingIdxSelThresh = tidbOptFloat64(val, DefTiDBOptOrderingIdxSelThresh)
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableMPPSharedCTEExecution, Value: BoolToOnOff(DefTiDBOptEnableMPPSharedCTEExecution), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableMPPSharedCTEExecution = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptFixControl, Value: "", Type: TypeStr, IsHintUpdatable: true,
 		SetSession: func(s *SessionVars, val string) error {
 			newMap := make(map[uint64]string)
@@ -2489,6 +2528,203 @@ var defaultSysVars = []*SysVar{
 			s.OptimizerFixControl = newMap
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPlanCacheInvalidationOnFreshStats, Value: BoolToOnOff(DefTiDBPlanCacheInvalidationOnFreshStats), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLAuthMethodName, Value: DefAuthenticationLDAPSASLAuthMethodName, Type: TypeEnum, PossibleValues: []string{ldap.SASLAuthMethodSCRAMSHA1, ldap.SASLAuthMethodSCRAMSHA256, ldap.SASLAuthMethodGSSAPI}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSASLAuthImpl.SetSASLAuthMethod(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetSASLAuthMethod(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLServerHost, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		// TODO: validate the ip/hostname
+		ldap.LDAPSASLAuthImpl.SetLDAPServerHost(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetLDAPServerHost(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLServerPort, Value: strconv.Itoa(DefAuthenticationLDAPSASLServerPort), Type: TypeInt, MinValue: 1, MaxValue: math.MaxUint16, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		ldap.LDAPSASLAuthImpl.SetLDAPServerPort(int(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(ldap.LDAPSASLAuthImpl.GetLDAPServerPort()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLTLS, Value: BoolToOnOff(DefAuthenticationLDAPSASLTLS), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSASLAuthImpl.SetEnableTLS(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(ldap.LDAPSASLAuthImpl.GetEnableTLS()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLCAPath, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		return ldap.LDAPSASLAuthImpl.SetCAPath(s)
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetCAPath(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLUserSearchAttr, Value: DefAuthenticationLDAPSASLUserSearchAttr, Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		// TODO: validate the ip/hostname
+		ldap.LDAPSASLAuthImpl.SetSearchAttr(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetSearchAttr(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLBindBaseDN, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSASLAuthImpl.SetBindBaseDN(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetBindBaseDN(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLBindRootDN, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSASLAuthImpl.SetBindRootDN(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetBindRootDN(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLBindRootPWD, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSASLAuthImpl.SetBindRootPW(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSASLAuthImpl.GetBindRootPW(), nil
+	}},
+	// TODO: allow setting init_pool_size to 0 to disable pooling
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLInitPoolSize, Value: strconv.Itoa(DefAuthenticationLDAPSASLInitPoolSize), Type: TypeInt, MinValue: 1, MaxValue: 32767, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		ldap.LDAPSASLAuthImpl.SetInitCapacity(int(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(ldap.LDAPSASLAuthImpl.GetInitCapacity()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLMaxPoolSize, Value: strconv.Itoa(DefAuthenticationLDAPSASLMaxPoolSize), Type: TypeInt, MinValue: 1, MaxValue: 32767, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		ldap.LDAPSASLAuthImpl.SetMaxCapacity(int(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(ldap.LDAPSASLAuthImpl.GetMaxCapacity()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleAuthMethodName, Value: DefAuthenticationLDAPSimpleAuthMethodName, Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		s = strings.ToUpper(s)
+		// Only "SIMPLE" is supported
+		if s != "SIMPLE" {
+			return errors.Errorf("auth method %s is not supported", s)
+		}
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleServerHost, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		// TODO: validate the ip/hostname
+		ldap.LDAPSimpleAuthImpl.SetLDAPServerHost(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSimpleAuthImpl.GetLDAPServerHost(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleServerPort, Value: strconv.Itoa(DefAuthenticationLDAPSimpleServerPort), Type: TypeInt, MinValue: 1, MaxValue: math.MaxUint16, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		ldap.LDAPSimpleAuthImpl.SetLDAPServerPort(int(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(ldap.LDAPSimpleAuthImpl.GetLDAPServerPort()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleTLS, Value: BoolToOnOff(DefAuthenticationLDAPSimpleTLS), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSimpleAuthImpl.SetEnableTLS(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(ldap.LDAPSimpleAuthImpl.GetEnableTLS()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleCAPath, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		return ldap.LDAPSimpleAuthImpl.SetCAPath(s)
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSimpleAuthImpl.GetCAPath(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleUserSearchAttr, Value: DefAuthenticationLDAPSimpleUserSearchAttr, Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		// TODO: validate the ip/hostname
+		ldap.LDAPSimpleAuthImpl.SetSearchAttr(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSimpleAuthImpl.GetSearchAttr(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleBindBaseDN, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSimpleAuthImpl.SetBindBaseDN(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSimpleAuthImpl.GetBindBaseDN(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleBindRootDN, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSimpleAuthImpl.SetBindRootDN(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSimpleAuthImpl.GetBindRootDN(), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleBindRootPWD, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		ldap.LDAPSimpleAuthImpl.SetBindRootPW(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return ldap.LDAPSimpleAuthImpl.GetBindRootPW(), nil
+	}},
+	// TODO: allow setting init_pool_size to 0 to disable pooling
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleInitPoolSize, Value: strconv.Itoa(DefAuthenticationLDAPSimpleInitPoolSize), Type: TypeInt, MinValue: 1, MaxValue: 32767, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		ldap.LDAPSimpleAuthImpl.SetInitCapacity(int(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(ldap.LDAPSimpleAuthImpl.GetInitCapacity()), nil
+	}},
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleMaxPoolSize, Value: strconv.Itoa(DefAuthenticationLDAPSimpleMaxPoolSize), Type: TypeInt, MinValue: 1, MaxValue: 32767, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		ldap.LDAPSimpleAuthImpl.SetMaxCapacity(int(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(ldap.LDAPSimpleAuthImpl.GetMaxCapacity()), nil
+	}},
+	// runtime filter variables group
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRuntimeFilterTypeName, Value: DefRuntimeFilterType, Type: TypeStr,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, ok := ToRuntimeFilterType(normalizedValue)
+			if ok {
+				return normalizedValue, nil
+			}
+			errMsg := fmt.Sprintf("incorrect value: %s. %s should be sepreated by , such as %s, also we only support IN and MIN_MAX now. ",
+				originalValue, TiDBRuntimeFilterTypeName, DefRuntimeFilterType)
+			return normalizedValue, errors.New(errMsg)
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.runtimeFilterTypes, _ = ToRuntimeFilterType(val)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRuntimeFilterModeName, Value: DefRuntimeFilterMode, Type: TypeStr,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, ok := RuntimeFilterModeStringToMode(normalizedValue)
+			if ok {
+				return normalizedValue, nil
+			}
+			errMsg := fmt.Sprintf("incorrect value: %s. %s options: %s ",
+				originalValue, TiDBRuntimeFilterModeName, DefRuntimeFilterMode)
+			return normalizedValue, errors.New(errMsg)
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.runtimeFilterMode, _ = RuntimeFilterModeStringToMode(val)
+			return nil
+		},
+	},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

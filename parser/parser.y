@@ -27,6 +27,7 @@ package parser
 
 import (
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/ast"
@@ -571,10 +572,12 @@ import (
 	reverse               "REVERSE"
 	role                  "ROLE"
 	rollback              "ROLLBACK"
+	rollup                "ROLLUP"
 	routine               "ROUTINE"
 	rowCount              "ROW_COUNT"
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
+	hypo                  "HYPO"
 	san                   "SAN"
 	savepoint             "SAVEPOINT"
 	second                "SECOND"
@@ -779,6 +782,12 @@ import (
 	low                   "LOW"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
+	execElapsed           "EXEC_ELAPSED"
+	dryRun                "DRYRUN"
+	cooldown              "COOLDOWN"
+	watch                 "WATCH"
+	similar               "SIMILAR"
+	queryLimit            "QUERY_LIMIT"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -976,6 +985,7 @@ import (
 	InsertIntoStmt             "INSERT INTO statement"
 	CallStmt                   "CALL statement"
 	IndexAdviseStmt            "INDEX ADVISE statement"
+	ImportIntoStmt             "IMPORT INTO statement"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
@@ -1086,7 +1096,6 @@ import (
 	IdentListWithParenOpt                  "column name list opt with parentheses"
 	ColumnNameOrUserVarListOpt             "column name or user vairiabe list opt"
 	ColumnNameOrUserVarListOptWithBrackets "column name or user variable list opt with brackets"
-	ColumnSetValue                         "insert statement set value by column name"
 	ColumnSetValueList                     "insert statement set value by column name list"
 	CompareOp                              "Compare opcode"
 	ColumnOption                           "column definition option"
@@ -1385,6 +1394,7 @@ import (
 	WindowNameOrSpec                       "WINDOW name or spec"
 	WindowSpec                             "WINDOW spec"
 	WindowSpecDetails                      "WINDOW spec details"
+	WithRollupClause                       "With rollup clause"
 	BetweenOrNotOp                         "Between predicate"
 	IsOrNotOp                              "Is predicate"
 	InOrNotOp                              "In predicate"
@@ -1438,6 +1448,10 @@ import (
 	PlacementPolicyOption                  "Anonymous or placement policy option"
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
+	DirectResourceGroupRunawayOption       "Subset of anonymous or direct resource group runaway option"
+	ResourceGroupRunawayActionOption       "Resource group runaway action option"
+	ResourceGroupRunawayWatchOption        "Resource group runaway watch option"
+	ResourceGroupRunawayOptionList         "Anomymous or direct resource group runaway option list"
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
@@ -1557,6 +1571,8 @@ import (
 %precedence next
 %precedence lowerThanValueKeyword
 %precedence value
+%precedence lowerThanWith
+%precedence with
 %precedence lowerThanStringLitToken
 %precedence stringLit
 %precedence lowerThanSetKeyword
@@ -1689,8 +1705,7 @@ ResourceGroupOptionList:
 	}
 |	ResourceGroupOptionList DirectResourceGroupOption
 	{
-		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp ||
-			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $2.(*ast.ResourceGroupOption).Tp) {
+		if !ast.CheckAppend($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption)) {
 			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
 			return 1
 		}
@@ -1698,8 +1713,7 @@ ResourceGroupOptionList:
 	}
 |	ResourceGroupOptionList ',' DirectResourceGroupOption
 	{
-		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp ||
-			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $3.(*ast.ResourceGroupOption).Tp) {
+		if !ast.CheckAppend($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption)) {
 			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
 			return 1
 		}
@@ -1720,6 +1734,76 @@ ResourceGroupPriorityOption:
 		$$ = uint64(16)
 	}
 
+ResourceGroupRunawayOptionList:
+	DirectResourceGroupRunawayOption
+	{
+		$$ = []*ast.ResourceGroupRunawayOption{$1.(*ast.ResourceGroupRunawayOption)}
+	}
+|	ResourceGroupRunawayOptionList DirectResourceGroupRunawayOption
+	{
+		if !ast.CheckRunawayAppend($1.([]*ast.ResourceGroupRunawayOption), $2.(*ast.ResourceGroupRunawayOption)) {
+			yylex.AppendError(yylex.Errorf("Dupliated runaway options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.ResourceGroupRunawayOption), $2.(*ast.ResourceGroupRunawayOption))
+	}
+|	ResourceGroupRunawayOptionList ',' DirectResourceGroupRunawayOption
+	{
+		if !ast.CheckRunawayAppend($1.([]*ast.ResourceGroupRunawayOption), $3.(*ast.ResourceGroupRunawayOption)) {
+			yylex.AppendError(yylex.Errorf("Dupliated runaway options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.ResourceGroupRunawayOption), $3.(*ast.ResourceGroupRunawayOption))
+	}
+
+ResourceGroupRunawayWatchOption:
+	"EXACT"
+	{
+		$$ = int32(model.WatchExact)
+	}
+|	"SIMILAR"
+	{
+		$$ = int32(model.WatchSimilar)
+	}
+
+ResourceGroupRunawayActionOption:
+	"DRYRUN"
+	{
+		$$ = int32(model.RunawayActionDryRun)
+	}
+|	"COOLDOWN"
+	{
+		$$ = int32(model.RunawayActionCooldown)
+	}
+|	"KILL"
+	{
+		$$ = int32(model.RunawayActionKill)
+	}
+
+DirectResourceGroupRunawayOption:
+	"EXEC_ELAPSED" EqOpt stringLit
+	{
+		_, err := time.ParseDuration($3)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The EXEC_ELAPSED option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayRule, StrValue: $3}
+	}
+|	"ACTION" EqOpt ResourceGroupRunawayActionOption
+	{
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayAction, IntValue: $3.(int32)}
+	}
+|	"WATCH" EqOpt ResourceGroupRunawayWatchOption "DURATION" EqOpt stringLit
+	{
+		_, err := time.ParseDuration($6)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The WATCH DURATION option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayWatch, StrValue: $6, IntValue: $3.(int32)}
+	}
+
 DirectResourceGroupOption:
 	"RU_PER_SEC" EqOpt LengthNum
 	{
@@ -1732,6 +1816,10 @@ DirectResourceGroupOption:
 |	"BURSTABLE"
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
+	}
+|	"QUERY_LIMIT" EqOpt '(' ResourceGroupRunawayOptionList ')'
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: $4.([]*ast.ResourceGroupRunawayOption)}
 	}
 
 PlacementOptionList:
@@ -1936,6 +2024,18 @@ AlterTableSpec:
 		tiflashReplicaSpec := &ast.TiFlashReplicaSpec{
 			Count:  $4.(uint64),
 			Labels: $5.([]string),
+		}
+		$$ = &ast.AlterTableSpec{
+			Tp:             ast.AlterTableSetTiFlashReplica,
+			TiFlashReplica: tiflashReplicaSpec,
+		}
+	}
+|	"SET" "HYPO" "TIFLASH" "REPLICA" LengthNum LocationLabelList
+	{
+		tiflashReplicaSpec := &ast.TiFlashReplicaSpec{
+			Count:  $5.(uint64),
+			Labels: $6.([]string),
+			Hypo:   true,
 		}
 		$$ = &ast.AlterTableSpec{
 			Tp:             ast.AlterTableSetTiFlashReplica,
@@ -3136,8 +3236,8 @@ ColumnDef:
 	ColumnName Type ColumnOptionListOpt
 	{
 		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: $2.(*types.FieldType), Options: $3.([]*ast.ColumnOption)}
-		if !colDef.Validate() {
-			yylex.AppendError(yylex.Errorf("Invalid column definition"))
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
 			return 1
 		}
 		$$ = colDef
@@ -3150,8 +3250,8 @@ ColumnDef:
 		options = append(options, $3.([]*ast.ColumnOption)...)
 		tp.AddFlag(mysql.UnsignedFlag)
 		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: tp, Options: options}
-		if !colDef.Validate() {
-			yylex.AppendError(yylex.Errorf("Invalid column definition"))
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
 			return 1
 		}
 		$$ = colDef
@@ -6056,10 +6156,20 @@ FieldList:
 		$$ = append(fl, field)
 	}
 
-GroupByClause:
-	"GROUP" "BY" ByList
+WithRollupClause:
+	%prec lowerThanWith
 	{
-		$$ = &ast.GroupByClause{Items: $3.([]*ast.ByItem)}
+		$$ = false
+	}
+|	"WITH" "ROLLUP"
+	{
+		$$ = true
+	}
+
+GroupByClause:
+	"GROUP" "BY" ByList WithRollupClause
+	{
+		$$ = &ast.GroupByClause{Items: $3.([]*ast.ByItem), Rollup: $4.(bool)}
 	}
 
 HavingClause:
@@ -6259,6 +6369,10 @@ IndexTypeName:
 	{
 		$$ = model.IndexTypeRtree
 	}
+|	"HYPO"
+	{
+		$$ = model.IndexTypeHypo
+	}
 
 IndexInvisible:
 	"VISIBLE"
@@ -6368,6 +6482,7 @@ UnReservedKeyword:
 |	"RESTART"
 |	"ROLE"
 |	"ROLLBACK"
+|	"ROLLUP"
 |	"SESSION"
 |	"SIGNED"
 |	"SHARD_ROW_ID_BITS"
@@ -6532,6 +6647,7 @@ UnReservedKeyword:
 |	"VALIDATION"
 |	"WITHOUT"
 |	"RTREE"
+|	"HYPO"
 |	"EXCHANGE"
 |	"COLUMN_FORMAT"
 |	"REPAIR"
@@ -6795,6 +6911,12 @@ NotKeywordToken:
 |	"UNTIL_TS"
 |	"RESTORED_TS"
 |	"FULL_BACKUP_STORAGE"
+|	"EXEC_ELAPSED"
+|	"DRYRUN"
+|	"COOLDOWN"
+|	"WATCH"
+|	"SIMILAR"
+|	"QUERY_LIMIT"
 
 /************************************************************************************
  *
@@ -6937,7 +7059,7 @@ InsertValues:
 	}
 |	"SET" ColumnSetValueList
 	{
-		$$ = &ast.InsertStmt{Setlist: $2.([]*ast.Assignment)}
+		$$ = $2.(*ast.InsertStmt)
 	}
 
 ValueSym:
@@ -6983,26 +7105,21 @@ ExprOrDefault:
 		$$ = &ast.DefaultExpr{}
 	}
 
-ColumnSetValue:
+ColumnSetValueList:
 	ColumnName eq ExprOrDefault
 	{
-		$$ = &ast.Assignment{
-			Column: $1.(*ast.ColumnName),
-			Expr:   $3,
+		$$ = &ast.InsertStmt{
+			Columns: []*ast.ColumnName{$1.(*ast.ColumnName)},
+			Lists:   [][]ast.ExprNode{{$3.(ast.ExprNode)}},
+			Setlist: true,
 		}
 	}
-
-ColumnSetValueList:
+|	ColumnSetValueList ',' ColumnName eq ExprOrDefault
 	{
-		$$ = []*ast.Assignment{}
-	}
-|	ColumnSetValue
-	{
-		$$ = []*ast.Assignment{$1.(*ast.Assignment)}
-	}
-|	ColumnSetValueList ',' ColumnSetValue
-	{
-		$$ = append($1.([]*ast.Assignment), $3.(*ast.Assignment))
+		ins := $1.(*ast.InsertStmt)
+		ins.Columns = append(ins.Columns, $3.(*ast.ColumnName))
+		ins.Lists[0] = append(ins.Lists[0], $5.(ast.ExprNode))
+		$$ = ins
 	}
 
 /*
@@ -10714,6 +10831,20 @@ AdminStmt:
 			JobIDs: $5.([]int64),
 		}
 	}
+|	"ADMIN" "PAUSE" "DDL" "JOBS" NumList
+	{
+		$$ = &ast.AdminStmt{
+			Tp:     ast.AdminPauseDDLJobs,
+			JobIDs: $5.([]int64),
+		}
+	}
+|	"ADMIN" "RESUME" "DDL" "JOBS" NumList
+	{
+		$$ = &ast.AdminStmt{
+			Tp:     ast.AdminResumeDDLJobs,
+			JobIDs: $5.([]int64),
+		}
+	}
 |	"ADMIN" "SHOW" "DDL" "JOB" "QUERIES" NumList
 	{
 		$$ = &ast.AdminStmt{
@@ -11678,6 +11809,7 @@ Statement:
 |	GrantProxyStmt
 |	GrantRoleStmt
 |	CallStmt
+|	ImportIntoStmt
 |	InsertIntoStmt
 |	IndexAdviseStmt
 |	KillStmt
@@ -14224,6 +14356,19 @@ LoadDataOption:
 		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1), Value: $3.(ast.ExprNode)}
 	}
 
+ImportIntoStmt:
+	"IMPORT" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt "FROM" stringLit FormatOpt LoadDataOptionListOpt
+	{
+		$$ = &ast.ImportIntoStmt{
+			Table:              $3.(*ast.TableName),
+			ColumnsAndUserVars: $4.([]*ast.ColumnNameOrUserVar),
+			ColumnAssignments:  $5.([]*ast.Assignment),
+			Path:               $7,
+			Format:             $8.(*string),
+			Options:            $9.([]*ast.LoadDataOpt),
+		}
+	}
+
 /*********************************************************************
  * Lock/Unlock Tables
  * See http://dev.mysql.com/doc/refman/5.7/en/lock-tables.html
@@ -15584,5 +15729,4 @@ CalibrateResourceWorkloadOption:
 	{
 		$$ = ast.OLTPWRITEONLY
 	}
-
 %%

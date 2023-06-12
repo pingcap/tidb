@@ -88,7 +88,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	switch paramStmt.(type) {
-	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
+	case *ast.ImportIntoStmt, *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
 		return nil, nil, 0, ErrUnsupportedPs
 	}
 
@@ -335,10 +335,6 @@ type PlanCacheValue struct {
 
 	// matchOpts stores some fields help to choose a suitable plan
 	matchOpts *utilpc.PlanCacheMatchOpts
-}
-
-func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
-	return checkTypesCompatibility4PC(v.matchOpts.ParamTypes, txtVarTps)
 }
 
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later

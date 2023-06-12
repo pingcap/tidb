@@ -40,7 +40,7 @@ import (
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 	}
@@ -235,12 +235,6 @@ func TestTiFlashManager(t *testing.T) {
 	require.Equal(t, false, rules[0].Override, false)
 	require.Equal(t, placement.RuleIndexTiFlash, rules[0].Index)
 
-	// PostTiFlashAccelerateSchedule
-	require.Nil(t, PostTiFlashAccelerateSchedule(ctx, 1))
-	z, ok := tiflash.SyncStatus[1]
-	require.Equal(t, true, ok)
-	require.Equal(t, true, z.Accel)
-
 	// GetTiFlashStoresStat
 	stats, err := GetTiFlashStoresStat(ctx)
 	require.NoError(t, err)
@@ -275,7 +269,7 @@ func TestTiFlashManager(t *testing.T) {
 	require.NoError(t, err)
 	// Have table a and partitions p1, p2
 	require.Equal(t, 3, len(rules))
-	z, ok = tiflash.SyncStatus[2]
+	z, ok := tiflash.SyncStatus[2]
 	require.Equal(t, true, ok)
 	require.Equal(t, true, z.Accel)
 	z, ok = tiflash.SyncStatus[3]
@@ -283,4 +277,44 @@ func TestTiFlashManager(t *testing.T) {
 	require.Equal(t, true, z.Accel)
 
 	CloseTiFlashManager(ctx)
+}
+
+func TestRuleOp(t *testing.T) {
+	rule := MakeNewRule(1, 2, []string{"a"})
+	ruleOp := RuleOp{
+		TiFlashRule:      &rule,
+		Action:           RuleOpAdd,
+		DeleteByIDPrefix: false,
+	}
+	j, err := json.Marshal(&ruleOp)
+	require.NoError(t, err)
+	ruleOpExpect := &RuleOp{}
+	json.Unmarshal(j, ruleOpExpect)
+	require.Equal(t, ruleOp.Action, ruleOpExpect.Action)
+	require.Equal(t, *ruleOp.TiFlashRule, *ruleOpExpect.TiFlashRule)
+	ruleOps := make([]RuleOp, 0, 2)
+	for i := 0; i < 10; i += 2 {
+		rule := MakeNewRule(int64(i), 2, []string{"a"})
+		ruleOps = append(ruleOps, RuleOp{
+			TiFlashRule:      &rule,
+			Action:           RuleOpAdd,
+			DeleteByIDPrefix: false,
+		})
+	}
+	for i := 1; i < 10; i += 2 {
+		rule := MakeNewRule(int64(i), 2, []string{"b"})
+		ruleOps = append(ruleOps, RuleOp{
+			TiFlashRule:      &rule,
+			Action:           RuleOpDel,
+			DeleteByIDPrefix: false,
+		})
+	}
+	j, err = json.Marshal(ruleOps)
+	require.NoError(t, err)
+	var ruleOpsExpect []RuleOp
+	json.Unmarshal(j, &ruleOpsExpect)
+	for i := 0; i < len(ruleOps); i++ {
+		require.Equal(t, ruleOps[i].Action, ruleOpsExpect[i].Action)
+		require.Equal(t, *ruleOps[i].TiFlashRule, *ruleOpsExpect[i].TiFlashRule)
+	}
 }

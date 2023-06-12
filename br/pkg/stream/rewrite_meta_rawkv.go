@@ -65,9 +65,10 @@ type DBReplace struct {
 
 // SchemasReplace specifies schemas information mapping from up-stream cluster to up-stream cluster.
 type SchemasReplace struct {
-	status           RewriteStatus
-	DbMap            map[UpstreamID]*DBReplace
-	globalTableIdMap map[UpstreamID]DownstreamID
+	status             RewriteStatus
+	DbMap              map[UpstreamID]*DBReplace
+	globalTableIdMap   map[UpstreamID]DownstreamID
+	needConstructIdMap bool
 
 	ingestRecorder  *ingestrec.IngestRecorder
 	TiflashRecorder *tiflashrec.TiFlashRecorder
@@ -104,6 +105,7 @@ func NewDBReplace(name string, newID DownstreamID) *DBReplace {
 // NewSchemasReplace creates a SchemasReplace struct.
 func NewSchemasReplace(
 	dbMap map[UpstreamID]*DBReplace,
+	needConstructIdMap bool,
 	tiflashRecorder *tiflashrec.TiFlashRecorder,
 	restoreTS uint64,
 	tableFilter filter.Filter,
@@ -125,6 +127,7 @@ func NewSchemasReplace(
 	return &SchemasReplace{
 		DbMap:                     dbMap,
 		globalTableIdMap:          globalTableIdMap,
+		needConstructIdMap:        needConstructIdMap,
 		ingestRecorder:            ingestrec.New(),
 		TiflashRecorder:           tiflashRecorder,
 		RewriteTS:                 restoreTS,
@@ -134,6 +137,10 @@ func NewSchemasReplace(
 		insertDeleteRangeForTable: insertDeleteRangeForTable,
 		insertDeleteRangeForIndex: insertDeleteRangeForIndex,
 	}
+}
+
+func (sr *SchemasReplace) NeedConstructIdMap() bool {
+	return sr.needConstructIdMap
 }
 
 // TidySchemaMaps produces schemas id maps from up-stream to down-stream.
@@ -337,16 +344,15 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 
 	dbReplace, exist := sr.DbMap[dbID]
 	if !exist {
-		if sr.IsPreConsturctMapStatus() {
-			newID, err := sr.genGenGlobalID(context.Background())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			dbReplace = NewDBReplace("", newID)
-			sr.DbMap[dbID] = dbReplace
-		} else {
+		if !sr.IsPreConsturctMapStatus() {
 			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", dbID)
 		}
+		newID, err := sr.genGenGlobalID(context.Background())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		dbReplace = NewDBReplace("", newID)
+		sr.DbMap[dbID] = dbReplace
 	}
 
 	tableReplace, exist := dbReplace.TableMap[tableID]
@@ -641,21 +647,19 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 
 	if meta.IsDBkey(rawKey.Field) {
 		return sr.rewriteEntryForDB(e, cf)
-	} else if meta.IsDBkey(rawKey.Key) {
-		if meta.IsTableKey(rawKey.Field) {
-			return sr.rewriteEntryForTable(e, cf)
-		} else if meta.IsAutoTableIDKey(rawKey.Field) {
-			return sr.rewriteEntryForAutoTableIDKey(e, cf)
-		} else if meta.IsSequenceKey(rawKey.Field) {
-			return sr.rewriteEntryForSequenceKey(e, cf)
-		} else if meta.IsAutoRandomTableIDKey(rawKey.Field) {
-			return sr.rewriteEntryForAutoRandomTableIDKey(e, cf)
-		} else {
-			return nil, nil
-		}
-	} else {
+	} else if !meta.IsDBkey(rawKey.Key) {
 		return nil, nil
 	}
+	if meta.IsTableKey(rawKey.Field) {
+		return sr.rewriteEntryForTable(e, cf)
+	} else if meta.IsAutoTableIDKey(rawKey.Field) {
+		return sr.rewriteEntryForAutoTableIDKey(e, cf)
+	} else if meta.IsSequenceKey(rawKey.Field) {
+		return sr.rewriteEntryForSequenceKey(e, cf)
+	} else if meta.IsAutoRandomTableIDKey(rawKey.Field) {
+		return sr.rewriteEntryForAutoRandomTableIDKey(e, cf)
+	}
+	return nil, nil
 }
 
 func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {

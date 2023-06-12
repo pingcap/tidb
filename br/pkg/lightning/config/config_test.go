@@ -83,6 +83,38 @@ func TestAdjustPdAddrAndPort(t *testing.T) {
 	require.Equal(t, "123.45.67.89:1234", cfg.TiDB.PdAddr)
 }
 
+func TestPausePDSchedulerScope(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK,
+		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
+	)
+	defer ts.Close()
+	tmpDir := t.TempDir()
+
+	cfg := config.NewConfig()
+	cfg.TiDB.Host = host
+	cfg.TiDB.StatusPort = port
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.SortedKVDir = "test"
+	cfg.Mydumper.SourceDir = tmpDir
+	require.Equal(t, config.PausePDSchedulerScopeTable, cfg.TikvImporter.PausePDSchedulerScope)
+
+	cfg.TikvImporter.PausePDSchedulerScope = ""
+	err := cfg.Adjust(context.Background())
+	require.ErrorContains(t, err, "pause-pd-scheduler-scope is invalid")
+
+	cfg.TikvImporter.PausePDSchedulerScope = "xxx"
+	err = cfg.Adjust(context.Background())
+	require.ErrorContains(t, err, "pause-pd-scheduler-scope is invalid")
+
+	cfg.TikvImporter.PausePDSchedulerScope = "TABLE"
+	require.NoError(t, cfg.Adjust(context.Background()))
+	require.Equal(t, config.PausePDSchedulerScopeTable, cfg.TikvImporter.PausePDSchedulerScope)
+
+	cfg.TikvImporter.PausePDSchedulerScope = "globAL"
+	require.NoError(t, cfg.Adjust(context.Background()))
+	require.Equal(t, config.PausePDSchedulerScopeGlobal, cfg.TikvImporter.PausePDSchedulerScope)
+}
+
 func TestAdjustPdAddrAndPortViaAdvertiseAddr(t *testing.T) {
 	ts, host, port := startMockServer(t, http.StatusOK,
 		`{"port":6666,"advertise-address":"121.212.121.212:5555","path":"34.34.34.34:3434"}`,
@@ -783,7 +815,7 @@ func TestLoadConfig(t *testing.T) {
 	err = taskCfg.Adjust(context.Background())
 	require.NoError(t, err)
 	equivalentDSN := taskCfg.Checkpoint.MySQLParam.ToDriverConfig().FormatDSN()
-	expectedDSN := "guest:12345@tcp(172.16.30.11:4001)/?maxAllowedPacket=67108864&charset=utf8mb4&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_AUTO_CREATE_USER%2CNO_ENGINE_SUBSTITUTION%27"
+	expectedDSN := "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8mb4&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_AUTO_CREATE_USER%2CNO_ENGINE_SUBSTITUTION%27"
 	require.Equal(t, expectedDSN, equivalentDSN)
 
 	result := taskCfg.String()
@@ -806,6 +838,7 @@ func TestDefaultImporterBackendValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, cfg.App.IndexConcurrency)
 	require.Equal(t, 6, cfg.App.TableConcurrency)
+	require.Equal(t, 4096, cfg.TikvImporter.RegionSplitBatchSize)
 }
 
 func TestDefaultTidbBackendValue(t *testing.T) {
@@ -820,16 +853,31 @@ func TestDefaultTidbBackendValue(t *testing.T) {
 }
 
 func TestDefaultCouldBeOverwritten(t *testing.T) {
+	ctx := context.Background()
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.TikvImporter.Backend = "local"
 	cfg.App.IndexConcurrency = 20
 	cfg.App.TableConcurrency = 60
 	cfg.TiDB.DistSQLScanConcurrency = 1
-	err := cfg.Adjust(context.Background())
+	err := cfg.Adjust(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 20, cfg.App.IndexConcurrency)
 	require.Equal(t, 60, cfg.App.TableConcurrency)
+
+	require.Equal(t, 32768, cfg.TikvImporter.SendKVPairs)
+	require.Equal(t, config.ByteSize(config.KVWriteBatchSize), cfg.TikvImporter.SendKVSize)
+
+	cfg.TikvImporter.RegionSplitConcurrency = 1
+	// backoff can be 0
+	cfg.TikvImporter.RegionCheckBackoffLimit = 0
+	err = cfg.Adjust(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, cfg.TikvImporter.RegionSplitConcurrency)
+	require.Equal(t, 0, cfg.TikvImporter.RegionCheckBackoffLimit)
+	cfg.TikvImporter.RegionSplitBatchSize = 0
+	err = cfg.Adjust(ctx)
+	require.ErrorContains(t, err, "`tikv-importer.region-split-batch-size` got 0, should be larger than 0")
 }
 
 func TestLoadFromInvalidConfig(t *testing.T) {
@@ -938,6 +986,53 @@ func TestAdjustDiskQuota(t *testing.T) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	require.NoError(t, cfg.Adjust(ctx))
 	require.Equal(t, int64(0), int64(cfg.TikvImporter.DiskQuota))
+}
+
+func TestAdjustOnDuplicate(t *testing.T) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+	ctx := context.Background()
+
+	cfg.TikvImporter.Backend = config.BackendTiDB
+	cfg.TikvImporter.OnDuplicate = ""
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, config.ReplaceOnDup, cfg.TikvImporter.OnDuplicate)
+
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.OnDuplicate = ""
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Empty(t, cfg.TikvImporter.OnDuplicate)
+
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, config.ReplaceOnDup, cfg.TikvImporter.OnDuplicate)
+
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
+	cfg.TikvImporter.IncrementalImport = true
+	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.incremental-import")
+
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
+	cfg.TikvImporter.IncrementalImport = false
+	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRemove
+	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution")
+}
+
+func TestAdjustMaxErrorRecords(t *testing.T) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+	ctx := context.Background()
+
+	cfg.App.MaxErrorRecords = 0
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, int64(100), cfg.App.MaxErrorRecords)
+
+	cfg.App.MaxErrorRecords = 0
+	cfg.App.MaxError.Syntax.Store(1000)
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, int64(1000), cfg.App.MaxErrorRecords)
 }
 
 func TestRemoveAllowAllFiles(t *testing.T) {

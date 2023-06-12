@@ -16,7 +16,9 @@ package integration_serial_test
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"math"
 	"strings"
 	"testing"
@@ -24,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -2326,7 +2329,9 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:00.999999');").Check(testkit.Rows("0.000000"))
 	tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:01.000000');").Check(testkit.Rows("1.000000"))
 	tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:07.999999');").Check(testkit.Rows("2147483647.999999"))
-	tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:08.000000');").Check(testkit.Rows("0.000000"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:08.000000');").Check(testkit.Rows("2147483648.000000"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('3001-01-18 23:59:59.999999');").Check(testkit.Rows("32536771199.999999"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('3001-01-19 00:00:00.000000');").Check(testkit.Rows("0.000000"))
 
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(151113);")
 	result.Check(testkit.Rows("1447372800"))
@@ -2357,7 +2362,9 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:07.999999');")
 	result.Check(testkit.Rows("2147483647.999999"))
-	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:08');")
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('3001-01-18 23:59:59.999999');")
+	result.Check(testkit.Rows("32536771199.999999"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('3001-01-19 00:00:00');")
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(0);")
 	result.Check(testkit.Rows("0"))
@@ -4413,4 +4420,58 @@ func TestPartitionPruningRelaxOP(t *testing.T) {
 
 	tk.MustQuery("SELECT COUNT(*) FROM t1 WHERE d < '2018-01-01'").Check(testkit.Rows("6"))
 	tk.MustQuery("SELECT COUNT(*) FROM t1 WHERE d > '2018-01-01'").Check(testkit.Rows("12"))
+}
+
+func TestTiDBRowChecksumBuiltin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	checksum := func(cols ...interface{}) uint32 {
+		buf := make([]byte, 0, 64)
+		for _, col := range cols {
+			switch x := col.(type) {
+			case int:
+				buf = binary.LittleEndian.AppendUint64(buf, uint64(x))
+			case string:
+				buf = binary.LittleEndian.AppendUint32(buf, uint32(len(x)))
+				buf = append(buf, []byte(x)...)
+			}
+		}
+		return crc32.ChecksumIEEE(buf)
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, c int)")
+
+	// row with 2 checksums
+	tk.MustExec("insert into t values (1, 10)")
+	tk.MustExec("alter table t change column c c varchar(10)")
+	checksum1 := fmt.Sprintf("%d,%d", checksum(1, 10), checksum(1, "10"))
+	// row with 1 checksum
+	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
+	tk.MustExec("insert into t values (2, '20')")
+	checksum2 := fmt.Sprintf("%d", checksum(2, "20"))
+	// row without checksum
+	tk.Session().GetSessionVars().EnableRowLevelChecksum = false
+	tk.MustExec("insert into t values (3, '30')")
+	checksum3 := "<nil>"
+
+	// fast point-get
+	tk.MustQuery("select tidb_row_checksum() from t where id = 1").Check(testkit.Rows(checksum1))
+	tk.MustQuery("select tidb_row_checksum() from t where id = 2").Check(testkit.Rows(checksum2))
+	tk.MustQuery("select tidb_row_checksum() from t where id = 3").Check(testkit.Rows(checksum3))
+	// fast batch-point-get
+	tk.MustQuery("select tidb_row_checksum() from t where id in (1, 2, 3)").Check(testkit.Rows(checksum1, checksum2, checksum3))
+
+	// non-fast point-get
+	tk.MustGetDBError("select length(tidb_row_checksum()) from t where id = 1", expression.ErrNotSupportedYet)
+	tk.MustGetDBError("select c from t where id = 1 and tidb_row_checksum() is not null", expression.ErrNotSupportedYet)
+	// non-fast batch-point-get
+	tk.MustGetDBError("select length(tidb_row_checksum()) from t where id in (1, 2, 3)", expression.ErrNotSupportedYet)
+	tk.MustGetDBError("select c from t where id in (1, 2, 3) and tidb_row_checksum() is not null", expression.ErrNotSupportedYet)
+
+	// other plans
+	tk.MustGetDBError("select tidb_row_checksum() from t", expression.ErrNotSupportedYet)
+	tk.MustGetDBError("select tidb_row_checksum() from t where id > 0", expression.ErrNotSupportedYet)
 }

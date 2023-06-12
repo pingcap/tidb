@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "dead_table_lock_checker.go",
         "event.go",
+        "mock.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/ddl/util",

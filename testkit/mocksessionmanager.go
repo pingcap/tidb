@@ -104,7 +104,7 @@ func (msm *MockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 }
 
 // Kill implements the SessionManager.Kill interface.
-func (*MockSessionManager) Kill(uint64, bool) {
+func (*MockSessionManager) Kill(uint64, bool, bool) {
 }
 
 // KillAllConnections implements the SessionManager.KillAllConnections interface.
@@ -118,6 +118,11 @@ func (*MockSessionManager) UpdateTLSConfig(*tls.Config) {
 // ServerID get server id.
 func (msm *MockSessionManager) ServerID() uint64 {
 	return msm.SerID
+}
+
+// GetAutoAnalyzeProcID implement SessionManager interface.
+func (msm *MockSessionManager) GetAutoAnalyzeProcID() uint64 {
+	return uint64(1)
 }
 
 // StoreInternalSession is to store internal session.
@@ -159,12 +164,12 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 		processInfo := se.ShowProcess()
 		ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
 		if !ok {
-			msm.Kill(se.GetSessionVars().ConnectionID, false)
+			msm.Kill(se.GetSessionVars().ConnectionID, false, false)
 			continue
 		}
 		_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
 		if !ok {
-			msm.Kill(se.GetSessionVars().ConnectionID, false)
+			msm.Kill(se.GetSessionVars().ConnectionID, false, false)
 			continue
 		}
 	}

@@ -25,13 +25,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
 // BackendCtxMgr is used to manage the backend context.
 type BackendCtxMgr interface {
-	Available() bool
-	Register(ctx context.Context, unique bool, jobID int64) (BackendCtx, error)
+	CheckAvailable() (bool, error)
+	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client) (BackendCtx, error)
 	Unregister(jobID int64)
 	Load(jobID int64) (BackendCtx, bool)
 }
@@ -53,23 +54,31 @@ func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 	LitMemRoot = mgr.memRoot
 	LitDiskRoot = mgr.diskRoot
 	LitDiskRoot.UpdateUsage()
+	err := LitDiskRoot.StartupCheck()
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl-ingest] ingest backfill may not be available", zap.Error(err))
+	}
 	return mgr
 }
 
-// Available checks if the ingest backfill is available.
-func (m *litBackendCtxMgr) Available() bool {
+// CheckAvailable checks if the ingest backfill is available.
+func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
 	activeJobIDs := m.Keys()
 	if len(activeJobIDs) > 0 {
 		logutil.BgLogger().Info("[ddl-ingest] ingest backfill is already in use by another DDL job",
 			zap.Int64("job ID", activeJobIDs[0]))
-		return false
+		return false, nil
 	}
-	return true
+	if err := m.diskRoot.PreCheckUsage(); err != nil {
+		logutil.BgLogger().Info("[ddl-ingest] ingest backfill is not available", zap.Error(err))
+		return false, err
+	}
+	return true, nil
 }
 
 // Register creates a new backend and registers it to the backend context.
-func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int64) (BackendCtx, error) {
+func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if !exist {
 		m.memRoot.RefreshConsumption()
@@ -88,7 +97,7 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 			return nil, err
 		}
 
-		bcCtx := newBackendContext(ctx, jobID, bd, cfg.Lightning, defaultImportantVariables, m.memRoot, m.diskRoot)
+		bcCtx := newBackendContext(ctx, jobID, bd, cfg.Lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
 		m.Store(jobID, bcCtx)
 
 		m.memRoot.Consume(StructSizeBackendCtx)
@@ -118,9 +127,8 @@ func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error
 
 const checkpointUpdateInterval = 10 * time.Minute
 
-func newBackendContext(ctx context.Context, jobID int64, be *local.Backend,
-	cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot) *litBackendCtx {
-	return &litBackendCtx{
+func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot, etcdClient *clientv3.Client) *litBackendCtx {
+	bCtx := &litBackendCtx{
 		SyncMap:        generic.NewSyncMap[int64, *engineInfo](10),
 		MemRoot:        memRoot,
 		DiskRoot:       diskRoot,
@@ -131,7 +139,10 @@ func newBackendContext(ctx context.Context, jobID int64, be *local.Backend,
 		sysVars:        vars,
 		diskRoot:       diskRoot,
 		updateInterval: checkpointUpdateInterval,
+		etcdClient:     etcdClient,
 	}
+	bCtx.timeOfLastFlush.Store(time.Now())
+	return bCtx
 }
 
 // Unregister removes a backend context from the backend context manager.
@@ -142,6 +153,9 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 	}
 	bc.unregisterAll(jobID)
 	bc.backend.Close()
+	if bc.checkpointMgr != nil {
+		bc.checkpointMgr.Close()
+	}
 	m.memRoot.Release(StructSizeBackendCtx)
 	m.Delete(jobID)
 	m.memRoot.ReleaseWithTag(EncodeBackendTag(jobID))

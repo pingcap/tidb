@@ -8,16 +8,28 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 5,
+    shard_count = 10,
     deps = [
         "//config",
+        "//ddl",
+        "//ddl/util/callback",
+        "//kv",
         "//meta",
+        "//parser/model",
+        "//parser/terror",
         "//session",  #keep
+        "//sessionctx",
         "//testkit",  #keep
         "//testkit/testmain",
         "//testkit/testsetup",
+        "//util",
+        "//util/chunk",
+        "//util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",  #keep
         "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
     ],
 )

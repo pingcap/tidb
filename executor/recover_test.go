@@ -315,7 +315,7 @@ func TestRecoverTablePrivilege(t *testing.T) {
 	// Recover without drop/create privilege.
 	tk.MustExec("CREATE USER 'testrecovertable'@'localhost';")
 	newTk := testkit.NewTestKit(t, store)
-	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testrecovertable", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testrecovertable", Hostname: "localhost"}, nil, nil, nil))
 	newTk.MustGetErrCode("recover table t_recover", errno.ErrTableaccessDenied)
 	newTk.MustGetErrCode("flashback table t_recover", errno.ErrTableaccessDenied)
 
@@ -364,7 +364,7 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	// Flashback without super privilege.
 	tk.MustExec("CREATE USER 'testflashback'@'localhost';")
 	newTk := testkit.NewTestKit(t, store)
-	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashback", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashback", Hostname: "localhost"}, nil, nil, nil))
 	newTk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), errno.ErrPrivilegeCheckFail)
 	tk.MustExec("drop user 'testflashback'@'localhost';")
 
@@ -545,7 +545,7 @@ func TestFlashbackSchema(t *testing.T) {
 	// Recover without drop/create privilege.
 	tk.MustExec("CREATE USER 'testflashbackschema'@'localhost';")
 	newTk := testkit.NewTestKit(t, store)
-	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashbackschema", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashbackschema", Hostname: "localhost"}, nil, nil, nil))
 	newTk.MustGetErrCode("flashback database t_recover", errno.ErrDBaccessDenied)
 
 	// Got drop privilege, still failed.

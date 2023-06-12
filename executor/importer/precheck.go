@@ -17,93 +17,102 @@ package importer
 import (
 	"context"
 	"fmt"
+	"time"
 
-	"github.com/jedib0t/go-pretty/v6/table"
-	"github.com/jedib0t/go-pretty/v6/text"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	tidb "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// CheckRequirements checks the requirements for load data.
+const (
+	etcdDialTimeout = 5 * time.Second
+)
+
+// CheckRequirements checks the requirements for IMPORT INTO.
+// we check the following things here:
+//  1. target table should be empty
+//  2. no CDC or PiTR tasks running
+//
+// todo: check if there's running lightning tasks?
+// we check them one by one, and return the first error we meet.
+// todo: check all items and return all errors at once.
 func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec.SQLExecutor) error {
-	collector := newPreCheckCollector()
-	if e.ImportMode == PhysicalImportMode {
-		// todo: maybe we can reuse checker in lightning
-		sql := fmt.Sprintf("SELECT 1 FROM %s USE INDEX() LIMIT 1", common.UniqueTable(e.DBName, e.Table.Meta().Name.L))
-		rs, err := conn.ExecuteInternal(ctx, sql)
-		if err != nil {
-			return err
-		}
-		defer terror.Call(rs.Close)
-		rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-		if err != nil {
-			return err
-		}
-		if len(rows) > 0 {
-			collector.fail(precheck.CheckTargetTableEmpty, "target table is not empty")
-		} else {
-			collector.pass(precheck.CheckTargetTableEmpty)
-		}
+	// todo: maybe we can reuse checker in lightning
+	if err := e.checkTableEmpty(ctx, conn); err != nil {
+		return err
 	}
-	if !collector.success() {
-		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("\n" + collector.output())
+	return e.checkCDCPiTRTasks(ctx)
+}
+
+func (e *LoadDataController) checkTableEmpty(ctx context.Context, conn sqlexec.SQLExecutor) error {
+	sql := fmt.Sprintf("SELECT 1 FROM %s USE INDEX() LIMIT 1", common.UniqueTable(e.DBName, e.Table.Meta().Name.L))
+	rs, err := conn.ExecuteInternal(ctx, sql)
+	if err != nil {
+		return err
+	}
+	defer terror.Call(rs.Close)
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return err
+	}
+	if len(rows) > 0 {
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
 	}
 	return nil
 }
 
-const (
-	failed = "failed"
-	passed = "passed"
-)
-
-type preCheckCollector struct {
-	failCount int
-	t         table.Writer
-}
-
-func newPreCheckCollector() *preCheckCollector {
-	t := table.NewWriter()
-	t.AppendHeader(table.Row{"Check Item", "Result", "Detailed Message"})
-	t.SetColumnConfigs([]table.ColumnConfig{
-		{Name: "Check Item", WidthMax: 20},
-		{Name: "Result", WidthMax: 6},
-		{Name: "Detailed Message", WidthMax: 130},
-	})
-	style := table.StyleDefault
-	style.Format.Header = text.FormatDefault
-	t.SetStyle(style)
-	return &preCheckCollector{
-		t: t,
+func (e *LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
+	cli, err := GetEtcdClient()
+	if err != nil {
+		return err
 	}
-}
+	defer terror.Call(cli.Close)
 
-func (c *preCheckCollector) fail(item precheck.CheckItemID, msg string) {
-	c.failCount++
-	c.t.AppendRow(table.Row{item.DisplayName(), failed, msg})
-	c.t.AppendSeparator()
-}
-
-func (c *preCheckCollector) success() bool {
-	return c.failCount == 0
-}
-
-func (c *preCheckCollector) output() string {
-	c.t.SetAllowedRowLength(170)
-	c.t.SetRowPainter(func(row table.Row) text.Colors {
-		if result, ok := row[1].(string); ok {
-			if result == failed {
-				return text.Colors{text.FgRed}
-			}
+	pitrCli := streamhelper.NewMetaDataClient(cli.GetClient())
+	tasks, err := pitrCli.GetAllTasks(ctx)
+	if err != nil {
+		return err
+	}
+	if len(tasks) > 0 {
+		names := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			names = append(names, task.Info.GetName())
 		}
-		return nil
-	})
-	return c.t.Render() + "\n"
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
+	}
+
+	nameSet, err := utils.GetCDCChangefeedNameSet(ctx, cli.GetClient())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !nameSet.Empty() {
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(nameSet.MessageToUser())
+	}
+	return nil
 }
 
-func (c *preCheckCollector) pass(item precheck.CheckItemID) {
-	c.t.AppendRow(table.Row{item.DisplayName(), passed, ""})
-	c.t.AppendSeparator()
+// GetEtcdClient returns an etcd client.
+// exported for testing.
+func GetEtcdClient() (*etcd.Client, error) {
+	tidbCfg := tidb.GetGlobalConfig()
+	tls, err := util.NewTLSConfig(
+		util.WithCAPath(tidbCfg.Security.ClusterSSLCA),
+		util.WithCertAndKeyPath(tidbCfg.Security.ClusterSSLCert, tidbCfg.Security.ClusterSSLKey),
+	)
+	if err != nil {
+		return nil, err
+	}
+	ectdEndpoints, err := util.ParseHostPortAddr(tidbCfg.Path)
+	if err != nil {
+		return nil, err
+	}
+	return etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, "", tls)
 }

@@ -235,7 +235,7 @@ func (e *stmtEventInfo) ensureStmtContextOriginalSQL() string {
 		e.sc.InitSQLDigest(planCache.NormalizedSQL, planCache.SQLDigest)
 	}
 
-	if e.sc.OriginalSQL == "" && e.executeStmtID == 0 {
+	if e.sc.OriginalSQL == "" && e.executeStmtID == 0 && e.stmtNode != nil {
 		e.sc.OriginalSQL = e.stmtNode.Text()
 	}
 

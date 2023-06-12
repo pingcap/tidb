@@ -29,9 +29,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -118,10 +120,23 @@ const (
 		"Priv LONGTEXT NOT NULL DEFAULT ''," +
 		"PRIMARY KEY (Host, User)" +
 		")"
+
+	// For `mysql.db`, `mysql.tables_priv` and `mysql.columns_priv` table, we have a slight different
+	// schema definition with MySQL: columns `DB`/`Table_name`/`Column_name` are defined with case-insensitive
+	// collation(in MySQL, they are case-sensitive).
+
+	// The reason behind this is that when writing those records, MySQL always converts those names into lower case
+	// while TiDB does not do so in early implementations, which makes some 'GRANT'/'REVOKE' operations case-sensitive.
+
+	// In order to fix this, we decide to explicitly set case-insensitive collation for the related columns here, to
+	// make sure:
+	// * The 'GRANT'/'REVOKE' could be case-insensitive for new clusters(compatible with MySQL).
+	// * Keep all behaviors unchanged for upgraded cluster.
+
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE IF NOT EXISTS mysql.db (
 		Host					CHAR(255),
-		DB						CHAR(64),
+		DB						CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		User					CHAR(32),
 		Select_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Insert_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -146,9 +161,9 @@ const (
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
 	CreateTablePrivTable = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
 		Host		CHAR(255),
-		DB			CHAR(64),
+		DB			CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		User		CHAR(32),
-		Table_name	CHAR(64),
+		Table_name	CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		Grantor		CHAR(77),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
@@ -157,10 +172,10 @@ const (
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
 		Host		CHAR(255),
-		DB			CHAR(64),
+		DB			CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		User		CHAR(32),
-		Table_name	CHAR(64),
-		Column_name	CHAR(64),
+		Table_name	CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
+		Column_name	CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
@@ -405,7 +420,8 @@ const (
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version_seq (table_id, version, seq_no),
-		KEY table_create_time (table_id, create_time, seq_no)
+		KEY table_create_time (table_id, create_time, seq_no),
+    	KEY idx_create_time (create_time)
 	);`
 	// CreateStatsMetaHistory stores the historical meta stats.
 	CreateStatsMetaHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_meta_history (
@@ -416,7 +432,8 @@ const (
     	source varchar(40) NOT NULL,
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version (table_id, version),
-		KEY table_create_time (table_id, create_time)
+		KEY table_create_time (table_id, create_time),
+    	KEY idx_create_time (create_time)
 	);`
 	// CreateAnalyzeJobs stores the analyze jobs.
 	CreateAnalyzeJobs = `CREATE TABLE IF NOT EXISTS mysql.analyze_jobs (
@@ -865,11 +882,23 @@ const (
 	version142 = 142
 	// version 143 add column `error` to `mysql.tidb_global_task` and `mysql.tidb_background_subtask`
 	version143 = 143
+	// version 144 turn off `tidb_plan_cache_invalidation_on_fresh_stats`, which is introduced in 7.1-rc,
+	// if it's upgraded from an existing old version cluster.
+	version144 = 144
+	// version 145 to only add a version make we know when we support upgrade state.
+	version145 = 145
+	// version 146 add index for mysql.stats_meta_history and mysql.stats_history.
+	version146 = 146
+	// ...
+	// [version147, version166] is the version range reserved for patches of 7.1.x
+	// ...
+	// version 167 add column `step` to `mysql.tidb_background_subtask`
+	version167 = 167
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version143
+var currentBootstrapVersion int64 = version167
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1001,6 +1030,10 @@ var (
 		upgradeToVer141,
 		upgradeToVer142,
 		upgradeToVer143,
+		upgradeToVer144,
+		// We will only use Ver145 to differentiate versions, so it is skipped here.
+		upgradeToVer146,
+		upgradeToVer167,
 	}
 )
 
@@ -1058,6 +1091,9 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	return row.GetString(0), false, nil
 }
 
+// SupportUpgradeStateVer is exported for testing.
+var SupportUpgradeStateVer = version145
+
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s Session) {
@@ -1086,14 +1122,23 @@ func upgrade(s Session) {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
+	if ver >= int64(SupportUpgradeStateVer) {
+		syncUpgradeState(s)
+	}
 	if isNull {
 		upgradeToVer99Before(s)
 	}
+
+	// It is only used in test.
+	addMockBootstrapVersionForTest(s)
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
 	if isNull {
 		upgradeToVer99After(s)
+	}
+	if ver >= int64(SupportUpgradeStateVer) {
+		syncNormalRunning(s)
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -1120,6 +1165,87 @@ func upgrade(s Session) {
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
 	}
+}
+
+func syncUpgradeState(s Session) {
+	totalInterval := time.Duration(internalSQLTimeout) * time.Second
+	ctx, cancelFunc := context.WithTimeout(context.Background(), totalInterval)
+	defer cancelFunc()
+	dom := domain.GetDomain(s)
+	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
+	if err != nil {
+		logutil.BgLogger().Fatal("[upgrading] update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
+	}
+
+	interval := 200 * time.Millisecond
+	retryTimes := int(totalInterval / interval)
+	for i := 0; i < retryTimes; i++ {
+		op, err := owner.GetOwnerOpValue(ctx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
+		if err == nil && op.String() == owner.OpGetUpgradingState.String() {
+			break
+		}
+		if i == retryTimes-1 {
+			logutil.BgLogger().Fatal("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
+		}
+		if i%10 == 0 {
+			logutil.BgLogger().Warn("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
+		}
+		time.Sleep(interval)
+	}
+
+	retryTimes = 60
+	interval = 500 * time.Millisecond
+	for i := 0; i < retryTimes; i++ {
+		jobErrs, err := ddl.PauseAllJobsBySystem(s)
+		if err == nil && len(jobErrs) == 0 {
+			break
+		}
+		jobErrStrs := make([]string, 0, len(jobErrs))
+		for _, jobErr := range jobErrs {
+			if dbterror.ErrPausedDDLJob.Equal(jobErr) {
+				continue
+			}
+			jobErrStrs = append(jobErrStrs, jobErr.Error())
+		}
+		if err == nil && len(jobErrStrs) == 0 {
+			break
+		}
+
+		if i == retryTimes-1 {
+			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
+		}
+		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
+		time.Sleep(interval)
+	}
+	logutil.BgLogger().Info("[upgrading] update global state to upgrading", zap.String("state", syncer.StateUpgrading))
+}
+
+func syncNormalRunning(s Session) {
+	failpoint.Inject("mockResumeAllJobsFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			dom := domain.GetDomain(s)
+			//nolint: errcheck
+			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), syncer.NewStateInfo(syncer.StateNormalRunning))
+			failpoint.Return()
+		}
+	})
+
+	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
+	if err != nil {
+		logutil.BgLogger().Warn("[upgrading] resume all paused jobs failed", zap.Error(err))
+	}
+	for _, e := range jobErrs {
+		logutil.BgLogger().Warn("[upgrading] resume the job failed ", zap.Error(e))
+	}
+
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelFunc()
+	dom := domain.GetDomain(s)
+	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateNormalRunning))
+	if err != nil {
+		logutil.BgLogger().Fatal("[upgrading] update global state to normal failed", zap.Error(err))
+	}
+	logutil.BgLogger().Info("[upgrading] update global state to normal running finished")
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
@@ -2426,7 +2552,7 @@ func upgradeToVer136(s Session, ver int64) {
 	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
 }
 
-func upgradeToVer137(s Session, ver int64) {
+func upgradeToVer137(_ Session, _ int64) {
 	// NOOP, we don't depend on ddl to init the default group due to backward compatible issue.
 }
 
@@ -2504,6 +2630,40 @@ func upgradeToVer143(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer144(s Session, ver int64) {
+	if ver >= version144 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
+}
+
+func upgradeToVer146(s Session, ver int64) {
+	if ver >= version146 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer167(s Session, ver int64) {
+	if ver >= version167 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {

@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
-	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -293,11 +293,10 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 			assert.NoError(t, err)
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8)
 		case model.StateWriteReorganization:
-			if reorgTime < 1 {
-				reorgTime++
-			} else {
+			if reorgTime >= 1 {
 				return
 			}
+			reorgTime++
 			_, err = tk1.Exec("insert into t values (10, 10)")
 			assert.NoError(t, err)
 			_, err = tk1.Exec("delete from t where b = 6")

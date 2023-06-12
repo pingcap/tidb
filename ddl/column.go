@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/bits"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -834,7 +836,7 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 	// enable: curl -X PUT -d "pause" "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/ddl/mockDelayInModifyColumnTypeWithData".
 	// disable: curl -X DELETE "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/ddl/mockDelayInModifyColumnTypeWithData"
 	failpoint.Inject("mockDelayInModifyColumnTypeWithData", func() {})
-	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+	err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onModifyColumn",
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tbl.Meta().Name, oldCol.Name)
@@ -845,6 +847,10 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 		return w.updateCurrentElement(tbl, reorgInfo)
 	})
 	if err != nil {
+		if dbterror.ErrPausedDDLJob.Equal(err) {
+			return false, ver, nil
+		}
+
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
 			// If timeout, we should return, check for the owner and re-wait job done.
 			return false, ver, nil
@@ -1098,7 +1104,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 			TestReorgGoroutineRunning <- a
 			for {
 				time.Sleep(30 * time.Millisecond)
-				if w.getReorgCtx(reorgInfo.Job.ID).isReorgCanceled() {
+				if w.isReorgCancelled(reorgInfo.Job.ID) {
 					// Job is cancelled. So it can't be done.
 					failpoint.Return(dbterror.ErrCancelledDDLJob)
 				}
@@ -1180,6 +1186,9 @@ type updateColumnWorker struct {
 	rowDecoder *decoder.RowDecoder
 
 	rowMap map[int64]types.Datum
+
+	checksumBuffer rowcodec.RowData
+	checksumNeeded bool
 }
 
 func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
@@ -1197,12 +1206,33 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 		}
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
+	checksumNeeded := false
+	failpoint.Inject("forceRowLevelChecksumOnUpdateColumnBackfill", func() {
+		orig := variable.EnableRowLevelChecksum.Load()
+		defer variable.EnableRowLevelChecksum.Store(orig)
+		variable.EnableRowLevelChecksum.Store(true)
+	})
+	// We use global `EnableRowLevelChecksum` to detect whether checksum is enabled in ddl backfill worker because
+	// `SessionVars.IsRowLevelChecksumEnabled` will filter out internal sessions.
+	if variable.EnableRowLevelChecksum.Load() {
+		if numNonPubCols := len(t.DeletableCols()) - len(t.Cols()); numNonPubCols > 1 {
+			cols := make([]*model.ColumnInfo, len(t.DeletableCols()))
+			for i, col := range t.DeletableCols() {
+				cols[i] = col.ToInfo()
+			}
+			logutil.BgLogger().Warn("skip checksum in update-column backfill since the number of non-public columns is greater than 1",
+				zap.String("jobQuery", reorgInfo.Query), zap.String("reorgInfo", reorgInfo.String()), zap.Any("cols", cols))
+		} else {
+			checksumNeeded = true
+		}
+	}
 	return &updateColumnWorker{
-		backfillCtx: newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.SchemaName, t, jc, "update_col_rate", false),
-		oldColInfo:  oldCol,
-		newColInfo:  newCol,
-		rowDecoder:  rowDecoder,
-		rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
+		backfillCtx:    newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.SchemaName, t, jc, "update_col_rate", false),
+		oldColInfo:     oldCol,
+		newColInfo:     newCol,
+		rowDecoder:     rowDecoder,
+		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
+		checksumNeeded: checksumNeeded,
 	}
 }
 
@@ -1332,15 +1362,15 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	newColumnIDs := make([]int64, 0, len(w.rowMap))
 	newRow := make([]types.Datum, 0, len(w.rowMap))
 	for colID, val := range w.rowMap {
 		newColumnIDs = append(newColumnIDs, colID)
 		newRow = append(newRow, val)
 	}
+	checksums := w.calcChecksums()
 	sctx, rd := w.sessCtx.GetSessionVars().StmtCtx, &w.sessCtx.GetSessionVars().RowEncoder
-	newRowVal, err := tablecodec.EncodeRow(sctx, newRow, newColumnIDs, nil, nil, rd)
+	newRowVal, err := tablecodec.EncodeRow(sctx, newRow, newColumnIDs, nil, nil, rd, checksums...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1348,6 +1378,38 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	w.rowRecords = append(w.rowRecords, &rowRecord{key: recordKey, vals: newRowVal, warning: recordWarning})
 	w.cleanRowMap()
 	return nil
+}
+
+func (w *updateColumnWorker) calcChecksums() []uint32 {
+	if !w.checksumNeeded {
+		return nil
+	}
+	// when w.checksumNeeded is true, it indicates that there is only one write-reorg column (the new column) and other
+	// columns are public, thus we have to calculate two checksums that one of which only contains the old column and
+	// the other only contains the new column.
+	var checksums [2]uint32
+	for i, id := range []int64{w.newColInfo.ID, w.oldColInfo.ID} {
+		if len(w.checksumBuffer.Cols) > 0 {
+			w.checksumBuffer.Cols = w.checksumBuffer.Cols[:0]
+		}
+		for _, col := range w.table.DeletableCols() {
+			if col.ID == id || (col.IsGenerated() && !col.GeneratedStored) {
+				continue
+			}
+			d := w.rowMap[col.ID]
+			w.checksumBuffer.Cols = append(w.checksumBuffer.Cols, rowcodec.ColData{ColumnInfo: col.ToInfo(), Datum: &d})
+		}
+		if !sort.IsSorted(w.checksumBuffer) {
+			sort.Sort(w.checksumBuffer)
+		}
+		checksum, err := w.checksumBuffer.Checksum()
+		if err != nil {
+			logutil.BgLogger().Warn("skip checksum in update-column backfill due to encode error", zap.Error(err))
+			return nil
+		}
+		checksums[i] = checksum
+	}
+	return checksums[:]
 }
 
 // reformatErrors casted error because `convertTo` function couldn't package column name and datum value for some errors.
@@ -1385,6 +1447,20 @@ func (w *updateColumnWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
+
+		// Because TiCDC do not want this kind of change,
+		// so we set the lossy DDL reorg txn source to 1 to
+		// avoid TiCDC to replicate this kind of change.
+		var txnSource uint64
+		if val := txn.GetOption(kv.TxnSource); val != nil {
+			txnSource, _ = val.(uint64)
+		}
+		err := kv.SetLossyDDLReorgSource(&txnSource, kv.LossyDDLColumnReorgSource)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		txn.SetOption(kv.TxnSource, txnSource)
+
 		txn.SetOption(kv.Priority, handleRange.priority)
 		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(handleRange.getJobID()); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)

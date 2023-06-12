@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/logutil"
@@ -50,12 +51,20 @@ type CheckpointManager struct {
 	mu              sync.Mutex
 	minTaskIDSynced int
 	dirty           bool
+	// Local meta.
+	pidLocal   int64
+	startLocal kv.Key
+	endLocal   kv.Key
 
 	// Persisted to the storage.
 	minKeySyncLocal  kv.Key
 	minKeySyncGlobal kv.Key
 	localCnt         int
 	globalCnt        int
+	// Global meta.
+	pidGlobal   int64
+	startGlobal kv.Key
+	endGlobal   kv.Key
 
 	// For persisting the checkpoint periodically.
 	updating      bool
@@ -75,7 +84,7 @@ type TaskCheckpoint struct {
 
 // FlushController is an interface to control the flush of the checkpoint.
 type FlushController interface {
-	Flush(indexID int64, force bool) (flushed, imported bool, err error)
+	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
 }
 
 // NewCheckpointManager creates a new checkpoint manager.
@@ -104,13 +113,15 @@ func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
 		cm.updateCheckpointLoop()
 		cm.updaterWg.Done()
 	}()
+	logutil.BgLogger().Info("[ddl-ingest] create checkpoint manager",
+		zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 	return cm, nil
 }
 
 // InitInstanceAddr returns the string concat with instance address and temp-dir.
 func InitInstanceAddr() string {
 	cfg := config.GetGlobalConfig()
-	dsn := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+	dsn := net.JoinHostPort(cfg.AdvertiseAddress, strconv.Itoa(int(cfg.Port)))
 	return fmt.Sprintf("%s:%s", dsn, cfg.TempDir)
 }
 
@@ -163,13 +174,27 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 	cp.currentKeys += added
 	s.mu.Unlock()
 
-	flushed, imported, err := s.flushCtrl.Flush(s.indexID, false)
+	flushed, imported, err := s.flushCtrl.Flush(s.indexID, FlushModeAuto)
 	if !flushed || err != nil {
 		return err
 	}
-	// Progress the minimum synced key.
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.progressLocalSyncMinKey()
+	if imported && s.minKeySyncGlobal.Cmp(s.minKeySyncLocal) != 0 {
+		s.minKeySyncGlobal = s.minKeySyncLocal
+		s.globalCnt = s.localCnt
+		s.dirty = true
+
+		s.pidGlobal = s.pidLocal
+		s.startGlobal = s.startLocal
+		s.endGlobal = s.endLocal
+	}
+	return nil
+}
+
+func (s *CheckpointManager) progressLocalSyncMinKey() {
 	for {
 		cp := s.checkpoints[s.minTaskIDSynced+1]
 		if cp == nil || !cp.lastBatchSent || cp.currentKeys < cp.totalKeys {
@@ -181,31 +206,46 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 		delete(s.checkpoints, s.minTaskIDSynced)
 		s.dirty = true
 	}
-	if imported && s.minKeySyncGlobal.Cmp(s.minKeySyncLocal) != 0 {
-		s.minKeySyncGlobal = s.minKeySyncLocal
-		s.globalCnt = s.localCnt
-		s.dirty = true
-	}
-	return nil
 }
 
 // Close closes the checkpoint manager.
 func (s *CheckpointManager) Close() {
 	s.updaterExitCh <- struct{}{}
 	s.updaterWg.Wait()
-	for id, cp := range s.checkpoints {
-		s.localCnt += cp.totalKeys
-		s.globalCnt = s.localCnt
-		delete(s.checkpoints, id)
-	}
+	logutil.BgLogger().Info("[ddl-ingest] close checkpoint manager",
+		zap.Int64("jobID", s.jobID), zap.Int64("indexID", s.indexID))
 }
 
 // Sync syncs the checkpoint.
 func (s *CheckpointManager) Sync() {
+	_, _, err := s.flushCtrl.Flush(s.indexID, FlushModeForceLocal)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl-ingest] flush local engine failed", zap.Error(err))
+	}
+	s.mu.Lock()
+	s.progressLocalSyncMinKey()
+	s.mu.Unlock()
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	s.updaterCh <- &wg
 	wg.Wait()
+}
+
+// Reset resets the checkpoint manager between two partitions.
+func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	logutil.BgLogger().Info("[ddl-ingest] reset checkpoint manager",
+		zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.pidLocal),
+		zap.Int64("indexID", s.indexID), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
+	if s.pidLocal != newPhysicalID {
+		s.minKeySyncLocal = nil
+		s.minKeySyncGlobal = nil
+		s.minTaskIDSynced = 0
+		s.pidLocal = newPhysicalID
+		s.startLocal = start
+		s.endLocal = end
+	}
 }
 
 // JobReorgMeta is the metadata for a reorg job.
@@ -220,7 +260,12 @@ type ReorgCheckpoint struct {
 	GlobalSyncKey  kv.Key `json:"global_sync_key"`
 	GlobalKeyCount int    `json:"global_key_count"`
 	InstanceAddr   string `json:"instance_addr"`
-	Version        int64  `json:"version"`
+
+	PhysicalID int64  `json:"physical_id"`
+	StartKey   kv.Key `json:"start_key"`
+	EndKey     kv.Key `json:"end_key"`
+
+	Version int64 `json:"version"`
 }
 
 // JobCheckpointVersionCurrent is the current version of the checkpoint.
@@ -238,7 +283,7 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 	ddlSess := sess.NewSession(sessCtx)
 	return ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d and ele_type = %s;"
-		sql := fmt.Sprintf(template, s.jobID, s.indexID, wrapKey2String(meta.IndexElementKey))
+		sql := fmt.Sprintf(template, s.jobID, s.indexID, util.WrapKey2String(meta.IndexElementKey))
 		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
 		rows, err := se.Execute(ctx, sql, "get_checkpoint")
 		if err != nil {
@@ -256,15 +301,19 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 		if cp := reorgMeta.Checkpoint; cp != nil {
 			s.minKeySyncGlobal = cp.GlobalSyncKey
 			s.globalCnt = cp.GlobalKeyCount
-			if s.instanceAddr == cp.InstanceAddr {
+			if s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */ {
 				s.localDataIsValid = true
 				s.minKeySyncLocal = cp.LocalSyncKey
 				s.localCnt = cp.LocalKeyCount
+				s.pidGlobal = cp.PhysicalID
+				s.startGlobal = cp.StartKey
+				s.endGlobal = cp.EndKey
 			}
 			logutil.BgLogger().Info("[ddl-ingest] resume checkpoint",
 				zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
 				zap.String("local checkpoint", hex.EncodeToString(s.minKeySyncLocal)),
 				zap.String("global checkpoint", hex.EncodeToString(s.minKeySyncGlobal)),
+				zap.Int64("physical table ID", cp.PhysicalID),
 				zap.String("previous instance", cp.InstanceAddr),
 				zap.String("current instance", s.instanceAddr))
 			return nil
@@ -281,6 +330,9 @@ func (s *CheckpointManager) updateCheckpoint() error {
 	currentGlobalKey := s.minKeySyncGlobal
 	currentLocalCnt := s.localCnt
 	currentGlobalCnt := s.globalCnt
+	currentGlobalPID := s.pidGlobal
+	currentGlobalStart := s.startGlobal
+	currentGlobalEnd := s.endGlobal
 	s.updating = true
 	s.mu.Unlock()
 	defer func() {
@@ -303,13 +355,16 @@ func (s *CheckpointManager) updateCheckpoint() error {
 			LocalKeyCount:  currentLocalCnt,
 			GlobalKeyCount: currentGlobalCnt,
 			InstanceAddr:   s.instanceAddr,
+			PhysicalID:     currentGlobalPID,
+			StartKey:       currentGlobalStart,
+			EndKey:         currentGlobalEnd,
 			Version:        JobCheckpointVersionCurrent,
 		}
 		rawReorgMeta, err := json.Marshal(JobReorgMeta{Checkpoint: cp})
 		if err != nil {
 			return errors.Trace(err)
 		}
-		sql := fmt.Sprintf(template, wrapKey2String(rawReorgMeta), s.jobID, s.indexID, wrapKey2String(meta.IndexElementKey))
+		sql := fmt.Sprintf(template, util.WrapKey2String(rawReorgMeta), s.jobID, s.indexID, util.WrapKey2String(meta.IndexElementKey))
 		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
 		_, err = se.Execute(ctx, sql, "update_checkpoint")
 		if err != nil {
@@ -324,6 +379,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
 		zap.String("local checkpoint", hex.EncodeToString(currentLocalKey)),
 		zap.String("global checkpoint", hex.EncodeToString(currentGlobalKey)),
+		zap.Int64("global physical ID", currentGlobalPID),
 		zap.Error(err))
 	return err
 }
@@ -354,11 +410,4 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 			return
 		}
 	}
-}
-
-func wrapKey2String(key []byte) string {
-	if len(key) == 0 {
-		return "''"
-	}
-	return fmt.Sprintf("0x%x", key)
 }

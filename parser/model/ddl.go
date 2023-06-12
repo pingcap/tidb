@@ -288,6 +288,7 @@ type SubJob struct {
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
 	SnapshotVer uint64          `json:"snapshot_ver"`
+	RealStartTS uint64          `json:"real_start_ts"`
 	Revertible  bool            `json:"revertible"`
 	State       JobState        `json:"state"`
 	RowCount    int64           `json:"row_count"`
@@ -334,7 +335,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 		RawArgs:         sub.RawArgs,
 		SchemaState:     sub.SchemaState,
 		SnapshotVer:     sub.SnapshotVer,
-		RealStartTS:     parentJob.RealStartTS,
+		RealStartTS:     sub.RealStartTS,
 		StartTS:         parentJob.StartTS,
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
@@ -346,6 +347,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 		SeqNum:          parentJob.SeqNum,
 		Charset:         parentJob.Charset,
 		Collate:         parentJob.Collate,
+		AdminOperator:   parentJob.AdminOperator,
 	}
 }
 
@@ -354,6 +356,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
 	sub.SchemaState = proxyJob.SchemaState
 	sub.SnapshotVer = proxyJob.SnapshotVer
+	sub.RealStartTS = proxyJob.RealStartTS
 	sub.Args = proxyJob.Args
 	sub.State = proxyJob.State
 	sub.Warning = proxyJob.Warning
@@ -430,6 +433,10 @@ type Job struct {
 	Charset string `json:"charset"`
 	// Collate is the collation the DDL Job is created.
 	Collate string `json:"collate"`
+
+	// AdminOperator indicates where the Admin command comes, by the TiDB
+	// itself (AdminCommandBySystem) or by user (AdminCommandByEndUser).
+	AdminOperator AdminCommandOperator `json:"admin_operator"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -737,6 +744,31 @@ func (job *Job) IsCancelling() bool {
 	return job.State == JobStateCancelling
 }
 
+// IsPaused returns whether the job is paused.
+func (job *Job) IsPaused() bool {
+	return job.State == JobStatePaused
+}
+
+// IsPausedBySystem returns whether the job is paused by system.
+func (job *Job) IsPausedBySystem() bool {
+	return job.IsPaused() && job.AdminOperator == AdminCommandBySystem
+}
+
+// IsPausing indicates whether the job is pausing.
+func (job *Job) IsPausing() bool {
+	return job.State == JobStatePausing
+}
+
+// IsPausable checks whether we can pause the job.
+func (job *Job) IsPausable() bool {
+	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
+}
+
+// IsResumable checks whether the job can be rollback.
+func (job *Job) IsResumable() bool {
+	return job.IsPaused()
+}
+
 // IsSynced returns whether the DDL modification is synced among all TiDB servers.
 func (job *Job) IsSynced() bool {
 	return job.State == JobStateSynced
@@ -806,10 +838,10 @@ func (job *Job) IsRollbackable() bool {
 		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
 	case ActionRebaseAutoID, ActionShardRowID,
-		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable,
+		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate, ActionTruncateTablePartition,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
-		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement:
+		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement, ActionDropCheckConstraint:
 		return job.SchemaState == StateNone
 	case ActionMultiSchemaChange:
 		return job.MultiSchemaInfo.Revertible
@@ -823,7 +855,7 @@ func (job *Job) IsRollbackable() bool {
 }
 
 // JobState is for job state.
-type JobState byte
+type JobState int32
 
 // List job states.
 const (
@@ -843,6 +875,9 @@ const (
 	JobStateCancelling JobState = 7
 	// JobStateQueueing means the job has not yet been started.
 	JobStateQueueing JobState = 8
+
+	JobStatePaused  JobState = 9
+	JobStatePausing JobState = 10
 )
 
 // String implements fmt.Stringer interface.
@@ -864,6 +899,10 @@ func (s JobState) String() string {
 		return "synced"
 	case JobStateQueueing:
 		return "queueing"
+	case JobStatePaused:
+		return "paused"
+	case JobStatePausing:
+		return "pausing"
 	default:
 		return "none"
 	}
@@ -888,8 +927,39 @@ func StrToJobState(s string) JobState {
 		return JobStateSynced
 	case "queueing":
 		return JobStateQueueing
+	case "paused":
+		return JobStatePaused
+	case "pausing":
+		return JobStatePausing
 	default:
 		return JobStateNone
+	}
+}
+
+// AdminCommandOperator indicates where the Cancel/Pause/Resume command on DDL
+// jobs comes from.
+type AdminCommandOperator int
+
+const (
+	// AdminCommandByNotKnown indicates that unknow calling of the
+	// Cancel/Pause/Resume on DDL job.
+	AdminCommandByNotKnown AdminCommandOperator = iota
+	// AdminCommandByEndUser indicates that the Cancel/Pause/Resume command on
+	// DDL job is issued by the end user.
+	AdminCommandByEndUser
+	// AdminCommandBySystem indicates that the Cancel/Pause/Resume command on
+	// DDL job is issued by TiDB itself, such as Upgrade(bootstrap).
+	AdminCommandBySystem
+)
+
+func (a *AdminCommandOperator) String() string {
+	switch *a {
+	case AdminCommandByEndUser:
+		return "EndUser"
+	case AdminCommandBySystem:
+		return "System"
+	default:
+		return "None"
 	}
 }
 

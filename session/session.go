@@ -66,6 +66,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/conn"
 	"github.com/pingcap/tidb/privilege/privileges"
 	session_metrics "github.com/pingcap/tidb/session/metrics"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -94,6 +95,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/consistency"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sli"
@@ -148,7 +150,7 @@ type Session interface {
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
 	Close()
-	Auth(user *auth.UserIdentity, auth, salt []byte) error
+	Auth(user *auth.UserIdentity, auth, salt []byte, authConn conn.AuthConn) error
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	AuthPluginForUser(user *auth.UserIdentity) (string, error)
 	MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error)
@@ -541,6 +543,9 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	}
 
 	processInfo := s.ShowProcess()
+	if processInfo == nil {
+		return nil
+	}
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
@@ -657,7 +662,21 @@ func (s *session) doCommit(ctx context.Context) error {
 	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
-	s.txn.SetOption(kv.TxnSource, sessVars.CDCWriteSource)
+
+	var txnSource uint64
+	if val := s.txn.GetOption(kv.TxnSource); val != nil {
+		txnSource, _ = val.(uint64)
+	}
+	// If the transaction is started by CDC, we need to set the CDCWriteSource option.
+	if sessVars.CDCWriteSource != 0 {
+		err := kv.SetCDCWriteSource(&txnSource, sessVars.CDCWriteSource)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		s.txn.SetOption(kv.TxnSource, txnSource)
+	}
+
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
 		c := cachedTableRenewLease{tables: tables}
 		now := time.Now()
@@ -705,7 +724,7 @@ func (c *cachedTableRenewLease) start(ctx context.Context) error {
 	return err
 }
 
-func (c *cachedTableRenewLease) stop(ctx context.Context) {
+func (c *cachedTableRenewLease) stop(_ context.Context) {
 	close(c.exit)
 }
 
@@ -1137,7 +1156,7 @@ func (s *session) isInternal() bool {
 	return s.sessionVars.InRestrictedSQL
 }
 
-func (s *session) isTxnRetryableError(err error) bool {
+func (*session) isTxnRetryableError(err error) bool {
 	if atomic.LoadUint32(&SchemaChangedWithoutRetry) == 1 {
 		return kv.IsTxnRetryableError(err)
 	}
@@ -1146,11 +1165,10 @@ func (s *session) isTxnRetryableError(err error) bool {
 
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	var err error
-	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
-		err = kv.ErrLockExpire
-	} else {
+	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) == 0 {
 		return nil
 	}
+	err = kv.ErrLockExpire
 	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
 	// because they are used to finish the aborted transaction.
 	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
@@ -1505,7 +1523,12 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 
 	p := parserPool.Get().(*parser.Parser)
 	defer parserPool.Put(p)
-	p.SetSQLMode(s.sessionVars.SQLMode)
+
+	sqlMode := s.sessionVars.SQLMode
+	if s.isInternal() {
+		sqlMode = mysql.DelSQLMode(sqlMode, mysql.ModeNoBackslashEscapes)
+	}
+	p.SetSQLMode(sqlMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
@@ -1522,8 +1545,10 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	// Because the select statement and other statements need this timestamp to read data,
 	// after the transaction is committed. e.g. SHOW MASTER STATUS;
 	var curTxnStartTS uint64
+	var curTxnCreateTime time.Time
 	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
 		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
+		curTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
 	}
 	// Set curTxnStartTS to SnapshotTS directly when the session is trying to historic read.
 	// It will avoid the session meet GC lifetime too short error.
@@ -1547,6 +1572,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		State:                 s.Status(),
 		Info:                  sql,
 		CurTxnStartTS:         curTxnStartTS,
+		CurTxnCreateTime:      curTxnCreateTime,
 		StmtCtx:               s.sessionVars.StmtCtx,
 		RefCountOfStmtCtx:     &s.sessionVars.RefCountOfStmtCtx,
 		MemTracker:            s.sessionVars.MemTracker,
@@ -1571,6 +1597,10 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if oldPi != nil && oldPi.Info == pi.Info && oldPi.Command == pi.Command {
 		pi.Time = oldPi.Time
 	}
+	if oldPi != nil && oldPi.CurTxnStartTS != 0 && oldPi.CurTxnStartTS == pi.CurTxnStartTS {
+		// Keep the last expensive txn log time, avoid print too many expensive txn logs.
+		pi.ExpensiveTxnLogTime = oldPi.ExpensiveTxnLogTime
+	}
 	_, digest := s.sessionVars.StmtCtx.SQLDigest()
 	pi.Digest = digest.String()
 	// DO NOT reset the currentPlan to nil until this query finishes execution, otherwise reentrant calls
@@ -1583,6 +1613,17 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		pi.Host = s.sessionVars.User.Hostname
 	}
 	s.processInfo.Store(&pi)
+}
+
+// UpdateProcessInfo updates the session's process info for the running statement.
+func (s *session) UpdateProcessInfo() {
+	pi := s.ShowProcess()
+	if pi == nil || pi.CurTxnStartTS != 0 {
+		return
+	}
+	// Update the current transaction start timestamp.
+	pi.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	pi.CurTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
 }
 
 func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
@@ -1722,14 +1763,11 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	}
 	if err != nil {
 		s.rollbackOnError(ctx)
-		// Only print log message when this SQL is from the user.
-		// Mute the warning for internal SQLs.
-		if !s.sessionVars.InRestrictedSQL {
-			if s.sessionVars.EnableRedactLog {
-				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
-			} else {
-				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
-			}
+		logSQL := sql[:mathutil.Min(500, len(sql))]
+		if s.sessionVars.EnableRedactLog {
+			logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", logSQL))
+		} else {
+			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", logSQL))
 		}
 		return nil, util.SyntaxError(err)
 	}
@@ -2124,6 +2162,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		plannercore.DebugTraceReceivedCommand(s, cmdByte, stmtNode)
 	}
 
+	if err := s.validateStatementInTxn(stmtNode); err != nil {
+		return nil, err
+	}
+
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
 		return nil, err
 	}
@@ -2155,7 +2197,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
-	// session resource-group might be changed by query hint, ensure the resoure it back when
+	// session resource-group might be changed by query hint, ensure restore it back when
 	// the execution finished.
 	if s.GetSessionVars().ResourceGroupName != originalResourceGroup {
 		defer func() {
@@ -2243,6 +2285,14 @@ func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.Stm
 	return sessiontxn.GetTxnManager(s).OnStmtStart(ctx, node)
 }
 
+func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
+	vars := s.GetSessionVars()
+	if _, ok := stmtNode.(*ast.ImportIntoStmt); ok && vars.InTxn() {
+		return errors.New("cannot run IMPORT INTO in explicit transaction")
+	}
+	return nil
+}
+
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
 	vars := s.GetSessionVars()
 	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead || vars.InRestrictedSQL {
@@ -2277,26 +2327,25 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	return nil
 }
 
-// querySpecialKeys contains the keys of special query, the special query will handled by handleQuerySpecial method.
-var querySpecialKeys = []fmt.Stringer{
+// fileTransInConnKeys contains the keys of queries that will be handled by handleFileTransInConn.
+var fileTransInConnKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
 	executor.IndexAdviseVarKey,
 	executor.PlanReplayerLoadVarKey,
 }
 
-func (s *session) hasQuerySpecial() bool {
-	found := false
+func (s *session) hasFileTransInConn() bool {
 	s.mu.RLock()
-	for _, k := range querySpecialKeys {
+	defer s.mu.RUnlock()
+
+	for _, k := range fileTransInConnKeys {
 		v := s.mu.values[k]
 		if v != nil {
-			found = true
-			break
+			return true
 		}
 	}
-	s.mu.RUnlock()
-	return found
+	return false
 }
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
@@ -2367,8 +2416,8 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	err = finishStmt(ctx, se, err, s)
-	if se.hasQuerySpecial() {
-		// The special query will be handled later in handleQuerySpecial,
+	if se.hasFileTransInConn() {
+		// The query will be handled later in handleFileTransInConn,
 		// then should call the ExecStmt.FinishExecuteStmt to finish this statement.
 		se.SetValue(ExecStmtVarKey, s.(*executor.ExecStmt))
 	} else {
@@ -2383,7 +2432,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 type ExecStmtVarKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k ExecStmtVarKeyType) String() string {
+func (ExecStmtVarKeyType) String() string {
 	return "exec_stmt_var_key"
 }
 
@@ -2405,38 +2454,7 @@ func (rs *execStmtResult) Close() error {
 	if err := rs.RecordSet.Close(); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
-	if err := resetCTEStorageMap(se); err != nil {
-		return finishStmt(context.Background(), se, err, rs.sql)
-	}
 	return finishStmt(context.Background(), se, nil, rs.sql)
-}
-
-func resetCTEStorageMap(se *session) error {
-	tmp := se.GetSessionVars().StmtCtx.CTEStorageMap
-	if tmp == nil {
-		// Close() is already called, so no need to reset. Such as TraceExec.
-		return nil
-	}
-	storageMap, ok := tmp.(map[int]*executor.CTEStorages)
-	if !ok {
-		return errors.New("type assertion for CTEStorageMap failed")
-	}
-	for _, v := range storageMap {
-		v.ResTbl.Lock()
-		err1 := v.ResTbl.DerefAndClose()
-		// Make sure we do not hold the lock for longer than necessary.
-		v.ResTbl.Unlock()
-		// No need to lock IterInTbl.
-		err2 := v.IterInTbl.DerefAndClose()
-		if err1 != nil {
-			return err1
-		}
-		if err2 != nil {
-			return err2
-		}
-	}
-	se.GetSessionVars().StmtCtx.CTEStorageMap = nil
-	return nil
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -2599,7 +2617,7 @@ func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 // Auth validates a user using an authentication string and salt.
 // If the password fails, it will keep trying other users until exhausted.
 // This means it can not be refactored to use MatchIdentity yet.
-func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) error {
+func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, authConn conn.AuthConn) error {
 	hasPassword := "YES"
 	if len(authentication) == 0 {
 		hasPassword = "NO"
@@ -2642,7 +2660,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		}
 	}
 
-	info, err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars)
+	info, err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars, authConn)
 	if err != nil {
 		if info.FailedDueToWrongPassword {
 			// when user enables the account locking function for consecutive login failures,
@@ -2777,15 +2795,14 @@ func verifyAccountAutoLock(s *session, user, host string) (bool, error) {
 		}
 		lastChanged := pl.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
-		if d > lockTimeDay*24*60*60 {
-			// Generate unlock json string.
-			plJSON = privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
-				pl.PasswordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
-		} else {
+		if d <= lockTimeDay*24*60*60 {
 			lds := strconv.FormatInt(lockTimeDay, 10)
 			rds := strconv.FormatInt(int64(math.Ceil(float64(lockTimeDay)-float64(d)/(24*60*60))), 10)
 			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, lds, rds)
 		}
+		// Generate unlock json string.
+		plJSON = privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
+			pl.PasswordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
 	}
 	if plJSON != "" {
 		lockStatusChanged = true
@@ -2965,7 +2982,7 @@ func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 }
 
 // RefreshVars implements the sessionctx.Context interface.
-func (s *session) RefreshVars(ctx context.Context) error {
+func (s *session) RefreshVars(_ context.Context) error {
 	pruneMode, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
 	if err != nil {
 		return err
@@ -3638,7 +3655,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		storeBootstrapped[store.UUID()] = true
 	}
 
-	return ver
+	return modifyBootstrapVersionForTest(store, ver)
 }
 
 func finishBootstrap(store kv.Storage) {
@@ -3788,20 +3805,16 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 }
 
 // GetStartTSFromSession returns the startTS in the session `se`
-func GetStartTSFromSession(se interface{}) (uint64, uint64) {
-	var startTS, processInfoID uint64
+func GetStartTSFromSession(se interface{}) (startTS, processInfoID uint64) {
 	tmp, ok := se.(*session)
 	if !ok {
 		logutil.BgLogger().Error("GetStartTSFromSession failed, can't transform to session struct")
 		return 0, 0
 	}
-	processInfo := tmp.ShowProcess()
-	if processInfo != nil {
-		processInfoID = processInfo.ID
-	}
 	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
 		startTS = txnInfo.StartTS
+		processInfoID = txnInfo.ConnectionID
 	}
 
 	logutil.BgLogger().Debug(
@@ -4162,7 +4175,8 @@ func (s *session) SetMemoryFootprintChangeHook() {
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
-func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (s *session) EncodeSessionStates(ctx context.Context,
+	_ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	// Transaction status is hard to encode, so we do not support it.
 	s.txn.mu.Lock()
 	valid := s.txn.Valid()
@@ -4230,7 +4244,8 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 }
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
-func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (s *session) DecodeSessionStates(ctx context.Context,
+	_ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	// Decode prepared statements and sql bindings.
 	for _, handler := range s.sessionStatesHandlers {
 		if err := handler.DecodeSessionStates(ctx, s, sessionStates); err != nil {
