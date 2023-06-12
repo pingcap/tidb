@@ -12,20 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package pooltask
+package util
 
-// Overclock is to increase the concurrency of pool.
-func (t *TaskManager[T, U, C, CT, TF]) Overclock(capacity int) (tid uint64, task *TaskBox[T, U, C, CT, TF]) {
-	if t.running.Load() >= int32(capacity) {
-		return
-	}
-	return t.getBoostTask()
+// IDGenerator util class used for generate auto-increasing id
+type IDGenerator struct {
+	nextID int
 }
 
-// Downclock is to decrease the concurrency of pool.
-func (t *TaskManager[T, U, C, CT, TF]) Downclock(capacity int) {
-	if t.running.Load() <= int32(capacity) {
-		return
-	}
-	t.pauseTask()
+// GetNextID return the id++
+func (g *IDGenerator) GetNextID() int {
+	curID := g.nextID
+	g.nextID++
+	return curID
 }

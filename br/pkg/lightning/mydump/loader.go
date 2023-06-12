@@ -125,11 +125,6 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 	return string(schema), nil
 }
 
-// FullTableName return FQDN of the table.
-func (m *MDTableMeta) FullTableName() string {
-	return common.UniqueTable(m.DB, m.Name)
-}
-
 // MDLoaderSetupConfig stores the configs when setting up a MDLoader.
 // This can control the behavior when constructing an MDLoader.
 type MDLoaderSetupConfig struct {
@@ -356,11 +351,10 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		return errors.New("file iterator is not defined")
 	}
 	if err := fileIter.IterateFiles(ctx, s.constructFileInfo); err != nil {
-		if s.setupCfg.ReturnPartialResultOnError {
-			gerr = err
-		} else {
+		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
+		gerr = err
 	}
 	if err := s.route(); err != nil {
 		return common.ErrTableRoute.Wrap(err).GenWithStackByArgs()

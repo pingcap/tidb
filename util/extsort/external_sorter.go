@@ -48,6 +48,8 @@ type ExternalSorter interface {
 // Writer is an interface for writing key-value pairs to the external sorter.
 type Writer interface {
 	// Put adds a key-value pair to the writer.
+	//
+	// Implementations must not modify or retain slices passed to Put().
 	Put(key, value []byte) error
 	// Flush flushes all buffered key-value pairs to the external sorter.
 	// the writer can be reused after calling Flush().
@@ -65,6 +67,8 @@ type Iterator interface {
 	// First moves the iterator to the first key-value pair.
 	First() bool
 	// Next moves the iterator to the next key-value pair.
+	//
+	// Implementations must guarantee the next key is greater than the current key.
 	Next() bool
 	// Last moves the iterator to the last key-value pair.
 	Last() bool

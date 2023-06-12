@@ -23,7 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -73,11 +73,10 @@ func TestColumnAdd(t *testing.T) {
 			writeOnlyTable = tbl
 			require.NoError(t, checkAddWriteOnly(ct, deleteOnlyTable, writeOnlyTable, kv.IntHandle(1)))
 		case model.StatePublic:
-			if first {
-				first = false
-			} else {
+			if !first {
 				return
 			}
+			first = false
 			publicTable = tbl
 			require.NoError(t, checkAddPublic(ct, writeOnlyTable, publicTable))
 		}
@@ -125,11 +124,10 @@ func TestColumnAdd(t *testing.T) {
 		case model.StateWriteOnly:
 			writeOnlyTable = tbl
 		case model.StatePublic:
-			if first {
-				first = false
-			} else {
+			if !first {
 				return
 			}
+			first = false
 			sess := testNewContext(store)
 			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)

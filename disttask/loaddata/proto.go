@@ -27,6 +27,7 @@ import (
 
 // TaskStep of LoadData.
 const (
+	// Import we sort source data and ingest it into TiKV in this step.
 	Import int64 = 1
 )
 
@@ -34,20 +35,25 @@ const (
 // All the field should be serializable.
 type TaskMeta struct {
 	Plan   importer.Plan
-	JobID  int64
 	Stmt   string
 	Result Result
 	// eligible instances to run this task, we run on all instances if it's empty.
 	// we only need this when run LOAD DATA without distributed option now, i.e.
 	// running on the instance that initiate the LOAD DATA.
 	EligibleInstances []*infosync.ServerInfo
+	// the file chunks to import, when import from server file, we need to pass those
+	// files to the framework dispatcher which might run on another instance.
+	// we use a map from engine ID to chunks since we need support split_file for CSV,
+	// so need to split them into engines before passing to dispatcher.
+	ChunkMap map[int32][]Chunk
 }
 
 // SubtaskMeta is the subtask of LoadData.
 // Dispatcher will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type SubtaskMeta struct {
-	Plan     importer.Plan
+	Plan importer.Plan
+	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
 	Chunks   []Chunk
 	Checksum Checksum

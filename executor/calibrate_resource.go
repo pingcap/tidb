@@ -132,19 +132,19 @@ type calibrateResourceExec struct {
 	done         bool
 }
 
-func (e *calibrateResourceExec) parseCalibrateDuration() (startTime time.Time, endTime time.Time, err error) {
+func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (startTime time.Time, endTime time.Time, err error) {
 	var dur time.Duration
 	var ts uint64
 	for _, op := range e.optionList {
 		switch op.Tp {
 		case ast.CalibrateStartTime:
-			ts, err = staleread.CalculateAsOfTsExpr(e.ctx, op.Ts)
+			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, op.Ts)
 			if err != nil {
 				return
 			}
 			startTime = oracle.GetTimeFromTS(ts)
 		case ast.CalibrateEndTime:
-			ts, err = staleread.CalculateAsOfTsExpr(e.ctx, op.Ts)
+			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, op.Ts)
 			if err != nil {
 				return
 			}
@@ -197,7 +197,7 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 }
 
 func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
-	startTs, endTs, err := e.parseCalibrateDuration()
+	startTs, endTs, err := e.parseCalibrateDuration(ctx)
 	if err != nil {
 		return err
 	}
@@ -258,21 +258,20 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	if len(quotas) < 5 {
 		return errors.Errorf("There are too few metrics points available in selected time window")
 	}
-	if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
-		sort.Slice(quotas, func(i, j int) bool {
-			return quotas[i] > quotas[j]
-		})
-		lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
-		upperBound := len(quotas) - lowerBound
-		sum := 0.
-		for i := lowerBound; i < upperBound; i++ {
-			sum += quotas[i]
-		}
-		quota := sum / float64(upperBound-lowerBound)
-		req.AppendUint64(0, uint64(quota))
-	} else {
+	if float64(len(quotas))/float64(len(quotas)+lowCount) <= percentOfPass {
 		return errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
 	}
+	sort.Slice(quotas, func(i, j int) bool {
+		return quotas[i] > quotas[j]
+	})
+	lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
+	upperBound := len(quotas) - lowerBound
+	sum := 0.
+	for i := lowerBound; i < upperBound; i++ {
+		sum += quotas[i]
+	}
+	quota := sum / float64(upperBound-lowerBound)
+	req.AppendUint64(0, uint64(quota))
 	return nil
 }
 

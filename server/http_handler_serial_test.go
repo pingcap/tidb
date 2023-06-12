@@ -555,7 +555,6 @@ func TestGetSchemaStorage(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int, e char(5), index idx(e))")
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
-	time.Sleep(5 * time.Second)
 	h.FlushStats()
 
 	resp, err := ts.fetchStatus("/schema_storage/test")

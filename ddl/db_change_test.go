@@ -24,13 +24,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -1337,9 +1336,7 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *doma
 			sess := testkit.NewTestKit(t, store).Session()
 			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
-			txn, err := sess.Txn(true)
-			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
+			jobs, err := ddl.GetAllDDLJobs(sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 2 {
@@ -1366,9 +1363,7 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *doma
 			sess := testkit.NewTestKit(t, store).Session()
 			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
-			txn, err := sess.Txn(true)
-			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
+			jobs, err := ddl.GetAllDDLJobs(sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 1 {
@@ -1692,11 +1687,10 @@ func TestCreateExpressionIndex(t *testing.T) {
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
-			if reorgTime < 2 {
-				reorgTime++
-			} else {
+			if reorgTime >= 2 {
 				return
 			}
+			reorgTime++
 			for _, sql := range stateWriteReorganizationSQLs {
 				_, checkErr = tk1.Exec(sql)
 				if checkErr != nil {
@@ -1788,11 +1782,10 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
-			if reorgTime < 2 {
-				reorgTime++
-			} else {
+			if reorgTime >= 2 {
 				return
 			}
+			reorgTime++
 			_, checkErr = tk1.Exec("insert into t values (10, 10) on duplicate key update a = 11")
 			if checkErr != nil {
 				return
@@ -1927,11 +1920,10 @@ func TestParallelRenameTable(t *testing.T) {
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateNone:
-			if firstDDL {
-				firstDDL = false
-			} else {
+			if !firstDDL {
 				return
 			}
+			firstDDL = false
 			wg.Add(1)
 			go func() {
 				if concurrentDDLQueryPre != "" {

@@ -1594,9 +1594,12 @@ func (n *CreateResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteName(n.ResourceGroupName.O)
 	for i, option := range n.ResourceGroupOptionList {
+		if i > 0 {
+			ctx.WritePlain(",")
+		}
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing CreatePlacementPolicy TableOption: [%v]", i)
+			return errors.Annotatef(err, "An error occurred while splicing CreateResourceGroupStmt Option: [%v]", i)
 		}
 	}
 	return nil
@@ -2110,10 +2113,11 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 
 // ResourceGroupOption is used for parsing resource group option.
 type ResourceGroupOption struct {
-	Tp        ResourceUnitType
-	StrValue  string
-	UintValue uint64
-	BoolValue bool
+	Tp                             ResourceUnitType
+	StrValue                       string
+	UintValue                      uint64
+	BoolValue                      bool
+	ResourceGroupRunawayOptionList []*ResourceGroupRunawayOption
 }
 
 type ResourceUnitType int
@@ -2129,6 +2133,7 @@ const (
 
 	// Options
 	ResourceBurstableOpiton
+	ResourceGroupRunaway
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
@@ -2156,8 +2161,65 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 		case ResourceBurstableOpiton:
 			ctx.WriteKeyWord("BURSTABLE")
+		case ResourceGroupRunaway:
+			if len(n.ResourceGroupRunawayOptionList) > 0 {
+				ctx.WriteKeyWord("QUERY_LIMIT")
+				ctx.WritePlain(" = (")
+				for i, option := range n.ResourceGroupRunawayOptionList {
+					if i > 0 {
+						ctx.WritePlain(" ")
+					}
+					if err := option.Restore(ctx); err != nil {
+						return errors.Annotatef(err, "An error occurred while splicing CreateResourceGroupStmt Option: [%v]", i)
+					}
+				}
+				ctx.WritePlain(")")
+			}
 		default:
-			return errors.Errorf("invalid PlacementOption: %d", n.Tp)
+			return errors.Errorf("invalid ResourceGroupOption: %d", n.Tp)
+		}
+		return nil
+	}
+	// WriteSpecialComment
+	return ctx.WriteWithSpecialComments(tidb.FeatureIDResourceGroup, fn)
+}
+
+type RunawayOptionType int
+
+const (
+	RunawayRule RunawayOptionType = iota
+	RunawayAction
+	RunawayWatch
+)
+
+// ResourceGroupRunawayOption is used for parsing resource group runaway rule option.
+type ResourceGroupRunawayOption struct {
+	Tp       RunawayOptionType
+	StrValue string
+	IntValue int32
+}
+
+func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
+	fn := func() error {
+		switch n.Tp {
+		case RunawayRule:
+			ctx.WriteKeyWord("EXEC_ELAPSED ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case RunawayAction:
+			ctx.WriteKeyWord("ACTION ")
+			ctx.WritePlain("= ")
+			ctx.WriteKeyWord(model.RunawayActionType(n.IntValue).String())
+		case RunawayWatch:
+			ctx.WriteKeyWord("WATCH ")
+			ctx.WritePlain("= ")
+			ctx.WriteKeyWord(model.RunawayWatchType(n.IntValue).String())
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("DURATION ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		default:
+			return errors.Errorf("invalid ResourceGroupRunawayOption: %d", n.Tp)
 		}
 		return nil
 	}
@@ -2907,6 +2969,7 @@ type AlterTableSpec struct {
 type TiFlashReplicaSpec struct {
 	Count  uint64
 	Labels []string
+	Hypo   bool // hypothetical replica is used by index advisor
 }
 
 // AlterOrderItem represents an item in order by at alter table stmt.
@@ -4458,6 +4521,24 @@ func (n *AlterPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+func CheckAppend(ops []*ResourceGroupOption, newOp *ResourceGroupOption) bool {
+	for _, op := range ops {
+		if op.Tp == newOp.Tp {
+			return false
+		}
+	}
+	return true
+}
+
+func CheckRunawayAppend(ops []*ResourceGroupRunawayOption, newOp *ResourceGroupRunawayOption) bool {
+	for _, op := range ops {
+		if op.Tp == newOp.Tp {
+			return false
+		}
+	}
+	return true
+}
+
 // AlterResourceGroupStmt is a statement to alter placement policy option.
 type AlterResourceGroupStmt struct {
 	ddlNode
@@ -4474,9 +4555,12 @@ func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteName(n.ResourceGroupName.O)
 	for i, option := range n.ResourceGroupOptionList {
+		if i > 0 {
+			ctx.WritePlain(",")
+		}
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing AlterResourceStmt Options: [%v]", i)
+			return errors.Annotatef(err, "An error occurred while splicing AlterResourceGroupStmt Options: [%v]", i)
 		}
 	}
 	return nil

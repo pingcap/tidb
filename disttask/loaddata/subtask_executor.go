@@ -16,14 +16,19 @@ package loaddata
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
+
+// TestSyncChan is used to test.
+var TestSyncChan = make(chan struct{})
 
 // ImportMinimalTaskExecutor is a subtask executor for load data.
 type ImportMinimalTaskExecutor struct {
@@ -34,6 +39,14 @@ type ImportMinimalTaskExecutor struct {
 func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
 	logger := logutil.BgLogger().With(zap.String("component", "minimal task executor"), zap.String("type", proto.LoadData), zap.Int64("table_id", e.task.Plan.TableInfo.ID))
 	logger.Info("subtask executor run", zap.Any("task", e.task))
+	failpoint.Inject("errorWhenSortChunk", func() {
+		time.Sleep(3 * time.Second) // wait ToImportMode called
+		failpoint.Return(errors.New("occur an error when sort chunk"))
+	})
+	failpoint.Inject("syncBeforeSortChunk", func() {
+		TestSyncChan <- struct{}{}
+		<-TestSyncChan
+	})
 	chunkCheckpoint := toChunkCheckpoint(e.task.Chunk)
 	sharedVars := e.task.SharedVars
 	if err := importer.ProcessChunk(ctx, &chunkCheckpoint, sharedVars.TableImporter, sharedVars.DataEngine, sharedVars.IndexEngine, sharedVars.Progress, logger); err != nil {

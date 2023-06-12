@@ -17,10 +17,10 @@ package loaddata
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
@@ -31,10 +31,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	checkTaskFinishInterval = 300 * time.Millisecond
-)
-
 // DistImporter is a JobImporter for distributed load data.
 type DistImporter struct {
 	*importer.JobImportParam
@@ -43,9 +39,9 @@ type DistImporter struct {
 	logger *zap.Logger
 	// the instance to import data, used for single-node import, nil means import data on all instances.
 	instance *infosync.ServerInfo
+	// the files to import, when import from server file, we need to pass those file to the framework.
+	chunkMap map[int32][]Chunk
 }
-
-var _ importer.JobImporter = &DistImporter{}
 
 // NewDistImporter creates a new DistImporter.
 func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt string) (*DistImporter, error) {
@@ -72,6 +68,18 @@ func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan
 	}, nil
 }
 
+// NewDistImporterServerFile creates a new DistImporter to import given files on current node.
+// we also run import on current node.
+// todo: merge all 3 ctor into one.
+func NewDistImporterServerFile(param *importer.JobImportParam, plan *importer.Plan, stmt string, ecp map[int32]*checkpoints.EngineCheckpoint) (*DistImporter, error) {
+	distImporter, err := NewDistImporterCurrNode(param, plan, stmt)
+	if err != nil {
+		return nil, err
+	}
+	distImporter.chunkMap = toChunkMap(ecp)
+	return distImporter, nil
+}
+
 // Param implements JobImporter.Param.
 func (ti *DistImporter) Param() *importer.JobImportParam {
 	return ti.JobImportParam
@@ -93,9 +101,9 @@ func (ti *DistImporter) ImportTask(task *proto.Task) {
 }
 
 // Result implements JobImporter.Result.
-func (ti *DistImporter) Result() importer.JobImportResult {
+func (ti *DistImporter) Result(task *proto.Task) importer.JobImportResult {
 	var result importer.JobImportResult
-	taskMeta, err := ti.getTaskMeta()
+	taskMeta, err := ti.getTaskMeta(task)
 	if err != nil {
 		result.Msg = err.Error()
 		return result
@@ -131,9 +139,9 @@ func (ti *DistImporter) SubmitTask() (*proto.Task, error) {
 	}
 	task := TaskMeta{
 		Plan:              *ti.plan,
-		JobID:             ti.Job.ID,
 		Stmt:              ti.stmt,
 		EligibleInstances: instances,
+		ChunkMap:          ti.chunkMap,
 	}
 	taskMeta, err := json.Marshal(task)
 	if err != nil {
@@ -155,18 +163,17 @@ func (*DistImporter) taskKey() string {
 	return fmt.Sprintf("%s/%s", proto.LoadData, uuid.New().String())
 }
 
-func (ti *DistImporter) getTaskMeta() (*TaskMeta, error) {
+func (*DistImporter) getTaskMeta(task *proto.Task) (*TaskMeta, error) {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
 	}
-	taskKey := ti.taskKey()
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	globalTask, err := globalTaskManager.GetGlobalTaskByID(task.ID)
 	if err != nil {
 		return nil, err
 	}
 	if globalTask == nil {
-		return nil, errors.Errorf("cannot find global task with key %s", taskKey)
+		return nil, errors.Errorf("cannot find global task with ID %d", task.ID)
 	}
 	var taskMeta TaskMeta
 	if err := json.Unmarshal(globalTask.Meta, &taskMeta); err != nil {
