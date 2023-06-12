@@ -5473,7 +5473,7 @@ func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 
 	// if failed, treat it as a date/time
 	// this part is similar to CalculateAsOfTsExpr
 	tpDateTime := types.NewFieldType(mysql.TypeDatetime)
-	tpDateTime.SetDecimal(3)
+	tpDateTime.SetDecimal(6)
 	timestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, tpDateTime)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)

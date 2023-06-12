@@ -74,6 +74,8 @@ const (
 	PlanReplayerTaskMetaPlanDigest = "planDigest"
 	// PlanReplayerTaskEnableHistoricalStats indicates whether the task is using historical stats
 	PlanReplayerTaskEnableHistoricalStats = "enableHistoricalStats"
+	// PlanReplayerHistoricalStatsTS indicates the expected TS of the historical stats if it's specified by the user.
+	PlanReplayerHistoricalStatsTS = "historicalStatsTS"
 )
 
 type tableNamePair struct {
@@ -390,6 +392,9 @@ func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
 	varMap[PlanReplayerTaskMetaSQLDigest] = task.SQLDigest
 	varMap[PlanReplayerTaskMetaPlanDigest] = task.PlanDigest
 	varMap[PlanReplayerTaskEnableHistoricalStats] = strconv.FormatBool(variable.EnableHistoricalStatsForCapture.Load())
+	if task.HistoryStatsTS > 0 {
+		varMap[PlanReplayerHistoricalStatsTS] = strconv.FormatUint(task.HistoryStatsTS, 10)
+	}
 	if err := toml.NewEncoder(cf).Encode(varMap); err != nil {
 		return errors.AddStack(err)
 	}
