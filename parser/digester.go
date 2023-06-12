@@ -285,9 +285,9 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 		d.tokens.popBack(1)
 	}
 
-	// "?, ?, ?, ?" => "..."
+	// "?, ?, ?, ?" => "..." or IN (lit) => IN (...)
 	last2 := d.tokens.back(2)
-	if d.isGenericList(last2) {
+	if d.isGenericList(last2) || d.isInList(last2) {
 		d.tokens.popBack(2)
 		currTok.tok = genericSymbolList
 		currTok.lit = "..."
@@ -380,6 +380,17 @@ func (d *sqlDigester) isGenericList(last2 []token) (generic bool) {
 	return
 }
 
+func (d *sqlDigester) isInList(last2 []token) (generic bool) {
+	if len(last2) < 2 {
+		return false
+	}
+
+	if !d.isLeftParen(last2[1]) || !d.isInKeyword(last2[0]) {
+		return false
+	}
+	return true
+}
+
 func (d *sqlDigester) isOrderOrGroupBy() (orderOrGroupBy bool) {
 	var (
 		last []token
@@ -439,6 +450,16 @@ func (*sqlDigester) isNumLit(tok int) (beNum bool) {
 
 func (*sqlDigester) isComma(tok token) (isComma bool) {
 	isComma = tok.lit == ","
+	return
+}
+
+func (*sqlDigester) isLeftParen(tok token) (isLeftParen bool) {
+	isLeftParen = tok.lit == "("
+	return
+}
+
+func (*sqlDigester) isInKeyword(tok token) (isInKeyword bool) {
+	isInKeyword = tok.lit == "in"
 	return
 }
 
