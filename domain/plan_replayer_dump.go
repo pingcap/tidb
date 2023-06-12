@@ -668,10 +668,10 @@ func dumpEncodedPlan(ctx sessionctx.Context, zw *zip.Writer, encodedPlan string)
 	return nil
 }
 
-func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []string, emptyAsNil bool) error {
+func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []string, emptyAsNil bool) (debugTraces []interface{}, err error) {
 	fw, err := zw.Create("explain.txt")
 	if err != nil {
-		return errors.AddStack(err)
+		return nil, errors.AddStack(err)
 	}
 	ctx.GetSessionVars().InPlanReplayer = true
 	defer func() {
@@ -679,37 +679,38 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 	}()
 	for i, sql := range sqls {
 		var recordSets []sqlexec.RecordSet
-		var err error
 		if isAnalyze {
 			// Explain analyze
 			recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain analyze %s", sql))
 			if err != nil {
-				return err
+				return nil, err
 			}
 		} else {
 			// Explain
 			recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain %s", sql))
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
+		debugTrace := ctx.GetSessionVars().StmtCtx.OptimizerDebugTrace
+		debugTraces = append(debugTraces, debugTrace)
 		sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], emptyAsNil)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, row := range sRows {
 			fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
 		}
 		if len(recordSets) > 0 {
 			if err := recordSets[0].Close(); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		if i < len(sqls)-1 {
 			fmt.Fprintf(fw, "<--------->\n")
 		}
 	}
-	return nil
+	return
 }
 
 func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
@@ -722,7 +723,9 @@ func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanR
 			Token:     task.FileName,
 		})
 	}
-	return dumpExplain(ctx, zw, task.Analyze, sqls, false)
+	debugTraces, err := dumpExplain(ctx, zw, task.Analyze, sqls, false)
+	task.DebugTrace = debugTraces
+	return err
 }
 
 func extractTableNames(ctx context.Context, sctx sessionctx.Context,
@@ -846,14 +849,24 @@ func getRows(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	return rows, nil
 }
 
-func dumpDebugTrace(zw *zip.Writer, debugTrace interface{}) error {
-	fw, err := zw.Create("debug_trace.json")
-	if err != nil {
-		return errors.AddStack(err)
+func dumpDebugTrace(zw *zip.Writer, debugTraces []interface{}) error {
+	for i, trace := range debugTraces {
+		fw, err := zw.Create(fmt.Sprintf("debug_trace/debug_trace%d.json", i))
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		err = dumpOneDebugTrace(fw, trace)
+		if err != nil {
+			return errors.AddStack(err)
+		}
 	}
-	jsonEncoder := json.NewEncoder(fw)
+	return nil
+}
+
+func dumpOneDebugTrace(w io.Writer, debugTrace interface{}) error {
+	jsonEncoder := json.NewEncoder(w)
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	jsonEncoder.SetEscapeHTML(false)
-	err = jsonEncoder.Encode(debugTrace)
+	err := jsonEncoder.Encode(debugTrace)
 	return err
 }
