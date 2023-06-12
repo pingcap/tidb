@@ -172,11 +172,10 @@ func deleteETCDRowCntStatIfNecessary(ctx context.Context, reorgInfo *reorgInfo, 
 		const retryCnt = 3
 		for i := 0; i < retryCnt; i++ {
 			_, err := client.Delete(ctx, path, clientv3.WithPrefix())
-			if err != nil {
-				logutil.BgLogger().Warn("[ddl] delete row count from ETCD failed", zap.Error(err))
-			} else {
+			if err == nil {
 				return
 			}
+			logutil.BgLogger().Warn("[ddl] delete row count from ETCD failed", zap.Error(err))
 		}
 	}
 }
@@ -216,7 +215,7 @@ func deleteETCDRowCntStatIfNecessary(ctx context.Context, reorgInfo *reorgInfo, 
 // the additional ddl round.
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
-func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
+func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 	lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
 	d := reorgInfo.d
