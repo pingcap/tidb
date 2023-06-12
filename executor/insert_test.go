@@ -1519,40 +1519,47 @@ func TestInsertLockUnchangedKeys(t *testing.T) {
 
 	for _, shouldLock := range []bool{false} {
 		for _, tt := range []struct {
-			name string
-			ddl  string
-			dml  string
+			name          string
+			ddl           string
+			dml           string
+			isClusteredPK bool
 		}{
-			// {
-			// 	"replace-pk",
-			// 	"create table t (c int primary key clustered)",
-			// 	"replace into t values (1)",
-			// },
+			{
+				"replace-pk",
+				"create table t (c int primary key clustered)",
+				"replace into t values (1)",
+				true,
+			},
 			{
 				"replace-uk",
 				"create table t (c int unique key)",
 				"replace into t values (1)",
+				false,
 			},
-			// {
-			// 	"insert-ignore-pk",
-			// 	"create table t (c int primary key clustered)",
-			// 	"insert ignore into t values (1)",
-			// },
-			// {
-			// 	"insert-ignore-uk",
-			// 	"create table t (c int unique key)",
-			// 	"insert ignore into t values (1)",
-			// },
-			// {
-			// 	"insert-update-pk",
-			// 	"create table t (c int primary key clustered)",
-			// 	"insert into t values (1) on duplicate key update c = values(c)",
-			// },
-			// {
-			// 	"insert-update-uk",
-			// 	"create table t (c int unique key)",
-			// 	"insert into t values (1) on duplicate key update c = values(c)",
-			// },
+			{
+				"insert-ignore-pk",
+				"create table t (c int primary key clustered)",
+				"insert ignore into t values (1)",
+				true,
+			},
+			{
+				"insert-ignore-uk",
+				"create table t (c int unique key)",
+				"insert ignore into t values (1)",
+				false,
+			},
+			{
+				"insert-update-pk",
+				"create table t (c int primary key clustered)",
+				"insert into t values (1) on duplicate key update c = values(c)",
+				true,
+			},
+			{
+				"insert-update-uk",
+				"create table t (c int unique key)",
+				"insert into t values (1) on duplicate key update c = values(c)",
+				false,
+			},
 		} {
 			t.Run(
 				tt.name+"-"+strconv.FormatBool(shouldLock), func(t *testing.T) {
@@ -1564,25 +1571,26 @@ func TestInsertLockUnchangedKeys(t *testing.T) {
 					println("t1 begin")
 					tk1.MustExec(tt.dml)
 					println("after t1 dml")
-					done := make(chan struct{})
+					errCh := make(chan error)
 					go func() {
-						tk2.MustExec("insert into t values (1)")
-						done <- struct{}{}
+						_, err := tk2.Exec("insert into t values (1)")
+						errCh <- err
 					}()
 					select {
-					case <-done:
+					case <-errCh:
+						println("done")
 						if shouldLock {
 							require.Failf(t, "txn2 is not blocked by %q", tt.dml)
 						}
-						close(done)
-					case <-time.After(100 * time.Second):
-						if !shouldLock {
+						close(errCh)
+					case <-time.After(100 * time.Millisecond):
+						if !shouldLock && !tt.isClusteredPK {
 							require.Failf(t, "txn2 is blocked by %q", tt.dml)
 						}
 					}
 					tk1.MustExec("commit")
-					<-done
-					tk1.MustQuery("select * from t").Check([][]interface{}{})
+					<-errCh
+					tk1.MustQuery("select * from t").Check(testkit.Rows("1"))
 				},
 			)
 		}
