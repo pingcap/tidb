@@ -867,6 +867,10 @@ type PhysicalTableScan struct {
 	// usedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
 	usedStatsInfo *stmtctx.UsedStatsInfoForTable
+
+	// for runtime filter
+	runtimeFilterList []*RuntimeFilter
+	maxWaitTimeMs     int
 }
 
 // Clone implements PhysicalPlan interface.
@@ -890,6 +894,11 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 		clonedScan.Hist = ts.Hist.Copy()
 	}
 	clonedScan.rangeInfo = ts.rangeInfo
+	clonedScan.runtimeFilterList = make([]*RuntimeFilter, len(ts.runtimeFilterList))
+	for i, rf := range ts.runtimeFilterList {
+		clonedRF := rf.Clone()
+		clonedScan.runtimeFilterList[i] = clonedRF
+	}
 	return clonedScan, nil
 }
 
@@ -1293,6 +1302,7 @@ type PhysicalHashJoin struct {
 	Concurrency     uint
 	EqualConditions []*expression.ScalarFunction
 
+	// null aware equal conditions
 	NAEqualConditions []*expression.ScalarFunction
 
 	// use the outer table to build a hash table when the outer table is smaller.
@@ -1301,6 +1311,9 @@ type PhysicalHashJoin struct {
 	// on which store the join executes.
 	storeTp        kv.StoreType
 	mppShuffleJoin bool
+
+	// for runtime filter
+	runtimeFilterList []*RuntimeFilter
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1318,6 +1331,10 @@ func (p *PhysicalHashJoin) Clone() (PhysicalPlan, error) {
 	}
 	for _, c := range p.NAEqualConditions {
 		cloned.NAEqualConditions = append(cloned.NAEqualConditions, c.Clone().(*expression.ScalarFunction))
+	}
+	for _, rf := range p.runtimeFilterList {
+		clonedRF := rf.Clone()
+		cloned.runtimeFilterList = append(cloned.runtimeFilterList, clonedRF)
 	}
 	return cloned, nil
 }
@@ -1358,6 +1375,14 @@ func (p *PhysicalHashJoin) MemoryUsage() (sum int64) {
 		sum += expr.MemoryUsage()
 	}
 	return
+}
+
+// RightIsBuildSide return true when right side is build side
+func (p *PhysicalHashJoin) RightIsBuildSide() bool {
+	if p.UseOuterToBuild {
+		return p.InnerChildIdx == 0
+	}
+	return p.InnerChildIdx != 0
 }
 
 // NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
@@ -1554,11 +1579,18 @@ type PhysicalExpand struct {
 	// GroupingSets is used to define what kind of group layout should the underlying data follow.
 	// For simple case: select count(distinct a), count(distinct b) from t; the grouping expressions are [a] and [b].
 	GroupingSets expression.GroupingSets
+
+	// The level projections is generated from grouping sets，make execution more clearly.
+	LevelExprs [][]expression.Expression
+
+	// The generated column names. Eg: "grouping_id" and so on.
+	ExtraGroupingColNames []string
 }
 
 // Init only assigns type and context.
-func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalExpand {
+func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
+	p.childrenReqProps = props
 	p.stats = stats
 	return &p
 }
@@ -2073,6 +2105,13 @@ type PhysicalSelection struct {
 	// The flag is only used by cost model for compatibility and will be removed later.
 	// Please see https://github.com/pingcap/tidb/issues/36243 for more details.
 	fromDataSource bool
+
+	// todo Since the feature of adding filter operators has not yet been implemented,
+	// the following code for this function will not be used for now.
+	// The flag indicates whether this Selection is used for RuntimeFilter
+	// True: Used for RuntimeFilter
+	// False: Only for normal conditions
+	// hasRFConditions bool
 }
 
 // Clone implements PhysicalPlan interface.

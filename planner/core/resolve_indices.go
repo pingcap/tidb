@@ -412,7 +412,8 @@ func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 }
 
 // ResolveIndicesItself resolve indices for PhysicalPlan itself
-func (p *PhysicalExpand) ResolveIndicesItself() error {
+func (p *PhysicalExpand) ResolveIndicesItself() (err error) {
+	// for version 1
 	for _, gs := range p.GroupingSets {
 		for _, groupingExprs := range gs {
 			for k, groupingExpr := range groupingExprs {
@@ -421,6 +422,16 @@ func (p *PhysicalExpand) ResolveIndicesItself() error {
 					return err
 				}
 				groupingExprs[k] = gExpr
+			}
+		}
+	}
+	// for version 2
+	for i, oneLevel := range p.LevelExprs {
+		for j, expr := range oneLevel {
+			// expr in expand level-projections only contains column ref and literal constant projection.
+			p.LevelExprs[i][j], err = expr.ResolveIndices(p.children[0].Schema())
+			if err != nil {
+				return err
 			}
 		}
 	}
@@ -649,6 +660,23 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 			return err
 		}
 		p.PhysicalHashJoin.NAEqualConditions[i] = newSf.(*expression.ScalarFunction)
+	}
+	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalTableScan) ResolveIndices() (err error) {
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
+}
+
+// ResolveIndicesItself implements PhysicalTableScan interface.
+func (p *PhysicalTableScan) ResolveIndicesItself() (err error) {
+	for i, column := range p.schema.Columns {
+		column.Index = i
 	}
 	return
 }

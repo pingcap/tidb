@@ -302,6 +302,7 @@ const (
 	TiDBRowChecksum = "tidb_row_checksum"
 	GetLock         = "get_lock"
 	ReleaseLock     = "release_lock"
+	Grouping        = "grouping"
 
 	// encryption and compression functions
 	AesDecrypt               = "aes_decrypt"

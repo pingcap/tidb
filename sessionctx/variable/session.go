@@ -872,6 +872,11 @@ type SessionVars struct {
 	// not limit and spill will never happen
 	TiFlashMaxBytesBeforeExternalSort int64
 
+	// TiFlashEnablePipelineMode means if we should use pipeline model to execute query or not in tiflash.
+	// Default value is `false`, means never use pipeline model in tiflash.
+	// Value set to `true` means try to execute query with pipeline model in tiflash.
+	TiFlashEnablePipelineMode bool
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -1483,6 +1488,15 @@ type SessionVars struct {
 
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+	// HypoTiFlashReplicas are for the Index Advisor.
+	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
+
+	// Runtime Filter Group
+	// Runtime filter type: only support IN or MIN_MAX now.
+	// Runtime filter type can take multiple values at the same time.
+	runtimeFilterTypes []RuntimeFilterType
+	// Runtime filter mode: only support OFF, LOCAL now
+	runtimeFilterMode RuntimeFilterMode
 }
 
 var (
@@ -1490,6 +1504,8 @@ var (
 
 	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
 	TiDBOptFixControl44262 uint64 = 44262
+	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
+	TiDBOptFixControl44389 uint64 = 44389
 )
 
 // GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
@@ -1988,6 +2004,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxBytesBeforeExternalJoin = DefTiFlashMaxBytesBeforeExternalJoin
 	vars.TiFlashMaxBytesBeforeExternalGroupBy = DefTiFlashMaxBytesBeforeExternalGroupBy
 	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
+	vars.TiFlashEnablePipelineMode = DefTiDBEnableTiFlashPipelineMode
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
@@ -3431,4 +3448,121 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
+}
+
+// IsRuntimeFilterEnabled return runtime filter mode whether OFF
+func (s *SessionVars) IsRuntimeFilterEnabled() bool {
+	return s.runtimeFilterMode != RFOff
+}
+
+// GetRuntimeFilterTypes return the session variable runtimeFilterTypes
+func (s *SessionVars) GetRuntimeFilterTypes() []RuntimeFilterType {
+	return s.runtimeFilterTypes
+}
+
+// GetRuntimeFilterMode return the session variable runtimeFilterMode
+func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
+	return s.runtimeFilterMode
+}
+
+// RuntimeFilterType type of runtime filter "IN"
+type RuntimeFilterType int64
+
+// In type of runtime filter, like "t.k1 in (?)"
+// MinMax type of runtime filter, like "t.k1 < ? and t.k1 > ?"
+const (
+	In RuntimeFilterType = iota
+	MinMax
+	// todo BloomFilter, bf/in
+)
+
+// String convert Runtime Filter Type to String name
+func (rfType RuntimeFilterType) String() string {
+	switch rfType {
+	case In:
+		return "IN"
+	case MinMax:
+		return "MIN_MAX"
+	default:
+		return ""
+	}
+}
+
+// RuntimeFilterTypeStringToType convert RuntimeFilterTypeNameString to RuntimeFilterType
+// If name is legal, it will return Runtime Filter Type and true
+// Else, it will return -1 and false
+// The second param means the convert is ok or not. Ture is ok, false means it is illegal name
+// At present, we only support two names: "IN" and "MIN_MAX"
+func RuntimeFilterTypeStringToType(name string) (RuntimeFilterType, bool) {
+	switch name {
+	case "IN":
+		return In, true
+	case "MIN_MAX":
+		return MinMax, true
+	default:
+		return -1, false
+	}
+}
+
+// ToRuntimeFilterType convert session var value to RuntimeFilterType list
+// If sessionVarValue is legal, it will return RuntimeFilterType list and true
+// The second param means the convert is ok or not. Ture is ok, false means it is illegal value
+// The legal value should be comma-separated, eg: "IN,MIN_MAX"
+func ToRuntimeFilterType(sessionVarValue string) ([]RuntimeFilterType, bool) {
+	typeNameList := strings.Split(sessionVarValue, ",")
+	rfTypeMap := make(map[RuntimeFilterType]bool)
+	for _, typeName := range typeNameList {
+		rfType, ok := RuntimeFilterTypeStringToType(strings.ToUpper(typeName))
+		if !ok {
+			return nil, ok
+		}
+		rfTypeMap[rfType] = true
+	}
+	rfTypeList := make([]RuntimeFilterType, 0, len(rfTypeMap))
+	for rfType := range rfTypeMap {
+		rfTypeList = append(rfTypeList, rfType)
+	}
+	return rfTypeList, true
+}
+
+// RuntimeFilterMode the mode of runtime filter "OFF", "LOCAL"
+type RuntimeFilterMode int64
+
+// RFOff disable runtime filter
+// RFLocal enable local runtime filter
+// RFGlobal enable local and global runtime filter
+const (
+	RFOff RuntimeFilterMode = iota + 1
+	RFLocal
+	RFGlobal
+)
+
+// String convert Runtime Filter Mode to String name
+func (rfMode RuntimeFilterMode) String() string {
+	switch rfMode {
+	case RFOff:
+		return "OFF"
+	case RFLocal:
+		return "LOCAL"
+	case RFGlobal:
+		return "GLOBAL"
+	default:
+		return ""
+	}
+}
+
+// RuntimeFilterModeStringToMode convert RuntimeFilterModeString to RuntimeFilterMode
+// If name is legal, it will return Runtime Filter Mode and true
+// Else, it will return -1 and false
+// The second param means the convert is ok or not. Ture is ok, false means it is illegal name
+// At present, we only support one name: "OFF", "LOCAL"
+func RuntimeFilterModeStringToMode(name string) (RuntimeFilterMode, bool) {
+	switch name {
+	case "OFF":
+		return RFOff, true
+	case "LOCAL":
+		return RFLocal, true
+	default:
+		return -1, false
+	}
 }

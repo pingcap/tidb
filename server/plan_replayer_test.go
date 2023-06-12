@@ -20,7 +20,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/BurntSushi/toml"
 	"io"
 	"os"
 	"path/filepath"
@@ -29,8 +28,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
@@ -40,7 +41,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-func prepareServerAndClientForTest(t *testing.T, store kv.Storage) (server *Server, client *testServerClient) {
+func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.Domain) (server *Server, client *testServerClient) {
 	driver := NewTiDBDriver(store)
 	client = newTestServerClient()
 
@@ -50,6 +51,7 @@ func prepareServerAndClientForTest(t *testing.T, store kv.Storage) (server *Serv
 	cfg.Status.ReportStatus = true
 
 	server, err := NewServer(cfg, driver)
+	server.SetDomain(dom)
 	require.NoError(t, err)
 	go func() {
 		err := server.Run()
@@ -64,10 +66,10 @@ func prepareServerAndClientForTest(t *testing.T, store kv.Storage) (server *Serv
 
 func TestDumpPlanReplayerAPI(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	server, client := prepareServerAndClientForTest(t, store)
-	defer server.Close()
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
+	server, client := prepareServerAndClientForTest(t, store, dom)
+	defer server.Close()
 	statsHandle := dom.StatsHandle()
 
 	filename := prepareData4PlanReplayer(t, client, statsHandle)
@@ -210,10 +212,10 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats"))
 	}()
 	store := testkit.CreateMockStore(t)
-	server, client := prepareServerAndClientForTest(t, store)
-	defer server.Close()
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
+	server, client := prepareServerAndClientForTest(t, store, dom)
+	defer server.Close()
 	statsHandle := dom.StatsHandle()
 	hsWorker := dom.GetHistoricalStatsWorker()
 

@@ -633,11 +633,10 @@ func (e *InsertValues) fillColValue(
 		if !hasValue && mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
 			vars := e.ctx.GetSessionVars()
 			sc := vars.StmtCtx
-			if !vars.StrictSQLMode {
-				sc.AppendWarning(table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name))
-			} else {
+			if vars.StrictSQLMode {
 				return datum, table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name)
 			}
+			sc.AppendWarning(table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name))
 		}
 
 		if e.lazyFillAutoID {
@@ -1238,27 +1237,26 @@ CheckAndInsert:
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKey)
 			if err == nil {
-				if replace {
-					handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
-					if err != nil {
-						return err
-					}
-					unchanged, err2 := e.removeRow(ctx, txn, handle, r, false)
-					if err2 != nil {
-						return err2
-					}
-					if unchanged {
-						// we don't need to add the identical row again, but the
-						// counter should act as if we did.
-						e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
-						continue
-					}
-				} else {
+				if !replace {
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
 						// lock duplicated row key on insert-ignore
 						txnCtx.AddUnchangedKeyForLock(r.handleKey.newKey)
 					}
+					continue
+				}
+				handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
+				if err != nil {
+					return err
+				}
+				unchanged, err2 := e.removeRow(ctx, txn, handle, r, false)
+				if err2 != nil {
+					return err2
+				}
+				if unchanged {
+					// we don't need to add the identical row again, but the
+					// counter should act as if we did.
+					e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
 					continue
 				}
 			} else if !kv.IsErrNotFound(err) {
@@ -1269,26 +1267,7 @@ CheckAndInsert:
 		for _, uk := range r.uniqueKeys {
 			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
-				if replace {
-					_, handle, err := tables.FetchDuplicatedHandle(
-						ctx,
-						uk.newKey,
-						true,
-						txn,
-						e.Table.Meta().ID,
-						uk.commonHandle,
-					)
-					if err != nil {
-						return err
-					}
-					if handle == nil {
-						continue
-					}
-					_, err = e.removeRow(ctx, txn, handle, r, true)
-					if err != nil {
-						return err
-					}
-				} else {
+				if !replace {
 					// If duplicate keys were found in BatchGet, mark row = nil.
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
 					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
@@ -1296,6 +1275,24 @@ CheckAndInsert:
 						txnCtx.AddUnchangedKeyForLock(uk.newKey)
 					}
 					continue CheckAndInsert
+				}
+				_, handle, err := tables.FetchDuplicatedHandle(
+					ctx,
+					uk.newKey,
+					true,
+					txn,
+					e.Table.Meta().ID,
+					uk.commonHandle,
+				)
+				if err != nil {
+					return err
+				}
+				if handle == nil {
+					continue
+				}
+				_, err = e.removeRow(ctx, txn, handle, r, true)
+				if err != nil {
+					return err
 				}
 			} else if !kv.IsErrNotFound(err) {
 				return err
@@ -1308,6 +1305,13 @@ CheckAndInsert:
 		e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
 		err = addRecord(ctx, rows[i])
 		if err != nil {
+			// throw warning when violate check constraint
+			if table.ErrCheckConstraintViolated.Equal(err) {
+				if !sc.InLoadDataStmt {
+					sc.AppendWarning(err)
+				}
+				continue
+			}
 			return err
 		}
 	}
@@ -1471,21 +1475,21 @@ func (e *InsertRuntimeStat) String() string {
 		buf.WriteString(", ")
 	}
 	if e.Prefetch > 0 {
-		buf.WriteString(fmt.Sprintf("check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
+		fmt.Fprintf(buf, "check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
 			execdetails.FormatDuration(e.CheckInsertTime),
 			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
-			execdetails.FormatDuration(e.Prefetch)))
+			execdetails.FormatDuration(e.Prefetch))
 		if e.FKCheckTime > 0 {
-			buf.WriteString(fmt.Sprintf(", fk_check: %v", execdetails.FormatDuration(e.FKCheckTime)))
+			fmt.Fprintf(buf, ", fk_check: %v", execdetails.FormatDuration(e.FKCheckTime))
 		}
 		if e.SnapshotRuntimeStats != nil {
 			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
-				buf.WriteString(fmt.Sprintf(", rpc:{%s}", rpc))
+				fmt.Fprintf(buf, ", rpc:{%s}", rpc)
 			}
 		}
 		buf.WriteString("}")
 	} else {
-		buf.WriteString(fmt.Sprintf("insert:%v", execdetails.FormatDuration(e.CheckInsertTime)))
+		fmt.Fprintf(buf, "insert:%v", execdetails.FormatDuration(e.CheckInsertTime))
 	}
 	return buf.String()
 }

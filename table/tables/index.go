@@ -279,7 +279,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			value, err = txn.Get(ctx, key)
-		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
+		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() && !keyIsTempIdxKey {
+			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
+			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
 			value, err = txn.GetMemBuffer().Get(ctx, key)
 		} else {
 			value, err = txn.Get(ctx, key)

@@ -948,11 +948,11 @@ func (e *Explain) RenderResult() error {
 			tracker := e.SCtx().GetSessionVars().MemTracker
 			encodeRoot.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
 		}
-		if str, err := JSONToString(encodes); err == nil {
-			e.Rows = append(e.Rows, []string{str})
-		} else {
+		str, err := JSONToString(encodes)
+		if err != nil {
 			return err
 		}
+		e.Rows = append(e.Rows, []string{str})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}

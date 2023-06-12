@@ -1645,19 +1645,19 @@ func matchHHMMSSDelimited(str string, requireColon bool) ([3]int, string, error)
 	hhmmss[0] = hour
 
 	for i := 1; i < 3; i++ {
-		if remain, err := matchColon(rest); err == nil {
-			num, remain, err := parser.Number(remain)
-			if err != nil {
-				return [3]int{}, str, err
-			}
-			hhmmss[i] = num
-			rest = remain
-		} else {
+		remain, err := matchColon(rest)
+		if err != nil {
 			if i == 1 && requireColon {
 				return [3]int{}, str, err
 			}
 			break
 		}
+		num, remain, err := parser.Number(remain)
+		if err != nil {
+			return [3]int{}, str, err
+		}
+		hhmmss[i] = num
+		rest = remain
 	}
 
 	return hhmmss, rest, nil
@@ -3481,11 +3481,10 @@ func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 func skipAllNums(_ *CoreTime, input string, _ map[string]int) (string, bool) {
 	retIdx := 0
 	for i, ch := range input {
-		if unicode.IsNumber(ch) {
-			retIdx = i + 1
-		} else {
+		if !unicode.IsNumber(ch) {
 			break
 		}
+		retIdx = i + 1
 	}
 	return input[retIdx:], true
 }
@@ -3493,11 +3492,10 @@ func skipAllNums(_ *CoreTime, input string, _ map[string]int) (string, bool) {
 func skipAllPunct(_ *CoreTime, input string, _ map[string]int) (string, bool) {
 	retIdx := 0
 	for i, ch := range input {
-		if unicode.IsPunct(ch) {
-			retIdx = i + 1
-		} else {
+		if !unicode.IsPunct(ch) {
 			break
 		}
+		retIdx = i + 1
 	}
 	return input[retIdx:], true
 }
@@ -3505,11 +3503,10 @@ func skipAllPunct(_ *CoreTime, input string, _ map[string]int) (string, bool) {
 func skipAllAlpha(_ *CoreTime, input string, _ map[string]int) (string, bool) {
 	retIdx := 0
 	for i, ch := range input {
-		if unicode.IsLetter(ch) {
-			retIdx = i + 1
-		} else {
+		if !unicode.IsLetter(ch) {
 			break
 		}
+		retIdx = i + 1
 	}
 	return input[retIdx:], true
 }

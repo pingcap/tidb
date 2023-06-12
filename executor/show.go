@@ -1051,7 +1051,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 					buf.WriteString(" DEFAULT ")
 					buf.WriteString(defaultValue.(string))
 					if col.GetDecimal() > 0 {
-						buf.WriteString(fmt.Sprintf("(%d)", col.GetDecimal()))
+						fmt.Fprintf(buf, "(%d)", col.GetDecimal())
 					}
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
@@ -1084,13 +1084,13 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
 			s, r := tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits
 			if r == 0 || r == autoid.AutoRandomRangeBitsDefault {
-				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", s))
+				fmt.Fprintf(buf, " /*T![auto_rand] AUTO_RANDOM(%d) */", s)
 			} else {
-				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d, %d) */", s, r))
+				fmt.Fprintf(buf, " /*T![auto_rand] AUTO_RANDOM(%d, %d) */", s, r)
 			}
 		}
 		if len(col.Comment) > 0 {
-			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
+			fmt.Fprintf(buf, " COMMENT '%s'", format.OutputFormat(col.Comment))
 		}
 		if i != len(tableInfo.Cols())-1 {
 			needAddComma = true
@@ -1120,9 +1120,14 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		schemaName := dbName.L
 		tblName := tableInfo.Name.L
 		if hypoIndexes[schemaName] != nil && hypoIndexes[schemaName][tblName] != nil {
+			hypoIndexList := make([]*model.IndexInfo, 0, len(hypoIndexes[schemaName][tblName]))
 			for _, index := range hypoIndexes[schemaName][tblName] {
-				publicIndices = append(publicIndices, index)
+				hypoIndexList = append(hypoIndexList, index)
 			}
+			sort.Slice(hypoIndexList, func(i, j int) bool { // to make the result stable
+				return hypoIndexList[i].Name.O < hypoIndexList[j].Name.O
+			})
+			publicIndices = append(publicIndices, hypoIndexList...)
 		}
 	}
 	if len(publicIndices) > 0 {
@@ -1176,30 +1181,49 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 	// Foreign Keys are supported by data dictionary even though
 	// they are not enforced by DDL. This is still helpful to applications.
 	for _, fk := range tableInfo.ForeignKeys {
-		buf.WriteString(fmt.Sprintf(",\n  CONSTRAINT %s FOREIGN KEY ", stringutil.Escape(fk.Name.O, sqlMode)))
+		fmt.Fprintf(buf, ",\n  CONSTRAINT %s FOREIGN KEY ", stringutil.Escape(fk.Name.O, sqlMode))
 		colNames := make([]string, 0, len(fk.Cols))
 		for _, col := range fk.Cols {
 			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
 		}
-		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(colNames, ",")))
+		fmt.Fprintf(buf, "(%s)", strings.Join(colNames, ","))
 		if fk.RefSchema.L != "" {
-			buf.WriteString(fmt.Sprintf(" REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode)))
+			fmt.Fprintf(buf, " REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode))
 		} else {
-			buf.WriteString(fmt.Sprintf(" REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode)))
+			fmt.Fprintf(buf, " REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode))
 		}
 		refColNames := make([]string, 0, len(fk.Cols))
 		for _, refCol := range fk.RefCols {
 			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
 		}
-		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(refColNames, ",")))
+		fmt.Fprintf(buf, "(%s)", strings.Join(refColNames, ","))
 		if model.ReferOptionType(fk.OnDelete) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON DELETE %s", model.ReferOptionType(fk.OnDelete).String()))
+			fmt.Fprintf(buf, " ON DELETE %s", model.ReferOptionType(fk.OnDelete).String())
 		}
 		if model.ReferOptionType(fk.OnUpdate) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
+			fmt.Fprintf(buf, " ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String())
 		}
 		if fk.Version < model.FKVersion1 {
 			buf.WriteString(" /* FOREIGN KEY INVALID */")
+		}
+	}
+	// add check constraints info
+	publicConstraints := make([]*model.ConstraintInfo, 0, len(tableInfo.Indices))
+	for _, constr := range tableInfo.Constraints {
+		if constr.State == model.StatePublic {
+			publicConstraints = append(publicConstraints, constr)
+		}
+	}
+	if len(publicConstraints) > 0 {
+		buf.WriteString(",\n")
+	}
+	for i, constrInfo := range publicConstraints {
+		fmt.Fprintf(buf, "CONSTRAINT %s CHECK ((%s))", stringutil.Escape(constrInfo.Name.O, sqlMode), constrInfo.ExprString)
+		if !constrInfo.Enforced {
+			buf.WriteString(" /*!80016 NOT ENFORCED */")
+		}
+		if i != len(publicConstraints)-1 {
+			buf.WriteString(",\n")
 		}
 	}
 
@@ -2260,20 +2284,20 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
 			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
-		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil); err == nil {
-			viewSchema := viewLogicalPlan.Schema()
-			viewOutputNames := viewLogicalPlan.OutputNames()
-			for _, col := range tbl.Columns {
-				idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
-				if idx >= 0 {
-					col.FieldType = *viewSchema.Columns[idx].GetType()
-				}
-				if col.GetType() == mysql.TypeVarString {
-					col.SetType(mysql.TypeVarchar)
-				}
-			}
-		} else {
+		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil)
+		if err != nil {
 			return err
+		}
+		viewSchema := viewLogicalPlan.Schema()
+		viewOutputNames := viewLogicalPlan.OutputNames()
+		for _, col := range tbl.Columns {
+			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
+			if idx >= 0 {
+				col.FieldType = *viewSchema.Columns[idx].GetType()
+			}
+			if col.GetType() == mysql.TypeVarString {
+				col.SetType(mysql.TypeVarchar)
+			}
 		}
 		return nil
 	})
