@@ -394,7 +394,7 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 		"syntax":   0,
 		"charset":  math.MaxInt64,
 		"type":     0,
-		"conflict": math.MaxInt64,
+		"conflict": -1,
 	}
 	// set default value first
 	cfg.Syntax.Store(defaultValMap["syntax"])
@@ -915,7 +915,7 @@ func NewConfig() *Config {
 			IOConcurrency:     5,
 			CheckRequirements: true,
 			MaxError: MaxError{
-				Conflict: *atomic.NewInt64(math.MaxInt64),
+				Conflict: *atomic.NewInt64(-1),
 			},
 			TaskInfoSchemaName: defaultTaskInfoSchemaName,
 		},
@@ -1230,6 +1230,16 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 			cfg.App.MaxErrorRecords = maxAccepted
 		} else {
 			cfg.App.MaxErrorRecords = defaultMaxErrorRecords
+		}
+	}
+
+	if cfg.App.MaxError.Conflict.Load() == -1 {
+		if cfg.TikvImporter.Backend == BackendTiDB {
+			// in versions before v7.2, tidb backend will treat "duplicate entry"
+			// as type error which default is 0. So we set it to 0 to keep compatible.
+			cfg.App.MaxError.Conflict.Store(0)
+		} else {
+			cfg.App.MaxError.Conflict.Store(math.MaxInt64)
 		}
 	}
 

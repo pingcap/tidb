@@ -155,6 +155,11 @@ func (em *ErrorManager) TypeErrorsRemain() int64 {
 	return em.remainingError.Type.Load()
 }
 
+// ConflictErrorsRemain returns the number of conflict errors that can be recorded.
+func (em *ErrorManager) ConflictErrorsRemain() int64 {
+	return em.remainingError.Conflict.Load()
+}
+
 // RemainRecord returns the number of errors that need be recorded.
 func (em *ErrorManager) RemainRecord() int64 {
 	return em.maxErrRecords.Load()

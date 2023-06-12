@@ -586,7 +586,7 @@ rowLoop:
 				continue rowLoop
 			case common.IsRetryableError(err):
 				// retry next loop
-			default:
+			case be.errorMgr.TypeErrorsRemain() > 0 || be.errorMgr.ConflictErrorsRemain() > 0:
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
 				// we need to redo the writing row-by-row to find where the error locates (and skip it correctly in future).
 				if err = be.WriteRowsToDB(ctx, tableName, columnNames, r); err != nil {
@@ -595,6 +595,8 @@ rowLoop:
 					return errors.Annotatef(err, "[%s] write rows reach max error count %d", tableName, 0)
 				}
 				continue rowLoop
+			default:
+				return err
 			}
 		}
 		return errors.Annotatef(err, "[%s] batch write rows reach max retry %d and still failed", tableName, writeRowsMaxRetryTimes)
