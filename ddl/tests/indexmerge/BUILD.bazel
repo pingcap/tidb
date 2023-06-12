@@ -1,15 +1,11 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "indexmergetest_test",
-    timeout = "short",
+    name = "indexmerge_test",
     srcs = [
         "main_test.go",
         "merge_test.go",
     ],
-    flaky = True,
-    race = "on",
-    shard_count = 20,
     deps = [
         "//config",
         "//ddl",
