@@ -624,22 +624,20 @@ func (e *Engine) ingestSSTLoop() {
 						finSeq = metas.seq
 						finMetaSeq := metasMaxSeq
 						for len(inSyncSeqs.arr) > 0 {
-							if inSyncSeqs.arr[0].flushSeq == finSeq+1 {
-								finSeq++
-								finMetaSeq = inSyncSeqs.arr[0].metaSeq
-								heap.Remove(inSyncSeqs, 0)
-							} else {
+							if inSyncSeqs.arr[0].flushSeq != finSeq+1 {
 								break
 							}
+							finSeq++
+							finMetaSeq = inSyncSeqs.arr[0].metaSeq
+							heap.Remove(inSyncSeqs, 0)
 						}
 
 						var flushChans []chan struct{}
 						for _, seq := range flushQueue {
-							if seq.seq <= finSeq {
-								flushChans = append(flushChans, seq.ch)
-							} else {
+							if seq.seq > finSeq {
 								break
 							}
+							flushChans = append(flushChans, seq.ch)
 						}
 						flushQueue = flushQueue[len(flushChans):]
 						finishedSeq.Store(finSeq)

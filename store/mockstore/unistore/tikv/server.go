@@ -863,11 +863,10 @@ func (svr *Server) EstablishMPPConnectionWithStoreID(req *mpp.EstablishMPPConnec
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if mppHandler == nil {
-			time.Sleep(time.Second)
-		} else {
+		if mppHandler != nil {
 			break
 		}
+		time.Sleep(time.Second)
 	}
 	if mppHandler == nil {
 		return errors.New("task not found")

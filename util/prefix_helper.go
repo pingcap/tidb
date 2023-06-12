@@ -34,16 +34,15 @@ func ScanMetaWithPrefix(retriever kv.Retriever, prefix kv.Key, filter func(kv.Ke
 	defer iter.Close()
 
 	for {
-		if iter.Valid() && iter.Key().HasPrefix(prefix) {
-			if !filter(iter.Key(), iter.Value()) {
-				break
-			}
-			err = iter.Next()
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
+		if !(iter.Valid() && iter.Key().HasPrefix(prefix)) {
 			break
+		}
+		if !filter(iter.Key(), iter.Value()) {
+			break
+		}
+		err = iter.Next()
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 
@@ -60,14 +59,13 @@ func DelKeyWithPrefix(rm kv.RetrieverMutator, prefix kv.Key) error {
 
 	defer iter.Close()
 	for {
-		if iter.Valid() && iter.Key().HasPrefix(prefix) {
-			keys = append(keys, iter.Key().Clone())
-			err = iter.Next()
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
+		if !(iter.Valid() && iter.Key().HasPrefix(prefix)) {
 			break
+		}
+		keys = append(keys, iter.Key().Clone())
+		err = iter.Next()
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 

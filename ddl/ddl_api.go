@@ -329,13 +329,12 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 		}
 		originVersion, pendingCount = d.getPendingTiFlashTableCount(sctx, originVersion, pendingCount)
 		delay := time.Duration(0)
-		if pendingCount >= threshold {
-			logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("currentPendingCount", pendingCount), zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID), zap.Duration("time", configWaitTime))
-			delay = configWaitTime
-		} else {
+		if pendingCount < threshold {
 			// If there are not many unavailable tables, we don't need a force check.
 			return false, originVersion, pendingCount, false
 		}
+		logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("currentPendingCount", pendingCount), zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID), zap.Duration("time", configWaitTime))
+		delay = configWaitTime
 		time.Sleep(delay)
 	}
 	logutil.BgLogger().Info("too many unavailable tables, timeout", zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID))
@@ -1125,11 +1124,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
-				if col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime {
-					if !expression.IsValidCurrentTimestampExpr(v.Expr, colDef.Tp) {
-						return nil, nil, dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
-					}
-				} else {
+				if !(col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime) {
+					return nil, nil, dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
+				}
+				if !expression.IsValidCurrentTimestampExpr(v.Expr, colDef.Tp) {
 					return nil, nil, dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 				}
 				col.AddFlag(mysql.OnUpdateNowFlag)
@@ -4983,11 +4981,10 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint (UNIQUE KEY)"))
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
-			if col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime {
-				if !expression.IsValidCurrentTimestampExpr(opt.Expr, &col.FieldType) {
-					return dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
-				}
-			} else {
+			if !(col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime) {
+				return dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
+			}
+			if !expression.IsValidCurrentTimestampExpr(opt.Expr, &col.FieldType) {
 				return dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 			}
 			col.AddFlag(mysql.OnUpdateNowFlag)
