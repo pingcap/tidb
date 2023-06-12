@@ -126,6 +126,11 @@ type flowHandle struct {
 	lastSwitchTime atomic.Time
 	// taskInfoMap is a map from taskID to taskInfo
 	taskInfoMap sync.Map
+
+	// currTaskID is the taskID of the current running task.
+	// It may be changed when we switch to a new task or switch to a new owner.
+	currTaskID            atomic.Int64
+	disableTiKVImportMode atomic.Bool
 }
 
 var _ dispatcher.TaskFlowHandle = (*flowHandle)(nil)
@@ -140,6 +145,11 @@ func (h *flowHandle) OnTicker(ctx context.Context, task *proto.Task) {
 }
 
 func (h *flowHandle) switchTiKVMode(ctx context.Context, task *proto.Task) {
+	h.updateCurrentTask(task)
+	if h.disableTiKVImportMode.Load() {
+		return
+	}
+
 	if time.Since(h.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
 		return
 	}
@@ -203,7 +213,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		gTask.Step = Import
 		return metaBytes, nil
 	case Import:
-		h.switchTiKV2NormalMode(ctx, logutil.BgLogger())
+		h.switchTiKV2NormalMode(ctx, gTask, logutil.BgLogger())
 		defer h.unregisterTask(ctx, gTask)
 		if err := postProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
 			return nil, err
@@ -218,7 +228,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
 	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
 	logger.Info("process error flow", zap.ByteStrings("error message", receiveErr))
-	h.switchTiKV2NormalMode(ctx, logger)
+	h.switchTiKV2NormalMode(ctx, gTask, logger)
 	h.unregisterTask(ctx, gTask)
 
 	gTask.Error = receiveErr[0]
@@ -259,7 +269,12 @@ func (*flowHandle) IsRetryableErr(error) bool {
 	return false
 }
 
-func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logger) {
+func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
+	h.updateCurrentTask(task)
+	if h.disableTiKVImportMode.Load() {
+		return
+	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -272,6 +287,15 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 
 	// clear it, so next task can switch TiKV mode again.
 	h.lastSwitchTime.Store(time.Time{})
+}
+
+func (h *flowHandle) updateCurrentTask(task *proto.Task) {
+	if h.currTaskID.Swap(task.ID) != task.ID {
+		taskMeta := &TaskMeta{}
+		if err := json.Unmarshal(task.Meta, taskMeta); err == nil {
+			h.disableTiKVImportMode.Store(taskMeta.Plan.DisableTiKVImportMode)
+		}
+	}
 }
 
 // preProcess does the pre processing for the task.

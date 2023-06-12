@@ -45,6 +45,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, int64(100), plan.MaxRecordedErrors)
 	require.Equal(t, false, plan.Detached)
 	require.Equal(t, "utf8mb4", *plan.Charset)
+	require.Equal(t, false, plan.DisableTiKVImportMode)
 
 	plan = &Plan{Format: DataFormatParquet}
 	plan.initDefaultOptions()
@@ -88,7 +89,9 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		maxWriteSpeedOption+"='200mib', "+
 		splitFileOption+", "+
 		recordErrorsOption+"=123, "+
-		detachedOption)
+		detachedOption+", "+
+		disableTiKVImportModeOption,
+	)
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
 	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
@@ -108,6 +111,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.True(t, plan.SplitFile, sql)
 	require.Equal(t, int64(123), plan.MaxRecordedErrors, sql)
 	require.True(t, plan.Detached, sql)
+	require.True(t, plan.DisableTiKVImportMode, sql)
 }
 
 func TestAdjustOptions(t *testing.T) {

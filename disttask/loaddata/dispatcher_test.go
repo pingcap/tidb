@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -75,4 +76,32 @@ func (s *loadDataSuite) TestFlowHandleGetEligibleInstances() {
 	eligibleInstances, err = h.GetEligibleInstances(context.Background(), gTask)
 	s.NoError(err)
 	s.Equal([]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}}, eligibleInstances)
+}
+
+func (s *loadDataSuite) TestUpdateCurrentTask() {
+	taskMeta := TaskMeta{
+		Plan: importer.Plan{
+			DisableTiKVImportMode: true,
+		},
+	}
+	bs, err := json.Marshal(taskMeta)
+	require.NoError(s.T(), err)
+
+	h := flowHandle{}
+	require.Equal(s.T(), int64(0), h.currTaskID.Load())
+	require.False(s.T(), h.disableTiKVImportMode.Load())
+
+	h.updateCurrentTask(&proto.Task{
+		ID:   1,
+		Meta: bs,
+	})
+	require.Equal(s.T(), int64(1), h.currTaskID.Load())
+	require.True(s.T(), h.disableTiKVImportMode.Load())
+
+	h.updateCurrentTask(&proto.Task{
+		ID:   1,
+		Meta: bs,
+	})
+	require.Equal(s.T(), int64(1), h.currTaskID.Load())
+	require.True(s.T(), h.disableTiKVImportMode.Load())
 }
