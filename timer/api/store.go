@@ -368,6 +368,8 @@ type TimerStoreCore interface {
 	// Watch watches all changes of the store. A chan will be returned to receive `WatchTimerResponse`
 	// The returned chan be closed when the context in the argument is done.
 	Watch(ctx context.Context) WatchTimerChan
+	// Close closes the store
+	Close()
 }
 
 // TimerStore extends TimerStoreCore to provide some extra methods for timer operations
@@ -398,4 +400,15 @@ func (s *TimerStore) getOneRecord(ctx context.Context, cond Cond) (record *Timer
 	}
 
 	return records[0], nil
+}
+
+// TimerWatchEventNotifier is used to notify timer watch events
+type TimerWatchEventNotifier interface {
+	// Watch watches all changes of the store. A chan will be returned to receive `WatchTimerResponse`
+	// The returned chan be closed when the context in the argument is done.
+	Watch(ctx context.Context) WatchTimerChan
+	// Notify sends the event to watchers
+	Notify(tp WatchTimerEventType, timerID string)
+	// Close closes the notifier
+	Close()
 }

@@ -199,6 +199,8 @@ const (
 	InternalImportInto = "ImportInto"
 	// InternalDistTask is the type of distributed task.
 	InternalDistTask = "DistTask"
+	// InternalTimer is the type of internal timer
+	InternalTimer = "Timer"
 )
 
 // The bitmap:

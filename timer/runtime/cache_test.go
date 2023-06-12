@@ -32,10 +32,10 @@ func newTestTimer(id string, policyExpr string, watermark time.Time) *api.TimerR
 			SchedPolicyType: api.SchedEventInterval,
 			SchedPolicyExpr: policyExpr,
 			HookClass:       "hook1",
+			Watermark:       watermark,
 			Enable:          true,
 		},
 		EventStatus: api.SchedEventIdle,
-		Watermark:   watermark,
 		Version:     1,
 	}
 }
