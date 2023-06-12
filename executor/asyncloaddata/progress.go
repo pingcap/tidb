@@ -79,6 +79,7 @@ func NewProgress(logicalImport bool) *Progress {
 	}
 }
 
+// AddColSize adds the size of the column to the progress.
 func (p *Progress) AddColSize(colSizeMap map[int64]int64) {
 	p.colSizeMu.Lock()
 	defer p.colSizeMu.Unlock()
@@ -87,6 +88,7 @@ func (p *Progress) AddColSize(colSizeMap map[int64]int64) {
 	}
 }
 
+// GetColSize returns the size of the column.
 func (p *Progress) GetColSize() map[int64]int64 {
 	colSizeMap := make(map[int64]int64)
 	p.colSizeMu.Lock()
