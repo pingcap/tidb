@@ -822,3 +822,15 @@ func TestIssue42400(t *testing.T) {
 	tk.MustQuery("show create table information_schema.ddl_jobs").CheckContain("`QUERY` text")
 	tk.MustQuery("select length(query) from information_schema.ddl_jobs;") // No error
 }
+
+func TestInfoSchemaRenameTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test.t1 (id int primary key,a text);")
+	tk.MustExec("insert test.t1 values(1,'334'),(4,'3443435'),(5,'fdf43t536653');")
+	tk.MustExec("rename table test.t1 to mysql.t1;")
+	tk.MustQuery("SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA = 'mysql') AND (TABLE_NAME = 't1');").
+		Check(testkit.Rows("1"))
+}

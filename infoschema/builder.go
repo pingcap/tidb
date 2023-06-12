@@ -716,6 +716,12 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	}
 
 	switch tp {
+	case model.ActionRenameTable, model.ActionRenameTables:
+		if tableNames, ok := b.is.schemaMap[dbInfo.Name.L]; ok {
+			if _, ok = tableNames.tables[tblInfo.Name.L]; ok {
+				return affected, nil
+			}
+		}
 	case model.ActionDropTablePartition:
 	case model.ActionTruncateTablePartition:
 	// ReorganizePartition handle the bundles in applyReorganizePartition
