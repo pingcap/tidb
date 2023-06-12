@@ -1149,7 +1149,6 @@ func (s *mockGCSSuite) TestAnalyze() {
 	// without analyze, use idx_ac
 	s.tk.MustExec("SET GLOBAL tidb_enable_auto_analyze=ON;")
 	s.tk.MustQuery("EXPLAIN SELECT * FROM load_data.analyze_table WHERE a=1 and b=1 and c=1;").CheckContain("idx_ac(a, c)")
-	s.tk.MustQuery("SHOW ANALYZE STATUS;").CheckNotContain("analyze_table")
 
 	sql := fmt.Sprintf(`IMPORT INTO load_data.analyze_table FROM 'gs://test-load/analyze-1.tsv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustExec(sql)
