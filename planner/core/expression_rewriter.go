@@ -1437,7 +1437,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		e.GetType().SetCharset(charset.CharsetBin)
 		e.GetType().SetCollate(charset.CollationBin)
 	default:
-		er.err = errors.Errorf("Not support type(%x) in sysVar", nativeType)
+		er.err = errors.Errorf("Not supported type(%x) in GetNativeValType() function", nativeType)
 		return
 	}
 	er.ctxStackAppend(e, types.EmptyName)
