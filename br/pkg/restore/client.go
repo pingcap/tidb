@@ -939,19 +939,17 @@ func (rc *Client) GoCreateTables(
 
 	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
 		err = rc.createTablesInWorkerPool(ctx, dom, tables, newTS, outCh)
-
 		if err == nil {
 			defer log.Debug("all tables are created")
 			close(outCh)
 			return outCh
-		} else if utils.FallBack2CreateTable(err) {
-			// fall back to old create table (sequential create table)
-			log.Info("fall back to the sequential create table")
-		} else {
+		} else if !utils.FallBack2CreateTable(err) {
 			errCh <- err
 			close(outCh)
 			return outCh
 		}
+		// fall back to old create table (sequential create table)
+		log.Info("fall back to the sequential create table")
 	}
 
 	createOneTable := func(c context.Context, db *DB, t *metautil.Table) error {

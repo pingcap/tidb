@@ -125,13 +125,12 @@ func (d *MinMaxDeque) Enqueue(idx uint64, item interface{}) error {
 		cmp := d.cmpFunc(item, pair.Item)
 		// 1. if MinMaxDeque aims for finding max and Item is equal or bigger than element at back
 		// 2. if MinMaxDeque aims for finding min and Item is equal or smaller than element at back
-		if cmp >= 0 && d.IsMax || cmp <= 0 && !d.IsMax {
-			err := d.PopBack()
-			if err != nil {
-				return err
-			}
-		} else {
+		if !(cmp >= 0 && d.IsMax || cmp <= 0 && !d.IsMax) {
 			break
+		}
+		err := d.PopBack()
+		if err != nil {
+			return err
 		}
 	}
 	d.PushBack(idx, item)

@@ -372,25 +372,24 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		}
 
 		// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
-		if len(partitionIDs) > 0 {
-			failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
-				if val.(bool) {
-					panic("drop global index must not delete partition index range")
-				}
-			})
-			for _, pid := range partitionIDs {
-				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
-				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
-				elemID := ea.allocForIndexID(pid, indexID)
-				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
-					return errors.Trace(err)
-				}
-			}
-		} else {
+		if len(partitionIDs) == 0 {
 			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 			elemID := ea.allocForIndexID(tableID, indexID)
 			return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("index ID is %d", indexID))
+		}
+		failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
+			if val.(bool) {
+				panic("drop global index must not delete partition index range")
+			}
+		})
+		for _, pid := range partitionIDs {
+			startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
+			endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
+			elemID := ea.allocForIndexID(pid, indexID)
+			if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	case model.ActionDropColumn:
 		var colName model.CIStr
@@ -401,14 +400,13 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			return errors.Trace(err)
 		}
 		if len(indexIDs) > 0 {
-			if len(partitionIDs) > 0 {
-				for _, pid := range partitionIDs {
-					if err := doBatchDeleteIndiceRange(ctx, s, job.ID, pid, indexIDs, now, ea); err != nil {
-						return errors.Trace(err)
-					}
-				}
-			} else {
+			if len(partitionIDs) == 0 {
 				return doBatchDeleteIndiceRange(ctx, s, job.ID, job.TableID, indexIDs, now, ea)
+			}
+			for _, pid := range partitionIDs {
+				if err := doBatchDeleteIndiceRange(ctx, s, job.ID, pid, indexIDs, now, ea); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 	case model.ActionModifyColumn:
