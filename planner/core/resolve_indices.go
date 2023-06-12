@@ -740,17 +740,6 @@ func (p *Insert) ResolveIndices() (err error) {
 			}
 		}
 	}
-	for _, set := range p.SetList {
-		newCol, err := set.Col.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return err
-		}
-		set.Col = newCol.(*expression.Column)
-		set.Expr, err = set.Expr.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return err
-		}
-	}
 	for i, expr := range p.GenCols.Exprs {
 		p.GenCols.Exprs[i], err = expr.ResolveIndices(p.tableSchema)
 		if err != nil {
