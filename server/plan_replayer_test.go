@@ -181,7 +181,7 @@ func getStatsAndMetaFromPlanReplayerAPI(
 			jsonTbl := &handle.JSONTable{}
 			r, err := zipFile.Open()
 			require.NoError(t, err)
-			// nolint: all_revive
+			//nolint: all_revive
 			defer func() {
 				require.NoError(t, r.Close())
 			}()
@@ -196,7 +196,7 @@ func getStatsAndMetaFromPlanReplayerAPI(
 			meta := make(map[string]string)
 			r, err := zipFile.Open()
 			require.NoError(t, err)
-			// nolint: all_revive
+			//nolint: all_revive
 			defer func() {
 				require.NoError(t, r.Close())
 			}()
