@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package loaddatatest
+package importintotest
 
 import (
 	"fmt"
@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/disttask/framework/storage"
-	"github.com/pingcap/tidb/disttask/loaddata"
+	"github.com/pingcap/tidb/disttask/importinto"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
@@ -312,7 +312,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
 	// subtask fail with error
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/errorWhenSortChunk", "return(true)")
 	result3 := s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-detached-job/t.csv?endpoint=%s' with detached`,
 		gcsEndpoint)).Rows()
 	s.Len(result3, 1)
@@ -374,15 +374,15 @@ func (s *mockGCSSuite) TestCancelJob() {
 	getTask := func(jobID int64) *proto.Task {
 		globalTaskManager, err := storage.GetTaskManager()
 		s.NoError(err)
-		taskKey := loaddata.TaskKey(jobID)
+		taskKey := importinto.TaskKey(jobID)
 		globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
 		s.NoError(err)
 		return globalTask
 	}
 
 	// cancel a running job created by self
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/waitBeforeSortChunk", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/syncAfterJobStarted", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/waitBeforeSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/syncAfterJobStarted", "return(true)")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_cancel_job1", Hostname: "localhost"}, nil, nil, nil))
 	result1 := s.tk.MustQuery(fmt.Sprintf(`import into t1 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
 		gcsEndpoint)).Rows()
@@ -390,7 +390,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	jobID1, err := strconv.Atoi(result1[0][0].(string))
 	s.NoError(err)
 	// wait job started
-	<-loaddata.TestSyncChan
+	<-importinto.TestSyncChan
 	// dist framework has bug, the cancelled status might be overridden by running status,
 	// so we wait it turn running before cancel, see https://github.com/pingcap/tidb/issues/44443
 	time.Sleep(3 * time.Second)
@@ -430,8 +430,8 @@ func (s *mockGCSSuite) TestCancelJob() {
 
 	// todo: enable it when https://github.com/pingcap/tidb/issues/44443 fixed
 	//// cancel a pending job created by test_cancel_job2 using root
-	//s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/loaddata/syncAfterJobStarted"))
-	//s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/syncBeforeJobStarted", "return(true)")
+	//s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/importinto/syncAfterJobStarted"))
+	//s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/syncBeforeJobStarted", "return(true)")
 	//result2 := s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
 	//	gcsEndpoint)).Rows()
 	//s.Len(result2, 1)

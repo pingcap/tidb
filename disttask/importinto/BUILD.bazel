@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "loaddata",
+    name = "importinto",
     srcs = [
         "dispatcher.go",
         "job.go",
@@ -10,7 +10,8 @@ go_library(
         "subtask_executor.go",
         "wrapper.go",
     ],
-    importpath = "github.com/pingcap/tidb/disttask/loaddata",
+    race = "on",
+    importpath = "github.com/pingcap/tidb/disttask/importinto",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/backend",
@@ -47,10 +48,10 @@ go_library(
 )
 
 go_test(
-    name = "loaddata_test",
+    name = "importinto_test",
     timeout = "short",
     srcs = ["dispatcher_test.go"],
-    embed = [":loaddata"],
+    embed = [":importinto"],
     flaky = True,
     deps = [
         "//disttask/framework/proto",
