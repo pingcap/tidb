@@ -2710,8 +2710,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		var lastTableRecord *consistency.RecordData
 		var indexRecord *consistency.RecordData
 		i := 0
-		j := 0
-		for i < len(tblRow) || j < len(idxRow) {
+		for i < len(tblRow) || i < len(idxRow) {
 			if i == len(tblRow) {
 				// No more rows in table side.
 				tableRecord = nil
@@ -2728,7 +2727,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 				}
 				tableRecord = &consistency.RecordData{Handle: handle, Values: value}
 			}
-			if j == len(idxRow) {
+			if i == len(idxRow) {
 				// No more rows in index side.
 				indexRecord = nil
 			} else {
@@ -2752,7 +2751,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 				err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, tableRecord)
 			} else if indexRecord == nil {
 				err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, tableRecord.Handle, indexRecord, tableRecord)
-			} else if tableRecord.Handle.Equal(indexRecord.Handle) && getCheckSum(tblRow[i]) != getCheckSum(idxRow[j]) {
+			} else if tableRecord.Handle.Equal(indexRecord.Handle) && getCheckSum(tblRow[i]) != getCheckSum(idxRow[i]) {
 				err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, tableRecord.Handle, indexRecord, tableRecord)
 			} else if !tableRecord.Handle.Equal(indexRecord.Handle) {
 				if tableRecord.Handle.Compare(indexRecord.Handle) < 0 {
@@ -2770,7 +2769,6 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 				return
 			}
 			i++
-			j++
 			if tableRecord != nil {
 				lastTableRecord = &consistency.RecordData{Handle: tableRecord.Handle, Values: tableRecord.Values}
 			} else {
