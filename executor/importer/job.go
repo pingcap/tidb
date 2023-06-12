@@ -125,8 +125,7 @@ func GetJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, user str
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 
 	sql := baseQuerySQL + ` WHERE id = %?`
-	args := []interface{}{jobID}
-	rs, err := conn.ExecuteInternal(ctx, sql, args...)
+	rs, err := conn.ExecuteInternal(ctx, sql, jobID)
 	if err != nil {
 		return nil, err
 	}

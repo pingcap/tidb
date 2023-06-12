@@ -190,7 +190,7 @@ type Plan struct {
 	InImportInto bool
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
-	// the user who executes the statement,in the form of user@host
+	// the user who executes the statement, in the form of user@host
 	// only initialized for IMPORT INTO
 	User string `json:"-"`
 }

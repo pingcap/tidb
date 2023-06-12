@@ -189,7 +189,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		if err := preProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
 			return nil, err
 		}
-		if err = startJob(ctx, taskMeta); err != nil {
+		if err = startJob(ctx, handle, taskMeta); err != nil {
 			return nil, err
 		}
 		subtaskMetas, err := generateSubtaskMetas(ctx, taskMeta)
@@ -210,11 +210,11 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	case Import:
 		defer func() {
 			if err == nil {
-				err = finishJob(ctx, taskMeta, &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt})
+				err = finishJob(ctx, handle, taskMeta, &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt})
 			} else {
 				// todo: we're not running in a transaction with task update, there might be case
 				// failJob return error, but task update succeed.
-				if err2 := failJob(ctx, taskMeta, err.Error()); err2 != nil {
+				if err2 := failJob(ctx, handle, taskMeta, err.Error()); err2 != nil {
 					logger.Error("call failJob failed", zap.Error(err2))
 				}
 			}
@@ -248,7 +248,7 @@ func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskH
 	for _, errStr := range receiveErr {
 		errStrs = append(errStrs, string(errStr))
 	}
-	if err = failJob(ctx, taskMeta, strings.Join(errStrs, "; ")); err != nil {
+	if err = failJob(ctx, handle, taskMeta, strings.Join(errStrs, "; ")); err != nil {
 		return nil, err
 	}
 	h.switchTiKV2NormalMode(ctx, logger)
@@ -514,16 +514,12 @@ func generateSubtaskMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMetas
 	return subtaskMetas, nil
 }
 
-func startJob(ctx context.Context, taskMeta *TaskMeta) error {
+func startJob(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta) error {
 	failpoint.Inject("syncBeforeJobStarted", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
 	})
-	globalTaskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+	err := handle.ExecInNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		return importer.StartJob(ctx, exec, taskMeta.JobID)
 	})
@@ -538,29 +534,23 @@ func job2Step(ctx context.Context, taskMeta *TaskMeta, step string) error {
 	if err != nil {
 		return err
 	}
+	// todo: use dispatcher.TaskHandle
+	// we might call this in scheduler later, there's no dispatcher.TaskHandle, so we use globalTaskManager here.
 	return globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		return importer.Job2Step(ctx, exec, taskMeta.JobID, step)
 	})
 }
 
-func finishJob(ctx context.Context, taskMeta *TaskMeta, summary *importer.JobSummary) error {
-	globalTaskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	return globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+func finishJob(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, summary *importer.JobSummary) error {
+	return handle.ExecInNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		return importer.FinishJob(ctx, exec, taskMeta.JobID, summary)
 	})
 }
 
-func failJob(ctx context.Context, taskMeta *TaskMeta, errorMsg string) error {
-	globalTaskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	return globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+func failJob(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, errorMsg string) error {
+	return handle.ExecInNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
 	})
