@@ -150,12 +150,11 @@ func convertToPrefixNext(key []byte) []byte {
 		return []byte{0}
 	}
 	for i := len(key) - 1; i >= 0; i-- {
-		if key[i] == 255 {
-			key[i] = 0
-		} else {
+		if key[i] != 255 {
 			key[i]++
 			return key
 		}
+		key[i] = 0
 	}
 	for i := 0; i < len(key); i++ {
 		key[i] = 255

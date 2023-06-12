@@ -1488,6 +1488,8 @@ type SessionVars struct {
 
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+	// HypoTiFlashReplicas are for the Index Advisor.
+	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
 
 	// Runtime Filter Group
 	// Runtime filter type: only support IN or MIN_MAX now.

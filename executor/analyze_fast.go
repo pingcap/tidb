@@ -171,17 +171,16 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
-		if kv.ErrInvalidTxn.Equal(err) {
-			_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			rollbackFn = func() error {
-				_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
-				return err
-			}
-		} else {
+		if !kv.ErrInvalidTxn.Equal(err) {
 			return nil, errors.Trace(err)
+		}
+		_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rollbackFn = func() error {
+			_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
+			return err
 		}
 	}
 	txn.SetOption(kv.Priority, kv.PriorityLow)

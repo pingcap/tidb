@@ -467,13 +467,12 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 			}
 		}
 
-		if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled {
-			logutil.Logger(w.logCtx).Error("[ddl] run DDL job failed", zap.String("job", job.String()), zap.Error(err))
-		} else {
+		if !(job.State != model.JobStateRollingback && job.State != model.JobStateCancelled) {
 			logutil.Logger(w.logCtx).Info("[ddl] the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
 			// If job is cancelled, we shouldn't return an error.
 			return ver, nil
 		}
+		logutil.Logger(w.logCtx).Error("[ddl] run DDL job failed", zap.String("job", job.String()), zap.Error(err))
 	}
 
 	return

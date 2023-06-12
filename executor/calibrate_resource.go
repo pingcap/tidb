@@ -258,21 +258,20 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	if len(quotas) < 5 {
 		return errors.Errorf("There are too few metrics points available in selected time window")
 	}
-	if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
-		sort.Slice(quotas, func(i, j int) bool {
-			return quotas[i] > quotas[j]
-		})
-		lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
-		upperBound := len(quotas) - lowerBound
-		sum := 0.
-		for i := lowerBound; i < upperBound; i++ {
-			sum += quotas[i]
-		}
-		quota := sum / float64(upperBound-lowerBound)
-		req.AppendUint64(0, uint64(quota))
-	} else {
+	if float64(len(quotas))/float64(len(quotas)+lowCount) <= percentOfPass {
 		return errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
 	}
+	sort.Slice(quotas, func(i, j int) bool {
+		return quotas[i] > quotas[j]
+	})
+	lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
+	upperBound := len(quotas) - lowerBound
+	sum := 0.
+	for i := lowerBound; i < upperBound; i++ {
+		sum += quotas[i]
+	}
+	quota := sum / float64(upperBound-lowerBound)
+	req.AppendUint64(0, uint64(quota))
 	return nil
 }
 
