@@ -65,7 +65,6 @@ type InsertValues struct {
 	Table   table.Table
 	Columns []*ast.ColumnName
 	Lists   [][]expression.Expression
-	SetList []*expression.Assignment
 
 	GenExprs []expression.Expression
 
@@ -122,6 +121,7 @@ func (e *InsertValues) exec(_ context.Context, _ [][]types.Datum) error {
 // 1 insert ... values(...)  --> name type column
 // 2 insert ... set x=y...   --> set type column
 // 3 insert ... (select ..)  --> name type column
+// set type is converted to name type in the optimizer
 // See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 func (e *InsertValues) initInsertColumns() error {
 	var cols []*table.Column
@@ -130,22 +130,8 @@ func (e *InsertValues) initInsertColumns() error {
 
 	tableCols := e.Table.Cols()
 
-	if len(e.SetList) > 0 {
-		// Process `set` type column.
-		columns := make([]string, 0, len(e.SetList))
-		for _, v := range e.SetList {
-			columns = append(columns, v.ColName.L)
-		}
-		cols, missingColIdx = table.FindColumns(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if missingColIdx >= 0 {
-			return errors.Errorf("INSERT INTO %s: unknown column %s",
-				e.Table.Meta().Name.O, e.SetList[missingColIdx].ColName.O)
-		}
-		if len(cols) == 0 {
-			return errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
-		}
-	} else if len(e.Columns) > 0 {
-		// Process `name` type column.
+	if len(e.Columns) > 0 {
+		// Process `name` and `set` type column.
 		columns := make([]string, 0, len(e.Columns))
 		for _, v := range e.Columns {
 			columns = append(columns, v.Name.L)
@@ -209,27 +195,9 @@ func (e *InsertValues) lazilyInitColDefaultValBuf() (ok bool) {
 	return false
 }
 
-func (e *InsertValues) processSetList() error {
-	if len(e.SetList) > 0 {
-		if len(e.Lists) > 0 {
-			return errors.Errorf("INSERT INTO %s: set type should not use values", e.Table)
-		}
-		l := make([]expression.Expression, 0, len(e.SetList))
-		for _, v := range e.SetList {
-			l = append(l, v.Expr)
-		}
-		e.Lists = append(e.Lists, l)
-	}
-	return nil
-}
-
 // insertRows processes `insert|replace into values ()` or `insert|replace into set x=y`
 func insertRows(ctx context.Context, base insertCommon) (err error) {
 	e := base.insertCommon()
-	// For `insert|replace into set x=y`, process the set list here.
-	if err = e.processSetList(); err != nil {
-		return err
-	}
 	sessVars := e.ctx.GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
