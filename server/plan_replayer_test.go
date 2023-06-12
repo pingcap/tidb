@@ -15,26 +15,34 @@
 package server
 
 import (
+	"archive/zip"
 	"bytes"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/gorilla/mux"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
-func TestDumpPlanReplayerAPI(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
+func prepareServerAndClientForTest(t *testing.T, store kv.Storage) (server *Server, client *testServerClient) {
 	driver := NewTiDBDriver(store)
-	client := newTestServerClient()
+	client = newTestServerClient()
+
 	cfg := newTestConfig()
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
@@ -42,25 +50,26 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 
 	server, err := NewServer(cfg, driver)
 	require.NoError(t, err)
-	defer server.Close()
-
-	client.port = getPortFromTCPAddr(server.listener.Addr())
-	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
 	}()
-	client.waitUntilServerOnline()
 
+	client.port = getPortFromTCPAddr(server.listener.Addr())
+	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+	client.waitUntilServerOnline()
+	return
+}
+
+func TestDumpPlanReplayerAPI(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	server, client := prepareServerAndClientForTest(t, store)
+	defer server.Close()
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
-	statsHandler := &StatsHandler{dom}
+	statsHandle := dom.StatsHandle()
 
-	planReplayerHandler := &PlanReplayerHandler{}
-	filename := prepareData4PlanReplayer(t, client, statsHandler)
-
-	router := mux.NewRouter()
-	router.Handle("/plan_replayer/dump/{filename}", planReplayerHandler)
+	filename := prepareData4PlanReplayer(t, client, statsHandle)
 
 	resp0, err := client.fetchStatus(filepath.Join("/plan_replayer/dump/", filename))
 	require.NoError(t, err)
@@ -110,7 +119,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	require.Equal(t, int64(8), count)
 }
 
-func prepareData4PlanReplayer(t *testing.T, client *testServerClient, statHandle *StatsHandler) string {
+func prepareData4PlanReplayer(t *testing.T, client *testServerClient, h *handle.Handle) string {
 	db, err := sql.Open("mysql", client.getDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
@@ -119,7 +128,6 @@ func prepareData4PlanReplayer(t *testing.T, client *testServerClient, statHandle
 	}()
 	tk := testkit.NewDBTestKit(t, db)
 
-	h := statHandle.do.StatsHandle()
 	tk.MustExec("create database planReplayer")
 	tk.MustExec("use planReplayer")
 	tk.MustExec("create table t(a int)")
@@ -144,4 +152,123 @@ func prepareData4PlanReplayer(t *testing.T, client *testServerClient, statHandle
 	rows.Close()
 	require.Equal(t, filename, filename2)
 	return filename
+}
+
+func getStatsFromPlanReplayerAPI(t *testing.T, client *testServerClient, filename string) (jsonTbls []*handle.JSONTable) {
+	resp0, err := client.fetchStatus(filepath.Join("/plan_replayer/dump/", filename))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp0.Body.Close())
+	}()
+
+	body, err := io.ReadAll(resp0.Body)
+	require.NoError(t, err)
+
+	b := bytes.NewReader(body)
+	z, err := zip.NewReader(b, int64(len(body)))
+
+	for _, zipFile := range z.File {
+		if !strings.HasPrefix(zipFile.Name, "stats/") {
+			continue
+		}
+		jsonTbl := &handle.JSONTable{}
+		r, err := zipFile.Open()
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, r.Close())
+		}()
+		buf := new(bytes.Buffer)
+		_, err = buf.ReadFrom(r)
+		require.NoError(t, err)
+		err = json.Unmarshal(buf.Bytes(), jsonTbl)
+		require.NoError(t, err)
+
+		jsonTbls = append(jsonTbls, jsonTbl)
+	}
+	return
+}
+
+func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats"))
+	}()
+	store := testkit.CreateMockStore(t)
+	server, client := prepareServerAndClientForTest(t, store)
+	defer server.Close()
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	statsHandle := dom.StatsHandle()
+	hsWorker := dom.GetHistoricalStatsWorker()
+
+	// time1, ts1: before everything starts
+	tk := testkit.NewTestKit(t, store)
+	time1 := time.Now()
+	ts1 := oracle.GoTimeToTS(time1)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, index ia(a))")
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+
+	// 1. first insert and first analyze, trigger first dump history stats
+	tk.MustExec("insert into t value(1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("analyze table t with 1 samplerate")
+	tblID := hsWorker.GetOneHistoricalStatsTable()
+	err = hsWorker.DumpHistoricalStats(tblID, statsHandle)
+	require.NoError(t, err)
+
+	// time2, stats1: after first analyze
+	time2 := time.Now()
+	stats1, err := statsHandle.DumpStatsToJSON("test", tblInfo, nil, true)
+	require.NoError(t, err)
+
+	// 2. second insert and second analyze, trigger second dump history stats
+	tk.MustExec("insert into t value(4,4,4), (5,5,5), (6,6,6)")
+	tk.MustExec("analyze table t with 1 samplerate")
+	tblID = hsWorker.GetOneHistoricalStatsTable()
+	err = hsWorker.DumpHistoricalStats(tblID, statsHandle)
+	require.NoError(t, err)
+
+	// time3, stats2: after second analyze
+	time3 := time.Now()
+	stats2, err := statsHandle.DumpStatsToJSON("test", tblInfo, nil, true)
+	require.NoError(t, err)
+
+	template := "plan replayer dump with stats as of timestamp '%s' explain %s"
+	query := "select * from t where a > 1"
+
+	// try to get history stats at time1
+	filename1 := tk.MustQuery(
+		fmt.Sprintf(template, strconv.FormatUint(ts1, 10), query),
+	).Rows()[0][0].(string)
+	jsonTbls1 := getStatsFromPlanReplayerAPI(t, client, filename1)
+	require.Len(t, jsonTbls1, 1)
+	// the result is the same as stats2, and IsHistoricalStats is false.
+	require.False(t, jsonTbls1[0].IsHistoricalStats)
+	require.Equal(t, jsonTbls1[0], stats2)
+
+	// try to get history stats at time2
+	filename2 := tk.MustQuery(
+		fmt.Sprintf(template, time2.Format("2006-01-02 15:04:05.000000"), query),
+	).Rows()[0][0].(string)
+	jsonTbls2 := getStatsFromPlanReplayerAPI(t, client, filename2)
+	require.Len(t, jsonTbls2, 1)
+	// the result is the same as stats1, and IsHistoricalStats is true.
+	require.True(t, jsonTbls2[0].IsHistoricalStats)
+	jsonTbls2[0].IsHistoricalStats = false
+	require.Equal(t, jsonTbls2[0], stats1)
+
+	// try to get history stats at time3
+	filename3 := tk.MustQuery(
+		fmt.Sprintf(template, time3.Format("2006-01-02T15:04:05.000000Z07:00"), query),
+	).Rows()[0][0].(string)
+	jsonTbls3 := getStatsFromPlanReplayerAPI(t, client, filename3)
+	require.Len(t, jsonTbls3, 1)
+	// the result is the same as stats2, and IsHistoricalStats is true.
+	require.True(t, jsonTbls3[0].IsHistoricalStats)
+	jsonTbls3[0].IsHistoricalStats = false
+	require.Equal(t, jsonTbls3[0], stats2)
 }

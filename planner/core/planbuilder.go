@@ -5461,16 +5461,20 @@ func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 
 	// first treat it as a TSO
 	tpLonglong := types.NewFieldType(mysql.TypeLonglong)
 	tpLonglong.SetFlag(mysql.UnsignedFlag)
-	tso, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, tpLonglong)
+	// We need a strict check, which means no truncate or any other warnings/errors, or it will wrongly try to parse
+	// a date/time string into a TSO.
+	// Maybe it's better not to modify and reuse the original StatementContext, so we use a temporary one here.
+	tmpStmtCtx := &stmtctx.StatementContext{TimeZone: sctx.GetSessionVars().Location()}
+	tso, err := tsVal.ConvertTo(tmpStmtCtx, tpLonglong)
 	if err == nil {
 		return tso.GetUint64()
 	}
 
 	// if failed, treat it as a date/time
 	// this part is similar to CalculateAsOfTsExpr
-	tpTimestamp := types.NewFieldType(mysql.TypeTimestamp)
-	tpTimestamp.SetDecimal(3)
-	timestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, tpTimestamp)
+	tpDateTime := types.NewFieldType(mysql.TypeDatetime)
+	tpDateTime.SetDecimal(3)
+	timestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, tpDateTime)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return 0
