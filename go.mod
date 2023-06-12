@@ -97,7 +97,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.8-0.20230605085112-28247160f497
-	github.com/tikv/pd/client v0.0.0-20230608061541-026ddf08a351
+	github.com/tikv/pd/client v0.0.0-20230419153320-f1d1a80feb95
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -294,6 +294,6 @@ replace (
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/parser => ./parser
-	//github.com/tikv/client-go/v2 => ../client-go
+	github.com/tikv/client-go/v2 => ../client-go
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
