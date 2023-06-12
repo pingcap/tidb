@@ -30,6 +30,7 @@ go_test(
     ],
     embed = [":runtime"],
     flaky = True,
+    race = "on",
     shard_count = 18,
     deps = [
         "//testkit/testsetup",
