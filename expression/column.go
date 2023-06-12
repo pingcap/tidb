@@ -83,6 +83,11 @@ func (col *CorrelatedColumn) VecEvalJSON(ctx sessionctx.Context, input *chunk.Ch
 	return genVecFromConstExpr(ctx, col, types.ETJson, input, result)
 }
 
+// Traverse implements the TraverseDown interface.
+func (col *CorrelatedColumn) Traverse(action TraverseAction) Expression {
+	return action.Transform(col)
+}
+
 // Eval implements Expression interface.
 func (col *CorrelatedColumn) Eval(row chunk.Row) (types.Datum, error) {
 	return *col.Data, nil
@@ -396,6 +401,11 @@ func (col *Column) MarshalJSON() ([]byte, error) {
 // GetType implements Expression interface.
 func (col *Column) GetType() *types.FieldType {
 	return col.RetType
+}
+
+// Traverse implements the TraverseDown interface.
+func (col *Column) Traverse(action TraverseAction) Expression {
+	return action.Transform(col)
 }
 
 // Eval implements Expression interface.

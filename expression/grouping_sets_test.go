@@ -414,25 +414,25 @@ func TestDistinctGroupingSets(t *testing.T) {
 	// for every col id, mapping them to a slice of gid.
 	require.Equal(t, len(id2Gids), 3)
 	// 0 -->  when grouping(column#1), the corresponding affected gids should be {0}
-	//            +--- explanation: when grouping(a), a is only grouped when grouping id = 0.
-	require.Equal(t, len(id2Gids[1]), 1)
-	_, ok := id2Gids[1][0]
+	//            +--- explanation: when grouping(a), col-a is needed when grouping id = 1,2,3.
+	require.Equal(t, len(id2Gids[1]), 3)
+	_, ok := id2Gids[1][1]
+	require.Equal(t, ok, true)
+	_, ok = id2Gids[1][2]
+	require.Equal(t, ok, true)
+	_, ok = id2Gids[1][3]
 	require.Equal(t, ok, true)
 	// 1 --> when grouping(column#2), the corresponding affected gids should be {0,1}
-	//            +--- explanation: when grouping(b), b is only grouped when grouping id = 0 or 1.
+	//            +--- explanation: when grouping(b), col-b is needed when grouping id = 2 or 3.
 	require.Equal(t, len(id2Gids[2]), 2)
-	_, ok = id2Gids[2][0]
+	_, ok = id2Gids[2][2]
 	require.Equal(t, ok, true)
-	_, ok = id2Gids[2][1]
+	_, ok = id2Gids[2][3]
 	require.Equal(t, ok, true)
 	// 2 --> when grouping(column#3), the corresponding affected gids should be {0,1,2}
-	//            +--- explanation: when grouping(c), c is only grouped when grouping id = 0 or 1 or 2.
-	require.Equal(t, len(id2Gids[3]), 3)
-	_, ok = id2Gids[3][0]
-	require.Equal(t, ok, true)
-	_, ok = id2Gids[3][1]
-	require.Equal(t, ok, true)
-	_, ok = id2Gids[3][2]
+	//            +--- explanation: when grouping(c), col-c is needed when grouping id = 3.
+	require.Equal(t, len(id2Gids[3]), 1)
+	_, ok = id2Gids[3][3]
 	require.Equal(t, ok, true)
 	// column d is not in the grouping set columns, so it won't be here.
 }

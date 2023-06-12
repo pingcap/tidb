@@ -1924,5 +1924,121 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestRollupMPP",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(1) from t group by a, b with rollup; -- 1. simple agg",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#8",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:Column#5, Column#6, gid, funcs:count(1)->Column#8",
+          "      └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#5, collate: binary], [name: Column#6, collate: binary], [name: gid, collate: binary]",
+          "          └─Expand 10000.00 mpp[tiflash]  level-projection:[<nil>->Column#5, <nil>->Column#6, 0->gid],[Column#5, <nil>->Column#6, 1->gid],[Column#5, Column#6, 3->gid]; schema: [Column#5,Column#6,gid]",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select sum(c), count(1) from t group by a, b with rollup; -- 2. non-grouping set col c",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#8, Column#9",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:Column#17, Column#18, Column#19, funcs:sum(Column#16)->Column#8, funcs:count(1)->Column#9",
+          "      └─Projection 10000.00 mpp[tiflash]  cast(test.t.c, decimal(10,0) BINARY)->Column#16, Column#5, Column#6, gid",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#5, collate: binary], [name: Column#6, collate: binary], [name: gid, collate: binary]",
+          "            └─Expand 10000.00 mpp[tiflash]  level-projection:[test.t.c, <nil>->Column#5, <nil>->Column#6, 0->gid],[test.t.c, Column#5, <nil>->Column#6, 1->gid],[test.t.c, Column#5, Column#6, 3->gid]; schema: [test.t.c,Column#5,Column#6,gid]",
+          "              └─Projection 10000.00 mpp[tiflash]  test.t.c, test.t.a, test.t.b",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select count(a) from t group by a, b with rollup; -- 3. should keep the original col a",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#8",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:Column#5, Column#6, gid, funcs:sum(Column#11)->Column#8",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#5, collate: binary], [name: Column#6, collate: binary], [name: gid, collate: binary]",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:Column#5, Column#6, gid, funcs:count(test.t.a)->Column#11",
+          "            └─Expand 10000.00 mpp[tiflash]  level-projection:[test.t.a, <nil>->Column#5, <nil>->Column#6, 0->gid],[test.t.a, Column#5, <nil>->Column#6, 1->gid],[test.t.a, Column#5, Column#6, 3->gid]; schema: [test.t.a,Column#5,Column#6,gid]",
+          "              └─Projection 10000.00 mpp[tiflash]  test.t.a, test.t.a, test.t.b",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select grouping(a) from t group by a, b with rollup; -- 4. contain grouping function ref to grouping set column a",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  grouping(gid)->Column#8",
+          "    └─Projection 8000.00 mpp[tiflash]  gid",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#5, Column#6, gid, funcs:firstrow(gid)->gid",
+          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#5, collate: binary], [name: Column#6, collate: binary], [name: gid, collate: binary]",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#5, Column#6, gid, ",
+          "              └─Expand 10000.00 mpp[tiflash]  level-projection:[<nil>->Column#5, <nil>->Column#6, 0->gid],[Column#5, <nil>->Column#6, 1->gid],[Column#5, Column#6, 3->gid]; schema: [Column#5,Column#6,gid]",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select grouping(a,b) from t group by a, b with rollup; -- 5. grouping function contains grouping set column a,c",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  grouping(gid)->Column#8",
+          "    └─Projection 8000.00 mpp[tiflash]  gid",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#5, Column#6, gid, funcs:firstrow(gid)->gid",
+          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#5, collate: binary], [name: Column#6, collate: binary], [name: gid, collate: binary]",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#5, Column#6, gid, ",
+          "              └─Expand 10000.00 mpp[tiflash]  level-projection:[<nil>->Column#5, <nil>->Column#6, 0->gid],[Column#5, <nil>->Column#6, 1->gid],[Column#5, Column#6, 3->gid]; schema: [Column#5,Column#6,gid]",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select a, grouping(b,a) from t group by a,b with rollup; -- 6. resolve normal column a to grouping set column a'",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#5, grouping(gid)->Column#8",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#5, gid",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#5, Column#6, gid, funcs:firstrow(Column#5)->Column#5, funcs:firstrow(gid)->gid",
+          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#5, collate: binary], [name: Column#6, collate: binary], [name: gid, collate: binary]",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#5, Column#6, gid, ",
+          "              └─Expand 10000.00 mpp[tiflash]  level-projection:[<nil>->Column#5, <nil>->Column#6, 0->gid],[Column#5, <nil>->Column#6, 1->gid],[Column#5, Column#6, 3->gid]; schema: [Column#5,Column#6,gid]",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select a+1, grouping(b) from t group by a+1, b with rollup; -- 7. resolve field list a+1 to grouping set column a+1",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#5, grouping(gid)->Column#8",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#5, gid",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#5, Column#6, gid, funcs:firstrow(Column#5)->Column#5, funcs:firstrow(gid)->gid",
+          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#5, collate: binary], [name: Column#6, collate: binary], [name: gid, collate: binary]",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#5, Column#6, gid, ",
+          "              └─Expand 10000.00 mpp[tiflash]  level-projection:[<nil>->Column#5, <nil>->Column#6, 0->gid],[Column#5, <nil>->Column#6, 1->gid],[Column#5, Column#6, 3->gid]; schema: [Column#5,Column#6,gid]",
+          "                └─Projection 10000.00 mpp[tiflash]  plus(test.t.a, 1)->Column#5, test.t.b",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
   }
 ]

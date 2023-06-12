@@ -352,6 +352,11 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 	return sf
 }
 
+// Traverse implements the TraverseDown interface.
+func (sf *ScalarFunction) Traverse(action TraverseAction) Expression {
+	return action.Transform(sf)
+}
+
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	var (

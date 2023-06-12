@@ -254,6 +254,10 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	expand := LogicalExpand{
 		rollupGroupingSets: rollupGroupingSets,
 		distinctGroupByCol: distinctGbyCols,
+		// for resolving grouping function args.
+		distinctGbyExprs: distinctGbyExprs,
+		gbyExprsRefPos:   gbyExprsRefPos,
+
 		// fill the gen col names when building level projections.
 	}.Init(b.ctx, b.getSelectOffset())
 
@@ -275,7 +279,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	}
 	expand.GID = gid
 	expandSchema.Append(gid)
-	expand.GeneratedColNames = append(expand.GeneratedColNames, gid.OrigName)
+	expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gid.OrigName)
 	names = append(names, buildExpandFieldName(gid, nil, "gid_"))
 	if hasDuplicateGroupingSet {
 		// the last two col of the schema should be gid & gpos
@@ -286,7 +290,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 		}
 		expand.GPos = gpos
 		expandSchema.Append(gpos)
-		expand.GeneratedColNames = append(expand.GeneratedColNames, gpos.OrigName)
+		expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gpos.OrigName)
 		names = append(names, buildExpandFieldName(gpos, nil, "gpos_"))
 	}
 	expand.SetChildren(proj)
@@ -1543,6 +1547,54 @@ func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *t
 	return nil
 }
 
+type resolveGroupingTraverseAction struct {
+	CurrentBlockExpand *LogicalExpand
+}
+
+func (r resolveGroupingTraverseAction) Transform(expr expression.Expression) (res expression.Expression) {
+	switch x := expr.(type) {
+	case *expression.Column:
+		// when meeting a column, judge whether it's a relate grouping set col.
+		// eg: select a, b from t group by a, c with rollup, here a is, while b is not.
+		// in underlying Expand schema (a,b,c,a',c'), a select list should be resolved to a'.
+		res, _ = r.CurrentBlockExpand.trySubstituteExprWithGroupingSetCol(x)
+	case *expression.CorrelatedColumn:
+		// select 1 in (select t2.a from t group by t2.a, b with rollup) from t2;
+		// in this case: group by item has correlated column t2.a, and it's select list contains t2.a as well.
+		res, _ = r.CurrentBlockExpand.trySubstituteExprWithGroupingSetCol(x)
+	case *expression.Constant:
+		// constant just keep it real: select 1 from t group by a, b with rollup.
+		res = x
+	case *expression.ScalarFunction:
+		// scalar function just try to resolve itself first, then if not changed, trying resolve its children.
+		var substituted bool
+		res, substituted = r.CurrentBlockExpand.trySubstituteExprWithGroupingSetCol(x)
+		if !substituted {
+			// if not changed, try to resolve it children.
+			// select a+1, grouping(b) from t group by a+1 (projected as c), b with rollup: in this case, a+1 is resolved as c as a whole.
+			// select a+1, grouping(b) from t group by a(projected as a'), b with rollup  : in this case, a+1 is resolved as a'+ 1.
+			newArgs := x.GetArgs()
+			for i, arg := range newArgs {
+				newArgs[i] = r.Transform(arg)
+			}
+			res = x
+		}
+	default:
+		res = expr
+	}
+	return res
+}
+
+func (b *PlanBuilder) replaceGroupingFunc(expr expression.Expression) expression.Expression {
+	// current block doesn't have an expand OP, just return it.
+	if b.currentBlockExpand == nil {
+		return expr
+	}
+	// curExpand can supply the distinctGbyExprs and gid col.
+	traverseAction := resolveGroupingTraverseAction{CurrentBlockExpand: b.currentBlockExpand}
+	return expr.Traverse(traverseAction)
+}
+
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
 	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, []expression.Expression, int, error) {
@@ -1588,6 +1640,11 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		if err != nil {
 			return nil, nil, 0, err
 		}
+
+		// for case: select a+1, b, sum(b), grouping(a) from t group by a, b with rollup.
+		// the column inside aggregate (only sum(b) here) should be resolved to original source column,
+		// while for others, just use expanded columns if exists: a'+ 1, b', group(gid)
+		newExpr = b.replaceGroupingFunc(newExpr)
 
 		// For window functions in the order by clause, we will append an field for it.
 		// We need rewrite the window mapper here so order by clause could find the added field.
@@ -3514,6 +3571,9 @@ func (*PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *ast.
 		}
 		switch errExprLoc.Loc {
 		case ErrExprInSelect:
+			if sel.GroupBy.Rollup {
+				return ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(strconv.Itoa(errExprLoc.Offset + 1))
+			}
 			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, name.DBName.O+"."+name.TblName.O+"."+name.OrigColName.O)
 		case ErrExprInOrderBy:
 			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.OrderBy.Items[errExprLoc.Offset].Expr.Text())
