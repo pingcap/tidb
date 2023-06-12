@@ -1193,5 +1193,13 @@
       "external/": "no need to vet third party code",
       "/cgo/": "no need to vet third party code for cgo"
     }
+  },
+  "QF1012": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      ".*_test.go": "ignore test code",
+      "external/": "no need to vet third party code",
+      "/cgo/": "no need to vet third party code for cgo"
+    }
   }
 }

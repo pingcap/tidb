@@ -638,7 +638,7 @@ func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt 
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(fmt.Sprintf("[%s, cost:%v]", join, tracer.cost[join]))
+			fmt.Fprintf(buffer, "[%s, cost:%v]", join, tracer.cost[join])
 		}
 		buffer.WriteString("]")
 		return buffer.String()
