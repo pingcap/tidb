@@ -174,12 +174,14 @@ func getStatsAndMetaFromPlanReplayerAPI(
 	require.NoError(t, err)
 	b := bytes.NewReader(body)
 	z, err := zip.NewReader(b, int64(len(body)))
+	require.NoError(t, err)
 
 	for _, zipFile := range z.File {
 		if strings.HasPrefix(zipFile.Name, "stats/") {
 			jsonTbl := &handle.JSONTable{}
 			r, err := zipFile.Open()
 			require.NoError(t, err)
+			// nolint: all_revive
 			defer func() {
 				require.NoError(t, r.Close())
 			}()
@@ -194,6 +196,7 @@ func getStatsAndMetaFromPlanReplayerAPI(
 			meta := make(map[string]string)
 			r, err := zipFile.Open()
 			require.NoError(t, err)
+			// nolint: all_revive
 			defer func() {
 				require.NoError(t, r.Close())
 			}()
