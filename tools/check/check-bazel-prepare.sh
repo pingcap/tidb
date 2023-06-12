@@ -26,7 +26,7 @@ after_checksum=`find . -type f \( -name *.bazel -o -name *.bzl \) -exec md5sum {
 if [ "$before_checksum" != "$after_checksum" ]
 then
   echo "Please run \`make bazel_prepare\` to update \`.bazel\` files"
-  diff <(echo "$before_checksum") <(echo "$after_checksum")
   git diff
+  diff <(echo "$before_checksum") <(echo "$after_checksum")
   exit 1
 fi
