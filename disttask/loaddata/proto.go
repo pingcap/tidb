@@ -34,6 +34,8 @@ const (
 // TaskMeta is the task of LoadData.
 // All the field should be serializable.
 type TaskMeta struct {
+	// IMPORT INTO job id.
+	JobID  int64
 	Plan   importer.Plan
 	Stmt   string
 	Result Result

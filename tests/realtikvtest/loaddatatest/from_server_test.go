@@ -52,37 +52,37 @@ func (s *mockGCSSuite) TestImportFromServer() {
 	s.tk.MustExec("create table t (a bigint, b varchar(100));")
 
 	// relative path
-	s.ErrorIs(s.tk.ExecToErr("IMPORT INTO t FROM '~/file.csv'"), exeerrors.ErrLoadDataInvalidURI)
+	s.ErrorIs(s.tk.QueryToErr("IMPORT INTO t FROM '~/file.csv'"), exeerrors.ErrLoadDataInvalidURI)
 	// no suffix or wrong suffix
-	s.ErrorIs(s.tk.ExecToErr("IMPORT INTO t FROM '/file'"), exeerrors.ErrLoadDataInvalidURI)
-	s.ErrorIs(s.tk.ExecToErr("IMPORT INTO t FROM '/file.txt'"), exeerrors.ErrLoadDataInvalidURI)
+	s.ErrorIs(s.tk.QueryToErr("IMPORT INTO t FROM '/file'"), exeerrors.ErrLoadDataInvalidURI)
+	s.ErrorIs(s.tk.QueryToErr("IMPORT INTO t FROM '/file.txt'"), exeerrors.ErrLoadDataInvalidURI)
 	// non-exist parent directory
-	err := s.tk.ExecToErr("IMPORT INTO t FROM '/path/to/non/exists/file.csv'")
+	err := s.tk.QueryToErr("IMPORT INTO t FROM '/path/to/non/exists/file.csv'")
 	s.ErrorIs(err, exeerrors.ErrLoadDataInvalidURI)
 	s.ErrorContains(err, "no such file or directory")
 	// without permission to parent dir
-	err = s.tk.ExecToErr(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "no-perm", "no-perm.csv")))
+	err = s.tk.QueryToErr(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "no-perm", "no-perm.csv")))
 	s.ErrorIs(err, exeerrors.ErrLoadDataCantRead)
 	s.ErrorContains(err, "permission denied")
 	// file not exists
-	err = s.tk.ExecToErr(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "not-exists.csv")))
+	err = s.tk.QueryToErr(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "not-exists.csv")))
 	s.ErrorIs(err, exeerrors.ErrLoadDataCantRead)
 	s.ErrorContains(err, "no such file or directory")
 	// file without permission
-	err = s.tk.ExecToErr(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "no-perm.csv")))
+	err = s.tk.QueryToErr(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "no-perm.csv")))
 	s.ErrorIs(err, exeerrors.ErrLoadDataCantRead)
 	s.ErrorContains(err, "permission denied")
 
-	s.tk.MustExec(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "server-0.csv")))
+	s.tk.MustQuery(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "server-0.csv")))
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{"0 test-0", "1 test-1"}...))
 
 	s.tk.MustExec("truncate table t")
 	// we don't have read access to 'no-perm' directory, so walk-dir fails
-	err = s.tk.ExecToErr(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "server-*.csv")))
+	err = s.tk.QueryToErr(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "server-*.csv")))
 	s.ErrorIs(err, exeerrors.ErrLoadDataCantRead)
 	s.ErrorContains(err, "permission denied")
 
 	s.NoError(os.Chmod(path.Join(tempDir, "no-perm"), 0o400))
-	s.tk.MustExec(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "server-*.csv")))
+	s.tk.MustQuery(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "server-*.csv")))
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows(allData...))
 }

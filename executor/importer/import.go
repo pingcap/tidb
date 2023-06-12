@@ -37,6 +37,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	pformat "github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -54,8 +55,8 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
-	"k8s.io/utils/strings/slices"
 )
 
 const (
@@ -88,7 +89,7 @@ const (
 	checksumTableOption       = "checksum_table"
 	analyzeTableOption        = "analyze_table"
 	recordErrorsOption        = "record_errors"
-	detachedOption            = plannercore.DetachedOption
+	detachedOption            = "detached"
 )
 
 var (
@@ -187,6 +188,11 @@ type Plan struct {
 
 	// todo: remove it when load data code is reverted.
 	InImportInto bool
+	// only initialized for IMPORT INTO, used when creating job.
+	Parameters *ImportParameters `json:"-"`
+	// the user who executes the statement, in the form of user@host
+	// only initialized for IMPORT INTO
+	User string `json:"-"`
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -347,8 +353,12 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 		InImportInto:           true,
+		User:                   userSctx.GetSessionVars().User.String(),
 	}
 	if err := p.initOptions(userSctx, plan.Options); err != nil {
+		return nil, err
+	}
+	if err := p.initParameters(plan); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -636,6 +646,53 @@ func (p *Plan) adjustOptions() {
 		log.L().Info("IMPORT INTO thread count is larger than cpu-count, set to cpu-count")
 		p.ThreadCnt = numCPU
 	}
+}
+
+func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
+	redactURL, err := storage.RedactURL(p.Path)
+	if err != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
+	}
+	var columnsAndVars, setClause string
+	var sb strings.Builder
+	formatCtx := pformat.NewRestoreCtx(pformat.DefaultRestoreFlags, &sb)
+	if len(plan.ColumnsAndUserVars) > 0 {
+		sb.WriteString("(")
+		for i, col := range plan.ColumnsAndUserVars {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			_ = col.Restore(formatCtx)
+		}
+		sb.WriteString(")")
+		columnsAndVars = sb.String()
+	}
+	if len(plan.ColumnAssignments) > 0 {
+		sb.Reset()
+		for i, assign := range plan.ColumnAssignments {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			_ = assign.Restore(formatCtx)
+		}
+		setClause = sb.String()
+	}
+	optionMap := make(map[string]interface{}, len(plan.Options))
+	for _, opt := range plan.Options {
+		if opt.Value != nil {
+			optionMap[opt.Name] = opt.Value.String()
+		} else {
+			optionMap[opt.Name] = nil
+		}
+	}
+	p.Parameters = &ImportParameters{
+		ColumnsAndVars: columnsAndVars,
+		SetClause:      setClause,
+		FileLocation:   redactURL,
+		Format:         p.Format,
+		Options:        optionMap,
+	}
+	return nil
 }
 
 // initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable

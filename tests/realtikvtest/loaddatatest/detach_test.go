@@ -60,7 +60,7 @@ func (s *mockGCSSuite) TestSameBehaviourDetachedOrNot() {
 			Content: []byte(ca.physicalModeData),
 		})
 		executor.TestDetachedTaskFinished.Store(false)
-		s.tk.MustExec(fmt.Sprintf(`IMPORT INTO test_detached.t1 FROM 'gs://test-detached/1.txt?endpoint=%s' WITH thread=1;`,
+		s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO test_detached.t1 FROM 'gs://test-detached/1.txt?endpoint=%s' WITH thread=1;`,
 			gcsEndpoint))
 		rows := s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO test_detached.t2 FROM 'gs://test-detached/1.txt?endpoint=%s' WITH DETACHED, thread=1;`,
 			gcsEndpoint)).Rows()
