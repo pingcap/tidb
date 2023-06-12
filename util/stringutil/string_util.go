@@ -336,7 +336,7 @@ func Escape(str string, sqlMode mysql.SQLMode) string {
 	} else {
 		quote = "`"
 	}
-	return quote + strings.Replace(str, quote, quote+quote, -1) + quote
+	return quote + strings.ReplaceAll(str, quote, quote+quote) + quote
 }
 
 // BuildStringFromLabels construct config labels into string by following format:
@@ -350,10 +350,10 @@ func BuildStringFromLabels(labels map[string]string) string {
 		s = append(s, k)
 	}
 	slices.Sort(s)
-	r := new(bytes.Buffer)
+	var r bytes.Buffer
 	// visit labels by sorted key in order to make sure that result should be consistency
 	for _, key := range s {
-		r.WriteString(fmt.Sprintf("%s=%s,", key, labels[key]))
+		fmt.Fprintf(&r, "%s=%s,", key, labels[key])
 	}
 	returned := r.String()
 	return returned[:len(returned)-1]
@@ -391,7 +391,7 @@ func TrimUtf8String(str *string, trimmedNum int64) int64 {
 	totalLenTrimmed := int64(0)
 	for ; trimmedNum > 0; trimmedNum-- {
 		length := Utf8Len((*str)[0]) // character length
-		(*str) = (*str)[length:]
+		*str = (*str)[length:]
 		totalLenTrimmed += int64(length)
 	}
 	return totalLenTrimmed
@@ -439,6 +439,11 @@ func LowerOneString(str []byte) {
 			str[i] = toLowerIfAlphaASCII(str[i])
 		}
 	}
+}
+
+// IsNumericASCII judges if a byte is numeric
+func IsNumericASCII(c byte) bool {
+	return (c >= '0' && c <= '9')
 }
 
 // LowerOneStringExcludeEscapeChar lowers strings and exclude an escape char

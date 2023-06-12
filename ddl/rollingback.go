@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -75,12 +76,21 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 		return ver, errors.Trace(err1)
 	}
 	job.State = model.JobStateRollingback
+	err = completeErr(err, indexInfo)
+	if ingest.LitBackCtxMgr != nil {
+		ingest.LitBackCtxMgr.Unregister(job.ID)
+	}
 	return ver, errors.Trace(err)
 }
 
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotReorgAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
+	defer func() {
+		if ingest.LitBackCtxMgr != nil {
+			ingest.LitBackCtxMgr.Unregister(job.ID)
+		}
+	}()
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -115,7 +125,7 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 	if needNotifyAndStopReorgWorker(job) {
 		// column type change workers are started. we have to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
-		d.notifyReorgCancel(job)
+		d.notifyReorgWorkerJobStateChange(job)
 		// Give the this kind of ddl one more round to run, the dbterror.ErrCancelledDDLJob should be fetched from the bottom up.
 		return w.onModifyColumn(d, t, job)
 	}
@@ -246,7 +256,7 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 	if needNotifyAndStopReorgWorker(job) {
 		// add index workers are started. need to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
-		d.notifyReorgCancel(job)
+		d.notifyReorgWorkerJobStateChange(job)
 		ver, err = w.onCreateIndex(d, t, job, isPK)
 	} else {
 		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
@@ -385,6 +395,15 @@ func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	return convertAddTablePartitionJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob, tblInfo)
 }
 
+func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
+	if needNotifyAndStopReorgWorker(job) {
+		logutil.Logger(w.logCtx).Info("[DDL] pausing the DDL job", zap.String("job", job.String()))
+		d.notifyReorgWorkerJobStateChange(job)
+	}
+
+	return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -421,10 +440,14 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
 		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement,
-		model.ActionRecoverSchema:
+		model.ActionRecoverSchema, model.ActionAlterCheckConstraint:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionMultiSchemaChange:
 		err = rollingBackMultiSchemaChange(job)
+	case model.ActionAddCheckConstraint:
+		ver, err = rollingBackAddConstraint(d, t, job)
+	case model.ActionDropCheckConstraint:
+		ver, err = rollingBackDropConstraint(t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
@@ -469,4 +492,46 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	}
 
 	return
+}
+
+func rollingBackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	job.State = model.JobStateRollingback
+	_, tblInfo, constrInfoInMeta, _, err := checkAddCheckConstraint(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if constrInfoInMeta == nil {
+		// Add constraint hasn't stored constraint info into meta, so we can cancel the job
+		// directly without further rollback action.
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	// Add constraint has stored constraint info into meta, that means the job has at least
+	// arrived write only state.
+	originalState := constrInfoInMeta.State
+	constrInfoInMeta.State = model.StateWriteOnly
+	job.SchemaState = model.StateWriteOnly
+
+	job.Args = []interface{}{constrInfoInMeta.Name}
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != constrInfoInMeta.State)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return ver, dbterror.ErrCancelledDDLJob
+}
+
+func rollingBackDropConstraint(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, constrInfoInMeta, err := checkDropCheckConstraint(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// StatePublic means when the job is not running yet.
+	if constrInfoInMeta.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	// Can not rollback like drop other element, so just continue to drop constraint.
+	job.State = model.JobStateRunning
+	return ver, nil
 }

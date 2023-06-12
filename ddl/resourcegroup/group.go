@@ -34,6 +34,28 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 	group := &rmpb.ResourceGroup{
 		Name: groupName,
 	}
+
+	group.Priority = uint32(options.Priority)
+	if options.Runaway != nil {
+		runaway := &rmpb.RunawaySettings{
+			Rule: &rmpb.RunawayRule{},
+		}
+		if options.Runaway.ExecElapsedTimeMs == 0 {
+			return nil, ErrInvalidResourceGroupRunawayExecElapsedTime
+		}
+		runaway.Rule.ExecElapsedTimeMs = options.Runaway.ExecElapsedTimeMs
+		if options.Runaway.Action == 0 {
+			return nil, ErrUnknownResourceGroupRunawayAction
+		}
+		runaway.Action = rmpb.RunawayAction(options.Runaway.Action)
+		if options.Runaway.WatchDurationMs > 0 {
+			runaway.Watch = &rmpb.RunawayWatch{}
+			runaway.Watch.Type = rmpb.RunawayWatchType(options.Runaway.WatchType)
+			runaway.Watch.LastingDurationMs = options.Runaway.WatchDurationMs
+		}
+		group.RunawaySettings = runaway
+	}
+
 	if options.RURate > 0 {
 		group.Mode = rmpb.GroupMode_RUMode
 		group.RUSettings = &rmpb.GroupRequestUnitSettings{
@@ -44,7 +66,6 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 				},
 			},
 		}
-		group.Priority = uint32(options.Priority)
 		if len(options.CPULimiter) > 0 || len(options.IOReadBandwidth) > 0 || len(options.IOWriteBandwidth) > 0 {
 			return nil, ErrInvalidResourceGroupDuplicatedMode
 		}

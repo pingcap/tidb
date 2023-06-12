@@ -17,6 +17,7 @@ package local
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -78,6 +79,9 @@ const (
 	wrote         jobStageTp = "wrote"
 	ingested      jobStageTp = "ingested"
 	needRescan    jobStageTp = "needRescan"
+
+	// suppose each KV is about 32 bytes, 16 * units.KiB / 32 = 512
+	defaultKVBatchCount = 512
 )
 
 func (j jobStageTp) String() string {
@@ -254,7 +258,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 
 	bytesBuf := bufferPool.NewBuffer()
 	defer bytesBuf.Destroy()
-	pairs := make([]*sst.Pair, 0, kvBatchSize)
+	pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
 	count := 0
 	size := int64(0)
 	totalSize := int64(0)
@@ -265,8 +269,6 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	if j.regionSplitSize <= int64(config.SplitRegionSize) {
 		regionMaxSize = j.regionSplitSize * 4 / 3
 	}
-	// Set a lower flush limit to make the speed of write more smooth.
-	flushLimit := int64(writeLimiter.Limit() / 10)
 
 	flushKVs := func() error {
 		for i := range clients {
@@ -278,6 +280,9 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				return annotateErr(err, allPeers[i])
 			}
 		}
+		failpoint.Inject("afterFlushKVs", func() {
+			log.FromContext(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))
+		})
 		return nil
 	}
 
@@ -305,7 +310,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		size += kvSize
 		totalSize += kvSize
 
-		if count >= kvBatchSize || size >= flushLimit {
+		if size >= kvBatchSize {
 			if err := flushKVs(); err != nil {
 				return errors.Trace(err)
 			}

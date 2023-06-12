@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/internal/builder"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -162,7 +163,7 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
 	e.initRuntimeStats()
 	if e.isCorColInTableFilter {
-		e.tableRequest.Executors, err = constructDistExec(e.ctx, e.tblPlans)
+		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.ctx, e.tblPlans)
 		if err != nil {
 			return err
 		}
@@ -338,16 +339,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		util.WithRecovery(
 			func() {
 				failpoint.Inject("testIndexMergePanicPartialIndexWorker", nil)
-				failpoint.Inject("mockSleepBeforeStartTableReader", func(_ failpoint.Value) {
-					select {
-					case <-ctx.Done():
-						failpoint.Return()
-					case <-e.finished:
-						failpoint.Return()
-					case <-exitCh:
-						failpoint.Return()
-					}
-				})
 				worker := &partialIndexWorker{
 					stats:              e.stats,
 					idxID:              e.getPartitalPlanID(workID),
@@ -365,7 +356,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
 					var err error
-					if e.dagPBs[workID].Executors, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.ctx, e.partialPlans[workID]); err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
@@ -463,16 +454,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		util.WithRecovery(
 			func() {
 				failpoint.Inject("testIndexMergePanicPartialTableWorker", nil)
-				failpoint.Inject("mockSleepBeforeStartTableReader", func(_ failpoint.Value) {
-					select {
-					case <-ctx.Done():
-						failpoint.Return()
-					case <-e.finished:
-						failpoint.Return()
-					case <-exitCh:
-						failpoint.Return()
-					}
-				})
 				var err error
 				partialTableReader := &TableReaderExecutor{
 					baseExecutor:     newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
@@ -514,7 +495,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				}
 
 				if e.isCorColInPartialFilters[workID] {
-					if e.dagPBs[workID].Executors, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.ctx, e.partialPlans[workID]); err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
@@ -1624,14 +1605,6 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 		// Make sure panic failpoint is after fetch task from workCh.
 		// Otherwise cannot send error to task.doneCh.
 		failpoint.Inject("testIndexMergePanicTableScanWorker", nil)
-		failpoint.Inject("mockSleepBeforeStartTableReader", func(_ failpoint.Value) {
-			select {
-			case <-ctx.Done():
-				failpoint.Return()
-			case <-w.finished:
-				failpoint.Return()
-			}
-		})
 		execStart := time.Now()
 		err := w.executeTask(ctx, *task)
 		if w.stats != nil {
@@ -1709,11 +1682,24 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 	}
 
 	if w.indexMergeExec.keepOrder {
+		// Because len(outputOffsets) == tableScan.Schema().Len(),
+		// so we could use row.GetInt64(idx) to get partition ID here.
+		// TODO: We could add plannercore.PartitionHandleCols to unify them.
+		physicalTableIDIdx := -1
+		for i, c := range w.indexMergeExec.Schema().Columns {
+			if c.ID == model.ExtraPhysTblID {
+				physicalTableIDIdx = i
+				break
+			}
+		}
 		task.rowIdx = make([]int, 0, len(task.rows))
 		for _, row := range task.rows {
 			handle, err := w.indexMergeExec.handleCols.BuildHandle(row)
 			if err != nil {
 				return err
+			}
+			if physicalTableIDIdx != -1 {
+				handle = kv.NewPartitionHandle(row.GetInt64(physicalTableIDIdx), handle)
 			}
 			rowIdx, _ := task.indexOrder.Get(handle)
 			task.rowIdx = append(task.rowIdx, rowIdx.(int))
@@ -1753,7 +1739,7 @@ func (e *IndexMergeRuntimeStat) String() string {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf(" table_task:{num:%d, concurrency:%d, fetch_row:%s, wait_time:%s}", e.TableTaskNum, e.Concurrency, time.Duration(e.FetchRow), time.Duration(e.WaitTime)))
+		fmt.Fprintf(&buf, " table_task:{num:%d, concurrency:%d, fetch_row:%s, wait_time:%s}", e.TableTaskNum, e.Concurrency, time.Duration(e.FetchRow), time.Duration(e.WaitTime))
 	}
 	return buf.String()
 }

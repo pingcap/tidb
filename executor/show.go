@@ -259,7 +259,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowBindingCacheStatus:
 		return e.fetchShowBindingCacheStatus(ctx)
 	case ast.ShowAnalyzeStatus:
-		return e.fetchShowAnalyzeStatus()
+		return e.fetchShowAnalyzeStatus(ctx)
 	case ast.ShowRegions:
 		return e.fetchShowTableRegions(ctx)
 	case ast.ShowBuiltins:
@@ -963,6 +963,10 @@ func getDefaultCollate(charsetName string) string {
 
 // ConstructResultOfShowCreateTable constructs the result for show create table.
 func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
+	return constructResultOfShowCreateTable(ctx, nil, tableInfo, allocators, buf)
+}
+
+func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
 		return nil
@@ -1047,7 +1051,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 					buf.WriteString(" DEFAULT ")
 					buf.WriteString(defaultValue.(string))
 					if col.GetDecimal() > 0 {
-						buf.WriteString(fmt.Sprintf("(%d)", col.GetDecimal()))
+						fmt.Fprintf(buf, "(%d)", col.GetDecimal())
 					}
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
@@ -1080,13 +1084,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
 			s, r := tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits
 			if r == 0 || r == autoid.AutoRandomRangeBitsDefault {
-				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", s))
+				fmt.Fprintf(buf, " /*T![auto_rand] AUTO_RANDOM(%d) */", s)
 			} else {
-				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d, %d) */", s, r))
+				fmt.Fprintf(buf, " /*T![auto_rand] AUTO_RANDOM(%d, %d) */", s, r)
 			}
 		}
 		if len(col.Comment) > 0 {
-			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
+			fmt.Fprintf(buf, " COMMENT '%s'", format.OutputFormat(col.Comment))
 		}
 		if i != len(tableInfo.Cols())-1 {
 			needAddComma = true
@@ -1107,6 +1111,23 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	for _, idx := range tableInfo.Indices {
 		if idx.State == model.StatePublic {
 			publicIndices = append(publicIndices, idx)
+		}
+	}
+
+	// consider hypo-indexes
+	hypoIndexes := ctx.GetSessionVars().HypoIndexes
+	if hypoIndexes != nil && dbName != nil {
+		schemaName := dbName.L
+		tblName := tableInfo.Name.L
+		if hypoIndexes[schemaName] != nil && hypoIndexes[schemaName][tblName] != nil {
+			hypoIndexList := make([]*model.IndexInfo, 0, len(hypoIndexes[schemaName][tblName]))
+			for _, index := range hypoIndexes[schemaName][tblName] {
+				hypoIndexList = append(hypoIndexList, index)
+			}
+			sort.Slice(hypoIndexList, func(i, j int) bool { // to make the result stable
+				return hypoIndexList[i].Name.O < hypoIndexList[j].Name.O
+			})
+			publicIndices = append(publicIndices, hypoIndexList...)
 		}
 	}
 	if len(publicIndices) > 0 {
@@ -1142,6 +1163,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if idxInfo.Comment != "" {
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
+		if idxInfo.Tp == model.IndexTypeHypo {
+			fmt.Fprintf(buf, ` /* HYPO INDEX */`)
+		}
 		if idxInfo.Primary {
 			if tableInfo.HasClusteredIndex() {
 				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
@@ -1157,30 +1181,49 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	// Foreign Keys are supported by data dictionary even though
 	// they are not enforced by DDL. This is still helpful to applications.
 	for _, fk := range tableInfo.ForeignKeys {
-		buf.WriteString(fmt.Sprintf(",\n  CONSTRAINT %s FOREIGN KEY ", stringutil.Escape(fk.Name.O, sqlMode)))
+		fmt.Fprintf(buf, ",\n  CONSTRAINT %s FOREIGN KEY ", stringutil.Escape(fk.Name.O, sqlMode))
 		colNames := make([]string, 0, len(fk.Cols))
 		for _, col := range fk.Cols {
 			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
 		}
-		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(colNames, ",")))
+		fmt.Fprintf(buf, "(%s)", strings.Join(colNames, ","))
 		if fk.RefSchema.L != "" {
-			buf.WriteString(fmt.Sprintf(" REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode)))
+			fmt.Fprintf(buf, " REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode))
 		} else {
-			buf.WriteString(fmt.Sprintf(" REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode)))
+			fmt.Fprintf(buf, " REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode))
 		}
 		refColNames := make([]string, 0, len(fk.Cols))
 		for _, refCol := range fk.RefCols {
 			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
 		}
-		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(refColNames, ",")))
+		fmt.Fprintf(buf, "(%s)", strings.Join(refColNames, ","))
 		if model.ReferOptionType(fk.OnDelete) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON DELETE %s", model.ReferOptionType(fk.OnDelete).String()))
+			fmt.Fprintf(buf, " ON DELETE %s", model.ReferOptionType(fk.OnDelete).String())
 		}
 		if model.ReferOptionType(fk.OnUpdate) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
+			fmt.Fprintf(buf, " ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String())
 		}
 		if fk.Version < model.FKVersion1 {
 			buf.WriteString(" /* FOREIGN KEY INVALID */")
+		}
+	}
+	// add check constraints info
+	publicConstraints := make([]*model.ConstraintInfo, 0, len(tableInfo.Indices))
+	for _, constr := range tableInfo.Constraints {
+		if constr.State == model.StatePublic {
+			publicConstraints = append(publicConstraints, constr)
+		}
+	}
+	if len(publicConstraints) > 0 {
+		buf.WriteString(",\n")
+	}
+	for i, constrInfo := range publicConstraints {
+		fmt.Fprintf(buf, "CONSTRAINT %s CHECK ((%s))", stringutil.Escape(constrInfo.Name.O, sqlMode), constrInfo.ExprString)
+		if !constrInfo.Enforced {
+			buf.WriteString(" /*!80016 NOT ENFORCED */")
+		}
+		if i != len(publicConstraints)-1 {
+			buf.WriteString(",\n")
 		}
 	}
 
@@ -1392,7 +1435,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	tableInfo := tb.Meta()
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, tb.Allocators(e.ctx), &buf); err != nil {
+	if err = constructResultOfShowCreateTable(e.ctx, &e.DBName, tableInfo, tb.Allocators(e.ctx), &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {

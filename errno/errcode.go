@@ -822,11 +822,11 @@ const (
 	ErrMustChangePasswordLogin                               = 1862
 	ErrRowInWrongPartition                                   = 1863
 	ErrErrorLast                                             = 1863
-	ErrMaxExecTimeExceeded                                   = 1907
 	ErrForeignKeyCascadeDepthExceeded                        = 3008
 	ErrInvalidFieldSize                                      = 3013
 	ErrPasswordExpireAnonymousUser                           = 3016
 	ErrInvalidArgumentForLogarithm                           = 3020
+	ErrMaxExecTimeExceeded                                   = 3024
 	ErrAggregateOrderNonAggQuery                             = 3029
 	ErrUserLockWrongName                                     = 3057
 	ErrUserLockDeadlock                                      = 3058
@@ -913,6 +913,16 @@ const (
 	ErrDefValGeneratedNamedFunctionIsNotAllowed              = 3770
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
+	ErrNonBooleanExprForCheckConstraint                      = 3812
+	ErrColumnCheckConstraintReferencesOtherColumn            = 3813
+	ErrCheckConstraintNamedFunctionIsNotAllowed              = 3814
+	ErrCheckConstraintFunctionIsNotAllowed                   = 3815
+	ErrCheckConstraintVariables                              = 3816
+	ErrCheckConstraintRefersAutoIncrementColumn              = 3818
+	ErrCheckConstraintViolated                               = 3819
+	ErrTableCheckConstraintReferUnknown                      = 3820
+	ErrCheckConstraintDupName                                = 3822
+	ErrCheckConstraintClauseUsingFKReferActionColumn         = 3823
 	ErrDependentByFunctionalIndex                            = 3837
 	ErrCannotConvertString                                   = 3854
 	ErrDependentByPartitionFunctional                        = 3855
@@ -921,7 +931,9 @@ const (
 	ErrFunctionalIndexDataIsTooLong                          = 3907
 	ErrFunctionalIndexNotApplicable                          = 3909
 	ErrDynamicPrivilegeNotRegistered                         = 3929
+	ErrConstraintNotFound                                    = 3940
 	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
+	ErrDependentByCheckConstraint                            = 3959
 	ErrJSONInBooleanContext                                  = 3986
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
@@ -1063,6 +1075,7 @@ const (
 	ErrLoadDataInvalidOperation            = 8171
 	ErrLoadDataLocalUnsupportedOption      = 8172
 	ErrLoadDataPreCheckFailed              = 8173
+	ErrBRJobNotFound                       = 8174
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1112,6 +1125,11 @@ const (
 	ErrColumnInChange                     = 8245
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
+
+	ErrCannotPauseDDLJob  = 8260
+	ErrCannotResumeDDLJob = 8261
+	ErrPausedDDLJob       = 8262
+
 	// Resource group errors.
 	ErrResourceGroupExists            = 8248
 	ErrResourceGroupNotExists         = 8249

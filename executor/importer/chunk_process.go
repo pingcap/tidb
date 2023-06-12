@@ -30,6 +30,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -102,12 +103,13 @@ func (b *deliverKVBatch) add(kvs *kv.Pairs) {
 
 // chunkProcessor process data chunk, it encodes and writes KV to local disk.
 type chunkProcessor struct {
-	parser      mydump.Parser
-	chunkInfo   *checkpoints.ChunkCheckpoint
-	logger      *zap.Logger
-	kvsCh       chan []deliveredRow
-	dataWriter  backend.EngineWriter
-	indexWriter backend.EngineWriter
+	parser        mydump.Parser
+	chunkInfo     *checkpoints.ChunkCheckpoint
+	logger        *zap.Logger
+	kvsCh         chan []deliveredRow
+	diskQuotaLock *syncutil.RWMutex
+	dataWriter    backend.EngineWriter
+	indexWriter   backend.EngineWriter
 
 	encoder     kvEncoder
 	kvCodec     tikv.Codec
@@ -245,7 +247,9 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 		}
 
 		err := func() error {
-			// todo: disk quota related code from lightning, removed temporary
+			p.diskQuotaLock.RLock()
+			defer p.diskQuotaLock.RUnlock()
+
 			if err := p.dataWriter.AppendRows(ctx, nil, &kvBatch.dataKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to data engine failed", log.ShortError(err))

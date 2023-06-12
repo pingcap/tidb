@@ -290,6 +290,7 @@ type SubJob struct {
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
 	SnapshotVer uint64          `json:"snapshot_ver"`
+	RealStartTS uint64          `json:"real_start_ts"`
 	Revertible  bool            `json:"revertible"`
 	State       JobState        `json:"state"`
 	RowCount    int64           `json:"row_count"`
@@ -336,7 +337,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 		RawArgs:         sub.RawArgs,
 		SchemaState:     sub.SchemaState,
 		SnapshotVer:     sub.SnapshotVer,
-		RealStartTS:     parentJob.RealStartTS,
+		RealStartTS:     sub.RealStartTS,
 		StartTS:         parentJob.StartTS,
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
@@ -357,6 +358,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
 	sub.SchemaState = proxyJob.SchemaState
 	sub.SnapshotVer = proxyJob.SnapshotVer
+	sub.RealStartTS = proxyJob.RealStartTS
 	sub.Args = proxyJob.Args
 	sub.State = proxyJob.State
 	sub.Warning = proxyJob.Warning
@@ -775,6 +777,11 @@ func (job *Job) IsPaused() bool {
 	return job.State == JobStatePaused
 }
 
+// IsPausedBySystem returns whether the job is paused by system.
+func (job *Job) IsPausedBySystem() bool {
+	return job.IsPaused() && job.AdminOperator == AdminCommandBySystem
+}
+
 // IsPausing indicates whether the job is pausing.
 func (job *Job) IsPausing() bool {
 	return job.State == JobStatePausing
@@ -782,7 +789,7 @@ func (job *Job) IsPausing() bool {
 
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
-	return (job.NotStarted() || job.IsRunning()) && job.IsRollbackable()
+	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
 }
 
 // IsResumable checks whether the job can be rollback.
@@ -870,7 +877,7 @@ func (job *Job) IsRollbackable() bool {
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate, ActionTruncateTablePartition,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
-		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement:
+		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement, ActionDropCheckConstraint:
 		return job.SchemaState == StateNone
 	case ActionMultiSchemaChange:
 		return job.MultiSchemaInfo.Revertible
@@ -980,6 +987,17 @@ const (
 	// DDL job is issued by TiDB itself, such as Upgrade(bootstrap).
 	AdminCommandBySystem
 )
+
+func (a *AdminCommandOperator) String() string {
+	switch *a {
+	case AdminCommandByEndUser:
+		return "EndUser"
+	case AdminCommandBySystem:
+		return "System"
+	default:
+		return "None"
+	}
+}
 
 // SchemaDiff contains the schema modification at a particular schema version.
 // It is used to reduce schema reload cost.

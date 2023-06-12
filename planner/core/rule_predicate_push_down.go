@@ -42,7 +42,7 @@ type exprPrefixAdder struct {
 	lengths   []int
 }
 
-func (s *ppdSolver) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (*ppdSolver) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	_, p := lp.PredicatePushDown(nil, opt)
 	return p, nil
 }
@@ -822,7 +822,7 @@ func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions [
 				}
 				buffer.WriteString(cond.String())
 			}
-			buffer.WriteString(fmt.Sprintf("] in %v_%v are pushed down", p.TP(), p.ID()))
+			fmt.Fprintf(buffer, "] in %v_%v are pushed down", p.TP(), p.ID())
 			return buffer.String()
 		}
 	}
@@ -844,7 +844,7 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *logicalOpti
 			}
 			buffer.WriteString(cond.String())
 		}
-		buffer.WriteString(fmt.Sprintf("] are pushed down across %v_%v", ds.TP(), ds.ID()))
+		fmt.Fprintf(buffer, "] are pushed down across %v_%v", ds.TP(), ds.ID())
 		return buffer.String()
 	}
 	opt.appendStepToCurrent(ds.ID(), ds.TP(), reason, action)
@@ -896,17 +896,17 @@ func (ds *DataSource) AddPrefix4ShardIndexes(sc sessionctx.Context, conds []expr
 
 func (ds *DataSource) addExprPrefixCond(sc sessionctx.Context, path *util.AccessPath,
 	conds []expression.Expression) ([]expression.Expression, error) {
-	IdxCols, IdxColLens :=
+	idxCols, idxColLens :=
 		expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
-	if len(IdxCols) == 0 {
+	if len(idxCols) == 0 {
 		return conds, nil
 	}
 
 	adder := &exprPrefixAdder{
 		sctx:      sc,
 		OrigConds: conds,
-		cols:      IdxCols,
-		lengths:   IdxColLens,
+		cols:      idxCols,
+		lengths:   idxColLens,
 	}
 
 	return adder.addExprPrefix4ShardIndex()
@@ -988,15 +988,37 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *lo
 	if !p.isOuterMostCTE {
 		return predicates, p.self
 	}
-	if len(predicates) == 0 {
+	pushedPredicates := make([]expression.Expression, len(predicates))
+	copy(pushedPredicates, predicates)
+	// The filter might change the correlated status of the cte.
+	// We forbid the push down that makes the change for now.
+	// Will support it later.
+	if !p.cte.IsInApply {
+		for i := len(pushedPredicates) - 1; i >= 0; i-- {
+			if len(expression.ExtractCorColumns(pushedPredicates[i])) == 0 {
+				continue
+			}
+			pushedPredicates = append(pushedPredicates[0:i], pushedPredicates[i+1:]...)
+		}
+	}
+	if len(pushedPredicates) == 0 {
 		p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.NewOne())
 		return predicates, p.self
 	}
 	newPred := make([]expression.Expression, 0, len(predicates))
-	for i := range predicates {
-		newPred = append(newPred, predicates[i].Clone())
+	for i := range pushedPredicates {
+		newPred = append(newPred, pushedPredicates[i].Clone())
 		ResolveExprAndReplace(newPred[i], p.cte.ColumnMap)
 	}
 	p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.ComposeCNFCondition(p.ctx, newPred...))
 	return predicates, p.self
+}
+
+// PredicatePushDown implements the LogicalPlan interface.
+// Currently, we only maintain the main query tree.
+func (p *LogicalSequence) PredicatePushDown(predicates []expression.Expression, op *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+	lastIdx := len(p.children) - 1
+	remained, newLastChild := p.children[lastIdx].PredicatePushDown(predicates, op)
+	p.SetChild(lastIdx, newLastChild)
+	return remained, p
 }

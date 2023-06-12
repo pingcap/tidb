@@ -21,11 +21,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -39,12 +40,22 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/syncutil"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+)
+
+// NewTiKVModeSwitcher make it a var, so we can mock it in tests.
+var NewTiKVModeSwitcher = local.NewTiKVModeSwitcher
+
+var (
+	// CheckDiskQuotaInterval is the default time interval to check disk quota.
+	// TODO: make it dynamically adjusting according to the speed of import and the disk size.
+	CheckDiskQuotaInterval = time.Minute
 )
 
 func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
@@ -75,8 +86,36 @@ func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
 	return sortPath, nil
 }
 
+// GetTiKVModeSwitcher creates a new TiKV mode switcher.
+func GetTiKVModeSwitcher(logger *zap.Logger) (local.TiKVModeSwitcher, error) {
+	tidbCfg := tidb.GetGlobalConfig()
+	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+	tls, err := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		hostPort,
+		nil, nil, nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return NewTiKVModeSwitcher(tls, tidbCfg.Path, logger), nil
+}
+
+func getCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {
+	// Disable GC because TiDB enables GC already.
+	keySpaceName := tidb.GetGlobalKeyspaceName()
+	// the kv store we get is a cached store, so we can't close it.
+	kvStore, err := GetKVStore(fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", pdAddr, keySpaceName), tls.ToTiKVSecurityConfig())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return kvStore, nil
+}
+
 // NewTableImporter creates a new table importer.
-func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableImporter, err error) {
+func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -84,7 +123,8 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
-	dir, err := prepareSortDir(e, param.Job.ID)
+	// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
+	dir, err := prepareSortDir(e, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -101,21 +141,21 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		return nil, err
 	}
 
-	// Disable GC because TiDB enables GC already.
-	keySpaceName := tidb.GetGlobalKeyspaceName()
-	// the kv store we get is a cached store, so we can't close it.
-	kvStore, err := GetKVStore(fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", tidbCfg.Path, keySpaceName), tls.ToTiKVSecurityConfig())
+	// no need to close kvStore, since it's a cached store.
+	kvStore, err := getCachedKVStoreFrom(tidbCfg.Path, tls)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	backendConfig := local.BackendConfig{
-		PDAddr:            tidbCfg.Path,
-		LocalStoreDir:     dir,
-		MaxConnPerStore:   config.DefaultRangeConcurrency,
-		ConnCompressType:  config.CompressionNone,
-		WorkerConcurrency: config.DefaultRangeConcurrency * 2,
-		KVWriteBatchSize:  config.KVWriteBatchSize,
+		PDAddr:                 tidbCfg.Path,
+		LocalStoreDir:          dir,
+		MaxConnPerStore:        config.DefaultRangeConcurrency,
+		ConnCompressType:       config.CompressionNone,
+		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
+		KVWriteBatchSize:       config.KVWriteBatchSize,
+		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
+		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
 		// todo: local backend report error when the sort-dir already exists & checkpoint disabled.
 		// set to false when we fix it.
 		CheckpointEnabled:       true,
@@ -125,27 +165,9 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		DupeDetectEnabled:       false,
 		DuplicateDetectOpt:      local.DupDetectOpt{ReportErrOnDup: false},
 		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
-		// todo: we can set it false when we support switch import mode.
-		ShouldCheckWriteStall: true,
-		MaxOpenFiles:          int(util.GenRLimit()),
-		KeyspaceName:          keySpaceName,
-	}
-
-	tableMeta := &mydump.MDTableMeta{
-		DB:        e.DBName,
-		Name:      e.Table.Meta().Name.O,
-		DataFiles: e.toMyDumpFiles(),
-		// todo: set IsRowOrdered.
-	}
-	dataDivideCfg := &mydump.DataDivideConfig{
-		ColumnCnt:         len(e.Table.Meta().Columns),
-		EngineDataSize:    int64(config.DefaultBatchSize),
-		MaxChunkSize:      int64(config.MaxRegionSize),
-		Concurrency:       int(e.ThreadCnt),
-		EngineConcurrency: config.DefaultTableConcurrency,
-		IOWorkers:         nil,
-		Store:             e.dataStore,
-		TableMeta:         tableMeta,
+		MaxOpenFiles:            int(util.GenRLimit("table_import")),
+		KeyspaceName:            tidb.GetGlobalKeyspaceName(),
+		PausePDSchedulerScope:   config.PausePDSchedulerScopeTable,
 	}
 
 	// todo: use a real region size getter
@@ -159,23 +181,20 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		JobImportParam:     param,
 		LoadDataController: e,
 		backend:            localBackend,
-		tableCp: &checkpoints.TableCheckpoint{
-			Engines: map[int32]*checkpoints.EngineCheckpoint{},
-		},
 		tableInfo: &checkpoints.TidbTableInfo{
 			ID:   e.Table.Meta().ID,
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),
 		},
-		tableMeta:       tableMeta,
 		encTable:        tbl,
 		dbID:            e.DBID,
-		dataDivideCfg:   dataDivideCfg,
 		store:           e.dataStore,
 		kvStore:         kvStore,
 		logger:          e.logger,
 		regionSplitSize: int64(config.SplitRegionSize),
 		regionSplitKeys: int64(config.SplitRegionKeys),
+		diskQuota:       adjustDiskQuota(int64(e.DiskQuota), dir, e.logger),
+		diskQuotaLock:   new(syncutil.RWMutex),
 	}, nil
 }
 
@@ -184,56 +203,22 @@ type TableImporter struct {
 	*JobImportParam
 	*LoadDataController
 	backend   *local.Backend
-	tableCp   *checkpoints.TableCheckpoint
 	tableInfo *checkpoints.TidbTableInfo
-	tableMeta *mydump.MDTableMeta
 	// this table has a separate id allocator used to record the max row id allocated.
-	encTable      table.Table
-	dbID          int64
-	dataDivideCfg *mydump.DataDivideConfig
+	encTable table.Table
+	dbID     int64
 
-	store           storage.ExternalStorage
+	store storage.ExternalStorage
+	// the kv store we get is a cached store, so we can't close it.
 	kvStore         tidbkv.Storage
 	logger          *zap.Logger
 	regionSplitSize int64
 	regionSplitKeys int64
 	// the smallest auto-generated ID in current import.
 	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
-	lastInsertID uint64
-}
-
-var _ JobImporter = &TableImporter{}
-
-// Param implements JobImporter.Param.
-func (ti *TableImporter) Param() *JobImportParam {
-	return ti.JobImportParam
-}
-
-// Import implements JobImporter.Import.
-func (ti *TableImporter) Import() {
-	ti.Group.Go(func() error {
-		defer close(ti.Done)
-		return ti.importTable(ti.GroupCtx)
-	})
-}
-
-// Result implements JobImporter.Result.
-func (ti *TableImporter) Result() JobImportResult {
-	var (
-		numWarnings uint64
-		numRecords  uint64
-		numDeletes  uint64
-		numSkipped  uint64
-	)
-	numRecords = ti.Progress.ReadRowCnt.Load()
-	// todo: we don't have a strict REPLACE or IGNORE mode in physical mode, so we can't get the numDeletes/numSkipped.
-	// we can have it when there's duplicate detection.
-	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
-	return JobImportResult{
-		Msg:          msg,
-		Affected:     ti.Progress.LoadedRowCnt.Load(),
-		LastInsertID: ti.lastInsertID,
-	}
+	lastInsertID  uint64
+	diskQuota     int64
+	diskQuotaLock *syncutil.RWMutex
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
@@ -269,67 +254,59 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEnc
 		Table:  ti.encTable,
 		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
-	return newTableKVEncoder(cfg, ti.ColumnAssignments, ti.ColumnsAndUserVars, ti.FieldMappings, ti.InsertColumns)
+	return newTableKVEncoder(cfg, ti)
 }
 
-func (ti *TableImporter) importTable(ctx context.Context) (err error) {
-	task := log.BeginTask(ti.logger, "import table")
+// VerifyChecksum verify the checksum of the table.
+func (e *LoadDataController) VerifyChecksum(ctx context.Context, localChecksum verify.KVChecksum) (err error) {
+	task := log.BeginTask(e.logger, "verify checksum")
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
-	// todo: pause GC if we need duplicate detection
-	// todo: register task to pd?
-	// no need to pause all schedulers, since we can pause them by key range
-	// todo: if add index by sql, drop all index first
-	// todo: tikv enter into import mode
-	if _, err2 := ti.PopulateChunks(ctx); err2 != nil {
-		return err2
+	tidbCfg := tidb.GetGlobalConfig()
+	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+	tls, err2 := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		hostPort,
+		nil, nil, nil,
+	)
+	if err2 != nil {
+		return errors.Trace(err2)
 	}
-	if err2 := ti.preprocessAndImportEngines(ctx); err2 != nil {
-		return err2
-	}
-	return ti.postProcess(ctx)
-}
 
-func (ti *TableImporter) postProcess(ctx context.Context) (err error) {
-	task := log.BeginTask(ti.logger, "post process")
-	defer func() {
-		task.End(zap.ErrorLevel, err)
-	}()
-	// todo: post process
-	if ti.Checksum != config.OpLevelOff {
-		return ti.verifyChecksum(ctx)
+	// no need to close kvStore, since it's a cached store.
+	kvStore, err2 := getCachedKVStoreFrom(tidbCfg.Path, tls)
+	if err2 != nil {
+		return errors.Trace(err2)
 	}
-	return nil
-}
+	pdCli, err2 := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tls.ToPDSecurityOption())
+	if err2 != nil {
+		return errors.Trace(err2)
+	}
+	defer pdCli.Close()
 
-func (ti *TableImporter) verifyChecksum(ctx context.Context) (err error) {
-	task := log.BeginTask(ti.logger, "verify checksum")
-	defer func() {
-		task.End(zap.ErrorLevel, err)
-	}()
-	var localChecksum verify.KVChecksum
-	for _, engine := range ti.tableCp.Engines {
-		for _, chunk := range engine.Chunks {
-			localChecksum.Add(&chunk.Checksum)
-		}
+	tableInfo := &checkpoints.TidbTableInfo{
+		ID:   e.Table.Meta().ID,
+		Name: e.Table.Meta().Name.O,
+		Core: e.Table.Meta(),
 	}
-	ti.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
-	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), uint(ti.DistSQLScanConcurrency))
-	remoteChecksum, err2 := manager.Checksum(ctx, ti.tableInfo)
+	manager := local.NewTiKVChecksumManager(kvStore.GetClient(), pdCli, uint(e.DistSQLScanConcurrency))
+	remoteChecksum, err2 := manager.Checksum(ctx, tableInfo)
 	if err2 != nil {
 		return err2
 	}
 	if remoteChecksum.IsEqual(&localChecksum) {
-		ti.logger.Info("checksum pass", zap.Object("local", &localChecksum))
+		e.logger.Info("checksum pass", zap.Object("local", &localChecksum))
 	} else {
 		err3 := common.ErrChecksumMismatch.GenWithStackByArgs(
 			remoteChecksum.Checksum, localChecksum.Sum(),
 			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
 			remoteChecksum.TotalBytes, localChecksum.SumSize(),
 		)
-		if ti.Checksum == config.OpLevelOptional {
-			ti.logger.Warn("verify checksum failed, but checksum is optional, will skip it", log.ShortError(err3))
+		if e.Checksum == config.OpLevelOptional {
+			e.logger.Warn("verify checksum failed, but checksum is optional, will skip it", log.ShortError(err3))
 			err3 = nil
 		}
 		return err3
@@ -340,27 +317,46 @@ func (ti *TableImporter) verifyChecksum(ctx context.Context) (err error) {
 // PopulateChunks populates chunks from table regions.
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
-func (ti *TableImporter) PopulateChunks(ctx context.Context) (ecp map[int32]*checkpoints.EngineCheckpoint, err error) {
-	task := log.BeginTask(ti.logger, "populate chunks")
+func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]*checkpoints.EngineCheckpoint, err error) {
+	task := log.BeginTask(e.logger, "populate chunks")
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
-	tableRegions, err2 := mydump.MakeTableRegions(ctx, ti.dataDivideCfg)
+
+	tableMeta := &mydump.MDTableMeta{
+		DB:        e.DBName,
+		Name:      e.Table.Meta().Name.O,
+		DataFiles: e.toMyDumpFiles(),
+	}
+	dataDivideCfg := &mydump.DataDivideConfig{
+		ColumnCnt:         len(e.Table.Meta().Columns),
+		EngineDataSize:    int64(config.DefaultBatchSize),
+		MaxChunkSize:      int64(config.MaxRegionSize),
+		Concurrency:       int(e.ThreadCnt),
+		EngineConcurrency: config.DefaultTableConcurrency,
+		IOWorkers:         nil,
+		Store:             e.dataStore,
+		TableMeta:         tableMeta,
+	}
+	tableRegions, err2 := mydump.MakeTableRegions(ctx, dataDivideCfg)
 
 	if err2 != nil {
-		ti.logger.Error("populate chunks failed", zap.Error(err2))
+		e.logger.Error("populate chunks failed", zap.Error(err2))
 		return nil, err2
 	}
 
 	var maxRowID int64
 	timestamp := time.Now().Unix()
+	tableCp := &checkpoints.TableCheckpoint{
+		Engines: map[int32]*checkpoints.EngineCheckpoint{},
+	}
 	for _, region := range tableRegions {
-		engine, found := ti.tableCp.Engines[region.EngineID]
+		engine, found := tableCp.Engines[region.EngineID]
 		if !found {
 			engine = &checkpoints.EngineCheckpoint{
 				Status: checkpoints.CheckpointStatusLoaded,
 			}
-			ti.tableCp.Engines[region.EngineID] = engine
+			tableCp.Engines[region.EngineID] = engine
 		}
 		ccp := &checkpoints.ChunkCheckpoint{
 			Key: checkpoints.ChunkCheckpointKey{
@@ -378,28 +374,45 @@ func (ti *TableImporter) PopulateChunks(ctx context.Context) (ecp map[int32]*che
 		}
 	}
 
-	if common.TableHasAutoID(ti.tableInfo.Core) {
-		// todo: the new base should be the max row id of the last Node if we support distributed import.
-		if err3 := common.RebaseGlobalAutoID(ctx, 0, ti.kvStore, ti.dbID, ti.tableInfo.Core); err3 != nil {
+	if common.TableHasAutoID(e.Table.Meta()) {
+		tidbCfg := tidb.GetGlobalConfig()
+		hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+		tls, err4 := common.NewTLS(
+			tidbCfg.Security.ClusterSSLCA,
+			tidbCfg.Security.ClusterSSLCert,
+			tidbCfg.Security.ClusterSSLKey,
+			hostPort,
+			nil, nil, nil,
+		)
+		if err4 != nil {
+			return nil, err4
+		}
+
+		// no need to close kvStore, since it's a cached store.
+		kvStore, err4 := getCachedKVStoreFrom(tidbCfg.Path, tls)
+		if err4 != nil {
+			return nil, errors.Trace(err4)
+		}
+		if err3 := common.RebaseGlobalAutoID(ctx, 0, kvStore, e.DBID, e.Table.Meta()); err3 != nil {
 			return nil, errors.Trace(err3)
 		}
-		newMinRowID, _, err3 := common.AllocGlobalAutoID(ctx, maxRowID, ti.kvStore, ti.dbID, ti.tableInfo.Core)
+		newMinRowID, _, err3 := common.AllocGlobalAutoID(ctx, maxRowID, kvStore, e.DBID, e.Table.Meta())
 		if err3 != nil {
 			return nil, errors.Trace(err3)
 		}
-		ti.rebaseChunkRowID(newMinRowID)
+		e.rebaseChunkRowID(newMinRowID, tableCp.Engines)
 	}
 
 	// Add index engine checkpoint
-	ti.tableCp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
-	return ti.tableCp.Engines, nil
+	tableCp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
+	return tableCp.Engines, nil
 }
 
-func (ti *TableImporter) rebaseChunkRowID(rowIDBase int64) {
+func (*LoadDataController) rebaseChunkRowID(rowIDBase int64, engines map[int32]*checkpoints.EngineCheckpoint) {
 	if rowIDBase == 0 {
 		return
 	}
-	for _, engine := range ti.tableCp.Engines {
+	for _, engine := range engines {
 		for _, chunk := range engine.Chunks {
 			chunk.Chunk.PrevRowIDMax += rowIDBase
 			chunk.Chunk.RowIDMax += rowIDBase
@@ -407,8 +420,22 @@ func (ti *TableImporter) rebaseChunkRowID(rowIDBase int64) {
 	}
 }
 
+// a simplified version of EstimateCompactionThreshold
+func (ti *TableImporter) getTotalRawFileSize(indexCnt int64) int64 {
+	var totalSize int64
+	for _, file := range ti.dataFiles {
+		size := file.RealSize
+		if file.Type == mydump.SourceTypeParquet {
+			// parquet file is compressed, thus estimates with a factor of 2
+			size *= 2
+		}
+		totalSize += size
+	}
+	return totalSize * indexCnt
+}
+
 // OpenIndexEngine opens an index engine.
-func (ti *TableImporter) OpenIndexEngine(ctx context.Context) (*backend.OpenedEngine, error) {
+func (ti *TableImporter) OpenIndexEngine(ctx context.Context, engineID int32) (*backend.OpenedEngine, error) {
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: ti.tableInfo,
 	}
@@ -416,18 +443,20 @@ func (ti *TableImporter) OpenIndexEngine(ctx context.Context) (*backend.OpenedEn
 	if !common.TableHasAutoRowID(ti.tableInfo.Core) {
 		idxCnt--
 	}
-	threshold := local.EstimateCompactionThreshold(ti.tableMeta.DataFiles, ti.tableCp, int64(idxCnt))
+	// todo: getTotalRawFileSize returns size of all data files, but in distributed framework,
+	// we create one index engine for each engine, should reflect this in the future.
+	threshold := local.EstimateCompactionThreshold2(ti.getTotalRawFileSize(int64(idxCnt)))
 	idxEngineCfg.Local = backend.LocalEngineConfig{
 		Compact:            threshold > 0,
 		CompactConcurrency: 4,
 		CompactThreshold:   threshold,
 	}
-	fullTableName := ti.tableMeta.FullTableName()
+	fullTableName := ti.fullTableName()
 	// todo: cleanup all engine data on any error since we don't support checkpoint for now
 	// some return path, didn't make sure all data engine and index engine are cleaned up.
 	// maybe we can add this in upper level to clean the whole local-sort directory
 	mgr := backend.MakeEngineManager(ti.backend)
-	return mgr.OpenEngine(ctx, idxEngineCfg, fullTableName, common.IndexEngineID)
+	return mgr.OpenEngine(ctx, idxEngineCfg, fullTableName, engineID)
 }
 
 // OpenDataEngine opens a data engine.
@@ -435,79 +464,33 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: ti.tableInfo,
 	}
-	if ti.tableMeta.IsRowOrdered {
-		dataEngineCfg.Local.Compact = true
-		dataEngineCfg.Local.CompactConcurrency = 4
-		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
-	}
+	// todo: support checking IsRowOrdered later.
+	//if ti.tableMeta.IsRowOrdered {
+	//	dataEngineCfg.Local.Compact = true
+	//	dataEngineCfg.Local.CompactConcurrency = 4
+	//	dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
+	//}
 	mgr := backend.MakeEngineManager(ti.backend)
-	return mgr.OpenEngine(ctx, dataEngineCfg, ti.tableMeta.FullTableName(), engineID)
-}
-
-func (ti *TableImporter) preprocessAndImportEngines(ctx context.Context) (err error) {
-	task := log.BeginTask(ti.logger, "preprocess and import engines")
-	defer func() {
-		task.End(zap.ErrorLevel, err)
-	}()
-	indexEngine, err3 := ti.OpenIndexEngine(ctx)
-	if err3 != nil {
-		return errors.Trace(err3)
-	}
-
-	for id, engineCP := range ti.tableCp.Engines {
-		// skip index engine
-		if id == common.IndexEngineID {
-			continue
-		}
-		dataClosedEngine, err2 := ti.preprocessEngine(ctx, indexEngine, id, engineCP.Chunks)
-		if err2 != nil {
-			return err2
-		}
-		if err2 = ti.ImportAndCleanup(ctx, dataClosedEngine); err2 != nil {
-			return err2
-		}
-
-		failpoint.Inject("AfterImportDataEngine", nil)
-		failpoint.Inject("SyncAfterImportDataEngine", func() {
-			TestSyncCh <- struct{}{}
-			<-TestSyncCh
-		})
-	}
-
-	closedIndexEngine, err3 := indexEngine.Close(ctx)
-	if err3 != nil {
-		return errors.Trace(err3)
-	}
-	return ti.ImportAndCleanup(ctx, closedIndexEngine)
-}
-
-func (ti *TableImporter) preprocessEngine(ctx context.Context, indexEngine *backend.OpenedEngine, engineID int32, chunks []*checkpoints.ChunkCheckpoint) (*backend.ClosedEngine, error) {
-	processor := engineProcessor{
-		engineID:      engineID,
-		fullTableName: ti.tableMeta.FullTableName(),
-		backend:       ti.backend,
-		tableInfo:     ti.tableInfo,
-		logger:        ti.logger.With(zap.Int32("engine-id", engineID)),
-		tableImporter: ti,
-		rowOrdered:    ti.tableMeta.IsRowOrdered,
-		indexEngine:   indexEngine,
-		chunks:        chunks,
-	}
-	return processor.process(ctx)
+	return mgr.OpenEngine(ctx, dataEngineCfg, ti.fullTableName(), engineID)
 }
 
 // ImportAndCleanup imports the engine and cleanup the engine data.
-func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) error {
+func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
+	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
 	if closedEngine.GetID() != common.IndexEngineID {
 		// todo: change to a finer-grain progress later.
 		// each row is encoded into 1 data key
-		kvCount := ti.backend.GetImportedKVCount(closedEngine.GetUUID())
-		ti.Progress.LoadedRowCnt.Add(uint64(kvCount))
+		kvCount = ti.backend.GetImportedKVCount(closedEngine.GetUUID())
 	}
 	// todo: if we need support checkpoint, engine should not be cleanup if import failed.
 	cleanupErr := closedEngine.Cleanup(ctx)
-	return multierr.Combine(importErr, cleanupErr)
+	return kvCount, multierr.Combine(importErr, cleanupErr)
+}
+
+// FullTableName return FQDN of the table.
+func (ti *TableImporter) fullTableName() string {
+	return common.UniqueTable(ti.DBName, ti.Table.Meta().Name.O)
 }
 
 // Close implements the io.Closer interface.
@@ -523,5 +506,103 @@ func (ti *TableImporter) setLastInsertID(id uint64) {
 	}
 	if ti.lastInsertID == 0 || id < ti.lastInsertID {
 		ti.lastInsertID = id
+	}
+}
+
+// CheckDiskQuota checks disk quota.
+func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
+	var locker sync.Locker
+	lockDiskQuota := func() {
+		if locker == nil {
+			ti.diskQuotaLock.Lock()
+			locker = ti.diskQuotaLock
+		}
+	}
+	unlockDiskQuota := func() {
+		if locker != nil {
+			locker.Unlock()
+			locker = nil
+		}
+	}
+
+	defer unlockDiskQuota()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(CheckDiskQuotaInterval):
+		}
+
+		largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := local.CheckDiskQuota(ti.backend, ti.diskQuota)
+		if len(largeEngines) == 0 && inProgressLargeEngines == 0 {
+			unlockDiskQuota()
+			continue
+		}
+
+		ti.logger.Warn("disk quota exceeded",
+			zap.Int64("diskSize", totalDiskSize),
+			zap.Int64("memSize", totalMemSize),
+			zap.Int64("quota", ti.diskQuota),
+			zap.Int("largeEnginesCount", len(largeEngines)),
+			zap.Int("inProgressLargeEnginesCount", inProgressLargeEngines))
+
+		lockDiskQuota()
+
+		if len(largeEngines) == 0 {
+			ti.logger.Warn("all large engines are already importing, keep blocking all writes")
+			continue
+		}
+
+		if err := ti.backend.FlushAllEngines(ctx); err != nil {
+			ti.logger.Error("flush engine for disk quota failed, check again later", log.ShortError(err))
+			unlockDiskQuota()
+			continue
+		}
+
+		// at this point, all engines are synchronized on disk.
+		// we then import every large engines one by one and complete.
+		// if any engine failed to import, we just try again next time, since the data are still intact.
+		var importErr error
+		for _, engine := range largeEngines {
+			// Use a larger split region size to avoid split the same region by many times.
+			if err := ti.backend.UnsafeImportAndReset(
+				ctx,
+				engine,
+				ti.regionSplitSize*int64(config.MaxSplitRegionSizeRatio),
+				ti.regionSplitKeys*int64(config.MaxSplitRegionSizeRatio),
+			); err != nil {
+				importErr = multierr.Append(importErr, err)
+			}
+		}
+		if importErr != nil {
+			// discuss: should we return the error and cancel the import?
+			ti.logger.Error("import large engines failed, check again later", log.ShortError(importErr))
+		}
+		unlockDiskQuota()
+	}
+}
+
+func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 {
+	sz, err := common.GetStorageSize(sortDir)
+	if err != nil {
+		logger.Warn("failed to get storage size", zap.Error(err))
+		if diskQuota != 0 {
+			return diskQuota
+		}
+		logger.Info("use default quota instead", zap.Int64("quota", int64(DefaultDiskQuota)))
+		return int64(DefaultDiskQuota)
+	}
+
+	maxDiskQuota := int64(float64(sz.Capacity) * 0.8)
+	switch {
+	case diskQuota == 0:
+		logger.Info("use 0.8 of the storage size as default disk quota", zap.Int64("quota", maxDiskQuota))
+		return maxDiskQuota
+	case diskQuota > maxDiskQuota:
+		logger.Warn("disk quota is larger than 0.8 of the storage size, use 0.8 of the storage size instead", zap.Int64("quota", maxDiskQuota))
+		return maxDiskQuota
+	default:
+		return diskQuota
 	}
 }

@@ -20,8 +20,8 @@ import (
 
 // task state machine
 //  1. succeed:			pending -> running -> succeed
-//  2. failed:			pending -> running -> reverting -> failed/revert_failed
-//  3. canceled:		pending -> running -> reverting -> canceled/revert_failed
+//  2. failed:			pending -> running -> reverting -> reverted/revert_failed
+//  3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
 //  3. pause/resume:	pending -> running -> pausing -> paused -> running
 //
 // subtask state machine
@@ -36,6 +36,7 @@ const (
 	TaskStateReverting     = "reverting"
 	TaskStateFailed        = "failed"
 	TaskStateRevertFailed  = "revert_failed"
+	TaskStateCancelling    = "cancelling"
 	TaskStateCanceled      = "canceled"
 	TaskStatePausing       = "pausing"
 	TaskStatePaused        = "paused"
@@ -52,11 +53,12 @@ const (
 
 // Task represents the task of distribute framework.
 type Task struct {
-	ID              int64
-	Key             string
-	Type            string
-	State           string
-	Step            int64
+	ID    int64
+	Key   string
+	Type  string
+	State string
+	Step  int64
+	// DispatcherID is not used now.
 	DispatcherID    string
 	Concurrency     uint64
 	StartTime       time.Time
@@ -73,10 +75,14 @@ func (t *Task) IsFinished() bool {
 // Subtask represents the subtask of distribute framework.
 // Each task is divided into multiple subtasks by dispatcher.
 type Subtask struct {
-	ID          int64
-	Type        string
-	TaskID      int64
-	State       string
+	ID   int64
+	Step int64
+	Type string
+	// taken from task_key of the subtask table
+	TaskID int64
+	State  string
+	// SchedulerID is the ID of scheduler, right now it's the same as instance_id, exec_id.
+	// its value is IP:PORT, see GenerateExecID
 	SchedulerID string
 	StartTime   uint64
 	EndTime     time.Time

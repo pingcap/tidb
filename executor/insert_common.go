@@ -321,6 +321,20 @@ func completeInsertErr(col *model.ColumnInfo, val *types.Datum, rowIdx int, err 
 	return err
 }
 
+func completeLoadErr(col *model.ColumnInfo, rowIdx int, err error) error {
+	var (
+		colName string
+	)
+	if col != nil {
+		colName = col.Name.String()
+	}
+
+	if types.ErrDataTooLong.Equal(err) {
+		err = types.ErrTruncated.GenWithStack("Data truncated for column '%v' at row %v", colName, rowIdx)
+	}
+	return err
+}
+
 func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
 	if err == nil {
 		return nil
@@ -331,7 +345,11 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	if col != nil {
 		c = col.ColumnInfo
 	}
-	err = completeInsertErr(c, val, rowIdx, err)
+	if e.ctx.GetSessionVars().StmtCtx.InLoadDataStmt {
+		err = completeLoadErr(c, rowIdx, err)
+	} else {
+		err = completeInsertErr(c, val, rowIdx, err)
+	}
 
 	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
 		return err
@@ -547,15 +565,34 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
+
+	inLoadData := e.ctx.GetSessionVars().StmtCtx.InLoadDataStmt
+
 	for i := 0; i < e.rowLen; i++ {
-		casted, err := table.CastValue(e.ctx, vals[i], e.insertColumns[i].ToInfo(), false, false)
-		if e.handleErr(nil, &vals[i], 0, err) != nil {
+		col := e.insertColumns[i].ToInfo()
+		casted, err := table.CastValue(e.ctx, vals[i], col, false, false)
+		if newErr := e.handleErr(e.insertColumns[i], &vals[i], int(e.rowCount), err); newErr != nil {
+			if inLoadData {
+				return nil, newErr
+			}
 			return nil, err
 		}
 
 		offset := e.insertColumns[i].Offset
 		row[offset] = casted
 		hasValue[offset] = true
+
+		if inLoadData {
+			if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+				for k := range newWarnings {
+					newWarnings[k].Err = completeLoadErr(col, int(e.rowCount), newWarnings[k].Err)
+				}
+				sc.AppendWarnings(newWarnings)
+				warnCnt += len(newWarnings)
+			}
+		}
 	}
 
 	return e.fillRow(ctx, row, hasValue, 0)
@@ -1271,6 +1308,13 @@ CheckAndInsert:
 		e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
 		err = addRecord(ctx, rows[i])
 		if err != nil {
+			// throw warning when violate check constraint
+			if table.ErrCheckConstraintViolated.Equal(err) {
+				if !sc.InLoadDataStmt {
+					sc.AppendWarning(err)
+				}
+				continue
+			}
 			return err
 		}
 	}
@@ -1434,21 +1478,21 @@ func (e *InsertRuntimeStat) String() string {
 		buf.WriteString(", ")
 	}
 	if e.Prefetch > 0 {
-		buf.WriteString(fmt.Sprintf("check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
+		fmt.Fprintf(buf, "check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
 			execdetails.FormatDuration(e.CheckInsertTime),
 			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
-			execdetails.FormatDuration(e.Prefetch)))
+			execdetails.FormatDuration(e.Prefetch))
 		if e.FKCheckTime > 0 {
-			buf.WriteString(fmt.Sprintf(", fk_check: %v", execdetails.FormatDuration(e.FKCheckTime)))
+			fmt.Fprintf(buf, ", fk_check: %v", execdetails.FormatDuration(e.FKCheckTime))
 		}
 		if e.SnapshotRuntimeStats != nil {
 			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
-				buf.WriteString(fmt.Sprintf(", rpc:{%s}", rpc))
+				fmt.Fprintf(buf, ", rpc:{%s}", rpc)
 			}
 		}
 		buf.WriteString("}")
 	} else {
-		buf.WriteString(fmt.Sprintf("insert:%v", execdetails.FormatDuration(e.CheckInsertTime)))
+		fmt.Fprintf(buf, "insert:%v", execdetails.FormatDuration(e.CheckInsertTime))
 	}
 	return buf.String()
 }

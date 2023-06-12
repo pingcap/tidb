@@ -42,18 +42,18 @@ type statsWrapper struct {
 
 // StatsLoad is used to load stats concurrently
 type StatsLoad struct {
-	sync.Mutex
-	SubCtxs        []sessionctx.Context
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
 	WorkingColMap  map[model.TableItemID][]chan stmtctx.StatsLoadResult
+	SubCtxs        []sessionctx.Context
+	sync.Mutex
 }
 
 // NeededItemTask represents one needed column/indices with expire time.
 type NeededItemTask struct {
-	TableItemID model.TableItemID
 	ToTimeout   time.Time
 	ResultCh    chan stmtctx.StatsLoadResult
+	TableItemID model.TableItemID
 }
 
 // SendLoadRequests send neededColumns requests
@@ -142,7 +142,7 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 
 // removeHistLoadedColumns removed having-hist columns based on neededColumns and statsCache.
 func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []model.TableItemID {
-	statsCache := h.statsCache.Load().(statsCache)
+	statsCache := h.statsCache.Load()
 	remainedItems := make([]model.TableItemID, 0, len(neededItems))
 	for _, item := range neededItems {
 		tbl, ok := statsCache.Get(item.TableID)
@@ -237,7 +237,7 @@ func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderC
 func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) (*NeededItemTask, error) {
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
 	item := result.Item
-	oldCache := h.statsCache.Load().(statsCache)
+	oldCache := h.statsCache.Load()
 	tbl, ok := oldCache.Get(item.TableID)
 	if !ok {
 		h.writeToResultChan(task.ResultCh, result)
@@ -482,7 +482,7 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	defer h.StatsLoad.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
-	oldCache := h.statsCache.Load().(statsCache)
+	oldCache := h.statsCache.Load()
 	tbl, ok := oldCache.Get(item.TableID)
 	if !ok {
 		return true

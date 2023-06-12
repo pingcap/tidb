@@ -19,12 +19,26 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util/callback"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
+	tidb_util "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	atomicutil "go.uber.org/atomic"
 )
 
 func TestUpgradeVersion83(t *testing.T) {
@@ -252,6 +266,381 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show create table mysql.mock_sys_t").Check(testkit.Rows(
+		"mock_sys_t CREATE TABLE `mock_sys_t` (\n" +
+			"  `c1` int(11) DEFAULT NULL,\n" +
+			"  `c2` int(11) NOT NULL,\n" +
+			"  `c11` char(10) DEFAULT NULL,\n" +
+			"  `c4` bigint(20) DEFAULT NULL,\n" +
+			"  `mayNullCol` bigint(20) NOT NULL DEFAULT '1',\n" +
+			"  KEY `fk_c1` (`c1`),\n" +
+			"  UNIQUE KEY `idx_uc2` (`c2`),\n" +
+			"  KEY `idx_c2` (`c2`),\n" +
+			"  KEY `idx_v` (`c1`) /*!80000 INVISIBLE */,\n" +
+			"  KEY `rename_idx2` (`c1`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table mysql.mock_sys_partition").Check(testkit.Rows(
+		"mock_sys_partition CREATE TABLE `mock_sys_partition` (\n" +
+			"  `c1` int(11) NOT NULL,\n" +
+			"  `c2` int(11) DEFAULT NULL,\n" +
+			"  `c3` int(11) DEFAULT NULL,\n" +
+			"  UNIQUE KEY `c3_index` (`c1`),\n" +
+			"  PRIMARY KEY (`c1`) /*T![clustered_index] NONCLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`c1`)\n" +
+			"(PARTITION `p0` VALUES LESS THAN (1024),\n" +
+			" PARTITION `p1` VALUES LESS THAN (2048),\n" +
+			" PARTITION `p2` VALUES LESS THAN (3072),\n" +
+			" PARTITION `p3` VALUES LESS THAN (4096),\n" +
+			" PARTITION `p4` VALUES LESS THAN (7096))"))
+}
+
+func TestUpgradeVersionForPausedJob(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	session.MustExec(t, seV, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", session.CurrentBootstrapVersion-1))
+	session.UnsetStoreBootstrapped(store.UUID())
+	ver, err := session.GetBootstrapVersion(seV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
+
+	// Add a paused DDL job before upgrade.
+	session.MustExec(t, seV, "create table test.upgrade_tbl(a int)")
+	ch := make(chan struct{})
+	var jobID int64
+	hook := &callback.TestDDLCallback{}
+	hook.OnJobRunAfterExported = func(job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly {
+			se := session.CreateSessionAndSetID(t, store)
+			session.MustExec(t, se, fmt.Sprintf("admin pause ddl jobs %d", job.ID))
+			ch <- struct{}{}
+			jobID = job.ID
+		}
+	}
+	dom.DDL().SetHook(hook)
+	go func() {
+		_, err = execute(context.Background(), seV, "alter table test.upgrade_tbl add index idx(a)")
+	}()
+
+	<-ch
+	dom.Close()
+	// Make sure upgrade is successful.
+	domLatestV, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domLatestV.Close()
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	// Resume the DDL job, then add index operation can be executed successfully.
+	session.MustExec(t, seLatestV, fmt.Sprintf("admin resume ddl jobs %d", jobID))
+	sql := fmt.Sprintf(" admin show ddl jobs where job_id=%d", jobID)
+	// Make sure the add index operation is successful.
+	suc := false
+	for i := 0; i < 20; i++ {
+		rows, err := execute(context.Background(), seLatestV, sql)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		require.Equal(t, rows[0].GetString(2), "upgrade_tbl")
+
+		state := rows[0].GetString(11)
+		if state == "synced" {
+			suc = true
+			break
+		}
+		time.Sleep(time.Millisecond * 200)
+	}
+	require.True(t, suc)
+}
+
+func TestUpgradeVersionForResumeJob(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	session.MustExec(t, seV, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", session.CurrentBootstrapVersion-1))
+	session.UnsetStoreBootstrapped(store.UUID())
+	ver, err := session.GetBootstrapVersion(seV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockResumeAllJobsFailed", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/session/mockResumeAllJobsFailed")
+
+	// Add a paused DDL job before upgrade.
+	session.MustExec(t, seV, "create table test.upgrade_tbl(a int, b int)")
+	session.MustExec(t, seV, "create table test.upgrade_tbl1(a int, b int)")
+	ch := make(chan struct{})
+	hook := &callback.TestDDLCallback{}
+	var jobID int64
+	doOnce := true
+	hook.OnGetJobBeforeExported = func(str string) {
+		if jobID == 0 || !doOnce {
+			return
+		}
+
+		for i := 0; i < 50; i++ {
+			sql := fmt.Sprintf("admin show ddl jobs where job_id=%d or job_id=%d", jobID, jobID+1)
+			se := session.CreateSessionAndSetID(t, store)
+			rows, err := execute(context.Background(), se, sql)
+			require.NoError(t, err)
+			if len(rows) == 2 {
+				doOnce = false
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	times := 0
+	hook.OnGetJobAfterExported = func(tp string, job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly && times == 0 {
+			ch <- struct{}{}
+			jobID = job.ID
+			times = 1
+		}
+		// Make sure we do jobID first, then do jobID+1.
+		if job.ID == jobID && job.SchemaState == model.StateWriteReorganization && job.State == model.JobStateQueueing && times == 1 {
+			times = 2
+		}
+		if job.ID == jobID+1 && job.SchemaState == model.StateNone && job.State == model.JobStateQueueing && times == 2 {
+			times = 3
+		}
+		if job.ID == jobID && job.State == model.JobStateDone && job.SchemaState == model.StatePublic {
+			wg.Done()
+		}
+	}
+
+	dom.DDL().SetHook(hook)
+	go func() {
+		// This "add index" job will be paused when upgrading.
+		_, _ = execute(context.Background(), seV, "alter table test.upgrade_tbl add index idx(a)")
+	}()
+
+	<-ch
+	dom.Close()
+	// Make sure upgrade is successful.
+	domLatestV, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domLatestV.Close()
+	domLatestV.DDL().SetHook(hook)
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	// Add a new DDL (an "add index" job uses a different table than the previous DDL job) to the DDL table.
+	session.MustExec(t, seLatestV, "alter table test.upgrade_tbl1 add index idx2(a)")
+	ver, err = session.GetBootstrapVersion(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	wg.Wait()
+	require.Equal(t, 3, times)
+	// Make sure the second add index operation is successful.
+	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_history where job_id=%d or job_id=%d order by job_id", jobID, jobID+1)
+	rows, err := execute(context.Background(), seLatestV, sql)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	var idxFinishTS uint64
+	for i, row := range rows {
+		jobBinary := row.GetBytes(0)
+		runJob := model.Job{}
+		err := runJob.Decode(jobBinary)
+		require.NoError(t, err)
+		require.True(t, strings.Contains(runJob.TableName, "upgrade_tbl"))
+		require.Equal(t, model.JobStateSynced.String(), runJob.State.String())
+		if i == 0 {
+			idxFinishTS = runJob.BinlogInfo.FinishedTS
+		} else {
+			require.Greater(t, runJob.BinlogInfo.FinishedTS, idxFinishTS)
+		}
+	}
+}
+
+func execute(ctx context.Context, s sessionctx.Context, query string) ([]chunk.Row, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	rs, err := s.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if rs == nil {
+		return nil, nil
+	}
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return rows, nil
+}
+
+func TestUpgradeWithPauseDDL(t *testing.T) {
+	session.SupportUpgradeStateVer--
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	_, err = execute(context.Background(), se, "create table test.pause_user_ddl_t(a int, b int)")
+	require.NoError(t, err)
+
+	tc := session.TestCallback{Cnt: atomicutil.NewInt32(0)}
+	sql := "select job_meta, processing from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing) order by processing desc, job_id"
+	tc.OnBootstrapBeforeExported = func(s session.Session) {
+		rows, err := execute(context.Background(), s, sql)
+		require.NoError(t, err)
+		require.Len(t, rows, 0)
+	}
+
+	wg := sync.WaitGroup{}
+	tc.OnBootstrapExported = func(s session.Session) {
+		var query string
+		switch tc.Cnt.Load() % 2 {
+		case 0:
+			query = fmt.Sprintf("alter table test.pause_user_ddl_t add index idx_%d(a)", tc.Cnt.Load())
+		case 1:
+			query = fmt.Sprintf("alter table test.pause_user_ddl_t add column c_%d int", tc.Cnt.Load())
+		}
+		tc.Cnt.Add(1)
+
+		ch := make(chan struct{})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ch <- struct{}{}
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			_, err := tk.ExecWithContext(context.Background(), query)
+			if err != nil {
+				// Maybe the bootstrap domain is closed.
+				require.Equal(t, err.Error(), context.Canceled.Error())
+			}
+		}()
+		<-ch
+
+		rows, err := execute(context.Background(), s, sql)
+		require.NoError(t, err)
+		for _, row := range rows {
+			jobBinary := row.GetBytes(0)
+			runJob := model.Job{}
+			err := runJob.Decode(jobBinary)
+			require.NoError(t, err)
+			cmt := fmt.Sprintf("job: %s", runJob.String())
+			if !tidb_util.IsSysDB(runJob.SchemaName) {
+				require.True(t, runJob.IsPausedBySystem(), cmt)
+			} else {
+				require.False(t, !runJob.IsPausedBySystem(), cmt)
+			}
+		}
+	}
+	tc.OnBootstrapAfterExported = func(s session.Session) {
+		rows, err := execute(context.Background(), s, sql)
+		require.NoError(t, err)
+
+		for _, row := range rows {
+			jobBinary := row.GetBytes(0)
+			runJob := model.Job{}
+			err := runJob.Decode(jobBinary)
+			require.NoError(t, err)
+			cmt := fmt.Sprintf("job: %s", runJob.String())
+			if !tidb_util.IsSysDB(runJob.SchemaName) {
+				require.True(t, runJob.IsPausedBySystem(), cmt)
+			} else {
+				require.False(t, !runJob.IsPausedBySystem(), cmt)
+			}
+		}
+	}
+	session.TestHook = tc
+
+	*session.WithMockUpgrade = true
+	seV := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(session.CurrentBootstrapVersion - 1)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	session.MustExec(t, seV, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", session.CurrentBootstrapVersion-1))
+	session.UnsetStoreBootstrapped(store.UUID())
+	ver, err := session.GetBootstrapVersion(seV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
+	dom.Close()
+	domLatestV, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domLatestV.Close()
+
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion+1, ver)
+
+	wg.Wait()
+
+	tk := testkit.NewTestKit(t, store)
+	var rows []chunk.Row
+
+	// Make sure all DDLs are done.
+	for i := 0; i < 50; i++ {
+		sql = "select count(1) from mysql.tidb_ddl_job"
+		rows, err = execute(context.Background(), tk.Session(), sql)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		if rows[0].GetInt64(0) == 0 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	require.Equal(t, int64(0), rows[0].GetInt64(0))
+
+	// Check user DDLs are handled after system DDLs.
+	sql = fmt.Sprintf("select job_meta from mysql.tidb_ddl_history order by job_id desc limit %d", tc.Cnt.Load())
+	rows, err = execute(context.Background(), tk.Session(), sql)
+	require.NoError(t, err)
+	require.Len(t, rows, int(tc.Cnt.Load()))
+	type info struct {
+		ts  uint64
+		sql string
+	}
+	mysqlOpInfos := make([]info, 0, len(rows))
+	testOpInfos := make([]info, 0, len(rows))
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		runJob := model.Job{}
+		err := runJob.Decode(jobBinary)
+		require.NoError(t, err)
+		if strings.EqualFold(runJob.SchemaName, "mysql") {
+			mysqlOpInfos = append(mysqlOpInfos, info{runJob.BinlogInfo.FinishedTS, runJob.Query})
+		} else {
+			testOpInfos = append(testOpInfos, info{runJob.BinlogInfo.FinishedTS, runJob.Query})
+		}
+	}
+	for _, mysqlInfo := range mysqlOpInfos {
+		for _, testInfo := range testOpInfos {
+			cmt := fmt.Sprintf("test sql:%s, ts:%v, mysql sql:%s, ts:%v",
+				testInfo.sql, testInfo.ts, mysqlInfo.sql, mysqlInfo.ts)
+			require.Greater(t, testInfo.ts, mysqlInfo.ts, cmt)
+		}
+	}
+	// Check system schema in mock bootstrap.
 	tk.MustQuery("show create table mysql.mock_sys_t").Check(testkit.Rows(
 		"mock_sys_t CREATE TABLE `mock_sys_t` (\n" +
 			"  `c1` int(11) DEFAULT NULL,\n" +

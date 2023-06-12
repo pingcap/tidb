@@ -398,6 +398,11 @@ const (
 	// TiDBMaxBytesBeforeTiFlashExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
 	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
 
+	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
+	// Default value is `false`, means never use pipeline model in tiflash.
+	// Value set to `true` means try to execute query with pipeline model in tiflash.
+	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
+
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
 	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
@@ -540,6 +545,9 @@ const (
 
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
+
+	// TiDBExpensiveTxnTimeThreshold indicates the time threshold of expensive transaction.
+	TiDBExpensiveTxnTimeThreshold = "tidb_expensive_txn_time_threshold"
 
 	// TiDBEnableIndexMerge indicates to generate IndexMergePath.
 	TiDBEnableIndexMerge = "tidb_enable_index_merge"
@@ -864,6 +872,8 @@ const (
 	// TiDBOptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
 	TiDBOptOrderingIdxSelThresh = "tidb_opt_ordering_index_selectivity_threshold"
 
+	// TiDBOptEnableMPPSharedCTEExecution indicates whehter the optimizer try to build shared CTE scan during MPP execution.
+	TiDBOptEnableMPPSharedCTEExecution = "tidb_opt_enable_mpp_shared_cte_execution"
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
 )
@@ -989,6 +999,58 @@ const (
 	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
 	// limitation, if the storage is not TiKV).
 	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
+	// AuthenticationLDAPSASLAuthMethodName defines the authentication method used by LDAP SASL authentication plugin
+	AuthenticationLDAPSASLAuthMethodName = "authentication_ldap_sasl_auth_method_name"
+	// AuthenticationLDAPSASLCAPath defines the ca certificate to verify LDAP connection in LDAP SASL authentication plugin
+	AuthenticationLDAPSASLCAPath = "authentication_ldap_sasl_ca_path"
+	// AuthenticationLDAPSASLTLS defines whether to use TLS connection in LDAP SASL authentication plugin
+	AuthenticationLDAPSASLTLS = "authentication_ldap_sasl_tls"
+	// AuthenticationLDAPSASLServerHost defines the server host of LDAP server for LDAP SASL authentication plugin
+	AuthenticationLDAPSASLServerHost = "authentication_ldap_sasl_server_host"
+	// AuthenticationLDAPSASLServerPort defines the port of LDAP server for LDAP SASL authentication plugin
+	AuthenticationLDAPSASLServerPort = "authentication_ldap_sasl_server_port"
+	// AuthenticationLDAPSASLReferral defines whether to enable LDAP referral for LDAP SASL authentication plugin
+	AuthenticationLDAPSASLReferral = "authentication_ldap_sasl_referral"
+	// AuthenticationLDAPSASLUserSearchAttr defines the attribute of username in LDAP server
+	AuthenticationLDAPSASLUserSearchAttr = "authentication_ldap_sasl_user_search_attr"
+	// AuthenticationLDAPSASLBindBaseDN defines the `dn` to search the users in. It's used to limit the search scope of TiDB.
+	AuthenticationLDAPSASLBindBaseDN = "authentication_ldap_sasl_bind_base_dn"
+	// AuthenticationLDAPSASLBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSASLBindRootDN = "authentication_ldap_sasl_bind_root_dn"
+	// AuthenticationLDAPSASLBindRootPWD defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSASLBindRootPWD = "authentication_ldap_sasl_bind_root_pwd"
+	// AuthenticationLDAPSASLInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSASLInitPoolSize = "authentication_ldap_sasl_init_pool_size"
+	// AuthenticationLDAPSASLMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSASLMaxPoolSize = "authentication_ldap_sasl_max_pool_size"
+	// AuthenticationLDAPSimpleAuthMethodName defines the authentication method used by LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleAuthMethodName = "authentication_ldap_simple_auth_method_name"
+	// AuthenticationLDAPSimpleCAPath defines the ca certificate to verify LDAP connection in LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleCAPath = "authentication_ldap_simple_ca_path"
+	// AuthenticationLDAPSimpleTLS defines whether to use TLS connection in LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleTLS = "authentication_ldap_simple_tls"
+	// AuthenticationLDAPSimpleServerHost defines the server host of LDAP server for LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleServerHost = "authentication_ldap_simple_server_host"
+	// AuthenticationLDAPSimpleServerPort defines the port of LDAP server for LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleServerPort = "authentication_ldap_simple_server_port"
+	// AuthenticationLDAPSimpleReferral defines whether to enable LDAP referral for LDAP Simple authentication plugin
+	AuthenticationLDAPSimpleReferral = "authentication_ldap_simple_referral"
+	// AuthenticationLDAPSimpleUserSearchAttr defines the attribute of username in LDAP server
+	AuthenticationLDAPSimpleUserSearchAttr = "authentication_ldap_simple_user_search_attr"
+	// AuthenticationLDAPSimpleBindBaseDN defines the `dn` to search the users in. It's used to limit the search scope of TiDB.
+	AuthenticationLDAPSimpleBindBaseDN = "authentication_ldap_simple_bind_base_dn"
+	// AuthenticationLDAPSimpleBindRootDN defines the `dn` of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSimpleBindRootDN = "authentication_ldap_simple_bind_root_dn"
+	// AuthenticationLDAPSimpleBindRootPWD defines the password of the user to login the LDAP server and perform search.
+	AuthenticationLDAPSimpleBindRootPWD = "authentication_ldap_simple_bind_root_pwd"
+	// AuthenticationLDAPSimpleInitPoolSize defines the init size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSimpleInitPoolSize = "authentication_ldap_simple_init_pool_size"
+	// AuthenticationLDAPSimpleMaxPoolSize defines the max size of connection pool to LDAP server for SASL plugin.
+	AuthenticationLDAPSimpleMaxPoolSize = "authentication_ldap_simple_max_pool_size"
+	// TiDBRuntimeFilterTypeName the value of is string, a runtime filter type list split by ",", such as: "IN,MIN_MAX"
+	TiDBRuntimeFilterTypeName = "tidb_runtime_filter_type"
+	// TiDBRuntimeFilterModeName the mode of runtime filter, such as "OFF", "LOCAL"
+	TiDBRuntimeFilterModeName = "tidb_runtime_filter_mode"
 )
 
 // TiDB intentional limits
@@ -1075,6 +1137,7 @@ const (
 	DefTiFlashMaxBytesBeforeExternalJoin           = -1
 	DefTiFlashMaxBytesBeforeExternalGroupBy        = -1
 	DefTiFlashMaxBytesBeforeExternalSort           = -1
+	DefTiDBEnableTiFlashPipelineMode               = false
 	DefTiDBMPPStoreFailTTL                         = "60s"
 	DefTiDBTxnMode                                 = ""
 	DefTiDBRowFormatV1                             = 1
@@ -1100,7 +1163,8 @@ const (
 	DefTiDBDDLSlowOprThreshold                     = 300
 	DefTiDBUseFastAnalyze                          = false
 	DefTiDBSkipIsolationLevelCheck                 = false
-	DefTiDBExpensiveQueryTimeThreshold             = 60 // 60s
+	DefTiDBExpensiveQueryTimeThreshold             = 60      // 60s
+	DefTiDBExpensiveTxnTimeThreshold               = 60 * 10 // 10 minutes
 	DefTiDBScatterRegion                           = false
 	DefTiDBWaitSplitRegionFinish                   = true
 	DefWaitSplitRegionTimeout                      = 300 // 300s
@@ -1167,7 +1231,7 @@ const (
 	DefTiDBIgnorePreparedCacheCloseStmt            = false
 	DefTiDBBatchPendingTiFlashCount                = 4000
 	DefRCReadCheckTS                               = false
-	DefTiDBRemoveOrderbyInSubquery                 = false
+	DefTiDBRemoveOrderbyInSubquery                 = true
 	DefTiDBSkewDistinctAgg                         = false
 	DefTiDB3StageDistinctAgg                       = true
 	DefTiDB3StageMultiDistinctAgg                  = false
@@ -1218,6 +1282,7 @@ const (
 	MaxDDLReorgBatchSize                  int32  = 10240
 	MinDDLReorgBatchSize                  int32  = 32
 	MinExpensiveQueryTimeThreshold        uint64 = 10 // 10s
+	MinExpensiveTxnTimeThreshold          uint64 = 60 // 60s
 	DefTiDBAutoBuildStatsConcurrency             = 1
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
@@ -1231,43 +1296,58 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold                float64 = 0.6
-	DefTiDBOptPrefixIndexSingleScan                  = true
-	DefTiDBExternalTS                                = 0
-	DefTiDBEnableExternalTSRead                      = false
-	DefTiDBEnableReusechunk                          = true
-	DefTiDBUseAlloc                                  = false
-	DefTiDBEnablePlanReplayerCapture                 = false
-	DefTiDBIndexMergeIntersectionConcurrency         = ConcurrencyUnset
-	DefTiDBTTLJobEnable                              = true
-	DefTiDBTTLScanBatchSize                          = 500
-	DefTiDBTTLScanBatchMaxSize                       = 10240
-	DefTiDBTTLScanBatchMinSize                       = 1
-	DefTiDBTTLDeleteBatchSize                        = 100
-	DefTiDBTTLDeleteBatchMaxSize                     = 10240
-	DefTiDBTTLDeleteBatchMinSize                     = 1
-	DefTiDBTTLDeleteRateLimit                        = 0
-	DefTiDBTTLRunningTasks                           = -1
-	DefPasswordReuseHistory                          = 0
-	DefPasswordReuseTime                             = 0
-	DefTiDBStoreBatchSize                            = 4
-	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
-	DefTiDBEnableHistoricalStatsForCapture           = false
-	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
-	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
-	DefTiDBTTLScanWorkerCount                        = 4
-	DefTiDBTTLDeleteWorkerCount                      = 4
-	DefaultExchangeCompressionMode                   = kv.ExchangeCompressionModeUnspecified
-	DefTiDBEnableResourceControl                     = true
-	DefTiDBPessimisticTransactionFairLocking         = false
-	DefTiDBEnablePlanCacheForParamLimit              = true
-	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
-	DefTiDBEnablePlanCacheForSubquery                = true
-	DefTiDBLoadBasedReplicaReadThreshold             = time.Second
-	DefTiDBOptEnableLateMaterialization              = true
-	DefTiDBOptOrderingIdxSelThresh                   = 0.0
-	DefTiDBPlanCacheInvalidationOnFreshStats         = true
-	DefTiDBEnableRowLevelChecksum                    = false
+	DefTiDBGOGCTunerThreshold                 float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan                   = true
+	DefTiDBExternalTS                                 = 0
+	DefTiDBEnableExternalTSRead                       = false
+	DefTiDBEnableReusechunk                           = true
+	DefTiDBUseAlloc                                   = false
+	DefTiDBEnablePlanReplayerCapture                  = false
+	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
+	DefTiDBTTLJobEnable                               = true
+	DefTiDBTTLScanBatchSize                           = 500
+	DefTiDBTTLScanBatchMaxSize                        = 10240
+	DefTiDBTTLScanBatchMinSize                        = 1
+	DefTiDBTTLDeleteBatchSize                         = 100
+	DefTiDBTTLDeleteBatchMaxSize                      = 10240
+	DefTiDBTTLDeleteBatchMinSize                      = 1
+	DefTiDBTTLDeleteRateLimit                         = 0
+	DefTiDBTTLRunningTasks                            = -1
+	DefPasswordReuseHistory                           = 0
+	DefPasswordReuseTime                              = 0
+	DefTiDBStoreBatchSize                             = 4
+	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture            = false
+	DefTiDBTTLJobScheduleWindowStartTime              = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime                = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                         = 4
+	DefTiDBTTLDeleteWorkerCount                       = 4
+	DefaultExchangeCompressionMode                    = kv.ExchangeCompressionModeUnspecified
+	DefTiDBEnableResourceControl                      = true
+	DefTiDBPessimisticTransactionFairLocking          = false
+	DefTiDBEnablePlanCacheForParamLimit               = true
+	DefTiFlashComputeDispatchPolicy                   = tiflashcompute.DispatchPolicyConsistentHashStr
+	DefTiDBEnablePlanCacheForSubquery                 = true
+	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
+	DefTiDBOptEnableLateMaterialization               = true
+	DefTiDBOptOrderingIdxSelThresh                    = 0.0
+	DefTiDBOptEnableMPPSharedCTEExecution             = false
+	DefTiDBPlanCacheInvalidationOnFreshStats          = true
+	DefTiDBEnableRowLevelChecksum                     = false
+	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"
+	DefAuthenticationLDAPSASLServerPort               = 389
+	DefAuthenticationLDAPSASLTLS                      = false
+	DefAuthenticationLDAPSASLUserSearchAttr           = "uid"
+	DefAuthenticationLDAPSASLInitPoolSize             = 10
+	DefAuthenticationLDAPSASLMaxPoolSize              = 1000
+	DefAuthenticationLDAPSimpleAuthMethodName         = "SIMPLE"
+	DefAuthenticationLDAPSimpleServerPort             = 389
+	DefAuthenticationLDAPSimpleTLS                    = false
+	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
+	DefAuthenticationLDAPSimpleInitPoolSize           = 10
+	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
+	DefRuntimeFilterType                              = "IN"
+	DefRuntimeFilterMode                              = "OFF"
 )
 
 // Process global variables.
@@ -1290,6 +1370,7 @@ var (
 	ForcePriority                        = int32(DefTiDBForcePriority)
 	MaxOfMaxAllowedPacket         uint64 = 1073741824
 	ExpensiveQueryTimeThreshold   uint64 = DefTiDBExpensiveQueryTimeThreshold
+	ExpensiveTxnTimeThreshold     uint64 = DefTiDBExpensiveTxnTimeThreshold
 	MemoryUsageAlarmRatio                = atomic.NewFloat64(DefMemoryUsageAlarmRatio)
 	MemoryUsageAlarmKeepRecordNum        = atomic.NewInt64(DefMemoryUsageAlarmKeepRecordNum)
 	EnableLocalTxn                       = atomic.NewBool(DefTiDBEnableLocalTxn)

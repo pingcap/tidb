@@ -1444,7 +1444,7 @@ func TestSysdatePushDown(t *testing.T) {
 	tk.MustExec("use test")
 	now := time.Now()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())))
-	rows[1][2] = fmt.Sprintf("gt(test.t.d, %v)", now.Format("2006-01-02 15:04:05"))
+	rows[1][2] = fmt.Sprintf("gt(test.t.d, %v)", now.Format(time.DateTime))
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
 	failpoint.Disable("github.com/pingcap/tidb/expression/injectNow")
@@ -2568,7 +2568,7 @@ func TestCreateViewIsolationRead(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
 
@@ -3047,14 +3047,14 @@ func TestSelectIgnoreTemporaryTableInView(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("create table t2 (c int, d int)")
-	tk.MustExec("create view v1 as select * from t1 order by a")
-	tk.MustExec("create view v2 as select * from ((select * from t1) union (select * from t2)) as tt order by a, b")
-	tk.MustExec("create view v3 as select * from v1 order by a")
-	tk.MustExec("create view v4 as select * from t1, t2 where t1.a = t2.c order by a, b")
-	tk.MustExec("create view v5 as select * from (select * from t1) as t1 order by a")
+	tk.MustExec("create view v1 as select * from t1 order by a limit 5")
+	tk.MustExec("create view v2 as select * from ((select * from t1) union (select * from t2)) as tt order by a, b limit 5")
+	tk.MustExec("create view v3 as select * from v1 order by a limit 5")
+	tk.MustExec("create view v4 as select * from t1, t2 where t1.a = t2.c order by a, b limit 5")
+	tk.MustExec("create view v5 as select * from (select * from t1) as t1 order by a limit 5")
 
 	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
 	tk.MustExec("insert into t2 values (3, 5), (6, 7)")
@@ -3807,15 +3807,10 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 			"[    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
 			"[      └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
 
-	var readFromCacheNoPanic bool
-	for i := 0; i < 10; i++ {
+	require.Eventually(t, func() bool {
 		tk.MustQuery("select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows("2"))
-		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
-			readFromCacheNoPanic = true
-			break
-		}
-	}
-	require.True(t, readFromCacheNoPanic)
+		return tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
+	}, 10*time.Second, 500*time.Millisecond)
 
 	tk.MustExec("drop table if exists t31202")
 }
@@ -4254,7 +4249,7 @@ func TestLeftShiftPushDownToTiFlash(t *testing.T) {
 func TestIssue36609(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d))")
 	tk.MustExec("create table t2(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d))")
@@ -5062,17 +5057,6 @@ func TestOuterJoinEliminationForIssue18216(t *testing.T) {
 	tk.MustQuery("select group_concat(c order by (select group_concat(c order by c) from t2 where a=t1.a), c desc) from t1;").Check(testkit.Rows("2,1,4,3"))
 }
 
-func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE t (
-		id INTEGER NOT NULL AUTO_INCREMENT,
-		CHECK (id IN (0, 1)),
-		KEY idx_autoinc_id (id)
-	)`)
-}
-
 // https://github.com/pingcap/tidb/issues/36888.
 func TestIssue36888(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -5268,7 +5252,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 func TestIssue41458(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int, b int, c int, index ia(a));`)
 	tk.MustExec("select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on t3.b=t4.b where t3.a=1 and t2.a=2;")

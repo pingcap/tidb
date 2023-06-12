@@ -39,7 +39,7 @@ func constructFieldType() types.FieldType {
 	return tp
 }
 
-func createGroupingFunc(ctx sessionctx.Context, args []Expression) (*builtinGroupingImplSig, error) {
+func createGroupingFunc(ctx sessionctx.Context, args []Expression) (*BuiltinGroupingImplSig, error) {
 	// TODO We should use the commented codes after the completion of rollup
 	// argTp := []types.EvalType{types.ETInt}
 	tp := constructFieldType()
@@ -49,7 +49,7 @@ func createGroupingFunc(ctx sessionctx.Context, args []Expression) (*builtinGrou
 		return nil, err
 	}
 	bf.tp.SetFlen(1)
-	sig := &builtinGroupingImplSig{bf, 0, map[int64]struct{}{}, false}
+	sig := &BuiltinGroupingImplSig{bf, 0, []map[uint64]struct{}{}, false}
 	sig.setPbCode(tipb.ScalarFuncSig_GroupingSig)
 	return sig, nil
 }
@@ -59,33 +59,33 @@ func TestGrouping(t *testing.T) {
 	tests := []struct {
 		groupingID   uint64
 		mode         tipb.GroupingMode
-		groupingIDs  map[int64]struct{}
+		groupingIDs  map[uint64]struct{}
 		expectResult uint64
 	}{
 		// GroupingMode_ModeBitAnd
-		{1, 1, map[int64]struct{}{1: {}}, 1},
-		{1, 1, map[int64]struct{}{3: {}}, 1},
-		{1, 1, map[int64]struct{}{6: {}}, 0},
-		{2, 1, map[int64]struct{}{1: {}}, 0},
-		{2, 1, map[int64]struct{}{3: {}}, 1},
-		{2, 1, map[int64]struct{}{6: {}}, 1},
-		{4, 1, map[int64]struct{}{2: {}}, 0},
-		{4, 1, map[int64]struct{}{4: {}}, 1},
-		{4, 1, map[int64]struct{}{6: {}}, 1},
+		{1, 1, map[uint64]struct{}{1: {}}, 0},
+		{1, 1, map[uint64]struct{}{3: {}}, 0},
+		{1, 1, map[uint64]struct{}{6: {}}, 1},
+		{2, 1, map[uint64]struct{}{1: {}}, 1},
+		{2, 1, map[uint64]struct{}{3: {}}, 0},
+		{2, 1, map[uint64]struct{}{6: {}}, 0},
+		{4, 1, map[uint64]struct{}{2: {}}, 1},
+		{4, 1, map[uint64]struct{}{4: {}}, 0},
+		{4, 1, map[uint64]struct{}{6: {}}, 0},
 
 		// GroupingMode_ModeNumericCmp
-		{0, 2, map[int64]struct{}{0: {}}, 0},
-		{0, 2, map[int64]struct{}{2: {}}, 0},
-		{2, 2, map[int64]struct{}{0: {}}, 1},
-		{2, 2, map[int64]struct{}{1: {}}, 1},
-		{2, 2, map[int64]struct{}{2: {}}, 0},
-		{2, 2, map[int64]struct{}{3: {}}, 0},
+		{0, 2, map[uint64]struct{}{0: {}}, 1},
+		{0, 2, map[uint64]struct{}{2: {}}, 1},
+		{2, 2, map[uint64]struct{}{0: {}}, 0},
+		{2, 2, map[uint64]struct{}{1: {}}, 0},
+		{2, 2, map[uint64]struct{}{2: {}}, 1},
+		{2, 2, map[uint64]struct{}{3: {}}, 1},
 
 		// GroupingMode_ModeNumericSet
-		{1, 3, map[int64]struct{}{1: {}, 2: {}}, 0},
-		{1, 3, map[int64]struct{}{2: {}}, 1},
-		{2, 3, map[int64]struct{}{1: {}, 3: {}}, 1},
-		{2, 3, map[int64]struct{}{2: {}, 3: {}}, 0},
+		{1, 3, map[uint64]struct{}{1: {}, 2: {}}, 0},
+		{1, 3, map[uint64]struct{}{2: {}}, 1},
+		{2, 3, map[uint64]struct{}{1: {}, 3: {}}, 1},
+		{2, 3, map[uint64]struct{}{2: {}, 3: {}}, 0},
 	}
 
 	for _, testCase := range tests {
@@ -95,7 +95,7 @@ func TestGrouping(t *testing.T) {
 		groupingFunc, err := createGroupingFunc(ctx, args)
 		require.NoError(t, err, comment)
 
-		err = groupingFunc.SetMetadata(testCase.mode, testCase.groupingIDs)
+		err = groupingFunc.SetMetadata(testCase.mode, []map[uint64]struct{}{testCase.groupingIDs})
 		require.NoError(t, err, comment)
 
 		actualResult, err := evalBuiltinFunc(groupingFunc, chunk.Row{})

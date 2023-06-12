@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,11 +71,12 @@ func TestKillStmt(t *testing.T) {
 	// excceed int64
 	tk.MustExec("kill 9223372036854775808") // 9223372036854775808 == 2^63
 	result = tk.MustQuery("show warnings")
-	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: Unexpected connectionID excceeds int64"))
+	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: unexpected connectionID exceeds int64"))
 
 	// local kill
-	killConnID := util.NewGlobalConnID(connID, true)
-	tk.MustExec("kill " + strconv.FormatUint(killConnID.ID(), 10))
+	connIDAllocator := globalconn.NewGlobalAllocator(dom.ServerID)
+	killConnID := connIDAllocator.NextID()
+	tk.MustExec("kill " + strconv.FormatUint(killConnID, 10))
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 
@@ -119,7 +120,7 @@ func TestUserAttributes(t *testing.T) {
 	// Non-root users could access COMMENT or ATTRIBUTE of all users via the view,
 	// but not via the mysql.user table.
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser1"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser1"}, nil, nil, nil))
 	tk.MustQueryWithContext(ctx, `SELECT user, host, attribute FROM information_schema.user_attributes ORDER BY user`).Check(
 		testkit.Rows("root % <nil>", "testuser % {\"comment\": \"1234\"}", "testuser1 % {\"age\": 20, \"name\": \"Tom\"}", "testuser2 % <nil>"))
 	tk.MustGetErrCode(`SELECT user, host, user_attributes FROM mysql.user ORDER BY user`, mysql.ErrTableaccessDenied)
@@ -145,7 +146,7 @@ func TestSetResourceGroup(t *testing.T) {
 	tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec = 100")
 	tk.MustExec("ALTER USER `root` RESOURCE GROUP `rg1`")
 	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows(""))
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
 
 	tk.MustExec("CREATE RESOURCE GROUP rg2 ru_per_sec = 200")
@@ -155,6 +156,6 @@ func TestSetResourceGroup(t *testing.T) {
 	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows(""))
 
 	tk.RefreshSession()
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
 }

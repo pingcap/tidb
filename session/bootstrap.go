@@ -29,9 +29,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -418,7 +420,8 @@ const (
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version_seq (table_id, version, seq_no),
-		KEY table_create_time (table_id, create_time, seq_no)
+		KEY table_create_time (table_id, create_time, seq_no),
+    	KEY idx_create_time (create_time)
 	);`
 	// CreateStatsMetaHistory stores the historical meta stats.
 	CreateStatsMetaHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_meta_history (
@@ -429,7 +432,8 @@ const (
     	source varchar(40) NOT NULL,
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version (table_id, version),
-		KEY table_create_time (table_id, create_time)
+		KEY table_create_time (table_id, create_time),
+    	KEY idx_create_time (create_time)
 	);`
 	// CreateAnalyzeJobs stores the analyze jobs.
 	CreateAnalyzeJobs = `CREATE TABLE IF NOT EXISTS mysql.analyze_jobs (
@@ -881,11 +885,20 @@ const (
 	// version 144 turn off `tidb_plan_cache_invalidation_on_fresh_stats`, which is introduced in 7.1-rc,
 	// if it's upgraded from an existing old version cluster.
 	version144 = 144
+	// version 145 to only add a version make we know when we support upgrade state.
+	version145 = 145
+	// version 146 add index for mysql.stats_meta_history and mysql.stats_history.
+	version146 = 146
+	// ...
+	// [version147, version166] is the version range reserved for patches of 7.1.x
+	// ...
+	// version 167 add column `step` to `mysql.tidb_background_subtask`
+	version167 = 167
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version144
+var currentBootstrapVersion int64 = version167
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1018,6 +1031,9 @@ var (
 		upgradeToVer142,
 		upgradeToVer143,
 		upgradeToVer144,
+		// We will only use Ver145 to differentiate versions, so it is skipped here.
+		upgradeToVer146,
+		upgradeToVer167,
 	}
 )
 
@@ -1075,6 +1091,9 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	return row.GetString(0), false, nil
 }
 
+// SupportUpgradeStateVer is exported for testing.
+var SupportUpgradeStateVer = version145
+
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s Session) {
@@ -1103,17 +1122,23 @@ func upgrade(s Session) {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
+	if ver >= int64(SupportUpgradeStateVer) {
+		syncUpgradeState(s)
+	}
 	if isNull {
 		upgradeToVer99Before(s)
 	}
 
 	// It is only used in test.
-	addMockBootstrapVersionForTest()
+	addMockBootstrapVersionForTest(s)
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
 	if isNull {
 		upgradeToVer99After(s)
+	}
+	if ver >= int64(SupportUpgradeStateVer) {
+		syncNormalRunning(s)
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -1140,6 +1165,84 @@ func upgrade(s Session) {
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
 	}
+}
+
+func syncUpgradeState(s Session) {
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelFunc()
+	dom := domain.GetDomain(s)
+	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
+	if err != nil {
+		logutil.BgLogger().Fatal("[upgrading] update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
+	}
+
+	retryTimes := 10
+	interval := 200 * time.Millisecond
+	for i := 0; i < retryTimes; i++ {
+		op, err := owner.GetOwnerOpValue(ctx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
+		if err == nil && op.String() == owner.OpGetUpgradingState.String() {
+			break
+		}
+		if i == retryTimes-1 {
+			logutil.BgLogger().Fatal("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
+		}
+		logutil.BgLogger().Warn("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
+		time.Sleep(interval)
+	}
+
+	retryTimes = 60
+	interval = 500 * time.Millisecond
+	for i := 0; i < retryTimes; i++ {
+		jobErrs, err := ddl.PauseAllJobsBySystem(s)
+		if err == nil && len(jobErrs) == 0 {
+			break
+		}
+		jobErrStrs := make([]string, 0, len(jobErrs))
+		for _, jobErr := range jobErrs {
+			if dbterror.ErrPausedDDLJob.Equal(jobErr) {
+				continue
+			}
+			jobErrStrs = append(jobErrStrs, jobErr.Error())
+		}
+		if err == nil && len(jobErrStrs) == 0 {
+			break
+		}
+
+		if i == retryTimes-1 {
+			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
+		}
+		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
+		time.Sleep(interval)
+	}
+	logutil.BgLogger().Info("[upgrading] update global state to upgrading", zap.String("state", syncer.StateUpgrading))
+}
+
+func syncNormalRunning(s Session) {
+	failpoint.Inject("mockResumeAllJobsFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			dom := domain.GetDomain(s)
+			//nolint: errcheck
+			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), syncer.NewStateInfo(syncer.StateNormalRunning))
+			failpoint.Return()
+		}
+	})
+
+	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
+	if err != nil {
+		logutil.BgLogger().Warn("[upgrading] resume all paused jobs failed", zap.Error(err))
+	}
+	for _, e := range jobErrs {
+		logutil.BgLogger().Warn("[upgrading] resume the job failed ", zap.Error(e))
+	}
+
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelFunc()
+	dom := domain.GetDomain(s)
+	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateNormalRunning))
+	if err != nil {
+		logutil.BgLogger().Fatal("[upgrading] update global state to normal failed", zap.Error(err))
+	}
+	logutil.BgLogger().Info("[upgrading] update global state to normal running finished")
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
@@ -2543,6 +2646,21 @@ func upgradeToVer144(s Session, ver int64) {
 
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
+}
+
+func upgradeToVer146(s Session, ver int64) {
+	if ver >= version146 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer167(s Session, ver int64) {
+	if ver >= version167 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {

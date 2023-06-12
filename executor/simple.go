@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -1025,13 +1026,6 @@ func deletePasswordLockingAttribute(ctx context.Context, sqlExecutor sqlexec.SQL
 	return err
 }
 
-func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin string) bool {
-	if authOpt == nil || !authOpt.ByAuthString {
-		return false
-	}
-	return mysql.IsAuthPluginClearText(authPlugin)
-}
-
 func (e *SimpleExec) isValidatePasswordEnabled() bool {
 	validatePwdEnable, err := e.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable)
 	if err != nil {
@@ -1175,14 +1169,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
 			authPlugin = spec.AuthOpt.AuthPlugin
 		}
-		if e.isValidatePasswordEnabled() && !s.IsCreateRole {
-			if spec.AuthOpt == nil || !spec.AuthOpt.ByAuthString && spec.AuthOpt.HashString == "" {
-				return variable.ErrNotValidPassword.GenWithStackByArgs()
+		// Validate the strength of the password if necessary
+		if e.isValidatePasswordEnabled() && !s.IsCreateRole && mysql.IsAuthPluginClearText(authPlugin) {
+			pwd := ""
+			if spec.AuthOpt != nil {
+				pwd = spec.AuthOpt.AuthString
 			}
-			if e.authUsingCleartextPwd(spec.AuthOpt, authPlugin) {
-				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
-					return err
-				}
+			if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), pwd); err != nil {
+				return err
 			}
 		}
 		pwd, ok := spec.EncodedPassword()
@@ -1192,7 +1186,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		switch authPlugin {
-		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthTiDBAuthToken:
+		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthTiDBAuthToken, mysql.AuthLDAPSimple, mysql.AuthLDAPSASL:
 		default:
 			return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 		}
@@ -1623,7 +1617,7 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 }
 
 func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, sctx sessionctx.Context, authPlugin string) error {
-	if strings.EqualFold(authPlugin, mysql.AuthTiDBAuthToken) {
+	if strings.EqualFold(authPlugin, mysql.AuthTiDBAuthToken) || strings.EqualFold(authPlugin, mysql.AuthLDAPSASL) || strings.EqualFold(authPlugin, mysql.AuthLDAPSimple) {
 		// AuthTiDBAuthToken is the token login method on the cloud,
 		// and the Password Reuse Policy does not take effect.
 		return nil
@@ -1809,7 +1803,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				spec.AuthOpt.AuthPlugin = currentAuthPlugin
 			}
 			switch spec.AuthOpt.AuthPlugin {
-			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, "":
+			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthLDAPSimple, mysql.AuthLDAPSASL, "":
 				authTokenOptionHandler = NoNeedAuthTokenOptions
 			case mysql.AuthTiDBAuthToken:
 				if authTokenOptionHandler != OptionalAuthTokenOptions {
@@ -1829,7 +1823,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					break
 				}
 			}
-			if e.isValidatePasswordEnabled() && e.authUsingCleartextPwd(spec.AuthOpt, spec.AuthOpt.AuthPlugin) {
+			if e.isValidatePasswordEnabled() && spec.AuthOpt.ByAuthString && mysql.IsAuthPluginClearText(spec.AuthOpt.AuthPlugin) {
 				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
 					return err
 				}
@@ -2550,7 +2544,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	if x, ok := s.Expr.(*ast.FuncCallExpr); ok {
 		if x.FnName.L == ast.ConnectionID {
 			sm := e.ctx.GetSessionManager()
-			sm.Kill(e.ctx.GetSessionVars().ConnectionID, s.Query)
+			sm.Kill(e.ctx.GetSessionVars().ConnectionID, s.Query, false)
 			return nil
 		}
 		return errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
@@ -2562,7 +2556,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			if sm == nil {
 				return nil
 			}
-			sm.Kill(s.ConnectionID, s.Query)
+			sm.Kill(s.ConnectionID, s.Query, false)
 		} else {
 			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
@@ -2577,11 +2571,11 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	if e.IsFromRemote {
 		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("conn", s.ConnectionID), zap.Bool("query", s.Query),
 			zap.String("sourceAddr", e.ctx.GetSessionVars().SourceAddr.IP.String()))
-		sm.Kill(s.ConnectionID, s.Query)
+		sm.Kill(s.ConnectionID, s.Query, false)
 		return nil
 	}
 
-	connID, isTruncated, err := util.ParseGlobalConnID(s.ConnectionID)
+	gcid, isTruncated, err := globalconn.ParseConnID(s.ConnectionID)
 	if err != nil {
 		err1 := errors.New("Parse ConnectionID failed: " + err.Error())
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
@@ -2597,26 +2591,26 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		return nil
 	}
 
-	if connID.ServerID != sm.ServerID() {
-		if err := killRemoteConn(ctx, e.ctx, &connID, s.Query); err != nil {
+	if gcid.ServerID != sm.ServerID() {
+		if err := killRemoteConn(ctx, e.ctx, &gcid, s.Query); err != nil {
 			err1 := errors.New("KILL remote connection failed: " + err.Error())
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
 		}
 	} else {
-		sm.Kill(s.ConnectionID, s.Query)
+		sm.Kill(s.ConnectionID, s.Query, false)
 	}
 
 	return nil
 }
 
-func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.GlobalConnID, query bool) error {
-	if connID.ServerID == 0 {
+func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalconn.GCID, query bool) error {
+	if gcid.ServerID == 0 {
 		return errors.New("Unexpected ZERO ServerID. Please file a bug to the TiDB Team")
 	}
 
 	killExec := &tipb.Executor{
 		Tp:   tipb.ExecType_TypeKill,
-		Kill: &tipb.Kill{ConnID: connID.ID(), Query: query},
+		Kill: &tipb.Kill{ConnID: gcid.ToConnID(), Query: query},
 	}
 
 	dagReq := &tipb.DAGRequest{}
@@ -2635,7 +2629,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		SetFromSessionVars(sctx.GetSessionVars()).
 		SetFromInfoSchema(sctx.GetInfoSchema()).
 		SetStoreType(kv.TiDB).
-		SetTiDBServerID(connID.ServerID).
+		SetTiDBServerID(gcid.ServerID).
 		Build()
 	if err != nil {
 		return err
@@ -2646,8 +2640,8 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		return err
 	}
 
-	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", connID.ServerID),
-		zap.Uint64("conn", connID.ID()), zap.Bool("query", query))
+	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", gcid.ServerID),
+		zap.Uint64("conn", gcid.ToConnID()), zap.Bool("query", query))
 	return err
 }
 
