@@ -2963,7 +2963,7 @@ const (
 	ShowPlacementLabels
 	ShowSessionStates
 	ShowCreateResourceGroup
-	ShowLoadDataJobs
+	ShowImportJobs
 	ShowCreateProcedure
 )
 
@@ -3013,7 +3013,7 @@ type ShowStmt struct {
 	ShowProfileArgs  *int64 // Used for `SHOW PROFILE` syntax
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
 
-	LoadDataJobID *int64 // Used for `SHOW LOAD DATA JOB <ID>` syntax
+	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
 }
 
 // Restore implements Node interface.
@@ -3222,12 +3222,12 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord(" PARTITION ")
 		ctx.WriteName(n.Partition.String())
-	case ShowLoadDataJobs:
-		if n.LoadDataJobID != nil {
-			ctx.WriteKeyWord("LOAD DATA JOB ")
-			ctx.WritePlainf("%d", *n.LoadDataJobID)
+	case ShowImportJobs:
+		if n.ImportJobID != nil {
+			ctx.WriteKeyWord("IMPORT JOB ")
+			ctx.WritePlainf("%d", *n.ImportJobID)
 		} else {
-			ctx.WriteKeyWord("LOAD DATA JOBS")
+			ctx.WriteKeyWord("IMPORT JOBS")
 			restoreShowLikeOrWhereOpt()
 		}
 	// ShowTargetFilterable
