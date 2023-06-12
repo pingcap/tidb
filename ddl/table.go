@@ -281,12 +281,11 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if infoschema.ErrDatabaseNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
-		} else if infoschema.ErrTableExists.Equal(err) {
-			if !orReplace {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-		} else {
+		} else if !infoschema.ErrTableExists.Equal(err) {
+			return ver, errors.Trace(err)
+		}
+		if !orReplace {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 	}

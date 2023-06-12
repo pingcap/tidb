@@ -121,17 +121,16 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	for {
 		select {
 		case result, ok := <-sc.StatsLoad.ResultCh:
-			if ok {
-				if result.HasError() {
-					errorMsgs = append(errorMsgs, result.ErrorMsg())
-				}
-				delete(resultCheckMap, result.Item)
-				if len(resultCheckMap) == 0 {
-					metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
-					return nil
-				}
-			} else {
+			if !ok {
 				return errors.New("sync load stats channel closed unexpectedly")
+			}
+			if result.HasError() {
+				errorMsgs = append(errorMsgs, result.ErrorMsg())
+			}
+			delete(resultCheckMap, result.Item)
+			if len(resultCheckMap) == 0 {
+				metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
+				return nil
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
@@ -293,26 +292,24 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 }
 
 func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
-	if readerCtx.reader == nil || readerCtx.createdTime.Add(h.Lease()).Before(time.Now()) {
-		if readerCtx.reader != nil {
-			err := readerCtx.reader.Close()
-			if err != nil {
-				logutil.BgLogger().Warn("Fail to release stats loader: ", zap.Error(err))
-			}
-		}
-		for {
-			newReader, err := statistics.GetStatsReader(0, ctx)
-			if err != nil {
-				logutil.BgLogger().Error("Fail to new stats loader, retry after a while.", zap.Error(err))
-				time.Sleep(h.Lease() / 10)
-			} else {
-				readerCtx.reader = newReader
-				readerCtx.createdTime = time.Now()
-				return
-			}
-		}
-	} else {
+	if !(readerCtx.reader == nil || readerCtx.createdTime.Add(h.Lease()).Before(time.Now())) {
 		return
+	}
+	if readerCtx.reader != nil {
+		err := readerCtx.reader.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("Fail to release stats loader: ", zap.Error(err))
+		}
+	}
+	for {
+		newReader, err := statistics.GetStatsReader(0, ctx)
+		if err == nil {
+			readerCtx.reader = newReader
+			readerCtx.createdTime = time.Now()
+			return
+		}
+		logutil.BgLogger().Error("Fail to new stats loader, retry after a while.", zap.Error(err))
+		time.Sleep(h.Lease() / 10)
 	}
 }
 

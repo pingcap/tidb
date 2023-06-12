@@ -647,60 +647,59 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 				tunnel.ErrCh <- err
 			}
 			return nil, nil
-		} else if chk != nil && chk.NumRows() != 0 {
-			if e.exchangeTp == tipb.ExchangeType_Hash {
-				rows := chk.NumRows()
-				targetChunks := make([]*chunk.Chunk, 0, len(e.tunnels))
-				for i := 0; i < len(e.tunnels); i++ {
-					targetChunks = append(targetChunks, chunk.NewChunkWithCapacity(e.fieldTypes, rows))
+		} else if !(chk != nil && chk.NumRows() != 0) {
+			return nil, nil
+		}
+		if e.exchangeTp == tipb.ExchangeType_Hash {
+			rows := chk.NumRows()
+			targetChunks := make([]*chunk.Chunk, 0, len(e.tunnels))
+			for i := 0; i < len(e.tunnels); i++ {
+				targetChunks = append(targetChunks, chunk.NewChunkWithCapacity(e.fieldTypes, rows))
+			}
+			hashVals := fnv.New64()
+			payload := make([]byte, 1)
+			for i := 0; i < rows; i++ {
+				row := chk.GetRow(i)
+				hashVals.Reset()
+				// use hash values to get unique uint64 to mod.
+				// collect all the hash key datum.
+				err := codec.HashChunkRow(e.sc, hashVals, row, e.hashKeyTypes, e.hashKeyOffsets, payload)
+				if err != nil {
+					for _, tunnel := range e.tunnels {
+						tunnel.ErrCh <- err
+					}
+					return nil, nil
 				}
-				hashVals := fnv.New64()
-				payload := make([]byte, 1)
-				for i := 0; i < rows; i++ {
-					row := chk.GetRow(i)
-					hashVals.Reset()
-					// use hash values to get unique uint64 to mod.
-					// collect all the hash key datum.
-					err := codec.HashChunkRow(e.sc, hashVals, row, e.hashKeyTypes, e.hashKeyOffsets, payload)
+				hashKey := hashVals.Sum64() % uint64(len(e.tunnels))
+				targetChunks[hashKey].AppendRow(row)
+			}
+			for i, tunnel := range e.tunnels {
+				if targetChunks[i].NumRows() > 0 {
+					tipbChunks, err := e.toTiPBChunk(targetChunks[i])
 					if err != nil {
 						for _, tunnel := range e.tunnels {
 							tunnel.ErrCh <- err
 						}
 						return nil, nil
 					}
-					hashKey := hashVals.Sum64() % uint64(len(e.tunnels))
-					targetChunks[hashKey].AppendRow(row)
-				}
-				for i, tunnel := range e.tunnels {
-					if targetChunks[i].NumRows() > 0 {
-						tipbChunks, err := e.toTiPBChunk(targetChunks[i])
-						if err != nil {
-							for _, tunnel := range e.tunnels {
-								tunnel.ErrCh <- err
-							}
-							return nil, nil
-						}
-						for j := range tipbChunks {
-							tunnel.DataCh <- &tipbChunks[j]
-						}
-					}
-				}
-			} else {
-				for _, tunnel := range e.tunnels {
-					tipbChunks, err := e.toTiPBChunk(chk)
-					if err != nil {
-						for _, tunnel := range e.tunnels {
-							tunnel.ErrCh <- err
-						}
-						return nil, nil
-					}
-					for i := range tipbChunks {
-						tunnel.DataCh <- &tipbChunks[i]
+					for j := range tipbChunks {
+						tunnel.DataCh <- &tipbChunks[j]
 					}
 				}
 			}
 		} else {
-			return nil, nil
+			for _, tunnel := range e.tunnels {
+				tipbChunks, err := e.toTiPBChunk(chk)
+				if err != nil {
+					for _, tunnel := range e.tunnels {
+						tunnel.ErrCh <- err
+					}
+					return nil, nil
+				}
+				for i := range tipbChunks {
+					tunnel.DataCh <- &tipbChunks[i]
+				}
+			}
 		}
 	}
 }

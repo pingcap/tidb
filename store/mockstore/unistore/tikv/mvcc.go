@@ -590,19 +590,7 @@ func (store *MVCCStore) CheckSecondaryLocks(reqCtx *requestCtx, keys [][]byte, s
 	locks := make([]*kvrpcpb.LockInfo, 0, len(keys))
 	for i, key := range keys {
 		lock := store.getLock(reqCtx, key)
-		if lock != nil && lock.StartTS == startTS {
-			if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) {
-				batch.Rollback(key, true)
-				err := store.dbWriter.Write(batch)
-				if err != nil {
-					return SecondaryLocksStatus{}, err
-				}
-				store.lockWaiterManager.WakeUp(startTS, 0, []uint64{hashVals[i]})
-				store.DeadlockDetectCli.CleanUp(startTS)
-				return SecondaryLocksStatus{commitTS: 0}, nil
-			}
-			locks = append(locks, lock.ToLockInfo(key))
-		} else {
+		if !(lock != nil && lock.StartTS == startTS) {
 			commitTS, err := store.checkCommitted(reqCtx.getDBReader(), key, startTS)
 			if err != nil {
 				return SecondaryLocksStatus{}, err
@@ -620,6 +608,17 @@ func (store *MVCCStore) CheckSecondaryLocks(reqCtx *requestCtx, keys [][]byte, s
 			}
 			return SecondaryLocksStatus{commitTS: 0}, err
 		}
+		if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) {
+			batch.Rollback(key, true)
+			err := store.dbWriter.Write(batch)
+			if err != nil {
+				return SecondaryLocksStatus{}, err
+			}
+			store.lockWaiterManager.WakeUp(startTS, 0, []uint64{hashVals[i]})
+			store.DeadlockDetectCli.CleanUp(startTS)
+			return SecondaryLocksStatus{commitTS: 0}, nil
+		}
+		locks = append(locks, lock.ToLockInfo(key))
 	}
 	return SecondaryLocksStatus{locks: locks}, nil
 }
@@ -672,11 +671,10 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 
 				if req.GetWakeUpMode() == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeNormal {
 					return nil, 0, writeConflictError
-				} else if req.GetWakeUpMode() == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
-					lockedWithConflictTS = userMeta.CommitTS()
-				} else {
+				} else if req.GetWakeUpMode() != kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
 					panic("unreachable")
 				}
+				lockedWithConflictTS = userMeta.CommitTS()
 			}
 		}
 		if m.Assertion == kvrpcpb.Assertion_NotExist && !item.IsEmpty() {

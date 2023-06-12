@@ -2284,20 +2284,20 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
 			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
-		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil); err == nil {
-			viewSchema := viewLogicalPlan.Schema()
-			viewOutputNames := viewLogicalPlan.OutputNames()
-			for _, col := range tbl.Columns {
-				idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
-				if idx >= 0 {
-					col.FieldType = *viewSchema.Columns[idx].GetType()
-				}
-				if col.GetType() == mysql.TypeVarString {
-					col.SetType(mysql.TypeVarchar)
-				}
-			}
-		} else {
+		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil)
+		if err != nil {
 			return err
+		}
+		viewSchema := viewLogicalPlan.Schema()
+		viewOutputNames := viewLogicalPlan.OutputNames()
+		for _, col := range tbl.Columns {
+			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
+			if idx >= 0 {
+				col.FieldType = *viewSchema.Columns[idx].GetType()
+			}
+			if col.GetType() == mysql.TypeVarString {
+				col.SetType(mysql.TypeVarchar)
+			}
 		}
 		return nil
 	})

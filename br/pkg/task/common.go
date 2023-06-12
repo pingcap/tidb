@@ -657,26 +657,25 @@ func ReadBackupMeta(
 	}
 	metaData, err := s.ReadFile(ctx, fileName)
 	if err != nil {
-		if gcsObjectNotFound(err) {
-			// change gcs://bucket/abc/def to gcs://bucket/abc and read defbackupmeta
-			oldPrefix := u.GetGcs().GetPrefix()
-			newPrefix, file := path.Split(oldPrefix)
-			newFileName := file + fileName
-			u.GetGcs().Prefix = newPrefix
-			s, err = storage.New(ctx, u, storageOpts(cfg))
-			if err != nil {
-				return nil, nil, nil, errors.Trace(err)
-			}
-			log.Info("retry load metadata in gcs", zap.String("newPrefix", newPrefix), zap.String("newFileName", newFileName))
-			metaData, err = s.ReadFile(ctx, newFileName)
-			if err != nil {
-				return nil, nil, nil, errors.Trace(err)
-			}
-			// reset prefix for tikv download sst file correctly.
-			u.GetGcs().Prefix = oldPrefix
-		} else {
+		if !gcsObjectNotFound(err) {
 			return nil, nil, nil, errors.Annotate(err, "load backupmeta failed")
 		}
+		// change gcs://bucket/abc/def to gcs://bucket/abc and read defbackupmeta
+		oldPrefix := u.GetGcs().GetPrefix()
+		newPrefix, file := path.Split(oldPrefix)
+		newFileName := file + fileName
+		u.GetGcs().Prefix = newPrefix
+		s, err = storage.New(ctx, u, storageOpts(cfg))
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		log.Info("retry load metadata in gcs", zap.String("newPrefix", newPrefix), zap.String("newFileName", newFileName))
+		metaData, err = s.ReadFile(ctx, newFileName)
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		// reset prefix for tikv download sst file correctly.
+		u.GetGcs().Prefix = oldPrefix
 	}
 
 	// the prefix of backupmeta file is iv(16 bytes) if encryption method is valid

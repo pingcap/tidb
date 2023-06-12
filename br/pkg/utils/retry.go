@@ -54,15 +54,14 @@ func WithRetry(
 	var allErrors error
 	for backoffer.Attempt() > 0 {
 		err := retryableFunc()
-		if err != nil {
-			allErrors = multierr.Append(allErrors, err)
-			select {
-			case <-ctx.Done():
-				return allErrors // nolint:wrapcheck
-			case <-time.After(backoffer.NextBackoff(err)):
-			}
-		} else {
+		if err == nil {
 			return nil
+		}
+		allErrors = multierr.Append(allErrors, err)
+		select {
+		case <-ctx.Done():
+			return allErrors // nolint:wrapcheck
+		case <-time.After(backoffer.NextBackoff(err)):
 		}
 	}
 	return allErrors // nolint:wrapcheck

@@ -2043,11 +2043,10 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 	}
 	tp := expr.GetType().Clone()
 	if expr.GetType().Hybrid() {
-		if enumOrSetRealTypeIsStr {
-			tp = types.NewFieldType(mysql.TypeVarString)
-		} else {
+		if !enumOrSetRealTypeIsStr {
 			return expr
 		}
+		tp = types.NewFieldType(mysql.TypeVarString)
 	} else if ec.Charset == charset.CharsetBin {
 		// When cast character string to binary string, if we still use fixed length representation,
 		// then 0 padding will be used, which can affect later execution.

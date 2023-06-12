@@ -337,21 +337,20 @@ func (helper extractHelper) extractLikePattern(
 	case ast.EQ, ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
 		colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 	}
-	if colName == extractColName {
-		switch fn.FuncName.L {
-		case ast.EQ:
-			return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
-		case ast.Like, ast.Ilike:
-			if needLike2Regexp {
-				return true, stringutil.CompileLike2Regexp(datums[0].GetString())
-			}
-			return true, datums[0].GetString()
-		case ast.Regexp, ast.RegexpLike:
-			return true, datums[0].GetString()
-		default:
-			return false, ""
+	if colName != extractColName {
+		return false, ""
+	}
+	switch fn.FuncName.L {
+	case ast.EQ:
+		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
+	case ast.Like, ast.Ilike:
+		if needLike2Regexp {
+			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
 		}
-	} else {
+		return true, datums[0].GetString()
+	case ast.Regexp, ast.RegexpLike:
+		return true, datums[0].GetString()
+	default:
 		return false, ""
 	}
 }

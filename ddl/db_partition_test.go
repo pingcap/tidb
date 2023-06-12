@@ -3569,11 +3569,10 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 	// check records num after drop database.
 	for i := 0; i < waitForCleanDataRound; i++ {
 		recordsNum = getPartitionTableRecordsNum(t, ctx, tbl.(table.PartitionedTable))
-		if recordsNum != 0 {
-			time.Sleep(waitForCleanDataInterval)
-		} else {
+		if recordsNum == 0 {
 			break
 		}
+		time.Sleep(waitForCleanDataInterval)
 	}
 	require.Equal(t, 0, recordsNum)
 }
@@ -4519,13 +4518,12 @@ func checkCreateSyntax(t *testing.T, tk *testkit.TestKit, ok bool, sql, showCrea
 	for i, sqlStmt := range []string{sql, showCreate} {
 		_, err := tk.Exec(sqlStmt)
 		// ignore warnings for now
-		if ok {
-			require.NoError(t, err, "%d sql: %s", i, sql)
-		} else {
+		if !ok {
 			require.Error(t, err, "sql: %s", sql)
 			// If not ok, no need to check anything else
 			return
 		}
+		require.NoError(t, err, "%d sql: %s", i, sql)
 		res := tk.MustQuery("show create table t")
 		require.Equal(t, showCreate, res.Rows()[0][1], "Compatible! (%d) sql: %s", i, sqlStmt)
 		tk.MustExec("drop table t")

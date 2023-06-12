@@ -1090,11 +1090,10 @@ func (e *HashAggExec) getNextChunk(ctx context.Context) (err error) {
 		if err := Next(ctx, e.children[0], e.childResult); err != nil {
 			return err
 		}
-		if e.childResult.NumRows() == 0 {
-			e.isChildDrained = true
-		} else {
+		if e.childResult.NumRows() != 0 {
 			return nil
 		}
+		e.isChildDrained = true
 	}
 	if e.offsetOfSpilledChks < e.numOfSpilledChks {
 		e.childResult, err = e.listInDisk.GetChunk(e.offsetOfSpilledChks)
@@ -1334,13 +1333,12 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 		if err = e.consumeCurGroupRowsAndFetchChild(ctx, chk); err != nil {
 			return err
 		}
-		if !e.executed {
-			_, err := e.groupChecker.splitIntoGroups(e.childResult)
-			if err != nil {
-				return err
-			}
-		} else {
+		if e.executed {
 			return nil
+		}
+		_, err := e.groupChecker.splitIntoGroups(e.childResult)
+		if err != nil {
+			return err
 		}
 	}
 	begin, end := e.groupChecker.getNextGroup()

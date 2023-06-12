@@ -244,16 +244,15 @@ func (c *Constant) Eval(row chunk.Row) (types.Datum, error) {
 		if c.DeferredExpr != nil {
 			sf, sfOk := c.DeferredExpr.(*ScalarFunction)
 			if sfOk {
-				if dt.Kind() == types.KindMysqlDecimal {
-					if err := c.adjustDecimal(dt.GetMysqlDecimal()); err != nil {
-						return dt, err
-					}
-				} else {
+				if dt.Kind() != types.KindMysqlDecimal {
 					val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
 					if err != nil {
 						return dt, err
 					}
 					return val, nil
+				}
+				if err := c.adjustDecimal(dt.GetMysqlDecimal()); err != nil {
+					return dt, err
 				}
 			}
 		}

@@ -313,12 +313,11 @@ func (ps PrettyString) slicePointOf(s int) (realSlicePoint, endAt int) {
 	for i, m := range ps.escapeSequencePlace {
 		start, end := m[0], m[1]
 		length := end - start
-		if realSlicePoint > start {
-			realSlicePoint += length
-		} else {
+		if realSlicePoint <= start {
 			endAt = i
 			return
 		}
+		realSlicePoint += length
 	}
 	return
 }

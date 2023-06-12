@@ -144,19 +144,19 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.GetFlag()) && !modified[i] && !onUpdateSpecified[i] {
-			if v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil); err == nil {
-				newData[i] = v
-				modified[i] = true
-				// Only TIMESTAMP and DATETIME columns can be automatically updated, so it cannot be PKIsHandle.
-				// Ref: https://dev.mysql.com/doc/refman/8.0/en/timestamp-initialization.html
-				if col.IsPKHandleColumn(t.Meta()) {
-					return false, errors.Errorf("on-update-now column should never be pk-is-handle")
-				}
-				if col.IsCommonHandleColumn(t.Meta()) {
-					handleChanged = true
-				}
-			} else {
+			v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
+			if err != nil {
 				return false, err
+			}
+			newData[i] = v
+			modified[i] = true
+			// Only TIMESTAMP and DATETIME columns can be automatically updated, so it cannot be PKIsHandle.
+			// Ref: https://dev.mysql.com/doc/refman/8.0/en/timestamp-initialization.html
+			if col.IsPKHandleColumn(t.Meta()) {
+				return false, errors.Errorf("on-update-now column should never be pk-is-handle")
+			}
+			if col.IsCommonHandleColumn(t.Meta()) {
+				handleChanged = true
 			}
 		}
 	}

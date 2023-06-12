@@ -344,16 +344,15 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 
 	dbReplace, exist := sr.DbMap[dbID]
 	if !exist {
-		if sr.IsPreConsturctMapStatus() {
-			newID, err := sr.genGenGlobalID(context.Background())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			dbReplace = NewDBReplace("", newID)
-			sr.DbMap[dbID] = dbReplace
-		} else {
+		if !sr.IsPreConsturctMapStatus() {
 			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", dbID)
 		}
+		newID, err := sr.genGenGlobalID(context.Background())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		dbReplace = NewDBReplace("", newID)
+		sr.DbMap[dbID] = dbReplace
 	}
 
 	tableReplace, exist := dbReplace.TableMap[tableID]
@@ -648,21 +647,19 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 
 	if meta.IsDBkey(rawKey.Field) {
 		return sr.rewriteEntryForDB(e, cf)
-	} else if meta.IsDBkey(rawKey.Key) {
-		if meta.IsTableKey(rawKey.Field) {
-			return sr.rewriteEntryForTable(e, cf)
-		} else if meta.IsAutoTableIDKey(rawKey.Field) {
-			return sr.rewriteEntryForAutoTableIDKey(e, cf)
-		} else if meta.IsSequenceKey(rawKey.Field) {
-			return sr.rewriteEntryForSequenceKey(e, cf)
-		} else if meta.IsAutoRandomTableIDKey(rawKey.Field) {
-			return sr.rewriteEntryForAutoRandomTableIDKey(e, cf)
-		} else {
-			return nil, nil
-		}
-	} else {
+	} else if !meta.IsDBkey(rawKey.Key) {
 		return nil, nil
 	}
+	if meta.IsTableKey(rawKey.Field) {
+		return sr.rewriteEntryForTable(e, cf)
+	} else if meta.IsAutoTableIDKey(rawKey.Field) {
+		return sr.rewriteEntryForAutoTableIDKey(e, cf)
+	} else if meta.IsSequenceKey(rawKey.Field) {
+		return sr.rewriteEntryForSequenceKey(e, cf)
+	} else if meta.IsAutoRandomTableIDKey(rawKey.Field) {
+		return sr.rewriteEntryForAutoRandomTableIDKey(e, cf)
+	}
+	return nil, nil
 }
 
 func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {

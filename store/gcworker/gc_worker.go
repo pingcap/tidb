@@ -1786,11 +1786,10 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*txnlo
 		locksInRegion := make([]*txnlock.Lock, 0)
 
 		for _, lock := range locks {
-			if loc.Contains(lock.Key) {
-				locksInRegion = append(locksInRegion, lock)
-			} else {
+			if !loc.Contains(lock.Key) {
 				break
 			}
+			locksInRegion = append(locksInRegion, lock)
 		}
 
 		ok, err := w.tikvStore.GetLockResolver().BatchResolveLocks(bo, locksInRegion, loc.Region)

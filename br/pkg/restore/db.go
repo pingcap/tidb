@@ -65,12 +65,11 @@ func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) 
 		// Set placement mode for handle placement policy.
 		err = se.Execute(context.Background(), fmt.Sprintf("set @@tidb_placement_mode='%s';", policyMode))
 		if err != nil {
-			if variable.ErrUnknownSystemVar.Equal(err) {
-				// not support placement policy, just ignore it
-				log.Warn("target tidb not support tidb_placement_mode, ignore create policies", zap.Error(err))
-			} else {
+			if !variable.ErrUnknownSystemVar.Equal(err) {
 				return nil, false, errors.Trace(err)
 			}
+			// not support placement policy, just ignore it
+			log.Warn("target tidb not support tidb_placement_mode, ignore create policies", zap.Error(err))
 		} else {
 			log.Info("set tidb_placement_mode success", zap.String("mode", policyMode))
 			supportPolicy = true

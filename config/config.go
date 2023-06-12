@@ -1492,17 +1492,14 @@ func GetJSONConfig() (string, error) {
 			if i == len(s)-1 {
 				delete(curValue, key)
 			}
-
-			if curValue[key] != nil {
-				mapValue, ok := curValue[key].(map[string]interface{})
-				if !ok {
-					break
-				}
-
-				curValue = mapValue
-			} else {
+			if curValue[key] == nil {
 				break
 			}
+			mapValue, ok := curValue[key].(map[string]interface{})
+			if !ok {
+				break
+			}
+			curValue = mapValue
 		}
 	}
 

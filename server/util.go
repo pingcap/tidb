@@ -517,11 +517,10 @@ func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 		pointPosInOut := len(in) + pointPos
 		validPos := ePosInOut
 		for i := ePosInOut - 1; i >= pointPosInOut; i-- {
-			if out[i] == '0' || out[i] == '.' {
-				validPos = i
-			} else {
+			if !(out[i] == '0' || out[i] == '.') {
 				break
 			}
+			validPos = i
 		}
 		out = append(out[:validPos], out[ePosInOut:]...)
 	} else {

@@ -462,11 +462,10 @@ func setDatumValue(d *types.Datum, v reflect.Value, meta *parquet.SchemaElement,
 	case reflect.Float32, reflect.Float64:
 		d.SetFloat64(v.Float())
 	case reflect.Ptr:
-		if v.IsNil() {
-			d.SetNull()
-		} else {
+		if !v.IsNil() {
 			return setDatumValue(d, v.Elem(), meta, logger)
 		}
+		d.SetNull()
 	default:
 		logger.Error("unknown value", zap.Stringer("kind", v.Kind()),
 			zap.String("type", v.Type().Name()), zap.Reflect("value", v.Interface()))

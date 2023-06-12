@@ -1199,24 +1199,7 @@ func (re *builtinRegexpReplaceFuncSig) replaceOneMatchedBinStr(reg *regexp.Regex
 		}
 
 		occurrence -= 1
-		if occurrence != 0 {
-			if res[0] == res[1] {
-				// Matched string is an empty string, and this circmstance should be specially treated,
-				// such as regexp_replace("abc", "\d*", "d") -> result: dadbdcd
-				if len(trimmedBexpr) <= res[0] {
-					trimmedBexpr = []byte("")
-					break
-				}
-
-				// When the matched string is empty, we need to stride across one character
-				utf8Len := stringutil.Utf8Len(trimmedBexpr[res[0]])
-				replacedBStr = append(replacedBStr, trimmedBexpr[res[0]:res[0]+utf8Len]...)
-				trimmedBexpr = trimmedBexpr[res[0]+utf8Len:]
-			} else {
-				replacedBStr = append(replacedBStr, trimmedBexpr[:res[1]]...) // Copy prefix
-				trimmedBexpr = trimmedBexpr[res[1]:]
-			}
-		} else {
+		if occurrence == 0 {
 			replacedBStr = append(replacedBStr, trimmedBexpr[:res[0]]...) // Copy prefix
 			err := re.copyReplacement(&replacedBStr, &trimmedBexpr, res, instructions)
 			if err != nil {
@@ -1226,6 +1209,22 @@ func (re *builtinRegexpReplaceFuncSig) replaceOneMatchedBinStr(reg *regexp.Regex
 			trimmedBexpr = trimmedBexpr[res[1]:]
 			replacedBStr = append(replacedBStr, trimmedBexpr...) // Copy suffix
 			break
+		}
+		if res[0] == res[1] {
+			// Matched string is an empty string, and this circmstance should be specially treated,
+			// such as regexp_replace("abc", "\d*", "d") -> result: dadbdcd
+			if len(trimmedBexpr) <= res[0] {
+				trimmedBexpr = []byte("")
+				break
+			}
+
+			// When the matched string is empty, we need to stride across one character
+			utf8Len := stringutil.Utf8Len(trimmedBexpr[res[0]])
+			replacedBStr = append(replacedBStr, trimmedBexpr[res[0]:res[0]+utf8Len]...)
+			trimmedBexpr = trimmedBexpr[res[0]+utf8Len:]
+		} else {
+			replacedBStr = append(replacedBStr, trimmedBexpr[:res[1]]...) // Copy prefix
+			trimmedBexpr = trimmedBexpr[res[1]:]
 		}
 	}
 
