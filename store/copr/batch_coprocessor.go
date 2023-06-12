@@ -870,7 +870,6 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 
 		if isMPP && !nodeSelectionPolicy.IsPolicyAllReplicas() && isTiDBLabelZoneSet {
 			allTiflashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
-			aliveStores = allTiflashStores
 			aliveStores = filterAliveStores(bo.GetCtx(), allTiflashStores, ttl, store)
 			aliveStoreIDsInTiDBZone = make(map[uint64]struct{}, len(aliveStores))
 			for _, as := range aliveStores {
