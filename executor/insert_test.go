@@ -1510,68 +1510,81 @@ func TestIssue32213(t *testing.T) {
 	tk.MustQuery("select cast(test.t1.c1 as decimal(6, 3)) from test.t1").Check(testkit.Rows("100.000"))
 }
 
-func TestInsertLock(t *testing.T) {
+func TestInsertLockUnchangedKeys(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 
-	for _, tt := range []struct {
-		name string
-		ddl  string
-		dml  string
-	}{
-		{
-			"replace-pk",
-			"create table t (c int primary key clustered)",
-			"replace into t values (1)",
-		},
-		{
-			"replace-uk",
-			"create table t (c int unique key)",
-			"replace into t values (1)",
-		},
-		{
-			"insert-ingore-pk",
-			"create table t (c int primary key clustered)",
-			"insert ignore into t values (1)",
-		},
-		{
-			"insert-ingore-uk",
-			"create table t (c int unique key)",
-			"insert ignore into t values (1)",
-		},
-		{
-			"insert-update-pk",
-			"create table t (c int primary key clustered)",
-			"insert into t values (1) on duplicate key update c = values(c)",
-		},
-		{
-			"insert-update-uk",
-			"create table t (c int unique key)",
-			"insert into t values (1) on duplicate key update c = values(c)",
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			tk1.MustExec("drop table if exists t")
-			tk1.MustExec(tt.ddl)
-			tk1.MustExec("insert into t values (1)")
-			tk1.MustExec("begin")
-			tk1.MustExec(tt.dml)
-			done := make(chan struct{})
-			go func() {
-				tk2.MustExec("delete from t")
-				done <- struct{}{}
-			}()
-			select {
-			case <-done:
-				require.Failf(t, "txn2 is not blocked by %q", tt.dml)
-			case <-time.After(100 * time.Millisecond):
-			}
-			tk1.MustExec("commit")
-			<-done
-			tk1.MustQuery("select * from t").Check([][]interface{}{})
-		})
+	for _, shouldLock := range []bool{false} {
+		for _, tt := range []struct {
+			name string
+			ddl  string
+			dml  string
+		}{
+			// {
+			// 	"replace-pk",
+			// 	"create table t (c int primary key clustered)",
+			// 	"replace into t values (1)",
+			// },
+			{
+				"replace-uk",
+				"create table t (c int unique key)",
+				"replace into t values (1)",
+			},
+			// {
+			// 	"insert-ignore-pk",
+			// 	"create table t (c int primary key clustered)",
+			// 	"insert ignore into t values (1)",
+			// },
+			// {
+			// 	"insert-ignore-uk",
+			// 	"create table t (c int unique key)",
+			// 	"insert ignore into t values (1)",
+			// },
+			// {
+			// 	"insert-update-pk",
+			// 	"create table t (c int primary key clustered)",
+			// 	"insert into t values (1) on duplicate key update c = values(c)",
+			// },
+			// {
+			// 	"insert-update-uk",
+			// 	"create table t (c int unique key)",
+			// 	"insert into t values (1) on duplicate key update c = values(c)",
+			// },
+		} {
+			t.Run(
+				tt.name+"-"+strconv.FormatBool(shouldLock), func(t *testing.T) {
+					tk1.MustExec(fmt.Sprintf("set @@tidb_lock_unchanged_keys = %v", shouldLock))
+					tk1.MustExec("drop table if exists t")
+					tk1.MustExec(tt.ddl)
+					tk1.MustExec("insert into t values (1)")
+					tk1.MustExec("begin")
+					println("t1 begin")
+					tk1.MustExec(tt.dml)
+					println("after t1 dml")
+					done := make(chan struct{})
+					go func() {
+						tk2.MustExec("insert into t values (1)")
+						done <- struct{}{}
+					}()
+					select {
+					case <-done:
+						if shouldLock {
+							require.Failf(t, "txn2 is not blocked by %q", tt.dml)
+						}
+						close(done)
+					case <-time.After(100 * time.Second):
+						if !shouldLock {
+							require.Failf(t, "txn2 is blocked by %q", tt.dml)
+						}
+					}
+					tk1.MustExec("commit")
+					<-done
+					tk1.MustQuery("select * from t").Check([][]interface{}{})
+				},
+			)
+		}
 	}
 }

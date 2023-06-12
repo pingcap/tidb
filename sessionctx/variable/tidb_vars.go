@@ -876,6 +876,10 @@ const (
 	TiDBOptEnableMPPSharedCTEExecution = "tidb_opt_enable_mpp_shared_cte_execution"
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
+
+	// TiDBLockUnchangedKeys indicates whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
+	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
+	TiDBLockUnchangedKeys = "tidb_lock_unchanged_keys"
 )
 
 // TiDB vars that have only global scope
@@ -1348,6 +1352,7 @@ const (
 	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
 	DefRuntimeFilterType                              = "IN"
 	DefRuntimeFilterMode                              = "OFF"
+	DefTiDBLockUnchangedKeys                          = true
 )
 
 // Process global variables.
@@ -1417,17 +1422,27 @@ var (
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
-	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
-	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
-	TTLScanWorkerCount                 = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
-	TTLDeleteWorkerCount               = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
-	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
-	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
-	IsSandBoxModeEnabled               = atomic.NewBool(false)
-	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
-	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
-	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
-	TTLRunningTasks                    = atomic.NewInt32(DefTiDBTTLRunningTasks)
+	TTLJobScheduleWindowStartTime      = atomic.NewTime(
+		mustParseTime(
+			FullDayTimeFormat,
+			DefTiDBTTLJobScheduleWindowStartTime,
+		),
+	)
+	TTLJobScheduleWindowEndTime = atomic.NewTime(
+		mustParseTime(
+			FullDayTimeFormat,
+			DefTiDBTTLJobScheduleWindowEndTime,
+		),
+	)
+	TTLScanWorkerCount              = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
+	TTLDeleteWorkerCount            = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
+	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
+	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
+	IsSandBoxModeEnabled            = atomic.NewBool(false)
+	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
+	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
+	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
+	TTLRunningTasks                 = atomic.NewInt32(DefTiDBTTLRunningTasks)
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
 	EnableResourceControl = atomic.NewBool(false)

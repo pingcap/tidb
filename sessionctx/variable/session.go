@@ -1495,6 +1495,10 @@ type SessionVars struct {
 	runtimeFilterTypes []RuntimeFilterType
 	// Runtime filter mode: only support OFF, LOCAL now
 	runtimeFilterMode RuntimeFilterMode
+
+	// Whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
+	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
+	LockUnchangedKeys bool
 }
 
 var (

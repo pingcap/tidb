@@ -17,6 +17,7 @@ package txn
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"sync/atomic"
 	"time"
 
@@ -78,6 +79,10 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 }
 
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
+	println("---")
+	for _, key := range keysInput {
+		println("lock key: %s", hex.EncodeToString(key))
+	}
 	keys := toTiKVKeys(keysInput)
 	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
 	if err != nil {
