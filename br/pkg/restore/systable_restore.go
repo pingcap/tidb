@@ -86,17 +86,16 @@ func generateResetSQLs(db *database, resetUsers []string) []string {
 		if sysPrivilegeTableMap[tableName] != "" {
 			for _, name := range resetUsers {
 				if strings.ToLower(name) == rootUser {
-					if !rootReset {
-						updateSQL := fmt.Sprintf("UPDATE %s.%s SET authentication_string='',"+
-							" Shutdown_priv='Y',"+
-							" Config_priv='Y'"+
-							" WHERE USER='root' AND Host='%%';",
-							db.Name.L, sysUserTableName)
-						sqls = append(sqls, updateSQL)
-						rootReset = true
-					} else {
+					if rootReset {
 						continue
 					}
+					updateSQL := fmt.Sprintf("UPDATE %s.%s SET authentication_string='',"+
+						" Shutdown_priv='Y',"+
+						" Config_priv='Y'"+
+						" WHERE USER='root' AND Host='%%';",
+						db.Name.L, sysUserTableName)
+					sqls = append(sqls, updateSQL)
+					rootReset = true
 				} else {
 					/* #nosec G202: SQL string concatenation */
 					whereClause := fmt.Sprintf("WHERE "+sysPrivilegeTableMap[tableName], name)

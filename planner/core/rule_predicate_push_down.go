@@ -553,6 +553,7 @@ func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expressio
 // (a > 1 and avg(b) > 1) or (a < 3), and `avg(b) > 1` can't be pushed-down.
 // Then condsToPush: (a < 3) and (a > 1), ret: (a > 1 and avg(b) > 1) or (a < 3)
 func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
+	//nolint: prealloc
 	var condsToPush []expression.Expression
 	var ret []expression.Expression
 	subDNFItem := expression.SplitDNFItems(cond)
@@ -561,11 +562,10 @@ func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expressio
 	}
 	for _, item := range subDNFItem {
 		condsToPushForItem, retForItem := la.pushDownCNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)
-		if len(condsToPushForItem) > 0 {
-			condsToPush = append(condsToPush, expression.ComposeCNFCondition(la.ctx, condsToPushForItem...))
-		} else {
+		if len(condsToPushForItem) <= 0 {
 			return nil, []expression.Expression{cond}
 		}
+		condsToPush = append(condsToPush, expression.ComposeCNFCondition(la.ctx, condsToPushForItem...))
 		if len(retForItem) > 0 {
 			ret = append(ret, expression.ComposeCNFCondition(la.ctx, retForItem...))
 		}

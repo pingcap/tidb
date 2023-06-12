@@ -1165,11 +1165,10 @@ func (*session) isTxnRetryableError(err error) bool {
 
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	var err error
-	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
-		err = kv.ErrLockExpire
-	} else {
+	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) == 0 {
 		return nil
 	}
+	err = kv.ErrLockExpire
 	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
 	// because they are used to finish the aborted transaction.
 	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
@@ -2796,15 +2795,14 @@ func verifyAccountAutoLock(s *session, user, host string) (bool, error) {
 		}
 		lastChanged := pl.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
-		if d > lockTimeDay*24*60*60 {
-			// Generate unlock json string.
-			plJSON = privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
-				pl.PasswordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
-		} else {
+		if d <= lockTimeDay*24*60*60 {
 			lds := strconv.FormatInt(lockTimeDay, 10)
 			rds := strconv.FormatInt(int64(math.Ceil(float64(lockTimeDay)-float64(d)/(24*60*60))), 10)
 			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, lds, rds)
 		}
+		// Generate unlock json string.
+		plJSON = privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
+			pl.PasswordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
 	}
 	if plJSON != "" {
 		lockStatusChanged = true

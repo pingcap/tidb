@@ -2819,11 +2819,11 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 
 			// Set the partitioning columns and calculate which partition to write to
 			for colID, offset := range w.writeColOffsetMap {
-				if d, ok := w.rowMap[colID]; ok {
-					tmpRow[offset] = d
-				} else {
+				d, ok := w.rowMap[colID]
+				if !ok {
 					return false, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 				}
+				tmpRow[offset] = d
 			}
 			p, err := w.reorgedTbl.GetPartitionByRow(w.sessCtx, tmpRow)
 			if err != nil {
@@ -3638,12 +3638,11 @@ func hexIfNonPrint(s string) string {
 		case 26: // ctrl-z / Substitute
 			res += `\Z`
 		default:
-			if strconv.IsPrint(runeVal) {
-				res += string(runeVal)
-			} else {
+			if !strconv.IsPrint(runeVal) {
 				isPrint = false
 				break
 			}
+			res += string(runeVal)
 		}
 	}
 	if isPrint {

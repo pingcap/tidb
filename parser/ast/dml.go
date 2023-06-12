@@ -142,11 +142,11 @@ func NewCrossJoin(left, right ResultSetNode) (n *Join) {
 			leftMostLeafFatherOfRight.Tp = LeftJoin
 		}
 		leftChild := leftMostLeafFatherOfRight.Left
-		if join, ok := leftChild.(*Join); ok && join.Right != nil {
-			leftMostLeafFatherOfRight = join
-		} else {
+		join, ok := leftChild.(*Join)
+		if !(ok && join.Right != nil) {
 			break
 		}
+		leftMostLeafFatherOfRight = join
 	}
 
 	newCrossJoin := &Join{Left: left, Right: leftMostLeafFatherOfRight.Left, Tp: CrossJoin}
