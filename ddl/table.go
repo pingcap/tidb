@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -1177,10 +1178,17 @@ func finishJobRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
+	oldRawArgs := job.RawArgs
+	job.Args[0] = job.SchemaID
+	job.RawArgs, err = json.Marshal(job.Args)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	ver, err := updateSchemaVersion(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	job.RawArgs = oldRawArgs
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
@@ -1201,10 +1209,18 @@ func finishJobRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 		tblInfos = append(tblInfos, tblInfo)
 	}
+	var err error
+	oldRawArgs := job.RawArgs
+	job.Args[0] = newSchemaIDs
+	job.RawArgs, err = json.Marshal(job.Args)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	ver, err := updateSchemaVersion(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	job.RawArgs = oldRawArgs
 	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, tblInfos)
 	return ver, nil
 }
