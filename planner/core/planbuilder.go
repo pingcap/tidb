@@ -3987,7 +3987,7 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert
 		// This branch is for the following scenarios:
 		// 1. `INSERT INTO tbl_name (col_name [, col_name] ...) {VALUES | VALUE} (value_list) [, (value_list)] ...`,
 		// 2. `INSERT INTO tbl_name (col_name [, col_name] ...) SELECT ...`.
-		// 2. `INSERT INTO tbl_name (col_name [, col_name] ...) SET ...`.
+		// 3. `INSERT INTO tbl_name SET col1=x1, ... colM=xM...`.
 		colName := make([]string, 0, len(insertStmt.Columns))
 		for _, col := range insertStmt.Columns {
 			colName = append(colName, col.Name.L)
