@@ -322,3 +322,24 @@ func (c *pdClient) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*m
 func (c *pdClient) Put(ctx context.Context, key []byte, value []byte, opts ...pd.OpOption) (*meta_storagepb.PutResponse, error) {
 	return nil, nil
 }
+
+// GetMinTS returns the minimal ts.
+func (c *pdClient) GetMinTS(ctx context.Context) (int64, int64, error) {
+	return 0, 0, nil
+}
+
+func (m *pdClient) LoadResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, int64, error) {
+	return nil, 0, nil
+}
+
+func (c *pdClient) UpdateGCSafePointV2(ctx context.Context, keyspaceID uint32, safePoint uint64) (uint64, error) {
+	panic("unimplemented")
+}
+
+func (c *pdClient) UpdateServiceSafePointV2(ctx context.Context, keyspaceID uint32, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	panic("unimplemented")
+}
+
+func (c *pdClient) WatchGCSafePointV2(ctx context.Context, revision int64) (chan []*pdpb.SafePointEvent, error) {
+	panic("unimplemented")
+}
