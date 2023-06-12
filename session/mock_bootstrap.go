@@ -157,7 +157,7 @@ func modifyBootstrapVersionForTest(store kv.Storage, ver int64) int64 {
 
 const (
 	defaultMockUpgradeToVerLatest = 0
-	// MockSimpleUpgradeToVerLatest is used to indicate the use of the simple mock bootstrapVersion.
+	// MockSimpleUpgradeToVerLatest is used to indicate the use of the simple mock bootstrapVersion, this is just a few simple DDL operations.
 	MockSimpleUpgradeToVerLatest = 1
 )
 
