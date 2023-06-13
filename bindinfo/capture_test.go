@@ -386,7 +386,7 @@ func TestCapturedBindingCharset(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "update `test` . `t` set `name` = ? where `name` <= ?", rows[0][0])
-	require.Equal(t, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`='hello' WHERE `name` <= 'abc'", rows[0][1])
+	require.Equal(t, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`), no_order_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`='hello' WHERE `name` <= 'abc'", rows[0][1])
 	require.Equal(t, "utf8mb4", rows[0][6])
 	require.Equal(t, "utf8mb4_bin", rows[0][7])
 }
