@@ -33,7 +33,7 @@ go_test(
     embed = [":api"],
     flaky = True,
     race = "on",
-    shard_count = 12,
+    shard_count = 10,
     deps = [
         "//testkit/testsetup",
         "@com_github_pingcap_errors//:errors",

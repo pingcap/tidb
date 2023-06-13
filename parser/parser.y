@@ -1034,7 +1034,7 @@ import (
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
 	PauseLoadDataStmt          "PAUSE LOAD DATA JOB statement"
 	ResumeLoadDataStmt         "RESUME LOAD DATA JOB statement"
-	CancelLoadDataStmt         "CANCEL LOAD DATA JOB statement"
+	CancelImportStmt           "CANCEL IMPORT JOB statement"
 	DropLoadDataStmt           "DROP LOAD DATA JOB statement"
 	ProcedureUnlabeledBlock    "The statement block without label in procedure"
 	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
@@ -1096,7 +1096,6 @@ import (
 	IdentListWithParenOpt                  "column name list opt with parentheses"
 	ColumnNameOrUserVarListOpt             "column name or user vairiabe list opt"
 	ColumnNameOrUserVarListOptWithBrackets "column name or user variable list opt with brackets"
-	ColumnSetValue                         "insert statement set value by column name"
 	ColumnSetValueList                     "insert statement set value by column name list"
 	CompareOp                              "Compare opcode"
 	ColumnOption                           "column definition option"
@@ -5739,12 +5738,12 @@ ResumeLoadDataStmt:
 		}
 	}
 
-CancelLoadDataStmt:
-	"CANCEL" "LOAD" "DATA" "JOB" Int64Num
+CancelImportStmt:
+	"CANCEL" "IMPORT" "JOB" Int64Num
 	{
-		$$ = &ast.LoadDataActionStmt{
-			Tp:    ast.LoadDataCancel,
-			JobID: $5.(int64),
+		$$ = &ast.ImportIntoActionStmt{
+			Tp:    ast.ImportIntoCancel,
+			JobID: $4.(int64),
 		}
 	}
 
@@ -7072,7 +7071,7 @@ InsertValues:
 	}
 |	"SET" ColumnSetValueList
 	{
-		$$ = &ast.InsertStmt{Setlist: $2.([]*ast.Assignment)}
+		$$ = $2.(*ast.InsertStmt)
 	}
 
 ValueSym:
@@ -7118,26 +7117,21 @@ ExprOrDefault:
 		$$ = &ast.DefaultExpr{}
 	}
 
-ColumnSetValue:
+ColumnSetValueList:
 	ColumnName eq ExprOrDefault
 	{
-		$$ = &ast.Assignment{
-			Column: $1.(*ast.ColumnName),
-			Expr:   $3,
+		$$ = &ast.InsertStmt{
+			Columns: []*ast.ColumnName{$1.(*ast.ColumnName)},
+			Lists:   [][]ast.ExprNode{{$3.(ast.ExprNode)}},
+			Setlist: true,
 		}
 	}
-
-ColumnSetValueList:
+|	ColumnSetValueList ',' ColumnName eq ExprOrDefault
 	{
-		$$ = []*ast.Assignment{}
-	}
-|	ColumnSetValue
-	{
-		$$ = []*ast.Assignment{$1.(*ast.Assignment)}
-	}
-|	ColumnSetValueList ',' ColumnSetValue
-	{
-		$$ = append($1.([]*ast.Assignment), $3.(*ast.Assignment))
+		ins := $1.(*ast.InsertStmt)
+		ins.Columns = append(ins.Columns, $3.(*ast.ColumnName))
+		ins.Lists[0] = append(ins.Lists[0], $5.(ast.ExprNode))
+		$$ = ins
 	}
 
 /*
@@ -11210,12 +11204,12 @@ ShowStmt:
 	{
 		$$ = $4.(*ast.ShowStmt)
 	}
-|	"SHOW" "LOAD" "DATA" "JOB" Int64Num
+|	"SHOW" "IMPORT" "JOB" Int64Num
 	{
-		v := $5.(int64)
+		v := $4.(int64)
 		$$ = &ast.ShowStmt{
-			Tp:            ast.ShowLoadDataJobs,
-			LoadDataJobID: &v,
+			Tp:          ast.ShowImportJobs,
+			ImportJobID: &v,
 		}
 	}
 |	"SHOW" "CREATE" "PROCEDURE" TableName
@@ -11564,9 +11558,9 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
 	}
-|	"LOAD" "DATA" "JOBS"
+|	"IMPORT" "JOBS"
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowLoadDataJobs}
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
 	}
 
 ShowLikeOrWhereOpt:
@@ -11880,7 +11874,7 @@ Statement:
 |	NonTransactionalDMLStmt
 |	PauseLoadDataStmt
 |	ResumeLoadDataStmt
-|	CancelLoadDataStmt
+|	CancelImportStmt
 |	DropLoadDataStmt
 
 TraceableStmt:
