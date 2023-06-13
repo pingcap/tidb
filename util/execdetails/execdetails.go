@@ -585,7 +585,7 @@ func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 
 // Empty check whether TiFlashScanContext is Empty, if scan no pack and skip no pack, we regard it as empty
 func (context *TiFlashScanContext) Empty() bool {
-	res := context.totalDmfileScannedPacks == 0 && context.totalDmfileSkippedPacks == 0
+	res := context.totalDmfileScannedPacks == 0 && context.totalDmfileSkippedPacks == 0 && context.totalLocalRegionNum == 0 && context.totalRemoteRegionNum == 0
 	return res
 }
 
