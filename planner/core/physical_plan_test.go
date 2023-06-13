@@ -319,10 +319,10 @@ func TestExplainJoinHints(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, key(b), key(c))")
 	tk.MustQuery("explain format='hint' select /*+ inl_merge_join(t2) */ * from t t1 inner join t t2 on t1.b = t2.b and t1.c = 1").Check(testkit.Rows(
-		"inl_merge_join(@`sel_1` `test`.`t2`), use_index(@`sel_1` `test`.`t1` `c`), use_index(@`sel_1` `test`.`t2` `b`), inl_merge_join(`t2`)",
+		"inl_merge_join(@`sel_1` `test`.`t2`), use_index(@`sel_1` `test`.`t1` `c`), no_order_index(@`sel_1` `test`.`t1` `c`), use_index(@`sel_1` `test`.`t2` `b`), order_index(@`sel_1` `test`.`t2` `b`), inl_merge_join(`t2`)",
 	))
 	tk.MustQuery("explain format='hint' select /*+ inl_hash_join(t2) */ * from t t1 inner join t t2 on t1.b = t2.b and t1.c = 1").Check(testkit.Rows(
-		"inl_hash_join(@`sel_1` `test`.`t2`), use_index(@`sel_1` `test`.`t1` `c`), use_index(@`sel_1` `test`.`t2` `b`), inl_hash_join(`t2`)",
+		"inl_hash_join(@`sel_1` `test`.`t2`), use_index(@`sel_1` `test`.`t1` `c`), no_order_index(@`sel_1` `test`.`t1` `c`), use_index(@`sel_1` `test`.`t2` `b`), no_order_index(@`sel_1` `test`.`t2` `b`), inl_hash_join(`t2`)",
 	))
 }
 
