@@ -433,7 +433,7 @@ func TestUpdateSubqueryCapture(t *testing.T) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
-	bindSQL := "UPDATE /*+ hash_join(@`upd_1` `test`.`t1`), use_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
+	bindSQL := "UPDATE /*+ hash_join(@`upd_1` `test`.`t1`), use_index(@`upd_1` `test`.`t1` `idx_b`), no_order_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	originSQL := "UPDATE `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	require.Equal(t, bindSQL, rows[0][1])
 	tk.MustExec(originSQL)
@@ -1012,7 +1012,7 @@ func TestCaptureHints(t *testing.T) {
 		tk.MustExec(capCase.query)
 		tk.MustExec("admin capture bindings")
 		res := tk.MustQuery(`show global bindings`).Rows()
-		require.Equal(t, len(res), 1)                                       // this query is captured, and
+		require.Equal(t, len(res), 1)                                                                                       // this query is captured, and
 		require.True(t, strings.Contains(res[0][1].(string), capCase.hint), fmt.Sprintf("%v:%v", capCase.query, res[0][1])) // the binding contains the expected hint
 		// test sql digest
 		parser4binding := parser.New()
