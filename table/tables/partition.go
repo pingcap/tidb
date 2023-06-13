@@ -129,7 +129,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	partitions := make(map[int64]*partition, len(pi.Definitions))
 	for _, p := range pi.Definitions {
 		var t partition
-		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs)
+		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs, tbl.Constraints)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -219,7 +219,7 @@ func unsetIndexesState(t *partitionedTable, orig []*model.IndexInfo) {
 
 func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partition, error) {
 	var newPart partition
-	err := initTableCommonWithIndices(&newPart.TableCommon, t.meta, def.ID, t.Columns, t.allocs)
+	err := initTableCommonWithIndices(&newPart.TableCommon, t.meta, def.ID, t.Columns, t.allocs, t.Constraints)
 	if err != nil {
 		return nil, err
 	}
@@ -1442,8 +1442,12 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	tblInfo.Partition.AddingDefinitions = nil
 	tblInfo.Partition.DroppingDefinitions = nil
 	tblInfo.Partition.Num = uint64(len(tblInfo.Partition.Definitions))
+	constraints, err := table.LoadCheckConstraint(tblInfo)
+	if err != nil {
+		return nil, err
+	}
 	var tc TableCommon
-	initTableCommon(&tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil))
+	initTableCommon(&tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints)
 
 	// and rebuild the partitioning structure
 

@@ -157,7 +157,7 @@ func (f *indentFormatter) format(flat bool, format string, args ...interface{}) 
 	case stPERC, stBOLPERC:
 		buf = append(buf, '%')
 	}
-	return f.Write([]byte(fmt.Sprintf(string(buf), args...)))
+	return fmt.Fprintf(f, string(buf), args...)
 }
 
 // Format implements Format interface.
@@ -401,15 +401,15 @@ func (ctx *RestoreCtx) WriteWithSpecialComments(featureID string, fn func() erro
 // `str` may be wrapped in quotes and escaped according to RestoreFlags.
 func (ctx *RestoreCtx) WriteString(str string) {
 	if ctx.Flags.HasStringEscapeBackslashFlag() {
-		str = strings.Replace(str, `\`, `\\`, -1)
+		str = strings.ReplaceAll(str, `\`, `\\`)
 	}
 	quotes := ""
 	switch {
 	case ctx.Flags.HasStringSingleQuotesFlag():
-		str = strings.Replace(str, `'`, `''`, -1)
+		str = strings.ReplaceAll(str, `'`, `''`)
 		quotes = `'`
 	case ctx.Flags.HasStringDoubleQuotesFlag():
-		str = strings.Replace(str, `"`, `""`, -1)
+		str = strings.ReplaceAll(str, `"`, `""`)
 		quotes = `"`
 	}
 	ctx.In.WriteString(quotes)
@@ -429,10 +429,10 @@ func (ctx *RestoreCtx) WriteName(name string) {
 	quotes := ""
 	switch {
 	case ctx.Flags.HasNameDoubleQuotesFlag():
-		name = strings.Replace(name, `"`, `""`, -1)
+		name = strings.ReplaceAll(name, `"`, `""`)
 		quotes = `"`
 	case ctx.Flags.HasNameBackQuotesFlag():
-		name = strings.Replace(name, "`", "``", -1)
+		name = strings.ReplaceAll(name, "`", "``")
 		quotes = "`"
 	}
 

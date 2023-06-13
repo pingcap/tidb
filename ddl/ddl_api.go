@@ -329,13 +329,12 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 		}
 		originVersion, pendingCount = d.getPendingTiFlashTableCount(sctx, originVersion, pendingCount)
 		delay := time.Duration(0)
-		if pendingCount >= threshold {
-			logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("currentPendingCount", pendingCount), zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID), zap.Duration("time", configWaitTime))
-			delay = configWaitTime
-		} else {
+		if pendingCount < threshold {
 			// If there are not many unavailable tables, we don't need a force check.
 			return false, originVersion, pendingCount, false
 		}
+		logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("currentPendingCount", pendingCount), zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID), zap.Duration("time", configWaitTime))
+		delay = configWaitTime
 		time.Sleep(delay)
 	}
 	logutil.BgLogger().Info("too many unavailable tables, timeout", zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID))
@@ -1125,11 +1124,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
-				if col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime {
-					if !expression.IsValidCurrentTimestampExpr(v.Expr, colDef.Tp) {
-						return nil, nil, dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
-					}
-				} else {
+				if !(col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime) {
+					return nil, nil, dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
+				}
+				if !expression.IsValidCurrentTimestampExpr(v.Expr, colDef.Tp) {
 					return nil, nil, dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 				}
 				col.AddFlag(mysql.OnUpdateNowFlag)
@@ -1159,7 +1157,17 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.GenWithStackByArgs())
 			case ast.ColumnOptionCheck:
-				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("CONSTRAINT CHECK"))
+				// Check the column CHECK constraint dependency lazily, after fill all the name.
+				// Extract column constraint from column option.
+				constraint := &ast.Constraint{
+					Tp:           ast.ConstraintCheck,
+					Expr:         v.Expr,
+					Enforced:     v.Enforced,
+					Name:         v.ConstraintName,
+					InColumn:     true,
+					InColumnName: colDef.Name.Name.O,
+				}
+				constraints = append(constraints, constraint)
 			}
 		}
 	}
@@ -1695,6 +1703,26 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	return nil
 }
 
+func setEmptyCheckConstraintName(tableLowerName string, namesMap map[string]bool, constrs []*ast.Constraint) {
+	cnt := 1
+	constraintPrefix := tableLowerName + "_chk_"
+	for _, constr := range constrs {
+		if constr.Name == "" {
+			constrName := fmt.Sprintf("%s%d", constraintPrefix, cnt)
+			for {
+				// loop until find constrName that haven't been used.
+				if !namesMap[constrName] {
+					namesMap[constrName] = true
+					break
+				}
+				cnt++
+				constrName = fmt.Sprintf("%s%d", constraintPrefix, cnt)
+			}
+			constr.Name = constrName
+		}
+	}
+}
+
 func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 	if constr.Name == "" && len(constr.Keys) > 0 {
 		var colName string
@@ -1722,7 +1750,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 	}
 }
 
-func checkConstraintNames(constraints []*ast.Constraint) error {
+func checkConstraintNames(tableName model.CIStr, constraints []*ast.Constraint) error {
 	constrNames := map[string]bool{}
 	fkNames := map[string]bool{}
 
@@ -1742,12 +1770,19 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	}
 
 	// Set empty constraint names.
+	checkConstraints := make([]*ast.Constraint, 0, len(constraints))
 	for _, constr := range constraints {
 		if constr.Tp != ast.ConstraintForeignKey {
 			setEmptyConstraintName(constrNames, constr)
 		}
+		if constr.Tp == ast.ConstraintCheck {
+			checkConstraints = append(checkConstraints, constr)
+		}
 	}
-
+	// Set check constraint name under its order.
+	if len(checkConstraints) > 0 {
+		setEmptyCheckConstraintName(tableName.L, constrNames, checkConstraints)
+	}
 	return nil
 }
 
@@ -1850,10 +1885,12 @@ func BuildTableInfo(
 		Collate: collate,
 	}
 	tblColumns := make([]*table.Column, 0, len(cols))
+	existedColsMap := make(map[string]struct{}, len(cols))
 	for _, v := range cols {
 		v.ID = AllocateColumnID(tbInfo)
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
 		tblColumns = append(tblColumns, table.ToColumn(v.ToInfo()))
+		existedColsMap[v.Name.L] = struct{}{}
 	}
 	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
@@ -1923,10 +1960,6 @@ func BuildTableInfo(
 			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.GenWithStackByArgs())
 			continue
 		}
-		if constr.Tp == ast.ConstraintCheck {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("CONSTRAINT CHECK"))
-			continue
-		}
 
 		var (
 			indexName       = constr.Name
@@ -1941,6 +1974,58 @@ func BuildTableInfo(
 			indexName = mysql.PrimaryKeyName
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			unique = true
+		}
+
+		// check constraint
+		if constr.Tp == ast.ConstraintCheck {
+			// Since column check constraint dependency has been done in columnDefToCol.
+			// Here do the table check constraint dependency check, table constraint
+			// can only refer the columns in defined columns of the table.
+			// Refer: https://dev.mysql.com/doc/refman/8.0/en/create-table-check-constraints.html
+			if ok, err := table.IsSupportedExpr(constr); !ok {
+				return nil, err
+			}
+			var dependedCols []model.CIStr
+			dependedColsMap := findDependentColsInExpr(constr.Expr)
+			if !constr.InColumn {
+				dependedCols = make([]model.CIStr, 0, len(dependedColsMap))
+				for k := range dependedColsMap {
+					if _, ok := existedColsMap[k]; !ok {
+						// The table constraint depended on a non-existed column.
+						return nil, dbterror.ErrTableCheckConstraintReferUnknown.GenWithStackByArgs(constr.Name, k)
+					}
+					dependedCols = append(dependedCols, model.NewCIStr(k))
+				}
+			} else {
+				// Check the column-type constraint dependency.
+				if len(dependedColsMap) != 1 {
+					return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
+				}
+				if _, ok := dependedColsMap[constr.InColumnName]; !ok {
+					return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
+				}
+				dependedCols = []model.CIStr{model.NewCIStr(constr.InColumnName)}
+			}
+			// check auto-increment column
+			if table.ContainsAutoIncrementCol(dependedCols, tbInfo) {
+				return nil, dbterror.ErrCheckConstraintRefersAutoIncrementColumn.GenWithStackByArgs(constr.Name)
+			}
+			// check foreign key
+			if err := table.HasForeignKeyRefAction(tbInfo.ForeignKeys, constraints, constr, dependedCols); err != nil {
+				return nil, err
+			}
+			// build constraint meta info.
+			constraintInfo, err := buildConstraintInfo(tbInfo, dependedCols, constr, model.StatePublic)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			// check if the expression is bool type
+			if err := table.IfCheckConstraintExprBoolType(constraintInfo, tbInfo); err != nil {
+				return nil, err
+			}
+			constraintInfo.ID = allocateConstraintID(tbInfo)
+			tbInfo.Constraints = append(tbInfo.Constraints, constraintInfo)
+			continue
 		}
 
 		// build index info.
@@ -2213,7 +2298,16 @@ func BuildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInf
 	if referTblInfo.TTLInfo != nil {
 		tblInfo.TTLInfo = referTblInfo.TTLInfo.Clone()
 	}
+	renameCheckConstraint(&tblInfo)
 	return &tblInfo, nil
+}
+
+func renameCheckConstraint(tblInfo *model.TableInfo) {
+	for _, cons := range tblInfo.Constraints {
+		cons.Name = model.NewCIStr("")
+		cons.Table = tblInfo.Name
+	}
+	setNameForConstraintInfo(tblInfo.Name.L, map[string]bool{}, tblInfo.Constraints)
 }
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
@@ -2285,7 +2379,7 @@ func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = checkConstraintNames(newConstraints)
+	err = checkConstraintNames(s.Table.Name, newConstraints)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3058,30 +3152,66 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 }
 
 // SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
-func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, typ ast.ResourceUnitType, stringVal string, uintVal uint64, boolValue bool) error {
-	switch typ {
+func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupOption) error {
+	switch opt.Tp {
 	case ast.ResourceRURate:
-		resourceGroupSettings.RURate = uintVal
+		resourceGroupSettings.RURate = opt.UintValue
 	case ast.ResourcePriority:
-		resourceGroupSettings.Priority = uintVal
+		resourceGroupSettings.Priority = opt.UintValue
 	case ast.ResourceUnitCPU:
-		resourceGroupSettings.CPULimiter = stringVal
+		resourceGroupSettings.CPULimiter = opt.StrValue
 	case ast.ResourceUnitIOReadBandwidth:
-		resourceGroupSettings.IOReadBandwidth = stringVal
+		resourceGroupSettings.IOReadBandwidth = opt.StrValue
 	case ast.ResourceUnitIOWriteBandwidth:
-		resourceGroupSettings.IOWriteBandwidth = stringVal
+		resourceGroupSettings.IOWriteBandwidth = opt.StrValue
 	case ast.ResourceBurstableOpiton:
 		// Some about BurstLimit(b):
 		//   - If b == 0, that means the limiter is unlimited capacity. default use in resource controller (burst with a rate within a unlimited capacity).
 		//   - If b < 0, that means the limiter is unlimited capacity and fillrate(r) is ignored, can be seen as r == Inf (burst with a inf rate within a unlimited capacity).
 		//   - If b > 0, that means the limiter is limited capacity. (current not used).
 		limit := int64(0)
-		if boolValue {
+		if opt.BoolValue {
 			limit = -1
 		}
 		resourceGroupSettings.BurstLimit = limit
+	case ast.ResourceGroupRunaway:
+		for _, opt := range opt.ResourceGroupRunawayOptionList {
+			err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue)
+			if err != nil {
+				return err
+			}
+		}
 	default:
 		return errors.Trace(errors.New("unknown resource unit type"))
+	}
+	return nil
+}
+
+// SetDirectResourceGroupRunawayOption tries to set runaway part of the ResourceGroupSettings.
+func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGroupSettings, typ ast.RunawayOptionType, stringVal string, intVal int32) error {
+	if resourceGroupSettings.Runaway == nil {
+		resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{}
+	}
+	settings := resourceGroupSettings.Runaway
+	switch typ {
+	case ast.RunawayRule:
+		// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
+		dur, err := time.ParseDuration(stringVal)
+		if err != nil {
+			return err
+		}
+		settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
+	case ast.RunawayAction:
+		settings.Action = model.RunawayActionType(intVal)
+	case ast.RunawayWatch:
+		settings.WatchType = model.RunawayWatchType(intVal)
+		dur, err := time.ParseDuration(stringVal)
+		if err != nil {
+			return err
+		}
+		settings.WatchDurationMs = uint64(dur.Milliseconds())
+	default:
+		return errors.Trace(errors.New("unknown runaway option type"))
 	}
 	return nil
 }
@@ -3434,7 +3564,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			case ast.ConstraintFulltext:
 				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
-				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("ADD CONSTRAINT CHECK"))
+				err = d.CreateCheckConstraint(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint)
 			default:
 				// Nothing to do now.
 			}
@@ -3531,9 +3661,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableIndexInvisible:
 			err = d.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility)
 		case ast.AlterTableAlterCheck:
-			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("ALTER CHECK"))
+			err = d.AlterCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
 		case ast.AlterTableDropCheck:
-			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("DROP CHECK"))
+			err = d.DropCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name))
 		case ast.AlterTableWithValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithValidation)
 		case ast.AlterTableWithoutValidation:
@@ -4851,11 +4981,10 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint (UNIQUE KEY)"))
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
-			if col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime {
-				if !expression.IsValidCurrentTimestampExpr(opt.Expr, &col.FieldType) {
-					return dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
-				}
-			} else {
+			if !(col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime) {
+				return dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
+			}
+			if !expression.IsValidCurrentTimestampExpr(opt.Expr, &col.FieldType) {
 				return dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 			}
 			col.AddFlag(mysql.OnUpdateNowFlag)
@@ -5448,6 +5577,11 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	if oldCol == nil {
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, ident.Name)
 	}
+	// check if column can rename with check constraint
+	err = IsColumnRenameableWithCheckConstraint(oldCol.Name, tbl.Meta())
+	if err != nil {
+		return err
+	}
 
 	if oldColName.L == newColName.L {
 		return nil
@@ -5707,6 +5841,23 @@ func shouldModifyTiFlashReplica(tbReplicaInfo *model.TiFlashReplicaInfo, replica
 	return true
 }
 
+// addHypoTiFlashReplicaIntoCtx adds this hypothetical tiflash replica into this ctx.
+func (*ddl) setHypoTiFlashReplica(ctx sessionctx.Context, schemaName, tableName model.CIStr, replicaInfo *ast.TiFlashReplicaSpec) error {
+	sctx := ctx.GetSessionVars()
+	if sctx.HypoTiFlashReplicas == nil {
+		sctx.HypoTiFlashReplicas = make(map[string]map[string]struct{})
+	}
+	if sctx.HypoTiFlashReplicas[schemaName.L] == nil {
+		sctx.HypoTiFlashReplicas[schemaName.L] = make(map[string]struct{})
+	}
+	if replicaInfo.Count > 0 { // add replicas
+		sctx.HypoTiFlashReplicas[schemaName.L][tableName.L] = struct{}{}
+	} else { // delete replicas
+		delete(sctx.HypoTiFlashReplicas[schemaName.L], tableName.L)
+	}
+	return nil
+}
+
 // AlterTableSetTiFlashReplica sets the TiFlash replicas info.
 func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
@@ -5722,6 +5873,10 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if !shouldModifyTiFlashReplica(tbReplicaInfo, replicaInfo) {
 		return nil
+	}
+
+	if replicaInfo.Hypo {
+		return d.setHypoTiFlashReplica(ctx, schema.Name, tb.Meta().Name, replicaInfo)
 	}
 
 	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
@@ -7188,6 +7343,10 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 	if err != nil {
 		return err
 	}
+	err = IsColumnDroppableWithCheckConstraint(colName, tblInfo)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -8078,7 +8237,7 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
 	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
 	for _, opt := range options {
-		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue, opt.BoolValue)
+		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -8351,4 +8510,135 @@ func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string
 		}
 	}
 	return nil
+}
+
+func (d *ddl) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr, constr *ast.Constraint) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if constraintInfo := t.Meta().FindConstraintInfoByName(constrName.L); constraintInfo != nil {
+		return infoschema.ErrCheckConstraintDupName.GenWithStackByArgs(constrName.L)
+	}
+
+	// allocate the temporary constraint name for dependency-check-error-output below.
+	constrNames := map[string]bool{}
+	for _, constr := range t.Meta().Constraints {
+		constrNames[constr.Name.L] = true
+	}
+	setEmptyCheckConstraintName(t.Meta().Name.L, constrNames, []*ast.Constraint{constr})
+
+	// existedColsMap can be used to check the existence of depended.
+	existedColsMap := make(map[string]struct{})
+	cols := t.Cols()
+	for _, v := range cols {
+		existedColsMap[v.Name.L] = struct{}{}
+	}
+	// check expression if supported
+	if ok, err := table.IsSupportedExpr(constr); !ok {
+		return err
+	}
+
+	dependedColsMap := findDependentColsInExpr(constr.Expr)
+	dependedCols := make([]model.CIStr, 0, len(dependedColsMap))
+	for k := range dependedColsMap {
+		if _, ok := existedColsMap[k]; !ok {
+			// The table constraint depended on a non-existed column.
+			return dbterror.ErrBadField.GenWithStackByArgs(k, "check constraint "+constr.Name+" expression")
+		}
+		dependedCols = append(dependedCols, model.NewCIStr(k))
+	}
+
+	// build constraint meta info.
+	tblInfo := t.Meta()
+
+	// check auto-increment column
+	if table.ContainsAutoIncrementCol(dependedCols, tblInfo) {
+		return dbterror.ErrCheckConstraintRefersAutoIncrementColumn.GenWithStackByArgs(constr.Name)
+	}
+	// check foreign key
+	if err := table.HasForeignKeyRefAction(tblInfo.ForeignKeys, nil, constr, dependedCols); err != nil {
+		return err
+	}
+	constraintInfo, err := buildConstraintInfo(tblInfo, dependedCols, constr, model.StateNone)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// check if the expression is bool type
+	if err := table.IfCheckConstraintExprBoolType(constraintInfo, tblInfo); err != nil {
+		return err
+	}
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAddCheckConstraint,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{constraintInfo},
+		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+	}
+
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) DropCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr) error {
+	is := d.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	}
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+
+	constraintInfo := t.Meta().FindConstraintInfoByName(constrName.L)
+	if constraintInfo == nil {
+		return dbterror.ErrConstraintNotFound.GenWithStackByArgs(constrName)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionDropCheckConstraint,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{constrName},
+	}
+
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr, enforced bool) error {
+	is := d.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	}
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+
+	constraintInfo := t.Meta().FindConstraintInfoByName(constrName.L)
+	if constraintInfo == nil {
+		return dbterror.ErrConstraintNotFound.GenWithStackByArgs(constrName)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterCheckConstraint,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{constrName, enforced},
+	}
+
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
 }

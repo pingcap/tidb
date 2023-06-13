@@ -31,9 +31,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	fstorage "github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/disttask/loaddata"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/executor/asyncloaddata"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -69,14 +71,12 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
-	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -110,7 +110,7 @@ type ShowExec struct {
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
 
-	LoadDataJobID *int64
+	ImportJobID *int64
 }
 
 type showTableRegionRowItem struct {
@@ -280,8 +280,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlacementForPartition(ctx)
 	case ast.ShowSessionStates:
 		return e.fetchShowSessionStates(ctx)
-	case ast.ShowLoadDataJobs:
-		return e.fetchShowLoadDataJobs(ctx)
+	case ast.ShowImportJobs:
+		return e.fetchShowImportJobs(ctx)
 	}
 	return nil
 }
@@ -1051,7 +1051,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 					buf.WriteString(" DEFAULT ")
 					buf.WriteString(defaultValue.(string))
 					if col.GetDecimal() > 0 {
-						buf.WriteString(fmt.Sprintf("(%d)", col.GetDecimal()))
+						fmt.Fprintf(buf, "(%d)", col.GetDecimal())
 					}
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
@@ -1084,13 +1084,13 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
 			s, r := tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits
 			if r == 0 || r == autoid.AutoRandomRangeBitsDefault {
-				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", s))
+				fmt.Fprintf(buf, " /*T![auto_rand] AUTO_RANDOM(%d) */", s)
 			} else {
-				buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d, %d) */", s, r))
+				fmt.Fprintf(buf, " /*T![auto_rand] AUTO_RANDOM(%d, %d) */", s, r)
 			}
 		}
 		if len(col.Comment) > 0 {
-			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
+			fmt.Fprintf(buf, " COMMENT '%s'", format.OutputFormat(col.Comment))
 		}
 		if i != len(tableInfo.Cols())-1 {
 			needAddComma = true
@@ -1181,30 +1181,49 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 	// Foreign Keys are supported by data dictionary even though
 	// they are not enforced by DDL. This is still helpful to applications.
 	for _, fk := range tableInfo.ForeignKeys {
-		buf.WriteString(fmt.Sprintf(",\n  CONSTRAINT %s FOREIGN KEY ", stringutil.Escape(fk.Name.O, sqlMode)))
+		fmt.Fprintf(buf, ",\n  CONSTRAINT %s FOREIGN KEY ", stringutil.Escape(fk.Name.O, sqlMode))
 		colNames := make([]string, 0, len(fk.Cols))
 		for _, col := range fk.Cols {
 			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
 		}
-		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(colNames, ",")))
+		fmt.Fprintf(buf, "(%s)", strings.Join(colNames, ","))
 		if fk.RefSchema.L != "" {
-			buf.WriteString(fmt.Sprintf(" REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode)))
+			fmt.Fprintf(buf, " REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode))
 		} else {
-			buf.WriteString(fmt.Sprintf(" REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode)))
+			fmt.Fprintf(buf, " REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode))
 		}
 		refColNames := make([]string, 0, len(fk.Cols))
 		for _, refCol := range fk.RefCols {
 			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
 		}
-		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(refColNames, ",")))
+		fmt.Fprintf(buf, "(%s)", strings.Join(refColNames, ","))
 		if model.ReferOptionType(fk.OnDelete) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON DELETE %s", model.ReferOptionType(fk.OnDelete).String()))
+			fmt.Fprintf(buf, " ON DELETE %s", model.ReferOptionType(fk.OnDelete).String())
 		}
 		if model.ReferOptionType(fk.OnUpdate) != 0 {
-			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String()))
+			fmt.Fprintf(buf, " ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String())
 		}
 		if fk.Version < model.FKVersion1 {
 			buf.WriteString(" /* FOREIGN KEY INVALID */")
+		}
+	}
+	// add check constraints info
+	publicConstraints := make([]*model.ConstraintInfo, 0, len(tableInfo.Indices))
+	for _, constr := range tableInfo.Constraints {
+		if constr.State == model.StatePublic {
+			publicConstraints = append(publicConstraints, constr)
+		}
+	}
+	if len(publicConstraints) > 0 {
+		buf.WriteString(",\n")
+	}
+	for i, constrInfo := range publicConstraints {
+		fmt.Fprintf(buf, "CONSTRAINT %s CHECK ((%s))", stringutil.Escape(constrInfo.Name.O, sqlMode), constrInfo.ExprString)
+		if !constrInfo.Enforced {
+			buf.WriteString(" /*!80016 NOT ENFORCED */")
+		}
+		if i != len(publicConstraints)-1 {
+			buf.WriteString(",\n")
 		}
 	}
 
@@ -2182,69 +2201,82 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	e.appendRow([]interface{}{stateJSON, tokenJSON})
 	return nil
 }
-
-// fetchShowLoadDataJobs fills the result with the schema
-// {"Job_ID", "Create_Time", "Start_Time", "End_Time",
-// "Data_Source", "Target_Table", "Import_Mode", "Created_By",
-// "Job_State", "Job_Status", "Source_File_Size", "Imported_rows",
-// "Result_Code", "Result_Message"}.
-func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
-	exec := e.ctx.(sqlexec.SQLExecutor)
-	handleOneInfo := func(info *asyncloaddata.JobInfo) {
-		e.result.AppendInt64(0, info.JobID)
-		e.result.AppendTime(1, info.CreateTime)
-		e.result.AppendTime(2, info.StartTime)
-		e.result.AppendTime(3, info.EndTime)
-		e.result.AppendString(4, info.DataSource)
-		table := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
-		e.result.AppendString(5, table)
-		e.result.AppendString(6, info.ImportMode)
-		e.result.AppendString(7, info.User)
-		e.result.AppendString(8, "loading")
-		status := info.Status
-		e.result.AppendString(9, status.String())
-		progress, err2 := asyncloaddata.ProgressFromJSON([]byte(info.Progress))
-		if err2 != nil {
-			// maybe empty progress
-			if info.Progress != "" {
-				logutil.Logger(ctx).Warn("invalid progress", zap.String("progress", info.Progress))
-			}
-			e.result.AppendNull(10)
-			e.result.AppendNull(11)
-		} else {
-			e.result.AppendString(10, units.HumanSize(float64(progress.SourceFileSize)))
-			e.result.AppendUint64(11, progress.LoadedRowCnt.Load())
-		}
-		terr := new(terror.Error)
-		err2 = terr.UnmarshalJSON([]byte(info.StatusMessage))
-		if err2 == nil {
-			e.result.AppendInt64(12, int64(terr.Code()))
-			e.result.AppendString(13, terr.GetMsg())
-			return
-		}
-		if status == asyncloaddata.JobFinished {
-			e.result.AppendInt64(12, 0)
-		} else {
-			e.result.AppendNull(12)
-		}
-		e.result.AppendString(13, info.StatusMessage)
+func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount uint64) {
+	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
+	result.AppendInt64(0, info.ID)
+	result.AppendString(1, info.Parameters.FileLocation)
+	result.AppendString(2, fullTableName)
+	result.AppendInt64(3, info.TableID)
+	result.AppendString(4, info.Step)
+	result.AppendString(5, info.Status)
+	result.AppendString(6, units.HumanSize(float64(info.SourceFileSize)))
+	if info.Summary != nil {
+		result.AppendUint64(7, info.Summary.ImportedRows)
+	} else if importedRowCount > 0 {
+		result.AppendUint64(7, importedRowCount)
+	} else {
+		result.AppendNull(7)
 	}
+	result.AppendString(8, info.ErrorMessage)
+	result.AppendTime(9, info.CreateTime)
+	result.AppendTime(10, info.StartTime)
+	result.AppendTime(11, info.EndTime)
+	result.AppendString(12, info.CreatedBy)
+}
 
-	if e.LoadDataJobID != nil {
-		job := asyncloaddata.NewJob(*e.LoadDataJobID, exec, e.ctx.GetSessionVars().User.String())
-		info, err := job.GetJobInfo(ctx)
+func handleImportJobInfo(info *importer.JobInfo, result *chunk.Chunk) error {
+	var importedRowCount uint64
+	if info.Summary == nil && info.Status == importer.JobStatusRunning {
+		// for running jobs, need get from distributed framework.
+		rows, err := loaddata.GetTaskImportedRows(info.ID)
 		if err != nil {
 			return err
 		}
-		handleOneInfo(info)
-		return nil
+		importedRowCount = rows
 	}
-	infos, err := asyncloaddata.GetAllJobInfo(ctx, exec, e.ctx.GetSessionVars().User.String())
+	fillOneImportJobInfo(info, result, importedRowCount)
+	return nil
+}
+
+// fetchShowImportJobs fills the result with the schema:
+// {"Job_ID", "Data_Source", "Target_Table", "Table_ID",
+// "Phase", "Status", "Source_File_Size", "Imported_Rows",
+// "Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
+func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
+	var hasSuperPriv bool
+	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
+		hasSuperPriv = pm.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
+	}
+	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
+	globalTaskManager, err := fstorage.GetTaskManager()
 	if err != nil {
 		return err
 	}
+	if e.ImportJobID != nil {
+		var info *importer.JobInfo
+		if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+			exec := se.(sqlexec.SQLExecutor)
+			var err2 error
+			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
+			return err2
+		}); err != nil {
+			return err
+		}
+		return handleImportJobInfo(info, e.result)
+	}
+	var infos []*importer.JobInfo
+	if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+		exec := se.(sqlexec.SQLExecutor)
+		var err2 error
+		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
+		return err2
+	}); err != nil {
+		return err
+	}
 	for _, info := range infos {
-		handleOneInfo(info)
+		if err2 := handleImportJobInfo(info, e.result); err2 != nil {
+			return err2
+		}
 	}
 	// TODO: does not support filtering for now
 	return nil
@@ -2265,20 +2297,20 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
 			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
-		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil); err == nil {
-			viewSchema := viewLogicalPlan.Schema()
-			viewOutputNames := viewLogicalPlan.OutputNames()
-			for _, col := range tbl.Columns {
-				idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
-				if idx >= 0 {
-					col.FieldType = *viewSchema.Columns[idx].GetType()
-				}
-				if col.GetType() == mysql.TypeVarString {
-					col.SetType(mysql.TypeVarchar)
-				}
-			}
-		} else {
+		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil)
+		if err != nil {
 			return err
+		}
+		viewSchema := viewLogicalPlan.Schema()
+		viewOutputNames := viewLogicalPlan.OutputNames()
+		for _, col := range tbl.Columns {
+			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
+			if idx >= 0 {
+				col.FieldType = *viewSchema.Columns[idx].GetType()
+			}
+			if col.GetType() == mysql.TypeVarString {
+				col.SetType(mysql.TypeVarchar)
+			}
 		}
 		return nil
 	})

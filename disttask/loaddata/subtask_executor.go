@@ -27,6 +27,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// TestSyncChan is used to test.
+var TestSyncChan = make(chan struct{})
+
 // ImportMinimalTaskExecutor is a subtask executor for load data.
 type ImportMinimalTaskExecutor struct {
 	task *MinimalTaskMeta
@@ -34,11 +37,17 @@ type ImportMinimalTaskExecutor struct {
 
 // Run implements the SubtaskExecutor.Run interface.
 func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
-	logger := logutil.BgLogger().With(zap.String("component", "minimal task executor"), zap.String("type", proto.LoadData), zap.Int64("table_id", e.task.Plan.TableInfo.ID))
+	logger := logutil.BgLogger().With(zap.String("component", "minimal task executor"), zap.String("type", proto.ImportInto), zap.Int64("table_id", e.task.Plan.TableInfo.ID))
 	logger.Info("subtask executor run", zap.Any("task", e.task))
+	failpoint.Inject("waitBeforeSortChunk", func() {
+		time.Sleep(3 * time.Second)
+	})
 	failpoint.Inject("errorWhenSortChunk", func() {
-		time.Sleep(3 * time.Second) // wait ToImportMode called
 		failpoint.Return(errors.New("occur an error when sort chunk"))
+	})
+	failpoint.Inject("syncBeforeSortChunk", func() {
+		TestSyncChan <- struct{}{}
+		<-TestSyncChan
 	})
 	chunkCheckpoint := toChunkCheckpoint(e.task.Chunk)
 	sharedVars := e.task.SharedVars
@@ -54,7 +63,7 @@ func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
 
 func init() {
 	scheduler.RegisterSubtaskExectorConstructor(
-		proto.LoadData,
+		proto.ImportInto,
 		// The order of the subtask executors is the same as the order of the subtasks.
 		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
 			task, ok := minimalTask.(MinimalTaskMeta)
