@@ -371,7 +371,7 @@ func TestExplainFormatHint(t *testing.T) {
 		"/*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ " +
 		"count(1) from t t1 " +
 		"where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12)").Check(testkit.Rows(
-		"hash_agg(@`sel_1`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` `idx_c2`), agg_to_cop(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`)"))
+		"hash_agg(@`sel_1`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` `idx_c2`), no_order_index(@`sel_2` `test`.`t2` `idx_c2`), agg_to_cop(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), no_order_index(@`sel_1` `test`.`t1` `idx_c2`)"))
 }
 
 func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
