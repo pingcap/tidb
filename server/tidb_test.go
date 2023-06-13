@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/collector/mock"
@@ -3000,7 +3001,7 @@ func TestChunkReuseCorruptSysVarString(t *testing.T) {
 }
 
 type mockProxyProtocolProxy struct {
-	mu            sync.Mutex
+	mu            syncutil.Mutex
 	frontend      string
 	backend       string
 	clientAddr    string
