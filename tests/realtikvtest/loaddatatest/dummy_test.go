@@ -14,9 +14,17 @@
 
 package loaddatatest
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/tests/realtikvtest"
+)
 
 func TestDummy(t *testing.T) {
 	// todo: delete it after enable importintotest.
 	t.Skip("skip dummy test")
+}
+
+func TestMain(m *testing.M) {
+	realtikvtest.RunTestMain(m)
 }
