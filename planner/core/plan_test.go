@@ -420,11 +420,11 @@ func TestNthPlanHint(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, index(a), index(b), index(a,b))")
 	tk.MustQuery("explain format='hint' select * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t` `a_2`)"))
+		"use_index(@`sel_1` `test`.`t` `a_2`), no_order_index(@`sel_1` `test`.`t` `a_2`)"))
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) */ * from t where a=1 and b=1").Check(testkit.Rows(
 		"use_index(@`sel_1` `test`.`t` ), nth_plan(1)"))
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(2)"))
+		"use_index(@`sel_1` `test`.`t` `a_2`), no_order_index(@`sel_1` `test`.`t` `a_2`), nth_plan(2)"))
 
 	tk.MustExec("explain format='hint' select /*+ nth_plan(3) */ * from t where a=1 and b=1")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
@@ -436,7 +436,7 @@ func TestNthPlanHint(t *testing.T) {
 
 	// Test warning for multiply hints.
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(1), nth_plan(2)"))
+		"use_index(@`sel_1` `test`.`t` `a_2`), no_order_index(@`sel_1` `test`.`t` `a_2`), nth_plan(1), nth_plan(2)"))
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)",
 		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)"))
