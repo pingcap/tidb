@@ -1155,7 +1155,7 @@ func redactURLWrapper(str string) string {
 		u, _ := url.Parse(str)
 		bakSchema := u.Scheme
 		u.Scheme = "s3"
-		res := ast.RedactURL(str)
+		res := ast.RedactURL(u.String())
 		u, _ = url.Parse(res)
 		u.Scheme = bakSchema
 		failpoint.Return(u.String())

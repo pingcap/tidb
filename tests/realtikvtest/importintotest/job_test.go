@@ -95,7 +95,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	// test show job by id using test_show_job1
 	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/setLastImportJobID", `return(true)`)
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/br/pkg/storage/forceRedactURL", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/forceRedactURL", "return(true)")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job1", Hostname: "localhost"}, nil, nil, nil))
 	result1 := s.tk.MustQuery(fmt.Sprintf(`import into t1 FROM 'gs://test-show-job/t.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`,
 		gcsEndpoint)).Rows()
@@ -111,7 +111,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		TableID:     tableID1,
 		CreatedBy:   "test_show_job1@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-job/t.csv?access-key=redacted&secret-access-key=redacted&endpoint=%s`, gcsEndpoint),
+			FileLocation: fmt.Sprintf(`gs://test-show-job/t.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=%s`, gcsEndpoint),
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
