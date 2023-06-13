@@ -1,23 +1,30 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "metadatalocktest_test",
+    name = "fk_test",
     timeout = "short",
     srcs = [
+        "foreign_key_test.go",
         "main_test.go",
-        "mdl_test.go",
     ],
     flaky = True,
-    shard_count = 32,
+    shard_count = 25,
     deps = [
         "//config",
         "//ddl",
-        "//errno",
-        "//server",
+        "//domain",
+        "//infoschema",
+        "//meta",
+        "//meta/autoid",
+        "//parser/auth",
+        "//parser/model",
+        "//planner/core",
+        "//sessiontxn",
         "//testkit",
         "//testkit/testsetup",
-        "@com_github_pingcap_failpoint//:failpoint",
+        "//util/dbterror",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",
     ],
 )
