@@ -79,3 +79,9 @@ check_contains "COUNT(*): ${duplicated_row_count}"
 # Check remaining records in the target table
 run_sql 'SELECT COUNT(*) FROM mytest.testtbl'
 check_contains "COUNT(*): ${uniq_row_count}"
+
+# Check tidb backend records
+run_lightning --backend tidb --config "${mydir}/tidb.toml"
+read -p 123
+
+# Check max-error-record

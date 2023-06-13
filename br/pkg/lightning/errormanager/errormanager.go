@@ -44,7 +44,9 @@ const (
 	syntaxErrorTableName = "syntax_error_v1"
 	typeErrorTableName   = "type_error_v1"
 	// ConflictErrorTableName is the table name for duplicate detection.
-	ConflictErrorTableName   = "conflict_error_v1"
+	ConflictErrorTableName = "conflict_error_v1"
+	// conflictErrorV2TableName is the table name to record duplicate data in tidb
+	// backend and pre-deduplication of local backend.
 	conflictErrorV2TableName = "conflict_error_v2"
 
 	createSyntaxErrorTable = `
