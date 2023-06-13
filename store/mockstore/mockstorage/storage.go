@@ -117,7 +117,7 @@ func (s *mockStorage) Close() error {
 	case <-s.KVStore.Closed():
 		return nil
 	default:
-		s.Store.Close()
+		defer s.Store.Close()
 		return s.KVStore.Close()
 	}
 }
