@@ -1259,18 +1259,18 @@ func TestTiDBTiflashReplicaRead(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, DefTiflashReplicaRead, val)
 
-	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, "closet_adaptive")
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, "closest_adaptive")
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBTiflashReplicaRead)
 	require.NoError(t, err)
-	require.Equal(t, "closet_adaptive", val)
+	require.Equal(t, "closest_adaptive", val)
 
 	// Test MaxValue
-	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, "closet_replicas")
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, "closest_replicas")
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBTiflashReplicaRead)
 	require.NoError(t, err)
-	require.Equal(t, "closet_replicas", val)
+	require.Equal(t, "closest_replicas", val)
 
 	// Test Normal Value
 	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, DefTiflashReplicaRead)

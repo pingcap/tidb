@@ -819,11 +819,11 @@ func filterAllStoresAccordingToTiflashReplicaRead(allStores []uint64, aliveStore
 		// needsCrossZoneAccess indicates whether we need to access(directly read or remote read) TiFlash stores in other zones.
 		needsCrossZoneAccess = true
 
-		if policy == tiflash.ClosetAdaptive {
-			// If the policy is `ClosetAdaptive`, we can dispatch tasks to the TiFlash stores in other zones.
+		if policy == tiflash.ClosestAdaptive {
+			// If the policy is `ClosestAdaptive`, we can dispatch tasks to the TiFlash stores in other zones.
 			storesMatchedPolicy = allStores
-		} else if policy == tiflash.ClosetReplicas {
-			// If the policy is `ClosetReplicas`, we dispatch tasks to the TiFlash stores in TiDB zone and remote read from other zones.
+		} else if policy == tiflash.ClosestReplicas {
+			// If the policy is `ClosestReplicas`, we dispatch tasks to the TiFlash stores in TiDB zone and remote read from other zones.
 			for id := range aliveStoreIDsInTiDBZone {
 				storesMatchedPolicy = append(storesMatchedPolicy, id)
 			}
@@ -878,8 +878,8 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 					aliveStoreIDsInTiDBZone[as.StoreID()] = struct{}{}
 				}
 			}
-			if nodeSelectionPolicy.IsPolicyClosetReplicas() {
-				maxRemoteReadCountAllowed = len(aliveStores) * tiflash.MaxRemoteReadCountPerNodeForClosetReplicas
+			if nodeSelectionPolicy.IsPolicyClosestReplicas() {
+				maxRemoteReadCountAllowed = len(aliveStores) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
 			}
 		}
 		var batchTasks []*batchCopTask
@@ -907,7 +907,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			allStores, needCrossZoneAccess = filterAllStoresAccordingToTiflashReplicaRead(allStores, aliveStoreIDsInTiDBZone, isTiDBLabelZoneSet, nodeSelectionPolicy)
 			if needCrossZoneAccess && !nodeSelectionPolicy.IsPolicyAllReplicas() {
 				regionsInOtherZones = append(regionsInOtherZones, task.region.GetID())
-				if nodeSelectionPolicy.IsPolicyClosetReplicas() && len(regionsInOtherZones) > maxRemoteReadCountAllowed {
+				if nodeSelectionPolicy.IsPolicyClosestReplicas() && len(regionsInOtherZones) > maxRemoteReadCountAllowed {
 					regionIDErrMsg := ""
 					for i := 0; i < 3 && i < len(regionsInOtherZones); i++ {
 						regionIDErrMsg += fmt.Sprintf("%d, ", regionsInOtherZones[i])

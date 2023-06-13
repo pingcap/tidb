@@ -2533,7 +2533,7 @@ var defaultSysVars = []*SysVar{
 		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTiflashReplicaRead, Value: DefTiflashReplicaRead, Type: TypeEnum, PossibleValues: []string{DefTiflashReplicaRead, "closet_adaptive", "closet_replicas"},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTiflashReplicaRead, Value: DefTiflashReplicaRead, Type: TypeEnum, PossibleValues: []string{DefTiflashReplicaRead, "closest_adaptive", "closest_replicas"},
 		SetSession: func(s *SessionVars, val string) error {
 			s.TiflashReplicaRead = tiflash.GetTiflashReplicaReadByStr(val)
 			return nil
