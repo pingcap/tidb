@@ -191,6 +191,8 @@ func (s *SessionStatsCollector) ClearForTest() {
 	s.feedback = statistics.NewQueryFeedbackMap()
 	s.rateMap = make(errorRateDeltaMap)
 	s.colMap = make(colStatsUsageMap)
+	s.next = nil
+	s.deleted = false
 }
 
 var (
