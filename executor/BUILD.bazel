@@ -112,7 +112,7 @@ go_library(
         "//distsql",
         "//disttask/framework/proto",
         "//disttask/framework/storage",
-        "//disttask/loaddata",
+        "//disttask/importinto",
         "//domain",
         "//domain/infosync",
         "//errno",

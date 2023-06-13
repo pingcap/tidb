@@ -6,8 +6,8 @@ go_test(
     srcs = [
         "detach_test.go",
         "from_server_test.go",
+        "import_into_test.go",
         "job_test.go",
-        "load_data_test.go",
         "main_test.go",
         "one_parquet_test.go",
         "operate_test.go",
@@ -30,7 +30,7 @@ go_test(
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
         "//disttask/framework/storage",
-        "//disttask/loaddata",
+        "//disttask/importinto",
         "//domain/infosync",
         "//executor",
         "//executor/asyncloaddata",

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package loaddata
+package importinto
 
 import (
 	"context"
@@ -32,7 +32,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// ImportScheduler is a scheduler for load data.
+// ImportScheduler is a scheduler for IMPORT INTO.
 // Scheduler is equivalent to a Lightning instance.
 type ImportScheduler struct {
 	taskID        int64
@@ -202,7 +202,7 @@ func init() {
 				return nil, err
 			}
 			logger := logutil.BgLogger().With(zap.String("component", "scheduler"), zap.String("type", proto.ImportInto), zap.Int64("table_id", taskMeta.Plan.TableInfo.ID))
-			logger.Info("create new load data scheduler", zap.Any("taskMeta", taskMeta))
+			logger.Info("create new IMPORT INTO scheduler", zap.Any("taskMeta", taskMeta))
 			return &ImportScheduler{
 				taskID:   taskID,
 				taskMeta: &taskMeta,
