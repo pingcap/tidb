@@ -150,6 +150,11 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.String(flagReplicaReadLabel, "", "specify the label of the stores to be used for backup, e.g. 'label_key:label_value'")
+	// Currently we have 3 type of backup, and correponsed to different rstore procedure.
+	// 1. scan precisely on leader and generate SST files
+	// 2. use EBS volume backup to backup all raft log and SST Files.
+	// 3. copy SST Files by region leader
+	flags.String(flagFullBackupType, string(FullBackupTypeScan), "full backup type")
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
