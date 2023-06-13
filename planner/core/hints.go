@@ -166,6 +166,18 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, storeType kv
 				HintName: model.NewCIStr(HintUseIndex),
 				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
 			})
+			if tbl.Table.PKIsHandle || tbl.Table.IsCommonHandle { // it's a primary key
+				orderHint := HintOrderIndex
+				if !tbl.KeepOrder {
+					orderHint = HintNoOrderIndex
+				}
+				res = append(res, &ast.TableOptimizerHint{
+					QBName:   qbName,
+					HintName: model.NewCIStr(orderHint),
+					Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
+					Indexes:  []model.CIStr{model.NewCIStr("primary")},
+				})
+			}
 		}
 	case *PhysicalIndexLookUpReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
@@ -175,11 +187,31 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, storeType kv
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
+		orderHint := HintOrderIndex
+		if !index.KeepOrder {
+			orderHint = HintNoOrderIndex
+		}
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   qbName,
+			HintName: model.NewCIStr(orderHint),
+			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
+			Indexes:  []model.CIStr{index.Index.Name},
+		})
 	case *PhysicalIndexReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: model.NewCIStr(HintUseIndex),
+			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
+			Indexes:  []model.CIStr{index.Index.Name},
+		})
+		orderHint := HintOrderIndex
+		if !index.KeepOrder {
+			orderHint = HintNoOrderIndex
+		}
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   qbName,
+			HintName: model.NewCIStr(orderHint),
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
