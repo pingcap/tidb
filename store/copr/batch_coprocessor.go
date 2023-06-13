@@ -765,6 +765,7 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
+<<<<<<< HEAD
 	var ranges []kv.KeyRange
 	for _, ri := range batchTask.regionInfos {
 		ri.Ranges.Do(func(ran *kv.KeyRange) {
@@ -772,6 +773,44 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 		})
 	}
 	return buildBatchCopTasks(bo, b.store, NewKeyRanges(ranges), b.req.StoreType, nil, 0, false, 0)
+=======
+	if batchTask.regionInfos != nil {
+		var ranges []kv.KeyRange
+		for _, ri := range batchTask.regionInfos {
+			ri.Ranges.Do(func(ran *kv.KeyRange) {
+				ranges = append(ranges, *ran)
+			})
+		}
+		// need to make sure the key ranges is sorted
+		slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		})
+		ret, err := buildBatchCopTasksForNonPartitionedTable(ctx, bo, b.store, NewKeyRanges(ranges), b.req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid)
+		return ret, err
+	}
+	// Retry Partition Table Scan
+	keyRanges := make([]*KeyRanges, 0, len(batchTask.PartitionTableRegions))
+	pid := make([]int64, 0, len(batchTask.PartitionTableRegions))
+	for _, trs := range batchTask.PartitionTableRegions {
+		pid = append(pid, trs.PhysicalTableId)
+		ranges := make([]kv.KeyRange, 0, len(trs.Regions))
+		for _, ri := range trs.Regions {
+			for _, ran := range ri.Ranges {
+				ranges = append(ranges, kv.KeyRange{
+					StartKey: ran.Start,
+					EndKey:   ran.End,
+				})
+			}
+		}
+		// need to make sure the key ranges is sorted
+		slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		})
+		keyRanges = append(keyRanges, NewKeyRanges(ranges))
+	}
+	ret, err := buildBatchCopTasksForPartitionedTable(ctx, bo, b.store, keyRanges, b.req.StoreType, false, 0, false, 0, pid, tiflashcompute.DispatchPolicyInvalid)
+	return ret, err
+>>>>>>> d934ef8d627 (store: key ranges should be sorted in batch cop retry (#44623))
 }
 
 const readTimeoutUltraLong = 3600 * time.Second // For requests that may scan many regions for tiflash.
