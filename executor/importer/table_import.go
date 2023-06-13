@@ -58,32 +58,33 @@ var (
 	CheckDiskQuotaInterval = time.Minute
 )
 
-func prepareSortDir(e *LoadDataController, taskID int64) (string, error) {
-	tidbCfg := tidb.GetGlobalConfig()
+func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (string, error) {
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
-	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix, strconv.FormatInt(taskID, 10))
+	importDir := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+	sortDir := filepath.Join(importDir, strconv.FormatInt(taskID, 10))
 
-	if info, err := os.Stat(sortPath); err != nil {
+	if info, err := os.Stat(importDir); err != nil {
 		if !os.IsNotExist(err) {
-			e.logger.Error("stat sort dir failed", zap.String("path", sortPath), zap.Error(err))
+			e.logger.Error("stat import dir failed", zap.String("import_dir", importDir), zap.Error(err))
 			return "", errors.Trace(err)
 		}
-	} else if info.IsDir() {
-		// Currently remove all dir to clean garbage data.
-		// TODO: when do checkpoint should change follow logic.
-		err := os.RemoveAll(sortPath)
+	} else if !info.IsDir() {
+		e.logger.Warn("import dir is not a dir, remove it", zap.String("import_dir", importDir))
+		err := os.RemoveAll(importDir)
 		if err != nil {
-			e.logger.Error("remove sort dir failed", zap.String("path", sortPath), zap.Error(err))
+			e.logger.Error("remove import dir failed", zap.String("import_dir", importDir), zap.Error(err))
 		}
+	} else {
+		return sortDir, nil
 	}
 
-	err := os.MkdirAll(sortPath, 0o700)
+	err := os.MkdirAll(importDir, 0o700)
 	if err != nil {
-		e.logger.Error("failed to make sort dir", zap.String("path", sortPath), zap.Error(err))
+		e.logger.Error("failed to make dir", zap.String("import_dir", importDir), zap.Error(err))
 		return "", errors.Trace(err)
 	}
-	e.logger.Info("sort dir prepared", zap.String("path", sortPath))
-	return sortPath, nil
+	e.logger.Info("import dir prepared", zap.String("import_dir", importDir), zap.String("sort_dir", sortDir))
+	return sortDir, nil
 }
 
 // GetTiKVModeSwitcher creates a new TiKV mode switcher.
@@ -124,7 +125,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 
 	tidbCfg := tidb.GetGlobalConfig()
 	// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
-	dir, err := prepareSortDir(e, taskID)
+	dir, err := prepareSortDir(e, taskID, tidbCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -156,9 +157,8 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
-		// todo: local backend report error when the sort-dir already exists & checkpoint disabled.
-		// set to false when we fix it.
-		CheckpointEnabled:       true,
+		// enable after we support checkpoint
+		CheckpointEnabled:       false,
 		MemTableSize:            config.DefaultEngineMemCacheSize,
 		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
 		ShouldCheckTiKV:         true,
