@@ -25,7 +25,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -75,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/gctuner"
+	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -125,7 +125,7 @@ type Domain struct {
 	infoCache       *infoschema.InfoCache
 	privHandle      *privileges.Handle
 	bindHandle      atomic.Pointer[bindinfo.BindHandle]
-	statsHandle     unsafe.Pointer
+	statsHandle     atomic.Pointer[handle.Handle]
 	statsLease      time.Duration
 	ddl             ddl.DDL
 	info            *infosync.InfoSyncer
@@ -162,8 +162,10 @@ type Domain struct {
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
-	onClose              func()
-	sysExecutorFactory   func(*Domain) (pools.Resource, error)
+	connIDAllocator      globalconn.Allocator
+
+	onClose            func()
+	sysExecutorFactory func(*Domain) (pools.Resource, error)
 
 	sysProcesses SysProcesses
 
@@ -1141,6 +1143,8 @@ func (do *Domain) Init(
 	}
 
 	if config.GetGlobalConfig().EnableGlobalKill {
+		do.connIDAllocator = globalconn.NewGlobalAllocator(do.ServerID)
+
 		if do.etcdClient != nil {
 			err := do.acquireServerID(ctx)
 			if err != nil {
@@ -1156,6 +1160,8 @@ func (do *Domain) Init(
 			// set serverID for standalone deployment to enable 'KILL'.
 			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
 		}
+	} else {
+		do.connIDAllocator = globalconn.NewSimpleAllocator()
 	}
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
@@ -1509,6 +1515,7 @@ func (p *sessionPool) Put(resource pools.Resource) {
 		resource.Close()
 	}
 }
+
 func (p *sessionPool) Close() {
 	p.mu.Lock()
 	if p.mu.closed {
@@ -2061,16 +2068,16 @@ func (do *Domain) StartHistoricalStatsWorker() {
 
 // StatsHandle returns the statistic handle.
 func (do *Domain) StatsHandle() *handle.Handle {
-	return (*handle.Handle)(atomic.LoadPointer(&do.statsHandle))
+	return do.statsHandle.Load()
 }
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
+	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
 	if err != nil {
 		return err
 	}
-	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(h))
+	do.statsHandle.Store(h)
 	return nil
 }
 
@@ -2142,11 +2149,11 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
+	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
 	if err != nil {
 		return err
 	}
-	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
+	do.statsHandle.Store(statsHandle)
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
@@ -2159,6 +2166,8 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		}, "syncIndexUsageWorker")
 	}
 	if do.statsLease <= 0 {
+		// For statsLease > 0, `updateStatsWorker` handles the quit of stats owner.
+		do.wg.Run(func() { quitStatsOwner(do, owner) }, "quitStatsOwner")
 		return nil
 	}
 	do.SetStatsUpdating(true)
@@ -2166,6 +2175,11 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.wg.Run(func() { do.autoAnalyzeWorker(owner) }, "autoAnalyzeWorker")
 	do.wg.Run(func() { do.gcAnalyzeHistory(owner) }, "gcAnalyzeHistory")
 	return nil
+}
+
+func quitStatsOwner(do *Domain, mgr owner.Manager) {
+	<-do.exit
+	mgr.Cancel()
 }
 
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
@@ -2182,7 +2196,7 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
 	var statsOwner owner.Manager
 	if do.etcdClient == nil {
-		statsOwner = owner.NewMockManager(context.Background(), id)
+		statsOwner = owner.NewMockManager(context.Background(), id, do.store, ownerKey)
 	} else {
 		statsOwner = owner.NewOwnerManager(context.Background(), do.etcdClient, prompt, id, ownerKey)
 	}
@@ -2532,12 +2546,31 @@ func (do *Domain) IsLostConnectionToPD() bool {
 	return do.isLostConnectionToPD.Load() != 0
 }
 
+// NextConnID return next connection ID.
+func (do *Domain) NextConnID() uint64 {
+	return do.connIDAllocator.NextID()
+}
+
+// ReleaseConnID releases connection ID.
+func (do *Domain) ReleaseConnID(connID uint64) {
+	do.connIDAllocator.Release(connID)
+}
+
+// GetAutoAnalyzeProcID returns processID for auto analyze
+// TODO: support IDs for concurrent auto-analyze
+func (do *Domain) GetAutoAnalyzeProcID() uint64 {
+	return do.connIDAllocator.GetReservedConnID(reservedConnAnalyze)
+}
+
 const (
 	serverIDEtcdPath               = "/tidb/server_id"
 	refreshServerIDRetryCnt        = 3
 	acquireServerIDRetryInterval   = 300 * time.Millisecond
 	acquireServerIDTimeout         = 10 * time.Second
 	retrieveServerIDSessionTimeout = 10 * time.Second
+
+	// reservedConnXXX must be within [0, globalconn.ReservedCount)
+	reservedConnAnalyze = 0
 )
 
 var (
@@ -2631,8 +2664,8 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 	}
 
 	for {
-		// get a random serverID: [1, MaxServerID]
-		randServerID := rand.Int63n(int64(util.MaxServerID)) + 1 // #nosec G404
+		// get a random serverID: [1, MaxServerID64]
+		randServerID := rand.Int63n(int64(globalconn.MaxServerID64)) + 1 // #nosec G404
 		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, randServerID)
 		cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
 		value := "0"

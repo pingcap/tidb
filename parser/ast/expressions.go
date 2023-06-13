@@ -582,7 +582,7 @@ func (n *ColumnNameExpr) Restore(ctx *format.RestoreCtx) error {
 
 // Format the ExprNode into a Writer.
 func (n *ColumnNameExpr) Format(w io.Writer) {
-	name := strings.Replace(n.Name.String(), ".", "`.`", -1)
+	name := strings.ReplaceAll(n.Name.String(), ".", "`.`")
 	fmt.Fprintf(w, "`%s`", name)
 }
 

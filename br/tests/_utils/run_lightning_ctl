@@ -24,7 +24,7 @@ bin/tidb-lightning-ctl.test -test.coverprofile="$TEST_DIR/cov.ctl.$TEST_NAME.$$.
     --tidb-port 4000 \
     --pd-urls '127.0.0.1:2379' \
     -d "tests/$TEST_NAME/data" \
-    --sorted-kv-dir "$TEST_DIR/sorted" \
+    --sorted-kv-dir "$TEST_DIR/$TEST_NAME.sorted" \
     --enable-checkpoint=0 \
     --check-requirements=0 \
     "$@"
