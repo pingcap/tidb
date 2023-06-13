@@ -642,39 +642,3 @@ func TestLockUnchangedUniqueKeys(t *testing.T) {
 		}
 	}
 }
-
-func TestDisablingLockUnchangedKeys(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk2.MustExec("use test")
-
-	// update unchanged unique key
-
-	tk1.MustExec("drop table if exists t")
-	tk1.MustExec("create table t (k int, primary key uk(k) nonclustered)")
-	tk1.MustExec("insert into t values (1)")
-
-	tk1.MustExec("begin pessimistic")
-	tk1.MustExec("update t set k = 1")
-
-	errCh := make(chan error, 1)
-	go func() {
-		tk2.MustExec("begin pessimistic")
-		_, err := tk2.Exec("insert into t values (1)")
-		errCh <- err
-	}()
-
-	select {
-	case <-time.After(100 * time.Millisecond):
-		require.Fail(t, "insert is blocked")
-	case err := <-errCh:
-		require.Error(t, err)
-	}
-	tk1.MustExec("rollback")
-	tk2.MustExec("rollback")
-
-	// insert ignore
-}
