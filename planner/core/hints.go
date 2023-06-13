@@ -56,23 +56,9 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 }
 
 // GenHintsFromPhysicalPlan generates hints from physical plan.
-// Deprecated: FlattenPhysicalPlan() + GenHintsFromFlatPlan() is preferred.
 func GenHintsFromPhysicalPlan(p Plan) []*ast.TableOptimizerHint {
-	var hints []*ast.TableOptimizerHint
-	switch pp := p.(type) {
-	case *Explain:
-		return GenHintsFromPhysicalPlan(pp.TargetPlan)
-	case *Update:
-		hints = genHintsFromPhysicalPlan(pp.SelectPlan, utilhint.TypeUpdate)
-	case *Delete:
-		hints = genHintsFromPhysicalPlan(pp.SelectPlan, utilhint.TypeDelete)
-	// For Insert, we only generate hints that would be used in select query block.
-	case *Insert:
-		hints = genHintsFromPhysicalPlan(pp.SelectPlan, utilhint.TypeSelect)
-	case PhysicalPlan:
-		hints = genHintsFromPhysicalPlan(pp, utilhint.TypeSelect)
-	}
-	return hints
+	flat := FlattenPhysicalPlan(p, false)
+	return GenHintsFromFlatPlan(flat)
 }
 
 func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {

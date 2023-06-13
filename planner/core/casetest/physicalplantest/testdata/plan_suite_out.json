@@ -3141,17 +3141,17 @@
       {
         "SQL": "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
         "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->StreamAgg)->StreamAgg}->HashAgg",
-        "Hints": "use_index(@`sel_1` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), stream_agg(@`sel_2`), hash_agg(@`sel_1`)"
+        "Hints": "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` `f`), stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` `f`)"
       },
       {
         "SQL": "select /*+ STREAM_AGG(@sel_1), HASH_AGG(@qb) */ count(*) from t t1 where t1.a < (select /*+ QB_NAME(qb) */ count(*) from t t2 where t1.a > t2.a)",
         "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->HashAgg)->HashAgg}->StreamAgg",
-        "Hints": "use_index(@`sel_1` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), hash_agg(@`sel_2`), stream_agg(@`sel_1`)"
+        "Hints": "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` `f`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` `f`)"
       },
       {
         "SQL": "select /*+ HASH_AGG(@sel_2) */ a, (select count(*) from t t1 where t1.b > t.a) from t where b > (select b from t t2 where t2.b = t.a limit 1)",
         "Plan": "Apply{Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(test.t.b, test.t.a)])->Limit)->Limit}->TableReader(Table(t)->Sel([gt(test.t.b, test.t.a)])->HashAgg)->HashAgg}->Projection",
-        "Hints": "use_index(@`sel_1` `test`.`t` ), use_index(@`sel_3` `test`.`t2` ), use_index(@`sel_2` `test`.`t1` ), hash_agg(@`sel_2`)"
+        "Hints": "use_index(@`sel_1` `test`.`t` ), use_index(@`sel_3` `test`.`t2` ), limit_to_cop(@`sel_3`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t1` )"
       },
       {
         "SQL": "select /*+ HASH_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t1) */ t1.b, t2.a, t2.aa from t t1, (select t1.a as a, t2.a as aa from t t1, t t2) t2 where t1.a = t2.aa;",
@@ -3161,7 +3161,7 @@
       {
         "SQL": "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), MERGE_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b",
         "Plan": "MergeInnerJoin{TableReader(Table(t))->Sort->LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Sort}(test.t.b,test.t.b)->Projection",
-        "Hints": "use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` `f`), hash_join(@`sel_2` `test`.`t1`)"
+        "Hints": "use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_2` `test`.`t1`), use_index(@`sel_2` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` `f`)"
       }
     ]
   },
