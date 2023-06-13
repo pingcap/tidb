@@ -208,11 +208,23 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, storeType kv
 			QBName:   qbName,
 			HintName: model.NewCIStr(HintHashAgg),
 		})
+		if storeType == kv.TiKV {
+			res = append(res, &ast.TableOptimizerHint{
+				QBName:   qbName,
+				HintName: model.NewCIStr(HintAggToCop),
+			})
+		}
 	case *PhysicalStreamAgg:
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: model.NewCIStr(HintStreamAgg),
 		})
+		if storeType == kv.TiKV {
+			res = append(res, &ast.TableOptimizerHint{
+				QBName:   qbName,
+				HintName: model.NewCIStr(HintAggToCop),
+			})
+		}
 	case *PhysicalMergeJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintSMJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalHashJoin:

@@ -914,11 +914,11 @@ func TestQuickBinding(t *testing.T) {
 		{`select /*+ use_index(t2) */ * from t2 where a=? and b=?`, "use_index(@`sel_1` `test`.`t2` )", nil},
 
 		// aggregation
-		{`select /*+ hash_agg(), use_index(t1, primary) */ count(*) from t1 where a<?`, "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
-		{`select /*+ hash_agg(), use_index(t1, primary) */ count(*), b from t1 where a<? group by b`, "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
-		{`select /*+ stream_agg(), use_index(t1, primary) */ count(*) from t1 where a<?`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
-		{`select /*+ stream_agg(), use_index(t1, primary) */ count(*), b from t1 where a<? group by b`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
-		{`select a+b+? from (select /*+ stream_agg() */ count(*) as a from t1) tt1, (select /*+ hash_agg() */ count(*) as b from t1) tt2`, "stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t1` `k_a`), hash_agg(@`sel_3`), use_index(@`sel_3` `test`.`t1` `k_a`)", nil},
+		{`select /*+ hash_agg(), use_index(t1, primary), agg_to_cop() */ count(*) from t1 where a<?`, "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), agg_to_cop(@`sel_1`)", nil},
+		{`select /*+ hash_agg(), use_index(t1, primary), agg_to_cop() */ count(*), b from t1 where a<? group by b`, "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), agg_to_cop(@`sel_1`)", nil},
+		{`select /*+ stream_agg(), use_index(t1, primary), agg_to_cop() */ count(*) from t1 where a<?`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), agg_to_cop(@`sel_1`)", nil},
+		{`select /*+ stream_agg(), use_index(t1, primary), agg_to_cop() */ count(*), b from t1 where a<? group by b`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` )", nil},
+		{`select a+b+? from (select /*+ stream_agg() */ count(*) as a from t1) tt1, (select /*+ hash_agg() */ count(*) as b from t1) tt2`, "stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t1` `k_a`), agg_to_cop(@`sel_2`), hash_agg(@`sel_3`), use_index(@`sel_3` `test`.`t1` `k_a`), agg_to_cop(@`sel_3`)", nil},
 
 		// 2-way hash joins
 		{`select /*+ hash_join(t1, t2), use_index(t1), use_index(t2) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
