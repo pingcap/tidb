@@ -384,8 +384,8 @@ func TestBindHints(t *testing.T) {
 	tk.MustExec("create global binding for select * from t using select /*+ resource_group(rg1) */ * from t")
 	tk.MustQuery("select * from t")
 	re.Equal("rg1", tk.Session().GetSessionVars().StmtCtx.ResourceGroup)
-	re.Equal("", tk.Session().GetSessionVars().ResourceGroupName)
+	re.Equal("default", tk.Session().GetSessionVars().ResourceGroupName)
 	tk.MustQuery("select a, b from t")
 	re.Equal("", tk.Session().GetSessionVars().StmtCtx.ResourceGroup)
-	re.Equal("", tk.Session().GetSessionVars().ResourceGroupName)
+	re.Equal("default", tk.Session().GetSessionVars().ResourceGroupName)
 }
