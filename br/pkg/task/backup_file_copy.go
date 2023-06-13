@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
+// Copyright 2023 PingCAP, Inc. Licensed under Apache-2.0.
 
 package task
 
@@ -198,7 +198,7 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 		return errors.Trace(err)
 	}
 
-	ranges, _, _, err := client.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, resolvedTs, true)
+	ranges, schemas, _, err := client.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, resolvedTs, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -270,6 +270,12 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 	}
 
 	err = metawriter.FinishWriteMetas(ctx, metautil.AppendDataFile)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = schemas.BackupSchemas(
+		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), nil, resolvedTs, 64, cfg.ChecksumConcurrency, true, updateCh)
 	if err != nil {
 		return errors.Trace(err)
 	}
