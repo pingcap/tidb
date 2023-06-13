@@ -407,21 +407,21 @@ func TestCursorDetachMemTracker(t *testing.T) {
 	// testkit also uses `PREPARE` related calls to run statement with arguments.
 	// format the SQL to avoid the interference from testkit.
 	tk.MustExec(fmt.Sprintf("set tidb_mem_quota_query=%d", maxConsumed/2))
-	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
 	// This query should exceed the memory limitation during `openExecutor`
 	require.Error(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
 		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
 	)))
-	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
 
 	// The next query should succeed
 	tk.MustExec(fmt.Sprintf("set tidb_mem_quota_query=%d", maxConsumed+1))
-	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
 	// This query should succeed
 	require.NoError(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
 		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
 	)))
-	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
 }
