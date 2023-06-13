@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "failtest_test",
+    name = "fail_test",
     timeout = "short",
     srcs = [
         "fail_db_test.go",

@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "tiflashtest_test",
+    name = "tiflash_test",
     timeout = "short",
     srcs = [
         "ddl_tiflash_test.go",
