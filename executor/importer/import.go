@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"math"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -36,6 +37,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	pformat "github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -53,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -66,9 +69,11 @@ const (
 	// DataFormatParquet represents the data source file of IMPORT INTO is parquet.
 	DataFormatParquet = "parquet"
 
+	// DefaultDiskQuota is the default disk quota for IMPORT INTO
+	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
+
 	// 0 means no limit
 	unlimitedWriteSpeed = config.ByteSize(0)
-	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
 
 	characterSetOption        = "character_set"
 	fieldsTerminatedByOption  = "fields_terminated_by"
@@ -84,7 +89,7 @@ const (
 	checksumTableOption       = "checksum_table"
 	analyzeTableOption        = "analyze_table"
 	recordErrorsOption        = "record_errors"
-	detachedOption            = plannercore.DetachedOption
+	detachedOption            = "detached"
 )
 
 var (
@@ -105,6 +110,17 @@ var (
 		analyzeTableOption:        true,
 		recordErrorsOption:        true,
 		detachedOption:            false,
+	}
+
+	csvOnlyOptions = map[string]struct{}{
+		characterSetOption:        {},
+		fieldsTerminatedByOption:  {},
+		fieldsEnclosedByOption:    {},
+		fieldsEscapedByOption:     {},
+		fieldsDefinedNullByOption: {},
+		linesTerminatedByOption:   {},
+		skipRowsOption:            {},
+		splitFileOption:           {},
 	}
 
 	// LoadDataReadBlockSize is exposed for test.
@@ -132,9 +148,10 @@ type LoadDataReaderInfo struct {
 
 // Plan describes the plan of LOAD DATA.
 type Plan struct {
-	DBName    string
-	DBID      int64
-	TableInfo *model.TableInfo
+	DBName           string
+	DBID             int64
+	TableInfo        *model.TableInfo
+	DesiredTableInfo *model.TableInfo
 
 	Path   string
 	Format string
@@ -171,6 +188,11 @@ type Plan struct {
 
 	// todo: remove it when load data code is reverted.
 	InImportInto bool
+	// only initialized for IMPORT INTO, used when creating job.
+	Parameters *ImportParameters `json:"-"`
+	// the user who executes the statement, in the form of user@host
+	// only initialized for IMPORT INTO
+	User string `json:"-"`
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -315,9 +337,10 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 	}
 
 	p := &Plan{
-		TableInfo: tbl.Meta(),
-		DBName:    plan.Table.Schema.O,
-		DBID:      plan.Table.DBInfo.ID,
+		TableInfo:        tbl.Meta(),
+		DesiredTableInfo: tbl.Meta(),
+		DBName:           plan.Table.Schema.O,
+		DBID:             plan.Table.DBInfo.ID,
 
 		Path:           plan.Path,
 		Format:         format,
@@ -330,8 +353,12 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 		InImportInto:           true,
+		User:                   userSctx.GetSessionVars().User.String(),
 	}
 	if err := p.initOptions(userSctx, plan.Options); err != nil {
+		return nil, err
+	}
+	if err := p.initParameters(plan); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -437,7 +464,6 @@ func (p *Plan) initDefaultOptions() {
 		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
 	}
 
-	_ = p.DiskQuota.UnmarshalText([]byte("50GiB")) // todo confirm with pm
 	p.Checksum = config.OpLevelRequired
 	p.Analyze = config.OpLevelOptional
 	p.ThreadCnt = int64(threadCnt)
@@ -466,6 +492,14 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 			return exeerrors.ErrDuplicateOption.FastGenByArgs(opt.Name)
 		}
 		specifiedOptions[opt.Name] = opt
+	}
+
+	if p.Format != DataFormatCSV {
+		for k := range csvOnlyOptions {
+			if _, ok := specifiedOptions[k]; ok {
+				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
+			}
+		}
 	}
 
 	optAsString := func(opt *plannercore.LoadDataOpt) (string, error) {
@@ -606,15 +640,59 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 }
 
 func (p *Plan) adjustOptions() {
-	if p.DiskQuota < minDiskQuota {
-		p.DiskQuota = minDiskQuota
-	}
 	// max value is cpu-count
 	numCPU := int64(runtime.NumCPU())
 	if p.ThreadCnt > numCPU {
 		log.L().Info("IMPORT INTO thread count is larger than cpu-count, set to cpu-count")
 		p.ThreadCnt = numCPU
 	}
+}
+
+func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
+	redactURL, err := storage.RedactURL(p.Path)
+	if err != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
+	}
+	var columnsAndVars, setClause string
+	var sb strings.Builder
+	formatCtx := pformat.NewRestoreCtx(pformat.DefaultRestoreFlags, &sb)
+	if len(plan.ColumnsAndUserVars) > 0 {
+		sb.WriteString("(")
+		for i, col := range plan.ColumnsAndUserVars {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			_ = col.Restore(formatCtx)
+		}
+		sb.WriteString(")")
+		columnsAndVars = sb.String()
+	}
+	if len(plan.ColumnAssignments) > 0 {
+		sb.Reset()
+		for i, assign := range plan.ColumnAssignments {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			_ = assign.Restore(formatCtx)
+		}
+		setClause = sb.String()
+	}
+	optionMap := make(map[string]interface{}, len(plan.Options))
+	for _, opt := range plan.Options {
+		if opt.Value != nil {
+			optionMap[opt.Name] = opt.Value.String()
+		} else {
+			optionMap[opt.Name] = nil
+		}
+	}
+	p.Parameters = &ImportParameters{
+		ColumnsAndVars: columnsAndVars,
+		SetClause:      setClause,
+		FileLocation:   redactURL,
+		Format:         p.Format,
+		Options:        optionMap,
+	}
+	return nil
 }
 
 // initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable
@@ -756,17 +834,41 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
 	}
-	path := strings.Trim(u.Path, "/")
-	u.Path = ""
+
+	var fileNameKey string
+	if storage.IsLocal(u) {
+		// LOAD DATA don't support server file.
+		if !e.InImportInto {
+			return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.Path)
+		}
+
+		if !filepath.IsAbs(e.Path) {
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("file location should be absolute path when import from server disk")
+		}
+		// we add this check for security, we don't want user import any sensitive system files,
+		// most of which is readable text file and don't have a suffix, such as /etc/passwd
+		if !slices.Contains([]string{".csv", ".sql", ".parquet"}, strings.ToLower(filepath.Ext(e.Path))) {
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("the file suffix is not supported when import from server disk")
+		}
+		dir := filepath.Dir(e.Path)
+		_, err := os.Stat(dir)
+		if err != nil {
+			// permission denied / file not exist error, etc.
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
+		}
+
+		fileNameKey = filepath.Base(e.Path)
+		u.Path = dir
+	} else {
+		fileNameKey = strings.Trim(u.Path, "/")
+		u.Path = ""
+	}
 	b, err2 := storage.ParseBackendFromURL(u, nil)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(GetMsgFromBRError(err2))
 	}
-	if b.GetLocal() != nil {
-		return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.Path)
-	}
 	// try to find pattern error in advance
-	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
+	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(fileNameKey), "")
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
 	}
@@ -782,13 +884,13 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	var totalSize int64
 	dataFiles := []*mydump.SourceFileMeta{}
-	idx := strings.IndexByte(path, '*')
-	// simple path when the INFILE represent one file
+	idx := strings.IndexByte(fileNameKey, '*')
+	// simple path when the path represent one file
 	sourceType := e.getSourceType()
 	if idx == -1 {
-		fileReader, err2 := s.Open(ctx, path)
+		fileReader, err2 := s.Open(ctx, fileNameKey)
 		if err2 != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the file location is correct")
 		}
 		defer func() {
 			terror.Log(fileReader.Close())
@@ -797,9 +899,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
 		}
-		compressTp := mydump.ParseCompressionOnFileExtension(path)
+		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		dataFiles = append(dataFiles, &mydump.SourceFileMeta{
-			Path:        path,
+			Path:        fileNameKey,
 			FileSize:    size,
 			Compression: compressTp,
 			Type:        sourceType,
@@ -809,10 +911,17 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		})
 		totalSize = size
 	} else {
-		commonPrefix := path[:idx]
+		var commonPrefix string
+		if !storage.IsLocal(u) {
+			// for local directory, we're walking the parent directory,
+			// so we don't have a common prefix as cloud storage do.
+			commonPrefix = fileNameKey[:idx]
+		}
+		// when import from server disk, all entries in parent directory should have READ
+		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
-		escapedPath := stringutil.EscapeGlobExceptAsterisk(path)
-		err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix},
+		escapedPath := stringutil.EscapeGlobExceptAsterisk(fileNameKey)
+		err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
 				//nolint: errcheck
@@ -832,7 +941,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				return nil
 			})
 		if err != nil {
-			return err
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err), "failed to walk dir")
 		}
 	}
 

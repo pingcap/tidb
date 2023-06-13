@@ -1781,17 +1781,26 @@ func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 	return duration.ParseDuration(t.JobInterval)
 }
 
-func writeSettingItemToBuilder(sb *strings.Builder, item string) {
+func writeSettingItemToBuilder(sb *strings.Builder, item string, separatorFns ...func()) {
 	if sb.Len() != 0 {
-		sb.WriteString(" ")
+		for _, fn := range separatorFns {
+			fn()
+		}
+		if len(separatorFns) == 0 {
+			sb.WriteString(" ")
+		}
 	}
 	sb.WriteString(item)
 }
-func writeSettingStringToBuilder(sb *strings.Builder, item string, value string) {
-	writeSettingItemToBuilder(sb, fmt.Sprintf("%s=\"%s\"", item, strings.ReplaceAll(value, "\"", "\\\"")))
+func writeSettingStringToBuilder(sb *strings.Builder, item string, value string, separatorFns ...func()) {
+	writeSettingItemToBuilder(sb, fmt.Sprintf("%s=\"%s\"", item, strings.ReplaceAll(value, "\"", "\\\"")), separatorFns...)
 }
-func writeSettingIntegerToBuilder(sb *strings.Builder, item string, value uint64) {
-	writeSettingItemToBuilder(sb, fmt.Sprintf("%s=%d", item, value))
+func writeSettingIntegerToBuilder(sb *strings.Builder, item string, value uint64, separatorFns ...func()) {
+	writeSettingItemToBuilder(sb, fmt.Sprintf("%s=%d", item, value), separatorFns...)
+}
+
+func writeSettingDurationToBuilder(sb *strings.Builder, item string, dur time.Duration, separatorFns ...func()) {
+	writeSettingStringToBuilder(sb, item, dur.String(), separatorFns...)
 }
 
 func (p *PlacementSettings) String() string {
@@ -1854,6 +1863,7 @@ type RunawayActionType int32
 
 //revive:disable:exported
 const (
+	// Note: RunawayActionNone is only defined in tidb, so take care of converting.
 	RunawayActionNone RunawayActionType = iota
 	RunawayActionDryRun
 	RunawayActionCooldown
@@ -1869,7 +1879,6 @@ const (
 	WatchSimilar
 )
 
-// RunawayWatchValueToName converts the runaway watch value to corresponding name
 func (t RunawayWatchType) String() string {
 	switch t {
 	case WatchExact:
@@ -1891,9 +1900,8 @@ const (
 	RunawayWatch
 )
 
-// RunawayActionValueToName converts the runaway action value to corresponding name
-func RunawayActionValueToName(value int32) string {
-	switch RunawayActionType(value) {
+func (t RunawayActionType) String() string {
+	switch t {
 	case RunawayActionDryRun:
 		return "DRYRUN"
 	case RunawayActionCooldown:
@@ -1901,7 +1909,7 @@ func RunawayActionValueToName(value int32) string {
 	case RunawayActionKill:
 		return "KILL"
 	default:
-		return "None"
+		return "DRYRUN"
 	}
 }
 
@@ -1913,10 +1921,10 @@ type ResourceGroupRefInfo struct {
 
 // ResourceGroupRunawaySettings is the runaway settings of the resource group
 type ResourceGroupRunawaySettings struct {
-	ExecElapsedTimeMs uint64 `json:"exec_elapsed_time_ms"`
-	Action            uint64 `json:"action"`
-	WatchType         uint64 `json:"watch_type"`
-	WatchDurationMs   uint64 `json:"watch_duration_ms"`
+	ExecElapsedTimeMs uint64            `json:"exec_elapsed_time_ms"`
+	Action            RunawayActionType `json:"action"`
+	WatchType         RunawayWatchType  `json:"watch_type"`
+	WatchDurationMs   uint64            `json:"watch_duration_ms"`
 }
 
 // ResourceGroupSettings is the settings of the resource group
@@ -1965,23 +1973,36 @@ const (
 
 func (p *ResourceGroupSettings) String() string {
 	sb := new(strings.Builder)
-	if p.RURate != 0 {
-		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate)
+	separatorFn := func() {
+		sb.WriteString(", ")
 	}
-	writeSettingItemToBuilder(sb, "PRIORITY="+PriorityValueToName(p.Priority))
+	if p.RURate != 0 {
+		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate, separatorFn)
+	}
+	writeSettingItemToBuilder(sb, "PRIORITY="+PriorityValueToName(p.Priority), separatorFn)
 	if len(p.CPULimiter) > 0 {
-		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter)
+		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter, separatorFn)
 	}
 	if len(p.IOReadBandwidth) > 0 {
-		writeSettingStringToBuilder(sb, "IO_READ_BANDWIDTH", p.IOReadBandwidth)
+		writeSettingStringToBuilder(sb, "IO_READ_BANDWIDTH", p.IOReadBandwidth, separatorFn)
 	}
 	if len(p.IOWriteBandwidth) > 0 {
-		writeSettingStringToBuilder(sb, "IO_WRITE_BANDWIDTH", p.IOWriteBandwidth)
+		writeSettingStringToBuilder(sb, "IO_WRITE_BANDWIDTH", p.IOWriteBandwidth, separatorFn)
 	}
 	// Once burst limit is negative, meaning allow burst with unlimit.
 	if p.BurstLimit < 0 {
-		writeSettingItemToBuilder(sb, "BURSTABLE")
+		writeSettingItemToBuilder(sb, "BURSTABLE", separatorFn)
 	}
+	if p.Runaway != nil {
+		writeSettingDurationToBuilder(sb, "QUERY_LIMIT=(EXEC_ELAPSED", time.Duration(p.Runaway.ExecElapsedTimeMs)*time.Millisecond, separatorFn)
+		writeSettingItemToBuilder(sb, "ACTION="+p.Runaway.Action.String())
+		if p.Runaway.WatchDurationMs > 0 {
+			writeSettingItemToBuilder(sb, "WATCH="+p.Runaway.WatchType.String())
+			writeSettingDurationToBuilder(sb, "DURATION", time.Duration(p.Runaway.WatchDurationMs)*time.Millisecond)
+		}
+		sb.WriteString(")")
+	}
+
 	return sb.String()
 }
 

@@ -506,6 +506,11 @@ error = '''
 system requirement not met
 '''
 
+["Lightning:PreDedup:ErrDuplicateKey"]
+error = '''
+duplicate key detected on indexID %d of KeyID: %v
+'''
+
 ["Lightning:Restore:ErrAddIndexFailed"]
 error = '''
 add index on table %s failed
@@ -1186,6 +1191,51 @@ error = '''
 Expression of expression index '%s' cannot refer to a row value
 '''
 
+["ddl:3812"]
+error = '''
+An expression of non-boolean type specified to a check constraint '%s'.
+'''
+
+["ddl:3813"]
+error = '''
+Column check constraint '%s' references other column.
+'''
+
+["ddl:3814"]
+error = '''
+An expression of a check constraint '%s' contains disallowed function: %s.
+'''
+
+["ddl:3815"]
+error = '''
+An expression of a check constraint '%s' contains disallowed function.
+'''
+
+["ddl:3816"]
+error = '''
+An expression of a check constraint '%s' cannot refer to a user or system variable.
+'''
+
+["ddl:3818"]
+error = '''
+Check constraint '%s' cannot refer to an auto-increment column.
+'''
+
+["ddl:3819"]
+error = '''
+Check constraint '%s' is violated.
+'''
+
+["ddl:3820"]
+error = '''
+Check constraint '%s' refers to non-existing column '%s'.
+'''
+
+["ddl:3823"]
+error = '''
+Column '%s' cannot be used in a check constraint '%s': needed in a foreign key constraint referential action.
+'''
+
 ["ddl:3837"]
 error = '''
 Column '%s' has an expression index dependency and cannot be dropped or renamed
@@ -1194,6 +1244,16 @@ Column '%s' has an expression index dependency and cannot be dropped or renamed
 ["ddl:3855"]
 error = '''
 Column '%s' has a partitioning function dependency and cannot be dropped or renamed
+'''
+
+["ddl:3940"]
+error = '''
+Constraint '%s' does not exist.
+'''
+
+["ddl:3959"]
+error = '''
+Check constraint '%s' uses column '%s', hence column cannot be dropped or renamed.
 '''
 
 ["ddl:4135"]
@@ -1723,7 +1783,7 @@ The FORMAT '%s' is not supported
 
 ["executor:8158"]
 error = '''
-The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'
+The URI of file location is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'
 '''
 
 ["executor:8159"]
@@ -1758,7 +1818,7 @@ Option %s specified more than once
 
 ["executor:8166"]
 error = '''
-Unsupported option %s for %s import mode
+Unsupported option %s for %s
 '''
 
 ["executor:8170"]
@@ -2376,6 +2436,16 @@ error = '''
 Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition
 '''
 
+["planner:3601"]
+error = '''
+Too many arguments for function %s; maximum allowed is %d
+'''
+
+["planner:3602"]
+error = '''
+Argument %s of GROUPING function is not in GROUP BY
+'''
+
 ["planner:3637"]
 error = '''
 Variable '%s' cannot be set using SET_VAR hint.
@@ -2641,6 +2711,11 @@ error = '''
 Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.
 '''
 
+["schema:3822"]
+error = '''
+Duplicate check constraint name '%s'.
+'''
+
 ["schema:4139"]
 error = '''
 Unknown SEQUENCE: '%-.300s'
@@ -2764,6 +2839,11 @@ Unknown partition '%-.64s' in table '%-.64s'
 ["table:1748"]
 error = '''
 Found a row not matching the given partition set
+'''
+
+["table:3819"]
+error = '''
+Check constraint '%s' is violated.
 '''
 
 ["table:4135"]

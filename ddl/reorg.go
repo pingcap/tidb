@@ -172,11 +172,10 @@ func deleteETCDRowCntStatIfNecessary(ctx context.Context, reorgInfo *reorgInfo, 
 		const retryCnt = 3
 		for i := 0; i < retryCnt; i++ {
 			_, err := client.Delete(ctx, path, clientv3.WithPrefix())
-			if err != nil {
-				logutil.BgLogger().Warn("[ddl] delete row count from ETCD failed", zap.Error(err))
-			} else {
+			if err == nil {
 				return
 			}
+			logutil.BgLogger().Warn("[ddl] delete row count from ETCD failed", zap.Error(err))
 		}
 	}
 }

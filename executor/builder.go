@@ -827,7 +827,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		GlobalScope:           v.GlobalScope,
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
-		LoadDataJobID:         v.LoadDataJobID,
+		ImportJobID:           v.ImportJobID,
 	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
@@ -877,6 +877,12 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 		}
 	case *ast.LoadDataActionStmt:
 		return &LoadDataActionExec{
+			baseExecutor: newBaseExecutor(b.ctx, nil, 0),
+			tp:           s.Tp,
+			jobID:        s.JobID,
+		}
+	case *ast.ImportIntoActionStmt:
+		return &ImportIntoActionExec{
 			baseExecutor: newBaseExecutor(b.ctx, nil, 0),
 			tp:           s.Tp,
 			jobID:        s.JobID,
@@ -934,7 +940,6 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		Table:                     v.Table,
 		Columns:                   v.Columns,
 		Lists:                     v.Lists,
-		SetList:                   v.SetList,
 		GenExprs:                  v.GenCols.Exprs,
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		hasRefCols:                v.NeedFillDefaultValue,
@@ -4276,6 +4281,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 					locateKey[keyColOffsets[i]] = data
 				}
 				p, err := pt.GetPartitionByRow(e.ctx, locateKey)
+				if table.ErrNoPartitionForGivenValue.Equal(err) {
+					continue
+				}
 				if err != nil {
 					return nil, err
 				}
@@ -4320,6 +4328,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				locateKey[keyColOffsets[i]] = data
 			}
 			p, err := pt.GetPartitionByRow(e.ctx, locateKey)
+			if table.ErrNoPartitionForGivenValue.Equal(err) {
+				continue
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -5291,12 +5302,11 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 
 	tblInfo := v.TableInfo.Meta()
 	if tblInfo.TempTableType != model.TempTableNone {
-		if tblInfo.TempTableType == model.TempTableGlobal {
-			e.sampler = &emptySampler{}
-		} else {
+		if tblInfo.TempTableType != model.TempTableGlobal {
 			b.err = errors.New("TABLESAMPLE clause can not be applied to local temporary tables")
 			return nil
 		}
+		e.sampler = &emptySampler{}
 	} else if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
 		e.sampler = newTableRegionSampler(
 			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),

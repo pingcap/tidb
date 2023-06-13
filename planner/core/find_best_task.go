@@ -809,16 +809,15 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		if path.IsTablePath() {
 			currentCandidate = ds.getTableCandidate(path, prop)
 		} else {
-			if len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan {
-				// We will use index to generate physical plan if any of the following conditions is satisfied:
-				// 1. This path's access cond is not nil.
-				// 2. We have a non-empty prop to match.
-				// 3. This index is forced to choose.
-				// 4. The needed columns are all covered by index columns(and handleCol).
-				currentCandidate = ds.getIndexCandidate(path, prop)
-			} else {
+			if !(len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan) {
 				continue
 			}
+			// We will use index to generate physical plan if any of the following conditions is satisfied:
+			// 1. This path's access cond is not nil.
+			// 2. We have a non-empty prop to match.
+			// 3. This index is forced to choose.
+			// 4. The needed columns are all covered by index columns(and handleCol).
+			currentCandidate = ds.getIndexCandidate(path, prop)
 		}
 		pruned := false
 		for i := len(candidates) - 1; i >= 0; i-- {
@@ -1635,6 +1634,12 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	}
 	if candidate.isMatchProp {
 		cop.keepOrder = true
+		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
+			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
+			cop.extraHandleCol = col
+			cop.needExtraProj = cop.needExtraProj || isNew
+		}
+
 		if ds.tableInfo.GetPartitionInfo() != nil {
 			// Add sort items for index scan for merge-sort operation between partitions.
 			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
@@ -1645,20 +1650,25 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 				})
 			}
 			cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
-			if !is.Index.Global && cop.tablePlan != nil && ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-				is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
-				is.schema.Append(&expression.Column{
+			if cop.tablePlan != nil && ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+				if !is.Index.Global {
+					is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
+					is.schema.Append(&expression.Column{
+						RetType:  types.NewFieldType(mysql.TypeLonglong),
+						UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+						ID:       model.ExtraPhysTblID,
+					})
+				}
+				// global index for tableScan with keepOrder also need PhysicalTblID
+				ts := cop.tablePlan.(*PhysicalTableScan)
+				ts.Columns = append(ts.Columns, model.NewExtraPhysTblIDColInfo())
+				ts.schema.Append(&expression.Column{
 					RetType:  types.NewFieldType(mysql.TypeLonglong),
 					UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 					ID:       model.ExtraPhysTblID,
 				})
+				cop.needExtraProj = true
 			}
-		}
-
-		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
-			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
-			cop.extraHandleCol = col
-			cop.needExtraProj = cop.needExtraProj || isNew
 		}
 	}
 	if cop.needExtraProj {

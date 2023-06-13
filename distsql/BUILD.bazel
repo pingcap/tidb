@@ -48,7 +48,6 @@ go_library(
         "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
         "@org_golang_google_grpc//metadata",
         "@org_golang_x_exp//maps",
-        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -68,6 +67,7 @@ go_test(
     race = "on",
     shard_count = 23,
     deps = [
+        "//domain/resourcegroup",
         "//kv",
         "//parser/charset",
         "//parser/mysql",
