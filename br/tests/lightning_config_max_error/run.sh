@@ -89,8 +89,8 @@ run_sql 'SELECT * FROM lightning_task_info.conflict_error_v2 WHERE offset = 149'
 check_contains "error: Error 1062 (23000): Duplicate entry '5' for key 'testtbl.PRIMARY'"
 check_contains "row_data: ('5','bbb05')"
 
-# Check max-error-record
+# Check max-error-record can limit the size of conflict_error_v2 table
 run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
-run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml"
-
-read -p 123
+run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep "\`lightning_task_info\`.\`conflict_error_v2\`" | grep -q "15"
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v2'
+check_contains "COUNT(*): 1"
