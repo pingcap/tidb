@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -846,7 +846,6 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		aliveStores               []*tikv.Store
 		aliveStoreIDsInTiDBZone   map[uint64]struct{}
 		maxRemoteReadCountAllowed int
-		regionsInOtherZones       []uint64
 	)
 	for {
 		var tasks []*copTask
@@ -868,7 +867,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			}
 		}
 
-		if isMPP && !nodeSelectionPolicy.IsPolicyAllReplicas() && isTiDBLabelZoneSet {
+		if !nodeSelectionPolicy.IsPolicyAllReplicas() && isTiDBLabelZoneSet {
 			allTiflashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 			aliveStores = filterAliveStores(bo.GetCtx(), allTiflashStores, ttl, store)
 			aliveStoreIDsInTiDBZone = make(map[uint64]struct{}, len(aliveStores))
@@ -883,7 +882,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			}
 		}
 		var batchTasks []*batchCopTask
-
+		var regionsInOtherZones []uint64
 		storeTaskMap := make(map[string]*batchCopTask)
 		needRetry := false
 		for _, task := range tasks {
