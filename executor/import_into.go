@@ -95,8 +95,14 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 
-	sqlExec := e.userSctx.(sqlexec.SQLExecutor)
-	if err2 := e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
+	// must use a new session to pre-check, else the stmt in show processlist will be changed.
+	newSCtx, err2 := CreateSession(e.userSctx)
+	if err2 != nil {
+		return err2
+	}
+	defer CloseSession(newSCtx)
+	sqlExec := newSCtx.(sqlexec.SQLExecutor)
+	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
 		return err2
 	}
 
