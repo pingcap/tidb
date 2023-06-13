@@ -14,6 +14,8 @@
 package ast
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
@@ -2076,6 +2078,8 @@ type ImportIntoStmt struct {
 	Options            []*LoadDataOpt
 }
 
+var _ SensitiveStmtNode = &ImportIntoStmt{}
+
 // Restore implements Node interface.
 func (n *ImportIntoStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("IMPORT INTO ")
@@ -2159,6 +2163,14 @@ func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
 		n.ColumnAssignments[i] = node.(*Assignment)
 	}
 	return v.Leave(n)
+}
+
+func (n *ImportIntoStmt) SecureText() string {
+	redactedStmt := *n
+	redactedStmt.Path = RedactURL(n.Path)
+	var sb strings.Builder
+	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	return sb.String()
 }
 
 // CallStmt represents a call procedure query node.

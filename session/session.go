@@ -90,7 +90,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/dbutil"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -2171,11 +2170,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 
-	redactedSQL := dbutil.GetRedactedSQL(stmtNode)
-
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
 	s.currentPlan = nil // reset current plan
-	s.SetProcessInfo(redactedSQL, time.Now(), cmdByte, 0)
+	s.SetProcessInfo(stmtNode.Text(), time.Now(), cmdByte, 0)
 	s.txn.onStmtStart(digest.String())
 	defer sessiontxn.GetTxnManager(s).OnStmtEnd()
 	defer s.txn.onStmtEnd()
@@ -3835,7 +3832,7 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
 		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
-		*ast.RenameUserStmt:
+		*ast.RenameUserStmt, *ast.ImportIntoStmt:
 		user := vars.User
 		schemaVersion := s.GetInfoSchema().SchemaMetaVersion()
 		if ss, ok := execStmt.StmtNode.(ast.SensitiveStmtNode); ok {

@@ -16,12 +16,8 @@ package dbutil
 
 import (
 	"database/sql"
-	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/format"
 )
 
 // ScanRowsToInterfaces scans rows to interface array.
@@ -79,24 +75,4 @@ func ScanRow(rows *sql.Rows) (map[string]*ColumnData, error) {
 	}
 
 	return result, nil
-}
-
-// GetRedactedSQL returns the redacted SQL of the stmtNode.
-func GetRedactedSQL(stmtNode ast.StmtNode) string {
-	if st, ok := stmtNode.(*ast.ImportIntoStmt); ok {
-		newNode := *st
-		// path might contain sensitive information, redact it
-		// if there's err during parsing, just use the original path
-		if redactURL, err := storage.RedactURL(newNode.Path); err != nil {
-			return newNode.Text()
-		} else {
-			newNode.Path = redactURL
-		}
-		var sb strings.Builder
-		if err := newNode.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)); err != nil {
-			return newNode.Text()
-		}
-		return sb.String()
-	}
-	return stmtNode.Text()
 }

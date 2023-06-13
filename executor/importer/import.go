@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -26,6 +27,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -649,10 +651,7 @@ func (p *Plan) adjustOptions() {
 }
 
 func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
-	redactURL, err := storage.RedactURL(p.Path)
-	if err != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
-	}
+	redactURL := redactURLWrapper(p.Path)
 	var columnsAndVars, setClause string
 	var sb strings.Builder
 	formatCtx := pformat.NewRestoreCtx(pformat.DefaultRestoreFlags, &sb)
@@ -1148,6 +1147,20 @@ func GetMsgFromBRError(err error) string {
 		return raw
 	}
 	return raw[:len(raw)-len(berrMsg)-len(": ")]
+}
+
+func redactURLWrapper(str string) string {
+	failpoint.Inject("forceRedactURL", func() {
+		// in test, we use gcs, to test s3 redact, we change its schema to s3.
+		u, _ := url.Parse(str)
+		bakSchema := u.Scheme
+		u.Scheme = "s3"
+		res := ast.RedactURL(str)
+		u, _ = url.Parse(res)
+		u.Scheme = bakSchema
+		failpoint.Return(u.String())
+	})
+	return ast.RedactURL(str)
 }
 
 // TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
