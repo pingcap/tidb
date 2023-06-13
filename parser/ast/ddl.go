@@ -14,6 +14,9 @@
 package ast
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
@@ -2160,11 +2163,14 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
 		case ResourceBurstableOpiton:
-			ctx.WriteKeyWord("BURSTABLE")
+			ctx.WriteKeyWord("BURSTABLE ")
+			ctx.WritePlain("= ")
+			ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", n.BoolValue)))
 		case ResourceGroupRunaway:
+			ctx.WritePlain("QUERY_LIMIT ")
+			ctx.WritePlain("= ")
 			if len(n.ResourceGroupRunawayOptionList) > 0 {
-				ctx.WriteKeyWord("QUERY_LIMIT")
-				ctx.WritePlain(" = (")
+				ctx.WritePlain("(")
 				for i, option := range n.ResourceGroupRunawayOptionList {
 					if i > 0 {
 						ctx.WritePlain(" ")
@@ -2174,6 +2180,8 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 					}
 				}
 				ctx.WritePlain(")")
+			} else {
+				ctx.WritePlain("NULL")
 			}
 		default:
 			return errors.Errorf("invalid ResourceGroupOption: %d", n.Tp)
