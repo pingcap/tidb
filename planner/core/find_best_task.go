@@ -2191,7 +2191,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
 	isTiFlashPath := ts.StoreType == kv.TiFlash
-	canMppConvertToRoot := prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed()
+	canMppConvertToRoot := prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed() && isTiFlashPath
 	if prop.TaskTp == property.MppTaskType || canMppConvertToRoot {
 		if ts.KeepOrder {
 			return invalidTask, nil
