@@ -139,7 +139,6 @@ type MPPDispatchRequest struct {
 	Data    []byte      // data encodes the dag coprocessor request.
 	Meta    MPPTaskMeta // mpp store is the location of tiflash store.
 	IsRoot  bool        // root task returns data to tidb directly.
-	ReceivedReport bool	// if received ReportStatus from mpp task
 	Timeout uint64      // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
 	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
 	SchemaVar  int64

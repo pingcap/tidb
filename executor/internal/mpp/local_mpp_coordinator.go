@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	//"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -85,7 +86,15 @@ func (m *mppResponse) MemSize() int64 {
 }
 
 func (m *mppResponse) RespTime() time.Duration {
+	logutil.BgLogger().Info("MPPResponseTime", zap.String("Value", m.respTime.String()))
 	return m.respTime
+}
+
+type mppRequestReport struct {
+	mppReq	*kv.MPPDispatchRequest
+	receivedReport bool	// if received ReportStatus from mpp task
+	errMsg	string
+	executionSummaries []*tipb.ExecutorExecutionSummary
 }
 
 // localMppCoordinator stands for constructing and dispatching mpp tasks in local tidb server, since these work might be done remotely too
@@ -93,6 +102,7 @@ type localMppCoordinator struct {
 	sessionCtx   sessionctx.Context
 	is           infoschema.InfoSchema
 	originalPlan plannercore.PhysicalPlan
+	planIDs	[]int
 	startTS      uint64
 	mppQueryID   kv.MPPQueryID
 	gatherID     uint64
@@ -102,6 +112,8 @@ type localMppCoordinator struct {
 	finishCh chan struct{}
 
 	respChan chan *mppResponse
+
+	reportStatusCh chan struct{}
 
 	cancelFunc context.CancelFunc
 
@@ -114,22 +126,22 @@ type localMppCoordinator struct {
 
 	needTriggerFallback        bool
 	enableCollectExecutionInfo bool
-	firstErrMsg	string
-	reqMap	map[int64]*kv.MPPDispatchRequest
-	reportedReqCount int
-	usedRRU	float64
-
 	mu sync.Mutex
+	firstErrMsg	string
+	reqMap	map[int64]*mppRequestReport
+	reportedReqCount int
+	dispatchFailed	uint32
 
 	memTracker *memory.Tracker
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
-func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, memTracker *memory.Tracker) *localMppCoordinator {
+func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, memTracker *memory.Tracker) *localMppCoordinator {
 	coord := &localMppCoordinator{
 		sessionCtx:   sctx,
 		is:           is,
 		originalPlan: plan,
+		planIDs: planIDs,
 		startTS:      startTS,
 		mppQueryID:   mppQueryID,
 		gatherID:     gatherID,
@@ -137,9 +149,9 @@ func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, p
 		finishCh:     make(chan struct{}),
 		wgDoneChan:   make(chan struct{}),
 		respChan:     make(chan *mppResponse),
+		reportStatusCh: make(chan struct{}),
 		vars:         sctx.GetSessionVars().KVVars,
-		reqMap: make(map[int64]*kv.MPPDispatchRequest),
-		reportedReqCount: 0,
+		reqMap: make(map[int64]*mppRequestReport),
 	}
 	return coord
 }
@@ -197,7 +209,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			MppVersion: mppTask.MppVersion,
 			State:      kv.MppTaskReady,
 		}
-		c.reqMap[req.ID] = req
+		c.reqMap[req.ID] = &mppRequestReport{mppReq: req, receivedReport: false, errMsg: "", executionSummaries: nil}
 		c.mppReqs = append(c.mppReqs, req)
 	}
 	return nil
@@ -370,6 +382,7 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 
 	if err != nil {
 		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()))
+		atomic.CompareAndSwapUint32(&c.dispatchFailed, 0, 1)
 		// if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
 		if c.needTriggerFallback {
 			err = derr.ErrTiFlashServerTimeout
@@ -380,12 +393,14 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 
 	if rpcResp.Error != nil {
 		logutil.BgLogger().Error("mpp dispatch response meet error", zap.String("error", rpcResp.Error.Msg), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("task-mpp-version", req.MppVersion.ToInt64()), zap.Int64("error-mpp-version", rpcResp.Error.GetMppVersion()))
+		atomic.CompareAndSwapUint32(&c.dispatchFailed, 0, 1)
 		c.sendError(errors.New(rpcResp.Error.Msg))
 		return
 	}
 	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
 		if val.(bool) && !req.IsRoot {
 			time.Sleep(1 * time.Second)
+			atomic.CompareAndSwapUint32(&c.dispatchFailed, 0, 1)
 			c.sendError(derr.ErrTiFlashServerTimeout)
 			return
 		}
@@ -410,6 +425,7 @@ func (c *localMppCoordinator) cancelMppTasks() {
 }
 
 func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta, bo *backoff.Backoffer) {
+	logutil.BgLogger().Info("ReceiveResults", zap.Int64("ReqID", req.ID))
 	stream, err := c.sessionCtx.GetMPPClient().EstablishMPPConns(kv.EstablishMPPConnsParam{Ctx: bo.GetCtx(), Req: req, TaskMeta: taskMeta})
 	if err != nil {
 		// if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
@@ -471,18 +487,52 @@ func (c *localMppCoordinator) ReportStatus(info kv.MCStatusInfo) error {
 	if !exists {
 		return errors.Errorf("ReportStatus received missing taskID: %s", taskID)
 	}
-	if len(c.firstErrMsg) == 0 && len(errMsg) > 0 {
-		c.firstErrMsg = errMsg
-	}
-
-	// update resource consumption and report counter
-	if req.ReceivedReport {
+	if req.receivedReport {
 		return errors.Errorf("ReportStatus already received taskID: %s", taskID)
 	}
+
+	req.receivedReport = true
+	if len(errMsg) > 0 {
+		req.errMsg = errMsg
+		if len(c.firstErrMsg) == 0 {
+			c.firstErrMsg = errMsg
+		}
+	}
+
 	c.reportedReqCount++
-	rc := info.Request.ResourceConsumption
-	c.usedRRU += rc.RRU
+	/// collect execution summary
+
+	if c.reportedReqCount == len(c.mppReqs) {
+		close(c.reportStatusCh)
+	}
 	return nil
+}
+
+func (c *localMppCoordinator) handleAllReports() {
+	if atomic.LoadUint32(&c.dispatchFailed) == 0 {
+		select {
+		case <-c.reportStatusCh:
+			var recordedPlanIDs = make(map[int]int)
+			for _, report := range c.reqMap {
+				for _, detail := range report.executionSummaries {
+					if detail != nil && detail.TimeProcessedNs != nil &&
+						detail.NumProducedRows != nil && detail.NumIterations != nil {
+						recordedPlanIDs[c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+							RecordOneCopTask(-1, kv.TiFlash.Name(), report.mppReq.Meta.GetAddress(), detail)] = 0
+					}
+				}
+			}
+			num := uint64(0)
+			dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
+			for _, planID := range c.planIDs {
+				if _, ok := recordedPlanIDs[planID]; !ok {
+					c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneCopTask(planID, kv.TiFlash.Name(), "", dummySummary)
+				}
+			}
+		case <-time.After(3 * time.Second):
+			logutil.BgLogger().Info("Not received all reports within 3 seconds")
+		}
+	}
 }
 
 // Close and release the used resources.
@@ -493,7 +543,7 @@ func (c *localMppCoordinator) Close() error {
 	}
 	c.cancelFunc()
 	<-c.wgDoneChan
-	// wait until all ReportStatus received
+	c.handleAllReports()
 	return nil
 }
 
@@ -530,6 +580,17 @@ func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, res
 	}
 	resp.detail.CalleeAddress = req.Meta.GetAddress()
 
+	if response != nil {
+		logutil.BgLogger().Info("handleMPPStreamResponse", zap.Bool("Error", response.Error == nil))
+		logutil.BgLogger().Info("handleMPPStreamResponse", zap.Int("dataLength", len(response.Data)))
+		selectResp := new(tipb.SelectResponse)
+		err = selectResp.Unmarshal(resp.GetData())
+		if err == nil {
+			if selectResp.ExecutionSummaries != nil {
+				logutil.BgLogger().Info("handleMPPStreamResponse", zap.Int("ExecutionSummary", len(selectResp.ExecutionSummaries)))
+			}
+		}
+	}
 	c.sendToRespCh(resp)
 	return
 }
@@ -540,17 +601,22 @@ func (c *localMppCoordinator) nextImpl(ctx context.Context) (resp *mppResponse, 
 	for {
 		select {
 		case resp, ok = <-c.respChan:
+			logutil.BgLogger().Info("Normal read data")
 			return
 		case <-ticker.C:
 			if c.vars != nil && c.vars.Killed != nil && atomic.LoadUint32(c.vars.Killed) == 1 {
+				logutil.BgLogger().Info("TimeTicker and killed lead to next finished")
 				err = derr.ErrQueryInterrupted
 				exit = true
 				return
 			}
+			logutil.BgLogger().Info("TimeTicker lead to next finished")
 		case <-c.finishCh:
+			logutil.BgLogger().Info("FinishChannel lead to next finished")
 			exit = true
 			return
 		case <-ctx.Done():
+			logutil.BgLogger().Info("ContextDone lead to next finished")
 			if atomic.CompareAndSwapUint32(&c.closed, 0, 1) {
 				close(c.finishCh)
 			}
@@ -564,20 +630,27 @@ func (c *localMppCoordinator) nextImpl(ctx context.Context) (resp *mppResponse, 
 func (c *localMppCoordinator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	resp, ok, closed, err := c.nextImpl(ctx)
 	if err != nil {
+		// Kill path, no need and not easy to wait and collect execution summaries
 		return nil, errors.Trace(err)
 	}
 	if !ok || closed {
+		//EOF or coordinator closed, read until the channel is closed and no error reported
+		logutil.BgLogger().Info("NextPath 1", zap.Bool("ok", ok), zap.Bool("closed", closed))
 		return nil, nil
 	}
 
 	if resp.err != nil {
+		//TiFlash Exception
+		logutil.BgLogger().Info("NextPath 2")
 		return nil, errors.Trace(resp.err)
 	}
 
 	err = c.sessionCtx.GetMPPClient().CheckVisibility(c.startTS)
 	if err != nil {
-		return nil, errors.Trace(err)
+		// Data invisibility error, no need and not easy to wait and collect execution summaries
+		return nil, errors.Trace(derr.ErrQueryInterrupted)
 	}
+	logutil.BgLogger().Info("NextPath 4", zap.Bool("RespNil", resp == nil))
 	return resp, nil
 }
 

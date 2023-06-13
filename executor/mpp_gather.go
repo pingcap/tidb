@@ -81,20 +81,23 @@ func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 // Open builds coordinator and invoke coordinator's Execute function to execute physical plan
 // If any task fails, it would cancel the rest tasks.
 func (e *MPPGather) Open(ctx context.Context) (err error) {
-	coord := e.buildCoordinator()
+	planIDs := collectPlanIDS(e.originalPlan, nil)
+	coord := e.buildCoordinator(planIDs)
 	mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherId: uint64(e.id)}, coord)
 	resp, err := coord.Execute(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	planIDs := collectPlanIDS(e.originalPlan, nil)
+
 	e.respIter = distsql.GenSelectResultFromResponse(e.ctx, e.retFieldTypes, planIDs, e.id, resp)
+	time.Sleep(time.Second*2)
+	coord.Close()
 	return nil
 }
 
-func (e *MPPGather) buildCoordinator() kv.MppCoordinator {
-	coord := mpp.NewLocalMPPCoordinator(e.ctx, e.is, e.originalPlan, e.startTS, e.mppQueryID, uint64(e.id), e.memTracker)
+func (e *MPPGather) buildCoordinator(planIDs []int) kv.MppCoordinator {
+	coord := mpp.NewLocalMPPCoordinator(e.ctx, e.is, e.originalPlan, planIDs, e.startTS, e.mppQueryID, uint64(e.id), e.memTracker)
 	return coord
 }
 
@@ -115,6 +118,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (e *MPPGather) Close() error {
 	var err error
 	if e.respIter != nil {
+		e.respIter.Dummy()
 		err = e.respIter.Close()
 	}
 	if err != nil {
