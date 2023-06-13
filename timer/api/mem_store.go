@@ -34,7 +34,7 @@ type memoryStoreCore struct {
 	mu         sync.Mutex
 	namespaces map[string]map[string]*TimerRecord
 	id2Timers  map[string]*TimerRecord
-	watchers   []*memStoreWatcher
+	notifier   TimerWatchEventNotifier
 }
 
 // NewMemoryTimerStore creates a memory store for timers
@@ -43,6 +43,7 @@ func NewMemoryTimerStore() *TimerStore {
 		TimerStoreCore: &memoryStoreCore{
 			namespaces: make(map[string]map[string]*TimerRecord),
 			id2Timers:  make(map[string]*TimerRecord),
+			notifier:   NewMemTimerWatchEventNotifier(),
 		},
 	}
 }
@@ -50,6 +51,18 @@ func NewMemoryTimerStore() *TimerStore {
 func (s *memoryStoreCore) Create(_ context.Context, record *TimerRecord) (string, error) {
 	if record == nil {
 		return "", errors.New("timer should not be nil")
+	}
+
+	if record.ID != "" {
+		return "", errors.New("ID should not be specified when create record")
+	}
+
+	if record.Version != 0 {
+		return "", errors.New("Version should not be specified when create record")
+	}
+
+	if !record.CreateTime.IsZero() {
+		return "", errors.New("CreateTime should not be specified when create record")
 	}
 
 	if err := record.Validate(); err != nil {
@@ -60,21 +73,13 @@ func (s *memoryStoreCore) Create(_ context.Context, record *TimerRecord) (string
 	defer s.mu.Unlock()
 
 	record = record.Clone()
-	if record.ID == "" {
-		uid := uuid.New()
-		record.ID = hex.EncodeToString(uid[:])
-	}
-
-	if record.Version == 0 {
-		record.Version = 1
-	}
+	uid := uuid.New()
+	record.ID = hex.EncodeToString(uid[:])
+	record.Version = 1
+	record.CreateTime = time.Now()
 
 	if record.EventStatus == "" {
 		record.EventStatus = SchedEventIdle
-	}
-
-	if record.CreateTime.IsZero() {
-		record.CreateTime = time.Now()
 	}
 
 	if _, ok := s.id2Timers[record.ID]; ok {
@@ -93,11 +98,14 @@ func (s *memoryStoreCore) Create(_ context.Context, record *TimerRecord) (string
 
 	s.id2Timers[record.ID] = record
 	ns[record.Key] = record
-	s.notify(WatchTimerEventCreate, record.ID)
+	s.notifier.Notify(WatchTimerEventCreate, record.ID)
 	return record.ID, nil
 }
 
 func (s *memoryStoreCore) List(_ context.Context, cond Cond) ([]*TimerRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	result := make([]*TimerRecord, 0, 1)
 	for _, ns := range s.namespaces {
 		for _, t := range ns {
@@ -134,7 +142,7 @@ func (s *memoryStoreCore) Update(_ context.Context, timerID string, update *Time
 	newRecord.Version++
 	s.id2Timers[timerID] = newRecord
 	s.namespaces[record.Namespace][record.Key] = newRecord
-	s.notify(WatchTimerEventUpdate, timerID)
+	s.notifier.Notify(WatchTimerEventUpdate, timerID)
 	return nil
 }
 
@@ -152,7 +160,7 @@ func (s *memoryStoreCore) Delete(_ context.Context, timerID string) (bool, error
 	if len(ns) == 0 {
 		delete(s.namespaces, record.Namespace)
 	}
-	s.notify(WatchTimerEventDelete, timerID)
+	s.notifier.Notify(WatchTimerEventDelete, timerID)
 	return true, nil
 }
 
@@ -161,30 +169,67 @@ func (*memoryStoreCore) WatchSupported() bool {
 }
 
 func (s *memoryStoreCore) Watch(ctx context.Context) WatchTimerChan {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	return s.notifier.Watch(ctx)
+}
+
+func (s *memoryStoreCore) Close() {
+	s.notifier.Close()
+}
+
+type memTimerWatchEventNotifier struct {
+	mu       sync.Mutex
+	ctx      context.Context
+	wg       sync.WaitGroup
+	cancel   func()
+	watchers []*memStoreWatcher
+}
+
+// NewMemTimerWatchEventNotifier creates a notifier with memory implement
+func NewMemTimerWatchEventNotifier() TimerWatchEventNotifier {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &memTimerWatchEventNotifier{
+		ctx:      ctx,
+		cancel:   cancel,
+		watchers: make([]*memStoreWatcher, 0, 8),
+	}
+}
+
+func (n *memTimerWatchEventNotifier) Watch(ctx context.Context) WatchTimerChan {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	ch := make(chan WatchTimerResponse)
+	if n.cancel == nil {
+		close(ch)
+		return ch
+	}
+
 	watcher := &memStoreWatcher{
 		ctx: ctx,
 		ch:  make(chan WatchTimerResponse, 8),
 	}
-	s.watchers = append(s.watchers, watcher)
-	ch := make(chan WatchTimerResponse)
+	n.watchers = append(n.watchers, watcher)
+	n.wg.Add(1)
 	go func() {
 		defer func() {
-			s.mu.Lock()
-			defer s.mu.Unlock()
+			n.mu.Lock()
+			defer n.mu.Unlock()
 			close(ch)
-			if i := slices.Index(s.watchers, watcher); i >= 0 {
-				s.watchers = slices.Delete(s.watchers, i, i+1)
+			if i := slices.Index(n.watchers, watcher); i >= 0 {
+				n.watchers = slices.Delete(n.watchers, i, i+1)
 			}
+			n.wg.Done()
 		}()
 
 		for {
 			select {
+			case <-n.ctx.Done():
+				return
 			case <-ctx.Done():
 				return
 			case resp := <-watcher.ch:
 				select {
+				case <-n.ctx.Done():
+					return
 				case <-ctx.Done():
 					return
 				case ch <- resp:
@@ -195,7 +240,13 @@ func (s *memoryStoreCore) Watch(ctx context.Context) WatchTimerChan {
 	return ch
 }
 
-func (s *memoryStoreCore) notify(tp WatchTimerEventType, timerID string) {
+func (n *memTimerWatchEventNotifier) Notify(tp WatchTimerEventType, timerID string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.cancel == nil {
+		return
+	}
+
 	resp := WatchTimerResponse{
 		Events: []*WatchTimerEvent{
 			{
@@ -205,15 +256,21 @@ func (s *memoryStoreCore) notify(tp WatchTimerEventType, timerID string) {
 		},
 	}
 
-	for _, w := range s.watchers {
+	for _, w := range n.watchers {
 		select {
-		case <-w.ctx.Done():
+		case <-n.ctx.Done():
 			return
+		case <-w.ctx.Done():
+			continue
 		case w.ch <- resp:
 		default:
 			watcher := w
+			n.wg.Add(1)
 			go func() {
+				defer n.wg.Done()
 				select {
+				case <-n.ctx.Done():
+					return
 				case <-watcher.ctx.Done():
 					return
 				case watcher.ch <- resp:
@@ -221,4 +278,14 @@ func (s *memoryStoreCore) notify(tp WatchTimerEventType, timerID string) {
 			}()
 		}
 	}
+}
+
+func (n *memTimerWatchEventNotifier) Close() {
+	n.mu.Lock()
+	if n.cancel != nil {
+		n.cancel()
+		n.cancel = nil
+	}
+	n.mu.Unlock()
+	n.wg.Wait()
 }

@@ -88,7 +88,7 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
 	// enough for gs storage
 	sql := fmt.Sprintf(`import into t FROM 'gs://privilege-test/db.tbl.*.csv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
 	// works even SEM enabled
 	sem.Enable()
@@ -98,19 +98,20 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	s.tk.MustExec("truncate table t")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
 
 	sem.Disable()
 	// requires FILE for server file
 	importFromServerSQL := fmt.Sprintf("IMPORT INTO t FROM '%s'", filePath)
+	// NOTE: we must use ExecToErr instead of QueryToErr here, because QueryToErr will cause the case fail always.
 	s.True(terror.ErrorEqual(s.tk.ExecToErr(importFromServerSQL), core.ErrSpecificAccessDenied))
 
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	s.tk.MustExec(`GRANT FILE on *.* to 'test_import_into'@'localhost'`)
 	s.tk.MustExec("truncate table t")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
-	s.tk.MustExec(importFromServerSQL)
+	s.tk.MustQuery(importFromServerSQL)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
 }
 
@@ -210,7 +211,7 @@ func (s *mockGCSSuite) TestBasicImportInto() {
 		s.tk.MustExec("drop table if exists t;")
 		s.tk.MustExec(c.createTableSQL)
 		sql := fmt.Sprintf(loadDataSQL, c.flags)
-		s.tk.MustExec(sql)
+		s.tk.MustQuery(sql)
 		// todo: open it after we support it.
 		//s.Equal("Records: 6  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
 		//s.Equal(uint64(6), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
@@ -237,13 +238,13 @@ func (s *mockGCSSuite) TestInputNull() {
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/nil-input.tsv?endpoint=%s'
 		WITH fields_terminated_by='\t'`, gcsEndpoint)
-	s.tk.MustExec(loadDataSQL)
+	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 <nil> 11", "2 test2 22"}...))
 	// set to default on nil
 	s.tk.MustExec("truncate table t")
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t (a,@1,c) set b=COALESCE(@1, 'def')
 		FROM 'gs://test-multi-load/nil-input.tsv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint)
-	s.tk.MustExec(loadDataSQL)
+	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 def 11", "2 test2 22"}...))
 }
 
@@ -268,9 +269,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
 		with thread=1`, gcsEndpoint)
-	s.tk.MustExec(loadDataSQL)
-	s.Equal("Records: 9  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
-	s.Equal(uint64(9), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
 		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
@@ -278,9 +277,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	s.tk.MustExec("truncate table t")
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
 		with thread=1, skip_rows=1`, gcsEndpoint)
-	s.tk.MustExec(loadDataSQL)
-	s.Equal("Records: 7  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
-	s.Equal(uint64(7), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"2 test2 22", "3 test3 33", "4 test4 44",
 		"6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
@@ -288,9 +285,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	s.tk.MustExec("truncate table t")
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/skip-rows-*.csv?endpoint=%s'
 		with thread=1, skip_rows=3`, gcsEndpoint)
-	s.tk.MustExec(loadDataSQL)
-	s.Equal("Records: 3  Deleted: 0  Skipped: 0  Warnings: 0", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
-	s.Equal(uint64(3), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"4 test4 44",
 		"8 test8 88", "9 test9 99",
@@ -313,35 +308,35 @@ func (s *mockGCSSuite) TestGeneratedColumnsAndTSVFile() {
 		Content: []byte("1\t2\n2\t3"),
 	})
 
-	s.tk.MustExec(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1 
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 	s.tk.MustExec("delete from t_gen1")
 
 	// Specify the column, this should also work.
-	s.tk.MustExec(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a) 
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 	s.tk.MustExec("delete from t_gen1")
-	s.tk.MustExec(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a,@1) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a,@1) 
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 
 	// Swap the column and test again.
 	s.tk.MustExec(`create table t_gen2 (a int generated ALWAYS AS (b+1), b int);`)
-	s.tk.MustExec(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2 
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("3 2", "4 3"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column b
-	s.tk.MustExec(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(b) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(b) 
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("2 1", "3 2"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column a
-	s.tk.MustExec(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(a) 
+	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(a) 
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("<nil> <nil>", "<nil> <nil>"))
 }
@@ -360,13 +355,13 @@ func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/input-cnt-mismatch.csv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustExec(loadDataSQL)
+	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 test1 <nil>", "2 test2 22"}...))
 	// mapped column of the missed field has non-null default
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int default 100);")
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/input-cnt-mismatch.csv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustExec(loadDataSQL)
+	s.tk.MustQuery(loadDataSQL)
 	// we convert it to null all the time
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 test1 <nil>", "2 test2 22"}...))
 	// mapped column of the missed field set to a variable
@@ -374,7 +369,7 @@ func (s *mockGCSSuite) TestInputCountMisMatchAndDefault() {
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t(a,b,@1) set c=COALESCE(@1, 100)
 		FROM 'gs://test-multi-load/input-cnt-mismatch.csv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustExec(loadDataSQL)
+	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 test1 100", "2 test2 22"}...))
 }
 
@@ -400,7 +395,7 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 	bak := importer.MinDeliverBytes
 	importer.MinDeliverBytes = 10
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/min-deliver-bytes-rows.csv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustExec(loadDataSQL)
+	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
 		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
@@ -411,7 +406,7 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 	bakCnt := importer.MinDeliverRowCnt
 	importer.MinDeliverRowCnt = 2
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/min-deliver-bytes-rows.csv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustExec(loadDataSQL)
+	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
 		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
@@ -439,7 +434,7 @@ func (s *mockGCSSuite) TestMultiValueIndex() {
 
 	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-csv/1.csv?endpoint=%s'
 		WITH skip_rows=1;`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"1 [1, 2, 3]",
 		"2 [2, 3, 4]",
@@ -483,7 +478,7 @@ func (s *mockGCSSuite) TestMixedCompression() {
 
 	sql := fmt.Sprintf(`IMPORT INTO multi_load.t FROM 'gs://test-multi-load/compress.*?endpoint=%s'
 		WITH thread=1;`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"1 test1", "2 test2", "3 test3", "4 test4",
 		"5 test5", "6 test6", "7 test7", "8 test8", "9 test9",
@@ -493,7 +488,7 @@ func (s *mockGCSSuite) TestMixedCompression() {
 	s.tk.MustExec("truncate table multi_load.t")
 	sql = fmt.Sprintf(`IMPORT INTO multi_load.t FROM 'gs://test-multi-load/compress.*?endpoint=%s'
 		WITH skip_rows=3, thread=1;`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"4 test4",
 		"8 test8", "9 test9",
@@ -514,12 +509,12 @@ func (s *mockGCSSuite) TestLoadSQLDump() {
 	s.NoError(os.WriteFile(path.Join(tempDir, "test.sql"), []byte(content), 0o644))
 
 	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p?endpoint=%s' FORMAT 'SQL';`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
 
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s' FORMAT 'SQL';`, path.Join(tempDir, "test.sql"))
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
 }
 
@@ -554,14 +549,14 @@ func (s *mockGCSSuite) TestGBK() {
 
 	sql := fmt.Sprintf(`IMPORT INTO load_charset.gbk FROM 'gs://test-load/gbk.csv?endpoint=%s'
 		WITH character_set='gbk'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.gbk;").Check(testkit.Rows(
 		"1 一丁丂七丄丅丆万丈三上下丌不与丏",
 		"2 丐丑丒专且丕世丗丘丙业丛东丝丞丢",
 	))
 	sql = fmt.Sprintf(`IMPORT INTO load_charset.utf8mb4 FROM 'gs://test-load/gbk.csv?endpoint=%s'
 		WITH character_set='gbk'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.utf8mb4;").Check(testkit.Rows(
 		"1 一丁丂七丄丅丆万丈三上下丌不与丏",
 		"2 丐丑丒专且丕世丗丘丙业丛东丝丞丢",
@@ -579,7 +574,7 @@ func (s *mockGCSSuite) TestGBK() {
 	s.tk.MustExec("TRUNCATE TABLE load_charset.gbk;")
 	sql = fmt.Sprintf(`IMPORT INTO load_charset.gbk FROM 'gs://test-load/utf8mb4.csv?endpoint=%s'
 		WITH character_set='utf8mb4'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.gbk;").Check(testkit.Rows(
 		"1 一丁丂七丄丅丆万丈三上下丌不与丏",
 		"2 丐丑丒专且丕世丗丘丙业丛东丝丞丢",
@@ -597,7 +592,7 @@ func (s *mockGCSSuite) TestGBK() {
 	s.tk.MustExec("TRUNCATE TABLE load_charset.gbk;")
 	sql = fmt.Sprintf(`IMPORT INTO load_charset.gbk FROM 'gs://test-load/emoji.csv?endpoint=%s'
 		WITH character_set='utf8mb4'`, gcsEndpoint)
-	err := s.tk.ExecToErr(sql)
+	err := s.tk.QueryToErr(sql)
 	// FIXME: handle error
 	s.ErrorContains(err, `Incorrect string value '\xF0\x9F\x98\x80' for column 'j'`)
 }
@@ -622,14 +617,14 @@ func (s *mockGCSSuite) TestOtherCharset() {
 
 	sql := fmt.Sprintf(`IMPORT INTO load_charset.utf8 FROM 'gs://test-load/utf8.tsv?endpoint=%s'
 		 WITH character_set='utf8'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.utf8;").Check(testkit.Rows(
 		"1 ကခဂဃ",
 		"2 ငစဆဇ",
 	))
 	sql = fmt.Sprintf(`IMPORT INTO load_charset.utf8mb4 FROM 'gs://test-load/utf8.tsv?endpoint=%s'
 		 WITH character_set='utf8'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.utf8mb4;").Check(testkit.Rows(
 		"1 ကခဂဃ",
 		"2 ငစဆဇ",
@@ -648,7 +643,7 @@ func (s *mockGCSSuite) TestOtherCharset() {
 		) CHARACTER SET latin1;`)
 	sql = fmt.Sprintf(`IMPORT INTO load_charset.latin1 FROM 'gs://test-load/latin1.tsv?endpoint=%s'
 		 WITH character_set='latin1'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.latin1;").Check(testkit.Rows(
 		"1 ‘’“”",
 		"2 ¡¢£¤",
@@ -657,7 +652,7 @@ func (s *mockGCSSuite) TestOtherCharset() {
 	s.tk.MustExec("TRUNCATE TABLE load_charset.utf8mb4;")
 	sql = fmt.Sprintf(`IMPORT INTO load_charset.utf8mb4 FROM 'gs://test-load/latin1.tsv?endpoint=%s'
 		 WITH character_set='latin1'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.utf8mb4;").Check(testkit.Rows(
 		"1 ‘’“”",
 		"2 ¡¢£¤",
@@ -678,13 +673,13 @@ func (s *mockGCSSuite) TestOtherCharset() {
 		) CHARACTER SET binary;`)
 	sql = fmt.Sprintf(`IMPORT INTO load_charset.ascii FROM 'gs://test-load/ascii.tsv?endpoint=%s'
 		 WITH character_set='ascii'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT HEX(j) FROM load_charset.ascii;").Check(testkit.Rows(
 		"0001020304050607",
 	))
 	sql = fmt.Sprintf(`IMPORT INTO load_charset.binary FROM 'gs://test-load/ascii.tsv?endpoint=%s'
 		 WITH character_set='binary'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT HEX(j) FROM load_charset.binary;").Check(testkit.Rows(
 		"0001020304050607",
 	))
@@ -713,7 +708,7 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	start := time.Now()
 	sql := fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'`,
 		gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	duration := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
@@ -725,7 +720,7 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	start = time.Now()
 	sql = fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'
 		with max_write_speed='6000'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	durationWithLimit := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
@@ -765,7 +760,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
 		with thread=1`, gcsEndpoint)
-	err := s.tk.ExecToErr(loadDataSQL)
+	err := s.tk.QueryToErr(loadDataSQL)
 	require.ErrorContains(s.T(), err, "ErrChecksumMismatch")
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
@@ -774,7 +769,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 	s.tk.MustExec("truncate table t;")
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
 		with thread=1, checksum_table='off'`, gcsEndpoint)
-	s.tk.MustExec(loadDataSQL)
+	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
 	}...))
@@ -782,7 +777,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 	s.tk.MustExec("truncate table t;")
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/duplicate-pk-*.csv?endpoint=%s'
 		with thread=1, checksum_table='optional'`, gcsEndpoint)
-	s.tk.MustExec(loadDataSQL)
+	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "4 test4 44", "6 test6 66",
 	}...))
@@ -804,7 +799,14 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	})
 	sql := fmt.Sprintf(`IMPORT INTO load_data.cols_and_vars (@V1, @v2, @v3) set a=@V1, b=@V2*10, c=123
 		FROM 'gs://test-load/cols_and_vars-*.tsv?endpoint=%s' WITH thread=2`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	rows := s.tk.MustQuery(sql).Rows()
+	s.Len(rows, 1)
+	jobID1, err := strconv.Atoi(rows[0][0].(string))
+	s.NoError(err)
+	jobInfo, err := importer.GetJob(context.Background(), s.tk.Session(), int64(jobID1), "", true)
+	s.NoError(err)
+	s.Equal("(@`V1`, @`v2`, @`v3`)", jobInfo.Parameters.ColumnsAndVars)
+	s.Equal("`a`=@`V1`, `b`=@`V2`*10, `c`=123", jobInfo.Parameters.SetClause)
 	s.tk.MustQuery("SELECT * FROM load_data.cols_and_vars;").Sort().Check(testkit.Rows(
 		"1 110 123",
 		"2 220 123",
@@ -864,7 +866,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
 	// better start a cluster without TiDB instance.
 	sql := fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.Greater(intoNormalTime, intoImportTime)
 
@@ -880,9 +882,11 @@ func (s *mockGCSSuite) TestImportMode() {
 		return nil
 	}).Times(1)
 	s.tk.MustExec("truncate table load_data.import_mode;")
+	// wait ToImportMode called
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/waitBeforeSortChunk", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk", "return(true)")
 	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
-	err := s.tk.ExecToErr(sql)
+	err := s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(intoNormalTime, intoImportTime)
 }
@@ -925,7 +929,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
 	// better start a cluster without TiDB instance.
 	sql := fmt.Sprintf(`IMPORT INTO load_data.register_task FROM 'gs://test-load/register_task-*.tsv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.register_task;").Sort().Check(testkit.Rows("1 11 111"))
 	s.Greater(unregisterTime, registerTime)
 
@@ -934,12 +938,14 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	taskRegister.EXPECT().RegisterTaskOnce(gomock.Any()).DoAndReturn(mockedRegister).Times(1)
 	taskRegister.EXPECT().Close(gomock.Any()).DoAndReturn(mockedClose).Times(1)
 	s.tk.MustExec("truncate table load_data.register_task;")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/waitBeforeSortChunk", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk", "return(true)")
-	err := s.tk.ExecToErr(sql)
+	err := s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(unregisterTime, registerTime)
 
 	loaddata.NewTaskRegisterWithTTL = backup
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/loaddata/waitBeforeSortChunk"))
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk"))
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/syncBeforeSortChunk", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
@@ -947,7 +953,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		s.tk.MustExec(sql)
+		s.tk.MustQuery(sql)
 	}()
 	// wait for the task to be registered
 	<-loaddata.TestSyncChan
@@ -987,7 +993,7 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 		Content:     []byte("5,55,555,\n6,66,666\n7,77,777"),
 	})
 	sql := fmt.Sprintf(`IMPORT INTO load_data.add_index FROM 'gs://test-load/add_index-*.tsv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.add_index;").Sort().Check(testkit.Rows(
 		"1 11 111",
 		"2 22 222",
@@ -1019,7 +1025,7 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
 		Content:     []byte("8,8|8,888\n"),
 	})
-	err := s.tk.ExecToErr(sql)
+	err := s.tk.QueryToErr(sql)
 	require.ErrorContains(s.T(), err, "Truncated incorrect DOUBLE value")
 	s.tk.MustQuery("SHOW CREATE TABLE load_data.add_index;").Check(testkit.Rows(
 		"add_index CREATE TABLE `add_index` (\n" +
@@ -1041,7 +1047,7 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
 		Content:     []byte("7,88,888\n"),
 	})
-	err = s.tk.ExecToErr(sql)
+	err = s.tk.QueryToErr(sql)
 	require.ErrorContains(s.T(), err, "checksum mismatched")
 	s.tk.MustQuery("SELECT COUNT(1) FROM load_data.add_index;").Sort().Check(testkit.Rows(
 		"7",
@@ -1063,7 +1069,7 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
 		Content:     []byte("8,77,777\n"),
 	})
-	err = s.tk.ExecToErr(sql)
+	err = s.tk.QueryToErr(sql)
 	require.EqualError(s.T(), err, "Failed to create index: [kv:1062]Duplicate entry '77' for key 'add_index.b'"+
 		", please execute the SQL manually, sql: ALTER TABLE `load_data`.`add_index` ADD UNIQUE KEY `b`(`b`), ADD KEY `c_1`(`c`)")
 	s.tk.MustQuery("SHOW CREATE TABLE load_data.add_index;").Check(testkit.Rows(
@@ -1082,7 +1088,7 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "add_index-3.tsv"},
 		Content:     []byte("7,77,777\n8,77,777\n"),
 	})
-	err = s.tk.ExecToErr(sql)
+	err = s.tk.QueryToErr(sql)
 	require.ErrorContains(s.T(), err, "checksum mismatched")
 	require.ErrorContains(s.T(), err, "Failed to create index: [kv:1062]Duplicate entry '77' for key 'add_index.b'"+
 		", please execute the SQL manually, sql: ALTER TABLE `load_data`.`add_index` ADD UNIQUE KEY `b`(`b`), ADD KEY `c_1`(`c`)")
@@ -1124,7 +1130,7 @@ func (s *mockGCSSuite) TestDiskQuota() {
 	// the encoded KV size is about 347440 bytes
 	sql := fmt.Sprintf(`IMPORT INTO load_test_disk_quota.t FROM 'gs://test-load/diskquota-test.csv?endpoint=%s'
 		with disk_quota='1b'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT count(1) FROM load_test_disk_quota.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))

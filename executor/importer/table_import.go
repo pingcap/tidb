@@ -58,10 +58,10 @@ var (
 	CheckDiskQuotaInterval = time.Minute
 )
 
-func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
+func prepareSortDir(e *LoadDataController, taskID int64) (string, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
-	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix, strconv.FormatInt(jobID, 10))
+	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix, strconv.FormatInt(taskID, 10))
 
 	if info, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
@@ -297,9 +297,7 @@ func (e *LoadDataController) VerifyChecksum(ctx context.Context, localChecksum v
 	if err2 != nil {
 		return err2
 	}
-	if remoteChecksum.IsEqual(&localChecksum) {
-		e.logger.Info("checksum pass", zap.Object("local", &localChecksum))
-	} else {
+	if !remoteChecksum.IsEqual(&localChecksum) {
 		err3 := common.ErrChecksumMismatch.GenWithStackByArgs(
 			remoteChecksum.Checksum, localChecksum.Sum(),
 			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
@@ -311,6 +309,7 @@ func (e *LoadDataController) VerifyChecksum(ctx context.Context, localChecksum v
 		}
 		return err3
 	}
+	e.logger.Info("checksum pass", zap.Object("local", &localChecksum))
 	return nil
 }
 

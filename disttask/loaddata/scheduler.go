@@ -196,13 +196,13 @@ func (s *ImportScheduler) Rollback(context.Context) error {
 
 func init() {
 	scheduler.RegisterSchedulerConstructor(
-		proto.LoadData,
+		proto.ImportInto,
 		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
 			taskMeta := TaskMeta{}
 			if err := json.Unmarshal(bs, &taskMeta); err != nil {
 				return nil, err
 			}
-			logger := logutil.BgLogger().With(zap.String("component", "scheduler"), zap.String("type", proto.LoadData), zap.Int64("table_id", taskMeta.Plan.TableInfo.ID))
+			logger := logutil.BgLogger().With(zap.String("component", "scheduler"), zap.String("type", proto.ImportInto), zap.Int64("table_id", taskMeta.Plan.TableInfo.ID))
 			logger.Info("create new load data scheduler", zap.Any("taskMeta", taskMeta))
 			return &ImportScheduler{
 				taskID:   taskID,

@@ -688,12 +688,11 @@ ChunkLoop:
 		checkFlushLock.Lock()
 		finished := 0
 		for _, c := range flushPendingChunks {
-			if c.indexStatus.Flushed() && c.dataStatus.Flushed() {
-				chunkCpChan <- c.chunkCp
-				finished++
-			} else {
+			if !(c.indexStatus.Flushed() && c.dataStatus.Flushed()) {
 				break
 			}
+			chunkCpChan <- c.chunkCp
+			finished++
 		}
 		if finished > 0 {
 			flushPendingChunks = flushPendingChunks[finished:]
@@ -823,12 +822,11 @@ ChunkLoop:
 		checkFlushLock.Lock()
 		cnt := 0
 		for _, chunk := range flushPendingChunks {
-			if chunk.dataStatus.Flushed() && chunk.indexStatus.Flushed() {
-				saveCheckpoint(rc, tr, engineID, chunk.chunkCp)
-				cnt++
-			} else {
+			if !(chunk.dataStatus.Flushed() && chunk.indexStatus.Flushed()) {
 				break
 			}
+			saveCheckpoint(rc, tr, engineID, chunk.chunkCp)
+			cnt++
 		}
 		flushPendingChunks = flushPendingChunks[cnt:]
 		checkFlushLock.Unlock()
