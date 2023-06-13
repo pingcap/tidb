@@ -35,6 +35,10 @@ go_test(
     ],
     embed = [":stmtctx"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 5,
+>>>>>>> 6f54a29444a (*: use approximately algorithm to calculate p90 in slowlog. (#44269))
     deps = [
         "//kv",
         "//sessionctx/variable",
