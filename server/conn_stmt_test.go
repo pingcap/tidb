@@ -425,3 +425,23 @@ func TestCursorDetachMemTracker(t *testing.T) {
 	)))
 	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
 }
+
+func TestMemoryTrackForPrepareBinaryProtocol(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	c := CreateMockConn(t, srv).(*mockConn)
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id_2 int)")
+	for i := 0; i <= 10; i++ {
+		stmt, _, _, err := c.Context().Prepare("select count(id_2) from t")
+		require.NoError(t, err)
+		require.NoError(t, stmt.Close())
+	}
+	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
+}
