@@ -256,6 +256,7 @@ func buildIndexRequest(
 func sendChecksumRequest(
 	ctx context.Context, client kv.Client, req *kv.Request, vars *kv.Variables,
 ) (resp *tipb.ChecksumResponse, err error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnLightning)
 	res, err := distsql.Checksum(ctx, client, req, vars)
 	if err != nil {
 		return nil, errors.Trace(err)

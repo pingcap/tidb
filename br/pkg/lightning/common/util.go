@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table/tables"
@@ -289,6 +290,7 @@ func (t SQLWithRetry) Exec(ctx context.Context, purpose string, query string, ar
 		logger = logger.With(zap.String("query", query), zap.Reflect("args", args))
 	}
 	return t.perform(ctx, logger, purpose, func() error {
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnLightning)
 		_, err := t.DB.ExecContext(ctx, query, args...)
 		return errors.Trace(err)
 	})

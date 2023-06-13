@@ -184,11 +184,10 @@ const (
 	InternalTxnAdmin = "admin"
 	// InternalTxnPrivilege is the type of privilege txn.
 	InternalTxnPrivilege = InternalTxnOthers
-	// InternalTxnTools is the type of tools usage of TiDB.
-	// Do not classify different tools by now.
-	InternalTxnTools = "tools"
 	// InternalTxnBR is the type of BR usage.
-	InternalTxnBR = InternalTxnTools
+	InternalTxnBR = "br"
+	// InternalTxnLightning is the type of Lightning usage.
+	InternalTxnLightning = "lightning"
 	// InternalTxnTrace handles the trace statement.
 	InternalTxnTrace = "Trace"
 	// InternalTxnTTL is the type of TTL usage
