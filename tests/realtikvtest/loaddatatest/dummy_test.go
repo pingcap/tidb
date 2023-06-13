@@ -21,6 +21,7 @@ import (
 )
 
 func TestDummy(t *testing.T) {
+	realtikvtest.CreateMockStoreAndSetup(t)
 	// todo: delete it after enable importintotest.
 	t.Skip("skip dummy test")
 }
