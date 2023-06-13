@@ -30,7 +30,7 @@ http_archive(
     strip_prefix = "rules_cc-0.0.6",
 )
 
-load("@io_bazel_rules_go//go:deps.bzl", "go_download_sdk", "go_register_toolchains", "go_rules_dependencies")
+load("@io_bazel_rules_go//go:deps.bzl", "go_host_sdk", "go_register_toolchains", "go_rules_dependencies")
 load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies")
 load("//:DEPS.bzl", "go_deps")
 
@@ -39,14 +39,8 @@ go_deps()
 
 go_rules_dependencies()
 
-go_download_sdk(
+go_host_sdk(
     name = "go_sdk",
-    urls = [
-        "http://ats.apps.svc/golang/{}",
-        "http://bazel-cache.pingcap.net:8080/golang/{}",
-        "https://mirrors.aliyun.com/golang/{}",
-        "https://dl.google.com/go/{}",
-    ],
     version = "1.20.5",
 )
 
