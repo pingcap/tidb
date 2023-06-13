@@ -1157,7 +1157,7 @@ func (s *mockGCSSuite) TestAnalyze() {
 	s.tk.MustQuery("EXPLAIN SELECT * FROM load_data.analyze_table WHERE a=1 and b=1 and c=1;").CheckContain("idx_ac(a, c)")
 
 	sql := fmt.Sprintf(`IMPORT INTO load_data.analyze_table FROM 'gs://test-load/analyze-1.tsv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	require.Eventually(s.T(), func() bool {
 		result := s.tk.MustQuery("EXPLAIN SELECT * FROM load_data.analyze_table WHERE a=1 and b=1 and c=1;")
 		return strings.Contains(result.Rows()[1][3].(string), "idx_b(b)")
