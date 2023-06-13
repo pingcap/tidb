@@ -2167,8 +2167,8 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain("= ")
 			ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", n.BoolValue)))
 		case ResourceGroupRunaway:
-			ctx.WritePlain("QUERY_LIMIT")
-			ctx.WritePlain(" = ")
+			ctx.WritePlain("QUERY_LIMIT ")
+			ctx.WritePlain("= ")
 			if len(n.ResourceGroupRunawayOptionList) > 0 {
 				ctx.WritePlain("(")
 				for i, option := range n.ResourceGroupRunawayOptionList {
