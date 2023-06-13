@@ -81,13 +81,13 @@ func TestDMLCapturePlanBaseline(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Sort().Rows()
 	require.Len(t, rows, 4)
 	require.Equal(t, "delete from `test` . `t` where `b` = ? and `c` > ?", rows[0][0])
-	require.Equal(t, "DELETE /*+ use_index(@`del_1` `test`.`t` `idx_b`)*/ FROM `test`.`t` WHERE `b` = 1 AND `c` > 1", rows[0][1])
+	require.Equal(t, "DELETE /*+ use_index(@`del_1` `test`.`t` `idx_b`), no_order_index(@`del_1` `test`.`t` `idx_b`)*/ FROM `test`.`t` WHERE `b` = 1 AND `c` > 1", rows[0][1])
 	require.Equal(t, "insert into `test` . `t1` select * from `test` . `t` where `t` . `b` = ? and `t` . `c` > ?", rows[1][0])
-	require.Equal(t, "INSERT INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1", rows[1][1])
+	require.Equal(t, "INSERT INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`), no_order_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1", rows[1][1])
 	require.Equal(t, "replace into `test` . `t1` select * from `test` . `t` where `t` . `b` = ? and `t` . `c` > ?", rows[2][0])
-	require.Equal(t, "REPLACE INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1", rows[2][1])
+	require.Equal(t, "REPLACE INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`), no_order_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1", rows[2][1])
 	require.Equal(t, "update `test` . `t` set `a` = ? where `b` = ? and `c` > ?", rows[3][0])
-	require.Equal(t, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx_b`)*/ `test`.`t` SET `a`=1 WHERE `b` = 1 AND `c` > 1", rows[3][1])
+	require.Equal(t, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx_b`), no_order_index(@`upd_1` `test`.`t` `idx_b`)*/ `test`.`t` SET `a`=1 WHERE `b` = 1 AND `c` > 1", rows[3][1])
 }
 
 func TestCapturePlanBaseline(t *testing.T) {
