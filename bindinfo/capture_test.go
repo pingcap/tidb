@@ -992,8 +992,8 @@ func TestCaptureHints(t *testing.T) {
 		{"select /*+ use_index_merge(t, a, b) */ a, b from t where a=1 or b=1", "use_index_merge(@`sel_1` `t` `a`, `b`)"},
 		{"select /*+ ignore_index(t, a) */ * from t where a=1", "ignore_index(`t` `a`)"},
 		// push-down hints
-		{"select /*+ limit_to_cop() */ * from t limit 10", "limit_to_cop()"},
-		{"select /*+ agg_to_cop() */ a, count(*) from t group by a", "agg_to_cop()"},
+		{"select /*+ limit_to_cop() */ * from t limit 10", "limit_to_cop(@`sel_1`)"},
+		{"select /*+ agg_to_cop() */ a, count(*) from t group by a", "agg_to_cop(@`sel_1`)"},
 		// index-merge hints
 		{"select /*+ no_index_merge() */ a, b from t where a>1 or b>1", "no_index_merge()"},
 		{"select /*+ use_index_merge(t, a, b) */ a, b from t where a>1 or b>1", "use_index_merge(@`sel_1` `t` `a`, `b`)"},
@@ -1013,7 +1013,7 @@ func TestCaptureHints(t *testing.T) {
 		tk.MustExec("admin capture bindings")
 		res := tk.MustQuery(`show global bindings`).Rows()
 		require.Equal(t, len(res), 1)                                       // this query is captured, and
-		require.True(t, strings.Contains(res[0][1].(string), capCase.hint)) // the binding contains the expected hint
+		require.True(t, strings.Contains(res[0][1].(string), capCase.hint), fmt.Sprintf("%v:%v", capCase.query, res[0][1])) // the binding contains the expected hint
 		// test sql digest
 		parser4binding := parser.New()
 		originNode, err := parser4binding.ParseOneStmt(capCase.query, "utf8mb4", "utf8mb4_general_ci")
