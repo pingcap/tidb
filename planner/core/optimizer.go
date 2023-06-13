@@ -387,12 +387,12 @@ func mergeContinuousSelections(p PhysicalPlan) {
 	if sel, ok := p.(*PhysicalSelection); ok {
 		for {
 			childSel := sel.children[0]
-			if tmp, ok := childSel.(*PhysicalSelection); ok {
-				sel.Conditions = append(sel.Conditions, tmp.Conditions...)
-				sel.SetChild(0, tmp.children[0])
-			} else {
+			tmp, ok := childSel.(*PhysicalSelection)
+			if !ok {
 				break
 			}
+			sel.Conditions = append(sel.Conditions, tmp.Conditions...)
+			sel.SetChild(0, tmp.children[0])
 		}
 	}
 	for _, child := range p.Children() {

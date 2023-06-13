@@ -79,11 +79,10 @@ func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Colu
 	for _, candidateKeys := range candidates {
 		matchedLen := 0
 		for i := range keys {
-			if i < len(candidateKeys) && keys[i].Equal(nil, candidateKeys[i]) {
-				matchedLen++
-			} else {
+			if !(i < len(candidateKeys) && keys[i].Equal(nil, candidateKeys[i])) {
 				break
 			}
+			matchedLen++
 		}
 		if matchedLen > maxLen {
 			maxLen = matchedLen
@@ -1004,7 +1003,7 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		} else {
 			isFirst = false
 		}
-		buffer.WriteString(fmt.Sprintf("eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
+		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff])
 	}
 	for _, access := range ijHelper.chosenAccess {
 		if !isFirst {
@@ -1012,7 +1011,7 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		} else {
 			isFirst = false
 		}
-		buffer.WriteString(fmt.Sprintf("%v", access))
+		fmt.Fprintf(buffer, "%v", access)
 	}
 	buffer.WriteString("]")
 	return buffer.String()
@@ -1407,7 +1406,7 @@ func (cwc *ColWithCmpFuncManager) resolveIndices(schema *expression.Schema) (err
 func (cwc *ColWithCmpFuncManager) String() string {
 	buffer := bytes.NewBufferString("")
 	for i := range cwc.OpType {
-		buffer.WriteString(fmt.Sprintf("%v(%v, %v)", cwc.OpType[i], cwc.TargetCol, cwc.opArg[i]))
+		fmt.Fprintf(buffer, "%v(%v, %v)", cwc.OpType[i], cwc.TargetCol, cwc.opArg[i])
 		if i < len(cwc.OpType)-1 {
 			buffer.WriteString(" ")
 		}
@@ -2121,19 +2120,18 @@ func (p *LogicalJoin) preferMppBCJ() bool {
 		// TODO: always use broadcast way to exchange data if there is only ONE mpp store.
 
 		if err == nil && mppStoreCnt > 0 {
-			if onlyCheckChild1 || onlyCheckChild0 {
-				if mppStoreCnt > 1 {
-					if onlyCheckChild1 {
-						return isJoinChildFitMPPBCJ(p, 1, mppStoreCnt)
-					} else if onlyCheckChild0 {
-						return isJoinChildFitMPPBCJ(p, 0, mppStoreCnt)
-					}
-				}
-				// If mppStoreCnt is ONE and only need to check one child plan, rollback to original way.
-				// Otherwise, the plan of tpch q4 may be unexpected.
-			} else {
+			if !(onlyCheckChild1 || onlyCheckChild0) {
 				return isJoinFitMPPBCJ(p, mppStoreCnt)
 			}
+			if mppStoreCnt > 1 {
+				if onlyCheckChild1 {
+					return isJoinChildFitMPPBCJ(p, 1, mppStoreCnt)
+				} else if onlyCheckChild0 {
+					return isJoinChildFitMPPBCJ(p, 0, mppStoreCnt)
+				}
+			}
+			// If mppStoreCnt is ONE and only need to check one child plan, rollback to original way.
+			// Otherwise, the plan of tpch q4 may be unexpected.
 		}
 	}
 
@@ -2405,11 +2403,11 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			if preferredBuildIndex == 1 {
 				hashKeys = lPartitionKeys
 			}
-			if matches := prop.IsSubsetOf(hashKeys); len(matches) != 0 {
-				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.HashType, MPPPartitionCols: prop.MPPPartitionCols, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
-			} else {
+			matches := prop.IsSubsetOf(hashKeys)
+			if len(matches) == 0 {
 				return nil
 			}
+			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.HashType, MPPPartitionCols: prop.MPPPartitionCols, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
 		} else {
 			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.AnyType, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
 		}
@@ -2481,6 +2479,39 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 	}
 	newProp.SortItems = newCols
 	return newProp, true
+}
+
+// exhaustPhysicalPlans enumerate all the possible physical plan for expand operator (currently only mpp case is supported)
+func (p *LogicalExpand) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
+	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
+	if !prop.IsSortItemEmpty() {
+		// false, meaning we can add a sort enforcer.
+		return nil, false, nil
+	}
+	// RootTaskType is the default one, meaning no option. (we can give them a mpp choice)
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
+		return nil, true, nil
+	}
+	// now Expand mode can only be executed on TiFlash node.
+	// Upper layer shouldn't expect any mpp partition from an Expand operator.
+	// todo: data output from Expand operator should keep the origin data mpp partition.
+	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
+		return nil, true, nil
+	}
+	// for property.RootTaskType and property.MppTaskType with no partition option, we can give an MPP Expand.
+	if p.SCtx().GetSessionVars().IsMPPAllowed() {
+		mppProp := prop.CloneEssentialFields()
+		mppProp.TaskTp = property.MppTaskType
+		expand := PhysicalExpand{
+			GroupingSets:          p.rollupGroupingSets,
+			LevelExprs:            p.LevelExprs,
+			ExtraGroupingColNames: p.ExtraGroupingColNames,
+		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, mppProp)
+		expand.SetSchema(p.Schema())
+		return []PhysicalPlan{expand}, true, nil
+	}
+	// if MPP switch is shutdown, nothing can be generated.
+	return nil, true, nil
 }
 
 func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
@@ -2745,12 +2776,12 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		partitionCols := lw.GetPartitionKeys()
 		// trying to match the required partitions.
 		if prop.MPPPartitionTp == property.HashType {
-			if matches := prop.IsSubsetOf(partitionCols); len(matches) != 0 {
-				partitionCols = choosePartitionKeys(partitionCols, matches)
-			} else {
+			matches := prop.IsSubsetOf(partitionCols)
+			if len(matches) == 0 {
 				// do not satisfy the property of its parent, so return empty
 				return nil
 			}
+			partitionCols = choosePartitionKeys(partitionCols, matches)
 		}
 		childProperty.MPPPartitionTp = property.HashType
 		childProperty.MPPPartitionCols = partitionCols
@@ -2848,31 +2879,33 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 				return false
 			}
 		case *LogicalUnionAll:
-			if storeTp == kv.TiFlash {
-				ret = ret && c.canPushToCopImpl(storeTp, true)
-			} else {
+			if storeTp != kv.TiFlash {
 				return false
 			}
+			ret = ret && c.canPushToCopImpl(storeTp, true)
 		case *LogicalSort:
-			if storeTp == kv.TiFlash {
-				ret = ret && c.canPushToCopImpl(storeTp, true)
-			} else {
+			if storeTp != kv.TiFlash {
 				return false
 			}
+			ret = ret && c.canPushToCopImpl(storeTp, true)
 		case *LogicalProjection:
-			if storeTp == kv.TiFlash {
-				ret = ret && c.canPushToCopImpl(storeTp, considerDual)
-			} else {
+			if storeTp != kv.TiFlash {
 				return false
 			}
+			ret = ret && c.canPushToCopImpl(storeTp, considerDual)
+		case *LogicalExpand:
+			// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
+			if storeTp != kv.TiFlash {
+				return false
+			}
+			ret = ret && c.canPushToCopImpl(storeTp, considerDual)
 		case *LogicalTableDual:
 			return storeTp == kv.TiFlash && considerDual
 		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *LogicalWindow:
-			if storeTp == kv.TiFlash {
-				ret = ret && c.canPushToCop(storeTp)
-			} else {
+			if storeTp != kv.TiFlash {
 				return false
 			}
+			ret = ret && c.canPushToCop(storeTp)
 		// These operators can be partially push down to TiFlash, so we don't raise warning for them.
 		case *LogicalLimit, *LogicalTopN:
 			return false
@@ -3081,12 +3114,12 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		// trying to match the required partitions.
 		if prop.MPPPartitionTp == property.HashType {
 			// partition key required by upper layer is subset of current layout.
-			if matches := prop.IsSubsetOf(partitionCols); len(matches) != 0 {
-				partitionCols = choosePartitionKeys(partitionCols, matches)
-			} else {
+			matches := prop.IsSubsetOf(partitionCols)
+			if len(matches) == 0 {
 				// do not satisfy the property of its parent, so return empty
 				return nil
 			}
+			partitionCols = choosePartitionKeys(partitionCols, matches)
 		} else if prop.MPPPartitionTp != property.AnyType {
 			return nil
 		}
@@ -3095,6 +3128,13 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		// If there are no available partition cols, but still have group by items, that means group by items are all expressions or constants.
 		// To avoid mess, we don't do any one-phase aggregation in this case.
 		// If this is a skew distinct group agg, skip generating 1-phase agg, because skew data will cause performance issue
+		//
+		// Rollup can't be 1-phase agg: cause it will append grouping_id to the schema, and expand each row as multi rows with different grouping_id.
+		// In a general, group items should also append grouping_id as its group layout, let's say 1-phase agg has grouping items as <a,b,c>, and
+		// lower OP can supply <a,b> as original partition layout, when we insert Expand logic between them:
+		// <a,b>             -->    after fill null in Expand    --> and this shown two rows should be shuffled to the same node (the underlying partition is not satisfied yet)
+		// <1,1> in node A           <1,null,gid=1> in node A
+		// <1,2> in node B           <1,null,gid=1> in node B
 		if len(partitionCols) != 0 && !la.ctx.GetSessionVars().EnableSkewDistinctAgg {
 			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)

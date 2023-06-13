@@ -3038,13 +3038,13 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 		return nil, errors.Trace(err)
 	}
 	var result tiFlashSQLExecuteResponse
-	if tiflashResp, ok := resp.Resp.(*kvrpcpb.TiFlashSystemTableResponse); ok {
-		err = json.Unmarshal(tiflashResp.Data, &result)
-		if err != nil {
-			return nil, errors.Wrapf(err, "Failed to decode JSON from TiFlash")
-		}
-	} else {
+	tiflashResp, ok := resp.Resp.(*kvrpcpb.TiFlashSystemTableResponse)
+	if !ok {
 		return nil, errors.Errorf("Unexpected response type: %T", resp.Resp)
+	}
+	err = json.Unmarshal(tiflashResp.Data, &result)
+	if err != nil {
+		return nil, errors.Wrapf(err, "Failed to decode JSON from TiFlash")
 	}
 
 	// Map result columns back to our columns. It is possible that some columns cannot be

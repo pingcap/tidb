@@ -2436,6 +2436,16 @@ error = '''
 Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition
 '''
 
+["planner:3601"]
+error = '''
+Too many arguments for function %s; maximum allowed is %d
+'''
+
+["planner:3602"]
+error = '''
+Argument %s of GROUPING function is not in GROUP BY
+'''
+
 ["planner:3637"]
 error = '''
 Variable '%s' cannot be set using SET_VAR hint.

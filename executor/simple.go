@@ -298,21 +298,20 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 		for _, role := range s.RoleList {
 			checker := privilege.GetPrivilegeManager(e.ctx)
 			ok := checker.FindEdge(e.ctx, role, user)
-			if ok {
-				sql.Reset()
-				sqlexec.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles values(%?, %?, %?, %?);", user.Hostname, user.Username, role.Hostname, role.Username)
-				if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
-					logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
-					if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
-						return rollbackErr
-					}
-					return err
-				}
-			} else {
+			if !ok {
 				if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 					return rollbackErr
 				}
 				return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(role.String(), user.String())
+			}
+			sql.Reset()
+			sqlexec.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles values(%?, %?, %?, %?);", user.Hostname, user.Username, role.Hostname, role.Username)
+			if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
+				logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+				if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
+					return rollbackErr
+				}
+				return err
 			}
 		}
 	}
@@ -2185,15 +2184,14 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 		}
 	}
 
-	if failedUser == "" {
-		if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
-			return err
-		}
-	} else {
+	if failedUser != "" {
 		if _, err := sqlExecutor.ExecuteInternal(ctx, "rollback"); err != nil {
 			return err
 		}
 		return exeerrors.ErrCannotUser.GenWithStackByArgs("RENAME USER", failedUser)
+	}
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+		return err
 	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
@@ -2250,12 +2248,11 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			return err
 		}
 		if !exists {
-			if s.IfExists {
-				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.GenWithStackByArgs(user))
-			} else {
+			if !s.IfExists {
 				failedUsers = append(failedUsers, user.String())
 				break
 			}
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.GenWithStackByArgs(user))
 		}
 
 		// Certain users require additional privileges in order to be modified.
@@ -2370,18 +2367,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 		} // TODO: need delete columns_priv once we implement columns_priv functionality.
 	}
 
-	if len(failedUsers) == 0 {
-		if _, err := sqlExecutor.ExecuteInternal(internalCtx, "commit"); err != nil {
-			return err
-		}
-		if s.IsDropRole {
-			// apply new activeRoles
-			if ok, roleName := checker.ActiveRoles(e.ctx, activeRoles); !ok {
-				u := e.ctx.GetSessionVars().User
-				return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
-			}
-		}
-	} else {
+	if len(failedUsers) != 0 {
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 			return err
 		}
@@ -2389,6 +2375,16 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			return exeerrors.ErrCannotUser.GenWithStackByArgs("DROP ROLE", strings.Join(failedUsers, ","))
 		}
 		return exeerrors.ErrCannotUser.GenWithStackByArgs("DROP USER", strings.Join(failedUsers, ","))
+	}
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "commit"); err != nil {
+		return err
+	}
+	if s.IsDropRole {
+		// apply new activeRoles
+		if ok, roleName := checker.ActiveRoles(e.ctx, activeRoles); !ok {
+			u := e.ctx.GetSessionVars().User
+			return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+		}
 	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
@@ -2470,12 +2466,11 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return errors.Trace(exeerrors.ErrPasswordNoMatch)
 	}
 	if e.ctx.InSandBoxMode() {
-		if s.User == nil || s.User.CurrentUser ||
-			e.ctx.GetSessionVars().User.AuthUsername == u && e.ctx.GetSessionVars().User.AuthHostname == strings.ToLower(h) {
-			disableSandboxMode = true
-		} else {
+		if !(s.User == nil || s.User.CurrentUser ||
+			e.ctx.GetSessionVars().User.AuthUsername == u && e.ctx.GetSessionVars().User.AuthHostname == strings.ToLower(h)) {
 			return exeerrors.ErrMustChangePassword.GenWithStackByArgs()
 		}
+		disableSandboxMode = true
 	}
 
 	authplugin, err := privilege.GetPrivilegeManager(e.ctx).GetAuthPlugin(u, h)

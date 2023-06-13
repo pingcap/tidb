@@ -1011,3 +1011,27 @@ func TestHypoIndexPlan(t *testing.T) {
 	tk.MustQuery(`explain select a from t where a = 1`).Check(testkit.Rows(
 		`Point_Get_5 1.00 root table:t, index:hypo_a(a) `))
 }
+
+func TestHypoTiFlashReplica(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+
+	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
+		`TableReader_5 10000.00 root  data:TableFullScan_4`,
+		`└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+
+	tk.MustExec(`alter table t set hypo tiflash replica 1`)
+
+	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
+		`TableReader_11 10000.00 root  MppVersion: 1, data:ExchangeSender_10`,
+		`└─ExchangeSender_10 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
+		`  └─TableFullScan_9 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo`))
+
+	tk.MustExec(`alter table t set hypo tiflash replica 0`)
+
+	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
+		`TableReader_5 10000.00 root  data:TableFullScan_4`,
+		`└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+}
