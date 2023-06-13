@@ -143,7 +143,7 @@ type clientConn struct {
 		sync.RWMutex
 		*TiDBContext // an interface to execute sql statements.
 	}
-	attrs         map[string]string // attributes parsed from client handshake response, not used for now.
+	attrs         map[string]string // attributes parsed from client handshake response.
 	serverHost    string            // server host
 	peerHost      string            // peer host
 	peerPort      string            // peer port
