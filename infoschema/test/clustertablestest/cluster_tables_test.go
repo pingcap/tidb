@@ -879,6 +879,170 @@ func TestMDLView(t *testing.T) {
 	}
 }
 
+func TestQuickBinding(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (pk int, a int, b int, c int, primary key(pk), key k_a(a), key k_bc(b, c))`)
+	tk.MustExec(`create table t2 (a int, b int, c int, key k_a(a), key k_bc(b, c))`) // no primary key
+
+	type testCase struct {
+		template                string
+		expectedHint            string
+		dmlAndSubqueryTemplates []string
+	}
+	//defaultDMLAndSubqueryTemplates := []string{
+	//	//"select a from (%v) tx where tx.a<1", // TODO: support sub query
+	//	"insert into t1 %v",
+	//	// TODO: more templates
+	//}
+	testCases := []testCase{
+		// access path selection with use_index / ignore_index
+		{`select /*+ use_index(t1, k_a) */ * from t1 where b=?`, "use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`)", nil},
+		{`select /*+ use_index(t1, k_bc) */ * from t1 where a=?`, "use_index(@`sel_1` `test`.`t1` `k_bc`), no_order_index(@`sel_1` `test`.`t1` `k_bc`)", nil},
+		{`select /*+ use_index(t1, primary) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`)", nil},
+		{`select /*+ ignore_index(t1, k_a, k_bc) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), ignore_index(`t1` `k_a`, `k_bc`)", nil},
+		{`select /*+ use_index(t1) */ * from t1 where a=? and b=?`, "use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`)", nil},
+		{`select /*+ use_index(t2) */ * from t2 where a=? and b=?`, "use_index(@`sel_1` `test`.`t2` )", nil},
+
+		// aggregation
+		{`select /*+ hash_agg(), use_index(t1, primary), agg_to_cop() */ count(*) from t1 where a<?`, "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), agg_to_cop(@`sel_1`)", nil},
+		{`select /*+ hash_agg(), use_index(t1, primary), agg_to_cop() */ count(*), b from t1 where a<? group by b`, "hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), agg_to_cop(@`sel_1`)", nil},
+		{`select /*+ stream_agg(), use_index(t1, primary), agg_to_cop() */ count(*) from t1 where a<?`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), agg_to_cop(@`sel_1`)", nil},
+		{`select /*+ stream_agg(), use_index(t1, primary), agg_to_cop() */ count(*), b from t1 where a<? group by b`, "stream_agg(@`sel_1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`)", nil},
+		{`select a+b+? from (select /*+ stream_agg() */ count(*) as a from t1) tt1, (select /*+ hash_agg() */ count(*) as b from t1) tt2`, "stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t1` `k_a`), no_order_index(@`sel_2` `test`.`t1` `k_a`), agg_to_cop(@`sel_2`), hash_agg(@`sel_3`), use_index(@`sel_3` `test`.`t1` `k_a`), no_order_index(@`sel_3` `test`.`t1` `k_a`), agg_to_cop(@`sel_3`)", nil},
+
+		// 2-way hash joins
+		{`select /*+ hash_join(t1, t2), use_index(t1), use_index(t2) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` )", nil},
+		// not support, fix them later on
+		//{`select /*+ hash_join_build(t1), use_index(t1), use_index(t2) */ * from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join_build(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
+		//{`select /*+ hash_join_build(t2), use_index(t1), use_index(t2) */ * from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join_build(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
+		//{`select /*+ hash_join_probe(t1), use_index(t1), use_index(t2) */ * from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join_build(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
+		//{`select /*+ hash_join_probe(t2), use_index(t1), use_index(t2) */ * from t1, t2 where t1.a=t2.a and t1.a<?`, "hash_join_build(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` )", nil},
+
+		// 2-way merge joins
+		{`select /*+ merge_join(t1, t2), use_index(t1), use_index(t2) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`, "merge_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` )", nil},
+		{`select /*+ merge_join(t1, t2), use_index(t1, k_a), use_index(t2, k_a) */ t1.* from t1, t2 where t1.a=t2.a and t1.a<?`, "merge_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `k_a`), order_index(@`sel_1` `test`.`t1` `k_a`), use_index(@`sel_1` `test`.`t2` `k_a`), order_index(@`sel_1` `test`.`t2` `k_a`)", nil},
+
+		// limit_to_cop
+		{`select /*+ limit_to_cop(), use_index(t1, k_a) */ * from t1 where a < ? limit 100`, "use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`), limit_to_cop(@`sel_1`)", nil},
+		{`select /*+ limit_to_cop(), use_index(t1, k_a) */ * from t1 where b < ? limit 100`, "use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`), limit_to_cop(@`sel_1`)", nil},
+		{`select /*+ limit_to_cop(), use_index(t1, k_a) */ * from t1 where a < ? order by a limit 100`, "use_index(@`sel_1` `test`.`t1` `k_a`), order_index(@`sel_1` `test`.`t1` `k_a`), limit_to_cop(@`sel_1`)", nil},
+		{`select /*+ limit_to_cop(), use_index(t1, k_a) */ * from t1 where a < ? order by b limit 100`, "use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`), limit_to_cop(@`sel_1`)", nil},
+	}
+
+	removeHint := func(sql string) string {
+		b := strings.Index(sql, "/*+")
+		e := strings.Index(sql, "*/")
+		if b != -1 && e != -1 {
+			sql = sql[:b] + sql[e+2:]
+		}
+		return sql
+	}
+	randValue := func() string {
+		switch rand.Intn(4) {
+		case 0:
+			return "0"
+		case 1:
+			return "-9999999999999"
+		case 2:
+			return "9999999999999"
+		default:
+			width := 100000
+			return strconv.Itoa(width - rand.Intn(width*2))
+		}
+	}
+	fillValues := func(sql string) string {
+		for strings.Contains(sql, "?") {
+			sql = strings.Replace(sql, "?", randValue(), 1)
+		}
+		return sql
+	}
+	genPrepSQL := func(sql string) (prepStmt, setStmt, execStmt string) {
+		sql = removeHint(sql)
+		prepStmt = fmt.Sprintf("prepare st from '%v'", sql)
+		nParam := strings.Count(sql, "?")
+		var x, y []string
+		for i := 0; i < nParam; i++ {
+			x = append(x, fmt.Sprintf("@a%d=%v", i, randValue()))
+			y = append(y, fmt.Sprintf("@a%d", i))
+		}
+		setStmt = fmt.Sprintf("set %v", strings.Join(x, ", "))
+		execStmt = fmt.Sprintf("execute st using %v", strings.Join(y, ", "))
+		return
+	}
+
+	// test general queries and prepared / execute statements
+	for _, tc := range testCases {
+		stmtsummary.StmtSummaryByDigestMap.Clear()
+		firstSQL := fillValues(tc.template)
+		tk.MustExec(firstSQL)
+		result := tk.MustQuery(`select plan_hint, digest, plan_digest from information_schema.statements_summary`).Rows()
+		planHint, sqlDigest, planDigest := result[0][0].(string), result[0][1].(string), result[0][2].(string)
+		require.Equal(t, tc.expectedHint, planHint)
+		tk.MustExec(fmt.Sprintf(`create session binding from history using plan digest '%v'`, planDigest))
+
+		// normal test
+		sqlWithoutHint := removeHint(tc.template)
+		for i := 0; i < 5; i++ {
+			stmtsummary.StmtSummaryByDigestMap.Clear()
+			testSQL := fillValues(sqlWithoutHint)
+			tk.MustExec(testSQL)
+			tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+			// has the same plan-digest
+			tk.MustQuery(fmt.Sprintf(`select plan_digest from information_schema.statements_summary where digest='%v'`, sqlDigest)).Check(testkit.Rows(planDigest))
+		}
+
+		// test with prepared / execute protocol
+		for i := 0; i < 5; i++ {
+			stmtsummary.StmtSummaryByDigestMap.Clear()
+			prepStmt, setStmt, execStmt := genPrepSQL(tc.template)
+			tk.MustExec(prepStmt)
+			tk.MustExec(setStmt)
+			tk.MustExec(execStmt)
+			tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+			// has the same plan-digest
+			tk.MustQuery(fmt.Sprintf(`select plan_digest from information_schema.statements_summary where digest='%v'`, sqlDigest)).Check(testkit.Rows(planDigest))
+		}
+
+		tk.MustExec(fmt.Sprintf(`drop session binding for %s`, firstSQL))
+	}
+
+	// test with DML and sub-query
+	for _, tc := range testCases {
+		for _, temp := range tc.dmlAndSubqueryTemplates {
+			temp = fmt.Sprintf(temp, tc.template)
+			stmtsummary.StmtSummaryByDigestMap.Clear()
+			firstSQL := fillValues(temp)
+			tk.MustExec(firstSQL)
+			result := tk.MustQuery(`select plan_hint, digest, plan_digest from information_schema.statements_summary`).Rows()
+			_, sqlDigest, planDigest := result[0][0].(string), result[0][1].(string), result[0][2].(string)
+			tk.MustExec(fmt.Sprintf(`create session binding from history using plan digest '%v'`, planDigest))
+
+			// normal test
+			sqlWithoutHint := removeHint(temp)
+			for i := 0; i < 5; i++ {
+				stmtsummary.StmtSummaryByDigestMap.Clear()
+				testSQL := fillValues(sqlWithoutHint)
+				tk.MustExec(testSQL)
+				tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+				// has the same plan-digest
+				tk.MustQuery(fmt.Sprintf(`select plan_digest from information_schema.statements_summary where digest='%v'`, sqlDigest)).Check(testkit.Rows(planDigest))
+			}
+
+			tk.MustExec(fmt.Sprintf(`drop session binding for %s`, firstSQL))
+		}
+	}
+}
+
 func TestCreateBindingFromHistory(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)

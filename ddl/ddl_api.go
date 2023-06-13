@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
+	rg "github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -89,8 +90,6 @@ const (
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
 	tiflashCheckPendingTablesRetry = 7
-	// DefaultResourceGroupName is the default resource group name.
-	DefaultResourceGroupName = "default"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
@@ -329,13 +328,12 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 		}
 		originVersion, pendingCount = d.getPendingTiFlashTableCount(sctx, originVersion, pendingCount)
 		delay := time.Duration(0)
-		if pendingCount >= threshold {
-			logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("currentPendingCount", pendingCount), zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID), zap.Duration("time", configWaitTime))
-			delay = configWaitTime
-		} else {
+		if pendingCount < threshold {
 			// If there are not many unavailable tables, we don't need a force check.
 			return false, originVersion, pendingCount, false
 		}
+		logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("currentPendingCount", pendingCount), zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID), zap.Duration("time", configWaitTime))
+		delay = configWaitTime
 		time.Sleep(delay)
 	}
 	logutil.BgLogger().Info("too many unavailable tables, timeout", zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID))
@@ -1125,11 +1123,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
-				if col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime {
-					if !expression.IsValidCurrentTimestampExpr(v.Expr, colDef.Tp) {
-						return nil, nil, dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
-					}
-				} else {
+				if !(col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime) {
+					return nil, nil, dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
+				}
+				if !expression.IsValidCurrentTimestampExpr(v.Expr, colDef.Tp) {
 					return nil, nil, dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 				}
 				col.AddFlag(mysql.OnUpdateNowFlag)
@@ -3153,8 +3150,8 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 	return nil
 }
 
-// SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
-func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupOption) error {
+// SetDirectResourceGroupSettings tries to set the ResourceGroupSettings.
+func SetDirectResourceGroupSettings(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupOption) error {
 	switch opt.Tp {
 	case ast.ResourceRURate:
 		resourceGroupSettings.RURate = opt.UintValue
@@ -3177,6 +3174,9 @@ func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettin
 		}
 		resourceGroupSettings.BurstLimit = limit
 	case ast.ResourceGroupRunaway:
+		if len(opt.ResourceGroupRunawayOptionList) == 0 {
+			resourceGroupSettings.Runaway = nil
+		}
 		for _, opt := range opt.ResourceGroupRunawayOptionList {
 			err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue)
 			if err != nil {
@@ -4983,11 +4983,10 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStack("can't change column constraint (UNIQUE KEY)"))
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
-			if col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime {
-				if !expression.IsValidCurrentTimestampExpr(opt.Expr, &col.FieldType) {
-					return dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
-				}
-			} else {
+			if !(col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime) {
+				return dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
+			}
+			if !expression.IsValidCurrentTimestampExpr(opt.Expr, &col.FieldType) {
 				return dbterror.ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 			}
 			col.AddFlag(mysql.OnUpdateNowFlag)
@@ -5844,6 +5843,23 @@ func shouldModifyTiFlashReplica(tbReplicaInfo *model.TiFlashReplicaInfo, replica
 	return true
 }
 
+// addHypoTiFlashReplicaIntoCtx adds this hypothetical tiflash replica into this ctx.
+func (*ddl) setHypoTiFlashReplica(ctx sessionctx.Context, schemaName, tableName model.CIStr, replicaInfo *ast.TiFlashReplicaSpec) error {
+	sctx := ctx.GetSessionVars()
+	if sctx.HypoTiFlashReplicas == nil {
+		sctx.HypoTiFlashReplicas = make(map[string]map[string]struct{})
+	}
+	if sctx.HypoTiFlashReplicas[schemaName.L] == nil {
+		sctx.HypoTiFlashReplicas[schemaName.L] = make(map[string]struct{})
+	}
+	if replicaInfo.Count > 0 { // add replicas
+		sctx.HypoTiFlashReplicas[schemaName.L][tableName.L] = struct{}{}
+	} else { // delete replicas
+		delete(sctx.HypoTiFlashReplicas[schemaName.L], tableName.L)
+	}
+	return nil
+}
+
 // AlterTableSetTiFlashReplica sets the TiFlash replicas info.
 func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
@@ -5859,6 +5875,10 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if !shouldModifyTiFlashReplica(tbReplicaInfo, replicaInfo) {
 		return nil
+	}
+
+	if replicaInfo.Hypo {
+		return d.setHypoTiFlashReplica(ctx, schema.Name, tb.Meta().Name, replicaInfo)
 	}
 
 	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
@@ -8178,7 +8198,7 @@ func (*ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) err
 // DropResourceGroup implements the DDL interface.
 func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
-	if groupName.L == DefaultResourceGroupName {
+	if groupName.L == rg.DefaultResourceGroupName {
 		return resourcegroup.ErrDroppingInternalResourceGroup
 	}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
@@ -8218,8 +8238,11 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 
 func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
 	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
+	if oldGroup.ResourceGroupSettings != nil {
+		*groupInfo.ResourceGroupSettings = *oldGroup.ResourceGroupSettings
+	}
 	for _, opt := range options {
-		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt)
+		err := SetDirectResourceGroupSettings(groupInfo.ResourceGroupSettings, opt)
 		if err != nil {
 			return nil, err
 		}

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -52,8 +53,8 @@ func newResourceGroupManager() *resourceGroupManager {
 	mgr := &resourceGroupManager{
 		groups: make(map[string]*rmpb.ResourceGroup),
 	}
-	mgr.groups["default"] = &rmpb.ResourceGroup{
-		Name: "default",
+	mgr.groups[resourcegroup.DefaultResourceGroupName] = &rmpb.ResourceGroup{
+		Name: resourcegroup.DefaultResourceGroupName,
 		Mode: rmpb.GroupMode_RUMode,
 		RUSettings: &rmpb.GroupRequestUnitSettings{
 			RU: &rmpb.TokenBucket{
@@ -331,14 +332,14 @@ func (c *pdClient) LoadResourceGroups(ctx context.Context) ([]*rmpb.ResourceGrou
 	return nil, 0, nil
 }
 
-func (c *pdClient) UpdateGCSafePointV2(ctx context.Context, ttl uint32, safePoint uint64) (uint64, error) {
-	return 0, nil
+func (c *pdClient) UpdateGCSafePointV2(ctx context.Context, keyspaceID uint32, safePoint uint64) (uint64, error) {
+	panic("unimplemented")
 }
 
 func (c *pdClient) UpdateServiceSafePointV2(ctx context.Context, keyspaceID uint32, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
-	return 0, nil
+	panic("unimplemented")
 }
 
 func (c *pdClient) WatchGCSafePointV2(ctx context.Context, revision int64) (chan []*pdpb.SafePointEvent, error) {
-	return nil, nil
+	panic("unimplemented")
 }

@@ -8,6 +8,7 @@ go_library(
         "importer.go",
         "mock_cluster.go",
         "s3iface.go",
+        "task_register.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/mock",
     visibility = ["//visibility:public"],

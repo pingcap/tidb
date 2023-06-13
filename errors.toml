@@ -506,6 +506,11 @@ error = '''
 system requirement not met
 '''
 
+["Lightning:PreDedup:ErrDuplicateKey"]
+error = '''
+duplicate key detected on indexID %d of KeyID: %v
+'''
+
 ["Lightning:Restore:ErrAddIndexFailed"]
 error = '''
 add index on table %s failed
@@ -2429,6 +2434,16 @@ Window '%s': INTERVAL can only be used with RANGE frames.
 ["planner:3599"]
 error = '''
 Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition
+'''
+
+["planner:3601"]
+error = '''
+Too many arguments for function %s; maximum allowed is %d
+'''
+
+["planner:3602"]
+error = '''
+Argument %s of GROUPING function is not in GROUP BY
 '''
 
 ["planner:3637"]

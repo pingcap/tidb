@@ -6,6 +6,7 @@ go_library(
         "error.go",
         "info.go",
         "label_manager.go",
+        "mock_info.go",
         "placement_manager.go",
         "region.go",
         "resource_manager_client.go",

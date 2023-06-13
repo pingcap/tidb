@@ -804,6 +804,19 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	return conn.ctx.ShowProcess(), ok
 }
 
+// GetConAttrs returns the connection attributes
+func (s *Server) GetConAttrs() map[uint64]map[string]string {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	rs := make(map[uint64]map[string]string)
+	for _, client := range s.clients {
+		if pi := client.ctx.ShowProcess(); pi != nil {
+			rs[pi.ID] = client.attrs
+		}
+	}
+	return rs
+}
+
 // Kill implements the SessionManager interface.
 func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 	logutil.BgLogger().Info("kill", zap.Uint64("conn", connectionID), zap.Bool("query", query))

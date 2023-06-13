@@ -360,7 +360,6 @@ type Insert struct {
 	tableColNames types.NameSlice
 	Columns       []*ast.ColumnName
 	Lists         [][]expression.Expression
-	SetList       []*expression.Assignment
 
 	OnDuplicate        []*expression.Assignment
 	Schema4OnDuplicate *expression.Schema
@@ -390,8 +389,8 @@ func (p *Insert) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*7 + int64(cap(p.tableColNames)+
-		cap(p.Columns)+cap(p.SetList)+cap(p.OnDuplicate)+cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer +
-		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*3 + size.SizeOfInt
+		cap(p.Columns)+cap(p.OnDuplicate)+cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer +
+		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*4 + size.SizeOfInt
 	if p.tableSchema != nil {
 		sum += p.tableSchema.MemoryUsage()
 	}
@@ -410,9 +409,6 @@ func (p *Insert) MemoryUsage() (sum int64) {
 		for _, expr := range exprs {
 			sum += expr.MemoryUsage()
 		}
-	}
-	for _, as := range p.SetList {
-		sum += as.MemoryUsage()
 	}
 	for _, as := range p.OnDuplicate {
 		sum += as.MemoryUsage()
@@ -947,11 +943,11 @@ func (e *Explain) RenderResult() error {
 			tracker := e.SCtx().GetSessionVars().MemTracker
 			encodeRoot.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
 		}
-		if str, err := JSONToString(encodes); err == nil {
-			e.Rows = append(e.Rows, []string{str})
-		} else {
+		str, err := JSONToString(encodes)
+		if err != nil {
 			return err
 		}
+		e.Rows = append(e.Rows, []string{str})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}

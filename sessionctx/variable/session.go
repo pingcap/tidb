@@ -873,6 +873,11 @@ type SessionVars struct {
 	// not limit and spill will never happen
 	TiFlashMaxBytesBeforeExternalSort int64
 
+	// TiFlashEnablePipelineMode means if we should use pipeline model to execute query or not in tiflash.
+	// Default value is `false`, means never use pipeline model in tiflash.
+	// Value set to `true` means try to execute query with pipeline model in tiflash.
+	TiFlashEnablePipelineMode bool
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -1484,6 +1489,8 @@ type SessionVars struct {
 
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+	// HypoTiFlashReplicas are for the Index Advisor.
+	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
 
 	// Runtime Filter Group
 	// Runtime filter type: only support IN or MIN_MAX now.
@@ -1999,6 +2006,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxBytesBeforeExternalJoin = DefTiFlashMaxBytesBeforeExternalJoin
 	vars.TiFlashMaxBytesBeforeExternalGroupBy = DefTiFlashMaxBytesBeforeExternalGroupBy
 	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
+	vars.TiFlashEnablePipelineMode = DefTiDBEnableTiFlashPipelineMode
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)

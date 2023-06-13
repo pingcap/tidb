@@ -183,6 +183,18 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 	s.mapper.update(id, delta, count, colSize)
 }
 
+// ClearForTest clears the mapper and feedback for test.
+func (s *SessionStatsCollector) ClearForTest() {
+	s.Lock()
+	defer s.Unlock()
+	s.mapper = make(tableDeltaMap)
+	s.feedback = statistics.NewQueryFeedbackMap()
+	s.rateMap = make(errorRateDeltaMap)
+	s.colMap = make(colStatsUsageMap)
+	s.next = nil
+	s.deleted = false
+}
+
 var (
 	// MinLogScanCount is the minimum scan count for a feedback to be logged.
 	MinLogScanCount = atomic.NewInt64(1000)
@@ -234,9 +246,6 @@ func (s *SessionStatsCollector) UpdateColStatsUsage(colMap colStatsUsageMap) {
 
 // NewSessionStatsCollector allocates a stats collector for a session.
 func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
@@ -315,8 +324,6 @@ func (s *SessionIndexUsageCollector) Delete() {
 // idxUsageListHead always points to an empty SessionIndexUsageCollector as a sentinel node. So we let idxUsageListHead.next
 // points to new item. It's helpful to sweepIdxUsageList.
 func (h *Handle) NewSessionIndexUsageCollector() *SessionIndexUsageCollector {
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.idxUsageListHead.Lock()
 	defer h.idxUsageListHead.Unlock()
 	newCollector := &SessionIndexUsageCollector{

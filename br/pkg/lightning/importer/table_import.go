@@ -17,6 +17,7 @@ package importer
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -47,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/extsort"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
@@ -198,8 +200,8 @@ func (tr *TableImporter) importTable(
 	// 2. Do duplicate detection if needed
 	if isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.OnDuplicate != "" {
 		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
-		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+".dupdetect")
-		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+".dupresult")
+		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)
+		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupResultDirSuffix)
 
 		dupIgnoreRows, err := extsort.OpenDiskSorter(resultDir, &extsort.DiskSorterOptions{
 			Concurrency: rc.cfg.App.RegionConcurrency,
@@ -210,13 +212,7 @@ func (tr *TableImporter) importTable(
 		tr.dupIgnoreRows = dupIgnoreRows
 
 		if cp.Status < checkpoints.CheckpointStatusDupDetected {
-			d := &dupDetector{
-				tr:     tr,
-				rc:     rc,
-				cp:     cp,
-				logger: tr.logger,
-			}
-			err := d.run(ctx, workingDir, dupIgnoreRows)
+			err := tr.preDeduplicate(ctx, rc, cp, workingDir)
 			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusDupDetected)
 			if err := firstErr(err, saveCpErr); err != nil {
 				return false, errors.Trace(err)
@@ -692,12 +688,11 @@ ChunkLoop:
 		checkFlushLock.Lock()
 		finished := 0
 		for _, c := range flushPendingChunks {
-			if c.indexStatus.Flushed() && c.dataStatus.Flushed() {
-				chunkCpChan <- c.chunkCp
-				finished++
-			} else {
+			if !(c.indexStatus.Flushed() && c.dataStatus.Flushed()) {
 				break
 			}
+			chunkCpChan <- c.chunkCp
+			finished++
 		}
 		if finished > 0 {
 			flushPendingChunks = flushPendingChunks[finished:]
@@ -827,12 +822,11 @@ ChunkLoop:
 		checkFlushLock.Lock()
 		cnt := 0
 		for _, chunk := range flushPendingChunks {
-			if chunk.dataStatus.Flushed() && chunk.indexStatus.Flushed() {
-				saveCheckpoint(rc, tr, engineID, chunk.chunkCp)
-				cnt++
-			} else {
+			if !(chunk.dataStatus.Flushed() && chunk.indexStatus.Flushed()) {
 				break
 			}
+			saveCheckpoint(rc, tr, engineID, chunk.chunkCp)
+			cnt++
 		}
 		flushPendingChunks = flushPendingChunks[cnt:]
 		checkFlushLock.Unlock()
@@ -1575,4 +1569,107 @@ func getDDLJobIDByQuery(ctx context.Context, db *sql.DB, wantQuery string) (int6
 		}
 	}
 	return 0, errors.Trace(rows.Err())
+}
+
+func (tr *TableImporter) preDeduplicate(
+	ctx context.Context,
+	rc *Controller,
+	cp *checkpoints.TableCheckpoint,
+	workingDir string,
+) error {
+	d := &dupDetector{
+		tr:     tr,
+		rc:     rc,
+		cp:     cp,
+		logger: tr.logger,
+	}
+	originalErr := d.run(ctx, workingDir, tr.dupIgnoreRows)
+	if originalErr == nil {
+		return nil
+	}
+
+	if !ErrDuplicateKey.Equal(originalErr) {
+		return errors.Trace(originalErr)
+	}
+
+	var (
+		idxName                          string
+		oneConflictMsg, otherConflictMsg string
+	)
+
+	// provide a more friendly error message
+
+	dupErr := errors.Cause(originalErr).(*errors.Error)
+	conflictIdxID := dupErr.Args()[0].(int64)
+	if conflictIdxID == conflictOnHandle {
+		idxName = "PRIMARY"
+	} else {
+		for _, idxInfo := range tr.tableInfo.Core.Indices {
+			if idxInfo.ID == conflictIdxID {
+				idxName = idxInfo.Name.O
+				break
+			}
+		}
+	}
+	if idxName == "" {
+		tr.logger.Error("cannot find index name", zap.Int64("conflictIdxID", conflictIdxID))
+		return errors.Trace(originalErr)
+	}
+	if !rc.cfg.Checkpoint.Enable {
+		return errors.Errorf("duplicate key in table %s caused by index `%s`, you can turn on checkpoint and re-run to see the conflicting rows",
+			tr.tableName, idxName)
+	}
+	conflictEncodedRowIDs := dupErr.Args()[1].([][]byte)
+	if len(conflictEncodedRowIDs) < 2 {
+		tr.logger.Error("invalid conflictEncodedRowIDs", zap.Int("len", len(conflictEncodedRowIDs)))
+		return errors.Trace(originalErr)
+	}
+	rowID := make([]int64, 2)
+	var err error
+	_, rowID[0], err = codec.DecodeComparableVarint(conflictEncodedRowIDs[0])
+	if err != nil {
+		rowIDHex := hex.EncodeToString(conflictEncodedRowIDs[0])
+		tr.logger.Error("failed to decode rowID",
+			zap.String("rowID", rowIDHex),
+			zap.Error(err))
+		return errors.Trace(originalErr)
+	}
+	_, rowID[1], err = codec.DecodeComparableVarint(conflictEncodedRowIDs[1])
+	if err != nil {
+		rowIDHex := hex.EncodeToString(conflictEncodedRowIDs[1])
+		tr.logger.Error("failed to decode rowID",
+			zap.String("rowID", rowIDHex),
+			zap.Error(err))
+		return errors.Trace(originalErr)
+	}
+
+	tableCp, err := rc.checkpointsDB.Get(ctx, tr.tableName)
+	if err != nil {
+		tr.logger.Error("failed to get table checkpoint", zap.Error(err))
+		return errors.Trace(err)
+	}
+	for _, engineCp := range tableCp.Engines {
+		for _, chunkCp := range engineCp.Chunks {
+			if chunkCp.Chunk.PrevRowIDMax <= rowID[0] && rowID[0] < chunkCp.Chunk.RowIDMax {
+				oneConflictMsg = fmt.Sprintf("row %d counting from offset %d in file %s",
+					rowID[0]-chunkCp.Chunk.PrevRowIDMax,
+					chunkCp.Chunk.Offset,
+					chunkCp.FileMeta.Path)
+			}
+			if chunkCp.Chunk.PrevRowIDMax <= rowID[1] && rowID[1] < chunkCp.Chunk.RowIDMax {
+				otherConflictMsg = fmt.Sprintf("row %d counting from offset %d in file %s",
+					rowID[1]-chunkCp.Chunk.PrevRowIDMax,
+					chunkCp.Chunk.Offset,
+					chunkCp.FileMeta.Path)
+			}
+		}
+	}
+	if oneConflictMsg == "" || otherConflictMsg == "" {
+		tr.logger.Error("cannot find conflict rows by rowID",
+			zap.Int64("rowID[0]", rowID[0]),
+			zap.Int64("rowID[1]", rowID[1]))
+		return errors.Trace(originalErr)
+	}
+	return errors.Errorf("duplicate entry for key '%s', a pair of conflicting rows are (%s, %s)",
+		idxName, oneConflictMsg, otherConflictMsg)
 }
