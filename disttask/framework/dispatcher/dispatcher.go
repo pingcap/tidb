@@ -158,7 +158,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 			// TODO: Consider getting these tasks, in addition to the task being worked on..
 			gTasks, err := d.taskMgr.GetGlobalTasksInStates(proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStateCancelling)
 			if err != nil {
-				logutil.BgLogger().Warn("get unfinished(pending, running or reverting) tasks failed", zap.Error(err))
+				logutil.BgLogger().Warn("get unfinished(pending, running, reverting or cancelling) tasks failed", zap.Error(err))
 				break
 			}
 
@@ -219,7 +219,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		if cnt > 0 {
 			subTaskErr, err = d.taskMgr.CollectSubTaskError(gTask.ID)
 			if err != nil {
-				logutil.BgLogger().Warn("collate subtask error failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
+				logutil.BgLogger().Warn("collect subtask error failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
 				return false, nil
 			}
 			return false, subTaskErr
@@ -231,7 +231,6 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 			return false, nil
 		}
 		if cnt > 0 {
-			logutil.BgLogger().Info("check task, subtasks aren't finished", zap.Int64("task ID", gTask.ID), zap.Int64("cnt", cnt))
 			return false, nil
 		}
 		return true, nil
@@ -425,6 +424,8 @@ func (d *dispatcher) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, m
 	}
 	// select all available TiDB nodes for this global tasks.
 	serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask)
+	logutil.BgLogger().Debug("eligible instances", zap.Int("num", len(serverNodes)))
+
 	if err1 != nil {
 		return err1
 	}
@@ -436,8 +437,11 @@ func (d *dispatcher) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, m
 		// we assign the subtask to the instance in a round-robin way.
 		pos := i % len(serverNodes)
 		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
+		logutil.BgLogger().Debug("create subtasks",
+			zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
+
 	return d.updateTask(gTask, gTask.State, subTasks, retrySQLTimes)
 }
 
@@ -474,21 +478,11 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 	}
 	ids := make([]string, 0, len(schedulerIDs))
 	for _, id := range schedulerIDs {
-		if ok := matchServerInfo(serverInfos, id); ok {
+		if ok := disttaskutil.MatchServerInfo(serverInfos, id); ok {
 			ids = append(ids, id)
 		}
 	}
 	return ids, nil
-}
-
-func matchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string) bool {
-	for _, serverInfo := range serverInfos {
-		serverID := disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port)
-		if serverID == schedulerID {
-			return true
-		}
-	}
-	return false
 }
 
 func (d *dispatcher) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error) {

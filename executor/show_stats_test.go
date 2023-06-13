@@ -278,10 +278,9 @@ func TestShowStatusSnapshot(t *testing.T) {
 
 func TestShowStatsExtended(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-
 	tk := testkit.NewTestKit(t, store)
-	dom.StatsHandle().Clear()
 	tk.MustExec("use test")
+	dom.StatsHandle().Clear()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustExec("insert into t values(1,1,3),(2,2,2),(3,3,1)")

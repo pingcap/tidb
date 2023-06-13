@@ -108,6 +108,9 @@ func (s *mockStoreCore) Watch(ctx context.Context) api.WatchTimerChan {
 	return args.Get(0).(api.WatchTimerChan)
 }
 
+func (s *mockStoreCore) Close() {
+}
+
 func waitDone(obj any, timeout time.Duration) {
 	var ch <-chan struct{}
 	switch o := obj.(type) {

@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	fstorage "github.com/pingcap/tidb/disttask/framework/storage"
-	"github.com/pingcap/tidb/disttask/loaddata"
+	"github.com/pingcap/tidb/disttask/importinto"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
@@ -2236,7 +2236,7 @@ func handleImportJobInfo(info *importer.JobInfo, result *chunk.Chunk) error {
 	var importedRowCount int64 = -1
 	if info.Summary == nil && info.Status == importer.JobStatusRunning {
 		// for running jobs, need get from distributed framework.
-		rows, err := loaddata.GetTaskImportedRows(info.ID)
+		rows, err := importinto.GetTaskImportedRows(info.ID)
 		if err != nil {
 			return err
 		}
