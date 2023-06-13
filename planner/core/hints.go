@@ -40,11 +40,8 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 		return nil
 	}
 	for _, op := range selectPlan {
-		if !op.IsRoot {
-			continue
-		}
 		p := op.Origin.(PhysicalPlan)
-		hints = genHintsFromSingle(p, nodeTp, hints)
+		hints = genHintsFromSingle(p, nodeTp, op.StoreType, hints)
 	}
 	for _, cte := range flat.CTEs {
 		for i, op := range cte {
@@ -52,7 +49,7 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 				continue
 			}
 			p := op.Origin.(PhysicalPlan)
-			hints = genHintsFromSingle(p, nodeTp, hints)
+			hints = genHintsFromSingle(p, nodeTp, op.StoreType, hints)
 		}
 	}
 	return hints
@@ -164,15 +161,22 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.recursivePartPhysicalPlan, nodeType)...)
 	}
 
-	return genHintsFromSingle(p, nodeType, res)
+	return genHintsFromSingle(p, nodeType, kv.TiDB, res)
 }
 
-func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
+func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
 	qbName, err := utilhint.GenerateQBName(nodeType, p.SelectBlockOffset())
 	if err != nil {
 		return res
 	}
 	switch pp := p.(type) {
+	case *PhysicalLimit, *PhysicalTopN:
+		if storeType == kv.TiKV {
+			res = append(res, &ast.TableOptimizerHint{
+				QBName:   qbName,
+				HintName: model.NewCIStr(HintLimitToCop),
+			})
+		}
 	case *PhysicalTableReader:
 		tbl, ok := pp.TablePlans[0].(*PhysicalTableScan)
 		if !ok {
