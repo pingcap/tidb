@@ -49,7 +49,6 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -339,7 +338,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 	defer func() {
 		if r.stats != nil {
 			// Ignore internal sql.
-			if !r.ctx.GetSessionVars().InRestrictedSQL && len(r.stats.copRespTime) > 0 {
+			if !r.ctx.GetSessionVars().InRestrictedSQL && r.stats.copRespTime.Size() > 0 {
 				ratio := r.stats.calcCacheHit()
 				if ratio >= 1 {
 					telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
@@ -651,7 +650,7 @@ func (r *selectResult) Close() error {
 					r.stats.storeBatchedNum, r.stats.storeBatchedFallbackNum = batched, fallback
 					telemetryStoreBatchedCnt.Add(float64(r.stats.storeBatchedNum))
 					telemetryStoreBatchedFallbackCnt.Add(float64(r.stats.storeBatchedFallbackNum))
-					telemetryBatchedQueryTaskCnt.Add(float64(len(r.stats.copRespTime)))
+					telemetryBatchedQueryTaskCnt.Add(float64(r.stats.copRespTime.Size()))
 				}
 			}
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
@@ -667,8 +666,8 @@ type CopRuntimeStats interface {
 }
 
 type selectResultRuntimeStats struct {
-	copRespTime             []time.Duration
-	procKeys                []int64
+	copRespTime             execdetails.Percentile[execdetails.Duration]
+	procKeys                execdetails.Percentile[execdetails.Int64]
 	backoffSleep            map[string]time.Duration
 	totalProcessTime        time.Duration
 	totalWaitTime           time.Duration
@@ -682,11 +681,11 @@ type selectResultRuntimeStats struct {
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
-	s.copRespTime = append(s.copRespTime, respTime)
+	s.copRespTime.Add(execdetails.Duration(respTime))
 	if copStats.ScanDetail != nil {
-		s.procKeys = append(s.procKeys, copStats.ScanDetail.ProcessedKeys)
+		s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
 	} else {
-		s.procKeys = append(s.procKeys, 0)
+		s.procKeys.Add(0)
 	}
 	maps.Copy(s.backoffSleep, copStats.BackoffSleep)
 	s.totalProcessTime += copStats.TimeDetail.ProcessTime
@@ -699,8 +698,8 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntim
 
 func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	newRs := selectResultRuntimeStats{
-		copRespTime:             make([]time.Duration, 0, len(s.copRespTime)),
-		procKeys:                make([]int64, 0, len(s.procKeys)),
+		copRespTime:             execdetails.Percentile[execdetails.Duration]{},
+		procKeys:                execdetails.Percentile[execdetails.Int64]{},
 		backoffSleep:            make(map[string]time.Duration, len(s.backoffSleep)),
 		rpcStat:                 tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency:      s.distSQLConcurrency,
@@ -710,8 +709,8 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		storeBatchedFallbackNum: s.storeBatchedFallbackNum,
 		buildTaskDuration:       s.buildTaskDuration,
 	}
-	newRs.copRespTime = append(newRs.copRespTime, s.copRespTime...)
-	newRs.procKeys = append(newRs.procKeys, s.procKeys...)
+	newRs.copRespTime.MergePercentile(&s.copRespTime)
+	newRs.procKeys.MergePercentile(&s.procKeys)
 	for k, v := range s.backoffSleep {
 		newRs.backoffSleep[k] += v
 	}
@@ -726,8 +725,8 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	if !ok {
 		return
 	}
-	s.copRespTime = append(s.copRespTime, other.copRespTime...)
-	s.procKeys = append(s.procKeys, other.procKeys...)
+	s.copRespTime.MergePercentile(&other.copRespTime)
+	s.procKeys.MergePercentile(&other.procKeys)
 
 	for k, v := range other.backoffSleep {
 		s.backoffSleep[k] += v
@@ -750,31 +749,39 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 func (s *selectResultRuntimeStats) String() string {
 	buf := bytes.NewBuffer(nil)
 	rpcStat := s.rpcStat
-	if len(s.copRespTime) > 0 {
-		size := len(s.copRespTime)
+	if s.copRespTime.Size() > 0 {
+		size := s.copRespTime.Size()
 		if size == 1 {
+<<<<<<< HEAD
 			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(s.copRespTime[0]), s.procKeys[0]))
+=======
+			fmt.Fprintf(buf, "cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(time.Duration(s.copRespTime.GetPercentile(0))), s.procKeys.GetPercentile(0))
+>>>>>>> 6f54a29444a (*: use approximately algorithm to calculate p90 in slowlog. (#44269))
 		} else {
-			slices.Sort(s.copRespTime)
-			vMax, vMin := s.copRespTime[size-1], s.copRespTime[0]
-			vP95 := s.copRespTime[size*19/20]
-			sum := 0.0
-			for _, t := range s.copRespTime {
-				sum += float64(t)
-			}
+			vMax, vMin := s.copRespTime.GetMax(), s.copRespTime.GetMin()
+			vP95 := s.copRespTime.GetPercentile(0.95)
+			sum := s.copRespTime.Sum()
 			vAvg := time.Duration(sum / float64(size))
 
+<<<<<<< HEAD
 			slices.Sort(s.procKeys)
 			keyMax := s.procKeys[size-1]
 			keyP95 := s.procKeys[size*19/20]
 			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,
 				execdetails.FormatDuration(vMax), execdetails.FormatDuration(vMin),
 				execdetails.FormatDuration(vAvg), execdetails.FormatDuration(vP95)))
+=======
+			keyMax := s.procKeys.GetMax()
+			keyP95 := s.procKeys.GetPercentile(0.95)
+			fmt.Fprintf(buf, "cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,
+				execdetails.FormatDuration(time.Duration(vMax.GetFloat64())), execdetails.FormatDuration(time.Duration(vMin.GetFloat64())),
+				execdetails.FormatDuration(vAvg), execdetails.FormatDuration(time.Duration(vP95)))
+>>>>>>> 6f54a29444a (*: use approximately algorithm to calculate p90 in slowlog. (#44269))
 			if keyMax > 0 {
 				buf.WriteString(", max_proc_keys: ")
-				buf.WriteString(strconv.FormatInt(keyMax, 10))
+				buf.WriteString(strconv.FormatInt(int64(keyMax), 10))
 				buf.WriteString(", p95_proc_keys: ")
-				buf.WriteString(strconv.FormatInt(keyP95, 10))
+				buf.WriteString(strconv.FormatInt(int64(keyP95), 10))
 			}
 		}
 		if s.totalProcessTime > 0 {
@@ -851,7 +858,7 @@ func (*selectResultRuntimeStats) Tp() int {
 
 func (s *selectResultRuntimeStats) calcCacheHit() float64 {
 	hit := s.CoprCacheHitNum
-	tot := len(s.copRespTime)
+	tot := s.copRespTime.Size()
 	if s.storeBatchedNum > 0 {
 		tot += int(s.storeBatchedNum)
 	}
