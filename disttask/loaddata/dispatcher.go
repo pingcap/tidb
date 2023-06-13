@@ -341,11 +341,8 @@ func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProce
 	// no need and should not call controller.InitDataFiles, files might not exist on this instance.
 
 	logger.Info("post process")
-	if err := verifyChecksum(ctx, controller, subtaskMeta.Checksum, logger); err != nil {
-		return err
-	}
 
-	return nil
+	return verifyChecksum(ctx, controller, subtaskMeta.Checksum, logger)
 }
 
 func verifyChecksum(ctx context.Context, controller *importer.LoadDataController, checksum Checksum, logger *zap.Logger) error {

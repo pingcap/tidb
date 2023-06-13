@@ -94,7 +94,7 @@ func (ti *DistImporter) Param() *importer.JobImportParam {
 	return ti.JobImportParam
 }
 
-// StepImport implements JobImporter.StepImport.
+// Import implements JobImporter.Import.
 func (*DistImporter) Import() {
 	// todo: remove it
 }
