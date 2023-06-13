@@ -19,6 +19,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//config",
+        "//domain/resourcegroup",
         "//errno",
         "//keyspace",
         "//kv",

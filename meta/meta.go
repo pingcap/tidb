@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -88,7 +89,7 @@ var (
 			Priority:   model.MediumPriorityValue,
 		},
 		ID:    defaultGroupID,
-		Name:  model.NewCIStr("default"),
+		Name:  model.NewCIStr(resourcegroup.DefaultResourceGroupName),
 		State: model.StatePublic,
 	}
 )
@@ -1026,7 +1027,7 @@ func (m *Meta) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		groups = append(groups, group)
-		hasDefault = hasDefault || (group.Name.L == "default")
+		hasDefault = hasDefault || (group.Name.L == resourcegroup.DefaultResourceGroupName)
 	}
 	if !hasDefault {
 		groups = append(groups, defaultRGroupMeta)

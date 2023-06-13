@@ -67,6 +67,7 @@ go_test(
     race = "on",
     shard_count = 23,
     deps = [
+        "//domain/resourcegroup",
         "//kv",
         "//parser/charset",
         "//parser/mysql",

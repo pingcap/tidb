@@ -230,9 +230,9 @@ func TestResourceGroupHint(t *testing.T) {
 	tk.MustQuery("select /*+ resource_group(rg1) resource_group(default) */ * from t1")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 RESOURCE_GROUP() is defined more than once, only the last definition takes effect: RESOURCE_GROUP(default)"))
 	tk.MustQuery("select /*+ resource_group(rg1) */ DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test rg1"))
-	tk.MustQuery("select DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test "))
+	tk.MustQuery("select DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test default"))
 	tk.MustExec("set global tidb_enable_resource_control='off'")
-	tk.MustQuery("select /*+ resource_group(rg1) */ DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test "))
+	tk.MustQuery("select /*+ resource_group(rg1) */ DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test default"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8250 Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature"))
 }
 
@@ -384,8 +384,8 @@ func TestBindHints(t *testing.T) {
 	tk.MustExec("create global binding for select * from t using select /*+ resource_group(rg1) */ * from t")
 	tk.MustQuery("select * from t")
 	re.Equal("rg1", tk.Session().GetSessionVars().StmtCtx.ResourceGroup)
-	re.Equal("", tk.Session().GetSessionVars().ResourceGroupName)
+	re.Equal("default", tk.Session().GetSessionVars().ResourceGroupName)
 	tk.MustQuery("select a, b from t")
 	re.Equal("", tk.Session().GetSessionVars().StmtCtx.ResourceGroup)
-	re.Equal("", tk.Session().GetSessionVars().ResourceGroupName)
+	re.Equal("default", tk.Session().GetSessionVars().ResourceGroupName)
 }
