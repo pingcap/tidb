@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/disttask/framework/storage"
-	"github.com/pingcap/tidb/disttask/loaddata"
+	"github.com/pingcap/tidb/disttask/importinto"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/auth"
@@ -822,7 +822,7 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	}, 1, 1, time.Second)
 	defer pool.Close()
 	taskManager := storage.NewTaskManager(context.Background(), pool)
-	subtasks, err := taskManager.GetSucceedSubtasksByStep(storage.TestLastTaskID.Load(), loaddata.Import)
+	subtasks, err := taskManager.GetSucceedSubtasksByStep(storage.TestLastTaskID.Load(), importinto.Import)
 	s.NoError(err)
 	s.Len(subtasks, 1)
 	serverInfo, err := infosync.GetServerInfo()
@@ -882,8 +882,8 @@ func (s *mockGCSSuite) TestImportMode() {
 	}).Times(1)
 	s.tk.MustExec("truncate table load_data.import_mode;")
 	// wait ToImportMode called
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/waitBeforeSortChunk", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/waitBeforeSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/errorWhenSortChunk", "return(true)")
 	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
 	err := s.tk.QueryToErr(sql)
 	s.Error(err)
@@ -907,14 +907,14 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	}
 	taskRegister.EXPECT().RegisterTaskOnce(gomock.Any()).DoAndReturn(mockedRegister).Times(1)
 	taskRegister.EXPECT().Close(gomock.Any()).DoAndReturn(mockedClose).Times(1)
-	backup := loaddata.NewTaskRegisterWithTTL
-	loaddata.NewTaskRegisterWithTTL = func(_ *clientv3.Client, _ time.Duration, _ utils.RegisterTaskType, name string) utils.TaskRegister {
+	backup := importinto.NewTaskRegisterWithTTL
+	importinto.NewTaskRegisterWithTTL = func(_ *clientv3.Client, _ time.Duration, _ utils.RegisterTaskType, name string) utils.TaskRegister {
 		// we use taskID as the task name
 		taskID.Store(name)
 		return taskRegister
 	}
 	s.T().Cleanup(func() {
-		loaddata.NewTaskRegisterWithTTL = backup
+		importinto.NewTaskRegisterWithTTL = backup
 	})
 
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
@@ -937,16 +937,16 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	taskRegister.EXPECT().RegisterTaskOnce(gomock.Any()).DoAndReturn(mockedRegister).Times(1)
 	taskRegister.EXPECT().Close(gomock.Any()).DoAndReturn(mockedClose).Times(1)
 	s.tk.MustExec("truncate table load_data.register_task;")
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/waitBeforeSortChunk", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/waitBeforeSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/errorWhenSortChunk", "return(true)")
 	err := s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(unregisterTime, registerTime)
 
-	loaddata.NewTaskRegisterWithTTL = backup
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/loaddata/waitBeforeSortChunk"))
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/loaddata/errorWhenSortChunk"))
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/loaddata/syncBeforeSortChunk", "return(true)")
+	importinto.NewTaskRegisterWithTTL = backup
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/importinto/waitBeforeSortChunk"))
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/importinto/errorWhenSortChunk"))
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/syncBeforeSortChunk", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
 	wg := sync.WaitGroup{}
 	wg.Add(1)
@@ -955,7 +955,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 		s.tk.MustQuery(sql)
 	}()
 	// wait for the task to be registered
-	<-loaddata.TestSyncChan
+	<-importinto.TestSyncChan
 	client, err := importer.GetEtcdClient()
 	s.NoError(err)
 	s.T().Cleanup(func() {
@@ -968,7 +968,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 		return len(resp.Kvs) == 1
 	}, 5*time.Second, 300*time.Millisecond)
 	// continue the execution
-	loaddata.TestSyncChan <- struct{}{}
+	importinto.TestSyncChan <- struct{}{}
 	wg.Wait()
 	s.tk.MustQuery("SELECT * FROM load_data.register_task;").Sort().Check(testkit.Rows("1 11 111"))
 
