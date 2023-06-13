@@ -574,3 +574,23 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.JSONKeys:          {},
 	ast.JSONLength:        {},
 }
+
+var analyzeSkipAllowedTypes = map[string]struct{}{
+	"json":       {},
+	"text":       {},
+	"mediumtext": {},
+	"longtext":   {},
+	"blob":       {},
+	"mediumblob": {},
+	"longblob":   {},
+}
+
+func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
+	skipTypes := make(map[string]struct{})
+	for _, columnType := range strings.Split(strings.ToLower(val), ",") {
+		if _, ok := analyzeSkipAllowedTypes[columnType]; ok {
+			skipTypes[columnType] = struct{}{}
+		}
+	}
+	return skipTypes
+}

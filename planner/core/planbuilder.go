@@ -2467,6 +2467,24 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		if colsInfo, ok := colsInfoMap[physicalID]; ok {
 			execColsInfo = colsInfo
 		}
+		filterSkipColumnTypes := func(origin []*model.ColumnInfo) (result []*model.ColumnInfo) {
+			skipTypes := b.ctx.GetSessionVars().AnalyzeSkipColumnTypes
+			if b.ctx.GetSessionVars().InRestrictedSQL {
+				val, err1 := b.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+				if err1 != nil {
+					logutil.BgLogger().Error("loading tidb_analyze_skip_column_types failed", zap.Error(err1))
+				} else {
+					skipTypes = variable.ParseAnalyzeSkipColumnTypes(val)
+				}
+			}
+			for _, colInfo := range origin {
+				if _, ok := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]; !ok {
+					result = append(result, colInfo)
+				}
+			}
+			return
+		}
+		execColsInfo = filterSkipColumnTypes(execColsInfo)
 		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
 		indexes := getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
