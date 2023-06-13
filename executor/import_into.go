@@ -188,7 +188,7 @@ func (e *ImportIntoExec) getJobImporter(param *importer.JobImportParam) (*import
 	return importinto.NewDistImporterCurrNode(param, e.importPlan, e.stmt, e.controller.TotalFileSize)
 }
 
-func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, distImporter *loaddata.DistImporter, task *proto.Task) error {
+func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, distImporter *importinto.DistImporter, task *proto.Task) error {
 	distImporter.ImportTask(task)
 	group := distImporter.Param().Group
 	err := group.Wait()
