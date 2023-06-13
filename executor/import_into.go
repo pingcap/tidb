@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	fstorage "github.com/pingcap/tidb/disttask/framework/storage"
-	"github.com/pingcap/tidb/disttask/loaddata"
+	"github.com/pingcap/tidb/disttask/importinto"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
@@ -168,7 +168,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	return nil
 }
 
-func (e *ImportIntoExec) getJobImporter(param *importer.JobImportParam) (*loaddata.DistImporter, error) {
+func (e *ImportIntoExec) getJobImporter(param *importer.JobImportParam) (*importinto.DistImporter, error) {
 	importFromServer, err := storage.IsLocalPath(e.controller.Path)
 	if err != nil {
 		// since we have checked this during creating controller, this should not happen.
@@ -179,13 +179,13 @@ func (e *ImportIntoExec) getJobImporter(param *importer.JobImportParam) (*loadda
 		if err2 != nil {
 			return nil, err2
 		}
-		return loaddata.NewDistImporterServerFile(param, e.importPlan, e.stmt, ecp, e.controller.TotalFileSize)
+		return importinto.NewDistImporterServerFile(param, e.importPlan, e.stmt, ecp, e.controller.TotalFileSize)
 	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
 	if variable.EnableDistTask.Load() {
-		return loaddata.NewDistImporter(param, e.importPlan, e.stmt, e.controller.TotalFileSize)
+		return importinto.NewDistImporter(param, e.importPlan, e.stmt, e.controller.TotalFileSize)
 	}
-	return loaddata.NewDistImporterCurrNode(param, e.importPlan, e.stmt, e.controller.TotalFileSize)
+	return importinto.NewDistImporterCurrNode(param, e.importPlan, e.stmt, e.controller.TotalFileSize)
 }
 
 func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, distImporter *loaddata.DistImporter, task *proto.Task) error {
@@ -237,7 +237,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		if err2 := importer.CancelJob(ctx, exec, e.jobID); err2 != nil {
 			return err2
 		}
-		return globalTaskManager.CancelGlobalTaskByKeySession(se, loaddata.TaskKey(e.jobID))
+		return globalTaskManager.CancelGlobalTaskByKeySession(se, importinto.TaskKey(e.jobID))
 	})
 }
 

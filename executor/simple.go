@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
@@ -1098,7 +1099,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
 
 		// check if specified resource group exists
-		if resourceGroupName != "default" && resourceGroupName != "" {
+		if resourceGroupName != resourcegroup.DefaultResourceGroupName && resourceGroupName != "" {
 			_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
 			if !exists {
 				return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
@@ -1909,7 +1910,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 			// check if specified resource group exists
 			resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
-			if resourceGroupName != "default" && s.ResourceGroupNameOption.Value != "" {
+			if resourceGroupName != resourcegroup.DefaultResourceGroupName && s.ResourceGroupNameOption.Value != "" {
 				_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
 				if !exists {
 					return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
@@ -2831,8 +2832,9 @@ func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) er
 		if _, ok := e.is.ResourceGroupByName(s.Name); !ok {
 			return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(s.Name.O)
 		}
+		e.ctx.GetSessionVars().ResourceGroupName = s.Name.L
+	} else {
+		e.ctx.GetSessionVars().ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	}
-
-	e.ctx.GetSessionVars().ResourceGroupName = s.Name.L
 	return nil
 }
