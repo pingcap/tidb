@@ -20,6 +20,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	pd "github.com/tikv/pd/client"
 )
@@ -102,4 +103,12 @@ func (m *mockResourceGroupManager) AcquireTokenBuckets(ctx context.Context, requ
 
 func (m *mockResourceGroupManager) WatchResourceGroup(ctx context.Context, revision int64) (chan []*rmpb.ResourceGroup, error) {
 	return nil, nil
+}
+
+func (m *mockResourceGroupManager) Watch(ctx context.Context, key []byte, opts ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
+	return nil, nil
+}
+
+func (m *mockResourceGroupManager) LoadResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, int64, error) {
+	return nil, 0, nil
 }
