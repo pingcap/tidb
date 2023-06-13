@@ -183,6 +183,16 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 	s.mapper.update(id, delta, count, colSize)
 }
 
+// ClearForTest clears the mapper and feedback for test.
+func (s *SessionStatsCollector) ClearForTest() {
+	s.Lock()
+	defer s.Unlock()
+	s.mapper = make(tableDeltaMap)
+	s.feedback = statistics.NewQueryFeedbackMap()
+	s.rateMap = make(errorRateDeltaMap)
+	s.colMap = make(colStatsUsageMap)
+}
+
 var (
 	// MinLogScanCount is the minimum scan count for a feedback to be logged.
 	MinLogScanCount = atomic.NewInt64(1000)

@@ -277,11 +277,6 @@ func TestShowStatusSnapshot(t *testing.T) {
 }
 
 func TestShowStatsExtended(t *testing.T) {
-	origEnableDDL := variable.EnableTTLJob.Load()
-	defer func() {
-		variable.EnableTTLJob.Store(origEnableDDL)
-	}()
-	variable.EnableTTLJob.Store(false)
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
