@@ -465,21 +465,17 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// If the stmt have no rs like `insert`, The session tracker detachment will be directly
 		// done in the `defer` function. If the rs is not nil, the detachment will be done in
 		// `rs.Close` in `handleStmt`
-<<<<<<< HEAD
 		if sc != nil && rs == nil {
 			if sc.MemTracker != nil {
 				sc.MemTracker.DetachFromGlobalTracker()
 			}
 			if sc.DiskTracker != nil {
 				sc.DiskTracker.DetachFromGlobalTracker()
-=======
-		if handled && sc != nil && rs == nil {
-			sc.DetachMemDiskTracker()
+			}
 			cteErr := resetCTEStorageMap(a.Ctx)
 			if err == nil {
 				// Only overwrite err when it's nil.
 				err = cteErr
->>>>>>> 437157e7209 (*: fix cte miss cleaning spilled-disk file (#44501))
 			}
 		}
 	}()
@@ -986,13 +982,7 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) error {
 	if cteErr != nil {
 		logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
 	}
-	if lastErr == nil {
-		// Only overwrite err when it's nil.
-		lastErr = cteErr
-	}
-	a.FinishExecuteStmt(txnStartTS, lastErr, false)
-	a.logAudit()
-<<<<<<< HEAD
+
 	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
 	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
 		if stmtCtx.DiskTracker != nil {
@@ -1002,8 +992,6 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) error {
 			stmtCtx.MemTracker.DetachFromGlobalTracker()
 		}
 	}
-=======
-	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
 	return cteErr
 }
 
@@ -1037,7 +1025,6 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 	}
 	se.GetSessionVars().StmtCtx.CTEStorageMap = nil
 	return nil
->>>>>>> 437157e7209 (*: fix cte miss cleaning spilled-disk file (#44501))
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
