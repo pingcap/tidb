@@ -115,6 +115,7 @@ go_library(
         "//disttask/importinto",
         "//domain",
         "//domain/infosync",
+        "//domain/resourcegroup",
         "//errno",
         "//executor/aggfuncs",
         "//executor/asyncloaddata",
