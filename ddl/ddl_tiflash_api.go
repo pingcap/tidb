@@ -24,7 +24,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -86,25 +87,25 @@ type PollTiFlashBackoffContext struct {
 }
 
 // NewPollTiFlashBackoffContext creates an instance of PollTiFlashBackoffContext.
-func NewPollTiFlashBackoffContext(MinThreshold, MaxThreshold TiFlashTick, Capacity int, Rate TiFlashTick) (*PollTiFlashBackoffContext, error) {
-	if MaxThreshold < MinThreshold {
-		return nil, fmt.Errorf("`MaxThreshold` should always be larger than `MinThreshold`")
+func NewPollTiFlashBackoffContext(minThreshold, maxThreshold TiFlashTick, capacity int, rate TiFlashTick) (*PollTiFlashBackoffContext, error) {
+	if maxThreshold < minThreshold {
+		return nil, fmt.Errorf("`maxThreshold` should always be larger than `minThreshold`")
 	}
-	if MinThreshold < 1 {
-		return nil, fmt.Errorf("`MinThreshold` should not be less than 1")
+	if minThreshold < 1 {
+		return nil, fmt.Errorf("`minThreshold` should not be less than 1")
 	}
-	if Capacity < 0 {
-		return nil, fmt.Errorf("negative `Capacity`")
+	if capacity < 0 {
+		return nil, fmt.Errorf("negative `capacity`")
 	}
-	if Rate <= 1 {
-		return nil, fmt.Errorf("`Rate` should always be larger than 1")
+	if rate <= 1 {
+		return nil, fmt.Errorf("`rate` should always be larger than 1")
 	}
 	return &PollTiFlashBackoffContext{
-		MinThreshold: MinThreshold,
-		MaxThreshold: MaxThreshold,
-		Capacity:     Capacity,
+		MinThreshold: minThreshold,
+		MaxThreshold: maxThreshold,
+		Capacity:     capacity,
 		elements:     make(map[int64]*PollTiFlashBackoffElement),
-		Rate:         Rate,
+		Rate:         rate,
 	}, nil
 }
 
@@ -128,12 +129,12 @@ type AvailableTableID struct {
 // 1. A bool indicates whether threshold is grown during this tick.
 // 2. A bool indicates whether this ID exists.
 // 3. A int indicates how many ticks ID has counted till now.
-func (b *PollTiFlashBackoffContext) Tick(ID int64) (bool, bool, int) {
-	e, ok := b.Get(ID)
+func (b *PollTiFlashBackoffContext) Tick(id int64) (grew bool, exist bool, cnt int) {
+	e, ok := b.Get(id)
 	if !ok {
 		return false, false, 0
 	}
-	grew := e.MaybeGrow(b)
+	grew = e.MaybeGrow(b)
 	e.Counter++
 	e.TotalCounter++
 	return grew, true, e.TotalCounter
@@ -167,26 +168,26 @@ func (e *PollTiFlashBackoffElement) MaybeGrow(b *PollTiFlashBackoffContext) bool
 }
 
 // Remove will reset table from backoff.
-func (b *PollTiFlashBackoffContext) Remove(ID int64) bool {
-	_, ok := b.elements[ID]
-	delete(b.elements, ID)
+func (b *PollTiFlashBackoffContext) Remove(id int64) bool {
+	_, ok := b.elements[id]
+	delete(b.elements, id)
 	return ok
 }
 
 // Get returns pointer to inner PollTiFlashBackoffElement.
 // Only exported for test.
-func (b *PollTiFlashBackoffContext) Get(ID int64) (*PollTiFlashBackoffElement, bool) {
-	res, ok := b.elements[ID]
+func (b *PollTiFlashBackoffContext) Get(id int64) (*PollTiFlashBackoffElement, bool) {
+	res, ok := b.elements[id]
 	return res, ok
 }
 
 // Put will record table into backoff pool, if there is enough room, or returns false.
-func (b *PollTiFlashBackoffContext) Put(ID int64) bool {
-	_, ok := b.elements[ID]
+func (b *PollTiFlashBackoffContext) Put(id int64) bool {
+	_, ok := b.elements[id]
 	if ok {
 		return true
 	} else if b.Len() < b.Capacity {
-		b.elements[ID] = NewPollTiFlashBackoffElement()
+		b.elements[id] = NewPollTiFlashBackoffElement()
 		return true
 	}
 	return false
@@ -223,7 +224,7 @@ var (
 	// PollTiFlashBackoffMinTick is the min tick before we try to update TiFlash replica availability for one table.
 	PollTiFlashBackoffMinTick TiFlashTick = 1
 	// PollTiFlashBackoffCapacity is the cache size of backoff struct.
-	PollTiFlashBackoffCapacity int = 1000
+	PollTiFlashBackoffCapacity = 1000
 	// PollTiFlashBackoffRate is growth rate of exponential backoff threshold.
 	PollTiFlashBackoffRate TiFlashTick = 1.5
 	// RefreshProgressMaxTableCount is the max count of table to refresh progress after available each poll.
@@ -263,9 +264,8 @@ func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
 	if !ok {
 		return "", errors.New("Error json")
 	}
-	port := int(port64)
 
-	addr := fmt.Sprintf("%v:%v", host, port)
+	addr := net.JoinHostPort(host, strconv.FormatUint(uint64(port64), 10))
 	return addr, nil
 }
 
@@ -294,11 +294,11 @@ func LoadTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplic
 
 // UpdateTiFlashHTTPAddress report TiFlash's StatusAddress's port to Pd's etcd.
 func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
-	addrAndPort := strings.Split(store.Store.StatusAddress, ":")
-	if len(addrAndPort) < 2 {
-		return errors.New("Can't get TiFlash Address from PD")
+	host, _, err := net.SplitHostPort(store.Store.StatusAddress)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	httpAddr, err := getTiflashHTTPAddr(addrAndPort[0], store.Store.StatusAddress)
+	httpAddr, err := getTiflashHTTPAddr(host, store.Store.StatusAddress)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -351,7 +351,7 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	return nil
 }
 
-func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
+func pollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
 	pollMaxCount := RefreshProgressMaxTableCount
 	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
 		pollMaxCount = uint64(val.(int))
@@ -584,7 +584,7 @@ func (d *ddl) PollTiFlashRoutine() {
 				}
 			}
 
-			sctx, err := d.sessPool.get()
+			sctx, err := d.sessPool.Get()
 			if err == nil {
 				if d.ownerManager.IsOwner() {
 					err := d.refreshTiFlashTicker(sctx, pollTiflashContext)
@@ -599,10 +599,10 @@ func (d *ddl) PollTiFlashRoutine() {
 				} else {
 					infosync.CleanTiFlashProgressCache()
 				}
-				d.sessPool.put(sctx)
+				d.sessPool.Put(sctx)
 			} else {
 				if sctx != nil {
-					d.sessPool.put(sctx)
+					d.sessPool.Put(sctx)
 				}
 				logutil.BgLogger().Error("failed to get session for pollTiFlashReplicaStatus", zap.Error(err))
 			}

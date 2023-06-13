@@ -30,9 +30,33 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 	if len(groupName) > MaxGroupNameLength {
 		return nil, ErrTooLongResourceGroupName
 	}
+
 	group := &rmpb.ResourceGroup{
 		Name: groupName,
 	}
+
+	group.Priority = uint32(options.Priority)
+	if options.Runaway != nil {
+		runaway := &rmpb.RunawaySettings{
+			Rule: &rmpb.RunawayRule{},
+		}
+		if options.Runaway.ExecElapsedTimeMs == 0 {
+			return nil, ErrInvalidResourceGroupRunawayExecElapsedTime
+		}
+		runaway.Rule.ExecElapsedTimeMs = options.Runaway.ExecElapsedTimeMs
+		if options.Runaway.Action == model.RunawayActionNone {
+			return nil, ErrUnknownResourceGroupRunawayAction
+		}
+		// because RunawayActionNone is only defined in tidb, sub 1.
+		runaway.Action = rmpb.RunawayAction(options.Runaway.Action - 1)
+		if options.Runaway.WatchDurationMs > 0 {
+			runaway.Watch = &rmpb.RunawayWatch{}
+			runaway.Watch.Type = rmpb.RunawayWatchType(options.Runaway.WatchType)
+			runaway.Watch.LastingDurationMs = options.Runaway.WatchDurationMs
+		}
+		group.RunawaySettings = runaway
+	}
+
 	if options.RURate > 0 {
 		group.Mode = rmpb.GroupMode_RUMode
 		group.RUSettings = &rmpb.GroupRequestUnitSettings{

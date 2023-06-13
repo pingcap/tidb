@@ -31,7 +31,6 @@ import (
 	ddlUtil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -65,70 +64,77 @@ const (
 
 // Handle can update stats info periodically.
 type Handle struct {
+	pool sessionPool
 
 	// initStatsCtx is the ctx only used for initStats
 	initStatsCtx sessionctx.Context
 
-	mu struct {
-		syncutil.RWMutex
-		ctx sessionctx.Context
-		// rateMap contains the error rate delta from feedback.
-		rateMap errorRateDeltaMap
-	}
+	// sysProcTracker is used to track sys process like analyze
+	sysProcTracker sessionctx.SysProcTracker
 
-	schemaMu struct {
-		sync.RWMutex
-		// pid2tid is the map from partition ID to table ID.
-		pid2tid map[int64]int64
-		// schemaVersion is the version of information schema when `pid2tid` is built.
-		schemaVersion int64
-	}
+	// autoAnalyzeProcIDGetter is used to generate auto analyze ID.
+	autoAnalyzeProcIDGetter func() uint64
 
-	// It can be read by multiple readers at the same time without acquiring lock, but it can be
-	// written only after acquiring the lock.
-	statsCache struct {
-		sync.Mutex
-		atomic.Value
-		memTracker *memory.Tracker
-	}
-
-	pool sessionPool
+	InitStatsDone chan struct{}
 
 	// ddlEventCh is a channel to notify a ddl operation has happened.
 	// It is sent only by owner or the drop stats executor, and read by stats handle.
 	ddlEventCh chan *ddlUtil.Event
-	// listHead contains all the stats collector required by session.
-	listHead *SessionStatsCollector
-	// globalMap contains all the delta map from collectors when we dump them to KV.
-	globalMap struct {
-		sync.Mutex
-		data tableDeltaMap
-	}
-	// feedback is used to store query feedback info.
-	feedback struct {
-		sync.Mutex
-		data *statistics.QueryFeedbackMap
-	}
-	// colMap contains all the column stats usage information from collectors when we dump them to KV.
-	colMap struct {
-		sync.Mutex
-		data colStatsUsageMap
-	}
-
-	lease atomic2.Duration
 
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *SessionIndexUsageCollector
 
+	// listHead contains all the stats collector required by session.
+	listHead *SessionStatsCollector
+
+	// It can be read by multiple readers at the same time without acquiring lock, but it can be
+	// written only after acquiring the lock.
+	statsCache struct {
+		atomic.Pointer[statsCache]
+		memTracker *memory.Tracker
+		sync.Mutex
+	}
+
+	// feedback is used to store query feedback info.
+	feedback struct {
+		data *statistics.QueryFeedbackMap
+		sync.Mutex
+	}
+
+	// globalMap contains all the delta map from collectors when we dump them to KV.
+	globalMap struct {
+		data tableDeltaMap
+		sync.Mutex
+	}
+
+	// colMap contains all the column stats usage information from collectors when we dump them to KV.
+	colMap struct {
+		data colStatsUsageMap
+		sync.Mutex
+	}
+
+	// tableLocked used to store locked tables
+	tableLocked []int64
+
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
 
-	// sysProcTracker is used to track sys process like analyze
-	sysProcTracker sessionctx.SysProcTracker
-	// serverIDGetter is used to get server ID for generating auto analyze ID.
-	serverIDGetter func() uint64
-	// tableLocked used to store locked tables
-	tableLocked []int64
+	mu struct {
+		ctx sessionctx.Context
+		// rateMap contains the error rate delta from feedback.
+		rateMap errorRateDeltaMap
+		syncutil.RWMutex
+	}
+
+	schemaMu struct {
+		// pid2tid is the map from partition ID to table ID.
+		pid2tid map[int64]int64
+		// schemaVersion is the version of information schema when `pid2tid` is built.
+		schemaVersion int64
+		sync.RWMutex
+	}
+
+	lease atomic2.Duration
 }
 
 // GetTableLockedAndClearForTest for unit test only
@@ -296,6 +302,7 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 			logutil.BgLogger().Error("[stats] error occurred when update mysql.stats_meta", zap.Error(err))
 			return "", err
 		}
+		TableRowStatsCache.Invalidate(tid)
 
 		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
 		if err != nil {
@@ -322,6 +329,7 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 			logutil.BgLogger().Error("[stats] error occurred when update mysql.stats_meta", zap.Error(err))
 			return "", err
 		}
+		TableRowStatsCache.Invalidate(tid)
 
 		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
 		if err != nil {
@@ -445,7 +453,8 @@ func (h *Handle) Clear() {
 	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
 	h.mu.Lock()
 	h.statsCache.Lock()
-	h.statsCache.Store(newStatsCache())
+	newCache := newStatsCache()
+	h.statsCache.Store(&newCache)
 	h.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	h.statsCache.Unlock()
 	for len(h.ddlEventCh) > 0 {
@@ -458,7 +467,7 @@ func (h *Handle) Clear() {
 	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
 	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
 	h.mu.ctx.GetSessionVars().SetProjectionConcurrency(0)
-	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
+	h.listHead.ClearForTest()
 	h.globalMap.Lock()
 	h.globalMap.data = make(tableDeltaMap)
 	h.globalMap.Unlock()
@@ -475,22 +484,24 @@ type sessionPool interface {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, serverIDGetter func() uint64) (*Handle, error) {
+func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 	handle := &Handle{
-		ddlEventCh:       make(chan *ddlUtil.Event, 1000),
-		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
-		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
-		pool:             pool,
-		sysProcTracker:   tracker,
-		serverIDGetter:   serverIDGetter,
+		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
+		listHead:                &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
+		idxUsageListHead:        &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
+		pool:                    pool,
+		sysProcTracker:          tracker,
+		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
+		InitStatsDone:           make(chan struct{}),
 	}
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
 	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
-	handle.statsCache.Store(newStatsCache())
+	newCache := newStatsCache()
+	handle.statsCache.Store(&newCache)
 	handle.globalMap.data = make(tableDeltaMap)
 	handle.feedback.data = statistics.NewQueryFeedbackMap()
 	handle.colMap.data = make(colStatsUsageMap)
@@ -530,15 +541,6 @@ func DurationToTS(d time.Duration) uint64 {
 	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
 }
 
-var statsHealthyGauges = []prometheus.Gauge{
-	metrics.StatsHealthyGauge.WithLabelValues("[0,50)"),
-	metrics.StatsHealthyGauge.WithLabelValues("[50,80)"),
-	metrics.StatsHealthyGauge.WithLabelValues("[80,100)"),
-	metrics.StatsHealthyGauge.WithLabelValues("[100,100]"),
-	// [0,100] should always be the last
-	metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),
-}
-
 // UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 func (h *Handle) UpdateStatsHealthyMetrics() {
 	v := h.statsCache.Load()
@@ -547,7 +549,7 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 	}
 
 	distribution := make([]int64, 5)
-	for _, tbl := range v.(statsCache).Values() {
+	for _, tbl := range v.Values() {
 		healthy, ok := tbl.GetStatsHealthy()
 		if !ok {
 			continue
@@ -564,13 +566,13 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 		distribution[4] += 1
 	}
 	for i, val := range distribution {
-		statsHealthyGauges[i].Set(float64(val))
+		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
 	}
 }
 
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
-	oldCache := h.statsCache.Load().(statsCache)
+	oldCache := h.statsCache.Load()
 	lastVersion := oldCache.version
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
@@ -621,7 +623,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 			continue
 		}
 		tbl.Version = version
-		tbl.Count = count
+		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
@@ -653,13 +655,13 @@ func (h *Handle) UpdateSessionVar() error {
 // In the column statistics, the variable `num` is equal to the number of columns in the partition table.
 // In the index statistics, the variable `num` is always equal to one.
 type GlobalStats struct {
-	Num         int
-	Count       int64
-	ModifyCount int64
 	Hg          []*statistics.Histogram
 	Cms         []*statistics.CMSketch
 	TopN        []*statistics.TopN
 	Fms         []*statistics.FMSketch
+	Num         int
+	Count       int64
+	ModifyCount int64
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -760,7 +762,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			allPartitionStats[partitionID] = partitionStats
 		}
 		for i := 0; i < globalStats.Num; i++ {
-			_, hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
+			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
 			if !analyzed {
 				var errMsg string
 				if isIndex == 0 {
@@ -772,7 +774,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 				return
 			}
 			// partition stats is not empty but column stats(hist, topn) is missing
-			if partitionStats.Count > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
+			if partitionStats.RealtimeCount > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
 				var errMsg string
 				if isIndex == 0 {
 					errMsg = fmt.Sprintf("table `%s` partition `%s` column `%s`", tableInfo.Name.L, def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
@@ -784,7 +786,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			}
 			if i == 0 {
 				// In a partition, we will only update globalStats.Count once
-				globalStats.Count += partitionStats.Count
+				globalStats.Count += partitionStats.RealtimeCount
 				globalStats.ModifyCount += partitionStats.ModifyCount
 			}
 			allHg[i] = append(allHg[i], hg)
@@ -991,7 +993,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 		tbl.PhysicalID = pid
 		return tbl
 	}
-	statsCache := h.statsCache.Load().(statsCache)
+	statsCache := h.statsCache.Load()
 	var ok bool
 	option := &tableStatsOption{}
 	for _, opt := range opts {
@@ -1005,10 +1007,16 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
-		h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
+		if tblInfo.GetPartitionInfo() == nil || h.statsCacheLen() < 64 {
+			h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
+		}
 		return tbl
 	}
 	return tbl
+}
+
+func (h *Handle) statsCacheLen() int {
+	return h.statsCache.Load().Len()
 }
 
 // updateStatsCache overrides the global statsCache with a new one, it may fail
@@ -1016,17 +1024,16 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 // Callers should add retry loop if necessary.
 func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	h.statsCache.Lock()
-	oldCache := h.statsCache.Load().(statsCache)
-	enableQuota := oldCache.EnableQuota()
+	oldCache := h.statsCache.Load()
 	newCost := newCache.Cost()
 	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
 		h.statsCache.memTracker.Consume(newCost - oldCache.Cost())
-		h.statsCache.Store(newCache)
+		h.statsCache.Store(&newCache)
 		updated = true
 	}
 	h.statsCache.Unlock()
-	if updated && enableQuota {
-		costGauge.Set(float64(newCost))
+	if updated {
+		handle_metrics.CostGauge.Set(float64(newCost))
 	}
 	return
 }
@@ -1061,7 +1068,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 }
 
 func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col model.TableItemID, loadFMSketch bool) (err error) {
-	oldCache := h.statsCache.Load().(statsCache)
+	oldCache := h.statsCache.Load()
 	tbl, ok := oldCache.Get(col.TableID)
 	if !ok {
 		return nil
@@ -1105,16 +1112,12 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 		IsHandle:   c.IsHandle,
 		StatsVer:   statsVer,
 	}
-	// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
-	colHist.Count = int64(colHist.TotalRowCount())
-	// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-	// So we need add colHist.Count > 0 here.
-	if statsVer != statistics.Version0 || colHist.Count > 0 {
+	if colHist.StatsAvailable() {
 		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
-	oldCache = h.statsCache.Load().(statsCache)
+	oldCache = h.statsCache.Load()
 	tbl, ok = oldCache.Get(col.TableID)
 	if !ok {
 		return nil
@@ -1128,7 +1131,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 }
 
 func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx model.TableItemID, loadFMSketch bool) (err error) {
-	oldCache := h.statsCache.Load().(statsCache)
+	oldCache := h.statsCache.Load()
 	tbl, ok := oldCache.Get(idx.TableID)
 	if !ok {
 		return nil
@@ -1167,7 +1170,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
 	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
-	oldCache = h.statsCache.Load().(statsCache)
+	oldCache = h.statsCache.Load()
 	tbl, ok = oldCache.Get(idx.TableID)
 	if !ok {
 		return nil
@@ -1182,12 +1185,12 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 
 // LastUpdateVersion gets the last update version.
 func (h *Handle) LastUpdateVersion() uint64 {
-	return h.statsCache.Load().(statsCache).version
+	return h.statsCache.Load().version
 }
 
 // SetLastUpdateVersion sets the last update version.
 func (h *Handle) SetLastUpdateVersion(version uint64) {
-	statsCache := h.statsCache.Load().(statsCache)
+	statsCache := h.statsCache.Load()
 	h.updateStatsCache(statsCache.update(nil, nil, version))
 }
 
@@ -1207,177 +1210,6 @@ func (h *Handle) FlushStats() {
 	}
 }
 
-func (h *Handle) indexStatsFromStorage(reader *statistics.StatsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo) error {
-	histID := row.GetInt64(2)
-	distinct := row.GetInt64(3)
-	histVer := row.GetUint64(4)
-	nullCount := row.GetInt64(5)
-	statsVer := row.GetInt64(7)
-	idx := table.Indices[histID]
-	errorRate := statistics.ErrorRate{}
-	flag := row.GetInt64(8)
-	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	if statistics.IsAnalyzed(flag) && !reader.IsHistory() {
-		h.mu.rateMap.clear(table.PhysicalID, histID, true)
-	} else if idx != nil {
-		errorRate = idx.ErrorRate
-	}
-	for _, idxInfo := range tableInfo.Indices {
-		if histID != idxInfo.ID {
-			continue
-		}
-		if idx == nil || idx.LastUpdateVersion < histVer {
-			hg, err := statistics.HistogramFromStorage(reader, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			cms, topN, err := statistics.CMSketchAndTopNFromStorage(reader, table.PhysicalID, 1, idxInfo.ID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			fmSketch, err := statistics.FMSketchFromStorage(reader, table.PhysicalID, 1, histID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			idx = &statistics.Index{
-				Histogram:  *hg,
-				CMSketch:   cms,
-				TopN:       topN,
-				FMSketch:   fmSketch,
-				Info:       idxInfo,
-				ErrorRate:  errorRate,
-				StatsVer:   statsVer,
-				Flag:       flag,
-				PhysicalID: table.PhysicalID,
-			}
-			if statsVer != statistics.Version0 {
-				idx.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-			}
-			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
-		}
-		break
-	}
-	if idx != nil {
-		table.Indices[histID] = idx
-	} else {
-		logutil.BgLogger().Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
-	}
-	return nil
-}
-
-func (h *Handle) columnStatsFromStorage(reader *statistics.StatsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool) error {
-	histID := row.GetInt64(2)
-	distinct := row.GetInt64(3)
-	histVer := row.GetUint64(4)
-	nullCount := row.GetInt64(5)
-	totColSize := row.GetInt64(6)
-	statsVer := row.GetInt64(7)
-	correlation := row.GetFloat64(9)
-	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	col := table.Columns[histID]
-	errorRate := statistics.ErrorRate{}
-	flag := row.GetInt64(8)
-	if statistics.IsAnalyzed(flag) && !reader.IsHistory() {
-		h.mu.rateMap.clear(table.PhysicalID, histID, false)
-	} else if col != nil {
-		errorRate = col.ErrorRate
-	}
-	for _, colInfo := range tableInfo.Columns {
-		if histID != colInfo.ID {
-			continue
-		}
-		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
-		// We will not load buckets if:
-		// 1. Lease > 0, and:
-		// 2. this column is not handle, and:
-		// 3. the column doesn't has any statistics before, and:
-		// 4. loadAll is false.
-		notNeedLoad := h.Lease() > 0 &&
-			!isHandle &&
-			(col == nil || !col.IsStatsInitialized() && col.LastUpdateVersion < histVer) &&
-			!loadAll
-		if notNeedLoad {
-			count, err := statistics.ColumnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			col = &statistics.Column{
-				PhysicalID: table.PhysicalID,
-				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
-				Info:       colInfo,
-				Count:      count + nullCount,
-				ErrorRate:  errorRate,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       flag,
-				StatsVer:   statsVer,
-			}
-			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-			// So we need add col.Count > 0 here.
-			if statsVer != statistics.Version0 || col.Count > 0 {
-				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-			}
-			lastAnalyzePos.Copy(&col.LastAnalyzePos)
-			col.Histogram.Correlation = correlation
-			break
-		}
-		if col == nil || col.LastUpdateVersion < histVer || loadAll {
-			hg, err := statistics.HistogramFromStorage(reader, table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			cms, topN, err := statistics.CMSketchAndTopNFromStorage(reader, table.PhysicalID, 0, colInfo.ID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			var fmSketch *statistics.FMSketch
-			if loadAll {
-				// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
-				// we load all the statistics, i.e., loadAll is true.
-				fmSketch, err = statistics.FMSketchFromStorage(reader, table.PhysicalID, 0, histID)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-			col = &statistics.Column{
-				PhysicalID: table.PhysicalID,
-				Histogram:  *hg,
-				Info:       colInfo,
-				CMSketch:   cms,
-				TopN:       topN,
-				FMSketch:   fmSketch,
-				ErrorRate:  errorRate,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       flag,
-				StatsVer:   statsVer,
-			}
-			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
-			col.Count = int64(col.TotalRowCount())
-			// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
-			// So we need add colHist.Count > 0 here.
-			if statsVer != statistics.Version0 || col.Count > 0 {
-				col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-			}
-			lastAnalyzePos.Copy(&col.LastAnalyzePos)
-			break
-		}
-		if col.TotColSize != totColSize {
-			newCol := *col
-			newCol.TotColSize = totColSize
-			col = &newCol
-		}
-		break
-	}
-	if col != nil {
-		table.Columns[col.ID] = col
-	} else {
-		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
-		// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
-		// avoid error.
-		logutil.BgLogger().Debug("we cannot find column in table info now. It may be deleted", zap.Int64("colID", histID), zap.String("table", tableInfo.Name.O))
-	}
-	return nil
-}
-
 // TableStatsFromStorage loads table stats info from storage.
 func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (_ *statistics.Table, err error) {
 	reader, err := h.getGlobalStatsReader(snapshot)
@@ -1390,7 +1222,7 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			err = err1
 		}
 	}()
-	statsTbl, ok := h.statsCache.Load().(statsCache).Get(physicalID)
+	statsTbl, ok := h.statsCache.Load().Get(physicalID)
 	if !ok {
 		statsTbl = nil
 	}
@@ -1622,6 +1454,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 		}
 		statsVer = version
 	}
+	TableRowStatsCache.Invalidate(tableID)
 	// 2. Save histograms.
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
@@ -1739,6 +1572,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
 		_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+		TableRowStatsCache.Invalidate(tableID)
 	} else {
 		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %?", version, tableID)
 	}
@@ -1816,6 +1650,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 	version := txn.StartTS()
 	_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
 	statsVer = version
+	TableRowStatsCache.Invalidate(tableID)
 	return err
 }
 
@@ -1984,7 +1819,7 @@ const updateStatsCacheRetryCnt = 5
 
 func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-		oldCache := h.statsCache.Load().(statsCache)
+		oldCache := h.statsCache.Load()
 		tbl, ok := oldCache.Get(tableID)
 		if !ok || tbl.ExtendedStats == nil || len(tbl.ExtendedStats.Stats) == 0 {
 			return
@@ -2015,7 +1850,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 		}
 	}()
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-		oldCache := h.statsCache.Load().(statsCache)
+		oldCache := h.statsCache.Load()
 		tables := make([]*statistics.Table, 0, oldCache.Len())
 		for physicalID, tbl := range oldCache.Map() {
 			t, err := statistics.ExtendedStatsFromStorage(reader, tbl.Copy(), physicalID, true)
@@ -2473,7 +2308,7 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 	if v == nil {
 		return
 	}
-	sc := v.(statsCache)
+	sc := v
 	sc.SetCapacity(c)
 }
 
@@ -2487,6 +2322,6 @@ func (h *Handle) GetStatsCacheFrontTable() int64 {
 	if v == nil {
 		return 0
 	}
-	sc := v.(statsCache)
+	sc := v
 	return sc.Front()
 }

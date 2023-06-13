@@ -159,6 +159,8 @@ const (
 	inSequenceFunction
 	// initTxnContextProvider is set when we should init txn context in preprocess
 	initTxnContextProvider
+	// inImportInto is set when visiting an import into statement.
+	inImportInto
 )
 
 // Make linter happy.
@@ -337,6 +339,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// The RepairTable should consist of the logic for creating tables and renaming tables.
 		p.flag |= inRepairTable
 		p.checkRepairTableGrammar(node)
+	case *ast.ImportIntoStmt:
+		p.stmtTp = TypeImportInto
+		p.flag |= inImportInto
 	case *ast.CreateSequenceStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -441,6 +446,8 @@ const (
 	TypeShow
 	// TypeExecute for ExecuteStmt
 	TypeExecute
+	// TypeImportInto for ImportIntoStmt
+	TypeImportInto
 )
 
 func bindableStmtType(node ast.StmtNode) byte {
@@ -732,24 +739,12 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	if len(autoIncrementCols) < 1 {
 		return
 	}
+	// Only have one auto_increment col.
 	if len(autoIncrementCols) > 1 {
 		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
 		return
 	}
-	// Only have one auto_increment col.
-	for col, isKey := range autoIncrementCols {
-		if !isKey {
-			isKey = isConstraintKeyTp(stmt.Constraints, col)
-		}
-		autoIncrementMustBeKey := true
-		for _, opt := range stmt.Options {
-			if opt.Tp == ast.TableOptionEngine && strings.EqualFold(opt.StrValue, "MyISAM") {
-				autoIncrementMustBeKey = false
-			}
-		}
-		if autoIncrementMustBeKey && !isKey {
-			p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
-		}
+	for col := range autoIncrementCols {
 		switch col.Tp.GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
@@ -1515,6 +1510,8 @@ func (p *preprocessor) stmtType() string {
 		return "SELECT, INSERT"
 	case TypeShow:
 		return "SHOW"
+	case TypeImportInto:
+		return "IMPORT INTO"
 	default:
 		return "SELECT" // matches Select and uncaught cases.
 	}
@@ -1575,10 +1572,13 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.String() != "" {
 		currentDB = tn.Schema.L
 	}
-	table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
-	if err != nil {
-		p.err = err
-		return
+
+	if !p.skipLockMDL() {
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
+		if err != nil {
+			p.err = err
+			return
+		}
 	}
 
 	tableInfo := table.Meta()
@@ -1835,6 +1835,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		var err error
 		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
 		if err != nil {
+			if !skipLock {
+				sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
+			}
 			return nil, err
 		}
 		if !skipLock {
@@ -1881,6 +1884,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 					}
 				}
 				if found {
+					if !skipLock {
+						sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
+					}
 					return nil, domain.ErrInfoSchemaChanged.GenWithStack("public column %s has changed", col.Name)
 				}
 			}
@@ -1906,4 +1912,11 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		return tbl, nil
 	}
 	return tbl, nil
+}
+
+// skipLockMDL returns true if the preprocessor should skip the lock of MDL.
+func (p *preprocessor) skipLockMDL() bool {
+	// skip lock mdl for IMPORT INTO statement,
+	// because it's a batch process and will do both DML and DDL.
+	return p.flag&inImportInto > 0
 }

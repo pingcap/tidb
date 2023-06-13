@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -65,7 +65,6 @@ type InsertValues struct {
 	Table   table.Table
 	Columns []*ast.ColumnName
 	Lists   [][]expression.Expression
-	SetList []*expression.Assignment
 
 	GenExprs []expression.Expression
 
@@ -93,11 +92,6 @@ type InsertValues struct {
 
 	stats *InsertRuntimeStat
 
-	// isLoadData indicates whatever current goroutine is use for generating batch data. LoadData use two goroutines. One for generate batch data,
-	// The other one for commit task, which will invalid txn.
-	// We use mutex to protect routine from using invalid txn.
-	isLoadData bool
-	txnInUse   sync.Mutex
 	// fkChecks contains the foreign key checkers.
 	fkChecks   []*FKCheckExec
 	fkCascades []*FKCascadeExec
@@ -127,6 +121,7 @@ func (e *InsertValues) exec(_ context.Context, _ [][]types.Datum) error {
 // 1 insert ... values(...)  --> name type column
 // 2 insert ... set x=y...   --> set type column
 // 3 insert ... (select ..)  --> name type column
+// set type is converted to name type in the optimizer
 // See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 func (e *InsertValues) initInsertColumns() error {
 	var cols []*table.Column
@@ -135,22 +130,8 @@ func (e *InsertValues) initInsertColumns() error {
 
 	tableCols := e.Table.Cols()
 
-	if len(e.SetList) > 0 {
-		// Process `set` type column.
-		columns := make([]string, 0, len(e.SetList))
-		for _, v := range e.SetList {
-			columns = append(columns, v.ColName.L)
-		}
-		cols, missingColIdx = table.FindColumns(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if missingColIdx >= 0 {
-			return errors.Errorf("INSERT INTO %s: unknown column %s",
-				e.Table.Meta().Name.O, e.SetList[missingColIdx].ColName.O)
-		}
-		if len(cols) == 0 {
-			return errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
-		}
-	} else if len(e.Columns) > 0 {
-		// Process `name` type column.
+	if len(e.Columns) > 0 {
+		// Process `name` and `set` type column.
 		columns := make([]string, 0, len(e.Columns))
 		for _, v := range e.Columns {
 			columns = append(columns, v.Name.L)
@@ -214,27 +195,9 @@ func (e *InsertValues) lazilyInitColDefaultValBuf() (ok bool) {
 	return false
 }
 
-func (e *InsertValues) processSetList() error {
-	if len(e.SetList) > 0 {
-		if len(e.Lists) > 0 {
-			return errors.Errorf("INSERT INTO %s: set type should not use values", e.Table)
-		}
-		l := make([]expression.Expression, 0, len(e.SetList))
-		for _, v := range e.SetList {
-			l = append(l, v.Expr)
-		}
-		e.Lists = append(e.Lists, l)
-	}
-	return nil
-}
-
 // insertRows processes `insert|replace into values ()` or `insert|replace into set x=y`
 func insertRows(ctx context.Context, base insertCommon) (err error) {
 	e := base.insertCommon()
-	// For `insert|replace into set x=y`, process the set list here.
-	if err = e.processSetList(); err != nil {
-		return err
-	}
 	sessVars := e.ctx.GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
@@ -313,7 +276,7 @@ func completeInsertErr(col *model.ColumnInfo, val *types.Datum, rowIdx int, err 
 		if err1 != nil {
 			logutil.BgLogger().Debug("time truncated error", zap.Error(err1))
 		}
-		err = errTruncateWrongInsertValue.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+		err = exeerrors.ErrTruncateWrongInsertValue.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
@@ -322,6 +285,20 @@ func completeInsertErr(col *model.ColumnInfo, val *types.Datum, rowIdx int, err 
 		err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	} else if types.ErrWarnDataOutOfRange.Equal(err) {
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
+	}
+	return err
+}
+
+func completeLoadErr(col *model.ColumnInfo, rowIdx int, err error) error {
+	var (
+		colName string
+	)
+	if col != nil {
+		colName = col.Name.String()
+	}
+
+	if types.ErrDataTooLong.Equal(err) {
+		err = types.ErrTruncated.GenWithStack("Data truncated for column '%v' at row %v", colName, rowIdx)
 	}
 	return err
 }
@@ -336,7 +313,11 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	if col != nil {
 		c = col.ColumnInfo
 	}
-	err = completeInsertErr(c, val, rowIdx, err)
+	if e.ctx.GetSessionVars().StmtCtx.InLoadDataStmt {
+		err = completeLoadErr(c, rowIdx, err)
+	} else {
+		err = completeInsertErr(c, val, rowIdx, err)
+	}
 
 	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
 		return err
@@ -535,13 +516,13 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
-		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		// We should return a special error for batch insert.
-		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	return nil
 }
@@ -552,15 +533,34 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
+
+	inLoadData := e.ctx.GetSessionVars().StmtCtx.InLoadDataStmt
+
 	for i := 0; i < e.rowLen; i++ {
-		casted, err := table.CastValue(e.ctx, vals[i], e.insertColumns[i].ToInfo(), false, false)
-		if e.handleErr(nil, &vals[i], 0, err) != nil {
+		col := e.insertColumns[i].ToInfo()
+		casted, err := table.CastValue(e.ctx, vals[i], col, false, false)
+		if newErr := e.handleErr(e.insertColumns[i], &vals[i], int(e.rowCount), err); newErr != nil {
+			if inLoadData {
+				return nil, newErr
+			}
 			return nil, err
 		}
 
 		offset := e.insertColumns[i].Offset
 		row[offset] = casted
 		hasValue[offset] = true
+
+		if inLoadData {
+			if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+				for k := range newWarnings {
+					newWarnings[k].Err = completeLoadErr(col, int(e.rowCount), newWarnings[k].Err)
+				}
+				sc.AppendWarnings(newWarnings)
+				warnCnt += len(newWarnings)
+			}
+		}
 	}
 
 	return e.fillRow(ctx, row, hasValue, 0)
@@ -590,17 +590,21 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 }
 
 // fillColValue fills the column value if it is not set in the insert statement.
-func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (types.Datum,
-	error) {
+func (e *InsertValues) fillColValue(
+	ctx context.Context,
+	datum types.Datum,
+	idx int,
+	column *table.Column,
+	hasValue bool,
+) (types.Datum, error) {
 	if mysql.HasAutoIncrementFlag(column.GetFlag()) {
 		if !hasValue && mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
 			vars := e.ctx.GetSessionVars()
 			sc := vars.StmtCtx
-			if !vars.StrictSQLMode {
-				sc.AppendWarning(table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name))
-			} else {
+			if vars.StrictSQLMode {
 				return datum, table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name)
 			}
+			sc.AppendWarning(table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name))
 		}
 
 		if e.lazyFillAutoID {
@@ -657,6 +661,11 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		col.ColumnInfo.Offset = len(tCols)
 		tCols = append(tCols, col)
 	}
+	rowCntInLoadData := uint64(0)
+	if e.ctx.GetSessionVars().StmtCtx.InLoadDataStmt {
+		rowCntInLoadData = e.rowCount
+	}
+
 	for i, c := range tCols {
 		var err error
 		// Evaluate the generated columns later after real columns set
@@ -668,7 +677,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 				return nil, err
 			}
 			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.GetFlag())) {
-				if err = c.HandleBadNull(&row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
+				if err = c.HandleBadNull(&row[i], e.ctx.GetSessionVars().StmtCtx, rowCntInLoadData); err != nil {
 					return nil, err
 				}
 			}
@@ -691,6 +700,8 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			return nil, err
 		}
 	}
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
@@ -701,11 +712,18 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			return nil, err
 		}
 		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo(), false, false)
-		if err != nil {
+		if err = e.handleErr(gCol, &val, rowIdx, err); err != nil {
 			return nil, err
 		}
+		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+			for k := range newWarnings {
+				newWarnings[k].Err = completeInsertErr(gCol.ColumnInfo, &val, rowIdx, newWarnings[k].Err)
+			}
+			sc.AppendWarnings(newWarnings)
+			warnCnt += len(newWarnings)
+		}
 		// Handle the bad null error.
-		if err = gCol.HandleBadNull(&row[colIdx], e.ctx.GetSessionVars().StmtCtx); err != nil {
+		if err = gCol.HandleBadNull(&row[colIdx], e.ctx.GetSessionVars().StmtCtx, rowCntInLoadData); err != nil {
 			return nil, err
 		}
 	}
@@ -1036,10 +1054,6 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	if shardFmt.IncrementalMask()&autoRandomID != autoRandomID {
 		return 0, autoid.ErrAutoRandReadFailed
 	}
-	if e.isLoadData {
-		e.txnInUse.Lock()
-		defer e.txnInUse.Unlock()
-	}
 	_, err = e.ctx.Txn(true)
 	if err != nil {
 		return 0, err
@@ -1183,49 +1197,90 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 
 	// append warnings and get no duplicated error rows
+CheckAndInsert:
 	for i, r := range toBeCheckedRows {
 		if r.ignored {
 			continue
 		}
-		skip := false
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKey)
 			if err == nil {
-				if replace {
-					err2 := e.removeRow(ctx, txn, r)
-					if err2 != nil {
-						return err2
-					}
-				} else {
+				if !replace {
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+						// lock duplicated row key on insert-ignore
+						txnCtx.AddUnchangedKeyForLock(r.handleKey.newKey)
+					}
+					continue
+				}
+				handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
+				if err != nil {
+					return err
+				}
+				unchanged, err2 := e.removeRow(ctx, txn, handle, r, false)
+				if err2 != nil {
+					return err2
+				}
+				if unchanged {
+					// we don't need to add the identical row again, but the
+					// counter should act as if we did.
+					e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
 					continue
 				}
 			} else if !kv.IsErrNotFound(err) {
 				return err
 			}
 		}
+
 		for _, uk := range r.uniqueKeys {
 			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
-				// If duplicate keys were found in BatchGet, mark row = nil.
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-				skip = true
-				break
-			}
-			if !kv.IsErrNotFound(err) {
+				if !replace {
+					// If duplicate keys were found in BatchGet, mark row = nil.
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+						// lock duplicated unique key on insert-ignore
+						txnCtx.AddUnchangedKeyForLock(uk.newKey)
+					}
+					continue CheckAndInsert
+				}
+				_, handle, err := tables.FetchDuplicatedHandle(
+					ctx,
+					uk.newKey,
+					true,
+					txn,
+					e.Table.Meta().ID,
+					uk.commonHandle,
+				)
+				if err != nil {
+					return err
+				}
+				if handle == nil {
+					continue
+				}
+				_, err = e.removeRow(ctx, txn, handle, r, true)
+				if err != nil {
+					return err
+				}
+			} else if !kv.IsErrNotFound(err) {
 				return err
 			}
 		}
 
 		// If row was checked with no duplicate keys,
-		// it should be add to values map for the further row check.
+		// it should be added to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
-		if !skip {
-			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
-			err = addRecord(ctx, rows[i])
-			if err != nil {
-				return err
+		e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+		err = addRecord(ctx, rows[i])
+		if err != nil {
+			// throw warning when violate check constraint
+			if table.ErrCheckConstraintViolated.Equal(err) {
+				if !sc.InLoadDataStmt {
+					sc.AppendWarning(err)
+				}
+				continue
 			}
+			return err
 		}
 	}
 	if e.stats != nil {
@@ -1234,12 +1289,16 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	return nil
 }
 
-func (e *InsertValues) removeRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) error {
-	handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
-	if err != nil {
-		return err
-	}
-
+// removeRow removes the duplicate row and cleanup its keys in the key-value map.
+// But if the to-be-removed row equals to the to-be-added row, no remove or add
+// things to do and return (true, nil).
+func (e *InsertValues) removeRow(
+	ctx context.Context,
+	txn kv.Transaction,
+	handle kv.Handle,
+	r toBeCheckedRow,
+	inReplace bool,
+) (bool, error) {
 	newRow := r.row
 	oldRow, err := getOldRow(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
 	if err != nil {
@@ -1249,24 +1308,38 @@ func (e *InsertValues) removeRow(ctx context.Context, txn kv.Transaction, r toBe
 		if kv.IsErrNotFound(err) {
 			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
 		}
-		return err
+		return false, err
 	}
 
 	identical, err := e.equalDatumsAsBinary(oldRow, newRow)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if identical {
-		return nil
+		if inReplace {
+			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+		}
+		if _, err := addUnchangedKeysForLockByRow(e.ctx, r.t, handle, oldRow, lockRowKey|lockUniqueKeys); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
 	err = r.t.RemoveRecord(e.ctx, handle, oldRow)
 	if err != nil {
-		return err
+		return false, err
 	}
-	e.ctx.GetSessionVars().StmtCtx.AddDeletedRows(1)
+	err = onRemoveRowForFK(e.ctx, oldRow, e.fkChecks, e.fkCascades)
+	if err != nil {
+		return false, err
+	}
+	if inReplace {
+		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	} else {
+		e.ctx.GetSessionVars().StmtCtx.AddDeletedRows(1)
+	}
 
-	return nil
+	return false, nil
 }
 
 // equalDatumsAsBinary compare if a and b contains the same datum values in binary collation.
@@ -1319,6 +1392,12 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	return nil
 }
 
+// CreateSession will be assigned by session package.
+var CreateSession func(ctx sessionctx.Context) (sessionctx.Context, error)
+
+// CloseSession will be assigned by session package.
+var CloseSession func(ctx sessionctx.Context)
+
 // InsertRuntimeStat record the stat about insert and check
 type InsertRuntimeStat struct {
 	*execdetails.BasicRuntimeStats
@@ -1364,21 +1443,21 @@ func (e *InsertRuntimeStat) String() string {
 		buf.WriteString(", ")
 	}
 	if e.Prefetch > 0 {
-		buf.WriteString(fmt.Sprintf("check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
+		fmt.Fprintf(buf, "check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
 			execdetails.FormatDuration(e.CheckInsertTime),
 			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
-			execdetails.FormatDuration(e.Prefetch)))
+			execdetails.FormatDuration(e.Prefetch))
 		if e.FKCheckTime > 0 {
-			buf.WriteString(fmt.Sprintf(", fk_check: %v", execdetails.FormatDuration(e.FKCheckTime)))
+			fmt.Fprintf(buf, ", fk_check: %v", execdetails.FormatDuration(e.FKCheckTime))
 		}
 		if e.SnapshotRuntimeStats != nil {
 			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
-				buf.WriteString(fmt.Sprintf(", rpc:{%s}", rpc))
+				fmt.Fprintf(buf, ", rpc:{%s}", rpc)
 			}
 		}
 		buf.WriteString("}")
 	} else {
-		buf.WriteString(fmt.Sprintf("insert:%v", execdetails.FormatDuration(e.CheckInsertTime)))
+		fmt.Fprintf(buf, "insert:%v", execdetails.FormatDuration(e.CheckInsertTime))
 	}
 	return buf.String()
 }

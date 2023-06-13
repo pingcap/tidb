@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -555,6 +556,11 @@ type PhysicalIndexMergeReader struct {
 	// AccessMVIndex indicates whether this IndexMergeReader access a MVIndex.
 	AccessMVIndex bool
 
+	// PushedLimit is used to avoid unnecessary table scan tasks of IndexMergeReader.
+	PushedLimit *PushedDownLimit
+	// ByItems is used to support sorting the handles returned by partialPlans.
+	ByItems []*util.ByItems
+
 	// PartialPlans flats the partialPlans to construct executor pb.
 	PartialPlans [][]PhysicalPlan
 	// TablePlans flats the tablePlan to construct executor pb.
@@ -566,6 +572,8 @@ type PhysicalIndexMergeReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
+
+	KeepOrder bool
 }
 
 // GetAvgTableRowSize return the average row size of table plan.
@@ -670,6 +678,9 @@ type PhysicalIndexScan struct {
 	isPartition bool
 	Desc        bool
 	KeepOrder   bool
+	// ByItems only for partition table with orderBy + pushedLimit
+	ByItems []*util.ByItems
+
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
@@ -686,6 +697,10 @@ type PhysicalIndexScan struct {
 	constColsByCond []bool
 
 	prop *property.PhysicalProperty
+
+	// usedStatsInfo records stats status of this physical table.
+	// It's for printing stats related information when display execution plan.
+	usedStatsInfo *stmtctx.UsedStatsInfoForTable
 }
 
 // Clone implements PhysicalPlan interface.
@@ -794,6 +809,10 @@ type PhysicalTableScan struct {
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
+	// lateMaterializationFilterCondition is used to record the filter conditions
+	// that are pushed down to table scan from selection by late materialization.
+	// TODO: remove this field after we support pushing down selection to coprocessor.
+	lateMaterializationFilterCondition []expression.Expression
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
@@ -825,6 +844,8 @@ type PhysicalTableScan struct {
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 	Desc      bool
+	// ByItems only for partition table with orderBy + pushedLimit
+	ByItems []*util.ByItems
 
 	isChildOfIndexLookUp bool
 
@@ -837,6 +858,19 @@ type PhysicalTableScan struct {
 	tblCols     []*expression.Column
 	tblColHists *statistics.HistColl
 	prop        *property.PhysicalProperty
+
+	// constColsByCond records the constant part of the index columns caused by the access conds.
+	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
+	// it's for indexMerge's tableScan only.
+	constColsByCond []bool
+
+	// usedStatsInfo records stats status of this physical table.
+	// It's for printing stats related information when display execution plan.
+	usedStatsInfo *stmtctx.UsedStatsInfoForTable
+
+	// for runtime filter
+	runtimeFilterList []*RuntimeFilter
+	maxWaitTimeMs     int
 }
 
 // Clone implements PhysicalPlan interface.
@@ -860,6 +894,11 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 		clonedScan.Hist = ts.Hist.Copy()
 	}
 	clonedScan.rangeInfo = ts.rangeInfo
+	clonedScan.runtimeFilterList = make([]*RuntimeFilter, len(ts.runtimeFilterList))
+	for i, rf := range ts.runtimeFilterList {
+		clonedRF := rf.Clone()
+		clonedScan.runtimeFilterList[i] = clonedRF
+	}
 	return clonedScan, nil
 }
 
@@ -1263,6 +1302,7 @@ type PhysicalHashJoin struct {
 	Concurrency     uint
 	EqualConditions []*expression.ScalarFunction
 
+	// null aware equal conditions
 	NAEqualConditions []*expression.ScalarFunction
 
 	// use the outer table to build a hash table when the outer table is smaller.
@@ -1271,6 +1311,9 @@ type PhysicalHashJoin struct {
 	// on which store the join executes.
 	storeTp        kv.StoreType
 	mppShuffleJoin bool
+
+	// for runtime filter
+	runtimeFilterList []*RuntimeFilter
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1288,6 +1331,10 @@ func (p *PhysicalHashJoin) Clone() (PhysicalPlan, error) {
 	}
 	for _, c := range p.NAEqualConditions {
 		cloned.NAEqualConditions = append(cloned.NAEqualConditions, c.Clone().(*expression.ScalarFunction))
+	}
+	for _, rf := range p.runtimeFilterList {
+		clonedRF := rf.Clone()
+		cloned.runtimeFilterList = append(cloned.runtimeFilterList, clonedRF)
 	}
 	return cloned, nil
 }
@@ -1328,6 +1375,14 @@ func (p *PhysicalHashJoin) MemoryUsage() (sum int64) {
 		sum += expr.MemoryUsage()
 	}
 	return
+}
+
+// RightIsBuildSide return true when right side is build side
+func (p *PhysicalHashJoin) RightIsBuildSide() bool {
+	if p.UseOuterToBuild {
+		return p.InnerChildIdx == 0
+	}
+	return p.InnerChildIdx != 0
 }
 
 // NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
@@ -1478,6 +1533,8 @@ type PhysicalExchangeReceiver struct {
 
 	Tasks []*kv.MPPTask
 	frags []*Fragment
+
+	IsCTEReader bool
 }
 
 // Clone implment PhysicalPlan interface.
@@ -1488,6 +1545,8 @@ func (p *PhysicalExchangeReceiver) Clone() (PhysicalPlan, error) {
 		return nil, errors.Trace(err)
 	}
 	np.basePhysicalPlan = *base
+
+	np.IsCTEReader = p.IsCTEReader
 	return np, nil
 }
 
@@ -1520,11 +1579,18 @@ type PhysicalExpand struct {
 	// GroupingSets is used to define what kind of group layout should the underlying data follow.
 	// For simple case: select count(distinct a), count(distinct b) from t; the grouping expressions are [a] and [b].
 	GroupingSets expression.GroupingSets
+
+	// The level projections is generated from grouping sets，make execution more clearly.
+	LevelExprs [][]expression.Expression
+
+	// The generated column names. Eg: "grouping_id" and so on.
+	ExtraGroupingColNames []string
 }
 
 // Init only assigns type and context.
-func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalExpand {
+func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
+	p.childrenReqProps = props
 	p.stats = stats
 	return &p
 }
@@ -1567,9 +1633,10 @@ func (p *PhysicalExpand) MemoryUsage() (sum int64) {
 type PhysicalExchangeSender struct {
 	basePhysicalPlan
 
-	TargetTasks  []*kv.MPPTask
-	ExchangeType tipb.ExchangeType
-	HashCols     []*property.MPPPartitionColumn
+	TargetTasks          []*kv.MPPTask
+	TargetCTEReaderTasks [][]*kv.MPPTask
+	ExchangeType         tipb.ExchangeType
+	HashCols             []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks           []*kv.MPPTask
 	CompressionMode kv.ExchangeCompressionMode
@@ -1861,9 +1928,19 @@ func (p *PhysicalHashAgg) MemoryUsage() (sum int64) {
 
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
 func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
+	newGbyItems := make([]expression.Expression, len(la.GroupByItems))
+	copy(newGbyItems, la.GroupByItems)
+	newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
+	// There's some places that rewrites the aggFunc in-place.
+	// I clone it first.
+	// It needs a well refactor to make sure that the physical optimize should not change the things of logical plan.
+	// It's bad for cascades
+	for i, aggFunc := range la.AggFuncs {
+		newAggFuncs[i] = aggFunc.Clone()
+	}
 	agg := basePhysicalAgg{
-		GroupByItems: la.GroupByItems,
-		AggFuncs:     la.AggFuncs,
+		GroupByItems: newGbyItems,
+		AggFuncs:     newAggFuncs,
 	}.initForHash(la.ctx, newStats, la.blockOffset, prop)
 	return agg
 }
@@ -2028,6 +2105,13 @@ type PhysicalSelection struct {
 	// The flag is only used by cost model for compatibility and will be removed later.
 	// Please see https://github.com/pingcap/tidb/issues/36243 for more details.
 	fromDataSource bool
+
+	// todo Since the feature of adding filter operators has not yet been implemented,
+	// the following code for this function will not be used for now.
+	// The flag indicates whether this Selection is used for RuntimeFilter
+	// True: Used for RuntimeFilter
+	// False: Only for normal conditions
+	// hasRFConditions bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -2419,6 +2503,9 @@ type PhysicalCTE struct {
 	CTE       *CTEClass
 	cteAsName model.CIStr
 	cteName   model.CIStr
+
+	readerReceiver *PhysicalExchangeReceiver
+	storageSender  *PhysicalExchangeSender
 }
 
 // PhysicalCTETable is for CTE table.
@@ -2455,6 +2542,45 @@ func (p *PhysicalCTE) ExplainID() fmt.Stringer {
 		}
 		return p.TP() + "_" + strconv.Itoa(p.id)
 	})
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalCTE) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalCTE)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	if p.SeedPlan != nil {
+		cloned.SeedPlan, err = p.SeedPlan.Clone()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if p.RecurPlan != nil {
+		cloned.RecurPlan, err = p.RecurPlan.Clone()
+		if err != nil {
+			return nil, err
+		}
+	}
+	cloned.cteAsName, cloned.cteName = p.cteAsName, p.cteName
+	cloned.CTE = p.CTE
+	if p.storageSender != nil {
+		clonedSender, err := p.storageSender.Clone()
+		if err != nil {
+			return nil, err
+		}
+		cloned.storageSender = clonedSender.(*PhysicalExchangeSender)
+	}
+	if p.readerReceiver != nil {
+		clonedReceiver, err := p.readerReceiver.Clone()
+		if err != nil {
+			return nil, err
+		}
+		cloned.readerReceiver = clonedReceiver.(*PhysicalExchangeReceiver)
+	}
+	return cloned, nil
 }
 
 // MemoryUsage return the memory usage of PhysicalCTE
@@ -2533,6 +2659,43 @@ func (p *CTEDefinition) MemoryUsage() (sum int64) {
 	return
 }
 
+// PhysicalCTEStorage is used for representing CTE storage, or CTE producer in other words.
+type PhysicalCTEStorage PhysicalCTE
+
+// ExplainInfo overrides the ExplainInfo
+func (*PhysicalCTEStorage) ExplainInfo() string {
+	return "Non-Recursive CTE Storage"
+}
+
+// ExplainID overrides the ExplainID.
+func (p *PhysicalCTEStorage) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
+	})
+}
+
+// MemoryUsage return the memory usage of CTEDefinition
+func (p *PhysicalCTEStorage) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.cteAsName.MemoryUsage()
+	if p.CTE != nil {
+		sum += p.CTE.MemoryUsage()
+	}
+	return
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalCTEStorage) Clone() (PhysicalPlan, error) {
+	cloned, err := (*PhysicalCTE)(p).Clone()
+	if err != nil {
+		return nil, err
+	}
+	return (*PhysicalCTEStorage)(cloned.(*PhysicalCTE)), nil
+}
+
 func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOptimizeOp) {
 	candidate := &tracing.CandidatePlanTrace{
 		PlanTrace: &tracing.PlanTrace{
@@ -2545,4 +2708,52 @@ func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOpti
 	op.tracer.AppendCandidate(candidate)
 	pp.appendChildCandidate(op)
 	op.tracer.Candidates[origin.ID()].AppendChildrenID(pp.ID())
+}
+
+// PhysicalSequence is the physical representation of LogicalSequence. Used to mark the CTE producers in the plan tree.
+type PhysicalSequence struct {
+	physicalSchemaProducer
+}
+
+// MemoryUsage returns the memory usage of the PhysicalSequence.
+func (p *PhysicalSequence) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage()
+
+	return
+}
+
+// ExplainID overrides the ExplainID.
+func (p *PhysicalSequence) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+			return p.TP()
+		}
+		return p.TP() + "_" + strconv.Itoa(p.id)
+	})
+}
+
+// ExplainInfo overrides the ExplainInfo.
+func (*PhysicalSequence) ExplainInfo() string {
+	res := "Sequence Node"
+	return res
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalSequence) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalSequence)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	return cloned, nil
+}
+
+// Schema returns its last child(which is the main query tree)'s schema.
+func (p *PhysicalSequence) Schema() *expression.Schema {
+	return p.Children()[len(p.Children())-1].Schema()
 }

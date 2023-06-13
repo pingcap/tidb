@@ -81,7 +81,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	if err != nil {
 		return nil, err
 	}
-	sctx.GetSessionVars().PlannerSelectBlockAsName = savedBlockNames
+	sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&savedBlockNames)
 	return newExpr, nil
 }
 
@@ -156,7 +156,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	}()
 
 	if len(b.rewriterPool) < b.rewriterCounter {
-		rewriter = &expressionRewriter{p: p, b: b, sctx: b.ctx, ctx: ctx}
+		rewriter = &expressionRewriter{p: p, b: b, sctx: b.ctx, ctx: ctx, rollExpand: b.currentBlockExpand}
 		rewriter.sctx.SetValue(expression.TiDBDecodeKeyFunctionKey, decodeKeyFromString)
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
@@ -174,6 +174,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
 	rewriter.ctx = ctx
 	rewriter.err = nil
+	rewriter.rollExpand = b.currentBlockExpand
 	return
 }
 
@@ -244,6 +245,8 @@ type expressionRewriter struct {
 	// NOTE: This value can be changed during expression rewritten.
 	disableFoldCounter int
 	tryFoldCounter     int
+
+	rollExpand *LogicalExpand
 }
 
 func (er *expressionRewriter) ctxStackLen() int {
@@ -324,9 +327,12 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 		outerSchema := er.schema.Clone()
 		er.b.outerSchemas = append(er.b.outerSchemas, outerSchema)
 		er.b.outerNames = append(er.b.outerNames, er.names)
+		er.b.outerBlockExpand = append(er.b.outerBlockExpand, er.b.currentBlockExpand)
 		defer func() {
 			er.b.outerSchemas = er.b.outerSchemas[0 : len(er.b.outerSchemas)-1]
 			er.b.outerNames = er.b.outerNames[0 : len(er.b.outerNames)-1]
+			er.b.currentBlockExpand = er.b.outerBlockExpand[len(er.b.outerBlockExpand)-1]
+			er.b.outerBlockExpand = er.b.outerBlockExpand[0 : len(er.b.outerBlockExpand)-1]
 		}()
 	}
 	// Store the old value before we enter the subquery and reset they to default value.
@@ -853,7 +859,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		semiJoinRewrite = false
 	}
 
-	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, semiJoinRewrite, noDecorrelate)
 		if er.err != nil || !er.asScalar {
 			return v, true
@@ -1053,7 +1059,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		noDecorrelate = false
 	}
 
-	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin, noDecorrelate)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
@@ -1111,6 +1117,31 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	return v, true
 }
 
+func hasCTEConsumerInSubPlan(p LogicalPlan) bool {
+	if _, ok := p.(*LogicalCTE); ok {
+		return true
+	}
+	for _, child := range p.Children() {
+		if hasCTEConsumerInSubPlan(child) {
+			return true
+		}
+	}
+	return false
+}
+
+func initConstantRepertoire(c *expression.Constant) {
+	c.SetRepertoire(expression.ASCII)
+	if c.GetType().EvalType() == types.ETString {
+		for _, b := range c.Value.GetBytes() {
+			// if any character in constant is not ascii, set the repertoire to UNICODE.
+			if b >= 0x80 {
+				c.SetRepertoire(expression.UNICODE)
+				break
+			}
+		}
+	}
+}
+
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
 	if er.err != nil {
@@ -1134,23 +1165,15 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		v.Datum.SetValue(v.Datum.GetValue(), retType)
 		value := &expression.Constant{Value: v.Datum, RetType: retType}
-		value.SetRepertoire(expression.ASCII)
-		if retType.EvalType() == types.ETString {
-			for _, b := range v.Datum.GetBytes() {
-				// if any character in constant is not ascii, set the repertoire to UNICODE.
-				if b >= 0x80 {
-					value.SetRepertoire(expression.UNICODE)
-					break
-				}
-			}
-		}
+		initConstantRepertoire(value)
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
-		var value expression.Expression
+		var value *expression.Constant
 		value, er.err = expression.ParamMarkerExpression(er.sctx, v, false)
 		if er.err != nil {
 			return retNode, false
 		}
+		initConstantRepertoire(value)
 		er.ctxStackAppend(value, types.EmptyName)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
@@ -1219,8 +1242,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
-	case *ast.PatternLikeExpr:
-		er.patternLikeToExpression(v)
+	case *ast.PatternLikeOrIlikeExpr:
+		er.patternLikeOrIlikeToExpression(v)
 	case *ast.PatternRegexpExpr:
 		er.regexpToScalarFunc(v)
 	case *ast.RowExpr:
@@ -1410,10 +1433,19 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 	nativeVal, nativeType, nativeFlag := sysVar.GetNativeValType(val)
 	e := expression.DatumToConstant(nativeVal, nativeType, nativeFlag)
-	charset, _ := sessionVars.GetSystemVar(variable.CharacterSetConnection)
-	e.GetType().SetCharset(charset)
-	collate, _ := sessionVars.GetSystemVar(variable.CollationConnection)
-	e.GetType().SetCollate(collate)
+	switch nativeType {
+	case mysql.TypeVarString:
+		charset, _ := sessionVars.GetSystemVar(variable.CharacterSetConnection)
+		e.GetType().SetCharset(charset)
+		collate, _ := sessionVars.GetSystemVar(variable.CollationConnection)
+		e.GetType().SetCollate(collate)
+	case mysql.TypeLong, mysql.TypeLonglong:
+		e.GetType().SetCharset(charset.CharsetBin)
+		e.GetType().SetCollate(charset.CollationBin)
+	default:
+		er.err = errors.Errorf("Not supported type(%x) in GetNativeValType() function", nativeType)
+		return
+	}
 	er.ctxStackAppend(e, types.EmptyName)
 }
 
@@ -1562,7 +1594,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 					if c.GetType().EvalType() == types.ETInt {
 						continue // no need to refine it
 					}
-					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to INT", c.String()))
+					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("'%v' may be converted to INT", c.String()))
 					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
@@ -1647,11 +1679,10 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 			}
 			tp := er.ctxStack[i].GetType().Clone()
 			if er.ctxStack[i].GetType().Hybrid() {
-				if expression.GetAccurateCmpType(er.ctxStack[stkLen-elemCnt-1], er.ctxStack[i]) == types.ETString {
-					tp = types.NewFieldType(mysql.TypeVarString)
-				} else {
+				if !(expression.GetAccurateCmpType(er.ctxStack[stkLen-elemCnt-1], er.ctxStack[i]) == types.ETString) {
 					continue
 				}
+				tp = types.NewFieldType(mysql.TypeVarString)
 			} else if coll.Charset == charset.CharsetBin {
 				// When cast character string to binary string, if we still use fixed length representation,
 				// then 0 padding will be used, which can affect later execution.
@@ -1720,7 +1751,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 	er.ctxStackAppend(function, types.EmptyName)
 }
 
-func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
+func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeOrIlikeExpr) {
 	l := len(er.ctxStack)
 	er.err = expression.CheckArgsNotMultiColumnRow(er.ctxStack[l-2:]...)
 	if er.err != nil {
@@ -1731,7 +1762,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	var function expression.Expression
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
-	// Treat predicate 'like' the same way as predicate '=' when it is an exact match and new collation is not enabled.
+	// Treat predicate 'like' or 'ilike' the same way as predicate '=' when it is an exact match and new collation is not enabled.
 	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
 		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
 		if err != nil {
@@ -1754,8 +1785,12 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 		}
 	}
 	if !isPatternExactMatch {
+		funcName := ast.Like
+		if !v.IsLike {
+			funcName = ast.Ilike
+		}
 		types.DefaultTypeForValue(int(v.Escape), fieldType, char, col)
-		function = er.notToExpression(v.Not, ast.Like, &v.Type,
+		function = er.notToExpression(v.Not, funcName, &v.Type,
 			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
 	}
 
@@ -1883,26 +1918,37 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 // Otherwise it should return false to indicate (the caller) that original behavior needs to be performed.
 func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	switch v.FnName.L {
-	// when column is not null, ifnull on such column is not necessary.
+	// when column is not null, ifnull on such column can be optimized to a cast.
 	case ast.Ifnull:
 		if len(v.Args) != 2 {
 			er.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(v.FnName.O)
 			return true
 		}
 		stackLen := len(er.ctxStack)
-		arg1 := er.ctxStack[stackLen-2]
-		col, isColumn := arg1.(*expression.Column)
+		lhs := er.ctxStack[stackLen-2]
+		rhs := er.ctxStack[stackLen-1]
+		col, isColumn := lhs.(*expression.Column)
 		var isEnumSet bool
-		if arg1.GetType().GetType() == mysql.TypeEnum || arg1.GetType().GetType() == mysql.TypeSet {
+		if lhs.GetType().GetType() == mysql.TypeEnum || lhs.GetType().GetType() == mysql.TypeSet {
 			isEnumSet = true
 		}
-		// if expr1 is a column and column has not null flag, then we can eliminate ifnull on
-		// this column.
+		// if expr1 is a column with not null flag, then we can optimize it as a cast.
 		if isColumn && !isEnumSet && mysql.HasNotNullFlag(col.RetType.GetFlag()) {
-			name := er.ctxNameStk[stackLen-2]
-			newCol := col.Clone().(*expression.Column)
+			retTp, err := expression.InferType4ControlFuncs(er.sctx, ast.Ifnull, lhs, rhs)
+			if err != nil {
+				er.err = err
+				return true
+			}
+			retTp.AddFlag((lhs.GetType().GetFlag() & mysql.NotNullFlag) | (rhs.GetType().GetFlag() & mysql.NotNullFlag))
+			if lhs.GetType().GetType() == mysql.TypeNull && rhs.GetType().GetType() == mysql.TypeNull {
+				retTp.SetType(mysql.TypeNull)
+				retTp.SetFlen(0)
+				retTp.SetDecimal(0)
+				types.SetBinChsClnFlag(retTp)
+			}
 			er.ctxStackPop(len(v.Args))
-			er.ctxStackAppend(newCol, name)
+			casted := expression.BuildCastFunction(er.sctx, lhs, retTp)
+			er.ctxStackAppend(casted, types.EmptyName)
 			return true
 		}
 
@@ -1969,6 +2015,50 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 			c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType().Clone(), DeferredExpr: function}
 			er.ctxStackAppend(c, types.EmptyName)
 		}
+	} else if v.FnName.L == ast.Grouping {
+		// grouping function should fetch the underlying grouping-sets meta and rewrite the args here.
+		// eg: grouping(a) actually is try to find in which grouping-set that the column 'a' is remained,
+		// collecting those gid as a collection and filling it into the grouping function meta. Besides,
+		// the first arg of grouping function should be rewritten as gid column defined/passed by Expand
+		// from the bottom up.
+		if er.rollExpand == nil {
+			er.err = errors.New("no rollup expand found")
+			er.ctxStackAppend(nil, types.EmptyName)
+		} else {
+			// whether there is some duplicate grouping sets, gpos is only be used in shuffle keys and group keys
+			// rather than grouping function.
+			// eg: rollup(a,a,b), the decided grouping sets are {a,a,b},{a,a,null},{a,null,null},{null,null,null}
+			// for the second and third grouping set: {a,a,null} and {a,null,null}, a here is the col ref of original
+			// column `a`. So from the static layer, this two grouping set are equivalent, we don't need to copy col
+			// `a double times at the every beginning and resort to gpos to distinguish them.
+			//  {col-a, col-b, gid, gpos}
+			//  {a, b, 0, 1}, {a, null, 1, 2}, {a, null, 1, 3}, {null, null, 2, 4}
+			// grouping function still only need to care about gid is enough, gpos what group and shuffle keys cared.
+			newArg := er.rollExpand.GID.Clone()
+			function, er.err = er.newFunction(v.FnName.L, &v.Type, newArg)
+			if er.err == nil {
+				if scalarFunc, ok := function.(*expression.ScalarFunction); ok {
+					if scalarFunc.FuncName.L == ast.Grouping {
+						if len(args) > 64 {
+							er.err = ErrInvalidNumberOfArgs.GenWithStackByArgs("GROUPING", 64)
+							er.ctxStackAppend(nil, types.EmptyName)
+						} else {
+							// resolve grouping args in group by items or not.
+							resolvedCols, err := er.rollExpand.resolveGroupingFuncArgsInGroupBy(args)
+							if err != nil {
+								er.err = err
+								er.ctxStackAppend(nil, types.EmptyName)
+							} else {
+								// rewrite the meta.
+								er.err = scalarFunc.Function.(*expression.BuiltinGroupingImplSig).
+									SetMetadata(er.rollExpand.GroupingMode, er.rollExpand.GenerateGroupingMarks(resolvedCols))
+							}
+						}
+					}
+				}
+			}
+			er.ctxStackAppend(function, types.EmptyName)
+		}
 	} else {
 		function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
 		er.ctxStackAppend(function, types.EmptyName)
@@ -2004,6 +2094,14 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.ctxStackAppend(column, er.names[idx])
 		return
 	}
+	col, name, err := findFieldNameFromNaturalUsingJoin(er.p, v)
+	if err != nil {
+		er.err = err
+		return
+	} else if col != nil {
+		er.ctxStackAppend(col, name)
+		return
+	}
 	for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
 		outerSchema, outerName := er.b.outerSchemas[i], er.b.outerNames[i]
 		idx, err = expression.FindFieldName(outerName, v)
@@ -2019,14 +2117,6 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	}
 	if _, ok := er.p.(*LogicalUnionAll); ok && v.Table.O != "" {
 		er.err = ErrTablenameNotAllowedHere.GenWithStackByArgs(v.Table.O, "SELECT", clauseMsg[er.b.curClause])
-		return
-	}
-	col, name, err := findFieldNameFromNaturalUsingJoin(er.p, v)
-	if err != nil {
-		er.err = err
-		return
-	} else if col != nil {
-		er.ctxStackAppend(col, name)
 		return
 	}
 	if er.b.curClause == globalOrderByClause {

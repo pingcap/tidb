@@ -67,6 +67,9 @@ var (
 	ErrUnknownColumn   = dbterror.ClassTable.NewStd(mysql.ErrBadField)
 	errDuplicateColumn = dbterror.ClassTable.NewStd(mysql.ErrFieldSpecifiedTwice)
 
+	// ErrWarnNullToNotnull is like ErrColumnCantNull but it's used in LOAD DATA
+	ErrWarnNullToNotnull = dbterror.ClassExecutor.NewStd(mysql.ErrWarnNullToNotnull)
+
 	errGetDefaultFailed = dbterror.ClassTable.NewStd(mysql.ErrFieldGetDefaultFailed)
 
 	// ErrNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
@@ -104,6 +107,8 @@ var (
 	ErrTempTableFull = dbterror.ClassTable.NewStd(mysql.ErrRecordFileFull)
 	// ErrOptOnCacheTable returns when exec unsupported opt at cache mode
 	ErrOptOnCacheTable = dbterror.ClassDDL.NewStd(mysql.ErrOptOnCacheTable)
+	// ErrCheckConstraintViolated return when check constraint is violated.
+	ErrCheckConstraintViolated = dbterror.ClassTable.NewStd(mysql.ErrCheckConstraintViolated)
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -269,7 +274,7 @@ type CachedTable interface {
 	// TryReadFromCache checks if the cache table is readable.
 	TryReadFromCache(ts uint64, leaseDuration time.Duration) (kv.MemBuffer, bool)
 
-	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
+	// UpdateLockForRead if you cannot meet the conditions of the read buffer,
 	// you need to update the lock information and read the data from the original table
 	UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration)
 

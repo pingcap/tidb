@@ -45,7 +45,8 @@ func TestGCS(t *testing.T) {
 	err = stg.WriteFile(ctx, "key1", []byte("data1"))
 	require.NoError(t, err)
 
-	err = stg.WriteFile(ctx, "key2", []byte("data22223346757222222222289722222"))
+	key2Data := []byte("data22223346757222222222289722222")
+	err = stg.WriteFile(ctx, "key2", key2Data)
 	require.NoError(t, err)
 
 	rc, err := server.Client().Bucket(bucketName).Object("a/b/key").NewReader(ctx)
@@ -216,17 +217,36 @@ func TestGCS(t *testing.T) {
 	require.Equal(t, 5, n)
 	require.Equal(t, "67572", string(p))
 
-	/* Since fake_gcs_server hasn't support for negative offset yet.
 	p = make([]byte, 5)
 	offs, err = efr.Seek(int64(-7), io.SeekEnd)
 	require.NoError(t, err)
-	require.Equal(t, int64(-7), offs)
+	require.Equal(t, int64(26), offs)
 
 	n, err = efr.Read(p)
 	require.NoError(t, err)
 	require.Equal(t, 5, n)
 	require.Equal(t, "97222", string(p))
-	*/
+
+	offs, err = efr.Seek(int64(100), io.SeekStart)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), offs)
+	_, err = efr.Read(p)
+	require.Contains(t, err.Error(), "EOF")
+
+	offs, err = efr.Seek(int64(0), io.SeekEnd)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(key2Data)), offs)
+	_, err = efr.Read(p)
+	require.Contains(t, err.Error(), "EOF")
+
+	offs, err = efr.Seek(int64(1), io.SeekCurrent)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(key2Data)+1), offs)
+	_, err = efr.Read(p)
+	require.Contains(t, err.Error(), "EOF")
+
+	_, err = efr.Seek(int64(-10000), io.SeekEnd)
+	require.Error(t, err)
 
 	err = efr.Close()
 	require.NoError(t, err)

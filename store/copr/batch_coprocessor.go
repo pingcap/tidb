@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,12 +36,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/tiflashcompute"
-	"github.com/stathat/consistent"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -327,7 +329,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 			storeTaskMap[taskStoreID] = batchTask
 		}
 	} else {
-		stores := cache.RegionCache.GetTiFlashStores()
+		stores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 		aliveStores := filterAliveStores(ctx, stores, ttl, kvStore)
 		for _, s := range aliveStores {
 			storeTaskMap[s.StoreID()] = &batchCopTask{
@@ -492,12 +494,13 @@ func buildBatchCopTasksForNonPartitionedTable(
 	isMPP bool,
 	ttl time.Duration,
 	balanceWithContinuity bool,
-	balanceContinuousRegionCount int64) ([]*batchCopTask, error) {
+	balanceContinuousRegionCount int64,
+	dispatchPolicy tiflashcompute.DispatchPolicy) ([]*batchCopTask, error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		if config.GetGlobalConfig().UseAutoScaler {
-			return buildBatchCopTasksConsistentHash(ctx, bo, store, []*KeyRanges{ranges}, storeType, ttl)
+			return buildBatchCopTasksConsistentHash(ctx, bo, store, []*KeyRanges{ranges}, storeType, ttl, dispatchPolicy)
 		}
-		return buildBatchCopTasksConsistentHashForPD(bo, store, []*KeyRanges{ranges}, storeType, ttl)
+		return buildBatchCopTasksConsistentHashForPD(bo, store, []*KeyRanges{ranges}, storeType, ttl, dispatchPolicy)
 	}
 	return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 }
@@ -512,13 +515,14 @@ func buildBatchCopTasksForPartitionedTable(
 	ttl time.Duration,
 	balanceWithContinuity bool,
 	balanceContinuousRegionCount int64,
-	partitionIDs []int64) (batchTasks []*batchCopTask, err error) {
+	partitionIDs []int64,
+	dispatchPolicy tiflashcompute.DispatchPolicy) (batchTasks []*batchCopTask, err error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		if config.GetGlobalConfig().UseAutoScaler {
-			batchTasks, err = buildBatchCopTasksConsistentHash(ctx, bo, store, rangesForEachPhysicalTable, storeType, ttl)
+			batchTasks, err = buildBatchCopTasksConsistentHash(ctx, bo, store, rangesForEachPhysicalTable, storeType, ttl, dispatchPolicy)
 		} else {
 			// todo: remove this after AutoScaler is stable.
-			batchTasks, err = buildBatchCopTasksConsistentHashForPD(bo, store, rangesForEachPhysicalTable, storeType, ttl)
+			batchTasks, err = buildBatchCopTasksConsistentHashForPD(bo, store, rangesForEachPhysicalTable, storeType, ttl, dispatchPolicy)
 		}
 	} else {
 		batchTasks, err = buildBatchCopTasksCore(bo, store, rangesForEachPhysicalTable, storeType, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount)
@@ -529,6 +533,14 @@ func buildBatchCopTasksForPartitionedTable(
 	// generate tableRegions for batchCopTasks
 	convertRegionInfosToPartitionTableRegions(batchTasks, partitionIDs)
 	return batchTasks, nil
+}
+
+func filterAliveStoresStr(ctx context.Context, storesStr []string, ttl time.Duration, kvStore *kvStore) (aliveStores []string) {
+	aliveIdx := filterAliveStoresHelper(ctx, storesStr, ttl, kvStore)
+	for _, idx := range aliveIdx {
+		aliveStores = append(aliveStores, storesStr[idx])
+	}
+	return aliveStores
 }
 
 func filterAliveStores(ctx context.Context, stores []*tikv.Store, ttl time.Duration, kvStore *kvStore) (aliveStores []*tikv.Store) {
@@ -576,22 +588,35 @@ func filterAliveStoresHelper(ctx context.Context, stores []string, ttl time.Dura
 }
 
 func getTiFlashComputeRPCContextByConsistentHash(ids []tikv.RegionVerID, storesStr []string) (res []*tikv.RPCContext, err error) {
-	hasher := consistent.New()
-	for _, addr := range storesStr {
-		hasher.Add(addr)
-	}
-
+	// Use RendezvousHash
 	for _, id := range ids {
-		addr, err := hasher.Get(strconv.Itoa(int(id.GetID())))
-		if err != nil {
-			return nil, err
+		var maxHash uint32 = 0
+		var maxHashStore string = ""
+		for _, store := range storesStr {
+			h := murmur3.StringSum32(fmt.Sprintf("%s-%d", store, id.GetID()))
+			if h > maxHash {
+				maxHash = h
+				maxHashStore = store
+			}
 		}
-
 		rpcCtx := &tikv.RPCContext{
 			Region: id,
-			Addr:   addr,
+			Addr:   maxHashStore,
+		}
+		res = append(res, rpcCtx)
+	}
+	return res, nil
+}
+
+func getTiFlashComputeRPCContextByRoundRobin(ids []tikv.RegionVerID, storesStr []string) (res []*tikv.RPCContext, err error) {
+	startIdx := rand.Intn(len(storesStr))
+	for _, id := range ids {
+		rpcCtx := &tikv.RPCContext{
+			Region: id,
+			Addr:   storesStr[startIdx%len(storesStr)],
 		}
 
+		startIdx++
 		res = append(res, rpcCtx)
 	}
 	return res, nil
@@ -606,7 +631,9 @@ func buildBatchCopTasksConsistentHash(
 	kvStore *kvStore,
 	rangesForEachPhysicalTable []*KeyRanges,
 	storeType kv.StoreType,
-	ttl time.Duration) (res []*batchCopTask, err error) {
+	ttl time.Duration,
+	dispatchPolicy tiflashcompute.DispatchPolicy) (res []*batchCopTask, err error) {
+	failpointCheckWhichPolicy(dispatchPolicy)
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
 	cache := kvStore.GetRegionCache()
@@ -648,9 +675,21 @@ func buildBatchCopTasksConsistentHash(
 		if err != nil {
 			return nil, err
 		}
+		storesBefFilter := len(storesStr)
+		storesStr = filterAliveStoresStr(ctx, storesStr, ttl, kvStore)
+		logutil.BgLogger().Info("topo filter alive", zap.Any("topo", storesStr))
 		if len(storesStr) == 0 {
-			retErr := errors.New("Cannot find proper topo from AutoScaler")
+			errMsg := "Cannot find proper topo to dispatch MPPTask: "
+			if storesBefFilter == 0 {
+				errMsg += "topo from AutoScaler is empty"
+			} else {
+				errMsg += "detect aliveness failed, no alive ComputeNode"
+			}
+			retErr := errors.New(errMsg)
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because FetchAndGetTopo return empty topo", zap.Int("retryNum", retryNum))
+			if intest.InTest && retryNum > 3 {
+				return nil, retErr
+			}
 			err := fetchTopoBo.Backoff(tikv.BoTiFlashRPC(), retErr)
 			if err != nil {
 				return nil, retErr
@@ -661,7 +700,14 @@ func buildBatchCopTasksConsistentHash(
 	}
 	fetchTopoElapsed := time.Since(fetchTopoStart)
 
-	rpcCtxs, err := getTiFlashComputeRPCContextByConsistentHash(regionIDs, storesStr)
+	var rpcCtxs []*tikv.RPCContext
+	if dispatchPolicy == tiflashcompute.DispatchPolicyRR {
+		rpcCtxs, err = getTiFlashComputeRPCContextByRoundRobin(regionIDs, storesStr)
+	} else if dispatchPolicy == tiflashcompute.DispatchPolicyConsistentHash {
+		rpcCtxs, err = getTiFlashComputeRPCContextByConsistentHash(regionIDs, storesStr)
+	} else {
+		err = errors.Errorf("unexpected dispatch policy %v", dispatchPolicy)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -675,9 +721,6 @@ func buildBatchCopTasksConsistentHash(
 			Region:         tasks[i].region,
 			Ranges:         tasks[i].ranges,
 			PartitionIndex: tasks[i].partitionIndex,
-			// No need to setup regionMeta and Store info.
-			// Meta:           rpcCtx.Meta,
-			// AllStores:      []uint64{rpcCtx.Store.StoreID()},
 		}
 		if batchTask, ok := taskMap[rpcCtx.Addr]; ok {
 			batchTask.regionInfos = append(batchTask.regionInfos, regionInfo)
@@ -692,7 +735,10 @@ func buildBatchCopTasksConsistentHash(
 			res = append(res, batchTask)
 		}
 	}
-	logutil.BgLogger().Info("buildBatchCopTasksConsistentHash done", zap.Any("len(tasks)", len(taskMap)), zap.Any("len(tiflash_compute)", len(storesStr)))
+	logutil.BgLogger().Info("buildBatchCopTasksConsistentHash done",
+		zap.Any("len(tasks)", len(taskMap)),
+		zap.Any("len(tiflash_compute)", len(storesStr)),
+		zap.Any("dispatchPolicy", tiflashcompute.GetDispatchPolicy(dispatchPolicy)))
 
 	if log.GetLevel() <= zap.DebugLevel {
 		debugTaskMap := make(map[string]string, len(taskMap))
@@ -741,6 +787,17 @@ func failpointCheckForConsistentHash(tasks []*batchCopTask) {
 	})
 }
 
+func failpointCheckWhichPolicy(act tiflashcompute.DispatchPolicy) {
+	failpoint.Inject("testWhichDispatchPolicy", func(exp failpoint.Value) {
+		expStr := exp.(string)
+		actStr := tiflashcompute.GetDispatchPolicy(act)
+		if actStr != expStr {
+			err := errors.Errorf("tiflash_compute dispatch should be %v, but got %v", expStr, actStr)
+			panic(err)
+		}
+	})
+}
+
 // When `partitionIDs != nil`, it means that buildBatchCopTasksCore is constructing a batch cop tasks for PartitionTableScan.
 // At this time, `len(rangesForEachPhysicalTable) == len(partitionIDs)` and `rangesForEachPhysicalTable[i]` is for partition `partitionIDs[i]`.
 // Otherwise, `rangesForEachPhysicalTable[0]` indicates the range for the single physical table.
@@ -775,7 +832,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		storeTaskMap := make(map[string]*batchCopTask)
 		needRetry := false
 		for _, task := range tasks {
-			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP)
+			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP, tikv.LabelFilterNoTiFlashWriteNode)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -790,7 +847,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				// Then `splitRegion` will reloads these regions.
 				continue
 			}
-			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store)
+			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store, tikv.LabelFilterNoTiFlashWriteNode)
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
 				batchCop.regionInfos = append(batchCop.regionInfos, RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionIndex: task.partitionIndex})
 			} else {
@@ -891,11 +948,11 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 			keyRanges = append(keyRanges, NewKeyRanges(pi.KeyRanges))
 			partitionIDs = append(partitionIDs, pi.ID)
 		}
-		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store.kvStore, keyRanges, req.StoreType, false, 0, false, 0, partitionIDs)
+		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store.kvStore, keyRanges, req.StoreType, false, 0, false, 0, partitionIDs, tiflashcompute.DispatchPolicyInvalid)
 	} else {
 		// TODO: merge the if branch.
 		ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
-		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store.kvStore, ranges, req.StoreType, false, 0, false, 0)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store.kvStore, ranges, req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid)
 	}
 
 	if err != nil {
@@ -943,7 +1000,7 @@ func (b *batchCopIterator) run(ctx context.Context) {
 	// We run workers for every batch cop.
 	for _, task := range b.tasks {
 		b.wg.Add(1)
-		boMaxSleep := copNextMaxBackoff
+		boMaxSleep := CopNextMaxBackoff
 		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
 			if value.(bool) {
 				boMaxSleep = 2
@@ -1042,7 +1099,11 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 				ranges = append(ranges, *ran)
 			})
 		}
-		ret, err := buildBatchCopTasksForNonPartitionedTable(ctx, bo, b.store, NewKeyRanges(ranges), b.req.StoreType, false, 0, false, 0)
+		// need to make sure the key ranges is sorted
+		slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		})
+		ret, err := buildBatchCopTasksForNonPartitionedTable(ctx, bo, b.store, NewKeyRanges(ranges), b.req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid)
 		return ret, err
 	}
 	// Retry Partition Table Scan
@@ -1059,9 +1120,13 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 				})
 			}
 		}
+		// need to make sure the key ranges is sorted
+		slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		})
 		keyRanges = append(keyRanges, NewKeyRanges(ranges))
 	}
-	ret, err := buildBatchCopTasksForPartitionedTable(ctx, bo, b.store, keyRanges, b.req.StoreType, false, 0, false, 0, pid)
+	ret, err := buildBatchCopTasksForPartitionedTable(ctx, bo, b.store, keyRanges, b.req.StoreType, false, 0, false, 0, pid, tiflashcompute.DispatchPolicyInvalid)
 	return ret, err
 }
 
@@ -1207,7 +1272,9 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 	kvStore *kvStore,
 	rangesForEachPhysicalTable []*KeyRanges,
 	storeType kv.StoreType,
-	ttl time.Duration) (res []*batchCopTask, err error) {
+	ttl time.Duration,
+	dispatchPolicy tiflashcompute.DispatchPolicy) (res []*batchCopTask, err error) {
+	failpointCheckWhichPolicy(dispatchPolicy)
 	const cmdType = tikvrpc.CmdBatchCop
 	var (
 		retryNum        int
@@ -1256,7 +1323,18 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 		}
 		getStoreElapsed = time.Since(getStoreStart)
 
-		rpcCtxs, err := cache.GetTiFlashComputeRPCContextByConsistentHash(bo.TiKVBackoffer(), regionIDs, stores)
+		storesStr := make([]string, 0, len(stores))
+		for _, s := range stores {
+			storesStr = append(storesStr, s.GetAddr())
+		}
+		var rpcCtxs []*tikv.RPCContext
+		if dispatchPolicy == tiflashcompute.DispatchPolicyRR {
+			rpcCtxs, err = getTiFlashComputeRPCContextByRoundRobin(regionIDs, storesStr)
+		} else if dispatchPolicy == tiflashcompute.DispatchPolicyConsistentHash {
+			rpcCtxs, err = getTiFlashComputeRPCContextByConsistentHash(regionIDs, storesStr)
+		} else {
+			err = errors.Errorf("unexpected dispatch policy %v", dispatchPolicy)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1277,9 +1355,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 			regionInfo := RegionInfo{
 				// tasks and rpcCtxs are correspond to each other.
 				Region:         tasks[i].region,
-				Meta:           rpcCtx.Meta,
 				Ranges:         tasks[i].ranges,
-				AllStores:      []uint64{rpcCtx.Store.StoreID()},
 				PartitionIndex: tasks[i].partitionIndex,
 			}
 			if batchTask, ok := taskMap[rpcCtx.Addr]; ok {
@@ -1295,17 +1371,16 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 				res = append(res, batchTask)
 			}
 		}
-		logutil.BgLogger().Info("buildBatchCopTasksConsistentHashForPD done", zap.Any("len(tasks)", len(taskMap)), zap.Any("len(tiflash_compute)", len(stores)))
+		logutil.BgLogger().Info("buildBatchCopTasksConsistentHashForPD done",
+			zap.Any("len(tasks)", len(taskMap)),
+			zap.Any("len(tiflash_compute)", len(stores)),
+			zap.Any("dispatchPolicy", tiflashcompute.GetDispatchPolicy(dispatchPolicy)))
 		if log.GetLevel() <= zap.DebugLevel {
-			debugStores := make([]string, 0, len(stores))
-			for _, s := range stores {
-				debugStores = append(debugStores, s.GetAddr())
-			}
 			debugTaskMap := make(map[string]string, len(taskMap))
 			for s, b := range taskMap {
 				debugTaskMap[s] = fmt.Sprintf("addr: %s; regionInfos: %v", b.storeAddr, b.regionInfos)
 			}
-			logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHashForPD", zap.Any("taskMap", debugTaskMap), zap.Any("allStores", debugStores))
+			logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHashForPD", zap.Any("taskMap", debugTaskMap), zap.Any("allStores", storesStr))
 		}
 		break
 	}

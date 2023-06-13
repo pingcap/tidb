@@ -52,7 +52,7 @@ type EnterNewTxnRequest struct {
 	// causalConsistencyOnly means whether enable causal consistency for transactions, default is false
 	CausalConsistencyOnly bool
 	// staleReadTS indicates the read ts for the stale read transaction.
-	//The default value is zero which means not a stale read transaction.
+	// The default value is zero which means not a stale read transaction.
 	StaleReadTS uint64
 }
 
@@ -123,7 +123,7 @@ type TxnContextProvider interface {
 	GetTxnScope() string
 	// GetReadReplicaScope returns the read replica scope
 	GetReadReplicaScope() string
-	//GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
+	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
 	GetStmtReadTS() (uint64, error)
 	// GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
 	GetStmtForUpdateTS() (uint64, error)
@@ -163,8 +163,6 @@ type TxnManager interface {
 	// If the session is not in any transaction, for example: between two autocommit statements,
 	// this method will return the latest information schema in session that is same with `sessionctx.GetDomainInfoSchema()`
 	GetTxnInfoSchema() infoschema.InfoSchema
-	// SetTxnInfoSchema sets the information schema used by txn.
-	SetTxnInfoSchema(infoschema.InfoSchema)
 	// GetTxnScope returns the current txn scope
 	GetTxnScope() string
 	// GetReadReplicaScope returns the read replica scope
@@ -205,6 +203,8 @@ type TxnManager interface {
 	OnStmtCommit(ctx context.Context) error
 	// OnStmtRollback is the hook that should be called when a statement fails to execute.
 	OnStmtRollback(ctx context.Context, isForPessimisticRetry bool) error
+	// OnStmtEnd is called when a statement ends, together with txn.onStmtEnd()
+	OnStmtEnd()
 	// OnLocalTemporaryTableCreated is the hook that should be called when a local temporary table created.
 	OnLocalTemporaryTableCreated()
 	// ActivateTxn activates the transaction.

@@ -19,29 +19,30 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
-// NonPreparedPlanCacheableOp stores function which can be cached to non-prepared plan cache.
-var NonPreparedPlanCacheableOp = map[string]struct{}{
-	ast.LogicAnd: {},
-	ast.LogicOr:  {},
-	ast.GE:       {},
-	ast.LE:       {},
-	ast.EQ:       {},
-	ast.LT:       {},
-	ast.GT:       {},
-	ast.In:       {},
-}
-
 // UnCacheableFunctions stores functions which can not be cached to plan cache.
 var UnCacheableFunctions = map[string]struct{}{
-	ast.Database:     {},
-	ast.CurrentUser:  {},
-	ast.CurrentRole:  {},
-	ast.User:         {},
-	ast.ConnectionID: {},
-	ast.LastInsertId: {},
-	ast.RowCount:     {},
-	ast.Version:      {},
-	ast.Like:         {},
+	ast.Database:             {},
+	ast.CurrentUser:          {},
+	ast.CurrentRole:          {},
+	ast.CurrentResourceGroup: {},
+	ast.User:                 {},
+	ast.ConnectionID:         {},
+	ast.LastInsertId:         {},
+	ast.RowCount:             {},
+	ast.Version:              {},
+	ast.Like:                 {},
+
+	// functions below are incompatible with (non-prep) plan cache, we'll fix them one by one later.
+	ast.JSONExtract:      {}, // cannot pass TestFuncJSON
+	ast.JSONObject:       {},
+	ast.JSONArray:        {},
+	ast.Coalesce:         {},
+	ast.Convert:          {},
+	ast.TimeLiteral:      {},
+	ast.DateLiteral:      {},
+	ast.TimestampLiteral: {},
+	ast.AesEncrypt:       {}, // affected by @@block_encryption_mode
+	ast.AesDecrypt:       {},
 }
 
 // unFoldableFunctions stores functions which can not be folded duration constant folding stage.
@@ -266,4 +267,6 @@ var booleanFunctions = map[string]struct{}{
 	ast.IsIPv4Compat:       {},
 	ast.IsIPv4Mapped:       {},
 	ast.IsIPv6:             {},
+	ast.JSONValid:          {},
+	ast.RegexpLike:         {},
 }

@@ -16,10 +16,7 @@ package copr
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,13 +29,13 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
-	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -49,22 +46,19 @@ type MPPClient struct {
 	store *kvStore
 }
 
+type mppStoreCnt struct {
+	cnt        int32
+	lastUpdate int64
+	initFlag   int32
+}
+
 // GetAddress returns the network address.
 func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
 }
 
-func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
-	resultTasks := make([]kv.MPPTaskMeta, 0)
-	for _, s := range c.store.GetRegionCache().GetTiFlashStores() {
-		task := &batchCopTask{storeAddr: s.GetAddr(), cmdType: tikvrpc.CmdMPPTask}
-		resultTasks = append(resultTasks, task)
-	}
-	return resultTasks
-}
-
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
-func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
+func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, ttl time.Duration, dispatchPolicy tiflashcompute.DispatchPolicy) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	var tasks []*batchCopTask
@@ -76,13 +70,13 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 			rangesForEachPartition[i] = NewKeyRanges(p.KeyRanges)
 			partitionIDs[i] = p.ID
 		}
-		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store, rangesForEachPartition, kv.TiFlash, true, ttl, true, 20, partitionIDs)
+		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store, rangesForEachPartition, kv.TiFlash, true, ttl, true, 20, partitionIDs, dispatchPolicy)
 	} else {
 		if req.KeyRanges == nil {
-			return c.selectAllTiFlashStore(), nil
+			return nil, errors.New("KeyRanges in MPPBuildTasksRequest is nil")
 		}
 		ranges := NewKeyRanges(req.KeyRanges)
-		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store, ranges, kv.TiFlash, true, ttl, true, 20)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store, ranges, kv.TiFlash, true, ttl, true, 20, dispatchPolicy)
 	}
 
 	if err != nil {
@@ -95,145 +89,9 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 	return mppTasks, nil
 }
 
-// mppResponse wraps mpp data packet.
-type mppResponse struct {
-	pbResp   *mpp.MPPDataPacket
-	detail   *CopRuntimeStats
-	respTime time.Duration
-	respSize int64
-
-	err error
-}
-
-// GetData implements the kv.ResultSubset GetData interface.
-func (m *mppResponse) GetData() []byte {
-	return m.pbResp.Data
-}
-
-// GetStartKey implements the kv.ResultSubset GetStartKey interface.
-func (m *mppResponse) GetStartKey() kv.Key {
-	return nil
-}
-
-// GetExecDetails is unavailable currently.
-func (m *mppResponse) GetCopRuntimeStats() *CopRuntimeStats {
-	return m.detail
-}
-
-// MemSize returns how many bytes of memory this response use
-func (m *mppResponse) MemSize() int64 {
-	if m.respSize != 0 {
-		return m.respSize
-	}
-
-	if m.detail != nil {
-		m.respSize += int64(sizeofExecDetails)
-	}
-	if m.pbResp != nil {
-		m.respSize += int64(m.pbResp.Size())
-	}
-	return m.respSize
-}
-
-func (m *mppResponse) RespTime() time.Duration {
-	return m.respTime
-}
-
-type mppIterator struct {
-	store *kvStore
-
-	tasks    []*kv.MPPDispatchRequest
-	finishCh chan struct{}
-
-	startTs    uint64
-	mppQueryID kv.MPPQueryID
-
-	mppVersion kv.MppVersion
-
-	respChan chan *mppResponse
-
-	cancelFunc context.CancelFunc
-
-	wg         sync.WaitGroup
-	wgDoneChan chan struct{}
-
-	closed uint32
-
-	vars *tikv.Variables
-
-	needTriggerFallback bool
-
-	mu sync.Mutex
-
-	enableCollectExecutionInfo bool
-
-	memTracker *memory.Tracker
-}
-
-func (m *mppIterator) run(ctx context.Context) {
-	for _, task := range m.tasks {
-		if atomic.LoadUint32(&m.closed) == 1 {
-			break
-		}
-		m.mu.Lock()
-		if task.State == kv.MppTaskReady {
-			task.State = kv.MppTaskRunning
-		}
-		m.mu.Unlock()
-		m.wg.Add(1)
-		boMaxSleep := copNextMaxBackoff
-		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
-			if value.(bool) {
-				boMaxSleep = 2
-			}
-		})
-		bo := backoff.NewBackoffer(ctx, boMaxSleep)
-		go func(mppTask *kv.MPPDispatchRequest) {
-			defer func() {
-				m.wg.Done()
-			}()
-			m.handleDispatchReq(ctx, bo, mppTask)
-		}(task)
-	}
-	m.wg.Wait()
-	close(m.wgDoneChan)
-	close(m.respChan)
-}
-
-func (m *mppIterator) sendError(err error) {
-	m.sendToRespCh(&mppResponse{err: err})
-	m.cancelMppTasks()
-}
-
-func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
-	defer func() {
-		if r := recover(); r != nil {
-			logutil.BgLogger().Error("mppIterator panic", zap.Stack("stack"), zap.Any("recover", r))
-			m.sendError(errors.New(fmt.Sprint(r)))
-		}
-	}()
-	if m.memTracker != nil {
-		respSize := resp.MemSize()
-		failpoint.Inject("testMPPOOMPanic", func(val failpoint.Value) {
-			if val.(bool) && respSize != 0 {
-				respSize = 1 << 30
-			}
-		})
-		m.memTracker.Consume(respSize)
-		defer m.memTracker.Consume(-respSize)
-	}
-	select {
-	case m.respChan <- resp:
-	case <-m.finishCh:
-		exit = true
-	}
-	return
-}
-
-// TODO:: Consider that which way is better:
-// - dispatch all tasks at once, and connect tasks at second.
-// - dispatch tasks and establish connection at the same time.
-func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req *kv.MPPDispatchRequest) {
+// DispatchMPPTask dispatch mpp task, and returns valid response when retry = false and err is nil
+func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.DispatchTaskResponse, retry bool, err error) {
+	req := param.Req
 	var regionInfos []*coprocessor.RegionInfo
 	originalTask, ok := req.Meta.(*batchCopTask)
 	if ok {
@@ -245,7 +103,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	// meta for current task.
 	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
 		Address:    req.Meta.GetAddress(),
-		MppVersion: m.mppVersion.ToInt64(),
+		MppVersion: req.MppVersion.ToInt64(),
 	}
 
 	mppReq := &mpp.DispatchTaskRequest{
@@ -268,15 +126,14 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 
 	// TODO: Handle dispatch task response correctly, including retry logic and cancel logic.
 	var rpcResp *tikvrpc.Response
-	var err error
-	var retry bool
 	invalidPDCache := config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler
+	bo := backoff.NewBackofferWithTikvBo(param.Bo)
 
 	// If copTasks is not empty, we should send request according to region distribution.
 	// Or else it's the task without region, which always happens in high layer task without table.
 	// In that case
 	if originalTask != nil {
-		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient(), m.enableCollectExecutionInfo)
+		sender := NewRegionBatchRequestSender(c.store.GetRegionCache(), c.store.GetTiKVClient(), param.EnableCollectExecutionInfo)
 		rpcResp, retry, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
@@ -284,22 +141,17 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		if sender.GetRPCError() != nil {
 			logutil.BgLogger().Warn("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
 			if invalidPDCache {
-				m.store.GetRegionCache().InvalidateTiFlashComputeStores()
+				c.store.GetRegionCache().InvalidateTiFlashComputeStores()
 			}
-			// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
-			if m.needTriggerFallback {
-				err = derr.ErrTiFlashServerTimeout
-			} else {
-				err = sender.GetRPCError()
-			}
+			err = sender.GetRPCError()
 		}
 	} else {
-		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutMedium)
+		rpcResp, err = c.store.GetTiKVClient().SendRequest(param.Ctx, req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutMedium)
 		if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 			retry = false
 		} else if err != nil {
 			if invalidPDCache {
-				m.store.GetRegionCache().InvalidateTiFlashComputeStores()
+				c.store.GetRegionCache().InvalidateTiFlashComputeStores()
 			}
 			if bo.Backoff(tikv.BoTiFlashRPC(), err) == nil {
 				retry = true
@@ -307,29 +159,15 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		}
 	}
 
-	if retry {
-		logutil.BgLogger().Warn("mpp dispatch meet error and retrying", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
-		m.handleDispatchReq(ctx, bo, req)
-		return
-	}
-
-	if err != nil {
-		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
-		// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
-		if m.needTriggerFallback {
-			err = derr.ErrTiFlashServerTimeout
-		}
-		m.sendError(err)
-		return
+	if err != nil || retry {
+		return nil, retry, err
 	}
 
 	realResp := rpcResp.Resp.(*mpp.DispatchTaskResponse)
-
 	if realResp.Error != nil {
-		logutil.BgLogger().Error("mpp dispatch response meet error", zap.String("error", realResp.Error.Msg), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("task-mpp-version", taskMeta.MppVersion), zap.Int64("error-mpp-version", realResp.Error.GetMppVersion()))
-		m.sendError(errors.New(realResp.Error.Msg))
-		return
+		return realResp, false, nil
 	}
+
 	if len(realResp.RetryRegions) > 0 {
 		logutil.BgLogger().Info("TiFlash found " + strconv.Itoa(len(realResp.RetryRegions)) + " stale regions. Only first " + strconv.Itoa(mathutil.Min(10, len(realResp.RetryRegions))) + " regions will be logged if the log level is higher than Debug")
 		for index, retry := range realResp.RetryRegions {
@@ -337,37 +175,31 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 			if index < 10 || log.GetLevel() <= zap.DebugLevel {
 				logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
 			}
-			m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
+			c.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
 		}
 	}
-	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
-		if val.(bool) && !req.IsRoot {
-			time.Sleep(1 * time.Second)
-			m.sendError(derr.ErrTiFlashServerTimeout)
-			return
-		}
-	})
-	if !req.IsRoot {
-		return
-	}
-	// only root task should establish a stream conn with tiFlash to receive result.
-	m.establishMPPConns(bo, req, taskMeta)
+	return realResp, retry, err
 }
 
+// CancelMPPTasks cancels mpp tasks
 // NOTE: We do not retry here, because retry is helpless when errors result from TiFlash or Network. If errors occur, the execution on TiFlash will finally stop after some minutes.
 // This function is exclusively called, and only the first call succeeds sending tasks and setting all tasks as cancelled, while others will not work.
-func (m *mppIterator) cancelMppTasks() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (c *MPPClient) CancelMPPTasks(param kv.CancelMPPTasksParam) {
+	reqs := param.Reqs
+	if len(reqs) == 0 {
+		return
+	}
+
+	firstReq := reqs[0]
 	killReq := &mpp.CancelTaskRequest{
-		Meta: &mpp.TaskMeta{StartTs: m.startTs, QueryTs: m.mppQueryID.QueryTs, LocalQueryId: m.mppQueryID.LocalQueryID, ServerId: m.mppQueryID.ServerID, MppVersion: m.mppVersion.ToInt64()},
+		Meta: &mpp.TaskMeta{StartTs: firstReq.StartTs, QueryTs: firstReq.MppQueryID.QueryTs, LocalQueryId: firstReq.MppQueryID.LocalQueryID, ServerId: firstReq.MppQueryID.ServerID, MppVersion: firstReq.MppVersion.ToInt64()},
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
 	wrappedReq.StoreTp = getEndPointType(kv.TiFlash)
 
 	usedStoreAddrs := make(map[string]bool)
-	for _, task := range m.tasks {
+	for _, task := range reqs {
 		// get the store address of running tasks
 		if task.State == kv.MppTaskRunning && !usedStoreAddrs[task.Meta.GetAddress()] {
 			usedStoreAddrs[task.Meta.GetAddress()] = true
@@ -384,10 +216,10 @@ func (m *mppIterator) cancelMppTasks() {
 	for addr := range usedStoreAddrs {
 		storeAddr := addr
 		wg.Run(func() {
-			_, err := m.store.GetTiKVClient().SendRequest(context.Background(), storeAddr, wrappedReq, tikv.ReadTimeoutShort)
-			logutil.BgLogger().Debug("cancel task", zap.Uint64("query id ", m.startTs), zap.String("on addr", storeAddr), zap.Int64("mpp-version", m.mppVersion.ToInt64()))
+			_, err := c.store.GetTiKVClient().SendRequest(context.Background(), storeAddr, wrappedReq, tikv.ReadTimeoutShort)
+			logutil.BgLogger().Debug("cancel task", zap.Uint64("query id ", firstReq.StartTs), zap.String("on addr", storeAddr), zap.Int64("mpp-version", firstReq.MppVersion.ToInt64()))
 			if err != nil {
-				logutil.BgLogger().Error("cancel task error", zap.Error(err), zap.Uint64("query id", m.startTs), zap.String("on addr", storeAddr), zap.Int64("mpp-version", m.mppVersion.ToInt64()))
+				logutil.BgLogger().Error("cancel task error", zap.Error(err), zap.Uint64("query id", firstReq.StartTs), zap.String("on addr", storeAddr), zap.Int64("mpp-version", firstReq.MppVersion.ToInt64()))
 				if invalidPDCache {
 					gotErr.CompareAndSwap(false, true)
 				}
@@ -396,19 +228,22 @@ func (m *mppIterator) cancelMppTasks() {
 	}
 	wg.Wait()
 	if invalidPDCache && gotErr.Load() {
-		m.store.GetRegionCache().InvalidateTiFlashComputeStores()
+		c.store.GetRegionCache().InvalidateTiFlashComputeStores()
 	}
 }
 
-func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta) {
+// EstablishMPPConns build a mpp connection to receive data, return valid response when err is nil
+func (c *MPPClient) EstablishMPPConns(param kv.EstablishMPPConnsParam) (*tikvrpc.MPPStreamResponse, error) {
+	req := param.Req
+	taskMeta := param.TaskMeta
 	connReq := &mpp.EstablishMPPConnectionRequest{
 		SenderMeta: taskMeta,
 		ReceiverMeta: &mpp.TaskMeta{
 			StartTs:      req.StartTs,
-			QueryTs:      m.mppQueryID.QueryTs,
-			LocalQueryId: m.mppQueryID.LocalQueryID,
-			ServerId:     m.mppQueryID.ServerID,
-			MppVersion:   m.mppVersion.ToInt64(),
+			QueryTs:      req.MppQueryID.QueryTs,
+			LocalQueryId: req.MppQueryID.LocalQueryID,
+			ServerId:     req.MppQueryID.ServerID,
+			MppVersion:   req.MppVersion.ToInt64(),
 			TaskId:       -1,
 		},
 	}
@@ -420,166 +255,87 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 
 	// Drain results from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
-	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, readTimeoutUltraLong)
+	rpcResp, err := c.store.GetTiKVClient().SendRequest(param.Ctx, req.Meta.GetAddress(), wrappedReq, readTimeoutUltraLong)
 
 	if err != nil {
 		logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
 		if config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler {
-			m.store.GetRegionCache().InvalidateTiFlashComputeStores()
+			c.store.GetRegionCache().InvalidateTiFlashComputeStores()
 		}
-		// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
-		if m.needTriggerFallback {
-			m.sendError(derr.ErrTiFlashServerTimeout)
-		} else {
-			m.sendError(err)
-		}
-		return
+		return nil, err
 	}
 
-	stream := rpcResp.Resp.(*tikvrpc.MPPStreamResponse)
-	defer stream.Close()
-
-	resp := stream.MPPDataPacket
-	if resp == nil {
-		return
-	}
-
-	for {
-		err := m.handleMPPStreamResponse(bo, resp, req)
-		if err != nil {
-			m.sendError(err)
-			return
-		}
-
-		resp, err = stream.Recv()
-		if err != nil {
-			if errors.Cause(err) == io.EOF {
-				return
-			}
-
-			if err1 := bo.Backoff(tikv.BoTiKVRPC(), errors.Errorf("recv stream response error: %v", err)); err1 != nil {
-				if errors.Cause(err) == context.Canceled {
-					logutil.BgLogger().Info("stream recv timeout", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
-				} else {
-					logutil.BgLogger().Info("stream unknown error", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
-				}
-			}
-			// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
-			if m.needTriggerFallback {
-				m.sendError(derr.ErrTiFlashServerTimeout)
-			} else {
-				m.sendError(err)
-			}
-			return
-		}
-	}
+	streamResponse := rpcResp.Resp.(*tikvrpc.MPPStreamResponse)
+	return streamResponse, nil
 }
 
-// TODO: Test the case that user cancels the query.
-func (m *mppIterator) Close() error {
-	if atomic.CompareAndSwapUint32(&m.closed, 0, 1) {
-		close(m.finishCh)
-	}
-	m.cancelFunc()
-	<-m.wgDoneChan
-	return nil
+// CheckVisibility checks if it is safe to read using given ts.
+func (c *MPPClient) CheckVisibility(startTime uint64) error {
+	return c.store.CheckVisibility(startTime)
 }
 
-func (m *mppIterator) handleMPPStreamResponse(bo *Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
-	if response.Error != nil {
-		err = errors.Errorf("other error for mpp stream: %s", response.Error.Msg)
-		logutil.BgLogger().Warn("other error",
-			zap.Uint64("txnStartTS", req.StartTs),
-			zap.String("storeAddr", req.Meta.GetAddress()),
-			zap.Int64("mpp-version", m.mppVersion.ToInt64()),
-			zap.Error(err))
-		return err
-	}
+func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, TTL int64) (int, error) {
+	failpoint.Inject("mppStoreCountSetLastUpdateTime", func(value failpoint.Value) {
+		v, _ := strconv.ParseInt(value.(string), 10, 0)
+		c.lastUpdate = v
+	})
 
-	resp := &mppResponse{
-		pbResp: response,
-		detail: new(CopRuntimeStats),
-	}
+	lastUpdate := atomic.LoadInt64(&c.lastUpdate)
+	now := time.Now().UnixMicro()
+	isInit := atomic.LoadInt32(&c.initFlag) != 0
 
-	backoffTimes := bo.GetBackoffTimes()
-	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
-	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
-	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
-	for backoff := range backoffTimes {
-		resp.detail.BackoffTimes[backoff] = backoffTimes[backoff]
-		resp.detail.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
-	}
-	resp.detail.CalleeAddress = req.Meta.GetAddress()
-
-	m.sendToRespCh(resp)
-	return
-}
-
-func (m *mppIterator) nextImpl(ctx context.Context) (resp *mppResponse, ok bool, exit bool, err error) {
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case resp, ok = <-m.respChan:
-			return
-		case <-ticker.C:
-			if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
-				err = derr.ErrQueryInterrupted
-				exit = true
-				return
-			}
-		case <-m.finishCh:
-			exit = true
-			return
-		case <-ctx.Done():
-			if atomic.CompareAndSwapUint32(&m.closed, 0, 1) {
-				close(m.finishCh)
-			}
-			exit = true
-			return
+	if now-lastUpdate < TTL {
+		if isInit {
+			return int(atomic.LoadInt32(&c.cnt)), nil
 		}
 	}
-}
 
-func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
-	resp, ok, closed, err := m.nextImpl(ctx)
+	failpoint.Inject("mppStoreCountSetLastUpdateTimeP2", func(value failpoint.Value) {
+		v, _ := strconv.ParseInt(value.(string), 10, 0)
+		c.lastUpdate = v
+	})
+
+	if !atomic.CompareAndSwapInt64(&c.lastUpdate, lastUpdate, now) {
+		if isInit {
+			return int(atomic.LoadInt32(&c.cnt)), nil
+		}
+		// if has't initialized, always fetch latest mpp store info
+	}
+
+	// update mpp store cache
+	cnt := 0
+	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
+
+	failpoint.Inject("mppStoreCountPDError", func(value failpoint.Value) {
+		if value.(bool) {
+			err = errors.New("failed to get mpp store count")
+		}
+	})
+
 	if err != nil {
-		return nil, errors.Trace(err)
+		// always to update cache next time
+		atomic.StoreInt32(&c.initFlag, 0)
+		return 0, err
 	}
-	if !ok || closed {
-		return nil, nil
+	for _, s := range stores {
+		if !tikv.LabelFilterNoTiFlashWriteNode(s.GetLabels()) {
+			continue
+		}
+		cnt += 1
+	}
+	failpoint.Inject("mppStoreCountSetMPPCnt", func(value failpoint.Value) {
+		cnt = value.(int)
+	})
+
+	if !isInit || atomic.LoadInt64(&c.lastUpdate) == now {
+		atomic.StoreInt32(&c.cnt, int32(cnt))
+		atomic.StoreInt32(&c.initFlag, 1)
 	}
 
-	if resp.err != nil {
-		return nil, errors.Trace(resp.err)
-	}
-
-	err = m.store.CheckVisibility(m.startTs)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return resp, nil
+	return cnt, nil
 }
 
-// DispatchMPPTasks dispatches all the mpp task and waits for the responses.
-func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppQueryID kv.MPPQueryID, mppVersion kv.MppVersion, memTracker *memory.Tracker) kv.Response {
-	vars := variables.(*tikv.Variables)
-	ctxChild, cancelFunc := context.WithCancel(ctx)
-	iter := &mppIterator{
-		store:                      c.store,
-		tasks:                      dispatchReqs,
-		finishCh:                   make(chan struct{}),
-		wgDoneChan:                 make(chan struct{}),
-		cancelFunc:                 cancelFunc,
-		respChan:                   make(chan *mppResponse),
-		startTs:                    startTs,
-		mppQueryID:                 mppQueryID,
-		mppVersion:                 mppVersion,
-		vars:                       vars,
-		needTriggerFallback:        needTriggerFallback,
-		enableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(),
-		memTracker:                 memTracker,
-	}
-	go iter.run(ctxChild)
-	return iter
+// GetMPPStoreCount returns number of TiFlash stores
+func (c *MPPClient) GetMPPStoreCount() (int, error) {
+	return c.store.mppStoreCnt.getMPPStoreCount(c.store.store.Ctx(), c.store.store.GetPDClient(), 120*1e6 /* TTL 120sec */)
 }

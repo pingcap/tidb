@@ -50,6 +50,10 @@ func TestExtractHandler(t *testing.T) {
 	require.NoError(t, err)
 	defer server.Close()
 
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
+
 	client.port = getPortFromTCPAddr(server.listener.Addr())
 	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
@@ -62,8 +66,6 @@ func TestExtractHandler(t *testing.T) {
 	prepareData4ExtractPlanTask(t, client)
 	time.Sleep(time.Second)
 	endTime := time.Now()
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
 	eh := &ExtractTaskServeHandler{extractHandler: dom.GetExtractHandle()}
 	router := mux.NewRouter()
 	router.Handle("/extract_task/dump", eh)
@@ -73,6 +75,12 @@ func TestExtractHandler(t *testing.T) {
 	}()
 	resp0, err := client.fetchStatus(fmt.Sprintf("/extract_task/dump?type=plan&begin=%s&end=%s",
 		url.QueryEscape(startTime.Format(types.TimeFormat)), url.QueryEscape(endTime.Format(types.TimeFormat))))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp0.Body.Close())
+	}()
+	require.Equal(t, resp0.StatusCode, http.StatusOK)
+	resp0, err = client.fetchStatus("/extract_task/dump?type=plan")
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp0.Body.Close())

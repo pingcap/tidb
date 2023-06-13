@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -56,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/topsql"
@@ -274,9 +276,19 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
 	if err != nil {
+		// If error is returned during the planner phase or the executor.Open
+		// phase, the rs will be nil, and StmtCtx.MemTracker StmtCtx.DiskTracker
+		// will not be detached. We need to detach them manually.
+		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
+			sv.StmtCtx.DetachMemDiskTracker()
+		}
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
+
 	if rs == nil {
 		if useCursor {
 			vars.SetStatusFlag(mysql.ServerStatusCursorExists, false)
@@ -285,7 +297,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	// since there are multiple implementations of ResultSet (the rs might be wrapped), we have to unwrap the rs before
 	// casting it to *tidbResultSet.
-	if result, ok := unwrapResultSet(rs).(*tidbResultSet); ok {
+	if result, ok := rs.(*tidbResultSet); ok {
 		if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
 			result.preparedStmt = planCacheStmt
 		}
@@ -297,12 +309,31 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	if useCursor {
 		cc.initResultEncoder(ctx)
 		defer cc.rsEncoder.clean()
-		// fix https://github.com/pingcap/tidb/issues/39447. we need to hold the start-ts here because the process info
-		// will be set to sleep after fetch returned.
-		if pi := cc.ctx.ShowProcess(); pi != nil && pi.ProtectedTSList != nil && pi.CurTxnStartTS > 0 {
-			unhold := pi.HoldTS(pi.CurTxnStartTS)
-			rs = &rsWithHooks{ResultSet: rs, onClosed: unhold}
+		// fetch all results of the resultSet, and stored them locally, so that the future `FETCH` command can read
+		// the rows directly to avoid running executor and accessing shared params/variables in the session
+		// NOTE: chunk should not be allocated from the connection allocator, which will reset after executing this command
+		// but the rows are still needed in the following FETCH command.
+		//
+		// TODO: trace the memory used here
+		chk := rs.NewChunk(nil)
+		var rows []chunk.Row
+		for {
+			if err = rs.Next(ctx, chk); err != nil {
+				return false, err
+			}
+			rowCount := chk.NumRows()
+			if rowCount == 0 {
+				break
+			}
+			// filling fetchedRows with chunk
+			for i := 0; i < rowCount; i++ {
+				row := chk.GetRow(i)
+				rows = append(rows, row)
+			}
+			chk = chunk.Renew(chk, vars.MaxChunkSize)
 		}
+		rs.StoreFetchedRows(rows)
+
 		stmt.StoreResultSet(rs)
 		if err = cc.writeColumnInfo(rs.Columns()); err != nil {
 			return false, err
@@ -310,15 +341,18 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		if cl, ok := rs.(fetchNotifier); ok {
 			cl.OnFetchReturned()
 		}
+
+		stmt.SetCursorActive(true)
+
 		// explicitly flush columnInfo to client.
 		err = cc.writeEOF(ctx, cc.ctx.Status())
 		if err != nil {
 			return false, err
 		}
+
 		return false, cc.flush(ctx)
 	}
-	defer terror.Call(rs.Close)
-	retryable, err := cc.writeResultset(ctx, rs, true, cc.ctx.Status(), 0)
+	retryable, err := cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), 0)
 	if err != nil {
 		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
@@ -363,10 +397,19 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
-	_, err = cc.writeResultset(ctx, rs, true, cc.ctx.Status(), int(fetchSize))
+	sendingEOF := false
+	// if the `fetchedRows` are empty before writing result, we could say the `FETCH` command will send EOF
+	if len(rs.GetFetchedRows()) == 0 {
+		sendingEOF = true
+	}
+	_, err = cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), int(fetchSize))
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
+	if sendingEOF {
+		stmt.SetCursorActive(false)
+	}
+
 	return nil
 }
 
@@ -636,7 +679,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression,
 
 	for i := range params {
 		ft := new(types.FieldType)
-		types.DefaultParamTypeForValue(args[i].GetValue(), ft)
+		types.InferParamTypeFromUnderlyingValue(args[i].GetValue(), ft)
 		params[i] = &expression.Constant{Value: args[i], RetType: ft}
 	}
 	return
@@ -704,6 +747,7 @@ func (cc *clientConn) handleStmtClose(data []byte) (err error) {
 	if stmt != nil {
 		return stmt.Close()
 	}
+
 	return
 }
 
@@ -770,9 +814,9 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 		return ""
 	}
 	if sv.EnableRedactLog {
-		return cc.preparedStmt2StringNoArgs(stmtID)
+		return parser.Normalize(cc.preparedStmt2StringNoArgs(stmtID))
 	}
-	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PreparedParams.String()
+	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PlanCacheParams.String()
 }
 
 func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {

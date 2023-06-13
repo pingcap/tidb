@@ -17,16 +17,21 @@ package session
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func init() {
@@ -52,6 +57,22 @@ type txnManager struct {
 
 	// We always reuse the same OptimisticTxnContextProvider in one session to reduce memory allocation cost for every new txn.
 	reservedOptimisticProviders [2]isolation.OptimisticTxnContextProvider
+
+	// used for slow transaction logs
+	events          []event
+	lastInstant     time.Time
+	enterTxnInstant time.Time
+}
+
+type event struct {
+	event    string
+	duration time.Duration
+}
+
+func (s event) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	enc.AddString("event", s.event)
+	enc.AddDuration("gap", s.duration)
+	return nil
 }
 
 func newTxnManager(sctx sessionctx.Context) *txnManager {
@@ -68,13 +89,6 @@ func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
 	}
 
 	return nil
-}
-
-func (m *txnManager) SetTxnInfoSchema(is infoschema.InfoSchema) {
-	if m.ctxProvider == nil {
-		return
-	}
-	m.ctxProvider.SetTxnInfoSchema(is)
 }
 
 func (m *txnManager) GetStmtReadTS() (uint64, error) {
@@ -153,12 +167,30 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 	if r.Type == sessiontxn.EnterNewTxnWithBeginStmt {
 		m.sctx.GetSessionVars().SetInTxn(true)
 	}
+
+	m.resetEvents()
+	m.recordEvent("enter txn")
 	return nil
 }
 
 func (m *txnManager) OnTxnEnd() {
 	m.ctxProvider = nil
 	m.stmtNode = nil
+
+	m.events = append(m.events, event{event: "txn end", duration: time.Since(m.lastInstant)})
+
+	duration := time.Since(m.enterTxnInstant)
+	threshold := m.sctx.GetSessionVars().SlowTxnThreshold
+	if threshold > 0 && uint64(duration.Milliseconds()) >= threshold {
+		logutil.BgLogger().Info(
+			"slow transaction", zap.Duration("duration", duration),
+			zap.Uint64("conn", m.sctx.GetSessionVars().ConnectionID),
+			zap.Uint64("txnStartTS", m.sctx.GetSessionVars().TxnCtx.StartTS),
+			zap.Objects("events", m.events),
+		)
+	}
+
+	m.lastInstant = time.Now()
 }
 
 func (m *txnManager) GetCurrentStmt() ast.StmtNode {
@@ -172,7 +204,21 @@ func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
+
+	var sql string
+	if node != nil {
+		sql = node.OriginalText()
+		if m.sctx.GetSessionVars().EnableRedactLog {
+			sql = parser.Normalize(sql)
+		}
+	}
+	m.recordEvent(sql)
 	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
+}
+
+// OnStmtEnd implements the TxnManager interface
+func (m *txnManager) OnStmtEnd() {
+	m.recordEvent("stmt end")
 }
 
 // OnPessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
@@ -222,7 +268,25 @@ func (m *txnManager) OnStmtCommit(ctx context.Context) error {
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
+	m.recordEvent("stmt commit")
 	return m.ctxProvider.OnStmtCommit(ctx)
+}
+
+func (m *txnManager) recordEvent(eventName string) {
+	if m.events == nil {
+		m.resetEvents()
+	}
+	m.events = append(m.events, event{event: eventName, duration: time.Since(m.lastInstant)})
+	m.lastInstant = time.Now()
+}
+
+func (m *txnManager) resetEvents() {
+	if m.events == nil {
+		m.events = make([]event, 0, 10)
+	} else {
+		m.events = m.events[:0]
+	}
+	m.enterTxnInstant = time.Now()
 }
 
 // OnStmtRollback is the hook that should be called when a statement fails to execute.
@@ -230,6 +294,7 @@ func (m *txnManager) OnStmtRollback(ctx context.Context, isForPessimisticRetry b
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
+	m.recordEvent("stmt rollback")
 	return m.ctxProvider.OnStmtRollback(ctx, isForPessimisticRetry)
 }
 

@@ -32,7 +32,7 @@ id	estRows	task	access object	operator info
 Sort_8	4433.77	root		test.t1.c1
 └─Projection_10	4433.77	root		test.t1.c1, test.t1.c2, test.t1.c3
   └─Selection_11	4433.77	root		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), Column#9))
-    └─HashJoin_12	5542.21	root		CARTESIAN anti left outer semi join, other cond:eq(test.t1.c3, test.t1.c3)
+    └─HashJoin_12	5542.21	root		Null-aware anti left outer semi join, equal:[eq(test.t1.c3, test.t1.c3)]
       ├─TableReader_18(Build)	10000.00	root		data:TableFullScan_17
       │ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
       └─IndexMerge_16(Probe)	5542.21	root		type: union
@@ -455,10 +455,9 @@ c1	c2	c3
 ///// MEMORY Table
 explain select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
 id	estRows	task	access object	operator info
-StreamAgg_10	1.00	root		funcs:count(Column#96)->Column#97
-└─Sort_11	1.00	root		Column#96
-  └─StreamAgg_14	1.00	root		funcs:count(1)->Column#96
-    └─MemTableScan_18	10000.00	root	table:STATEMENTS_SUMMARY	
+StreamAgg_9	1.00	root		funcs:count(Column#96)->Column#97
+└─StreamAgg_11	1.00	root		funcs:count(1)->Column#96
+  └─MemTableScan_15	10000.00	root	table:STATEMENTS_SUMMARY	
 show warnings;
 Level	Code	Message
 select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;

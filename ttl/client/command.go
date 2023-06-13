@@ -90,7 +90,8 @@ type CommandClient interface {
 	// WatchCommand watches the commands that are sent
 	WatchCommand(ctx context.Context) <-chan *CmdRequest
 	// TakeCommand takes a command to ensure only one can handle the command.
-	// If the first return value is true, it means you have taken the command successfully, and you should call `ResponseCommand`
+	// If the first return value is true, it means you have taken the command successfully,
+	// and you should call `ResponseCommand`
 	// after processed the command. Otherwise, you should not process this command because it is not belong to you.
 	TakeCommand(ctx context.Context, reqID string) (bool, error)
 	// ResponseCommand responses the result of the command. `TakeCommand` must be called first before `ResponseCommand`
@@ -99,7 +100,8 @@ type CommandClient interface {
 }
 
 // TriggerNewTTLJob triggers a new TTL job
-func TriggerNewTTLJob(ctx context.Context, cli CommandClient, dbName, tableName string) (*TriggerNewTTLJobResponse, error) {
+func TriggerNewTTLJob(ctx context.Context, cli CommandClient, dbName, tableName string) (
+	*TriggerNewTTLJobResponse, error) {
 	var resp TriggerNewTTLJobResponse
 	_, err := cli.Command(ctx, ttlCmdTypeTriggerTTLJob, &TriggerNewTTLJobRequest{
 		DBName:    dbName,
@@ -145,7 +147,8 @@ func (c *etcdClient) sendCmd(ctx context.Context, cmdType string, obj interface{
 		return reqID, err
 	}
 
-	if _, err = c.etcdCli.Put(ctx, ttlCmdKeyRequestPrefix+reqID, string(requestJSON), clientv3.WithLease(lease.ID)); err != nil {
+	_, err = c.etcdCli.Put(ctx, ttlCmdKeyRequestPrefix+reqID, string(requestJSON), clientv3.WithLease(lease.ID))
+	if err != nil {
 		return reqID, err
 	}
 
@@ -198,7 +201,8 @@ loop:
 }
 
 // Command implements the CommandClient
-func (c *etcdClient) Command(ctx context.Context, cmdType string, request interface{}, response interface{}) (string, error) {
+func (c *etcdClient) Command(ctx context.Context, cmdType string, request interface{}, response interface{}) (
+	string, error) {
 	requestID, err := c.sendCmd(ctx, cmdType, request)
 	if err != nil {
 		return requestID, err
@@ -302,7 +306,8 @@ func NewMockCommandClient() CommandClient {
 }
 
 // Command implements the CommandClient
-func (c *mockClient) Command(ctx context.Context, cmdType string, request interface{}, response interface{}) (string, error) {
+func (c *mockClient) Command(ctx context.Context, cmdType string, request interface{}, response interface{}) (
+	string, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*time.Duration(ttlCmdKeyLeaseSeconds))
 	defer cancel()
 

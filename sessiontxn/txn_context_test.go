@@ -39,7 +39,7 @@ import (
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -738,11 +738,14 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("truncate table t1")
 		tk.MustExec("insert into t1 values(1, 10)")
+		// Fair locking avoids conflicting again after retry in this case. Disable it for this test.
+		tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 		tk2 := testkit.NewSteppedTestKit(t, store)
 		defer tk2.MustExec("rollback")
 
 		tk2.MustExec("use test")
 		tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 		tk2.MustExec(fmt.Sprintf("set tx_isolation = '%s'", testfork.PickEnum(t, ast.RepeatableRead, ast.ReadCommitted)))
 		autocommit := testfork.PickEnum(t, 0, 1)
 		tk2.MustExec(fmt.Sprintf("set autocommit=%d", autocommit))
@@ -823,6 +826,12 @@ func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
 		doubleConflictAfterTransfer := testfork.PickEnum(t, true, false)
 		if !conflictAfterTransfer && doubleConflictAfterTransfer {
 			return
+		}
+
+		// If `tidb_pessimistic_txn_fair_locking` is enabled, the double conflict case is
+		// avoided. Disable it to run this test.
+		if doubleConflictAfterTransfer {
+			tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 		}
 
 		tk2.SetBreakPoints(

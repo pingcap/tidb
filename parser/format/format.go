@@ -157,7 +157,7 @@ func (f *indentFormatter) format(flat bool, format string, args ...interface{}) 
 	case stPERC, stBOLPERC:
 		buf = append(buf, '%')
 	}
-	return f.Write([]byte(fmt.Sprintf(string(buf), args...)))
+	return fmt.Fprintf(f, string(buf), args...)
 }
 
 // Format implements Format interface.
@@ -238,6 +238,7 @@ const (
 	RestoreWithTTLEnableOff
 	RestoreWithoutSchemaName
 	RestoreWithoutTableName
+	RestoreForNonPrepPlanCache
 )
 
 const (
@@ -304,17 +305,20 @@ func (rf RestoreFlags) HasNameBackQuotesFlag() bool {
 	return rf.has(RestoreNameBackQuotes)
 }
 
-// HasSpacesAroundBinaryOperationFlag returns a boolean indicating whether `rf` has `RestoreSpacesAroundBinaryOperation` flag.
+// HasSpacesAroundBinaryOperationFlag returns a boolean indicating
+// whether `rf` has `RestoreSpacesAroundBinaryOperation` flag.
 func (rf RestoreFlags) HasSpacesAroundBinaryOperationFlag() bool {
 	return rf.has(RestoreSpacesAroundBinaryOperation)
 }
 
-// HasRestoreBracketAroundBinaryOperation returns a boolean indicating whether `rf` has `RestoreBracketAroundBinaryOperation` flag.
+// HasRestoreBracketAroundBinaryOperation returns a boolean indicating
+// whether `rf` has `RestoreBracketAroundBinaryOperation` flag.
 func (rf RestoreFlags) HasRestoreBracketAroundBinaryOperation() bool {
 	return rf.has(RestoreBracketAroundBinaryOperation)
 }
 
-// HasStringWithoutDefaultCharset returns a boolean indicating whether `rf` has `RestoreStringWithoutDefaultCharset` flag.
+// HasStringWithoutDefaultCharset returns a boolean indicating
+// whether `rf` has `RestoreStringWithoutDefaultCharset` flag.
 func (rf RestoreFlags) HasStringWithoutDefaultCharset() bool {
 	return rf.has(RestoreStringWithoutDefaultCharset)
 }
@@ -334,21 +338,33 @@ func (rf RestoreFlags) HasSkipPlacementRuleForRestoreFlag() bool {
 	return rf.has(SkipPlacementRuleForRestore)
 }
 
-// HasRestoreWithTTLEnableOff returns a boolean indicating whether to force set TTL_ENABLE='OFF' when restoring a TTL table
+// HasRestoreWithTTLEnableOff returns a boolean indicating
+// whether to force set TTL_ENABLE='OFF' when restoring a TTL table
 func (rf RestoreFlags) HasRestoreWithTTLEnableOff() bool {
 	return rf.has(RestoreWithTTLEnableOff)
+}
+
+// HasRestoreForNonPrepPlanCache returns a boolean indicating whether `rf` has `RestoreForNonPrepPlanCache` flag.
+func (rf RestoreFlags) HasRestoreForNonPrepPlanCache() bool {
+	return rf.has(RestoreForNonPrepPlanCache)
+}
+
+// RestoreWriter is the interface for `Restore` to write.
+type RestoreWriter interface {
+	io.Writer
+	io.StringWriter
 }
 
 // RestoreCtx is `Restore` context to hold flags and writer.
 type RestoreCtx struct {
 	Flags     RestoreFlags
-	In        io.Writer
+	In        RestoreWriter
 	DefaultDB string
 	CTERestorer
 }
 
 // NewRestoreCtx returns a new `RestoreCtx`.
-func NewRestoreCtx(flags RestoreFlags, in io.Writer) *RestoreCtx {
+func NewRestoreCtx(flags RestoreFlags, in RestoreWriter) *RestoreCtx {
 	return &RestoreCtx{Flags: flags, In: in, DefaultDB: ""}
 }
 
@@ -361,7 +377,7 @@ func (ctx *RestoreCtx) WriteKeyWord(keyWord string) {
 	case ctx.Flags.HasKeyWordLowercaseFlag():
 		keyWord = strings.ToLower(keyWord)
 	}
-	fmt.Fprint(ctx.In, keyWord)
+	ctx.In.WriteString(keyWord)
 }
 
 // WriteWithSpecialComments writes a string with a special comment wrapped.
@@ -385,18 +401,20 @@ func (ctx *RestoreCtx) WriteWithSpecialComments(featureID string, fn func() erro
 // `str` may be wrapped in quotes and escaped according to RestoreFlags.
 func (ctx *RestoreCtx) WriteString(str string) {
 	if ctx.Flags.HasStringEscapeBackslashFlag() {
-		str = strings.Replace(str, `\`, `\\`, -1)
+		str = strings.ReplaceAll(str, `\`, `\\`)
 	}
 	quotes := ""
 	switch {
 	case ctx.Flags.HasStringSingleQuotesFlag():
-		str = strings.Replace(str, `'`, `''`, -1)
+		str = strings.ReplaceAll(str, `'`, `''`)
 		quotes = `'`
 	case ctx.Flags.HasStringDoubleQuotesFlag():
-		str = strings.Replace(str, `"`, `""`, -1)
+		str = strings.ReplaceAll(str, `"`, `""`)
 		quotes = `"`
 	}
-	fmt.Fprint(ctx.In, quotes, str, quotes)
+	ctx.In.WriteString(quotes)
+	ctx.In.WriteString(str)
+	ctx.In.WriteString(quotes)
 }
 
 // WriteName writes the name into writer
@@ -411,18 +429,22 @@ func (ctx *RestoreCtx) WriteName(name string) {
 	quotes := ""
 	switch {
 	case ctx.Flags.HasNameDoubleQuotesFlag():
-		name = strings.Replace(name, `"`, `""`, -1)
+		name = strings.ReplaceAll(name, `"`, `""`)
 		quotes = `"`
 	case ctx.Flags.HasNameBackQuotesFlag():
-		name = strings.Replace(name, "`", "``", -1)
+		name = strings.ReplaceAll(name, "`", "``")
 		quotes = "`"
 	}
-	fmt.Fprint(ctx.In, quotes, name, quotes)
+
+	// use `WriteString` directly instead of `fmt.Fprint` to get a better performance.
+	ctx.In.WriteString(quotes)
+	ctx.In.WriteString(name)
+	ctx.In.WriteString(quotes)
 }
 
 // WritePlain writes the plain text into writer without any handling.
 func (ctx *RestoreCtx) WritePlain(plainText string) {
-	fmt.Fprint(ctx.In, plainText)
+	ctx.In.WriteString(plainText)
 }
 
 // WritePlainf write the plain text into writer without any handling.

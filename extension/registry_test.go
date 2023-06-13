@@ -220,10 +220,10 @@ func TestSetVariablePrivilege(t *testing.T) {
 	tk.MustExec("create user u2@localhost")
 
 	tk1 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 
 	tk2 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
 
 	sem.Disable()
 	tk1.MustExec("set @@var1=7")
@@ -297,11 +297,11 @@ func TestCustomAccessCheck(t *testing.T) {
 	tk.MustExec("create user u2@localhost")
 
 	tk1 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustExec("use test")
 
 	tk2 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec("GRANT all on test.t1 TO u2@localhost")
 	tk2.MustExec("use test")
 

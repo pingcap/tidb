@@ -12,6 +12,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
+    shard_count = 6,
     deps = [
         "//config",
         "//domain",

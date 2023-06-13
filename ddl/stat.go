@@ -39,22 +39,22 @@ var (
 )
 
 // GetScope gets the status variables scope.
-func (d *ddl) GetScope(status string) variable.ScopeFlag {
+func (*ddl) GetScope(_ string) variable.ScopeFlag {
 	// Now ddl status variables scope are all default scope.
 	return variable.DefaultStatusVarScopeFlag
 }
 
 // Stats returns the DDL statistics.
-func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+func (d *ddl) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[serverID] = d.uuid
 	var ddlInfo *Info
 
-	s, err := d.sessPool.get()
+	s, err := d.sessPool.Get()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer d.sessPool.put(s)
+	defer d.sessPool.Put(s)
 	ddlInfo, err = GetDDLInfoWithNewTxn(s)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -69,7 +69,7 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 	job := ddlInfo.Jobs[0]
 	m[ddlJobID] = job.ID
 	m[ddlJobAction] = job.Type.String()
-	m[ddlJobStartTS] = job.StartTS / 1e9 // unit: second
+	m[ddlJobStartTS] = job.StartTS
 	m[ddlJobState] = job.State.String()
 	m[ddlJobRows] = job.RowCount
 	if job.Error == nil {

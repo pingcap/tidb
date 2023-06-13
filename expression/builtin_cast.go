@@ -433,7 +433,7 @@ func (c *castAsArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	arrayType := c.tp.ArrayType()
 	switch arrayType.GetType() {
-	case mysql.TypeYear, mysql.TypeJSON, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeNewDecimal:
+	case mysql.TypeYear, mysql.TypeJSON, mysql.TypeFloat, mysql.TypeNewDecimal:
 		return nil, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAST-ing data to array of %s", arrayType.String()))
 	}
 	if arrayType.EvalType() == types.ETString && arrayType.GetCharset() != charset.CharsetUTF8MB4 && arrayType.GetCharset() != charset.CharsetBin {
@@ -526,6 +526,13 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 				return uint64(jsonToInt), err
 			}
 			return jsonToInt, err
+		}
+	case types.ETReal:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+			if item.TypeCode != types.JSONTypeCodeFloat64 && item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			return types.ConvertJSONToFloat(sc, item)
 		}
 	case types.ETDatetime:
 		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
@@ -2036,11 +2043,10 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 	}
 	tp := expr.GetType().Clone()
 	if expr.GetType().Hybrid() {
-		if enumOrSetRealTypeIsStr {
-			tp = types.NewFieldType(mysql.TypeVarString)
-		} else {
+		if !enumOrSetRealTypeIsStr {
 			return expr
 		}
+		tp = types.NewFieldType(mysql.TypeVarString)
 	} else if ec.Charset == charset.CharsetBin {
 		// When cast character string to binary string, if we still use fixed length representation,
 		// then 0 padding will be used, which can affect later execution.

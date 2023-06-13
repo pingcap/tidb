@@ -68,7 +68,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	// Handle the bad null error.
 	for i, col := range t.Cols() {
 		var err error
-		if err = col.HandleBadNull(&newData[i], sc); err != nil {
+		if err = col.HandleBadNull(&newData[i], sc, 0); err != nil {
 			return false, err
 		}
 	}
@@ -137,32 +137,26 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		if sctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-
-		physicalID := t.Meta().ID
-		if pt, ok := t.(table.PartitionedTable); ok {
-			p, err := pt.GetPartitionByRow(sctx, oldData)
-			if err != nil {
-				return false, err
-			}
-			physicalID = p.GetPhysicalID()
-		}
-
-		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
-		txnCtx := sctx.GetSessionVars().TxnCtx
-		if txnCtx.IsPessimistic {
-			txnCtx.AddUnchangedRowKey(unchangedRowKey)
-		}
-		return false, nil
+		_, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, lockRowKey|lockUniqueKeys)
+		return false, err
 	}
 
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.GetFlag()) && !modified[i] && !onUpdateSpecified[i] {
-			if v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil); err == nil {
-				newData[i] = v
-				modified[i] = true
-			} else {
+			v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
+			if err != nil {
 				return false, err
+			}
+			newData[i] = v
+			modified[i] = true
+			// Only TIMESTAMP and DATETIME columns can be automatically updated, so it cannot be PKIsHandle.
+			// Ref: https://dev.mysql.com/doc/refman/8.0/en/timestamp-initialization.html
+			if col.IsPKHandleColumn(t.Meta()) {
+				return false, errors.Errorf("on-update-now column should never be pk-is-handle")
+			}
+			if col.IsCommonHandleColumn(t.Meta()) {
+				handleChanged = true
 			}
 		}
 	}
@@ -205,6 +199,10 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			}
 			return false, err
 		}
+		// Lock unique keys when handle unchanged
+		if _, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, lockUniqueKeys); err != nil {
+			return false, err
+		}
 	}
 	for _, fkt := range fkChecks {
 		err := fkt.updateRowNeedToCheck(sc, oldData, newData)
@@ -227,6 +225,53 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	sc.AddCopiedRows(1)
 
 	return true, nil
+}
+
+const (
+	lockRowKey = 1 << iota
+	lockUniqueKeys
+)
+
+func addUnchangedKeysForLockByRow(sctx sessionctx.Context, t table.Table, h kv.Handle, row []types.Datum, keyset int) (int, error) {
+	txnCtx := sctx.GetSessionVars().TxnCtx
+	if !txnCtx.IsPessimistic || keyset == 0 {
+		return 0, nil
+	}
+	count := 0
+	physicalID := t.Meta().ID
+	if pt, ok := t.(table.PartitionedTable); ok {
+		p, err := pt.GetPartitionByRow(sctx, row)
+		if err != nil {
+			return 0, err
+		}
+		physicalID = p.GetPhysicalID()
+	}
+	if keyset&lockRowKey > 0 {
+		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
+		txnCtx.AddUnchangedKeyForLock(unchangedRowKey)
+		count++
+	}
+	if keyset&lockUniqueKeys > 0 {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		clustered := t.Meta().HasClusteredIndex()
+		for _, idx := range t.Indices() {
+			meta := idx.Meta()
+			if !meta.Unique || !meta.IsPublic() || (meta.Primary && clustered) {
+				continue
+			}
+			ukVals, err := idx.FetchValues(row, nil)
+			if err != nil {
+				return count, err
+			}
+			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(stmtCtx, idx.TableMeta(), meta, physicalID, ukVals, h, nil)
+			if err != nil {
+				return count, err
+			}
+			txnCtx.AddUnchangedKeyForLock(unchangedUniqueKey)
+			count++
+		}
+	}
+	return count, nil
 }
 
 func rebaseAutoRandomValue(ctx context.Context, sctx sessionctx.Context, t table.Table, newData *types.Datum, col *table.Column) error {

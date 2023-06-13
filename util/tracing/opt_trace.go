@@ -98,7 +98,8 @@ type LogicalRuleOptimizeTracer struct {
 }
 
 // buildLogicalRuleOptimizeTracerBeforeOptimize build rule tracer before rule optimize
-func buildLogicalRuleOptimizeTracerBeforeOptimize(index int, name string, before *PlanTrace) *LogicalRuleOptimizeTracer {
+func buildLogicalRuleOptimizeTracerBeforeOptimize(
+	index int, name string, before *PlanTrace) *LogicalRuleOptimizeTracer {
 	return &LogicalRuleOptimizeTracer{
 		Index:    index,
 		Before:   toFlattenPlanTrace(before),

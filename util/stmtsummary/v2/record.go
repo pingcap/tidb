@@ -144,6 +144,9 @@ type StmtRecord struct {
 	// Pessimistic execution retry information.
 	ExecRetryCount uint          `json:"exec_retry_count"`
 	ExecRetryTime  time.Duration `json:"exec_retry_time"`
+
+	KeyspaceName string `json:"keyspace_name,omitempty"`
+	KeyspaceID   uint32 `json:"keyspace_id,omitempty"`
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -209,6 +212,8 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		Prepared:         info.Prepared,
 		FirstSeen:        info.StartTime,
 		LastSeen:         info.StartTime,
+		KeyspaceName:     info.KeyspaceName,
+		KeyspaceID:       info.KeyspaceID,
 	}
 }
 
@@ -561,7 +566,10 @@ func formatSQL(sql string) string {
 	maxSQLLength := int(maxSQLLength())
 	length := len(sql)
 	if length > maxSQLLength {
-		sql = fmt.Sprintf("%.*s(len:%d)", maxSQLLength, sql, length)
+		var result strings.Builder
+		result.WriteString(sql[:maxSQLLength])
+		fmt.Fprintf(&result, "(len:%d)", length)
+		return result.String()
 	}
 	return sql
 }
@@ -651,10 +659,12 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 			Tables:     tables,
 			IndexNames: indexes,
 		},
-		MemMax:    10000,
-		DiskMax:   10000,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
-		Succeed:   true,
+		MemMax:       10000,
+		DiskMax:      10000,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		Succeed:      true,
+		KeyspaceName: "keyspace_a",
+		KeyspaceID:   1,
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo

@@ -47,7 +47,7 @@ func TestEncodeDecodePlan(t *testing.T) {
 	tk.MustExec("set tidb_enable_collect_execution_info=1;")
 	tk.MustExec("set tidb_partition_prune_mode='static';")
 
-	tk.Session().GetSessionVars().PlanID = 0
+	tk.Session().GetSessionVars().PlanID.Store(0)
 	getPlanTree := func() (str1, str2 string) {
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
@@ -480,7 +480,7 @@ func BenchmarkDecodePlan(b *testing.B) {
 		buf.WriteString(fmt.Sprintf("select count(1) as num,a from t where a='%v' group by a", i))
 	}
 	query := buf.String()
-	tk.Session().GetSessionVars().PlanID = 0
+	tk.Session().GetSessionVars().PlanID.Store(0)
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
@@ -507,7 +507,7 @@ func BenchmarkEncodePlan(b *testing.B) {
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
 
 	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i"
-	tk.Session().GetSessionVars().PlanID = 0
+	tk.Session().GetSessionVars().PlanID.Store(0)
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
@@ -531,7 +531,7 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
 
 	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i"
-	tk.Session().GetSessionVars().PlanID = 0
+	tk.Session().GetSessionVars().PlanID.Store(0)
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
@@ -957,4 +957,81 @@ func TestIssue40535(t *testing.T) {
 	tk.MustExec("CREATE TABLE `t2`(`c1` set('kn8pu','7et','vekx6','v3','liwrh','q14','1met','nnd5i','5o0','8cz','l') DEFAULT '7et,vekx6,liwrh,q14,1met', `c2` float DEFAULT '1.683167', KEY `k1` (`c2`,`c1`), KEY `k2` (`c2`)) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;")
 	tk.MustExec("(select /*+ agg_to_cop()*/ locate(t1.c3, t1.c3) as r0, t1.c3 as r1 from t1 where not( IsNull(t1.c1)) order by r0,r1) union all (select concat_ws(',', t2.c2, t2.c1) as r0, t2.c1 as r1 from t2 order by r0, r1) order by 1 limit 273;")
 	require.Empty(t, tk.Session().LastMessage())
+}
+
+func TestHypoIndexDDL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int, key(a))`)
+
+	tk.MustExec(`create index hypo_a type hypo on t (a)`)
+	tk.MustExec(`create index hypo_bc type hypo on t (b, c)`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  `d` int(11) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`),\n" +
+		"  KEY `hypo_a` (`a`) /* HYPO INDEX */,\n" +
+		"  KEY `hypo_bc` (`b`,`c`) /* HYPO INDEX */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec(`drop index hypo_a on t`)
+	tk.MustExec(`drop index hypo_bc on t`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  `d` int(11) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestHypoIndexPlan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+
+	tk.MustQuery(`explain select a from t where a = 1`).Check(testkit.Rows(
+		`TableReader_7 10.00 root  data:Selection_6`,
+		`└─Selection_6 10.00 cop[tikv]  eq(test.t.a, 1)`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+
+	tk.MustExec(`create index hypo_a type hypo on t (a)`)
+
+	tk.MustQuery(`explain select a from t where a = 1`).Check(testkit.Rows(
+		`IndexReader_6 10.00 root  index:IndexRangeScan_5`,
+		`└─IndexRangeScan_5 10.00 cop[tikv] table:t, index:hypo_a(a) range:[1,1], keep order:false, stats:pseudo`))
+
+	tk.MustExec(`drop index hypo_a on t`)
+	tk.MustExec(`create unique index hypo_a type hypo on t (a)`)
+
+	tk.MustQuery(`explain select a from t where a = 1`).Check(testkit.Rows(
+		`Point_Get_5 1.00 root table:t, index:hypo_a(a) `))
+}
+
+func TestHypoTiFlashReplica(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+
+	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
+		`TableReader_5 10000.00 root  data:TableFullScan_4`,
+		`└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+
+	tk.MustExec(`alter table t set hypo tiflash replica 1`)
+
+	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
+		`TableReader_11 10000.00 root  MppVersion: 1, data:ExchangeSender_10`,
+		`└─ExchangeSender_10 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
+		`  └─TableFullScan_9 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo`))
+
+	tk.MustExec(`alter table t set hypo tiflash replica 0`)
+
+	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
+		`TableReader_5 10000.00 root  data:TableFullScan_4`,
+		`└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 }

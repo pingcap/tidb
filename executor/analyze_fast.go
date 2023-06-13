@@ -27,8 +27,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -44,12 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
-)
-
-var (
-	fastAnalyzeHistogramSample        = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "sample")
-	fastAnalyzeHistogramAccessRegions = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "access_regions")
-	fastAnalyzeHistogramScanKeys      = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "scan_keys")
 )
 
 func analyzeFastExec(exec *AnalyzeFastExec) *statistics.AnalyzeResults {
@@ -122,7 +116,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	var historyRowCount uint64
 	hasBeenAnalyzed := len(rows) != 0 && rows[0].GetInt64(0) == statistics.AnalyzeFlag
 	if hasBeenAnalyzed {
-		historyRowCount = uint64(domain.GetDomain(e.ctx).StatsHandle().GetPartitionStats(e.tblInfo, e.tableID.GetStatisticsID()).Count)
+		historyRowCount = uint64(domain.GetDomain(e.ctx).StatsHandle().GetPartitionStats(e.tblInfo, e.tableID.GetStatisticsID()).RealtimeCount)
 	} else {
 		dbInfo, ok := domain.GetDomain(e.ctx).InfoSchema().SchemaByTable(e.tblInfo)
 		if !ok {
@@ -177,17 +171,16 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
-		if kv.ErrInvalidTxn.Equal(err) {
-			_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			rollbackFn = func() error {
-				_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
-				return err
-			}
-		} else {
+		if !kv.ErrInvalidTxn.Equal(err) {
 			return nil, errors.Trace(err)
+		}
+		_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rollbackFn = func() error {
+			_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
+			return err
 		}
 	}
 	txn.SetOption(kv.Priority, kv.PriorityLow)
@@ -238,7 +231,7 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 			break
 		}
 	}
-	fastAnalyzeHistogramAccessRegions.Observe(float64(accessRegionsCounter))
+	executor_metrics.FastAnalyzeHistogramAccessRegions.Observe(float64(accessRegionsCounter))
 
 	return nil
 }
@@ -460,7 +453,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 				return
 			}
 		}
-		fastAnalyzeHistogramSample.Observe(float64(len(kvMap)))
+		executor_metrics.FastAnalyzeHistogramSample.Observe(float64(len(kvMap)))
 
 		*err = e.handleBatchSeekResponse(kvMap)
 		if *err != nil {
@@ -561,7 +554,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	scanKeysSize, err := e.handleScanTasks(bo)
-	fastAnalyzeHistogramScanKeys.Observe(float64(scanKeysSize))
+	executor_metrics.FastAnalyzeHistogramScanKeys.Observe(float64(scanKeysSize))
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -570,7 +563,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	var rowCount int64 = 0
 	if stats.Lease() > 0 {
 		if t := stats.GetPartitionStats(e.tblInfo, e.tableID.GetStatisticsID()); !t.Pseudo {
-			rowCount = t.Count
+			rowCount = t.RealtimeCount
 		}
 	}
 	hists, cms, topNs, fms := make([]*statistics.Histogram, length), make([]*statistics.CMSketch, length), make([]*statistics.TopN, length), make([]*statistics.FMSketch, length)

@@ -130,8 +130,7 @@ autoscaler-addr = "tiflash-autoscale-lb.tiflash-autoscale.svc.cluster.local:8081
 autoscaler-cluster-id = ""
 
 # use-autoscaler indicates whether use AutoScaler or PD for tiflash_compute nodes, only meaningful when disaggregated-tiflash is true.
-# Will remove this after AutoScaler is stable.
-use-autoscaler = true
+use-autoscaler = false
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -148,6 +147,9 @@ format = "text"
 
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
+
+# Make tidb panic if the write log operation hang for 15s
+# timeout = 15
 
 # File logging.
 [log.file]
@@ -276,6 +278,12 @@ max-txn-ttl = 3600000
 # If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.
 # If you find the CPU used by GC is too high or GC is too frequent and impact your business you can increase this value.
 gogc = 100
+
+# Whether to use the lite mode of init stats.
+lite-init-stats = true
+
+# Whether to wait for init stats to finish before providing service during startup
+force-init-stats = true
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.

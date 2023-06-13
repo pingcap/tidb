@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "tiflashcompute",
-    srcs = ["topo_fetcher.go"],
+    srcs = [
+        "dispatch_policy.go",
+        "topo_fetcher.go",
+    ],
     importpath = "github.com/pingcap/tidb/util/tiflashcompute",
     visibility = ["//visibility:public"],
     deps = [

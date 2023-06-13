@@ -4,6 +4,7 @@ go_library(
     name = "kv",
     srcs = [
         "allocator.go",
+        "base.go",
         "kv2sql.go",
         "session.go",
         "sql2kv.go",
@@ -12,6 +13,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/lightning/backend/kv",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/manual",
@@ -53,7 +55,9 @@ go_test(
     embed = [":kv"],
     flaky = True,
     race = "on",
+    shard_count = 16,
     deps = [
+        "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/verification",
@@ -64,6 +68,7 @@ go_test(
         "//parser/ast",
         "//parser/model",
         "//parser/mysql",
+        "//planner/core",
         "//sessionctx",
         "//table",
         "//table/tables",

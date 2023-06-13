@@ -205,7 +205,7 @@ func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *
 	return checkTableForeignKey(referTblInfo, tbInfo, fk)
 }
 
-func getAndCheckLatestInfoSchema(d *ddlCtx, t *meta.Meta) (infoschema.InfoSchema, error) {
+func getAndCheckLatestInfoSchema(d *ddlCtx, _ *meta.Meta) (infoschema.InfoSchema, error) {
 	// TODO(crazycs520): fix me, need to make sure the `d.infoCache` is the latest infoschema.
 	return d.infoCache.GetLatest(), nil
 }
@@ -673,7 +673,7 @@ func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKI
 	if !fkCheck {
 		return nil
 	}
-	sctx, err := w.sessPool.get()
+	sctx, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -681,7 +681,7 @@ func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKI
 	sctx.GetSessionVars().OptimizerEnableNAAJ = true
 	defer func() {
 		sctx.GetSessionVars().OptimizerEnableNAAJ = originValue
-		w.sessPool.put(sctx)
+		w.sessPool.Put(sctx)
 	}()
 
 	var buf strings.Builder

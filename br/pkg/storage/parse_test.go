@@ -260,3 +260,74 @@ func TestParseRawURL(t *testing.T) {
 		require.Equal(t, c.secretAccessKey, secretAccessKey)
 	}
 }
+
+func TestRedactURL(t *testing.T) {
+	type args struct {
+		str string
+	}
+	tests := []struct {
+		args    args
+		want    string
+		wantErr bool
+	}{
+		{args{""}, "", false},
+		{args{":"}, "", true},
+		{args{"~/file"}, "~/file", false},
+		{args{"gs://bucket/file"}, "gs://bucket/file", false},
+		// gs don't have access-key/secret-access-key, so it will NOT be redacted
+		{args{"gs://bucket/file?access-key=123"}, "gs://bucket/file?access-key=123", false},
+		{args{"gs://bucket/file?secret-access-key=123"}, "gs://bucket/file?secret-access-key=123", false},
+		{args{"s3://bucket/file"}, "s3://bucket/file", false},
+		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123", false},
+		{args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=redacted", false},
+		{args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=redacted", false},
+		// underline
+		{args{"s3://bucket/file?access_key=123"}, "s3://bucket/file?access_key=redacted", false},
+		{args{"s3://bucket/file?secret_access_key=123"}, "s3://bucket/file?secret_access_key=redacted", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.args.str, func(t *testing.T) {
+			got, err := RedactURL(tt.args.str)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("RedactURL() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("RedactURL() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsLocal(t *testing.T) {
+	type args struct {
+		path string
+	}
+	tests := []struct {
+		name   string
+		args   args
+		want   bool
+		errStr string
+	}{
+		{"local", args{":"}, false, "missing protocol scheme"},
+		{"local", args{"~/tmp/file"}, true, ""},
+		{"local", args{"."}, true, ""},
+		{"local", args{".."}, true, ""},
+		{"local", args{"./tmp/file"}, true, ""},
+		{"local", args{"/tmp/file"}, true, ""},
+		{"local", args{"local:///tmp/file"}, true, ""},
+		{"local", args{"file:///tmp/file"}, true, ""},
+		{"local", args{"s3://bucket/tmp/file"}, false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := IsLocalPath(tt.args.path)
+			if tt.errStr != "" {
+				require.ErrorContains(t, err, tt.errStr)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, got, tt.want)
+		})
+	}
+}

@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -41,6 +43,46 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
+var (
+	// PlanCacheKeyTestIssue43667 is for test.
+	PlanCacheKeyTestIssue43667 struct{}
+)
+
+// SetParameterValuesIntoSCtx sets these parameters into session context.
+func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
+	vars := sctx.GetSessionVars()
+	vars.PlanCacheParams.Reset()
+	for i, usingParam := range params {
+		val, err := usingParam.Eval(chunk.Row{})
+		if err != nil {
+			return err
+		}
+		if isGetVarBinaryLiteral(sctx, usingParam) {
+			binVal, convErr := val.ToBytes()
+			if convErr != nil {
+				return convErr
+			}
+			val.SetBinaryLiteral(binVal)
+		}
+		if markers != nil {
+			param := markers[i].(*driver.ParamMarkerExpr)
+			param.Datum = val
+			param.InExecute = true
+		}
+		vars.PlanCacheParams.Append(val)
+	}
+	if vars.StmtCtx.EnableOptimizerDebugTrace && len(vars.PlanCacheParams.AllParamValues()) > 0 {
+		vals := vars.PlanCacheParams.AllParamValues()
+		valStrs := make([]string, len(vals))
+		for i, val := range vals {
+			valStrs[i] = val.String()
+		}
+		debugtrace.RecordAnyValuesWithNames(sctx, "Parameter datums for EXECUTE", valStrs)
+	}
+	vars.PlanCacheParams.SetForNonPrepCache(isNonPrep)
+	return nil
+}
+
 func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
 	stmtAst := stmt.PreparedAst
@@ -52,22 +94,8 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 
 	// step 2: set parameter values
-	for i, usingParam := range params {
-		val, err := usingParam.Eval(chunk.Row{})
-		if err != nil {
-			return err
-		}
-		param := stmtAst.Params[i].(*driver.ParamMarkerExpr)
-		if isGetVarBinaryLiteral(sctx, usingParam) {
-			binVal, convErr := val.ToBytes()
-			if convErr != nil {
-				return convErr
-			}
-			val.SetBinaryLiteral(binVal)
-		}
-		param.Datum = val
-		param.InExecute = true
-		vars.PreparedParams = append(vars.PreparedParams, val)
+	if err := SetParameterValuesIntoSCtx(sctx, isNonPrepared, stmtAst.Params, params); err != nil {
+		return errors.Trace(err)
 	}
 
 	// step 3: check schema version
@@ -100,7 +128,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	// And update lastUpdateTime to the newest one.
 	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
 	if stmt.StmtCacheable && expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
-		sctx.GetPlanCache(isNonPrepared).DeleteAll()
+		sctx.GetSessionPlanCache().DeleteAll()
 		stmtAst.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
@@ -123,8 +151,13 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	stmtCtx := sessVars.StmtCtx
 	stmtAst := stmt.PreparedAst
 	stmtCtx.UseCache = stmt.StmtCacheable
+	if isNonPrepared {
+		stmtCtx.CacheType = stmtctx.SessionNonPrepared
+	} else {
+		stmtCtx.CacheType = stmtctx.SessionPrepared
+	}
 	if !stmt.StmtCacheable {
-		stmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: %s", stmt.UncacheableReason))
+		stmtCtx.SetSkipPlanCache(errors.New(stmt.UncacheableReason))
 	}
 
 	var bindSQL string
@@ -132,7 +165,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		var ignoreByBinding bool
 		bindSQL, ignoreByBinding = GetBindSQL4PlanCache(sctx, stmt)
 		if ignoreByBinding {
-			stmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: ignore plan cache by binding"))
+			stmtCtx.SetSkipPlanCache(errors.Errorf("ignore plan cache by binding"))
 		}
 	}
 
@@ -148,7 +181,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 		}
 		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), stmt.StmtText,
-			stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL); err != nil {
+			stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -159,7 +192,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	matchOpts, err := GetMatchOpts(sctx, stmt.PreparedAst.Stmt, params)
+	matchOpts, err := GetMatchOpts(sctx, is, stmt, params)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -174,6 +207,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 // parseParamTypes get parameters' types in PREPARE statement
 func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (paramTypes []*types.FieldType) {
+	paramTypes = make([]*types.FieldType, 0, len(params))
 	for _, param := range params {
 		if c, ok := param.(*expression.Constant); ok { // from binary protocol
 			paramTypes = append(paramTypes, c.GetType())
@@ -206,7 +240,8 @@ func getCachedPointPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmt
 	if metrics.ResettablePlanCacheCounterFortTest {
 		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 	} else {
-		planCacheCounter.Inc()
+		// only for prepared plan cache
+		core_metrics.GetPlanCacheHitCounter(false).Inc()
 	}
 	sessVars.FoundInPlanCache = true
 	stmtCtx.PointExec = true
@@ -219,7 +254,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	candidate, exist := sctx.GetPlanCache(isNonPrepared).Get(cacheKey, matchOpts)
+	candidate, exist := sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
 	if !exist {
 		return nil, nil, false, nil
 	}
@@ -231,7 +266,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 		if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
 			// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
 			// rebuilding the filters in UnionScan is pretty trivial.
-			sctx.GetPlanCache(isNonPrepared).Delete(cacheKey)
+			sctx.GetSessionPlanCache().Delete(cacheKey)
 			return nil, nil, false, nil
 		}
 	}
@@ -247,7 +282,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 	if metrics.ResettablePlanCacheCounterFortTest {
 		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 	} else {
-		planCacheCounter.Inc()
+		core_metrics.GetPlanCacheHitCounter(isNonPrepared).Inc()
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	return cachedVal.Plan, cachedVal.OutPutNames, true, nil
@@ -262,7 +297,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	planCacheMissCounter.Inc()
+	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	p, names, err := OptimizeAstNode(ctx, sctx, stmtAst.Stmt, is)
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = false
@@ -276,7 +311,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache {
-		if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount)); !cacheable {
+		if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
 			stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
 		}
 	}
@@ -287,7 +322,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
 			if cacheKey, err = NewPlanCacheKey(sessVars, stmt.StmtText, stmt.StmtDB,
-				stmtAst.SchemaVersion, latestSchemaVersion, bindSQL); err != nil {
+				stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
 				return nil, nil, err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
@@ -296,7 +331,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-		sctx.GetPlanCache(isNonPrepared).Put(cacheKey, cached, matchOpts)
+		sctx.GetSessionPlanCache().Put(cacheKey, cached, matchOpts)
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
@@ -654,6 +689,14 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 }
 
 func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err error) {
+	if len(is.IdxCols) == 0 {
+		if ranger.HasFullRange(is.Ranges, false) { // the original range is already a full-range.
+			is.Ranges = ranger.FullRange()
+			return
+		}
+		return errors.New("unexpected range for PhysicalIndexScan")
+	}
+
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens, 0)
 	if err != nil {
 		return err

@@ -848,7 +848,7 @@ func TestIndexRangeEliminatedProjection(t *testing.T) {
 	testKit.MustExec("create table t(a int not null, b int not null, primary key(a,b))")
 	testKit.MustExec("insert into t values(1,2)")
 	testKit.MustExec("analyze table t")
-	testKit.MustQuery("explain format = 'brief' select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
+	testKit.MustQuery("explain format = 'brief' select * from (select * from t union all select a, b from t) sub where a > 0").Check(testkit.Rows(
 		"Union 2.00 root  ",
 		"├─IndexReader 1.00 root  index:IndexRangeScan",
 		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
@@ -997,6 +997,33 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func TestIssue41572(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a varchar(100), b int, c int, d int, index idx(a, b, c))")
+	testKit.MustExec("insert into t values ('t',1,1,1),('t',1,3,3),('t',2,1,3),('t',2,3,1),('w',0,3,3),('z',0,1,1)")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	rangerSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Sort().Rows())
+		})
+		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }
 
@@ -1432,14 +1459,14 @@ create table t(
 			exprStr:     `a LIKE "\\"`,
 			accessConds: "[like(test.t.a, \\, 92)]",
 			filterConds: "[]",
-			resultStr:   "[[\"\\\",\"\\\"]]",
+			resultStr:   "[[\"\\\\\",\"\\\\\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\\\a%"`,
 			accessConds: `[like(test.t.a, \\a%, 92)]`,
 			filterConds: "[]",
-			resultStr:   "[[\"\\a\",\"\\b\")]",
+			resultStr:   "[[\"\\\\a\",\"\\\\b\")]",
 		},
 		{
 			indexPos:    0,
@@ -1663,7 +1690,7 @@ create table t(
 			exprStr:     `h LIKE 'ÿÿ%'`,
 			accessConds: `[like(test.t.h, ÿÿ%, 92)]`,
 			filterConds: "[like(test.t.h, ÿÿ%, 92)]",
-			resultStr:   "[[\"ÿÿ\",\"ÿ\xc3\xc0\")]", // The decoding error is ignored.
+			resultStr:   "[[\"ÿÿ\",\"ÿ\\xc3\\xc0\")]", // The decoding error is ignored.
 		},
 	}
 
@@ -2563,5 +2590,33 @@ create table t(
 		require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds), fmt.Sprintf("wrong filter conditions for expr: %s", tt.exprStr))
 		got := fmt.Sprintf("%v", res.Ranges)
 		require.Equal(t, tt.resultStr, got, fmt.Sprintf("different for expr %s", tt.exprStr))
+	}
+}
+
+func TestIssue44389(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a varchar(100), b int, c int, index idx_ab(a, b))")
+	testKit.MustExec("insert into t values ('kk', 1, 10), ('kk', 1, 20), ('hh', 2, 10), ('hh', 3, 10), ('xx', 4, 10), ('yy', 5, 10), ('yy', 6, 20), ('zz', 7, 10)")
+	testKit.MustExec("set @@tidb_opt_fix_control = '44389:ON'")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	rangerSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Sort().Rows())
+		})
+		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }

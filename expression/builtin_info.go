@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -44,6 +45,7 @@ var (
 	_ functionClass = &foundRowsFunctionClass{}
 	_ functionClass = &currentUserFunctionClass{}
 	_ functionClass = &currentRoleFunctionClass{}
+	_ functionClass = &currentResourceGroupFunctionClass{}
 	_ functionClass = &userFunctionClass{}
 	_ functionClass = &connectionIDFunctionClass{}
 	_ functionClass = &lastInsertIDFunctionClass{}
@@ -69,6 +71,7 @@ var (
 	_ builtinFunc = &builtinDatabaseSig{}
 	_ builtinFunc = &builtinFoundRowsSig{}
 	_ builtinFunc = &builtinCurrentUserSig{}
+	_ builtinFunc = &builtinCurrentResourceGroupSig{}
 	_ builtinFunc = &builtinUserSig{}
 	_ builtinFunc = &builtinConnectionIDSig{}
 	_ builtinFunc = &builtinLastInsertIDSig{}
@@ -243,6 +246,41 @@ func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (res string, isNull bo
 		}
 	}
 	return res, false, nil
+}
+
+type currentResourceGroupFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *currentResourceGroupFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(64)
+	sig := &builtinCurrentResourceGroupSig{bf}
+	return sig, nil
+}
+
+type builtinCurrentResourceGroupSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinCurrentResourceGroupSig) Clone() builtinFunc {
+	newSig := &builtinCurrentResourceGroupSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinCurrentResourceGroupSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
+	data := b.ctx.GetSessionVars()
+	if data == nil {
+		return "", true, errors.Errorf("Missing session variable when eval builtin")
+	}
+	return data.ResourceGroupName, false, nil
 }
 
 type userFunctionClass struct {
@@ -925,6 +963,45 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool
 	}
 
 	return string(resultStr), false, nil
+}
+
+type tidbEncodeSQLDigestFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbEncodeSQLDigestFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	argTps := []types.EvalType{types.ETString}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinTiDBEncodeSQLDigestSig{bf}
+	return sig, nil
+}
+
+type builtinTiDBEncodeSQLDigestSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBEncodeSQLDigestSig) Clone() builtinFunc {
+	newSig := &builtinTiDBEncodeSQLDigestSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinTiDBEncodeSQLDigestSig) evalString(row chunk.Row) (string, bool, error) {
+	orgSQLStr, isNull, err := b.getArgs()[0].EvalString(b.ctx, row)
+	if err != nil {
+		return "", true, err
+	}
+	if isNull {
+		return "", true, nil
+	}
+	return parser.DigestHash(orgSQLStr).String(), false, nil
 }
 
 type tidbDecodePlanFunctionClass struct {

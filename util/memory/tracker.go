@@ -88,11 +88,11 @@ type Tracker struct {
 	}
 	label int // Label of this "Tracker".
 	// following fields are used with atomic operations, so make them 64-byte aligned.
-	bytesConsumed       int64            // Consumed bytes.
-	bytesReleased       int64            // Released bytes.
-	maxConsumed         atomicutil.Int64 // max number of bytes consumed during execution.
-	SessionID           uint64           // SessionID indicates the sessionID the tracker is bound.
-	NeedKill            atomic.Bool      // NeedKill indicates whether this session need kill because OOM
+	bytesConsumed       int64             // Consumed bytes.
+	bytesReleased       int64             // Released bytes.
+	maxConsumed         atomicutil.Int64  // max number of bytes consumed during execution.
+	SessionID           atomicutil.Uint64 // SessionID indicates the sessionID the tracker is bound.
+	NeedKill            atomic.Bool       // NeedKill indicates whether this session need kill because OOM
 	NeedKillReceived    sync.Once
 	IsRootTrackerOfSess bool // IsRootTrackerOfSess indicates whether this tracker is bound for session
 	isGlobal            bool // isGlobal indicates whether this tracker is global tracker
@@ -302,6 +302,9 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 
 // Detach de-attach the tracker child from its parent, then set its parent property as nil
 func (t *Tracker) Detach() {
+	if t == nil {
+		return
+	}
 	parent := t.getParent()
 	if parent == nil {
 		return
@@ -310,7 +313,7 @@ func (t *Tracker) Detach() {
 		t.DetachFromGlobalTracker()
 		return
 	}
-	if parent.IsRootTrackerOfSess && t.label == LabelForSQLText {
+	if parent.IsRootTrackerOfSess && t.label != LabelForMemDB {
 		parent.actionMuForHardLimit.Lock()
 		parent.actionMuForHardLimit.actionOnExceed = nil
 		parent.actionMuForHardLimit.Unlock()
@@ -446,6 +449,9 @@ func (t *Tracker) Consume(bs int64) {
 				currentAction = nextAction
 				nextAction = currentAction.GetFallback()
 			}
+			if action, ok := currentAction.(ActionCareInvoker); ok {
+				action.SetInvoker(Instance)
+			}
 			currentAction.Action(tracker)
 		}
 	}
@@ -456,7 +462,7 @@ func (t *Tracker) Consume(bs int64) {
 			sessionRootTracker.NeedKillReceived.Do(
 				func() {
 					logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
-						zap.Uint64("conn", sessionRootTracker.SessionID))
+						zap.Uint64("conn", sessionRootTracker.SessionID.Load()))
 				})
 			tryActionLastOne(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
 		}

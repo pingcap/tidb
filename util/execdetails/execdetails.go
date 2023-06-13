@@ -18,12 +18,14 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/influxdata/tdigest"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -48,6 +50,60 @@ type DetailsNeedP90 struct {
 	BackoffTimes  map[string]int
 	CalleeAddress string
 	TimeDetail    util.TimeDetail
+}
+
+// P90BackoffSummary contains execution summary for a backoff type.
+type P90BackoffSummary struct {
+	ReqTimes          int
+	BackoffPercentile Percentile[DurationWithAddr]
+	TotBackoffTime    time.Duration
+	TotBackoffTimes   int
+}
+
+// P90Summary contains execution summary for cop tasks.
+type P90Summary struct {
+	NumCopTasks int
+
+	ProcessTimePercentile Percentile[DurationWithAddr]
+	WaitTimePercentile    Percentile[DurationWithAddr]
+
+	BackoffInfo map[string]*P90BackoffSummary
+}
+
+// MaxDetailsNumsForOneQuery is the max number of details to keep for P90 for one query.
+const MaxDetailsNumsForOneQuery = 1000
+
+// Reset resets all fields in DetailsNeedP90Summary.
+func (d *P90Summary) Reset() {
+	d.NumCopTasks = 0
+	d.ProcessTimePercentile = Percentile[DurationWithAddr]{}
+	d.WaitTimePercentile = Percentile[DurationWithAddr]{}
+	d.BackoffInfo = make(map[string]*P90BackoffSummary)
+}
+
+// Merge merges DetailsNeedP90 into P90Summary.
+func (d *P90Summary) Merge(detail *DetailsNeedP90) {
+	if d.BackoffInfo == nil {
+		d.Reset()
+	}
+	d.NumCopTasks++
+	d.ProcessTimePercentile.Add(DurationWithAddr{detail.TimeDetail.ProcessTime, detail.CalleeAddress})
+	d.WaitTimePercentile.Add(DurationWithAddr{detail.TimeDetail.WaitTime, detail.CalleeAddress})
+
+	var info *P90BackoffSummary
+	var ok bool
+	for backoff, timeItem := range detail.BackoffTimes {
+		if info, ok = d.BackoffInfo[backoff]; !ok {
+			d.BackoffInfo[backoff] = &P90BackoffSummary{}
+			info = d.BackoffInfo[backoff]
+		}
+		sleepItem := detail.BackoffSleep[backoff]
+		info.ReqTimes++
+		info.TotBackoffTime += sleepItem
+		info.TotBackoffTimes += timeItem
+
+		info.BackoffPercentile.Add(DurationWithAddr{sleepItem, detail.CalleeAddress})
+	}
 }
 
 type stmtExecDetailKeyType struct{}
@@ -327,26 +383,154 @@ type basicCopRuntimeStats struct {
 	BasicRuntimeStats
 	threads    int32
 	totalTasks int32
-	procTimes  []time.Duration
+	procTimes  Percentile[Duration]
+}
+
+type canGetFloat64 interface {
+	GetFloat64() float64
+}
+
+// Int64 is a wrapper of int64 to implement the canGetFloat64 interface.
+type Int64 int64
+
+// GetFloat64 implements the canGetFloat64 interface.
+func (i Int64) GetFloat64() float64 { return float64(i) }
+
+// Duration is a wrapper of time.Duration to implement the canGetFloat64 interface.
+type Duration time.Duration
+
+// GetFloat64 implements the canGetFloat64 interface.
+func (d Duration) GetFloat64() float64 { return float64(d) }
+
+// DurationWithAddr is a wrapper of time.Duration and string to implement the canGetFloat64 interface.
+type DurationWithAddr struct {
+	D    time.Duration
+	Addr string
+}
+
+// GetFloat64 implements the canGetFloat64 interface.
+func (d DurationWithAddr) GetFloat64() float64 { return float64(d.D) }
+
+// Percentile is a struct to calculate the percentile of a series of values.
+type Percentile[valueType canGetFloat64] struct {
+	values   []valueType
+	size     int
+	isSorted bool
+
+	minVal valueType
+	maxVal valueType
+	sumVal float64
+	dt     *tdigest.TDigest
+}
+
+// Add adds a value to calculate the percentile.
+func (p *Percentile[valueType]) Add(value valueType) {
+	p.isSorted = false
+	p.sumVal += value.GetFloat64()
+	p.size++
+	if p.dt == nil && len(p.values) == 0 {
+		p.minVal = value
+		p.maxVal = value
+	} else {
+		if value.GetFloat64() < p.minVal.GetFloat64() {
+			p.minVal = value
+		}
+		if value.GetFloat64() > p.maxVal.GetFloat64() {
+			p.maxVal = value
+		}
+	}
+	if p.dt == nil {
+		p.values = append(p.values, value)
+		if len(p.values) >= MaxDetailsNumsForOneQuery {
+			p.dt = tdigest.New()
+			for _, v := range p.values {
+				p.dt.Add(v.GetFloat64(), 1)
+			}
+			p.values = nil
+		}
+		return
+	}
+	p.dt.Add(value.GetFloat64(), 1)
+}
+
+// GetPercentile returns the percentile `f` of the values.
+func (p *Percentile[valueType]) GetPercentile(f float64) float64 {
+	if p.dt == nil {
+		if !p.isSorted {
+			p.isSorted = true
+			sort.Slice(p.values, func(i, j int) bool {
+				return p.values[i].GetFloat64() < p.values[j].GetFloat64()
+			})
+		}
+		return p.values[int(float64(len(p.values))*f)].GetFloat64()
+	}
+	return p.dt.Quantile(f)
+}
+
+// GetMax returns the max value.
+func (p *Percentile[valueType]) GetMax() valueType {
+	return p.maxVal
+}
+
+// GetMin returns the min value.
+func (p *Percentile[valueType]) GetMin() valueType {
+	return p.minVal
+}
+
+// MergePercentile merges two Percentile.
+func (p *Percentile[valueType]) MergePercentile(p2 *Percentile[valueType]) {
+	p.isSorted = false
+	if p2.dt == nil {
+		for _, v := range p2.values {
+			p.Add(v)
+		}
+		return
+	}
+	p.sumVal += p2.sumVal
+	p.size += p2.size
+	if p.dt == nil {
+		p.dt = p2.dt
+		p2.dt = nil
+		for _, v := range p.values {
+			p.dt.Add(v.GetFloat64(), 1)
+		}
+		p.values = nil
+		return
+	}
+	p.dt.AddCentroidList(p2.dt.Centroids())
+}
+
+// Size returns the size of the values.
+func (p *Percentile[valueType]) Size() int {
+	return p.size
+}
+
+// Sum returns the sum of the values.
+func (p *Percentile[valueType]) Sum() float64 {
+	return p.sumVal
 }
 
 // String implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) String() string {
 	if e.storeType == "tiflash" {
-		return fmt.Sprintf("time:%v, loops:%d, threads:%d, ", FormatDuration(time.Duration(e.consume)), e.loop, e.threads) + e.BasicRuntimeStats.tiflashScanContext.String()
+		return fmt.Sprintf("time:%v, loops:%d, threads:%d, ", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads) + e.BasicRuntimeStats.tiflashScanContext.String()
 	}
-	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
+	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load())
 }
 
 // Clone implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) Clone() RuntimeStats {
-	return &basicCopRuntimeStats{
-		BasicRuntimeStats: BasicRuntimeStats{loop: e.loop, consume: e.consume, rows: e.rows, tiflashScanContext: e.tiflashScanContext.Clone()},
+	stats := &basicCopRuntimeStats{
+		BasicRuntimeStats: BasicRuntimeStats{tiflashScanContext: e.tiflashScanContext.Clone()},
 		threads:           e.threads,
 		storeType:         e.storeType,
 		totalTasks:        e.totalTasks,
 		procTimes:         e.procTimes,
 	}
+	stats.loop.Store(e.loop.Load())
+	stats.consume.Store(e.consume.Load())
+	stats.rows.Store(e.rows.Load())
+	return stats
 }
 
 // Merge implements the RuntimeStats interface.
@@ -355,15 +539,15 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 	if !ok {
 		return
 	}
-	e.loop += tmp.loop
-	e.consume += tmp.consume
-	e.rows += tmp.rows
+	e.loop.Add(tmp.loop.Load())
+	e.consume.Add(tmp.consume.Load())
+	e.rows.Add(tmp.rows.Load())
 	e.threads += tmp.threads
 	e.totalTasks += tmp.totalTasks
-	if len(tmp.procTimes) > 0 {
-		e.procTimes = append(e.procTimes, tmp.procTimes...)
+	if tmp.procTimes.Size() == 0 {
+		e.procTimes.Add(Duration(tmp.consume.Load()))
 	} else {
-		e.procTimes = append(e.procTimes, time.Duration(tmp.consume))
+		e.procTimes.MergePercentile(&tmp.procTimes)
 	}
 	e.tiflashScanContext.Merge(tmp.tiflashScanContext)
 }
@@ -397,11 +581,9 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 			storeType: crs.storeType,
 		}
 	}
-	crs.stats[address].Merge(&basicCopRuntimeStats{
+	data := &basicCopRuntimeStats{
 		storeType: crs.storeType,
-		BasicRuntimeStats: BasicRuntimeStats{loop: int32(*summary.NumIterations),
-			consume: int64(*summary.TimeProcessedNs),
-			rows:    int64(*summary.NumProducedRows),
+		BasicRuntimeStats: BasicRuntimeStats{
 			tiflashScanContext: TiFlashScanContext{
 				totalDmfileScannedPacks:            summary.GetTiflashScanContext().GetTotalDmfileScannedPacks(),
 				totalDmfileSkippedPacks:            summary.GetTiflashScanContext().GetTotalDmfileSkippedPacks(),
@@ -413,25 +595,28 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 				totalLocalRegionNum:                summary.GetTiflashScanContext().GetTotalLocalRegionNum(),
 				totalRemoteRegionNum:               summary.GetTiflashScanContext().GetTotalRemoteRegionNum()}}, threads: int32(summary.GetConcurrency()),
 		totalTasks: 1,
-	})
+	}
+	data.BasicRuntimeStats.loop.Store(int32(*summary.NumIterations))
+	data.BasicRuntimeStats.consume.Store(int64(*summary.TimeProcessedNs))
+	data.BasicRuntimeStats.rows.Store(int64(*summary.NumProducedRows))
+	crs.stats[address].Merge(data)
 }
 
 // GetActRows return total rows of CopRuntimeStats.
 func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 	for _, instanceStats := range crs.stats {
-		totalRows += instanceStats.rows
+		totalRows += instanceStats.rows.Load()
 	}
 	return totalRows
 }
 
 // MergeBasicStats traverses basicCopRuntimeStats in the CopRuntimeStats and collects some useful information.
-func (crs *CopRuntimeStats) MergeBasicStats() (procTimes []time.Duration, totalTime time.Duration, totalTasks, totalLoops, totalThreads int32, totalTiFlashScanContext TiFlashScanContext) {
-	procTimes = make([]time.Duration, 0, 32)
+func (crs *CopRuntimeStats) MergeBasicStats() (procTimes Percentile[Duration], totalTime time.Duration, totalTasks, totalLoops, totalThreads int32, totalTiFlashScanContext TiFlashScanContext) {
 	totalTiFlashScanContext = TiFlashScanContext{}
 	for _, instanceStats := range crs.stats {
-		procTimes = append(procTimes, instanceStats.procTimes...)
-		totalTime += time.Duration(instanceStats.consume)
-		totalLoops += instanceStats.loop
+		procTimes.MergePercentile(&instanceStats.procTimes)
+		totalTime += time.Duration(instanceStats.consume.Load())
+		totalLoops += instanceStats.loop.Load()
 		totalThreads += instanceStats.threads
 		totalTiFlashScanContext.Merge(instanceStats.tiflashScanContext)
 		totalTasks += instanceStats.totalTasks
@@ -450,9 +635,9 @@ func (crs *CopRuntimeStats) String() string {
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
-		buf.WriteString(fmt.Sprintf("%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(procTimes[0]), totalLoops))
+		fmt.Fprintf(buf, "%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(time.Duration(procTimes.GetPercentile(0))), totalLoops)
 		if isTiFlashCop {
-			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
+			fmt.Fprintf(buf, ", threads:%d}", totalThreads)
 			if !totalTiFlashScanContext.Empty() {
 				buf.WriteString(", " + totalTiFlashScanContext.String())
 			}
@@ -460,13 +645,11 @@ func (crs *CopRuntimeStats) String() string {
 			buf.WriteString("}")
 		}
 	} else {
-		n := len(procTimes)
-		slices.Sort(procTimes)
-		buf.WriteString(fmt.Sprintf("%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
-			crs.storeType, FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]), FormatDuration(avgTime),
-			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalLoops, totalTasks))
+		fmt.Fprintf(buf, "%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
+			crs.storeType, FormatDuration(time.Duration(procTimes.GetMax().GetFloat64())), FormatDuration(time.Duration(procTimes.GetMin().GetFloat64())), FormatDuration(avgTime),
+			FormatDuration(time.Duration(procTimes.GetPercentile(0.8))), FormatDuration(time.Duration(procTimes.GetPercentile(0.95))), totalLoops, totalTasks)
 		if isTiFlashCop {
-			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
+			fmt.Fprintf(buf, ", threads:%d}", totalThreads)
 			if !totalTiFlashScanContext.Empty() {
 				buf.WriteString(", " + totalTiFlashScanContext.String())
 			}
@@ -521,6 +704,8 @@ const (
 	TpFKCheckRuntimeStats
 	// TpFKCascadeRuntimeStats is the tp for FKCascadeRuntimeStats
 	TpFKCascadeRuntimeStats
+	// TpRURuntimeStats is the tp for RURuntimeStats
+	TpRURuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -577,35 +762,36 @@ func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 
 // Empty check whether TiFlashScanContext is Empty, if scan no pack and skip no pack, we regard it as empty
 func (context *TiFlashScanContext) Empty() bool {
-	res := (context.totalDmfileScannedPacks == 0 && context.totalDmfileSkippedPacks == 0)
+	res := context.totalDmfileScannedPacks == 0 && context.totalDmfileSkippedPacks == 0
 	return res
 }
 
 // BasicRuntimeStats is the basic runtime stats.
 type BasicRuntimeStats struct {
 	// executor's Next() called times.
-	loop int32
+	loop atomic.Int32
 	// executor consume time.
-	consume int64
+	consume atomic.Int64
 	// executor return row count.
-	rows int64
+	rows atomic.Int64
 	// executor extra infos
 	tiflashScanContext TiFlashScanContext
 }
 
 // GetActRows return total rows of BasicRuntimeStats.
 func (e *BasicRuntimeStats) GetActRows() int64 {
-	return e.rows
+	return e.rows.Load()
 }
 
 // Clone implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) Clone() RuntimeStats {
-	return &BasicRuntimeStats{
-		loop:               e.loop,
-		consume:            e.consume,
-		rows:               e.rows,
+	result := &BasicRuntimeStats{
 		tiflashScanContext: e.tiflashScanContext.Clone(),
 	}
+	result.loop.Store(e.loop.Load())
+	result.consume.Store(e.consume.Load())
+	result.rows.Store(e.rows.Load())
+	return result
 }
 
 // Merge implements the RuntimeStats interface.
@@ -614,9 +800,9 @@ func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 	if !ok {
 		return
 	}
-	e.loop += tmp.loop
-	e.consume += tmp.consume
-	e.rows += tmp.rows
+	e.loop.Add(tmp.loop.Load())
+	e.consume.Add(tmp.consume.Load())
+	e.rows.Add(tmp.rows.Load())
 	e.tiflashScanContext.Merge(tmp.tiflashScanContext)
 }
 
@@ -641,7 +827,7 @@ func (e *RootRuntimeStats) GetActRows() int64 {
 	if e.basic == nil {
 		return 0
 	}
-	return e.basic.rows
+	return e.basic.rows.Load()
 }
 
 // MergeStats merges stats in the RootRuntimeStats and return the stats suitable for display directly.
@@ -659,7 +845,7 @@ func (e *RootRuntimeStats) String() string {
 	for _, group := range groups {
 		str := group.String()
 		if len(str) > 0 {
-			strs = append(strs, group.String())
+			strs = append(strs, str)
 		}
 	}
 	return strings.Join(strs, ", ")
@@ -667,14 +853,14 @@ func (e *RootRuntimeStats) String() string {
 
 // Record records executor's execution.
 func (e *BasicRuntimeStats) Record(d time.Duration, rowNum int) {
-	atomic.AddInt32(&e.loop, 1)
-	atomic.AddInt64(&e.consume, int64(d))
-	atomic.AddInt64(&e.rows, int64(rowNum))
+	e.loop.Add(1)
+	e.consume.Add(int64(d))
+	e.rows.Add(int64(rowNum))
 }
 
 // SetRowNum sets the row num.
 func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
-	atomic.StoreInt64(&e.rows, rowNum)
+	e.rows.Store(rowNum)
 }
 
 // String implements the RuntimeStats interface.
@@ -684,15 +870,15 @@ func (e *BasicRuntimeStats) String() string {
 	}
 	var str strings.Builder
 	str.WriteString("time:")
-	str.WriteString(FormatDuration(time.Duration(e.consume)))
+	str.WriteString(FormatDuration(time.Duration(e.consume.Load())))
 	str.WriteString(", loops:")
-	str.WriteString(strconv.FormatInt(int64(e.loop), 10))
+	str.WriteString(strconv.FormatInt(int64(e.loop.Load()), 10))
 	return str.String()
 }
 
 // GetTime get the int64 total time
 func (e *BasicRuntimeStats) GetTime() int64 {
-	return e.consume
+	return e.consume.Load()
 }
 
 // RuntimeStatsColl collects executors's execution info.
@@ -708,6 +894,8 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 	if reuse != nil {
 		// Reuse map is cheaper than create a new map object.
 		// Go compiler optimize this cleanup code pattern to a clearmap() function.
+		reuse.mu.Lock()
+		defer reuse.mu.Unlock()
 		for k := range reuse.rootStats {
 			delete(reuse.rootStats, k)
 		}

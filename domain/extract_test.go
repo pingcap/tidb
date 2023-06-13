@@ -29,12 +29,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExtractPlanWithoutHistoryView(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	extractHandler := dom.GetExtractHandle()
+	task := domain.NewExtractPlanTask(time.Now(), time.Now())
+	task.UseHistoryView = false
+	_, err := extractHandler.ExtractTask(context.Background(), task)
+	require.NoError(t, err)
+}
+
 func TestExtractWithoutStmtSummaryPersistedEnabled(t *testing.T) {
 	setupStmtSummary()
 	closeStmtSummary()
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 	extractHandler := dom.GetExtractHandle()
-	_, err := extractHandler.ExtractTask(context.Background(), domain.NewExtractPlanTask(time.Now(), time.Now()))
+	task := domain.NewExtractPlanTask(time.Now(), time.Now())
+	task.UseHistoryView = true
+	_, err := extractHandler.ExtractTask(context.Background(), task)
 	require.Error(t, err)
 }
 
@@ -61,7 +72,9 @@ func TestExtractHandlePlanTask(t *testing.T) {
 	time.Sleep(time.Second)
 	end := time.Now()
 	extractHandler := dom.GetExtractHandle()
-	name, err := extractHandler.ExtractTask(context.Background(), domain.NewExtractPlanTask(startTime, end))
+	task := domain.NewExtractPlanTask(startTime, end)
+	task.UseHistoryView = true
+	name, err := extractHandler.ExtractTask(context.Background(), task)
 	require.NoError(t, err)
 	require.True(t, len(name) > 0)
 }
@@ -80,7 +93,6 @@ func closeStmtSummary() {
 		conf.Instance.StmtSummaryEnablePersistent = false
 	})
 	stmtsummaryv2.GlobalStmtSummary.Close()
-	stmtsummaryv2.GlobalStmtSummary = nil
 	_ = os.Remove(config.GetGlobalConfig().Instance.StmtSummaryFilename)
 }
 
@@ -92,6 +104,6 @@ func newTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := newTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	return tk
 }

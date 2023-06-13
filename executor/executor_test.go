@@ -1523,6 +1523,12 @@ func TestPrepareLoadData(t *testing.T) {
 	tk.MustGetErrCode(`prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";`, mysql.ErrUnsupportedPs)
 }
 
+func TestPrepareImportInto(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustGetErrCode(`prepare stmt from "import into test from 'xx' format 'delimited'";`, mysql.ErrUnsupportedPs)
+}
+
 func TestSetOperation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3122,7 +3128,7 @@ func TestPrevStmtDesensitization(t *testing.T) {
 	tk.MustExec("create table t (a int, unique key (a))")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
-	require.Equal(t, "insert into `t` values ( ? ) , ( ? )", tk.Session().GetSessionVars().PrevStmt.String())
+	require.Equal(t, "insert into `t` values ( ... )", tk.Session().GetSessionVars().PrevStmt.String())
 	tk.MustGetErrMsg("insert into t values (1)", `[kv:1062]Duplicate entry '?' for key 't.a'`)
 }
 
@@ -3496,6 +3502,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		require.NotNil(t, p)
 
 		// This for loop level traverses the plan tree to get which operators are covered.
+		var hasCTE bool
 		for child := []plannercore.PhysicalPlan{p.(plannercore.PhysicalPlan)}; len(child) != 0; {
 			newChild := make([]plannercore.PhysicalPlan, 0, len(child))
 			for _, ch := range child {
@@ -3512,6 +3519,7 @@ func TestUnreasonablyClose(t *testing.T) {
 				case *plannercore.PhysicalCTE:
 					newChild = append(newChild, x.RecurPlan)
 					newChild = append(newChild, x.SeedPlan)
+					hasCTE = true
 					continue
 				case *plannercore.PhysicalShuffle:
 					newChild = append(newChild, x.DataSources...)
@@ -3523,6 +3531,12 @@ func TestUnreasonablyClose(t *testing.T) {
 			child = newChild
 		}
 
+		if hasCTE {
+			// Normally CTEStorages will be setup in ResetContextOfStmt.
+			// But the following case call e.Close() directly, instead of calling session.ExecStmt(), which calls ResetContextOfStmt.
+			// So need to setup CTEStorages manually.
+			tk.Session().GetSessionVars().StmtCtx.CTEStorageMap = map[int]*executor.CTEStorages{}
+		}
 		e := executorBuilder.Build(p)
 
 		func() {
@@ -3614,34 +3628,34 @@ func TestOOMPanicAction(t *testing.T) {
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select sum(b) from t group by a;")
 	require.Error(t, err)
-	require.Regexp(t, "Out Of Memory Quota!.*", err.Error())
+	require.Regexp(t, memory.PanicMemoryExceedWarnMsg, err.Error())
 
 	// Test insert from select oom panic.
 	tk.MustExec("drop table if exists t,t1")
 	tk.MustExec("create table t (a bigint);")
 	tk.MustExec("create table t1 (a bigint);")
 	tk.MustExec("set @@tidb_mem_quota_query=200;")
-	tk.MustMatchErrMsg("insert into t1 values (1),(2),(3),(4),(5);", "Out Of Memory Quota!.*")
-	tk.MustMatchErrMsg("replace into t1 values (1),(2),(3),(4),(5);", "Out Of Memory Quota!.*")
+	tk.MustMatchErrMsg("insert into t1 values (1),(2),(3),(4),(5);", memory.PanicMemoryExceedWarnMsg)
+	tk.MustMatchErrMsg("replace into t1 values (1),(2),(3),(4),(5);", memory.PanicMemoryExceedWarnMsg)
 	tk.MustExec("set @@tidb_mem_quota_query=10000")
 	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
 	tk.MustExec("set @@tidb_mem_quota_query=10;")
-	tk.MustMatchErrMsg("insert into t select a from t1 order by a desc;", "Out Of Memory Quota!.*")
-	tk.MustMatchErrMsg("replace into t select a from t1 order by a desc;", "Out Of Memory Quota!.*")
+	tk.MustMatchErrMsg("insert into t select a from t1 order by a desc;", memory.PanicMemoryExceedWarnMsg)
+	tk.MustMatchErrMsg("replace into t select a from t1 order by a desc;", memory.PanicMemoryExceedWarnMsg)
 
 	tk.MustExec("set @@tidb_mem_quota_query=10000")
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
 	// Set the memory quota to 244 to make this SQL panic during the DeleteExec
 	// instead of the TableReaderExec.
 	tk.MustExec("set @@tidb_mem_quota_query=244;")
-	tk.MustMatchErrMsg("delete from t", "Out Of Memory Quota!.*")
+	tk.MustMatchErrMsg("delete from t", memory.PanicMemoryExceedWarnMsg)
 
 	tk.MustExec("set @@tidb_mem_quota_query=10000;")
 	tk.MustExec("delete from t1")
 	tk.MustExec("insert into t1 values(1)")
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
 	tk.MustExec("set @@tidb_mem_quota_query=244;")
-	tk.MustMatchErrMsg("delete t, t1 from t join t1 on t.a = t1.a", "Out Of Memory Quota!.*")
+	tk.MustMatchErrMsg("delete t, t1 from t join t1 on t.a = t1.a", memory.PanicMemoryExceedWarnMsg)
 
 	tk.MustExec("set @@tidb_mem_quota_query=100000;")
 	tk.MustExec("truncate table t")
@@ -3649,7 +3663,7 @@ func TestOOMPanicAction(t *testing.T) {
 	// set the memory to quota to make the SQL panic during UpdateExec instead
 	// of TableReader.
 	tk.MustExec("set @@tidb_mem_quota_query=244;")
-	tk.MustMatchErrMsg("update t set a = 4", "Out Of Memory Quota!.*")
+	tk.MustMatchErrMsg("update t set a = 4", memory.PanicMemoryExceedWarnMsg)
 }
 
 func TestPointGetPreparedPlan(t *testing.T) {
@@ -5543,6 +5557,16 @@ func TestStrToDateBuiltinWithWarnings(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustQuery(`SELECT STR_TO_DATE('0000-1-01', '%Y-%m-%d');`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1411 Incorrect datetime value: '0000-1-01' for function str_to_date"))
+	tk.MustQuery("SELECT CAST('4#,8?Q' AS DATE);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
+		`Warning 8034 Incorrect datetime value: '4#,8?Q'`,
+	))
+	tk.MustExec("CREATE TABLE t1 (c1 INT, c2 TEXT);")
+	tk.MustExec("INSERT INTO t1 VALUES (1833458842, '0.3503490908550797');")
+	tk.MustQuery(`SELECT  CAST(t1.c2 AS DATE) FROM t1`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
+		`Warning 1292 Incorrect datetime value: '0.3503490908550797'`,
+	))
 }
 
 func TestReadPartitionedTable(t *testing.T) {
@@ -6098,9 +6122,9 @@ func TestSummaryFailedUpdate(t *testing.T) {
 	tk.MustQuery("select variable_value from mysql.GLOBAL_VARIABLES where variable_name = 'tidb_mem_oom_action'").Check(testkit.Rows("LOG"))
 
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("set @@tidb_mem_quota_query=1")
-	tk.MustMatchErrMsg("update t set t.a = t.a - 1 where t.a in (select a from t where a < 4)", "Out Of Memory Quota!.*")
+	tk.MustMatchErrMsg("update t set t.a = t.a - 1 where t.a in (select a from t where a < 4)", memory.PanicMemoryExceedWarnMsg)
 	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
 	tk.MustQuery("select stmt_type from information_schema.statements_summary where digest_text = 'update `t` set `t` . `a` = `t` . `a` - ? where `t` . `a` in ( select `a` from `t` where `a` < ? )'").Check(testkit.Rows("Update"))
 }
@@ -6203,7 +6227,7 @@ func TestTableLockPrivilege(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("create user 'testuser'@'localhost'")
-	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil))
 	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
 	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
 	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't'")
@@ -6221,72 +6245,6 @@ func TestTableLockPrivilege(t *testing.T) {
 	tk.MustExec("GRANT SELECT ON test2.* to 'testuser'@'localhost'")
 	tk2.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
 	tk.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
-}
-
-func TestGlobalMemoryControl(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk0 := testkit.NewTestKit(t, store)
-	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	tk0.MustExec("set global tidb_server_memory_limit = 512 << 20")
-	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
-
-	tk1 := testkit.NewTestKit(t, store)
-	tracker1 := tk1.Session().GetSessionVars().MemTracker
-	tracker1.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
-
-	tk2 := testkit.NewTestKit(t, store)
-	tracker2 := tk2.Session().GetSessionVars().MemTracker
-	tracker2.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
-
-	tk3 := testkit.NewTestKit(t, store)
-	tracker3 := tk3.Session().GetSessionVars().MemTracker
-	tracker3.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
-
-	sm := &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk1.Session().ShowProcess(), tk2.Session().ShowProcess(), tk3.Session().ShowProcess()},
-	}
-	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
-	go dom.ServerMemoryLimitHandle().Run()
-
-	tracker1.Consume(100 << 20) // 100 MB
-	tracker2.Consume(200 << 20) // 200 MB
-	tracker3.Consume(300 << 20) // 300 MB
-
-	test := make([]int, 128<<20)       // Keep 1GB HeapInUse
-	time.Sleep(500 * time.Millisecond) // The check goroutine checks the memory usage every 100ms. The Sleep() make sure that Top1Tracker can be Canceled.
-
-	// Kill Top1
-	require.False(t, tracker1.NeedKill.Load())
-	require.False(t, tracker2.NeedKill.Load())
-	require.True(t, tracker3.NeedKill.Load())
-	require.Equal(t, memory.MemUsageTop1Tracker.Load(), tracker3)
-	util.WithRecovery( // Next Consume() will panic and cancel the SQL
-		func() {
-			tracker3.Consume(1)
-		}, func(r interface{}) {
-			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
-		})
-	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
-	time.Sleep(500 * time.Millisecond)
-	require.False(t, tracker2.NeedKill.Load())
-	// Kill Finished
-	tracker3.Consume(-(300 << 20))
-	// Simulated SQL is Canceled and the time is updated
-	sm.PSMu.Lock()
-	ps := *sm.PS[2]
-	ps.Time = time.Now()
-	sm.PS[2] = &ps
-	sm.PSMu.Unlock()
-	time.Sleep(500 * time.Millisecond)
-	// Kill the Next SQL
-	util.WithRecovery( // Next Consume() will panic and cancel the SQL
-		func() {
-			tracker2.Consume(1)
-		}, func(r interface{}) {
-			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
-		})
-	require.Equal(t, test[0], 0) // Keep 1GB HeapInUse
 }
 
 func TestGlobalMemoryControl2(t *testing.T) {
@@ -6319,7 +6277,7 @@ func TestGlobalMemoryControl2(t *testing.T) {
 		wg.Done()
 	}()
 	sql := "select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a;" // Need 500MB
-	require.True(t, strings.Contains(tk0.QueryToErr(sql).Error(), "Out Of Memory Quota!"))
+	require.True(t, strings.Contains(tk0.QueryToErr(sql).Error(), memory.PanicMemoryExceedWarnMsg))
 	require.Equal(t, tk0.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
 	wg.Wait()
 	test[0] = 0
@@ -6338,7 +6296,7 @@ func TestCompileOutOfMemoryQuota(t *testing.T) {
 	tk.MustExec("create table t1(a int, c int, index idx(a))")
 	tk.MustExec("set tidb_mem_quota_query=10")
 	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
-	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+	require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg)
 }
 
 func TestSignalCheckpointForSort(t *testing.T) {
@@ -6364,7 +6322,7 @@ func TestSignalCheckpointForSort(t *testing.T) {
 	tk.Session().GetSessionVars().ConnectionID = 123456
 
 	err := tk.QueryToErr("select * from t order by a")
-	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+	require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg)
 }
 
 func TestSessionRootTrackerDetach(t *testing.T) {
@@ -6376,7 +6334,7 @@ func TestSessionRootTrackerDetach(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create table t1(a int, c int, index idx(a))")
 	tk.MustExec("set tidb_mem_quota_query=10")
-	tk.MustContainErrMsg("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a", "Out Of Memory Quota!")
+	tk.MustContainErrMsg("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a", memory.PanicMemoryExceedWarnMsg)
 	tk.MustExec("set tidb_mem_quota_query=1000")
 	rs, err := tk.Exec("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
 	require.NoError(t, err)
@@ -6546,4 +6504,21 @@ UNION
 from ssci right join csci on (ssci.customer_sk=csci.customer_sk
                                and ssci.item_sk = csci.item_sk)
 limit 100;`)
+}
+
+func TestProcessInfoOfSubQuery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int, j int);")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tk.MustQuery("select 1, (select sleep(count(1) + 2) from t);")
+		wg.Done()
+	}()
+	time.Sleep(time.Second)
+	tk2.MustQuery("select 1 from information_schema.processlist where TxnStart != '' and info like 'select%sleep% from t%'").Check(testkit.Rows("1"))
+	wg.Wait()
 }

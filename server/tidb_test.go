@@ -86,7 +86,7 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 0
-	cfg.Status.RecordDBLabel = false
+	cfg.Status.RecordDBLabel = true
 	cfg.Performance.TCPKeepAlive = true
 	return createTidbTestSuiteWithCfg(t, cfg)
 }
@@ -109,7 +109,6 @@ func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite
 	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
 	ts.server.SetDomain(ts.domain)
-	ts.server.InitGlobalConnID(ts.domain.ServerID)
 	ts.domain.InfoSyncer().SetSessionManager(ts.server)
 	go func() {
 		err := ts.server.Run()
@@ -398,6 +397,7 @@ func TestSocketForwarding(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -430,6 +430,7 @@ func TestSocket(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
@@ -464,6 +465,7 @@ func TestSocketAndIp(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -628,6 +630,7 @@ func TestOnlySocket(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
@@ -903,7 +906,6 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 	}
 	// Test an issue that sysSessionPool doesn't call session's Close, cause
 	// asyncGetTSWorker goroutine leak.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockDelayInnerSessionExecute", "return"))
 	var wg util.WaitGroupWrapper
 	for i := 0; i < count; i++ {
 		s := stmts[i]
@@ -912,11 +914,6 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-	time.Sleep(100 * time.Millisecond)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockDelayInnerSessionExecute"))
-
-	lst := ts.domain.InfoSyncer().GetSessionManager().GetInternalSessionStartTSList()
-	require.Equal(t, len(lst), 10)
 
 	wg.Wait()
 }
@@ -2073,7 +2070,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 	tagChecker := &resourceTagChecker{
 		sqlDigest2Reqs: make(map[stmtstats.BinaryDigest]map[tikvrpc.CmdType]struct{}),
 	}
-	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
+	unistoreRPCClientSendHook := func(req *tikvrpc.Request) {
 		tag := req.GetResourceGroupTag()
 		if len(tag) == 0 || ddlutil.IsInternalResourceGroupTaggerForTopSQL(tag) {
 			// Ignore for internal background request.
@@ -2091,6 +2088,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		reqMap[req.Type] = struct{}{}
 		tagChecker.sqlDigest2Reqs[stmtstats.BinaryDigest(sqlDigest)] = reqMap
 	}
+	unistore.UnistoreRPCClientSendHook.Store(&unistoreRPCClientSendHook)
 
 	t.Cleanup(func() {
 		stmtstats.UnregisterCollector(mockCollector)
@@ -2509,6 +2507,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -3002,7 +3001,7 @@ type mockProxyProtocolProxy struct {
 	clientAddr    string
 	backendIsSock bool
 	ln            net.Listener
-	run           bool
+	run           atomic.Bool
 }
 
 func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSock bool) *mockProxyProtocolProxy {
@@ -3012,7 +3011,6 @@ func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSo
 		clientAddr:    clientAddr,
 		backendIsSock: backendIsSock,
 		ln:            nil,
-		run:           false,
 	}
 }
 
@@ -3021,12 +3019,12 @@ func (p *mockProxyProtocolProxy) ListenAddr() net.Addr {
 }
 
 func (p *mockProxyProtocolProxy) Run() (err error) {
-	p.run = true
+	p.run.Store(true)
 	p.ln, err = net.Listen("tcp", p.frontend)
 	if err != nil {
 		return err
 	}
-	for p.run {
+	for p.run.Load() {
 		conn, err := p.ln.Accept()
 		if err != nil {
 			break
@@ -3037,7 +3035,7 @@ func (p *mockProxyProtocolProxy) Run() (err error) {
 }
 
 func (p *mockProxyProtocolProxy) Close() error {
-	p.run = false
+	p.run.Store(false)
 	if p.ln != nil {
 		return p.ln.Close()
 	}
@@ -3127,6 +3125,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	// Prepare Server
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
@@ -3191,6 +3190,7 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	// Prepare Server
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)

@@ -29,4 +29,10 @@ var (
 	ErrInvalidResourceGroupDuplicatedMode = errors.New("cannot set RU mode and Raw mode options at the same time")
 	// ErrUnknownResourceGroupMode is from group.go.
 	ErrUnknownResourceGroupMode = errors.New("unknown resource group mode")
+	// ErrDroppingInternalResourceGroup is from group.go
+	ErrDroppingInternalResourceGroup = errors.New("can't drop reserved resource group")
+	// ErrInvalidResourceGroupRunawayExecElapsedTime is from group.go.
+	ErrInvalidResourceGroupRunawayExecElapsedTime = errors.New("invalid exec elapsed time")
+	// ErrUnknownResourceGroupRunawayAction is from group.go.
+	ErrUnknownResourceGroupRunawayAction = errors.New("unknown resource group runaway action")
 )

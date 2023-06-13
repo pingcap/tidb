@@ -69,13 +69,14 @@ func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalSt
 
 // MDTableMeta contains some parsed metadata for a table in the source by MyDumper Loader.
 type MDTableMeta struct {
-	DB           string
-	Name         string
-	SchemaFile   FileInfo
-	DataFiles    []FileInfo
-	charSet      string
-	TotalSize    int64
-	IndexRatio   float64
+	DB         string
+	Name       string
+	SchemaFile FileInfo
+	DataFiles  []FileInfo
+	charSet    string
+	TotalSize  int64
+	IndexRatio float64
+	// default to true, and if we do precheck, this var is updated using data sampling result, so it's not accurate.
 	IsRowOrdered bool
 }
 
@@ -89,6 +90,7 @@ type SourceFileMeta struct {
 	// WARNING: variables below are not persistent
 	ExtendData ExtendColumnData
 	RealSize   int64
+	Rows       int64 // only for parquet
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
@@ -109,7 +111,8 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 		return "", errors.Annotate(err, "check table schema file exists error")
 	}
 	if !fileExists {
-		return "", errors.Errorf("the provided schema file (%s) for the table '%s.%s' doesn't exist", schemaFilePath, m.DB, m.Name)
+		return "", errors.Errorf("the provided schema file (%s) for the table '%s.%s' doesn't exist",
+			schemaFilePath, m.DB, m.Name)
 	}
 	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
@@ -210,7 +213,8 @@ func NewMyDumpLoader(ctx context.Context, cfg *config.Config, opts ...MDLoaderSe
 }
 
 // NewMyDumpLoaderWithStore constructs a MyDumper loader with the provided external storage that scanns the data source and constructs a set of metadatas.
-func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store storage.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
+func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config,
+	store storage.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	var r *regexprrouter.RouteTable
 	var err error
 
@@ -347,11 +351,10 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		return errors.New("file iterator is not defined")
 	}
 	if err := fileIter.IterateFiles(ctx, s.constructFileInfo); err != nil {
-		if s.setupCfg.ReturnPartialResultOnError {
-			gerr = err
-		} else {
+		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
+		gerr = err
 	}
 	if err := s.route(); err != nil {
 		return common.ErrTableRoute.Wrap(err).GenWithStackByArgs()

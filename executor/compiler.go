@@ -50,7 +50,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		if r == nil {
 			return
 		}
-		if str, ok := r.(string); !ok || !strings.Contains(str, memory.PanicMemoryExceed) {
+		if str, ok := r.(string); !ok || !strings.Contains(str, memory.PanicMemoryExceedWarnMsg) {
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)
@@ -247,6 +247,41 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			dbLabel := x.Table.Schema.O
 			dbLabelSet[dbLabel] = struct{}{}
 		}
+	case *ast.TruncateTableStmt:
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.RepairTableStmt:
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.FlashBackTableStmt:
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.RecoverTableStmt:
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.CreateViewStmt:
+		if x.ViewName != nil {
+			dbLabel := x.ViewName.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.RenameTableStmt:
+		tables := x.TableToTables
+		for _, table := range tables {
+			if table.OldTable != nil {
+				dbLabel := table.OldTable.Schema.O
+				if _, ok := dbLabelSet[dbLabel]; !ok {
+					dbLabelSet[dbLabel] = struct{}{}
+				}
+			}
+		}
 	case *ast.DropTableStmt:
 		tables := x.Tables
 		for _, table := range tables {
@@ -256,6 +291,11 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			}
 		}
 	case *ast.SelectStmt:
+		dbLabels := getDbFromResultNode(x)
+		for _, db := range dbLabels {
+			dbLabelSet[db] = struct{}{}
+		}
+	case *ast.SetOprStmt:
 		dbLabels := getDbFromResultNode(x)
 		for _, db := range dbLabels {
 			dbLabelSet[db] = struct{}{}
@@ -274,7 +314,169 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 				dbLabelSet[db] = struct{}{}
 			}
 		}
+	case *ast.CallStmt:
+		if x.Procedure != nil {
+			dbLabel := x.Procedure.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.ShowStmt:
+		dbLabelSet[x.DBName] = struct{}{}
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.LoadDataStmt:
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.ImportIntoStmt:
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.SplitRegionStmt:
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.NonTransactionalDMLStmt:
+		if x.ShardColumn != nil {
+			dbLabel := x.ShardColumn.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.AnalyzeTableStmt:
+		tables := x.TableNames
+		for _, table := range tables {
+			dbLabel := table.Schema.O
+			if _, ok := dbLabelSet[dbLabel]; !ok {
+				dbLabelSet[dbLabel] = struct{}{}
+			}
+		}
+	case *ast.DropStatsStmt:
+		tables := x.Tables
+		for _, table := range tables {
+			dbLabel := table.Schema.O
+			if _, ok := dbLabelSet[dbLabel]; !ok {
+				dbLabelSet[dbLabel] = struct{}{}
+			}
+		}
+	case *ast.AdminStmt:
+		tables := x.Tables
+		for _, table := range tables {
+			dbLabel := table.Schema.O
+			if _, ok := dbLabelSet[dbLabel]; !ok {
+				dbLabelSet[dbLabel] = struct{}{}
+			}
+		}
+	case *ast.UseStmt:
+		if _, ok := dbLabelSet[x.DBName]; !ok {
+			dbLabelSet[x.DBName] = struct{}{}
+		}
+	case *ast.FlushStmt:
+		tables := x.Tables
+		for _, table := range tables {
+			dbLabel := table.Schema.O
+			if _, ok := dbLabelSet[dbLabel]; !ok {
+				dbLabelSet[dbLabel] = struct{}{}
+			}
+		}
+	case *ast.CompactTableStmt:
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
 	case *ast.CreateBindingStmt:
+		var resNode ast.ResultSetNode
+		var tableRef *ast.TableRefsClause
+		if x.OriginNode != nil {
+			switch n := x.OriginNode.(type) {
+			case *ast.SelectStmt:
+				tableRef = n.From
+			case *ast.DeleteStmt:
+				tableRef = n.TableRefs
+			case *ast.UpdateStmt:
+				tableRef = n.TableRefs
+			case *ast.InsertStmt:
+				tableRef = n.Table
+			}
+			if tableRef != nil {
+				resNode = tableRef.TableRefs
+			} else {
+				resNode = nil
+			}
+			dbLabels := getDbFromResultNode(resNode)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
+		if len(dbLabelSet) == 0 && x.HintedNode != nil {
+			switch n := x.HintedNode.(type) {
+			case *ast.SelectStmt:
+				tableRef = n.From
+			case *ast.DeleteStmt:
+				tableRef = n.TableRefs
+			case *ast.UpdateStmt:
+				tableRef = n.TableRefs
+			case *ast.InsertStmt:
+				tableRef = n.Table
+			}
+			if tableRef != nil {
+				resNode = tableRef.TableRefs
+			} else {
+				resNode = nil
+			}
+			dbLabels := getDbFromResultNode(resNode)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
+	case *ast.DropBindingStmt:
+		var resNode ast.ResultSetNode
+		var tableRef *ast.TableRefsClause
+		if x.OriginNode != nil {
+			switch n := x.OriginNode.(type) {
+			case *ast.SelectStmt:
+				tableRef = n.From
+			case *ast.DeleteStmt:
+				tableRef = n.TableRefs
+			case *ast.UpdateStmt:
+				tableRef = n.TableRefs
+			case *ast.InsertStmt:
+				tableRef = n.Table
+			}
+			if tableRef != nil {
+				resNode = tableRef.TableRefs
+			} else {
+				resNode = nil
+			}
+			dbLabels := getDbFromResultNode(resNode)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
+		if len(dbLabelSet) == 0 && x.HintedNode != nil {
+			switch n := x.HintedNode.(type) {
+			case *ast.SelectStmt:
+				tableRef = n.From
+			case *ast.DeleteStmt:
+				tableRef = n.TableRefs
+			case *ast.UpdateStmt:
+				tableRef = n.TableRefs
+			case *ast.InsertStmt:
+				tableRef = n.Table
+			}
+			if tableRef != nil {
+				resNode = tableRef.TableRefs
+			} else {
+				resNode = nil
+			}
+			dbLabels := getDbFromResultNode(resNode)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
+	case *ast.SetBindingStmt:
 		var resNode ast.ResultSetNode
 		var tableRef *ast.TableRefsClause
 		if x.OriginNode != nil {
@@ -320,6 +522,11 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 				dbLabelSet[db] = struct{}{}
 			}
 		}
+	}
+
+	// add "" db label
+	if len(dbLabelSet) == 0 {
+		dbLabelSet[""] = struct{}{}
 	}
 
 	return dbLabelSet

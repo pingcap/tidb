@@ -156,9 +156,9 @@ func TestIssue29850(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PointGet
 		`Projection_7 0.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
-		`└─MergeJoin_8 0.00 root  inner join, left key:test.customer.c_w_id, right key:test.warehouse.w_id`,
-		`  ├─Point_Get_34(Build) 1.00 root table:warehouse handle:1262`,
-		`  └─Point_Get_33(Probe) 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) `))
+		`└─HashJoin_8 0.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get_11(Build) 1.00 root table:warehouse handle:1262`,
+		`  └─Point_Get_10(Probe) 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) `))
 	tk.MustQuery(`execute stmt using @w_id, @c_d_id, @c_id`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the cached plan
 
@@ -170,11 +170,10 @@ func TestIssue29850(t *testing.T) {
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a range condition
-		`TableReader_6 1.00 root  data:TableRangeScan_5`,
-		`└─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		`Point_Get_5 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
 	tk.MustExec(`prepare stmt from 'select * from t where a=? or a=?'`)
 	tk.MustQuery(`execute stmt using @a1, @a1`).Check(testkit.Rows("1"))
@@ -182,8 +181,7 @@ func TestIssue29850(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a or condition
-		`TableReader_6 1.00 root  data:TableRangeScan_5`,
-		`└─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+		`Point_Get_5 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
 }
 
@@ -284,16 +282,14 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 	tk.MustExec("ADMIN reload expr_pushdown_blacklist;")
 
 	tk.MustExec("execute stmt;")
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustExec("execute stmt;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	// The expressions can still be pushed down to tikv.
-	require.Equal(t, 3, len(res.Rows()))
-	require.Contains(t, res.Rows()[1][0], "Selection")
-	require.Equal(t, "gt(test.t.a, 2), lt(test.t.a, 2)", res.Rows()[1][4])
+	// The expressions can not be pushed down to tikv.
+	require.Equal(t, 4, len(res.Rows()))
 
 	res = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE a < 2 and a > 2;")
 	require.Equal(t, 4, len(res.Rows()))
@@ -853,6 +849,7 @@ func TestIssue29101(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec(`use test`)
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec(`CREATE TABLE customer (
@@ -877,13 +874,11 @@ func TestIssue29101(t *testing.T) {
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use IndexJoin
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PK
 		`Projection_6 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
-		`└─IndexJoin_14 1.00 root  inner join, inner:TableReader_10, outer key:test.customer.c_w_id, inner key:test.warehouse.w_id, equal cond:eq(test.customer.c_w_id, test.warehouse.w_id)`,
-		`  ├─Point_Get_33(Build) 1.00 root table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) `,
-		`  └─TableReader_10(Probe) 0.00 root  data:Selection_9`,
-		`    └─Selection_9 0.00 cop[tikv]  eq(test.warehouse.w_id, 936)`,
-		`      └─TableRangeScan_8 1.00 cop[tikv] table:warehouse range: decided by [test.customer.c_w_id], keep order:false, stats:pseudo`))
+		`└─HashJoin_7 1.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get_10(Build) 1.00 root table:warehouse handle:936`,
+		`  └─Point_Get_9(Probe) 1.00 root table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) `))
 	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
 
@@ -1114,7 +1109,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	// The subquery plan with PhysicalApply can't be cached.
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustExec("execute stmt;")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: PhysicalApply plan is un-cacheable"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: PhysicalApply plan is un-cacheable"))
 
 	// test for apply cache
 	tk.MustExec("set @@tidb_enable_collect_execution_info=1;")
@@ -1172,7 +1167,7 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=0`)
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -1219,7 +1214,7 @@ func TestPreparePC4Binding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")

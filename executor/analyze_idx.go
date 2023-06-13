@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -194,10 +194,10 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 	for {
 		failpoint.Inject("mockKillRunningAnalyzeIndexJob", func() {
 			dom := domain.GetDomain(e.ctx)
-			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
+			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 		})
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-			return nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+			return nil, nil, nil, nil, errors.Trace(exeerrors.ErrQueryInterrupted)
 		}
 		failpoint.Inject("mockSlowAnalyzeIndex", func() {
 			time.Sleep(1000 * time.Second)

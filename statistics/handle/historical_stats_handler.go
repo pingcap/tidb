@@ -75,6 +75,7 @@ func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	if _, err := exec.ExecuteInternal(ctx, sql, tableID, modifyCount, count, version, source); err != nil {
 		return errors.Trace(err)
 	}
+	TableRowStatsCache.Invalidate(tableID)
 	return nil
 }
 
@@ -83,7 +84,7 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source
 	if v == nil {
 		return
 	}
-	sc := v.(statsCache)
+	sc := v
 	tbl, ok := sc.Get(tableID)
 	if !ok {
 		return

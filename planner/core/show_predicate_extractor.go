@@ -38,12 +38,12 @@ var (
 	_ ShowPredicateExtractor = &ShowBaseExtractor{}
 )
 
-// ShowPredicateExtractor is used to extract some predicates from `PatternLikeExpr` clause
+// ShowPredicateExtractor is used to extract some predicates from `PatternLikeOrIlikeExpr` clause
 // and push the predicates down to the data retrieving on reading memory table stage when use ShowStmt.
 //
 // e.g:
 // SHOW COLUMNS FROM t LIKE '%abc%'
-// We must request all components from the memory table, and filter the result by the PatternLikeExpr predicate.
+// We must request all components from the memory table, and filter the result by the PatternLikeOrIlikeExpr predicate.
 //
 // it is a way to fix https://github.com/pingcap/tidb/issues/29910.
 type ShowPredicateExtractor interface {
@@ -114,11 +114,11 @@ func (e *ShowBaseExtractor) explainInfo() string {
 
 	r := new(bytes.Buffer)
 	if len(e.field) > 0 {
-		r.WriteString(fmt.Sprintf("%s:[%s], ", key, e.field))
+		fmt.Fprintf(r, "%s:[%s], ", key, e.field)
 	}
 
 	if len(e.fieldPattern) > 0 {
-		r.WriteString(fmt.Sprintf("%s_pattern:[%s], ", key, e.fieldPattern))
+		fmt.Fprintf(r, "%s_pattern:[%s], ", key, e.fieldPattern)
 	}
 
 	// remove the last ", " in the message info

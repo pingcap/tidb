@@ -13,6 +13,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/store/mockstore/unistore",
     visibility = ["//visibility:public"],
     deps = [
+        "//domain/resourcegroup",
         "//parser/terror",
         "//store/mockstore/unistore/config",
         "//store/mockstore/unistore/lockstore",
@@ -29,6 +30,7 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/errorpb",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/meta_storagepb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_kvproto//pkg/mpp",
         "@com_github_pingcap_kvproto//pkg/pdpb",
@@ -51,6 +53,7 @@ go_test(
     ],
     embed = [":unistore"],
     flaky = True,
+    shard_count = 4,
     deps = [
         "//testkit/testsetup",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",

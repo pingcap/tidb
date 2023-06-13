@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -170,7 +171,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
 		dom := domain.GetDomain(e.ctx)
-		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
+		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 	})
 	for _, task := range tasks {
 		taskCh <- task
@@ -193,7 +194,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
 		dom := domain.GetDomain(e.ctx)
-		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
+		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 	})
 
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
@@ -323,10 +324,9 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 		} else {
 			finishJobWithLog(e.ctx, results.Job, nil)
 		}
-		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-			finishJobWithLog(e.ctx, results.Job, ErrQueryInterrupted)
-			return errors.Trace(ErrQueryInterrupted)
+			finishJobWithLog(e.ctx, results.Job, exeerrors.ErrQueryInterrupted)
+			return errors.Trace(exeerrors.ErrQueryInterrupted)
 		}
 	}
 	// Dump stats to historical storage.
@@ -360,7 +360,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	for panicCnt < statsConcurrency {
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			close(saveResultsCh)
-			return errors.Trace(ErrQueryInterrupted)
+			return errors.Trace(exeerrors.ErrQueryInterrupted)
 		}
 		results, ok := <-resultsCh
 		if !ok {

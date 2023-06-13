@@ -21,49 +21,67 @@ import (
 // log backup metrics.
 // see the `Help` field for details.
 var (
-	LastCheckpoint = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	LastCheckpoint                    *prometheus.GaugeVec
+	AdvancerOwner                     prometheus.Gauge
+	AdvancerTickDuration              *prometheus.HistogramVec
+	GetCheckpointBatchSize            *prometheus.HistogramVec
+	RegionCheckpointRequest           *prometheus.CounterVec
+	RegionCheckpointFailure           *prometheus.CounterVec
+	RegionCheckpointSubscriptionEvent *prometheus.HistogramVec
+)
+
+// InitLogBackupMetrics initializes log backup metrics.
+func InitLogBackupMetrics() {
+	LastCheckpoint = NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "last_checkpoint",
 		Help:      "The last global checkpoint of log backup.",
 	}, []string{"task"})
-	AdvancerOwner = prometheus.NewGauge(prometheus.GaugeOpts{
+
+	AdvancerOwner = NewGauge(prometheus.GaugeOpts{
 		Namespace:   "tidb",
 		Subsystem:   "log_backup",
 		Name:        "advancer_owner",
 		Help:        "If the node is the owner of advancers, set this to `1`, otherwise `0`.",
 		ConstLabels: map[string]string{},
 	})
-	AdvancerTickDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+
+	AdvancerTickDuration = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "advancer_tick_duration_sec",
 		Help:      "The time cost of each step during advancer ticking.",
 		Buckets:   prometheus.ExponentialBuckets(0.01, 3.0, 8),
 	}, []string{"step"})
-	GetCheckpointBatchSize = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+
+	GetCheckpointBatchSize = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "advancer_batch_size",
 		Help:      "The batch size of scanning region or get region checkpoint.",
 		Buckets:   prometheus.ExponentialBuckets(1, 2.0, 12),
 	}, []string{"type"})
-	RegionCheckpointRequest = prometheus.NewCounterVec(prometheus.CounterOpts{
+
+	RegionCheckpointRequest = NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "region_request",
 		Help:      "The failure / success stat requesting region checkpoints.",
 	}, []string{"result"})
-	RegionCheckpointFailure = prometheus.NewCounterVec(prometheus.CounterOpts{
+
+	RegionCheckpointFailure = NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "region_request_failure",
 		Help:      "The failure reasons of requesting region checkpoints.",
 	}, []string{"reason"})
-	RegionCheckpointSubscriptionEvent = prometheus.NewCounterVec(prometheus.CounterOpts{
+
+	RegionCheckpointSubscriptionEvent = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "region_checkpoint_event",
-		Help:      "The region flush event count.",
+		Help:      "The region flush event size.",
+		Buckets:   prometheus.ExponentialBuckets(8, 2.0, 12),
 	}, []string{"store"})
-)
+}
