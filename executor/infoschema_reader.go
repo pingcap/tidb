@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	internalutil "github.com/pingcap/tidb/executor/internal/util"
 	"github.com/pingcap/tidb/expression"
@@ -3253,7 +3254,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 		burstable := burstdisableStr
 		priority := model.PriorityValueToName(uint64(group.Priority))
 		fillrate := unlimitedFillRate
-		isDefaultInReservedSetting := group.Name == "default" && group.RUSettings.RU.Settings.FillRate == math.MaxInt32
+		isDefaultInReservedSetting := group.Name == resourcegroup.DefaultResourceGroupName && group.RUSettings.RU.Settings.FillRate == math.MaxInt32
 		if !isDefaultInReservedSetting {
 			fillrate = strconv.FormatUint(group.RUSettings.RU.Settings.FillRate, 10)
 		}
