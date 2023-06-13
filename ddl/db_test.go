@@ -1512,11 +1512,10 @@ func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
 		if job.SchemaState != model.StateDeleteOnly {
 			return
 		}
-		if !one {
-			one = true
-		} else {
+		if one {
 			return
 		}
+		one = true
 		wg.Add(1)
 		go func() {
 			tk2 := testkit.NewTestKit(t, store)
@@ -1551,11 +1550,10 @@ func TestMDLTruncateTable(t *testing.T) {
 
 	one := false
 	f := func(job *model.Job) {
-		if !one {
-			one = true
-		} else {
+		if one {
 			return
 		}
+		one = true
 		go func() {
 			tk3.MustExec("truncate table test.t")
 			timetk3 = time.Now()

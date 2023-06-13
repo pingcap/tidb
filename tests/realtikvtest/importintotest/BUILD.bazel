@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "importintotest_test",
+    timeout = "short",
+    srcs = ["dummy_test.go"],
+    flaky = True,
+    deps = ["//tests/realtikvtest"],
+)
