@@ -114,7 +114,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	txn.SetVars(sessVars.KVVars)
 	txn.SetOption(kv.IsStalenessReadOnly, true)
 	txn.SetOption(kv.TxnScope, txnScope)
-	txn.SetOption(kv.ResourceGroupName, p.sctx.GetSessionVars().ResourceGroupName)
+	txn.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
 	internal.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
 	is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
 	if err != nil {
