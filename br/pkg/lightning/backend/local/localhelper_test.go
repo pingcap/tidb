@@ -478,14 +478,12 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 	}
 
 	err = local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
-	if len(errPat) == 0 {
-		require.NoError(t, err)
-	} else {
+	if len(errPat) != 0 {
 		require.Error(t, err)
 		require.Regexp(t, errPat, err.Error())
 		return
 	}
-
+	require.NoError(t, err)
 	splitHook.check(t, client)
 
 	// check split ranges

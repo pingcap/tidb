@@ -610,12 +610,11 @@ func (gss GroupingSets) DistinctSizeWithThreshold(N int) (int, []uint64, map[int
 			// for every original column unique, traverse the all grouping set.
 			for idx, oneOriginSetIDs := range originGroupingIDsSlice {
 				if oneOriginSetIDs.Has(i) {
-					// this column is needed in this grouping set.
-					continue
+					// this column is needed in this grouping set. maintaining the map.
+					collectionMap[gids[idx]] = struct{}{}
 				}
-				// this column is not needed in this grouping set.(this column is grouped)
-				collectionMap[gids[idx]] = struct{}{}
 			}
+			// id2GIDs maintained the needed-column's grouping sets (GIDs)
 			id2GIDs[i] = collectionMap
 		})
 		return len(distinctGroupingIDsPos), gids, id2GIDs

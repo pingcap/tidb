@@ -350,10 +350,10 @@ func BuildStringFromLabels(labels map[string]string) string {
 		s = append(s, k)
 	}
 	slices.Sort(s)
-	r := new(bytes.Buffer)
+	var r bytes.Buffer
 	// visit labels by sorted key in order to make sure that result should be consistency
 	for _, key := range s {
-		r.WriteString(fmt.Sprintf("%s=%s,", key, labels[key]))
+		fmt.Fprintf(&r, "%s=%s,", key, labels[key])
 	}
 	returned := r.String()
 	return returned[:len(returned)-1]
@@ -470,12 +470,11 @@ func LowerOneStringExcludeEscapeChar(str []byte, escapeChar byte) byte {
 			// Do not lower the escape char, however when a char is equal to
 			// an escape char and it's after an escape char, we still lower it
 			// For example: "AA" (escape 'A'), -> "Aa"
-			if str[i] != escapeChar || escaped {
-				str[i] = toLowerIfAlphaASCII(str[i])
-			} else {
+			if !(str[i] != escapeChar || escaped) {
 				escaped = true
 				continue
 			}
+			str[i] = toLowerIfAlphaASCII(str[i])
 		} else {
 			if str[i] == escapeChar && !escaped {
 				escaped = true

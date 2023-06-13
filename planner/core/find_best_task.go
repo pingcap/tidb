@@ -809,16 +809,15 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		if path.IsTablePath() {
 			currentCandidate = ds.getTableCandidate(path, prop)
 		} else {
-			if len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan {
-				// We will use index to generate physical plan if any of the following conditions is satisfied:
-				// 1. This path's access cond is not nil.
-				// 2. We have a non-empty prop to match.
-				// 3. This index is forced to choose.
-				// 4. The needed columns are all covered by index columns(and handleCol).
-				currentCandidate = ds.getIndexCandidate(path, prop)
-			} else {
+			if !(len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan) {
 				continue
 			}
+			// We will use index to generate physical plan if any of the following conditions is satisfied:
+			// 1. This path's access cond is not nil.
+			// 2. We have a non-empty prop to match.
+			// 3. This index is forced to choose.
+			// 4. The needed columns are all covered by index columns(and handleCol).
+			currentCandidate = ds.getIndexCandidate(path, prop)
 		}
 		pruned := false
 		for i := len(candidates) - 1; i >= 0; i-- {

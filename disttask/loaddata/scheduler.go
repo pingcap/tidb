@@ -40,6 +40,10 @@ type ImportScheduler struct {
 	tableImporter *importer.TableImporter
 	sharedVars    sync.Map
 	logger        *zap.Logger
+
+	importCtx    context.Context
+	importCancel context.CancelFunc
+	wg           sync.WaitGroup
 }
 
 // InitSubtaskExecEnv implements the Scheduler.InitSubtaskExecEnv interface.
@@ -73,6 +77,13 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 		return err
 	}
 	s.tableImporter = tableImporter
+
+	s.importCtx, s.importCancel = context.WithCancel(context.Background())
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.tableImporter.CheckDiskQuota(s.importCtx)
+	}()
 	return nil
 }
 
@@ -170,6 +181,8 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaByte
 // CleanupSubtaskExecEnv implements the Scheduler.CleanupSubtaskExecEnv interface.
 func (s *ImportScheduler) CleanupSubtaskExecEnv(_ context.Context) (err error) {
 	s.logger.Info("CleanupSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
+	s.importCancel()
+	s.wg.Wait()
 	return s.tableImporter.Close()
 }
 
@@ -182,13 +195,13 @@ func (s *ImportScheduler) Rollback(context.Context) error {
 
 func init() {
 	scheduler.RegisterSchedulerConstructor(
-		proto.LoadData,
+		proto.ImportInto,
 		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
 			taskMeta := TaskMeta{}
 			if err := json.Unmarshal(bs, &taskMeta); err != nil {
 				return nil, err
 			}
-			logger := logutil.BgLogger().With(zap.String("component", "scheduler"), zap.String("type", proto.LoadData), zap.Int64("table_id", taskMeta.Plan.TableInfo.ID))
+			logger := logutil.BgLogger().With(zap.String("component", "scheduler"), zap.String("type", proto.ImportInto), zap.Int64("table_id", taskMeta.Plan.TableInfo.ID))
 			logger.Info("create new load data scheduler", zap.Any("taskMeta", taskMeta))
 			return &ImportScheduler{
 				taskID:   taskID,
