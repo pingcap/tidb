@@ -80,8 +80,17 @@ check_contains "COUNT(*): ${duplicated_row_count}"
 run_sql 'SELECT COUNT(*) FROM mytest.testtbl'
 check_contains "COUNT(*): ${uniq_row_count}"
 
-# Check tidb backend records
+# Check tidb backend record duplicate entry in conflict_error_v2 table
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v1'
 run_lightning --backend tidb --config "${mydir}/tidb.toml"
-read -p 123
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v2'
+check_contains "COUNT(*): 10"
+run_sql 'SELECT * FROM lightning_task_info.conflict_error_v2 WHERE offset = 149'
+check_contains "error: Error 1062 (23000): Duplicate entry '5' for key 'testtbl.PRIMARY'"
+check_contains "row_data: ('5','bbb05')"
 
 # Check max-error-record
+run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
+run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml"
+
+read -p 123
