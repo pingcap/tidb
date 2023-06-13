@@ -52,7 +52,7 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 			hints = genHintsFromSingle(p, nodeTp, op.StoreType, hints)
 		}
 	}
-	return hints
+	return removeDuplicatedHints(hints)
 }
 
 // GenHintsFromPhysicalPlan generates hints from physical plan.
@@ -133,21 +133,6 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 		break
 	}
 	return res
-}
-
-func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res []*ast.TableOptimizerHint) {
-	if p == nil {
-		return res
-	}
-	for _, child := range p.Children() {
-		res = append(res, genHintsFromPhysicalPlan(child, nodeType)...)
-	}
-	if phCte, ok := p.(*PhysicalCTE); ok {
-		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.seedPartPhysicalPlan, nodeType)...)
-		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.recursivePartPhysicalPlan, nodeType)...)
-	}
-
-	return genHintsFromSingle(p, nodeType, kv.TiDB, res)
 }
 
 func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
@@ -239,6 +224,23 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, storeType kv
 		res = append(res, getJoinHints(p.SCtx(), HintINLMJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	case *PhysicalIndexHashJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintINLHJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+	}
+	return res
+}
+
+func removeDuplicatedHints(hints []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
+	if len(hints) < 2 {
+		return hints
+	}
+	m := make(map[string]struct{}, len(hints))
+	res := make([]*ast.TableOptimizerHint, 0, len(hints))
+	for _, hint := range hints {
+		key := utilhint.RestoreTableOptimizerHint(hint)
+		if _, ok := m[key]; ok {
+			continue
+		}
+		m[key] = struct{}{}
+		res = append(res, hint)
 	}
 	return res
 }
