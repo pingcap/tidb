@@ -99,7 +99,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
 	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
-	fmt.Println("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
 	return it
 }
 

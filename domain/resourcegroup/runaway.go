@@ -14,11 +14,11 @@
 package resourcegroup
 
 import (
-	"fmt"
 	"sync/atomic"
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
+	"github.com/ngaut/pools"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/tikv/client-go/v2/tikv"
@@ -26,17 +26,47 @@ import (
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
+const (
+	maxWatchListCap           = 10000
+	maxWatchRecordChannelSize = 1024
+)
+
+type RunawayWatchRecord struct {
+	ResourceGroupName string
+	StartTime         time.Time
+	EndTime           time.Time
+	Type              string
+	SqlText           string
+	PlanDigest        string
+	From              uint64
+}
+
+type sessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
+}
+
 type RunawayManager struct {
 	resourceGroupCtl *rmclient.ResourceGroupsController
 	watchList        *ttlcache.Cache[string, struct{}]
+	serverID         uint64
+
+	pool sessionPool
+
+	watchRecordCache chan *RunawayWatchRecord
+	flush            chan struct{}
 }
 
-func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController) *RunawayManager {
-	watchList := ttlcache.New[string, struct{}]()
+func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serverID uint64, pool sessionPool) *RunawayManager {
+	watchList := ttlcache.New[string, struct{}](ttlcache.WithCapacity[string, struct{}](maxWatchListCap))
 	go watchList.Start()
 	return &RunawayManager{
 		resourceGroupCtl: resourceGroupCtl,
 		watchList:        watchList,
+		watchRecordCache: make(chan *RunawayWatchRecord, maxWatchRecordChannelSize),
+		serverID:         serverID,
+		flush:            make(chan struct{}),
+		pool:             pool,
 	}
 }
 
@@ -49,8 +79,46 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName string, originalSql st
 	return newRunawayChecker(rm, resourceGroupName, meta.RunawaySettings, originalSql, planDigest)
 }
 
-func (rm *RunawayManager) MarkRunaway(resourceGroupName string, convict string, ttl time.Duration) {
+func (rm *RunawayManager) MarkRunaway(resourceGroupName, convict, originalSql, planDigest, watchType string, ttl time.Duration) {
 	rm.watchList.Set(resourceGroupName+"/"+convict, struct{}{}, ttl)
+	now := time.Now()
+	if len(rm.watchRecordCache) >= maxWatchRecordChannelSize/2 {
+		select {
+		case rm.flush <- struct{}{}:
+		default:
+		}
+	}
+	go func() {
+		rm.watchRecordCache <- &RunawayWatchRecord{
+			ResourceGroupName: resourceGroupName,
+			StartTime:         now,
+			EndTime:           now.Add(ttl),
+			Type:              watchType,
+			SqlText:           originalSql,
+			PlanDigest:        planDigest,
+			From:              rm.serverID,
+		}
+	}()
+}
+
+func (rm *RunawayManager) FlushWatchRecords() (ret []*RunawayWatchRecord) {
+	ret = make([]*RunawayWatchRecord, 0)
+	for {
+		if len(ret) > maxWatchRecordChannelSize {
+			break
+		}
+		select {
+		case record := <-rm.watchRecordCache:
+			ret = append(ret, record)
+		default:
+			return ret
+		}
+	}
+	return ret
+}
+
+func (rm *RunawayManager) FlushChannel() <-chan struct{} {
+	return rm.flush
 }
 
 func (rm *RunawayManager) ExamineWatchList(resourceGroupName string, convict string) bool {
@@ -64,18 +132,19 @@ func (rm *RunawayManager) Stop() {
 type RunawayChecker struct {
 	manager           *RunawayManager
 	resourceGroupName string
-	convict           string
+	originalSql       string
+	planDigest        string
 	setting           *rmpb.RunawaySettings
 	deadline          time.Time
 	marked            atomic.Bool
 }
 
 func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSql string, planDigest string) *RunawayChecker {
-	convict := getConvictName(setting, originalSql, planDigest)
 	return &RunawayChecker{
 		manager:           manager,
 		resourceGroupName: resourceGroupName,
-		convict:           convict,
+		originalSql:       originalSql,
+		planDigest:        planDigest,
 		deadline:          time.Now().Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond),
 		setting:           setting,
 		marked:            atomic.Bool{},
@@ -84,7 +153,10 @@ func newRunawayChecker(manager *RunawayManager, resourceGroupName string, settin
 
 // BeforeExecutor checks whether query is in watch list before executing and after compiling.
 func (r *RunawayChecker) BeforeExecutor() error {
-	result := r.manager.ExamineWatchList(r.resourceGroupName, r.convict)
+	if r == nil {
+		return nil
+	}
+	result := r.manager.ExamineWatchList(r.resourceGroupName, r.getConvictName())
 	if result {
 		r.marked.Store(result)
 		switch r.setting.Action {
@@ -106,14 +178,12 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 		return nil
 	}
 	marked := r.marked.Load()
-	fmt.Println("############", time.Now(), r.deadline)
 	if !marked {
 		until := time.Until(r.deadline)
 		// execution time exceeds the threshold, mark the query as runaway
 		if until <= 0 {
 			r.marked.Store(true)
 			r.markRunaway()
-			fmt.Println("r.marked.Store(true)")
 		} else {
 			if r.setting.Action == rmpb.RunawayAction_Kill {
 				// if the execution time is close to the threshold, set a timeout
@@ -153,26 +223,19 @@ func (r *RunawayChecker) markRunaway() {
 	if r.setting.Watch == nil {
 		return
 	}
-	r.manager.MarkRunaway(r.resourceGroupName, r.convict, time.Duration(r.setting.Watch.LastingDurationMs)*time.Millisecond)
+	r.manager.MarkRunaway(r.resourceGroupName, r.getConvictName(), r.originalSql, r.planDigest, r.setting.Watch.Type.String(), time.Duration(r.setting.Watch.LastingDurationMs)*time.Millisecond)
 }
 
-func getConvictName(settings *rmpb.RunawaySettings, originalSql string, planDigest string) string {
-	if settings.Watch == nil {
+func (r *RunawayChecker) getConvictName() string {
+	if r.setting.Watch == nil {
 		return ""
 	}
-	switch settings.Watch.Type {
+	switch r.setting.Watch.Type {
 	case rmpb.RunawayWatchType_Similar:
-		return planDigest
+		return r.planDigest
 	case rmpb.RunawayWatchType_Exact:
-		return originalSql
+		return r.originalSql
 	default:
 		return ""
 	}
-}
-
-type DoAction func(rmpb.RunawayAction) error
-
-type RunawayActionWorker interface {
-	Type() rmpb.RunawayAction
-	Action() func() error
 }

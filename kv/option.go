@@ -199,6 +199,8 @@ const (
 	InternalImportInto = "ImportInto"
 	// InternalDistTask is the type of distributed task.
 	InternalDistTask = "DistTask"
+	// InternalRunaway is the type of runaway query task.
+	InternalRunaway = "runaway"
 )
 
 // The bitmap:

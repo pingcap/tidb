@@ -1212,6 +1212,7 @@ func (do *Domain) Init(
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
+	do.wg.Run(do.runawayRecordFlushLoop, "runawayRecordFlushLoop")
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
 	}
@@ -1227,6 +1228,42 @@ func (do *Domain) Init(
 	}
 
 	return nil
+}
+
+func (do *Domain) runawayRecordFlushLoop() {
+	defer util.Recover(metrics.LabelDomain, "runawayRecordFlushLoop", nil, false)
+	ticker := time.NewTicker(time.Minute * 1)
+	defer func() {
+		ticker.Stop()
+	}()
+	flush := do.RunawayManager().FlushChannel()
+	for {
+		var records []*resourcegroup.RunawayWatchRecord
+		select {
+		case <-ticker.C:
+			records = do.runawayManager.FlushWatchRecords()
+		case <-flush:
+			records = do.runawayManager.FlushWatchRecords()
+		}
+		if len(records) > 0 {
+			se, err := do.sysSessionPool.Get()
+			if err != nil {
+				logutil.BgLogger().Warn("", zap.Error(err))
+			}
+			exec := se.(sqlexec.RestrictedSQLExecutor)
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+			for _, record := range records {
+				_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+					"insert into mysql.quarantine_watch VALUES (%?, %?, %?, %?, %?, %?, %?)",
+					record.ResourceGroupName, record.StartTime, record.EndTime, record.Type, record.SqlText, record.PlanDigest, record.From,
+				)
+				if err != nil {
+					logutil.BgLogger().Info("runawayRecordFlushLoop ExecRestrictedSQL", zap.Error(err), zap.Any("record", record))
+				}
+			}
+			do.sysSessionPool.Put(se)
+		}
+	}
 }
 
 // SetOnClose used to set do.onClose func.
@@ -1246,7 +1283,7 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdCli pd.Cli
 	}
 	tikv.SetResourceControlInterceptor(control)
 	control.Start(ctx)
-	do.runawayManager = resourcegroup.NewRunawayManager(control)
+	do.runawayManager = resourcegroup.NewRunawayManager(control, do.ServerID(), do.sysSessionPool)
 	do.resourceGroupsController = control
 	return nil
 }

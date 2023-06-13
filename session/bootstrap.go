@@ -603,6 +603,19 @@ const (
        PRIMARY KEY (job_id),
        KEY (create_time),
        KEY (create_user));`
+
+	// CreateQuarantineWatchTable stores the sql bind info which is used to update globalBindCache.
+	CreateQuarantineWatchTable = `CREATE TABLE IF NOT EXISTS mysql.quarantine_watch (
+		resource_group_name varchar(32) not null,
+		start_time TIMESTAMP NOT NULL,
+		end_time TIMESTAMP NOT NULL,
+		watch_type varchar(12) not null,
+		original_sql TEXT NOT NULL,
+		plan_digest TEXT NOT NULL,
+		tidb_server bigint(32),
+		INDEX sql_index(original_sql(700)) COMMENT "accelerate the speed when add global binding query",
+		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 )
 
 // bootstrap initiates system DB for a store.
@@ -2777,6 +2790,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGlobalTask)
 	// Create load_data_jobs
 	mustExecute(s, CreateLoadDataJobs)
+	// create quarantine_watch
+	mustExecute(s, CreateQuarantineWatchTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
