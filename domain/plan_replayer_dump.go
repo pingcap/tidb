@@ -867,6 +867,5 @@ func dumpOneDebugTrace(w io.Writer, debugTrace interface{}) error {
 	jsonEncoder := json.NewEncoder(w)
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	jsonEncoder.SetEscapeHTML(false)
-	err := jsonEncoder.Encode(debugTrace)
-	return err
+	return jsonEncoder.Encode(debugTrace)
 }
