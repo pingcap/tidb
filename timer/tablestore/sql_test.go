@@ -27,11 +27,11 @@ import (
 func TestBuildInsertTimerSQL(t *testing.T) {
 	now := time.Now()
 	sql1 := "INSERT INTO `db1`.`t1` (NAMESPACE, TIMER_KEY, TIMER_DATA, TIMEZONE, SCHED_POLICY_TYPE, SCHED_POLICY_EXPR, " +
-		"HOOK_CLASS, WATERMARK, ENABLE, EVENT_ID, EVENT_STATUS, EVENT_START, EVENT_DATA, SUMMARY_DATA, VERSION) " +
-		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, FROM_UNIXTIME(%?), %?, %?, %?, FROM_UNIXTIME(%?), %?, %?, 1)"
+		"HOOK_CLASS, WATERMARK, ENABLE, TIMER_EXT, EVENT_ID, EVENT_STATUS, EVENT_START, EVENT_DATA, SUMMARY_DATA, VERSION) " +
+		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, FROM_UNIXTIME(%?), %?, %?, %?, %?, FROM_UNIXTIME(%?), %?, %?, 1)"
 	sql2 := "INSERT INTO `db1`.`t1` (NAMESPACE, TIMER_KEY, TIMER_DATA, TIMEZONE, SCHED_POLICY_TYPE, SCHED_POLICY_EXPR, " +
-		"HOOK_CLASS, WATERMARK, ENABLE, EVENT_ID, EVENT_STATUS, EVENT_START, EVENT_DATA, SUMMARY_DATA, VERSION) " +
-		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, 1)"
+		"HOOK_CLASS, WATERMARK, ENABLE, TIMER_EXT, EVENT_ID, EVENT_STATUS, EVENT_START, EVENT_DATA, SUMMARY_DATA, VERSION) " +
+		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, 1)"
 
 	cases := []struct {
 		sql    string

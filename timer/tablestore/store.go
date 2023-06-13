@@ -107,7 +107,7 @@ func (s *tableTimerStoreCore) Create(ctx context.Context, record *api.TimerRecor
 		return "", err
 	}
 
-	timerID := rows[0].GetString(0)
+	timerID := strconv.FormatUint(rows[0].GetUint64(0), 10)
 	s.notifier.Notify(api.WatchTimerEventCreate, timerID)
 	return timerID, nil
 }

@@ -15,6 +15,7 @@ go_test(
         "//testkit/testsetup",
         "//timer/api",
         "//timer/tablestore",
+        "@com_github_google_uuid//:uuid",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

@@ -40,7 +40,7 @@ func CreateTimerTableSQL(dbName, tableName string) string {
 		HOOK_CLASS VARCHAR(64) NOT NULL,
 		WATERMARK TIMESTAMP DEFAULT NULL,
 		ENABLE TINYINT(2) NOT NULL,
-        TIMER_EXT JSON NOT NULL,
+		TIMER_EXT JSON NOT NULL,
 		EVENT_STATUS VARCHAR(32) NOT NULL,
 		EVENT_ID VARCHAR(64) NOT NULL,
 		EVENT_DATA BLOB,
@@ -51,7 +51,7 @@ func CreateTimerTableSQL(dbName, tableName string) string {
 		VERSION BIGINT(64) UNSIGNED NOT NULL,
 		PRIMARY KEY (ID),
 		UNIQUE KEY timer_key(NAMESPACE, TIMER_KEY),
-    	KEY tags((CAST(TIMER_EXT->'$.tags' AS CHAR(256) ARRAY))),
+		KEY tags((CAST(TIMER_EXT->'$.tags' AS CHAR(256) ARRAY))),
 		KEY hook_class(HOOK_CLASS)
 	)`, indentString(dbName, tableName))
 }
