@@ -5,4 +5,5 @@ go_test(
     timeout = "short",
     srcs = ["dummy_test.go"],
     flaky = True,
+    deps = ["//tests/realtikvtest"],
 )
