@@ -3000,6 +3000,7 @@ func TestChunkReuseCorruptSysVarString(t *testing.T) {
 }
 
 type mockProxyProtocolProxy struct {
+	mu            sync.Mutex
 	frontend      string
 	backend       string
 	clientAddr    string
@@ -3019,10 +3020,14 @@ func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSo
 }
 
 func (p *mockProxyProtocolProxy) ListenAddr() net.Addr {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.ln.Addr()
 }
 
 func (p *mockProxyProtocolProxy) Run() (err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.run.Store(true)
 	p.ln, err = net.Listen("tcp", p.frontend)
 	if err != nil {
