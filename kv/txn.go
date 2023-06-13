@@ -24,10 +24,13 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"go.uber.org/zap"
 )
 
@@ -213,4 +216,30 @@ func setRequestSourceForInnerTxn(ctx context.Context, txn Transaction) {
 		logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, " +
 			"the `RequestSourceTypeKey` is missing in the context")
 	}
+}
+
+// SetTxnResourceGroup update the resource group name of target txn.
+func SetTxnResourceGroup(txn Transaction, name string) {
+	txn.SetOption(ResourceGroupName, name)
+	failpoint.Inject("TxnResouceGroupChecker", func(val failpoint.Value) {
+		expectedRgName := val.(string)
+		validateRNameInteceptor := func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+				var rgName *string
+				switch r := req.Req.(type) {
+				case *kvrpcpb.PrewriteRequest:
+					rgName = &r.Context.ResourceControlContext.ResourceGroupName
+				case *kvrpcpb.CommitRequest:
+					rgName = &r.Context.ResourceControlContext.ResourceGroupName
+				case *kvrpcpb.PessimisticLockRequest:
+					rgName = &r.Context.ResourceControlContext.ResourceGroupName
+				}
+				if rgName != nil && *rgName != expectedRgName {
+					panic(fmt.Sprintf("resource group name not match, expected: %s, actual: %s", expectedRgName, *rgName))
+				}
+				return next(target, req)
+			}
+		}
+		txn.SetOption(RPCInterceptor, interceptor.NewRPCInterceptor("test-validate-rg-name", validateRNameInteceptor))
+	})
 }

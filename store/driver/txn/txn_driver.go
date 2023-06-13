@@ -261,7 +261,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.CommitTSUpperBoundCheck:
 		txn.KVTxn.SetCommitTSUpperBoundCheck(val.(func(commitTS uint64) bool))
 	case kv.RPCInterceptor:
-		txn.KVTxn.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
+		txn.KVTxn.AddRPCInterceptor(val.(interceptor.RPCInterceptor))
 	case kv.AssertionLevel:
 		txn.KVTxn.SetAssertionLevel(val.(kvrpcpb.AssertionLevel))
 	case kv.TableToColumnMaps:

@@ -20,6 +20,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	pd "github.com/tikv/pd/client"
 )
@@ -96,10 +97,25 @@ func (m *mockResourceGroupManager) DeleteResourceGroup(ctx context.Context, name
 	return "Success!", nil
 }
 
+func (m *mockResourceGroupManager) LoadResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, int64, error) {
+	m.Lock()
+	defer m.Unlock()
+	groups := make([]*rmpb.ResourceGroup, 0, len(m.groups))
+	for _, g := range m.groups {
+		groups = append(groups, g)
+	}
+	// TODO: implement revision if needed.
+	return groups, 0, nil
+}
+
 func (m *mockResourceGroupManager) AcquireTokenBuckets(ctx context.Context, request *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
 	return nil, nil
 }
 
 func (m *mockResourceGroupManager) WatchResourceGroup(ctx context.Context, revision int64) (chan []*rmpb.ResourceGroup, error) {
+	return nil, nil
+}
+
+func (m *mockResourceGroupManager) Watch(ctx context.Context, key []byte, opts ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
 	return nil, nil
 }

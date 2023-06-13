@@ -337,7 +337,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if sessVars.LoadBasedReplicaReadThreshold > 0 {
 		txn.SetOption(kv.LoadBasedReplicaReadThreshold, sessVars.LoadBasedReplicaReadThreshold)
 	}
-	txn.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
+	kv.SetTxnResourceGroup(txn, sessVars.ResourceGroupName)
 
 	p.txn = txn
 	return txn, nil
