@@ -3023,25 +3023,25 @@
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
         "Best": "MergeInnerJoin{IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)",
         "Warning": "",
-        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t3` ), merge_join(@`sel_1` `test`.`t3`)"
+        "Hints": "merge_join(@`sel_1` `test`.`t3`), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_1` `test`.`t3` )"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(test.t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
         "Best": "MergeInnerJoin{IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)",
         "Warning": "",
-        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t3` ), merge_join(@`sel_1` `test`.`t3`)"
+        "Hints": "merge_join(@`sel_1` `test`.`t3`), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_1` `test`.`t3` )"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
         "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.b,test.t.a)",
         "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable",
-        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` `f`), hash_join(@`sel_1` `test`.`t1`)"
+        "Hints": "hash_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` `f`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
         "Best": "IndexJoin{TableReader(Table(t2)->Sel([eq(test.t2.c, -1)]))->IndexReader(Index(t2.b)[[NULL,NULL]])}(test.t2.b,test.t2.b)->Projection",
         "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable",
-        "Hints": "use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_1` `test`.`t1` `b`), inl_join(@`sel_1` `test`.`t1`)"
+        "Hints": "inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_1` `test`.`t1` `b`)"
       }
     ]
   },
