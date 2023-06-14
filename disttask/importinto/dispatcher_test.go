@@ -78,7 +78,7 @@ func (s *importIntoSuite) TestFlowHandleGetEligibleInstances() {
 	s.Equal([]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}}, eligibleInstances)
 }
 
-func (s *loadDataSuite) TestUpdateCurrentTask() {
+func (s *importIntoSuite) TestUpdateCurrentTask() {
 	taskMeta := TaskMeta{
 		Plan: importer.Plan{
 			DisableTiKVImportMode: true,
