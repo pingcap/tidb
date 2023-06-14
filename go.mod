@@ -130,10 +130,11 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 	honnef.co/go/tools v0.4.3
 	k8s.io/api v0.27.2
-	k8s.io/utils v0.0.0-20230209194617-a36077c30491
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+require k8s.io/utils v0.0.0-20230209194617-a36077c30491 // indirect
 
 require (
 	cloud.google.com/go v0.110.0 // indirect
