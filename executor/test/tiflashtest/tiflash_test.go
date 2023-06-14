@@ -490,7 +490,8 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
 	failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks")
 	tk.MustExec("set @@session.tidb_partition_prune_mode='static-only'")
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(false)`)
+	// when we lift the restriction of partition table can not take MPP path, here should `return(true)`
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(true)`)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
 	tk.MustExec("set @@session.tidb_partition_prune_mode='dynamic-only'")
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(true)`)
