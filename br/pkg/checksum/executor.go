@@ -372,11 +372,9 @@ func (exec *Executor) Execute(
 // so sometimes BR would get the incomplete result.
 // checkContextDone makes sure the result is not affected by CONTEXT DONE.
 func checkContextDone(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return errors.New("context is cancelled by other error")
-	default:
-		// context isn't done, so the result is complete.
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return errors.Annotate(ctxErr, "context is cancelled by other error")
 	}
 	return nil
 }
