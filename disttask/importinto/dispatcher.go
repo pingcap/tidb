@@ -308,7 +308,7 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 }
 
 // preProcess does the pre processing for the task.
-func preProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) error {
+func preProcess(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) error {
 	logger.Info("pre process", zap.Any("table_info", taskMeta.Plan.TableInfo))
 	// TODO: drop table indexes depends on the option.
 	// if err := dropTableIndexes(ctx, handle, taskMeta, logger); err != nil {
