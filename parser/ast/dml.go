@@ -2211,7 +2211,7 @@ type InsertStmt struct {
 	Table       *TableRefsClause
 	Columns     []*ColumnName
 	Lists       [][]ExprNode
-	Setlist     []*Assignment
+	Setlist     bool
 	Priority    mysql.PriorityEnum
 	OnDuplicate []*Assignment
 	Select      ResultSetNode
@@ -2265,38 +2265,60 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WritePlain(")")
 	}
-	if n.Columns != nil {
-		ctx.WritePlain(" (")
-		for i, v := range n.Columns {
+	if n.Setlist {
+		if len(n.Lists) != 1 {
+			return errors.Errorf("Expect len(InsertStmt.Lists)[%d] == 1 for SET x=y", len(n.Lists))
+		}
+		if len(n.Lists[0]) != len(n.Columns) {
+			return errors.Errorf("Expect len(InsertStmt.Columns)[%d] == len(InsertStmt.Lists[0])[%d] for SET x=y", len(n.Columns), len(n.Lists[0]))
+		}
+		ctx.WriteKeyWord(" SET ")
+		for i, v := range n.Lists[0] {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(v.OriginalText()) > 0 {
-				ctx.WritePlain(v.OriginalText())
-			} else {
-				if err := v.Restore(ctx); err != nil {
-					return errors.Annotatef(err, "An error occurred while restore InsertStmt.Columns[%d]", i)
-				}
+			v := &Assignment{
+				Column: n.Columns[i],
+				Expr:   v,
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore InsertStmt.Set (Columns = Expr)[%d]", i)
 			}
 		}
-		ctx.WritePlain(")")
-	}
-	if n.Lists != nil {
-		ctx.WriteKeyWord(" VALUES ")
-		for i, row := range n.Lists {
-			if i != 0 {
-				ctx.WritePlain(",")
-			}
-			ctx.WritePlain("(")
-			for j, v := range row {
-				if j != 0 {
+	} else {
+		if n.Columns != nil {
+			ctx.WritePlain(" (")
+			for i, v := range n.Columns {
+				if i != 0 {
 					ctx.WritePlain(",")
 				}
-				if err := v.Restore(ctx); err != nil {
-					return errors.Annotatef(err, "An error occurred while restore InsertStmt.Lists[%d][%d]", i, j)
+				if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(v.OriginalText()) > 0 {
+					ctx.WritePlain(v.OriginalText())
+				} else {
+					if err := v.Restore(ctx); err != nil {
+						return errors.Annotatef(err, "An error occurred while restore InsertStmt.Columns[%d]", i)
+					}
 				}
 			}
 			ctx.WritePlain(")")
+		}
+		if n.Lists != nil {
+			ctx.WriteKeyWord(" VALUES ")
+			for i, row := range n.Lists {
+				if i != 0 {
+					ctx.WritePlain(",")
+				}
+				ctx.WritePlain("(")
+				for j, v := range row {
+					if j != 0 {
+						ctx.WritePlain(",")
+					}
+					if err := v.Restore(ctx); err != nil {
+						return errors.Annotatef(err, "An error occurred while restore InsertStmt.Lists[%d][%d]", i, j)
+					}
+				}
+				ctx.WritePlain(")")
+			}
 		}
 	}
 	if n.Select != nil {
@@ -2308,17 +2330,6 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		default:
 			return errors.Errorf("Incorrect type for InsertStmt.Select: %T", v)
-		}
-	}
-	if n.Setlist != nil {
-		ctx.WriteKeyWord(" SET ")
-		for i, v := range n.Setlist {
-			if i != 0 {
-				ctx.WritePlain(",")
-			}
-			if err := v.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore InsertStmt.Setlist[%d]", i)
-			}
 		}
 	}
 	if n.OnDuplicate != nil {
@@ -2373,13 +2384,6 @@ func (n *InsertStmt) Accept(v Visitor) (Node, bool) {
 			}
 			n.Lists[i][j] = node.(ExprNode)
 		}
-	}
-	for i, val := range n.Setlist {
-		node, ok := val.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Setlist[i] = node.(*Assignment)
 	}
 	for i, val := range n.OnDuplicate {
 		node, ok := val.Accept(v)
@@ -2959,7 +2963,7 @@ const (
 	ShowPlacementLabels
 	ShowSessionStates
 	ShowCreateResourceGroup
-	ShowLoadDataJobs
+	ShowImportJobs
 	ShowCreateProcedure
 )
 
@@ -3009,7 +3013,7 @@ type ShowStmt struct {
 	ShowProfileArgs  *int64 // Used for `SHOW PROFILE` syntax
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
 
-	LoadDataJobID *int64 // Used for `SHOW LOAD DATA JOB <ID>` syntax
+	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
 }
 
 // Restore implements Node interface.
@@ -3218,12 +3222,12 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord(" PARTITION ")
 		ctx.WriteName(n.Partition.String())
-	case ShowLoadDataJobs:
-		if n.LoadDataJobID != nil {
-			ctx.WriteKeyWord("LOAD DATA JOB ")
-			ctx.WritePlainf("%d", *n.LoadDataJobID)
+	case ShowImportJobs:
+		if n.ImportJobID != nil {
+			ctx.WriteKeyWord("IMPORT JOB ")
+			ctx.WritePlainf("%d", *n.ImportJobID)
 		} else {
-			ctx.WriteKeyWord("LOAD DATA JOBS")
+			ctx.WriteKeyWord("IMPORT JOBS")
 			restoreShowLikeOrWhereOpt()
 		}
 	// ShowTargetFilterable

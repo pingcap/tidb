@@ -603,6 +603,26 @@ const (
        PRIMARY KEY (job_id),
        KEY (create_time),
        KEY (create_user));`
+
+	// CreateImportJobs is a table that IMPORT INTO uses.
+	CreateImportJobs = `CREATE TABLE IF NOT EXISTS mysql.tidb_import_jobs (
+		id bigint(64) NOT NULL AUTO_INCREMENT,
+		create_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+		start_time TIMESTAMP(6) NULL DEFAULT NULL,
+		update_time TIMESTAMP(6) NULL DEFAULT NULL,
+		end_time TIMESTAMP(6) NULL DEFAULT NULL,
+		table_schema VARCHAR(64) NOT NULL,
+		table_name VARCHAR(64) NOT NULL,
+		table_id bigint(64) NOT NULL,
+		created_by VARCHAR(300) NOT NULL,
+		parameters text NOT NULL,
+		source_file_size bigint(64) NOT NULL,
+		status VARCHAR(64) NOT NULL,
+		step VARCHAR(64) NOT NULL,
+		summary text DEFAULT NULL,
+		error_message TEXT DEFAULT NULL,
+		PRIMARY KEY (id),
+		KEY (created_by));`
 )
 
 // bootstrap initiates system DB for a store.
@@ -894,11 +914,12 @@ const (
 	// ...
 	// version 167 add column `step` to `mysql.tidb_background_subtask`
 	version167 = 167
+	version168 = 168
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version167
+var currentBootstrapVersion int64 = version168
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1034,6 +1055,7 @@ var (
 		// We will only use Ver145 to differentiate versions, so it is skipped here.
 		upgradeToVer146,
 		upgradeToVer167,
+		upgradeToVer168,
 	}
 )
 
@@ -1168,7 +1190,8 @@ func upgrade(s Session) {
 }
 
 func syncUpgradeState(s Session) {
-	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
+	totalInterval := time.Duration(internalSQLTimeout) * time.Second
+	ctx, cancelFunc := context.WithTimeout(context.Background(), totalInterval)
 	defer cancelFunc()
 	dom := domain.GetDomain(s)
 	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
@@ -1176,8 +1199,8 @@ func syncUpgradeState(s Session) {
 		logutil.BgLogger().Fatal("[upgrading] update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
 	}
 
-	retryTimes := 10
 	interval := 200 * time.Millisecond
+	retryTimes := int(totalInterval / interval)
 	for i := 0; i < retryTimes; i++ {
 		op, err := owner.GetOwnerOpValue(ctx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
 		if err == nil && op.String() == owner.OpGetUpgradingState.String() {
@@ -1186,7 +1209,9 @@ func syncUpgradeState(s Session) {
 		if i == retryTimes-1 {
 			logutil.BgLogger().Fatal("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
 		}
-		logutil.BgLogger().Warn("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
+		if i%10 == 0 {
+			logutil.BgLogger().Warn("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
+		}
 		time.Sleep(interval)
 	}
 
@@ -2663,6 +2688,13 @@ func upgradeToVer167(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer168(s Session, ver int64) {
+	if ver >= version168 {
+		return
+	}
+	mustExecute(s, CreateImportJobs)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2777,6 +2809,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGlobalTask)
 	// Create load_data_jobs
 	mustExecute(s, CreateLoadDataJobs)
+	// Create tidb_import_jobs
+	mustExecute(s, CreateImportJobs)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

@@ -843,7 +843,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
 		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt,
-		*ast.LoadDataActionStmt, *ast.CalibrateResourceStmt:
+		*ast.LoadDataActionStmt, *ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -3333,7 +3333,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			GlobalScope:           show.GlobalScope,
 			Extended:              show.Extended,
 			Limit:                 show.Limit,
-			LoadDataJobID:         show.LoadDataJobID,
+			ImportJobID:           show.ImportJobID,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -3887,14 +3887,9 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return n
 	}
 
-	if len(insert.Setlist) > 0 {
-		// Branch for `INSERT ... SET ...`.
-		err := b.buildSetValuesOfInsert(ctx, insert, insertPlan, mockTablePlan, checkRefColumn)
-		if err != nil {
-			return nil, err
-		}
-	} else if len(insert.Lists) > 0 {
+	if len(insert.Lists) > 0 {
 		// Branch for `INSERT ... VALUES ...`.
+		// Branch for `INSERT ... SET ...`.
 		err := b.buildValuesListOfInsert(ctx, insert, insertPlan, mockTablePlan, checkRefColumn)
 		if err != nil {
 			return nil, err
@@ -3992,6 +3987,7 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert
 		// This branch is for the following scenarios:
 		// 1. `INSERT INTO tbl_name (col_name [, col_name] ...) {VALUES | VALUE} (value_list) [, (value_list)] ...`,
 		// 2. `INSERT INTO tbl_name (col_name [, col_name] ...) SELECT ...`.
+		// 3. `INSERT INTO tbl_name SET col1=x1, ... colM=xM...`.
 		colName := make([]string, 0, len(insertStmt.Columns))
 		for _, col := range insertStmt.Columns {
 			colName = append(colName, col.Name.L)
@@ -4002,7 +3998,7 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert
 			return nil, ErrUnknownColumn.GenWithStackByArgs(
 				insertStmt.Columns[missingColIdx].Name.O, clauseMsg[fieldList])
 		}
-	} else if len(insertStmt.Setlist) == 0 {
+	} else {
 		// This branch is for the following scenarios:
 		// 1. `INSERT INTO tbl_name {VALUES | VALUE} (value_list) [, (value_list)] ...`,
 		// 2. `INSERT INTO tbl_name SELECT ...`.
@@ -4071,49 +4067,6 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 		return nil, ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
 	}
 	return outExpr, nil
-}
-
-func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
-	tableInfo := insertPlan.Table.Meta()
-	colNames := make([]string, 0, len(insert.Setlist))
-	exprCols := make([]*expression.Column, 0, len(insert.Setlist))
-	for _, assign := range insert.Setlist {
-		idx, err := expression.FindFieldName(insertPlan.tableColNames, assign.Column)
-		if err != nil {
-			return err
-		}
-		if idx < 0 {
-			return dbterror.ErrBadField.GenWithStackByArgs(assign.Column, "field list")
-		}
-		colNames = append(colNames, assign.Column.Name.L)
-		exprCols = append(exprCols, insertPlan.tableSchema.Columns[idx])
-	}
-
-	// Check whether the column to be updated is the generated column.
-	tCols, missingColIdx := table.FindColumns(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
-	if missingColIdx >= 0 {
-		return ErrUnknownColumn.GenWithStackByArgs(insert.Setlist[missingColIdx].Column.Name.O, clauseMsg[fieldList])
-	}
-
-	insertPlan.AllAssignmentsAreConstant = true
-	for i, assign := range insert.Setlist {
-		expr, err := b.getInsertColExpr(ctx, insertPlan, mockTablePlan, tCols[i], assign.Expr, checkRefColumn)
-		if err != nil {
-			return err
-		}
-		if expr == nil {
-			continue
-		}
-
-		insertPlan.SetList = append(insertPlan.SetList, &expression.Assignment{
-			Col:     exprCols[i],
-			ColName: model.NewCIStr(colNames[i]),
-			Expr:    expr,
-		})
-	}
-	insertPlan.Schema4OnDuplicate = insertPlan.tableSchema
-	insertPlan.names4OnDuplicate = insertPlan.tableColNames
-	return nil
 }
 
 func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
@@ -4364,15 +4317,20 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	return p, err
 }
 
-// DetachedOption is a special option in load data statement that need to be handled separately.
-const DetachedOption = "detached"
+var (
+	importIntoSchemaNames = []string{"Job_ID", "Data_Source", "Target_Table", "Table_ID",
+		"Phase", "Status", "Source_File_Size", "Imported_Rows",
+		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
+	importIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
+)
 
 func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (Plan, error) {
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	var (
 		err              error
 		options          = make([]*LoadDataOpt, 0, len(ld.Options))
-		detached         = false
 		importFromServer bool
 	)
 
@@ -4392,9 +4350,6 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			if err != nil {
 				return nil, err
 			}
-		}
-		if strings.ToLower(opt.Name) == DetachedOption && opt.Value == nil {
-			detached = true
 		}
 		options = append(options, &loadDataOpt)
 	}
@@ -4444,11 +4399,8 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		return nil, err
 	}
 
-	if detached {
-		p.setSchemaAndNames(expression.NewSchema(&expression.Column{
-			RetType: types.NewFieldType(mysql.TypeLonglong),
-		}), types.NameSlice{{ColName: model.NewCIStr("Task_ID")}})
-	}
+	outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes)
+	p.setSchemaAndNames(outputSchema, outputFields)
 	return p, nil
 }
 
@@ -5428,17 +5380,14 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowSessionStates:
 		names = []string{"Session_states", "Session_token"}
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
-	case ast.ShowLoadDataJobs:
-		names = []string{"Job_ID", "Create_Time", "Start_Time", "End_Time",
-			"Data_Source", "Target_Table", "Import_Mode", "Created_By",
-			"Job_State", "Job_Status", "Source_File_Size", "Imported_Rows",
-			"Result_Code", "Result_Message"}
-		ftypes = []byte{mysql.TypeLonglong, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
-			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
-			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
-			mysql.TypeLonglong, mysql.TypeString}
+	case ast.ShowImportJobs:
+		names = importIntoSchemaNames
+		ftypes = importIntoSchemaFTypes
 	}
+	return convert2OutputSchemasAndNames(names, ftypes)
+}
 
+func convert2OutputSchemasAndNames(names []string, ftypes []byte) (schema *expression.Schema, outputNames []*types.FieldName) {
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	outputNames = make([]*types.FieldName, 0, len(names))
 	for i := range names {

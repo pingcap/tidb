@@ -508,20 +508,33 @@ func TestLoadDataRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
-func TestLoadDataActions(t *testing.T) {
+func TestImportActions(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{
-			sourceSQL: "show load data jobs",
-			expectSQL: "SHOW LOAD DATA JOBS",
+			sourceSQL: "cancel import job 123",
+			expectSQL: "CANCEL IMPORT JOB 123",
 		},
 		{
-			sourceSQL: "show load data job 123",
-			expectSQL: "SHOW LOAD DATA JOB 123",
+			sourceSQL: "show import jobs",
+			expectSQL: "SHOW IMPORT JOBS",
 		},
 		{
-			sourceSQL: "show load data jobs where aa > 1",
-			expectSQL: "SHOW LOAD DATA JOBS WHERE `aa`>1",
+			sourceSQL: "show import job 123",
+			expectSQL: "SHOW IMPORT JOB 123",
 		},
+		{
+			sourceSQL: "show import jobs where aa > 1",
+			expectSQL: "SHOW IMPORT JOBS WHERE `aa`>1",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestLoadDataActions(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
 		{
 			sourceSQL: "pause load data job 123",
 			expectSQL: "PAUSE LOAD DATA JOB 123",
@@ -529,10 +542,6 @@ func TestLoadDataActions(t *testing.T) {
 		{
 			sourceSQL: "resume load data job 123",
 			expectSQL: "RESUME LOAD DATA JOB 123",
-		},
-		{
-			sourceSQL: "Cancel load data job 123",
-			expectSQL: "CANCEL LOAD DATA JOB 123",
 		},
 		{
 			sourceSQL: "drop   load data job 123",

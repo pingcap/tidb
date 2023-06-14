@@ -16,6 +16,7 @@ go_library(
     deps = [
         "//ddl/schematracker",
         "//domain",
+        "//domain/infosync",
         "//expression",
         "//kv",
         "//parser/ast",

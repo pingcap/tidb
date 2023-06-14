@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -2004,6 +2005,37 @@ func GetDataFromSessionVariables(ctx context.Context, sctx sessionctx.Context) (
 		}
 		row := types.MakeDatums(v.Name, value)
 		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// GetDataFromSessionConnectAttrs produces the rows for the session_connect_attrs table.
+func GetDataFromSessionConnectAttrs(sctx sessionctx.Context) ([][]types.Datum, error) {
+	sm := sctx.GetSessionManager()
+	if sm == nil {
+		return nil, nil
+	}
+	allAttrs := sm.GetConAttrs()
+	rows := make([][]types.Datum, 0, len(allAttrs)*10) // 10 Attributes per connection
+	for pid, attrs := range allAttrs {                 // Note: PID is not ordered.
+		// Sorts the attributes by key and gives ORDINAL_POSITION based on this. This is needed as we didn't store the
+		// ORDINAL_POSITION and a map doesn't have a guaranteed sort order. This is needed to keep the ORDINAL_POSITION
+		// stable over multiple queries.
+		attrnames := make([]string, 0, len(attrs))
+		for attrname := range attrs {
+			attrnames = append(attrnames, attrname)
+		}
+		sort.Strings(attrnames)
+
+		for ord, attrkey := range attrnames {
+			row := types.MakeDatums(
+				pid,
+				attrkey,
+				attrs[attrkey],
+				ord,
+			)
+			rows = append(rows, row)
+		}
 	}
 	return rows, nil
 }

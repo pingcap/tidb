@@ -185,6 +185,20 @@ func TestTiKVProfileCPU(t *testing.T) {
 	require.Lenf(t, accessed, 5, "expect all HTTP API had been accessed, but found: %v", accessed)
 }
 
+// TestSessionConnectAttrs tests the `SESSION_CONNECT_ATTRS` table
+func TestSessionConnectAttrs(t *testing.T) {
+	sm := &testkit.MockSessionManager{}
+	sm.ConAttrs = map[uint64]map[string]string{
+		123456: {
+			"_client_name": "libmysql",
+		},
+	}
+	store := newMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().SetSessionManager(sm)
+	tk.MustQuery("SELECT PROCESSLIST_ID,ATTR_NAME,ATTR_VALUE,ORDINAL_POSITION FROM performance_schema.SESSION_CONNECT_ATTRS").Check(testkit.Rows("123456 _client_name libmysql 0"))
+}
+
 func newMockStore(t *testing.T) kv.Storage {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
