@@ -2119,7 +2119,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 
 // cpuCostDivisor computes the concurrency to which we would amortize CPU cost
 // for hash aggregation.
-func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (float64, float64) {
+func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (divisor, con float64) {
 	if hasDistinct {
 		return 0, 0
 	}
@@ -2193,11 +2193,11 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 	}
 	sumNDV := float64(0)
 	for _, groupingSet := range groupingSets {
-		// for every grouping set, pick its cols out, and combine with normal group cols to get the NDV.
+		// for every grouping set, pick its cols out, and combine with normal group cols to get the ndv.
 		groupingSetCols := groupingSet.ExtractCols()
 		groupingSetCols = append(groupingSetCols, normalGbyCols...)
-		NDV, _ := getColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
-		sumNDV += NDV
+		ndv, _ := getColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
+		sumNDV += ndv
 	}
 	// After group operator, all same rows are grouped into one row, that means all
 	// change the sub-agg's stats
