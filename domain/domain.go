@@ -1245,7 +1245,9 @@ func (do *Domain) SetOnClose(onClose func()) {
 
 func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.Client) error {
 	if pdClient == nil {
-		return errors.New("cannot setup up resource controller, should use tikv storage")
+		logutil.BgLogger().Warn("cannot setup up resource controller, should use tikv storage")
+		// return nil as unistore doesn't support it
+		return nil
 	}
 
 	control, err := rmclient.NewResourceGroupController(ctx, do.ServerID(), pdClient, nil, rmclient.WithMaxWaitDuration(time.Second*30))
