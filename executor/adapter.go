@@ -538,7 +538,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	var pi processinfoSetter
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
-		sql := a.getSqlForProcessInfo()
+		sql := a.getSQLForProcessInfo()
 		maxExecutionTime := getMaxExecutionTime(sctx)
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
@@ -579,7 +579,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}, nil
 }
 
-func (a *ExecStmt) getSqlForProcessInfo() string {
+func (a *ExecStmt) getSQLForProcessInfo() string {
 	sql := a.OriginText()
 	if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
 		if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
