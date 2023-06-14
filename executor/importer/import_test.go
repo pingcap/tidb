@@ -38,7 +38,6 @@ func TestInitDefaultOptions(t *testing.T) {
 	plan.initDefaultOptions()
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
-	require.Equal(t, config.OpLevelOptional, plan.Analyze)
 	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt)
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
 	require.Equal(t, false, plan.SplitFile)
@@ -83,7 +82,6 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		skipRowsOption+"=3, "+
 		diskQuotaOption+"='100gib', "+
 		checksumTableOption+"='optional', "+
-		analyzeTableOption+"='required', "+
 		threadOption+"=100000, "+
 		maxWriteSpeedOption+"='200mib', "+
 		splitFileOption+", "+
@@ -102,7 +100,6 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, uint64(3), plan.IgnoreLines, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
-	require.Equal(t, config.OpLevelRequired, plan.Analyze, sql)
 	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
 	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
 	require.True(t, plan.SplitFile, sql)

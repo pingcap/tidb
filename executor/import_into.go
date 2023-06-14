@@ -33,9 +33,11 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -123,18 +125,24 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	}
 
 	if e.controller.Detached {
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalImportInto)
+		se, err := CreateSession(e.userSctx)
+		if err != nil {
+			return err
+		}
 		go func() {
+			defer CloseSession(se)
 			// todo: there's no need to wait for the import to finish, we can just return here.
 			// error is stored in system table, so we can ignore it here
 			//nolint: errcheck
-			_ = e.doImport(distImporter, task)
+			_ = e.doImport(ctx, se, distImporter, task)
 			failpoint.Inject("testDetachedTaskFinished", func() {
 				TestDetachedTaskFinished.Store(true)
 			})
 		}()
 		return e.fillJobInfo(ctx, jobID, req)
 	}
-	if err = e.doImport(distImporter, task); err != nil {
+	if err = e.doImport(ctx, e.userSctx, distImporter, task); err != nil {
 		return err
 	}
 	return e.fillJobInfo(ctx, jobID, req)
@@ -180,10 +188,14 @@ func (e *ImportIntoExec) getJobImporter(param *importer.JobImportParam) (*import
 	return importinto.NewDistImporterCurrNode(param, e.importPlan, e.stmt, e.controller.TotalFileSize)
 }
 
-func (e *ImportIntoExec) doImport(distImporter *importinto.DistImporter, task *proto.Task) error {
+func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, distImporter *importinto.DistImporter, task *proto.Task) error {
 	distImporter.ImportTask(task)
 	group := distImporter.Param().Group
-	return group.Wait()
+	err := group.Wait()
+	if err2 := flushStats(ctx, se, e.importPlan.TableInfo.ID, distImporter.Result()); err2 != nil {
+		logutil.BgLogger().Error("flush stats failed", zap.Error(err2))
+	}
+	return err
 }
 
 // ImportIntoActionExec represents a import into action executor.
@@ -243,4 +255,17 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 		return exeerrors.ErrLoadDataInvalidOperation.FastGenByArgs("CANCEL")
 	}
 	return nil
+}
+
+// flushStats flushes the stats of the table.
+func flushStats(ctx context.Context, se sessionctx.Context, tableID int64, result importer.JobImportResult) error {
+	if err := sessiontxn.NewTxn(ctx, se); err != nil {
+		return err
+	}
+	sessionVars := se.GetSessionVars()
+	sessionVars.TxnCtxMu.Lock()
+	defer sessionVars.TxnCtxMu.Unlock()
+	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected), result.ColSizeMap)
+	se.StmtCommit(ctx)
+	return se.CommitTxn(ctx)
 }

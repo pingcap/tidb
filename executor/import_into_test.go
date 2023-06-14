@@ -126,11 +126,6 @@ func TestImportIntoOptionsNegativeCase(t *testing.T) {
 		{OptionStr: "checksum_table=false", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: "checksum_table=null", Err: exeerrors.ErrInvalidOptionVal},
 
-		{OptionStr: "analyze_table='aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: "analyze_table=123", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: "analyze_table=false", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: "analyze_table=null", Err: exeerrors.ErrInvalidOptionVal},
-
 		{OptionStr: "record_errors='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: "record_errors='111aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: "record_errors=-123", Err: exeerrors.ErrInvalidOptionVal},
