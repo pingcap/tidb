@@ -785,15 +785,15 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 // For keepOrder with partition table,
 // we need use partitionHandle to distinct two handles,
 // the `_tidb_rowid` in differenct partition will same in some scenario.
-func (is *PhysicalIndexScan) AddExtraPhysTblIDColumn() bool {
+func (p *PhysicalIndexScan) AddExtraPhysTblIDColumn() bool {
 	// The first column will return 0 when has more than two ExtraPhysTblID columns.
-	if FindColumnInfoByID(is.Columns, model.ExtraPhysTblID) == nil {
+	if FindColumnInfoByID(p.Columns, model.ExtraPhysTblID) == nil {
 		return false
 	}
-	is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
-	is.schema.Append(&expression.Column{
+	p.Columns = append(p.Columns, model.NewExtraPhysTblIDColInfo())
+	p.schema.Append(&expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraPhysTblID,
 	})
 	return true
