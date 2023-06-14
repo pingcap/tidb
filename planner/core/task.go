@@ -977,7 +977,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 // It can be pushed to the index side when all columns used by ByItems are available from the index side and
 //
 //	there's no prefix index column.
-func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
+func (*PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
 	// If we call canPushToIndexPlan and there's no index plan, we should go into the index merge case.
 	// Index merge case is specially handled for now. So we directly return false here.
 	// So we directly return false.
