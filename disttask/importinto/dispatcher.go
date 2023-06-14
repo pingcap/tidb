@@ -520,13 +520,18 @@ func toPostProcessStep(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
 	var localChecksum verify.KVChecksum
+	columnSizeMap := make(map[int64]int64)
 	for _, subtaskMeta := range subtaskMetas {
 		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
 		localChecksum.Add(&checksum)
 
 		taskMeta.Result.ReadRowCnt += subtaskMeta.Result.ReadRowCnt
 		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
+		for key, val := range subtaskMeta.Result.ColSizeMap {
+			columnSizeMap[key] += val
+		}
 	}
+	taskMeta.Result.ColSizeMap = columnSizeMap
 	if err2 := updateMeta(gTask, taskMeta); err2 != nil {
 		return nil, err2
 	}

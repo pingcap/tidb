@@ -121,4 +121,5 @@ type Checksum struct {
 type Result struct {
 	ReadRowCnt   uint64
 	LoadedRowCnt uint64
+	ColSizeMap   map[int64]int64
 }

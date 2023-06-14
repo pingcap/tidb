@@ -170,6 +170,7 @@ func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMeta
 	subtaskMeta.Result = Result{
 		ReadRowCnt:   sharedVars.Progress.ReadRowCnt.Load(),
 		LoadedRowCnt: uint64(dataKVCount),
+		ColSizeMap:   sharedVars.Progress.GetColSize(),
 	}
 	s.sharedVars.Delete(subtaskMeta.ID)
 	return json.Marshal(subtaskMeta)
