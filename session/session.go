@@ -2237,10 +2237,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			s.currentPlan = nil
 		}
 	}
-	if variable.EnableResourceControl.Load() && domain.GetDomain(s).RunawayManager() != nil {
-		_, planDigest := executor.GetPlanDigest(sessVars.StmtCtx)
-		sessVars.StmtCtx.RunawayChecker = domain.GetDomain(s).RunawayManager().DeriveChecker(sessVars.ResourceGroupName, sessVars.StmtCtx.OriginalSQL, planDigest.String())
-	}
 
 	// Execute the physical plan.
 	logStmt(stmt, s)
