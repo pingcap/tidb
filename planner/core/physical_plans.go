@@ -786,7 +786,7 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 // we need use partitionHandle to distinct two handles,
 // the `_tidb_rowid` in differenct partition will same in some scenario.
 func (is *PhysicalIndexScan) AddExtraPhysTblIDColumn() bool {
-	// The first column will return 0 when it happend.
+	// The first column will return 0 when has more than two ExtraPhysTblID columns.
 	if FindColumnInfoByID(is.Columns, model.ExtraPhysTblID) == nil {
 		return false
 	}
@@ -1015,7 +1015,7 @@ func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool
 // we need use partitionHandle to distinct two handles,
 // the `_tidb_rowid` in differenct partition will same in some scenario.
 func (ts *PhysicalTableScan) AddExtraPhysTblIDColumn() bool {
-	// The first column will return 0 when it happend.
+	// The first column will return 0 when has more than two ExtraPhysTblID columns.
 	if FindColumnInfoByID(ts.Columns, model.ExtraPhysTblID) == nil {
 		return false
 	}
