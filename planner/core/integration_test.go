@@ -1848,10 +1848,10 @@ func TestSpacePushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
-		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"TableReader_10", "root", "MppVersion: 1, data:ExchangeSender_9"},
+		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "space(test.t.a)->Column#3"},
-		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 
 	tk.MustQuery("explain select space(a) from t;").CheckAt([]int{0, 2, 4}, rows)
@@ -4480,10 +4480,10 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
-		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"TableReader_10", "root", "MppVersion: 1, data:ExchangeSender_9"},
+		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "cast(test.t.a, time BINARY)->Column#4, cast(test.t.b, time BINARY)->Column#5"},
-		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select cast(a as time), cast(b as time) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
