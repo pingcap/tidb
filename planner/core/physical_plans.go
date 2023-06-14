@@ -781,6 +781,24 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	return
 }
 
+// AddExtraPhysTblIDColumn for partition table.
+// For keepOrder with partition table,
+// we need use partitionHandle to distinct two handles,
+// the `_tidb_rowid` in differenct partition will same in some scenario.
+func (is *PhysicalIndexScan) AddExtraPhysTblIDColumn() bool {
+	// The first column will return 0 when it happend.
+	if FindColumnInfoByID(is.Columns, model.ExtraPhysTblID) == nil {
+		return false
+	}
+	is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
+	is.schema.Append(&expression.Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraPhysTblID,
+	})
+	return true
+}
+
 // PhysicalMemTable reads memory table.
 type PhysicalMemTable struct {
 	physicalSchemaProducer
@@ -998,10 +1016,8 @@ func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool
 // the `_tidb_rowid` in differenct partition will same in some scenario.
 func (ts *PhysicalTableScan) AddExtraPhysTblIDColumn() bool {
 	// The first column will return 0 when it happend.
-	for _, col := range ts.Columns {
-		if col.ID == model.ExtraPhysTblID {
-			return false
-		}
+	if FindColumnInfoByID(ts.Columns, model.ExtraPhysTblID) == nil {
+		return false
 	}
 	ts.Columns = append(ts.Columns, model.NewExtraPhysTblIDColInfo())
 	ts.schema.Append(&expression.Column{
