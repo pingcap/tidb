@@ -15,11 +15,9 @@
 package store
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/domain"
@@ -73,16 +71,20 @@ func TestStoreErr(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopCancelled", "1*return(true)"))
 
-	err = tk.QueryToErr("select count(*) from t")
-	require.Equal(t, context.Canceled, errors.Cause(err))
+	_, err = tk.Exec("select count(*) from t")
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "[planner:1815]Internal : Can't find a proper physical plan for this query")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "1*return(\"tiflash0\")"))
 
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
+	_, err = tk.Exec("select count(*) from t")
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "[planner:1815]Internal : Can't find a proper physical plan for this query")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
-	err = tk.QueryToErr("select count(*) from t")
+	_, err = tk.Exec("select count(*) from t")
 	require.Error(t, err)
+	require.Equal(t, err.Error(), "[planner:1815]Internal : Can't find a proper physical plan for this query")
 }
 
 func TestStoreSwitchPeer(t *testing.T) {
