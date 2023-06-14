@@ -189,6 +189,22 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	}
 	logger.Info("process normal flow", zap.Any("task_meta", taskMeta))
 
+	var taskFinished bool
+	defer func() {
+		if taskFinished {
+			// todo: we're not running in a transaction with task update
+			if err2 := h.finishJob(ctx, handle, gTask, taskMeta, logger); err2 != nil {
+				err = err2
+			}
+		} else if err != nil && !h.IsRetryableErr(err) {
+			if err2 := h.failJob(ctx, handle, gTask, taskMeta, logger, err.Error()); err2 != nil {
+				// todo: we're not running in a transaction with task update, there might be case
+				// failJob return error, but task update succeed.
+				logger.Error("call failJob failed", zap.Error(err2))
+			}
+		}
+	}()
+
 	switch gTask.Step {
 	case proto.StepInit:
 		if err := preProcess(ctx, handle, gTask, taskMeta, logger); err != nil {
@@ -226,15 +242,13 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		if err != nil {
 			return nil, err
 		}
+		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
+			failpoint.Return(nil, errors.New("injected error after StepImport"))
+		})
 		gTask.Step = StepPostProcess
 		return [][]byte{bs}, nil
 	case StepPostProcess:
-		h.switchTiKV2NormalMode(ctx, logutil.BgLogger())
-		defer h.unregisterTask(ctx, gTask)
-		if err = finishJob(ctx, handle, taskMeta, &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}); err != nil {
-			return nil, err
-		}
-		gTask.State = proto.TaskStateSucceed
+		taskFinished = true
 		return nil, nil
 	default:
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
@@ -253,11 +267,9 @@ func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskH
 	for _, errStr := range receiveErr {
 		errStrs = append(errStrs, string(errStr))
 	}
-	if err = failJob(ctx, handle, taskMeta, strings.Join(errStrs, "; ")); err != nil {
+	if err = h.failJob(ctx, handle, gTask, taskMeta, logger, strings.Join(errStrs, "; ")); err != nil {
 		return nil, err
 	}
-	h.switchTiKV2NormalMode(ctx, logger)
-	h.unregisterTask(ctx, gTask)
 
 	gTask.Error = receiveErr[0]
 
@@ -555,14 +567,21 @@ func job2Step(ctx context.Context, taskMeta *TaskMeta, step string) error {
 	})
 }
 
-func finishJob(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, summary *importer.JobSummary) error {
+func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task,
+	taskMeta *TaskMeta, logger *zap.Logger) error {
+	h.switchTiKV2NormalMode(ctx, logger)
+	h.unregisterTask(ctx, gTask)
+	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	return handle.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		return importer.FinishJob(ctx, exec, taskMeta.JobID, summary)
 	})
 }
 
-func failJob(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, errorMsg string) error {
+func (h *flowHandle) failJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task,
+	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
+	h.switchTiKV2NormalMode(ctx, logger)
+	h.unregisterTask(ctx, gTask)
 	return handle.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
