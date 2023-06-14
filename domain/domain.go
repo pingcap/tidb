@@ -1000,7 +1000,9 @@ func (do *Domain) Close() {
 		do.cancel()
 	}
 	do.wg.Wait()
-	do.sysSessionPool.Close()
+	if intest.InTest {
+		do.sysSessionPool.Close()
+	}
 	variable.UnregisterStatistics(do.bindHandle.Load())
 	if do.onClose != nil {
 		do.onClose()
@@ -1380,6 +1382,13 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		logutil.BgLogger().Info("tidb server adaptive closest replica read is changed", zap.Bool("enable", enabled))
 	}
 	return nil
+}
+
+// InitTaskManager initialize taskManager, only used in test.
+func (do *Domain) InitTaskManager() {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
+	storage.SetTaskManager(taskManager)
 }
 
 // InitDistTaskLoop initializes the distributed task framework.

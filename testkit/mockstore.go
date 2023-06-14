@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/session"
@@ -128,9 +127,15 @@ func (d *DistExecutionTestContext) DeleteServer(idx int) {
 		d.SetOwner(0)
 		d.mu.Lock()
 	}
+
+	d.domains[idx].Close()
 	d.domains = append(d.domains[:idx], d.domains[idx+1:]...)
-	err := infosync.MockGlobalServerInfoManagerEntry.Delete(idx)
-	require.NoError(d.t, err)
+	for _, dom := range d.domains {
+		if dom.DDL().OwnerManager().IsOwner() {
+			dom.InitTaskManager()
+			break
+		}
+	}
 }
 
 // Close cleanup running goroutines, release resources used.

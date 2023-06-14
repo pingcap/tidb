@@ -15,8 +15,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//ddl/schematracker",
+        "//disttask/framework/storage",
         "//domain",
-        "//domain/infosync",
         "//expression",
         "//kv",
         "//parser/ast",
