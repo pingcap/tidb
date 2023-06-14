@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
@@ -3431,6 +3432,9 @@ func RedactURL(str string) string {
 		return str
 	}
 	scheme := u.Scheme
+	failpoint.Inject("forceRedactURL", func() {
+		scheme = "s3"
+	})
 	if strings.ToLower(scheme) == "s3" {
 		values := u.Query()
 		for k := range values {

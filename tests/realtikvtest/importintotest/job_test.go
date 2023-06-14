@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,7 +96,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	// test show job by id using test_show_job1
 	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/setLastImportJobID", `return(true)`)
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/forceRedactURL", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/parser/ast/forceRedactURL", "return(true)")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job1", Hostname: "localhost"}, nil, nil, nil))
 	result1 := s.tk.MustQuery(fmt.Sprintf(`import into t1 FROM 'gs://test-show-job/t.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`,
 		gcsEndpoint)).Rows()
@@ -193,7 +194,7 @@ func (s *mockGCSSuite) TestShowJob() {
 			TableID:     tableID3,
 			CreatedBy:   "test_show_job2@localhost",
 			Parameters: importer.ImportParameters{
-				FileLocation: fmt.Sprintf(`gs://test-show-job/t*.csv?endpoint=%s`, gcsEndpoint),
+				FileLocation: fmt.Sprintf(`gs://test-show-job/t*.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=%s`, gcsEndpoint),
 				Format:       importer.DataFormatCSV,
 			},
 			SourceFileSize: 6,
@@ -208,6 +209,22 @@ func (s *mockGCSSuite) TestShowJob() {
 		rows = tk2.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 		s.Len(rows, 1)
 		s.compareJobInfoWithoutTime(jobInfo, rows[0])
+		// show processlist, should be redacted too
+		procRows := tk2.MustQuery("show full processlist").Rows()
+
+		var got bool
+		for _, r := range procRows {
+			user := r[1].(string)
+			sql := r[7].(string)
+			if user == "test_show_job2" && strings.Contains(sql, "IMPORT INTO") {
+				s.Contains(sql, "access-key=xxxxxx")
+				s.Contains(sql, "secret-access-key=xxxxxx")
+				s.NotContains(sql, "aaaaaa")
+				s.NotContains(sql, "bbbbbb")
+				got = true
+			}
+		}
+		s.True(got)
 
 		// resume the scheduler
 		scheduler.TestSyncChan <- struct{}{}
@@ -220,7 +237,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		// resume the scheduler
 		scheduler.TestSyncChan <- struct{}{}
 	}()
-	s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-job/t*.csv?endpoint=%s'`, gcsEndpoint))
+	s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-job/t*.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`, gcsEndpoint))
 	wg.Wait()
 	s.tk.MustQuery("select * from t3").Sort().Check(testkit.Rows("1", "2", "3", "4"))
 }
