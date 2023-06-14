@@ -1660,23 +1660,9 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 					})
 				}
 				// global index for tableScan with keepOrder also need PhysicalTblID
-				find := false
 				ts := cop.tablePlan.(*PhysicalTableScan)
-				for _, col := range ts.Columns {
-					if col.ID == model.ExtraPhysTblID {
-						find = true
-						break
-					}
-				}
-				if !find {
-					ts.Columns = append(ts.Columns, model.NewExtraPhysTblIDColInfo())
-					ts.schema.Append(&expression.Column{
-						RetType:  types.NewFieldType(mysql.TypeLonglong),
-						UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-						ID:       model.ExtraPhysTblID,
-					})
-					cop.needExtraProj = true
-				}
+				succ := ts.AddExtraPhysTblIDColumn()
+				cop.needExtraProj = cop.needExtraProj || succ
 			}
 		}
 	}

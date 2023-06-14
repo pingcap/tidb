@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -989,6 +990,26 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 // SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
 func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool) {
 	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
+}
+
+// AddExtraPhysTblIDColumn for partition table.
+// For keepOrder with partition table,
+// we need use partitionHandle to distinct two handles,
+// the `_tidb_rowid` in differenct partition will same in some scenario.
+func (ts *PhysicalTableScan) AddExtraPhysTblIDColumn() bool {
+	// The first column will return 0 when it happend.
+	for _, col := range ts.Columns {
+		if col.ID == model.ExtraPhysTblID {
+			return false
+		}
+	}
+	ts.Columns = append(ts.Columns, model.NewExtraPhysTblIDColInfo())
+	ts.schema.Append(&expression.Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		UniqueID: ts.ctx.GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraPhysTblID,
+	})
+	return true
 }
 
 const emptyPhysicalTableScanSize = int64(unsafe.Sizeof(PhysicalTableScan{}))
