@@ -87,7 +87,6 @@ const (
 	threadOption                = "thread"
 	maxWriteSpeedOption         = "max_write_speed"
 	checksumTableOption         = "checksum_table"
-	analyzeTableOption          = "analyze_table"
 	recordErrorsOption          = "record_errors"
 	detachedOption              = "detached"
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
@@ -108,7 +107,6 @@ var (
 		threadOption:                true,
 		maxWriteSpeedOption:         true,
 		checksumTableOption:         true,
-		analyzeTableOption:          true,
 		recordErrorsOption:          true,
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
@@ -178,7 +176,6 @@ type Plan struct {
 
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
-	Analyze               config.PostOpLevel
 	ThreadCnt             int64
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
@@ -468,7 +465,6 @@ func (p *Plan) initDefaultOptions() {
 	}
 
 	p.Checksum = config.OpLevelRequired
-	p.Analyze = config.OpLevelOptional
 	p.ThreadCnt = int64(threadCnt)
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
@@ -615,15 +611,6 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		if err = p.Checksum.FromStringValue(v); err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-	}
-	if opt, ok := specifiedOptions[analyzeTableOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = p.Analyze.FromStringValue(v); err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -1124,6 +1111,7 @@ type JobImportResult struct {
 	LastInsertID uint64
 	Affected     uint64
 	Warnings     []stmtctx.SQLWarn
+	ColSizeMap   map[int64]int64
 }
 
 // JobImporter is the interface for importing a job.
