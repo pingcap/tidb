@@ -986,6 +986,7 @@ func TestTiFlashFallback(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_ban_tiflash_cop=OFF")
 	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	tk.MustExec("drop table if exists t")

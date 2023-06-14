@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -2192,14 +2193,13 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
 	isTiFlashPath := ts.StoreType == kv.TiFlash
 	canMppConvertToRoot := prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed() && isTiFlashPath
-	if prop.TaskTp == property.MppTaskType || canMppConvertToRoot {
+	canMppConvertToRootForDisaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
+	canMppConvertToRootForWhenTiFlashCopIsBanned := ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
+	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
 		if ts.KeepOrder {
 			return invalidTask, nil
 		}
 		if prop.MPPPartitionTp != property.AnyType {
-			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
-			// But in disaggregated tiflash mode, we enable using mpp for static pruning partition table, because cop and batchCop is deprecated.
-			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
 			return invalidTask, nil
 		}
 		mppTask := &mppTask{
@@ -2221,7 +2221,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
 				task = invalidTask
 			} else if prop.TaskTp == property.RootTaskType {
-				// When got here, canMppConvertToRoot is true.
+				// When got here, canMppConvertToRootX is true.
 				// This is for situations like cannot generate mppTask for some operators.
 				// Such as when the build side of HashJoin is Projection,
 				// which cannot pushdown to tiflash(because TiFlash doesn't support some expr in Proj)
@@ -2232,7 +2232,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		}
 		return task, nil
 	}
-	if isTiFlashPath {
+	if isTiFlashPath && config.GetGlobalConfig().DisaggregatedTiFlash || isTiFlashPath && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() {
 		// prop.TaskTp is cop related, just return invalidTask.
 		return invalidTask, nil
 	}

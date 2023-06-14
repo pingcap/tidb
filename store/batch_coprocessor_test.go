@@ -15,9 +15,11 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/domain"
@@ -61,6 +63,7 @@ func TestStoreErr(t *testing.T) {
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
+	tk.MustExec("set @@session.tidb_ban_tiflash_cop=OFF")
 
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
@@ -71,20 +74,16 @@ func TestStoreErr(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopCancelled", "1*return(true)"))
 
-	_, err = tk.Exec("select count(*) from t")
-	require.Error(t, err)
-	require.Equal(t, err.Error(), "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	err = tk.QueryToErr("select count(*) from t")
+	require.Equal(t, context.Canceled, errors.Cause(err))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "1*return(\"tiflash0\")"))
 
-	_, err = tk.Exec("select count(*) from t")
-	require.Error(t, err)
-	require.Equal(t, err.Error(), "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
-	_, err = tk.Exec("select count(*) from t")
+	err = tk.QueryToErr("select count(*) from t")
 	require.Error(t, err)
-	require.Equal(t, err.Error(), "[planner:1815]Internal : Can't find a proper physical plan for this query")
 }
 
 func TestStoreSwitchPeer(t *testing.T) {
@@ -100,6 +99,7 @@ func TestStoreSwitchPeer(t *testing.T) {
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
+	tk.MustExec("set @@session.tidb_ban_tiflash_cop=OFF")
 
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
