@@ -83,12 +83,7 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 	marked := r.marked.Load()
 	if !marked {
 		until := time.Until(r.deadline)
-		// execution time exceeds the threshold, mark the query as runaway
-		if until <= 0 {
-			if r.marked.CompareAndSwap(false, true) {
-				r.manager.MarkRunaway(r.originalSQL, r.planDigest)
-			}
-		} else {
+		if until > 0 {
 			if r.action == rmpb.RunawayAction_Kill {
 				// if the execution time is close to the threshold, set a timeout
 				if until < tikv.ReadTimeoutMedium {
@@ -96,6 +91,10 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 				}
 			}
 			return nil
+		}
+		// execution time exceeds the threshold, mark the query as runaway
+		if r.marked.CompareAndSwap(false, true) {
+			r.manager.MarkRunaway(r.originalSQL, r.planDigest)
 		}
 	}
 	switch r.action {
