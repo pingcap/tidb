@@ -622,7 +622,8 @@ const (
 		summary text DEFAULT NULL,
 		error_message TEXT DEFAULT NULL,
 		PRIMARY KEY (id),
-		KEY (created_by));`
+		KEY (created_by),
+		KEY (status));`
 )
 
 // bootstrap initiates system DB for a store.
