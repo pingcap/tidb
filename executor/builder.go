@@ -3412,7 +3412,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 
 func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Executor {
 	if _, isTiDBZoneLabelSet := config.GetGlobalConfig().Labels[placement.DCLabelKey]; b.ctx.GetSessionVars().TiflashReplicaRead != tiflash.AllReplicas && !isTiDBZoneLabelSet {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The variable tiflash_replica_read is ignored"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The variable tiflash_replica_read is ignored, because the entry TiDB[%s] does not set the zone attribute and tiflash_replica_read is '%s'.", config.GetGlobalConfig().AdvertiseAddress, tiflash.GetTiflashReplicaRead(b.ctx.GetSessionVars().TiflashReplicaRead)))
 	}
 	startTs, err := b.getSnapshotTS()
 	if err != nil {
