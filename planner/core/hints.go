@@ -40,11 +40,8 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 		return nil
 	}
 	for _, op := range selectPlan {
-		if !op.IsRoot {
-			continue
-		}
 		p := op.Origin.(PhysicalPlan)
-		hints = genHintsFromSingle(p, nodeTp, hints)
+		hints = genHintsFromSingle(p, nodeTp, op.StoreType, hints)
 	}
 	for _, cte := range flat.CTEs {
 		for i, op := range cte {
@@ -52,30 +49,16 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 				continue
 			}
 			p := op.Origin.(PhysicalPlan)
-			hints = genHintsFromSingle(p, nodeTp, hints)
+			hints = genHintsFromSingle(p, nodeTp, op.StoreType, hints)
 		}
 	}
-	return hints
+	return removeDuplicatedHints(hints)
 }
 
 // GenHintsFromPhysicalPlan generates hints from physical plan.
-// Deprecated: FlattenPhysicalPlan() + GenHintsFromFlatPlan() is preferred.
 func GenHintsFromPhysicalPlan(p Plan) []*ast.TableOptimizerHint {
-	var hints []*ast.TableOptimizerHint
-	switch pp := p.(type) {
-	case *Explain:
-		return GenHintsFromPhysicalPlan(pp.TargetPlan)
-	case *Update:
-		hints = genHintsFromPhysicalPlan(pp.SelectPlan, utilhint.TypeUpdate)
-	case *Delete:
-		hints = genHintsFromPhysicalPlan(pp.SelectPlan, utilhint.TypeDelete)
-	// For Insert, we only generate hints that would be used in select query block.
-	case *Insert:
-		hints = genHintsFromPhysicalPlan(pp.SelectPlan, utilhint.TypeSelect)
-	case PhysicalPlan:
-		hints = genHintsFromPhysicalPlan(pp, utilhint.TypeSelect)
-	}
-	return hints
+	flat := FlattenPhysicalPlan(p, false)
+	return GenHintsFromFlatPlan(flat)
 }
 
 func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
@@ -152,27 +135,19 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 	return res
 }
 
-func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res []*ast.TableOptimizerHint) {
-	if p == nil {
-		return res
-	}
-	for _, child := range p.Children() {
-		res = append(res, genHintsFromPhysicalPlan(child, nodeType)...)
-	}
-	if phCte, ok := p.(*PhysicalCTE); ok {
-		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.seedPartPhysicalPlan, nodeType)...)
-		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.recursivePartPhysicalPlan, nodeType)...)
-	}
-
-	return genHintsFromSingle(p, nodeType, res)
-}
-
-func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
+func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
 	qbName, err := utilhint.GenerateQBName(nodeType, p.SelectBlockOffset())
 	if err != nil {
 		return res
 	}
 	switch pp := p.(type) {
+	case *PhysicalLimit, *PhysicalTopN:
+		if storeType == kv.TiKV {
+			res = append(res, &ast.TableOptimizerHint{
+				QBName:   qbName,
+				HintName: model.NewCIStr(HintLimitToCop),
+			})
+		}
 	case *PhysicalTableReader:
 		tbl, ok := pp.TablePlans[0].(*PhysicalTableScan)
 		if !ok {
@@ -191,6 +166,18 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.T
 				HintName: model.NewCIStr(HintUseIndex),
 				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
 			})
+			if tbl.Table.PKIsHandle || tbl.Table.IsCommonHandle { // it's a primary key
+				orderHint := HintOrderIndex
+				if !tbl.KeepOrder {
+					orderHint = HintNoOrderIndex
+				}
+				res = append(res, &ast.TableOptimizerHint{
+					QBName:   qbName,
+					HintName: model.NewCIStr(orderHint),
+					Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
+					Indexes:  []model.CIStr{model.NewCIStr("primary")},
+				})
+			}
 		}
 	case *PhysicalIndexLookUpReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
@@ -200,11 +187,31 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.T
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
+		orderHint := HintOrderIndex
+		if !index.KeepOrder {
+			orderHint = HintNoOrderIndex
+		}
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   qbName,
+			HintName: model.NewCIStr(orderHint),
+			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
+			Indexes:  []model.CIStr{index.Index.Name},
+		})
 	case *PhysicalIndexReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: model.NewCIStr(HintUseIndex),
+			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
+			Indexes:  []model.CIStr{index.Index.Name},
+		})
+		orderHint := HintOrderIndex
+		if !index.KeepOrder {
+			orderHint = HintNoOrderIndex
+		}
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   qbName,
+			HintName: model.NewCIStr(orderHint),
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
@@ -233,11 +240,23 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.T
 			QBName:   qbName,
 			HintName: model.NewCIStr(HintHashAgg),
 		})
+		if storeType == kv.TiKV {
+			res = append(res, &ast.TableOptimizerHint{
+				QBName:   qbName,
+				HintName: model.NewCIStr(HintAggToCop),
+			})
+		}
 	case *PhysicalStreamAgg:
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: model.NewCIStr(HintStreamAgg),
 		})
+		if storeType == kv.TiKV {
+			res = append(res, &ast.TableOptimizerHint{
+				QBName:   qbName,
+				HintName: model.NewCIStr(HintAggToCop),
+			})
+		}
 	case *PhysicalMergeJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintSMJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalHashJoin:
@@ -249,6 +268,23 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.T
 		res = append(res, getJoinHints(p.SCtx(), HintINLMJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	case *PhysicalIndexHashJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintINLHJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+	}
+	return res
+}
+
+func removeDuplicatedHints(hints []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
+	if len(hints) < 2 {
+		return hints
+	}
+	m := make(map[string]struct{}, len(hints))
+	res := make([]*ast.TableOptimizerHint, 0, len(hints))
+	for _, hint := range hints {
+		key := utilhint.RestoreTableOptimizerHint(hint)
+		if _, ok := m[key]; ok {
+			continue
+		}
+		m[key] = struct{}{}
+		res = append(res, hint)
 	}
 	return res
 }

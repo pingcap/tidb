@@ -231,6 +231,11 @@ func (c *Constant) getLazyDatum(row chunk.Row) (dt types.Datum, isLazy bool, err
 	return types.Datum{}, false, nil
 }
 
+// Traverse implements the TraverseDown interface.
+func (c *Constant) Traverse(action TraverseAction) Expression {
+	return action.Transform(c)
+}
+
 // Eval implements Expression interface.
 func (c *Constant) Eval(row chunk.Row) (types.Datum, error) {
 	if dt, lazy, err := c.getLazyDatum(row); lazy {
