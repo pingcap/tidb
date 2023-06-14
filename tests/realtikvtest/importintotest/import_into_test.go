@@ -883,7 +883,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	s.tk.MustExec("truncate table load_data.import_mode;")
 
 	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s' WITH disable_tikv_import_mode`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 
 	// wait ToImportMode called
