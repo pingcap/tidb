@@ -312,8 +312,6 @@ github.com/ghemawat/stream v0.0.0-20171120220530-696b145b53b9/go.mod h1:106OIgoo
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
 github.com/gin-contrib/sse v0.0.0-20190301062529-5545eab6dad3/go.mod h1:VJ0WA2NBN22VlZ2dKZQPAPnyWw5XTlK1KymzLKsr59s=
 github.com/gin-gonic/gin v1.4.0/go.mod h1:OW2EZn3DO8Ln9oIKOvM++LBO+5UPHJJDH72/q/3rZdM=
-github.com/glorv/client-go/v2 v2.0.1-0.20230613105714-1804733d1124 h1:XRn2GugWkC9lDvgxz0PaiCN1N1UoxyCzufuQJBVpwE0=
-github.com/glorv/client-go/v2 v2.0.1-0.20230613105714-1804733d1124/go.mod h1:gg1sJNByEp/GhJwibTdzrTu7j6Ba3e+xZkRf82wi2b8=
 github.com/go-asn1-ber/asn1-ber v1.5.4 h1:vXT6d/FNDiELJnLb6hGNa309LMsrCoYFvpwHDF0+Y1A=
 github.com/go-asn1-ber/asn1-ber v1.5.4/go.mod h1:hEBeB/ic+5LoWskz+yKT7vGhhPYkProFKoKdwZRWMe0=
 github.com/go-check/check v0.0.0-20180628173108-788fd7840127/go.mod h1:9ES+weclKsC9YodN5RgxqK/VD9HM9JsCSh7rNhMZE98=
@@ -974,6 +972,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
+github.com/tikv/client-go/v2 v2.0.8-0.20230614032106-0b4b0ca00e74 h1:BDQQDtqhUo3epgVc8HOPYLg9w8zehRaegEX+1bHMyVg=
+github.com/tikv/client-go/v2 v2.0.8-0.20230614032106-0b4b0ca00e74/go.mod h1:4KkKqjJgKlvvWMyNqdnAlYFfV4QjEj1fEb5Hb/FoT88=
 github.com/tikv/pd/client v0.0.0-20230608061541-026ddf08a351 h1:GZdnq41Gs/Zxz0Ne/cZ/rKual+GD8F3h434OwhZogfA=
 github.com/tikv/pd/client v0.0.0-20230608061541-026ddf08a351/go.mod h1:YmNkj9UT8IjwFov9k3oquH0UgIUHniUaQT3jXKgZYbM=
 github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966 h1:quvGphlmUVU+nhpFa4gg4yJyTRJ13reZMDHrKwYw53M=
