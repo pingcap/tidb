@@ -147,6 +147,12 @@ race: failpoint-enable
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
 
+SCHED_BUILD_FLAG =
+ifeq ($(shell ./tools/patch-go/patch-go-check.sh), true)
+	SCHED_BUILD_FLAG = --define gotags=sched
+	GOBUILD += -tags sched
+endif
+
 server:
 ifeq ($(TARGET), "")
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server ./tidb-server
@@ -461,10 +467,10 @@ bazel_coverage_test: check-bazel-prepare failpoint-enable bazel_ci_prepare
 bazel_build: bazel_ci_prepare
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		--define gotags=sched \
+		$(SCHED_BUILD_FLAG) \
 		//... --//build:with_nogo_flag=true
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		--define gotags=sched \
+		$(SCHED_BUILD_FLAG) \
 		//cmd/importer:importer //tidb-server:tidb-server //tidb-server:tidb-server-check --//build:with_nogo_flag=true
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
@@ -527,3 +533,4 @@ docker:
 
 docker-test:
 	docker buildx build --platform linux/amd64,linux/arm64 --push -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile .
+
