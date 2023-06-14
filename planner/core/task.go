@@ -1216,13 +1216,22 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		}
 		// global index for tableScan with keepOrder also need PhysicalTblID
 		if clonedTblScan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			clonedTblScan.Columns = append(clonedTblScan.Columns, model.NewExtraPhysTblIDColInfo())
-			clonedTblScan.Schema().Append(&expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-				ID:       model.ExtraPhysTblID,
-			})
-			copTsk.needExtraProj = true
+			find := false
+			for _, col := range clonedTblScan.Columns {
+				if col.ID == model.ExtraPhysTblID {
+					find = true
+					break
+				}
+			}
+			if !find {
+				clonedTblScan.Columns = append(clonedTblScan.Columns, model.NewExtraPhysTblIDColInfo())
+				clonedTblScan.Schema().Append(&expression.Column{
+					RetType:  types.NewFieldType(mysql.TypeLonglong),
+					UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+					ID:       model.ExtraPhysTblID,
+				})
+				copTsk.needExtraProj = true
+			}
 		}
 		clonedTblScan.HandleCols, err = clonedTblScan.HandleCols.ResolveIndices(clonedTblScan.Schema())
 		if err != nil {
