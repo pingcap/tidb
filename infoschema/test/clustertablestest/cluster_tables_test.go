@@ -964,11 +964,10 @@ func TestQuickBinding(t *testing.T) {
 		for {
 			b := strings.Index(sql, "/*+")
 			e := strings.Index(sql, "*/")
-			if b != -1 && e != -1 {
-				sql = sql[:b] + sql[e+2:]
-			} else {
+			if b == -1 || e == -1 {
 				return sql
 			}
+			sql = sql[:b] + sql[e+2:]
 		}
 	}
 	randValue := func() string {
