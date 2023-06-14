@@ -513,8 +513,9 @@ bazel_addindextest: failpoint-enable bazel_ci_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/addindextest/...
 
+# in importintotest, we set timeout = "long" which is 900s, might still timeout in CI env, so set to 1200s here.
 bazel_importintotest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_timeout=1200 --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/importintotest/...
 
 bazel_lint: bazel_prepare
