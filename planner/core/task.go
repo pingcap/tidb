@@ -1146,23 +1146,13 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			if plan, ok := finalScan.(*PhysicalTableScan); ok {
 				plan.ByItems = p.ByItems
 				if plan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
-					plan.schema.Append(&expression.Column{
-						RetType:  types.NewFieldType(mysql.TypeLonglong),
-						UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-						ID:       model.ExtraPhysTblID,
-					})
+					plan.AddExtraPhysTblIDColumn()
 				}
 			}
 			if plan, ok := finalScan.(*PhysicalIndexScan); ok {
 				plan.ByItems = p.ByItems
 				if plan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() && !plan.Index.Global {
-					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
-					plan.schema.Append(&expression.Column{
-						RetType:  types.NewFieldType(mysql.TypeLonglong),
-						UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-						ID:       model.ExtraPhysTblID,
-					})
+					plan.AddExtraPhysTblIDColumn()
 				}
 			}
 			partialScans = append(partialScans, finalScan)

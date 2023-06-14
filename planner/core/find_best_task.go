@@ -1652,12 +1652,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 			cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
 			if cop.tablePlan != nil && ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				if !is.Index.Global {
-					is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
-					is.schema.Append(&expression.Column{
-						RetType:  types.NewFieldType(mysql.TypeLonglong),
-						UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-						ID:       model.ExtraPhysTblID,
-					})
+					is.AddExtraPhysTblIDColumn()
 				}
 				// global index for tableScan with keepOrder also need PhysicalTblID
 				ts := cop.tablePlan.(*PhysicalTableScan)
