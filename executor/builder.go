@@ -3411,9 +3411,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 }
 
 func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Executor {
-	if _, isTiDBZoneLabelSet := config.GetGlobalConfig().Labels[placement.DCLabelKey]; b.ctx.GetSessionVars().TiflashReplicaRead != tiflash.AllReplicas && !isTiDBZoneLabelSet {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The variable tiflash_replica_read is ignored, because the entry TiDB[%s] does not set the zone attribute and tiflash_replica_read is '%s'.", config.GetGlobalConfig().AdvertiseAddress, tiflash.GetTiflashReplicaRead(b.ctx.GetSessionVars().TiflashReplicaRead)))
-	}
 	startTs, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -3468,7 +3465,15 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 			failpoint.Return(nil)
 		}
 	})
-	if useMPPExecution(b.ctx, v) {
+	useMPP := useMPPExecution(b.ctx, v)
+	useTiFlashBatchCop := v.ReadReqType == plannercore.BatchCop
+	useTiFlash := useMPP || useTiFlashBatchCop
+	if useTiFlash {
+		if _, isTiDBZoneLabelSet := config.GetGlobalConfig().Labels[placement.DCLabelKey]; b.ctx.GetSessionVars().TiflashReplicaRead != tiflash.AllReplicas && !isTiDBZoneLabelSet {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The variable tiflash_replica_read is ignored, because the entry TiDB[%s] does not set the zone attribute and tiflash_replica_read is '%s'.", config.GetGlobalConfig().AdvertiseAddress, tiflash.GetTiflashReplicaRead(b.ctx.GetSessionVars().TiflashReplicaRead)))
+		}
+	}
+	if useMPP {
 		return b.buildMPPGather(v)
 	}
 	ts, err := v.GetTableScan()
