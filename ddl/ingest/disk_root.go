@@ -17,6 +17,7 @@ package ingest
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	lcom "github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -44,6 +45,7 @@ type diskRootImpl struct {
 	bcUsed   uint64
 	bcCtx    *litBackendCtxMgr
 	mu       sync.RWMutex
+	updating atomic.Bool
 }
 
 // NewDiskRootImpl creates a new DiskRoot.
@@ -56,6 +58,9 @@ func NewDiskRootImpl(path string, bcCtx *litBackendCtxMgr) DiskRoot {
 
 // UpdateUsage implements DiskRoot interface.
 func (d *diskRootImpl) UpdateUsage() {
+	if !d.updating.CompareAndSwap(false, true) {
+		return
+	}
 	bcUsed := d.bcCtx.TotalDiskUsage()
 	var capacity, used uint64
 	sz, err := lcom.GetStorageSize(d.path)
@@ -64,6 +69,7 @@ func (d *diskRootImpl) UpdateUsage() {
 	} else {
 		capacity, used = sz.Capacity, sz.Capacity-sz.Available
 	}
+	d.updating.Store(false)
 	d.mu.Lock()
 	d.bcUsed = bcUsed
 	d.capacity = capacity
