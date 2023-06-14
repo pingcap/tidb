@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -52,8 +53,8 @@ func newResourceGroupManager() *resourceGroupManager {
 	mgr := &resourceGroupManager{
 		groups: make(map[string]*rmpb.ResourceGroup),
 	}
-	mgr.groups["default"] = &rmpb.ResourceGroup{
-		Name: "default",
+	mgr.groups[resourcegroup.DefaultResourceGroupName] = &rmpb.ResourceGroup{
+		Name: resourcegroup.DefaultResourceGroupName,
 		Mode: rmpb.GroupMode_RUMode,
 		RUSettings: &rmpb.GroupRequestUnitSettings{
 			RU: &rmpb.TokenBucket{

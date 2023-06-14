@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
+	rg "github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -89,8 +90,6 @@ const (
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
 	tiflashCheckPendingTablesRetry = 7
-	// DefaultResourceGroupName is the default resource group name.
-	DefaultResourceGroupName = "default"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
@@ -3151,8 +3150,8 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 	return nil
 }
 
-// SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
-func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupOption) error {
+// SetDirectResourceGroupSettings tries to set the ResourceGroupSettings.
+func SetDirectResourceGroupSettings(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupOption) error {
 	switch opt.Tp {
 	case ast.ResourceRURate:
 		resourceGroupSettings.RURate = opt.UintValue
@@ -3175,6 +3174,9 @@ func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettin
 		}
 		resourceGroupSettings.BurstLimit = limit
 	case ast.ResourceGroupRunaway:
+		if len(opt.ResourceGroupRunawayOptionList) == 0 {
+			resourceGroupSettings.Runaway = nil
+		}
 		for _, opt := range opt.ResourceGroupRunawayOptionList {
 			err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue)
 			if err != nil {
@@ -8196,7 +8198,7 @@ func (*ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) err
 // DropResourceGroup implements the DDL interface.
 func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
-	if groupName.L == DefaultResourceGroupName {
+	if groupName.L == rg.DefaultResourceGroupName {
 		return resourcegroup.ErrDroppingInternalResourceGroup
 	}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
@@ -8236,8 +8238,11 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 
 func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
 	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
+	if oldGroup.ResourceGroupSettings != nil {
+		*groupInfo.ResourceGroupSettings = *oldGroup.ResourceGroupSettings
+	}
 	for _, opt := range options {
-		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt)
+		err := SetDirectResourceGroupSettings(groupInfo.ResourceGroupSettings, opt)
 		if err != nil {
 			return nil, err
 		}
