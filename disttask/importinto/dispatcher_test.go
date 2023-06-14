@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package loaddata
+package importinto
 
 import (
 	"context"
@@ -27,22 +27,22 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type loadDataSuite struct {
+type importIntoSuite struct {
 	suite.Suite
 }
 
-func TestLoadData(t *testing.T) {
-	suite.Run(t, &loadDataSuite{})
+func TestImportInto(t *testing.T) {
+	suite.Run(t, &importIntoSuite{})
 }
 
-func (s *loadDataSuite) enableFailPoint(path, term string) {
+func (s *importIntoSuite) enableFailPoint(path, term string) {
 	require.NoError(s.T(), failpoint.Enable(path, term))
 	s.T().Cleanup(func() {
 		_ = failpoint.Disable(path)
 	})
 }
 
-func (s *loadDataSuite) TestFlowHandleGetEligibleInstances() {
+func (s *importIntoSuite) TestFlowHandleGetEligibleInstances() {
 	makeFailpointRes := func(v interface{}) string {
 		bytes, err := json.Marshal(v)
 		s.NoError(err)

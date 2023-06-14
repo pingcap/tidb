@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package loaddata
+package importinto
 
 import (
 	"sync"
@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/tidb/executor/importer"
 )
 
-// TaskStep of LoadData.
+// TaskStep of IMPORT INTO.
 const (
 	// Import we sort source data and ingest it into TiKV in this step.
 	Import int64 = 1
 )
 
-// TaskMeta is the task of LoadData.
+// TaskMeta is the task of IMPORT INTO.
 // All the field should be serializable.
 type TaskMeta struct {
 	// IMPORT INTO job id.
@@ -40,8 +40,8 @@ type TaskMeta struct {
 	Stmt   string
 	Result Result
 	// eligible instances to run this task, we run on all instances if it's empty.
-	// we only need this when run LOAD DATA without distributed option now, i.e.
-	// running on the instance that initiate the LOAD DATA.
+	// we only need this when run IMPORT INTO without distributed option now, i.e.
+	// running on the instance that initiate the IMPORT INTO.
 	EligibleInstances []*infosync.ServerInfo
 	// the file chunks to import, when import from server file, we need to pass those
 	// files to the framework dispatcher which might run on another instance.
@@ -50,7 +50,7 @@ type TaskMeta struct {
 	ChunkMap map[int32][]Chunk
 }
 
-// SubtaskMeta is the subtask of LoadData.
+// SubtaskMeta is the subtask of IMPORT INTO.
 // Dispatcher will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type SubtaskMeta struct {
@@ -75,7 +75,7 @@ type SharedVars struct {
 	Checksum *verification.KVChecksum
 }
 
-// MinimalTaskMeta is the minimal task of LoadData.
+// MinimalTaskMeta is the minimal task of IMPORT INTO.
 // Scheduler will split the subtask into minimal tasks(Chunks -> Chunk)
 type MinimalTaskMeta struct {
 	Plan       importer.Plan

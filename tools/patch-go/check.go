@@ -12,22 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package loaddatatest
+package main
 
-import (
-	"testing"
+import _ "unsafe"
 
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/tests/realtikvtest"
-)
+//go:linkname grunningnanos runtime.grunningnanos
+func grunningnanos() int64
 
-func init() {
-	// need a real PD
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Path = "127.0.0.1:2379"
-	})
-}
-
-func TestMain(m *testing.M) {
-	realtikvtest.RunTestMain(m)
+func main() {
+	grunningnanos()
 }

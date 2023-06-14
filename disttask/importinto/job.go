@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package loaddata
+package importinto
 
 import (
 	"context"
@@ -34,7 +34,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// DistImporter is a JobImporter for distributed load data.
+// DistImporter is a JobImporter for distributed IMPORT INTO.
 type DistImporter struct {
 	*importer.JobImportParam
 	plan   *importer.Plan
@@ -101,7 +101,7 @@ func (*DistImporter) Import() {
 
 // ImportTask import task.
 func (ti *DistImporter) ImportTask(task *proto.Task) {
-	ti.logger.Info("start distribute load data")
+	ti.logger.Info("start distribute IMPORT INTO")
 	ti.Group.Go(func() error {
 		defer close(ti.Done)
 		// task is run using distribute framework, so we only wait for the task to finish.
@@ -118,7 +118,7 @@ func (ti *DistImporter) Result() importer.JobImportResult {
 		return result
 	}
 
-	ti.logger.Info("finish distribute load data", zap.Any("task meta", taskMeta))
+	ti.logger.Info("finish distribute IMPORT INTO", zap.Any("task meta", taskMeta))
 	var (
 		numWarnings uint64
 		numRecords  uint64
