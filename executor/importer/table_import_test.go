@@ -35,7 +35,7 @@ func TestPrepareSortDir(t *testing.T) {
 	}
 	importDir := filepath.Join(dir, "import-4000")
 
-	// dir not exist
+	// dir not exist, create it
 	sortDir, err := prepareSortDir(e, 1, tidbCfg)
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "1"), sortDir)
@@ -46,7 +46,7 @@ func TestPrepareSortDir(t *testing.T) {
 	require.True(t, os.IsNotExist(err))
 	require.Nil(t, info)
 
-	// dir is a file
+	// dir is a file, remove it and create dir
 	require.NoError(t, os.Remove(importDir))
 	_, err = os.Create(importDir)
 	require.NoError(t, err)
@@ -57,11 +57,23 @@ func TestPrepareSortDir(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, info.IsDir())
 
-	// dir already exist
+	// dir already exist, do nothing
 	sortDir, err = prepareSortDir(e, 3, tidbCfg)
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "3"), sortDir)
 	info, err = os.Stat(importDir)
 	require.NoError(t, err)
 	require.True(t, info.IsDir())
+
+	// sortdir already exist, remove it
+	require.NoError(t, os.Mkdir(sortDir, 0755))
+	sortDir, err = prepareSortDir(e, 3, tidbCfg)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(importDir, "3"), sortDir)
+	info, err = os.Stat(importDir)
+	require.NoError(t, err)
+	require.True(t, info.IsDir())
+	info, err = os.Stat(sortDir)
+	require.True(t, os.IsNotExist(err))
+	require.Nil(t, info)
 }

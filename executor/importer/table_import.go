@@ -58,32 +58,44 @@ var (
 	CheckDiskQuotaInterval = time.Minute
 )
 
+// prepareSortDir creates a new directory for import, remove previous sort directory if exists.
 func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (string, error) {
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
 	importDir := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
 	sortDir := filepath.Join(importDir, strconv.FormatInt(taskID, 10))
 
-	if info, err := os.Stat(importDir); err != nil {
+	info, err := os.Stat(importDir)
+	switch {
+	case err != nil && !os.IsNotExist(err):
+		e.logger.Error("stat import dir failed", zap.String("import_dir", importDir), zap.Error(err))
+		return "", errors.Trace(err)
+	case os.IsNotExist(err) || !info.IsDir():
 		if !os.IsNotExist(err) {
-			e.logger.Error("stat import dir failed", zap.String("import_dir", importDir), zap.Error(err))
+			e.logger.Warn("import dir is not a dir, remove it", zap.String("import_dir", importDir))
+			if err := os.RemoveAll(importDir); err != nil {
+				return "", errors.Trace(err)
+			}
+		}
+		e.logger.Info("import dir not exists, create it", zap.String("import_dir", importDir))
+		if err := os.MkdirAll(importDir, 0o700); err != nil {
+			e.logger.Error("failed to make dir", zap.String("import_dir", importDir), zap.Error(err))
 			return "", errors.Trace(err)
 		}
-	} else if !info.IsDir() {
-		e.logger.Warn("import dir is not a dir, remove it", zap.String("import_dir", importDir))
-		err := os.RemoveAll(importDir)
-		if err != nil {
-			e.logger.Error("remove import dir failed", zap.String("import_dir", importDir), zap.Error(err))
-		}
-	} else {
-		return sortDir, nil
+	default: // err==nil && info.IsDir()
 	}
 
-	err := os.MkdirAll(importDir, 0o700)
-	if err != nil {
-		e.logger.Error("failed to make dir", zap.String("import_dir", importDir), zap.Error(err))
+	// todo: remove this after we support checkpoint
+	_, err = os.Stat(sortDir)
+	switch {
+	case err != nil && !os.IsNotExist(err):
+		e.logger.Error("stat sort dir failed", zap.String("sort_dir", sortDir), zap.Error(err))
 		return "", errors.Trace(err)
+	case !os.IsNotExist(err):
+		e.logger.Warn("sort dir already exists, remove it", zap.String("sort_dir", sortDir))
+		if err := os.RemoveAll(sortDir); err != nil {
+			return "", errors.Trace(err)
+		}
 	}
-	e.logger.Info("import dir prepared", zap.String("import_dir", importDir), zap.String("sort_dir", sortDir))
 	return sortDir, nil
 }
 
