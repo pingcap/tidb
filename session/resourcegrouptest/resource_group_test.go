@@ -31,7 +31,7 @@ func TestResourceGroupHintInTxn(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (id int primary key, val int)")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/TxnResouceGroupChecker", `return("")`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/TxnResouceGroupChecker", `return("default")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/TxnResouceGroupChecker"))
 	}()
