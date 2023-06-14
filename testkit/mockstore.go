@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -90,7 +91,7 @@ func (d *DistExecutionTestContext) SetOwner(idx int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if idx >= len(d.domains) || idx < 0 {
-		d.t.Fatal("server idx out of bound")
+		require.NoError(d.t, errors.New("server idx out of bound"))
 		return
 	}
 	for _, dom := range d.domains {
@@ -115,11 +116,11 @@ func (d *DistExecutionTestContext) DeleteServer(idx int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if idx >= len(d.domains) || idx < 0 {
-		d.t.Fatal("server idx out of bound")
+		require.NoError(d.t, errors.New("server idx out of bound"))
 		return
 	}
 	if len(d.domains) == 1 {
-		d.t.Fatal("can't delete server, since server num = 1")
+		require.NoError(d.t, errors.New("can't delete server, since server num = 1"))
 		return
 	}
 	if d.domains[idx].DDL().OwnerManager().IsOwner() {
