@@ -81,7 +81,7 @@ run_sql 'SELECT COUNT(*) FROM mytest.testtbl'
 check_contains "COUNT(*): ${uniq_row_count}"
 
 # Check tidb backend record duplicate entry in conflict_error_v2 table
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v1'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
 run_lightning --backend tidb --config "${mydir}/tidb.toml"
 run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v2'
 check_contains "COUNT(*): 10"
