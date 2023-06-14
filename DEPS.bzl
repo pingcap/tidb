@@ -4222,8 +4222,8 @@ def go_deps():
         name = "com_github_tiancaiamao_sched",
         build_file_proto_mode = "disable",
         importpath = "github.com/tiancaiamao/sched",
-        sum = "h1:xPT7X77YGkco7UsWW5u9Qn0915BES4QSSa0qDr40cHM=",
-        version = "v0.0.0-20230301022149-48af5eccbf20",
+        sum = "h1:EI9Xh3tf7zcdiJG5p/d7qT+PG/qemMO5dxXk4ETOGoU=",
+        version = "v0.0.0-20230614032915-025ce6f3aef2",
     )
 
     go_repository(
