@@ -878,8 +878,8 @@ const (
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
 
-	// TiDBTiflashReplicaRead is used to set the policy of TiFlash replica read when the query needs the TiFlash engine.
-	TiDBTiflashReplicaRead = "tiflash_replica_read"
+	// TiFlashReplicaRead is used to set the policy of TiFlash replica read when the query needs the TiFlash engine.
+	TiFlashReplicaRead = "tiflash_replica_read"
 )
 
 // TiDB vars that have only global scope

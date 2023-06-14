@@ -302,13 +302,9 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 //
 // The second balance strategy: Not only consider the region count between TiFlash stores, but also try to make the regions' range continuous(stored in TiFlash closely).
 // If balanceWithContinuity is true, the second balance strategy is enable.
-func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, isMPP bool, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64, isClosestReplicas bool) []*batchCopTask {
+func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
 	if len(originalTasks) == 0 {
 		log.Info("Batch cop task balancer got an empty task set.")
-		return originalTasks
-	}
-	// for mpp, we still need to detect the store availability
-	if len(originalTasks) <= 1 && !isMPP && !isClosestReplicas {
 		return originalTasks
 	}
 	cache := kvStore.GetRegionCache()
@@ -319,37 +315,21 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 	totalRegionCandidateNum := 0
 	totalRemainingRegionNum := 0
 
-	if !isMPP && !isClosestReplicas {
-		for _, task := range originalTasks {
-			taskStoreID := task.regionInfos[0].AllStores[0]
-			batchTask := &batchCopTask{
-				storeAddr:   task.storeAddr,
-				cmdType:     task.cmdType,
-				ctx:         task.ctx,
-				regionInfos: []RegionInfo{task.regionInfos[0]},
-			}
-			storeTaskMap[taskStoreID] = batchTask
-		}
-	} else {
-		stores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
-		aliveStores := filterAliveStores(ctx, stores, ttl, kvStore)
-		for _, s := range aliveStores {
-			storeTaskMap[s.StoreID()] = &batchCopTask{
-				storeAddr: s.GetAddr(),
-				cmdType:   originalTasks[0].cmdType,
-				ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
-			}
+	stores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
+	aliveStores := filterAliveStores(ctx, stores, ttl, kvStore)
+	for _, s := range aliveStores {
+		storeTaskMap[s.StoreID()] = &batchCopTask{
+			storeAddr: s.GetAddr(),
+			cmdType:   originalTasks[0].cmdType,
+			ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
 		}
 	}
 
 	var candidateRegionInfos []RegionInfo
 	for _, task := range originalTasks {
-		for index, ri := range task.regionInfos {
+		for _, ri := range task.regionInfos {
 			// for each region, figure out the valid store num
 			validStoreNum := 0
-			if index == 0 && !isMPP && !isClosestReplicas {
-				continue
-			}
 			var validStoreID uint64
 			for _, storeID := range ri.AllStores {
 				if _, ok := storeTaskMap[storeID]; ok {
@@ -957,8 +937,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			logutil.BgLogger().Debug(msg)
 		}
 		balanceStart := time.Now()
-		balanceWithClosestReplicasRead := tiflashReplicaReadPolicy.IsPolicyClosestReplicas() && isTiDBLabelZoneSet
-		batchTasks = balanceBatchCopTask(bo.GetCtx(), store, batchTasks, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount, balanceWithClosestReplicasRead)
+		batchTasks = balanceBatchCopTask(bo.GetCtx(), store, batchTasks, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 		balanceElapsed := time.Since(balanceStart)
 		if log.GetLevel() <= zap.DebugLevel {
 			msg := "After region balance:"

@@ -1259,36 +1259,33 @@ func TestTiDBTiflashReplicaRead(t *testing.T) {
 	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
-	// Test tidb_server_memory_limit
-	tidbTiFlashReplicaRead := GetSysVar(TiDBTiflashReplicaRead)
+	tidbTiFlashReplicaRead := GetSysVar(TiFlashReplicaRead)
 	// Check default value
 	require.Equal(t, DefTiflashReplicaRead, tidbTiFlashReplicaRead.Value)
 
-	err := mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, "all_replicas")
+	err := mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, "all_replicas")
 	require.NoError(t, err)
-	val, err := mock.GetGlobalSysVar(TiDBTiflashReplicaRead)
+	val, err := mock.GetGlobalSysVar(TiFlashReplicaRead)
 	require.NoError(t, err)
-	require.Equal(t, DefTiflashReplicaRead, val)
+	require.Equal(t, "all_replicas", val)
 
-	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, "closest_adaptive")
+	err = mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, "closest_adaptive")
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBTiflashReplicaRead)
+	val, err = mock.GetGlobalSysVar(TiFlashReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "closest_adaptive", val)
 
-	// Test MaxValue
-	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, "closest_replicas")
+	err = mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, "closest_replicas")
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBTiflashReplicaRead)
+	val, err = mock.GetGlobalSysVar(TiFlashReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "closest_replicas", val)
 
-	// Test Normal Value
-	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, DefTiflashReplicaRead)
+	err = mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, DefTiflashReplicaRead)
 	require.NoError(t, err)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBTiflashReplicaRead, "random")
+	err = mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, "random")
 	require.Error(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBTiflashReplicaRead)
+	val, err = mock.GetGlobalSysVar(TiFlashReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, DefTiflashReplicaRead, val)
 }
