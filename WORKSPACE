@@ -41,7 +41,6 @@ go_rules_dependencies()
 
 go_host_sdk(
     name = "go_sdk",
-    version = "1.20.5",
 )
 
 go_register_toolchains(
