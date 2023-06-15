@@ -76,7 +76,7 @@ func (t *taskInfo) register(ctx context.Context) {
 	if time.Since(t.lastRegisterTime) < refreshTaskTTLInterval {
 		return
 	}
-	logger := logutil.BgLogger().With(zap.Int64("task_id", t.taskID))
+	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
 	if t.taskRegister == nil {
 		client, err := importer.GetEtcdClient()
 		if err != nil {
@@ -100,7 +100,7 @@ func (t *taskInfo) register(ctx context.Context) {
 }
 
 func (t *taskInfo) close(ctx context.Context) {
-	logger := logutil.BgLogger().With(zap.Int64("task_id", t.taskID))
+	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
 	if t.taskRegister != nil {
 		timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
 		defer cancel()
@@ -152,7 +152,7 @@ func (h *flowHandle) switchTiKVMode(ctx context.Context, task *proto.Task) {
 		return
 	}
 
-	logger := logutil.BgLogger().With(zap.Int64("task_id", task.ID))
+	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
 	switcher, err := importer.GetTiKVModeSwitcher(logger)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
@@ -177,9 +177,8 @@ func (h *flowHandle) unregisterTask(ctx context.Context, task *proto.Task) {
 
 func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (_ [][]byte, err error) {
 	logger := logutil.BgLogger().With(
-		zap.String("component", "dispatcher"),
 		zap.String("type", gTask.Type),
-		zap.Int64("ID", gTask.ID),
+		zap.Int64("task-id", gTask.ID),
 		zap.String("step", stepStr(gTask.Step)),
 	)
 	taskMeta := &TaskMeta{}
@@ -187,7 +186,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("process normal flow", zap.Any("task_meta", taskMeta))
+	logger.Info("process normal flow")
 
 	var taskFinished bool
 	defer func() {
@@ -217,7 +216,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		if err != nil {
 			return nil, err
 		}
-		logger.Info("generate subtasks", zap.Any("subtask_metas", subtaskMetas))
+		logger.Info("move to import step", zap.Any("subtask-count", len(subtaskMetas)))
 		metaBytes := make([][]byte, 0, len(subtaskMetas))
 		for _, subtaskMeta := range subtaskMetas {
 			bs, err := json.Marshal(subtaskMeta)
@@ -237,7 +236,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 			return nil, err
 		}
 		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result),
-			zap.Any("step_meta", stepMeta))
+			zap.Any("step-meta", stepMeta))
 		bs, err := json.Marshal(stepMeta)
 		if err != nil {
 			return nil, err
@@ -256,7 +255,11 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 }
 
 func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
-	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
+	logger := logutil.BgLogger().With(
+		zap.String("type", gTask.Type),
+		zap.Int64("task-id", gTask.ID),
+		zap.String("step", stepStr(gTask.Step)),
+	)
 	logger.Info("process error flow", zap.ByteStrings("error message", receiveErr))
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
@@ -609,7 +612,7 @@ func rollback(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Ta
 		return err
 	}
 
-	logger.Info("rollback", zap.Any("task_meta", taskMeta))
+	logger.Info("rollback")
 
 	// create table indexes even if the rollback is failed.
 	defer func() {

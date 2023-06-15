@@ -57,7 +57,7 @@ func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt s
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
-		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
+		logger:         logutil.BgLogger(),
 		sourceFileSize: sourceFileSize,
 	}, nil
 }
@@ -72,7 +72,7 @@ func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
-		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
+		logger:         logutil.BgLogger(),
 		instance:       serverInfo,
 		sourceFileSize: sourceFileSize,
 	}, nil
@@ -119,7 +119,7 @@ func (ti *DistImporter) Result() importer.JobImportResult {
 		return result
 	}
 
-	ti.logger.Info("finish distribute IMPORT INTO", zap.Any("task meta", taskMeta))
+	ti.logger.Info("finish distribute IMPORT INTO")
 	var (
 		numWarnings uint64
 		numRecords  uint64

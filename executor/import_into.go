@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	fstorage "github.com/pingcap/tidb/disttask/framework/storage"
@@ -118,7 +117,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		Done:     make(chan struct{}),
 		Progress: asyncloaddata.NewProgress(false),
 	}
-	distImporter, err := e.getJobImporter(param)
+	distImporter, err := e.getJobImporter(ctx, param)
 	if err != nil {
 		return err
 	}
@@ -175,12 +174,14 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	return nil
 }
 
-func (e *ImportIntoExec) getJobImporter(param *importer.JobImportParam) (*importinto.DistImporter, error) {
+func (e *ImportIntoExec) getJobImporter(ctx context.Context, param *importer.JobImportParam) (*importinto.DistImporter, error) {
 	importFromServer, err := storage.IsLocalPath(e.controller.Path)
 	if err != nil {
 		// since we have checked this during creating controller, this should not happen.
 		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(err.Error())
 	}
+	logutil.Logger(ctx).Info("get job importer", zap.Stringer("param", e.controller.Parameters),
+		zap.Bool("dist-task-enabled", variable.EnableDistTask.Load()))
 	if importFromServer {
 		ecp, err2 := e.controller.PopulateChunks(param.GroupCtx)
 		if err2 != nil {
@@ -200,7 +201,7 @@ func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, di
 	group := distImporter.Param().Group
 	err := group.Wait()
 	if err2 := flushStats(ctx, se, e.importPlan.TableInfo.ID, distImporter.Result()); err2 != nil {
-		logutil.BgLogger().Error("flush stats failed", zap.Error(err2))
+		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
 	}
 	return err
 }
@@ -233,8 +234,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return err
 	}
 
-	log.L().Info("import into action", zap.Int64("jobID", e.jobID), zap.Any("action", e.tp))
-	// todo: validating step is not run in a subtask, the framework don't support cancel it, we can make it run in a subtask later.
+	logutil.Logger(ctx).Info("import into action", zap.Int64("jobID", e.jobID), zap.Any("action", e.tp))
 	// todo: cancel is async operation, we don't wait here now, maybe add a wait syntax later.
 	// todo: after CANCEL, user can see the job status is Canceled immediately, but the job might still running.
 	// and the state of framework task might became finished since framework don't force state change DAG when update task.

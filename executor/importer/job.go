@@ -17,6 +17,7 @@ package importer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -79,6 +80,14 @@ type ImportParameters struct {
 	Format       string `json:"format"`
 	// only include what user specified, not include default value.
 	Options map[string]interface{} `json:"options,omitempty"`
+}
+
+var _ fmt.Stringer = &ImportParameters{}
+
+// String implements fmt.Stringer interface.
+func (ip *ImportParameters) String() string {
+	b, _ := json.Marshal(ip)
+	return string(b)
 }
 
 // JobSummary is the summary info of import into job.
