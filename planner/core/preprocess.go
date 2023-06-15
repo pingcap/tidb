@@ -1270,7 +1270,7 @@ func checkIndexInfo(indexName string, indexPartSpecifications []*ast.IndexPartSp
 
 // checkUnsupportedTableOptions checks if there exists unsupported table options
 func checkUnsupportedTableOptions(options []*ast.TableOption) error {
-	var err error = nil
+	var err error
 	for _, option := range options {
 		switch option.Tp {
 		case ast.TableOptionUnion:
