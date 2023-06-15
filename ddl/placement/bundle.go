@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"golang.org/x/exp/slices"
+	"gopkg.in/yaml.v2"
 )
 
 // Refer to https://github.com/tikv/pd/issues/2701 .
@@ -123,7 +124,13 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 			rules = append(rules, rule)
 		}
 	}
-
+	labels, err := newLocationLabelsFromSurvivalPreferences(options.SurvivalPreferences)
+	if err != nil {
+		return nil, err
+	}
+	for _, rule := range rules {
+		rule.LocationLabels = labels
+	}
 	return &Bundle{Rules: rules}, nil
 }
 
@@ -155,9 +162,17 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 
 	var rules []*Rule
 
+	locationLabels, err := newLocationLabelsFromSurvivalPreferences(options.SurvivalPreferences)
+	if err != nil {
+		return nil, err
+	}
+
 	// in case empty primaryRegion and regions, just return an empty bundle
 	if primaryRegion == "" && len(regions) == 0 {
 		rules = append(rules, NewRule(Voter, followers+1, NewConstraintsDirect()))
+		for _, rule := range rules {
+			rule.LocationLabels = locationLabels
+		}
 		return &Bundle{Rules: rules}, nil
 	}
 
@@ -195,6 +210,11 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		}
 	}
 
+	// set location labels
+	for _, rule := range rules {
+		rule.LocationLabels = locationLabels
+	}
+
 	return &Bundle{Rules: rules}, nil
 }
 
@@ -221,6 +241,19 @@ func newBundleFromOptions(options *model.PlacementSettings) (bundle *Bundle, err
 		bundle, err = NewBundleFromConstraintsOptions(options)
 	}
 	return bundle, err
+}
+
+// newLocationLabelsFromSurvivalPreferences will parse the survival preferences into location labels.
+func newLocationLabelsFromSurvivalPreferences(survivalPreferenceStr string) ([]string, error) {
+	if len(survivalPreferenceStr) > 0 {
+		labels := []string{}
+		err := yaml.UnmarshalStrict([]byte(survivalPreferenceStr), &labels)
+		if err != nil {
+			return nil, ErrInvalidSurvivalPreferenceFormat
+		}
+		return labels, nil
+	}
+	return nil, nil
 }
 
 // NewBundleFromOptions will transform options into the bundle.
@@ -257,6 +290,15 @@ func (b *Bundle) String() string {
 func (b *Bundle) Tidy() error {
 	extraCnt := map[PeerRoleType]int{}
 	newRules := b.Rules[:0]
+
+	// One Bundle is from one PlacementSettings, rule share same location labels, so we can use the first rule's location labels.
+	var locationLabels []string
+	for _, rule := range b.Rules {
+		if len(rule.LocationLabels) > 0 {
+			locationLabels = rule.LocationLabels
+			break
+		}
+	}
 	for i, rule := range b.Rules {
 		// useless Rule
 		if rule.Count <= 0 {
@@ -300,6 +342,8 @@ func (b *Bundle) Tidy() error {
 				Key:    EngineLabelKey,
 				Values: []string{EngineLabelTiFlash},
 			}},
+			// the merged rule should have the same location labels with the original rules.
+			LocationLabels: locationLabels,
 		})
 	}
 	b.Rules = newRules
