@@ -1255,7 +1255,6 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 		return err
 	}
 	control.Start(ctx)
-	tikv.SetResourceControlInterceptor(control)
 	do.runawayManager = resourcegroup.NewRunawayManager(control)
 	do.resourceGroupsController = control
 	return nil
