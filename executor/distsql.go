@@ -623,7 +623,7 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	return nil
 }
 
-func (e *IndexLookUpExecutor) hasExtraCol(tp getHandleType) bool {
+func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) bool {
 	var col *expression.Column
 	if tp == getHandleFromIndex {
 		cols := e.idxPlans[0].Schema().Columns
@@ -657,7 +657,7 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	} else {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
-	if e.hasExtraCol(getHandleFromIndex) {
+	if e.needPartitionHandle(getHandleFromIndex) {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 	if e.checkIndexValue != nil {
@@ -1042,7 +1042,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	numColsWithoutPid := chk.NumCols()
-	if w.idxLookup.hasExtraCol(getHandleFromIndex) {
+	if w.idxLookup.needPartitionHandle(getHandleFromIndex) {
 		numColsWithoutPid = numColsWithoutPid - 1
 	}
 	handleOffset := make([]int, 0, len(w.idxLookup.handleCols))
@@ -1233,7 +1233,7 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			handle = kv.IntHandle(row.GetInt64(handleIdx[0]))
 		}
 	}
-	if e.hasExtraCol(tp) {
+	if e.needPartitionHandle(tp) {
 		pid := row.GetInt64(row.Len() - 1)
 		handle = kv.NewPartitionHandle(pid, handle)
 	}
