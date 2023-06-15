@@ -124,7 +124,7 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 	case kv.SnapInterceptor:
 		s.interceptor = val.(kv.SnapshotInterceptor)
 	case kv.RPCInterceptor:
-		s.KVSnapshot.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
+		s.KVSnapshot.AddRPCInterceptor(val.(interceptor.RPCInterceptor))
 	case kv.RequestSourceInternal:
 		s.KVSnapshot.SetRequestSourceInternal(val.(bool))
 	case kv.RequestSourceType:

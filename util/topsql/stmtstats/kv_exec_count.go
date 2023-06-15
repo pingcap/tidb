@@ -49,14 +49,14 @@ type KvExecCounter struct {
 // each RPC request is initiated, in order to count the number of SQL executions of
 // the TiKV dimension.
 func (c *KvExecCounter) RPCInterceptor() interceptor.RPCInterceptor {
-	return func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+	return interceptor.NewRPCInterceptor("kv-exec-counter", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 		return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 			if topsqlstate.TopSQLEnabled() {
 				c.mark(target)
 			}
 			return next(target, req)
 		}
-	}
+	})
 }
 
 // mark this target during the current execution of statement.
