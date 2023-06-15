@@ -37,6 +37,7 @@ const (
 	// MppVersionV1 supports TiFlash version [v6.6.x, ~]
 	MppVersionV1
 
+	// MppVersionV2 supports TiFlash version [v7.3, ~], support ReportMPPTaskStatus service
 	MppVersionV2
 	// MppVersionV3
 

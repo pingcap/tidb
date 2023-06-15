@@ -31,7 +31,7 @@ var InstanceMPPCoordinatorManager = newMPPCoordinatorManger()
 // CoordinatorUniqueID identifies a unique coordinator
 type CoordinatorUniqueID struct {
 	MPPQueryID kv.MPPQueryID
-	GatherId   uint64
+	GatherID   uint64
 }
 
 // MPPCoordinatorManager manages all mpp coordinator instances
@@ -50,6 +50,7 @@ func (m *MPPCoordinatorManager) InitServerAddr(serverOn bool, serverAddr string)
 	}
 }
 
+// GetServerAddr returns grpcServer address, empty serverAddr if server not on
 func (m *MPPCoordinatorManager) GetServerAddr() (serverOn bool, serverAddr string) {
 	return m.serverOn, m.serverAddr
 }
@@ -61,7 +62,7 @@ func (m *MPPCoordinatorManager) Register(coordID CoordinatorUniqueID, mppCoord k
 	defer m.mu.Unlock()
 	_, exists := m.coordinatorMap[coordID]
 	if exists {
-		return errors.Errorf("Already added mpp coordinator: %d %d %d %d", coordID.MPPQueryID.QueryTs, coordID.MPPQueryID.LocalQueryID, coordID.MPPQueryID.ServerID, coordID.GatherId)
+		return errors.Errorf("Already added mpp coordinator: %d %d %d %d", coordID.MPPQueryID.QueryTs, coordID.MPPQueryID.LocalQueryID, coordID.MPPQueryID.ServerID, coordID.GatherID)
 	}
 	m.coordinatorMap[coordID] = mppCoord
 	logutil.BgLogger().Info("Register track mpp coordinator instances", zap.Int("CoordCounter", len(m.coordinatorMap)))
@@ -86,7 +87,7 @@ func (m *MPPCoordinatorManager) ReportStatus(request *mpp.ReportTaskStatusReques
 	}
 	coordID := CoordinatorUniqueID{
 		MPPQueryID: mppQueryID,
-		GatherId:   request.Meta.GatherId,
+		GatherID:   request.Meta.GatherId,
 	}
 	m.mu.Lock()
 	coord, exists := m.coordinatorMap[coordID]
