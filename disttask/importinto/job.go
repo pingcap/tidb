@@ -130,8 +130,9 @@ func (ti *DistImporter) Result() importer.JobImportResult {
 	// we can have it when there's duplicate detection.
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
 	return importer.JobImportResult{
-		Msg:      msg,
-		Affected: taskMeta.Result.ReadRowCnt,
+		Msg:        msg,
+		Affected:   taskMeta.Result.ReadRowCnt,
+		ColSizeMap: taskMeta.Result.ColSizeMap,
 	}
 }
 
@@ -240,13 +241,13 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 	if globalTask == nil {
 		return 0, errors.Errorf("cannot find global task with key %s", taskKey)
 	}
-	subtasks, err := globalTaskManager.GetSubtasksByStep(globalTask.ID, Import)
+	subtasks, err := globalTaskManager.GetSubtasksByStep(globalTask.ID, StepImport)
 	if err != nil {
 		return 0, err
 	}
 	var importedRows uint64
 	for _, subtask := range subtasks {
-		var subtaskMeta SubtaskMeta
+		var subtaskMeta ImportStepMeta
 		if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
 			return 0, err2
 		}
