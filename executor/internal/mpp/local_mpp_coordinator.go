@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	//"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -88,19 +89,31 @@ func (m *mppResponse) RespTime() time.Duration {
 	return m.respTime
 }
 
+type mppRequestReport struct {
+	mppReq             *kv.MPPDispatchRequest
+	receivedReport     bool // if received ReportStatus from mpp task
+	errMsg             string
+	executionSummaries []*tipb.ExecutorExecutionSummary
+}
+
 // localMppCoordinator stands for constructing and dispatching mpp tasks in local tidb server, since these work might be done remotely too
 type localMppCoordinator struct {
-	sessionCtx   sessionctx.Context
-	is           infoschema.InfoSchema
-	originalPlan plannercore.PhysicalPlan
-	startTS      uint64
-	mppQueryID   kv.MPPQueryID
+	sessionCtx      sessionctx.Context
+	is              infoschema.InfoSchema
+	originalPlan    plannercore.PhysicalPlan
+	planIDs         []int
+	startTS         uint64
+	mppQueryID      kv.MPPQueryID
+	gatherID        uint64
+	coordinatorAddr string // empty if coordinator service not available
 
 	mppReqs []*kv.MPPDispatchRequest
 
 	finishCh chan struct{}
 
 	respChan chan *mppResponse
+
+	reportStatusCh chan struct{}
 
 	cancelFunc context.CancelFunc
 
@@ -113,25 +126,33 @@ type localMppCoordinator struct {
 
 	needTriggerFallback        bool
 	enableCollectExecutionInfo bool
-
-	mu sync.Mutex
+	mu                         sync.Mutex
+	firstErrMsg                string
+	reqMap                     map[int64]*mppRequestReport
+	reportedReqCount           int
+	dispatchFailed             uint32
 
 	memTracker *memory.Tracker
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
-func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, startTS uint64, mppQueryID kv.MPPQueryID, memTracker *memory.Tracker) *localMppCoordinator {
+func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string, memTracker *memory.Tracker) *localMppCoordinator {
 	coord := &localMppCoordinator{
-		sessionCtx:   sctx,
-		is:           is,
-		originalPlan: plan,
-		startTS:      startTS,
-		mppQueryID:   mppQueryID,
-		memTracker:   memTracker,
-		finishCh:     make(chan struct{}),
-		wgDoneChan:   make(chan struct{}),
-		respChan:     make(chan *mppResponse),
-		vars:         sctx.GetSessionVars().KVVars,
+		sessionCtx:      sctx,
+		is:              is,
+		originalPlan:    plan,
+		planIDs:         planIDs,
+		startTS:         startTS,
+		mppQueryID:      mppQueryID,
+		gatherID:        gatherID,
+		coordinatorAddr: coordinatorAddr,
+		memTracker:      memTracker,
+		finishCh:        make(chan struct{}),
+		wgDoneChan:      make(chan struct{}),
+		respChan:        make(chan *mppResponse),
+		reportStatusCh:  make(chan struct{}),
+		vars:            sctx.GetSessionVars().KVVars,
+		reqMap:          make(map[int64]*mppRequestReport),
 	}
 	return coord
 }
@@ -177,17 +198,20 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
 		)
 		req := &kv.MPPDispatchRequest{
-			Data:       pbData,
-			Meta:       mppTask.Meta,
-			ID:         mppTask.ID,
-			IsRoot:     pf.IsRoot,
-			Timeout:    10,
-			SchemaVar:  c.is.SchemaMetaVersion(),
-			StartTs:    c.startTS,
-			MppQueryID: mppTask.MppQueryID,
-			MppVersion: mppTask.MppVersion,
-			State:      kv.MppTaskReady,
+			Data:               pbData,
+			Meta:               mppTask.Meta,
+			ID:                 mppTask.ID,
+			IsRoot:             pf.IsRoot,
+			Timeout:            10,
+			SchemaVar:          c.is.SchemaMetaVersion(),
+			StartTs:            c.startTS,
+			MppQueryID:         mppTask.MppQueryID,
+			GatherID:           c.gatherID,
+			MppVersion:         mppTask.MppVersion,
+			CoordinatorAddress: c.coordinatorAddr,
+			State:              kv.MppTaskReady,
 		}
+		c.reqMap[req.ID] = &mppRequestReport{mppReq: req, receivedReport: false, errMsg: "", executionSummaries: nil}
 		c.mppReqs = append(c.mppReqs, req)
 	}
 	return nil
@@ -360,6 +384,7 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 
 	if err != nil {
 		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()))
+		atomic.CompareAndSwapUint32(&c.dispatchFailed, 0, 1)
 		// if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
 		if c.needTriggerFallback {
 			err = derr.ErrTiFlashServerTimeout
@@ -370,12 +395,14 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 
 	if rpcResp.Error != nil {
 		logutil.BgLogger().Error("mpp dispatch response meet error", zap.String("error", rpcResp.Error.Msg), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID), zap.Int64("task-mpp-version", req.MppVersion.ToInt64()), zap.Int64("error-mpp-version", rpcResp.Error.GetMppVersion()))
+		atomic.CompareAndSwapUint32(&c.dispatchFailed, 0, 1)
 		c.sendError(errors.New(rpcResp.Error.Msg))
 		return
 	}
 	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
 		if val.(bool) && !req.IsRoot {
 			time.Sleep(1 * time.Second)
+			atomic.CompareAndSwapUint32(&c.dispatchFailed, 0, 1)
 			c.sendError(derr.ErrTiFlashServerTimeout)
 			return
 		}
@@ -394,9 +421,19 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 // NOTE: We do not retry here, because retry is helpless when errors result from TiFlash or Network. If errors occur, the execution on TiFlash will finally stop after some minutes.
 // This function is exclusively called, and only the first call succeeds sending Tasks and setting all Tasks as cancelled, while others will not work.
 func (c *localMppCoordinator) cancelMppTasks() {
+	usedStoreAddrs := make(map[string]bool)
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.sessionCtx.GetMPPClient().CancelMPPTasks(kv.CancelMPPTasksParam{Reqs: c.mppReqs})
+	for _, task := range c.mppReqs {
+		// get the store address of running tasks
+		if task.State == kv.MppTaskRunning && !usedStoreAddrs[task.Meta.GetAddress()] {
+			usedStoreAddrs[task.Meta.GetAddress()] = true
+		} else if task.State == kv.MppTaskCancelled {
+			return
+		}
+		task.State = kv.MppTaskCancelled
+	}
+	c.mu.Unlock()
+	c.sessionCtx.GetMPPClient().CancelMPPTasks(kv.CancelMPPTasksParam{StoreAddr: usedStoreAddrs, Reqs: c.mppReqs})
 }
 
 func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta, bo *backoff.Backoffer) {
@@ -448,6 +485,70 @@ func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMet
 	}
 }
 
+func (c *localMppCoordinator) ReportStatus(info kv.ReportStatusRequest) error {
+	taskID := info.Request.Meta.TaskId
+	var errMsg string
+	if info.Request.Error != nil {
+		errMsg = info.Request.Error.Msg
+	}
+	executionInfo := new(tipb.TiFlashExecutionInfo)
+	err := executionInfo.Unmarshal(info.Request.GetData())
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	req, exists := c.reqMap[taskID]
+	if !exists {
+		return errors.Errorf("ReportMPPTaskStatus task not exists taskID: %s", taskID)
+	}
+	if req.receivedReport {
+		return errors.Errorf("ReportMPPTaskStatus task already received taskID: %s", taskID)
+	}
+
+	req.receivedReport = true
+	if len(errMsg) > 0 {
+		req.errMsg = errMsg
+		if len(c.firstErrMsg) == 0 {
+			c.firstErrMsg = errMsg
+		}
+	}
+
+	c.reportedReqCount++
+	req.executionSummaries = executionInfo.GetExecutionSummaries()
+	if c.reportedReqCount == len(c.mppReqs) {
+		close(c.reportStatusCh)
+	}
+	return nil
+}
+
+func (c *localMppCoordinator) handleAllReports() {
+	if len(c.coordinatorAddr) > 0 && atomic.LoadUint32(&c.dispatchFailed) == 0 {
+		var timeoutInSec int = 3
+		select {
+		case <-c.reportStatusCh:
+			var recordedPlanIDs = make(map[int]int)
+			for _, report := range c.reqMap {
+				for _, detail := range report.executionSummaries {
+					if detail != nil && detail.TimeProcessedNs != nil &&
+						detail.NumProducedRows != nil && detail.NumIterations != nil {
+						recordedPlanIDs[c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+							RecordOneCopTask(-1, kv.TiFlash.Name(), report.mppReq.Meta.GetAddress(), detail)] = 0
+					}
+				}
+			}
+			distsql.FillDummySummaryForMppTasks(c.sessionCtx.GetSessionVars().StmtCtx, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
+		case <-time.After(time.Duration(timeoutInSec) * time.Second):
+			logutil.BgLogger().Warn(fmt.Sprintf("Not received all reports within %d seconds", timeoutInSec),
+				zap.Uint64("txnStartTS", c.startTS),
+				zap.Uint64("gatherID", c.gatherID),
+				zap.Int("expectCount", len(c.mppReqs)),
+				zap.Int("actualCount", c.reportedReqCount))
+		}
+	}
+}
+
 // Close and release the used resources.
 // TODO: Test the case that user cancels the query.
 func (c *localMppCoordinator) Close() error {
@@ -456,12 +557,19 @@ func (c *localMppCoordinator) Close() error {
 	}
 	c.cancelFunc()
 	<-c.wgDoneChan
+	c.handleAllReports()
 	return nil
 }
 
 func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
 	if response.Error != nil {
-		err = errors.Errorf("other error for mpp stream: %s", response.Error.Msg)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if len(c.firstErrMsg) > 0 {
+			err = errors.Errorf("other error for mpp stream: %s", c.firstErrMsg)
+		} else {
+			err = errors.Errorf("other error for mpp stream: %s", response.Error.Msg)
+		}
 		logutil.BgLogger().Warn("other error",
 			zap.Uint64("txnStartTS", req.StartTs),
 			zap.String("storeAddr", req.Meta.GetAddress()),
@@ -485,7 +593,6 @@ func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, res
 		resp.detail.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
 	}
 	resp.detail.CalleeAddress = req.Meta.GetAddress()
-
 	c.sendToRespCh(resp)
 	return
 }
@@ -520,6 +627,7 @@ func (c *localMppCoordinator) nextImpl(ctx context.Context) (resp *mppResponse, 
 func (c *localMppCoordinator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	resp, ok, closed, err := c.nextImpl(ctx)
 	if err != nil {
+		// Kill path, no need and not easy to wait and collect execution summaries
 		return nil, errors.Trace(err)
 	}
 	if !ok || closed {
@@ -532,7 +640,8 @@ func (c *localMppCoordinator) Next(ctx context.Context) (kv.ResultSubset, error)
 
 	err = c.sessionCtx.GetMPPClient().CheckVisibility(c.startTS)
 	if err != nil {
-		return nil, errors.Trace(err)
+		// Data invisibility error, no need and not easy to wait and collect execution summaries
+		return nil, errors.Trace(derr.ErrQueryInterrupted)
 	}
 	return resp, nil
 }

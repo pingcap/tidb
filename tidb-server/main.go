@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/extension"
 	_ "github.com/pingcap/tidb/extension/_import"
 	"github.com/pingcap/tidb/keyspace"
@@ -811,6 +812,7 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 		closeDomainAndStorage(storage, dom)
 		log.Fatal("failed to create the server", zap.Error(err), zap.Stack("stack"))
 	}
+	mppcoordmanager.InstanceMPPCoordinatorManager.InitServerAddr(svr.GetStatusServerAddr())
 	svr.SetDomain(dom)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 	go dom.MemoryUsageAlarmHandle().SetSessionManager(svr).Run()

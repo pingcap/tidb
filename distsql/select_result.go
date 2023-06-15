@@ -513,6 +513,30 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
+// FillDummySummaryForMppTasks fills dummy execution summaries for mpp tasks which lack summaries
+func FillDummySummaryForMppTasks(sctx *stmtctx.StatementContext, callee string, storeTypeName string, allPlanIDs []int, recordedPlanIDs map[int]int) {
+	num := uint64(0)
+	dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
+	for _, planID := range allPlanIDs {
+		if _, ok := recordedPlanIDs[planID]; !ok {
+			sctx.RuntimeStatsColl.RecordOneCopTask(planID, storeTypeName, callee, dummySummary)
+		}
+	}
+}
+
+// recordExecutionSummariesForMppTasks records mpp task execution summaries
+func recordExecutionSummariesForMppTasks(sctx *stmtctx.StatementContext, executionSummaries []*tipb.ExecutorExecutionSummary, callee string, storeTypeName string, allPlanIDs []int) {
+	var recordedPlanIDs = make(map[int]int)
+	for _, detail := range executionSummaries {
+		if detail != nil && detail.TimeProcessedNs != nil &&
+			detail.NumProducedRows != nil && detail.NumIterations != nil {
+			recordedPlanIDs[sctx.RuntimeStatsColl.
+				RecordOneCopTask(-1, storeTypeName, callee, detail)] = 0
+		}
+	}
+	FillDummySummaryForMppTasks(sctx, callee, storeTypeName, allPlanIDs, recordedPlanIDs)
+}
+
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	callee := copStats.CalleeAddress
 	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
@@ -556,21 +580,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		}
 	}
 	if hasExecutor {
-		var recorededPlanIDs = make(map[int]int)
-		for _, detail := range r.selectResp.GetExecutionSummaries() {
-			if detail != nil && detail.TimeProcessedNs != nil &&
-				detail.NumProducedRows != nil && detail.NumIterations != nil {
-				recorededPlanIDs[r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-					RecordOneCopTask(-1, r.storeType.Name(), callee, detail)] = 0
-			}
-		}
-		num := uint64(0)
-		dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
-		for _, planID := range r.copPlanIDs {
-			if _, ok := recorededPlanIDs[planID]; !ok {
-				r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType.Name(), callee, dummySummary)
-			}
-		}
+		recordExecutionSummariesForMppTasks(r.ctx.GetSessionVars().StmtCtx, r.selectResp.GetExecutionSummaries(), callee, r.storeType.Name(), r.copPlanIDs)
 	} else {
 		// For cop task cases, we still need this protection.
 		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
