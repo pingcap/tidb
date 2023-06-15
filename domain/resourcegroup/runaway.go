@@ -15,7 +15,6 @@
 package resourcegroup
 
 import (
-	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -27,14 +26,16 @@ import (
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
-// DefaultResourceGroupName is the name of the default resource group.
+// DefaultResourceGroupName is the default resource group name.
 const DefaultResourceGroupName = "default"
 
+// RunawayManager is used to detect and record runaway queries.
 type RunawayManager struct {
 	resourceGroupCtl *rmclient.ResourceGroupsController
 	watchList        *ttlcache.Cache[string, struct{}]
 }
 
+// NewRunawayManager creates a new RunawayManager.
 func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController) *RunawayManager {
 	watchList := ttlcache.New[string, struct{}]()
 	go watchList.Start()
@@ -44,6 +45,7 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController) *Run
 	}
 }
 
+// DeriveChecker derives a RunawayChecker from the given resource group
 func (rm *RunawayManager) DeriveChecker(resourceGroupName string, originalSql string, planDigest string) *RunawayChecker {
 	meta, err := rm.resourceGroupCtl.GetResourceGroup(resourceGroupName)
 	if err != nil || meta == nil || meta.RunawaySettings == nil {
@@ -53,18 +55,22 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName string, originalSql st
 	return newRunawayChecker(rm, resourceGroupName, meta.RunawaySettings, originalSql, planDigest)
 }
 
+// MarkRunaway marks the query as runaway.
 func (rm *RunawayManager) MarkRunaway(resourceGroupName string, convict string, ttl time.Duration) {
 	rm.watchList.Set(resourceGroupName+"/"+convict, struct{}{}, ttl)
 }
 
+// ExamineWatchList check whether the query is in watch list.
 func (rm *RunawayManager) ExamineWatchList(resourceGroupName string, convict string) bool {
 	return rm.watchList.Get(resourceGroupName+"/"+convict) != nil
 }
 
+// Stop stops the watchList which is a ttlcache.
 func (rm *RunawayManager) Stop() {
 	rm.watchList.Stop()
 }
 
+// RunawayChecker is used to check if the query is runaway.
 type RunawayChecker struct {
 	manager           *RunawayManager
 	resourceGroupName string
@@ -110,15 +116,10 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 		return nil
 	}
 	marked := r.marked.Load()
-	fmt.Println("############", time.Now(), r.deadline)
 	if !marked {
 		until := time.Until(r.deadline)
 		// execution time exceeds the threshold, mark the query as runaway
-		if until <= 0 {
-			r.marked.Store(true)
-			r.markRunaway()
-			fmt.Println("r.marked.Store(true)")
-		} else {
+		if until > 0 {
 			if r.setting.Action == rmpb.RunawayAction_Kill {
 				// if the execution time is close to the threshold, set a timeout
 				if until < tikv.ReadTimeoutMedium {
@@ -126,6 +127,10 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 				}
 			}
 			return nil
+		}
+		// execution time exceeds the threshold, mark the query as runaway
+		if r.marked.CompareAndSwap(false, true) {
+			r.markRunaway()
 		}
 	}
 	switch r.setting.Action {
@@ -141,15 +146,14 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 	}
 }
 
+// AfterCopRequest checks runaway after receiving coprocessor response.
 func (r *RunawayChecker) AfterCopRequest() {
-	if r == nil {
-		return
-	}
 	// Do not perform action here as it may be the last cop request and just let it finish. If it's not the last cop request, action would be performed in `BeforeCopRequest` when handling the next cop request.
 	// Here only marks the query as runaway
 	if !r.marked.Load() && r.deadline.Before(time.Now()) {
-		r.marked.Store(true)
-		r.markRunaway()
+		if r.marked.CompareAndSwap(false, true) {
+			r.markRunaway()
+		}
 	}
 }
 
@@ -172,11 +176,4 @@ func getConvictName(settings *rmpb.RunawaySettings, originalSql string, planDige
 	default:
 		return ""
 	}
-}
-
-type DoAction func(rmpb.RunawayAction) error
-
-type RunawayActionWorker interface {
-	Type() rmpb.RunawayAction
-	Action() func() error
 }

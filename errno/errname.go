@@ -1138,8 +1138,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrResourceGroupSupportDisabled:        mysql.Message("Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature", nil),
 	ErrResourceGroupConfigUnavailable:      mysql.Message("Resource group configuration is unavailable", nil),
 	ErrResourceGroupThrottled:              mysql.Message("Exceeded resource group quota limitation", nil),
-	ErrResourceGroupQueryRunaway:           mysql.Message("Killed because of identified as runaway query", nil),
-	ErrResourceGroupQueryRunawayQuarantine: mysql.Message("Quarantined and Killed because of being watch list", nil),
+	ErrResourceGroupQueryRunaway:           mysql.Message("Query execution was interrupted, identified as runaway query", nil),
+	ErrResourceGroupQueryRunawayQuarantine: mysql.Message("Quarantined and interrupted because of being watch list", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),

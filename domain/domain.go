@@ -1244,16 +1244,18 @@ func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose
 }
 
-func (do *Domain) initResourceGroupsController(ctx context.Context, pdCli pd.Client) error {
-	pdClient := do.GetPDClient()
+func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.Client) error {
 	if pdClient == nil {
-		return errors.New("cannot setup up resource controller, should use tikv storage")
+		logutil.BgLogger().Warn("cannot setup up resource controller, should use tikv storage")
+		// return nil as unistore doesn't support it
+		return nil
 	}
 
 	control, err := rmclient.NewResourceGroupController(ctx, do.ServerID(), pdClient, nil, rmclient.WithMaxWaitDuration(time.Second*30))
 	if err != nil {
 		return err
 	}
+	control.Start(ctx)
 	tikv.SetResourceControlInterceptor(control)
 	control.Start(ctx)
 	do.runawayManager = resourcegroup.NewRunawayManager(control)
@@ -1943,12 +1945,12 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 	}
 }
 
-// RunawayManager returns resourcegroup.RunawayManager
+// RunawayManager returns the runaway manager.
 func (do *Domain) RunawayManager() *resourcegroup.RunawayManager {
 	return do.runawayManager
 }
 
-// ResourceGroupsController returns rmclient.ResourceGroupsController
+// ResourceGroupsController returns the resource groups controller.
 func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController {
 	return do.resourceGroupsController
 }

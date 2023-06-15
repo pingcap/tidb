@@ -4238,9 +4238,14 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         replace = "github.com/CabinfeverB/client-go/v2",
         sum = "h1:e6xR0Q/GdE6AWAzf+W7n9br7M7rUg1FV33KwIqmx5zM=",
         version = "v2.0.0-20230602095003-9e72e8dd57d9",
+=======
+        sum = "h1:kSK7fBLEsGUf4Yn2nAl6f9lQ4Sp2yHwRFsq+fNAQyBY=",
+        version = "v2.0.8-0.20230608074729-5ddc523cfc46",
+>>>>>>> resource_manager/runaway_bokang
     )
     go_repository(
         name = "com_github_tikv_pd",
@@ -4254,9 +4259,14 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
+<<<<<<< HEAD
         replace = "github.com/CabinfeverB/pd/client",
         sum = "h1:rwzgdzfBUFofG6wrzaHLmXNbG8315HZs8QYOZV8I5ns=",
         version = "v0.0.0-20230601154623-a209ebf2b67c",
+=======
+        sum = "h1:a5SATBxu/0Z6qNnz4KXDN91gDA06waaYcHM6dkb6lz4=",
+        version = "v0.0.0-20230613052906-7158cb319935",
+>>>>>>> resource_manager/runaway_bokang
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
@@ -6051,15 +6061,15 @@ def go_deps():
         name = "org_golang_google_genproto_googleapis_api",
         build_file_proto_mode = "disable",
         importpath = "google.golang.org/genproto/googleapis/api",
-        sum = "h1:AZX1ra8YbFMSb7+1pI8S9v4rrgRR7jU1FmuFSSjTVcQ=",
-        version = "v0.0.0-20230526203410-71b5a4ffd15e",
+        sum = "h1:HiYVD+FGJkTo+9zj1gqz0anapsa1JxjiSrN+BJKyUmE=",
+        version = "v0.0.0-20230525234020-1aefcd67740a",
     )
     go_repository(
         name = "org_golang_google_genproto_googleapis_rpc",
         build_file_proto_mode = "disable",
         importpath = "google.golang.org/genproto/googleapis/rpc",
-        sum = "h1:0nDDozoAU19Qb2HwhXadU8OcsiO/09cnTqhUtq2MEOM=",
-        version = "v0.0.0-20230525234030-28d5490b6b19",
+        sum = "h1:XSJ8Vk1SWuNr8S18z1NZSziL0CPIXLCCMDOEFtHBOFc=",
+        version = "v0.0.0-20230530153820-e85fd2cbaebc",
     )
 
     go_repository(

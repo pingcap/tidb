@@ -1851,6 +1851,11 @@ error = '''
 Failed to split region ranges: %s
 '''
 
+["executor:8253"]
+error = '''
+Query execution was interrupted, identified as runaway query
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp

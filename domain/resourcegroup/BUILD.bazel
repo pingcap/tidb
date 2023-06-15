@@ -7,7 +7,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_jellydator_ttlcache_v3//:ttlcache",
+        "//util/dbterror/exeerrors",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_pd_client//resource_group/controller",
     ],
 )

@@ -97,8 +97,8 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20230605085112-28247160f497
-	github.com/tikv/pd/client v0.0.0-20230419153320-f1d1a80feb95
+	github.com/tikv/client-go/v2 v2.0.8-0.20230608074729-5ddc523cfc46
+	github.com/tikv/pd/client v0.0.0-20230613052906-7158cb319935
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -131,10 +131,11 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 	honnef.co/go/tools v0.4.3
 	k8s.io/api v0.27.2
-	k8s.io/utils v0.0.0-20230209194617-a36077c30491
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+require k8s.io/utils v0.0.0-20230209194617-a36077c30491 // indirect
 
 require (
 	cloud.google.com/go v0.110.0 // indirect
@@ -300,7 +301,5 @@ replace (
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/parser => ./parser
-	github.com/tikv/client-go/v2 => github.com/CabinfeverB/client-go/v2 v2.0.0-20230602095003-9e72e8dd57d9
-	github.com/tikv/pd/client => /Users/jiangyongbo/github/pd/client
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )

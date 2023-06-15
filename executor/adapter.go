@@ -526,6 +526,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.observeStmtBeginForTopSQL(ctx)
+	if variable.EnableResourceControl.Load() && domain.GetDomain(sctx).RunawayManager() != nil {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		_, planDigest := GetPlanDigest(stmtCtx)
+		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().ResourceGroupName, stmtCtx.OriginalSQL, planDigest.String())
+	}
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
 	if err = a.openExecutor(ctx, e); err != nil {
