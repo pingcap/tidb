@@ -769,8 +769,8 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 		})
 	}
 	// need to make sure the key ranges is sorted
-	sort.Slice(ranges, func(i, j kv.KeyRange) bool {
-		return bytes.Compare(i.StartKey, j.StartKey) < 0
+	sort.Slice(ranges, func(i, j int) bool {
+		return bytes.Compare(ranges[i].StartKey, ranges[j].StartKey) < 0
 	})
 	return buildBatchCopTasks(bo, b.store, NewKeyRanges(ranges), b.req.StoreType, nil, 0, false, 0)
 }
