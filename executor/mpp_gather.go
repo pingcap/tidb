@@ -83,12 +83,12 @@ func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 func (e *MPPGather) Open(ctx context.Context) (err error) {
 	planIDs := collectPlanIDS(e.originalPlan, nil)
 	coord := e.buildCoordinator(planIDs)
-	mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherId: uint64(e.id)}, coord)
 	resp, err := coord.Execute(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherId: uint64(e.id)}, coord)
 	e.respIter = distsql.GenSelectResultFromResponse(e.ctx, e.retFieldTypes, planIDs, e.id, resp)
 	return nil
 }
@@ -116,12 +116,11 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (e *MPPGather) Close() error {
 	var err error
 	if e.respIter != nil {
-		e.respIter.Dummy()
 		err = e.respIter.Close()
+		mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherId: uint64(e.id)})
 	}
 	if err != nil {
 		return err
 	}
-	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherId: uint64(e.id)})
 	return nil
 }
