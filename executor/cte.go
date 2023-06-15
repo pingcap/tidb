@@ -71,6 +71,56 @@ type CTEExec struct {
 	meetFirstBatch bool
 }
 
+// Open implements the Executor interface.
+func (e *CTEExec) Open(ctx context.Context) (err error) {
+	e.reset()
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+
+	e.producer.resTbl.Lock()
+	defer e.producer.resTbl.Unlock()
+
+	e.producer.reset()
+	if !e.producer.opened {
+		if err = e.producer.openProducer(ctx, e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Next implements the Executor interface.
+func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	e.producer.resTbl.Lock()
+	defer e.producer.resTbl.Unlock()
+	if !e.producer.resTbl.Done() {
+		if err = e.producer.produce(ctx, e); err != nil {
+			return err
+		}
+	}
+	return e.producer.getChunk(ctx, e, req)
+}
+
+// Close implements the Executor interface.
+func (e *CTEExec) Close() (err error) {
+	e.producer.resTbl.Lock()
+	if !e.producer.closed {
+		err = e.producer.closeProducer()
+	}
+	e.producer.resTbl.Unlock()
+	if err != nil {
+		return err
+	}
+	return e.baseExecutor.Close()
+}
+
+func (e *CTEExec) reset() {
+	e.chkIdx = 0
+	e.cursor = 0
+	e.meetFirstBatch = false
+}
+
 type cteProducer struct {
 	opened   bool
 	produced bool
@@ -88,9 +138,6 @@ type cteProducer struct {
 	iterOutTbl cteutil.Storage
 
 	hashTbl baseHashTable
-
-	// Index of chunk to read from `resTbl`.
-	chkIdx int
 
 	// UNION ALL or UNION DISTINCT.
 	isDistinct bool
@@ -110,49 +157,6 @@ type cteProducer struct {
 	// and should resTbl/iterInTbl be reset for each outer row of Apply.
 	// Because we reset them when SQL is finished instead of when CTEExec.Close() is called.
 	isInApply bool
-}
-
-// Open implements the Executor interface.
-func (e *CTEExec) Open(ctx context.Context) (err error) {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
-
-	e.producer.resTbl.Lock()
-	defer e.producer.resTbl.Unlock()
-
-	if !e.producer.opened {
-		if err = e.producer.openProducer(ctx, e); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// Next implements the Executor interface.
-func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
-	e.producer.resTbl.Lock()
-	defer e.producer.resTbl.Unlock()
-	if !e.producer.resTbl.Done() {
-		if err = e.producer.produce(ctx, e); err != nil {
-			return err
-		}
-	}
-
-	return e.producer.getChunk(ctx, e, req)
-}
-
-// Close implements the Executor interface.
-func (e *CTEExec) Close() (err error) {
-	e.producer.resTbl.Lock()
-	if !e.producer.closed {
-		err = e.producer.closeProducer()
-	}
-	e.producer.resTbl.Unlock()
-	if err != nil {
-		return err
-	}
-	return e.baseExecutor.Close()
 }
 
 func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err error) {
@@ -215,6 +219,12 @@ func (p *cteProducer) closeProducer() (err error) {
 			if err = p.iterOutTbl.DerefAndClose(); err != nil {
 				return err
 			}
+		}
+	}
+	p.closed = true
+	if p.isInApply {
+		if err = p.reopenTbls(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -457,8 +467,11 @@ func (p *cteProducer) setupTblsForNewIteration() (err error) {
 
 func (p *cteProducer) reset() {
 	p.curIter = 0
-	p.chkIdx = 0
 	p.hashTbl = nil
+
+	p.opened = false
+	p.produced = false
+	p.closed = false
 }
 
 func (p *cteProducer) reopenTbls() (err error) {
