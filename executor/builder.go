@@ -108,7 +108,7 @@ type executorBuilder struct {
 type CTEStorages struct {
 	ResTbl    cteutil.Storage
 	IterInTbl cteutil.Storage
-	Producer  *CTEProducer
+	Producer  *cteProducer
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
@@ -5315,18 +5315,35 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	// iterOutTbl will be constructed in CTEExec.Open().
 	var resTbl cteutil.Storage
 	var iterInTbl cteutil.Storage
-	var cteProducer *CTEProducer
+	var producer *cteProducer
 	storages, ok := storageMap[v.CTE.IDForStorage]
 	if ok {
 		// Storage already setup.
 		resTbl = storages.ResTbl
 		iterInTbl = storages.IterInTbl
-		cteProducer = storages.Producer
+		producer = storages.Producer
 	} else {
+		// Build seed part.
 		seedExec := b.build(v.SeedPlan)
 		if b.err != nil {
 			return nil
 		}
+
+		// Setup storages.
+		tps := seedExec.base().retFieldTypes
+		resTbl = cteutil.NewStorageRowContainer(tps, chkSize)
+		if err := resTbl.OpenAndRef(); err != nil {
+			b.err = err
+			return nil
+		}
+		iterInTbl = cteutil.NewStorageRowContainer(tps, chkSize)
+		if err := iterInTbl.OpenAndRef(); err != nil {
+			b.err = err
+			return nil
+		}
+		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl, Producer: producer}
+
+		// Build recursive part.
 		recursiveExec := b.build(v.RecurPlan)
 		if b.err != nil {
 			return nil
@@ -5338,7 +5355,8 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 				sel[i] = i
 			}
 		}
-		cteProducer = &CTEProducer{
+
+		producer = &cteProducer{
 			ctx:           b.ctx,
 			seedExec:      seedExec,
 			recursiveExec: recursiveExec,
@@ -5351,23 +5369,11 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 			limitEnd:      v.CTE.LimitEnd,
 			isInApply:     v.CTE.IsInApply,
 		}
-		tps := seedExec.base().retFieldTypes
-		resTbl = cteutil.NewStorageRowContainer(tps, chkSize)
-		if err := resTbl.OpenAndRef(); err != nil {
-			b.err = err
-			return nil
-		}
-		iterInTbl = cteutil.NewStorageRowContainer(tps, chkSize)
-		if err := iterInTbl.OpenAndRef(); err != nil {
-			b.err = err
-			return nil
-		}
-		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl, Producer: cteProducer}
 	}
 
 	return &CTEExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		producer:     cteProducer,
+		producer:     producer,
 	}
 }
 

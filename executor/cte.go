@@ -64,10 +64,14 @@ type CTEExec struct {
 	baseExecutor
 
 	chkIdx   int
-	producer *CTEProducer
+	producer *cteProducer
+
+	// limit in recursive CTE.
+	cursor         uint64
+	meetFirstBatch bool
 }
 
-type CTEProducer struct {
+type cteProducer struct {
 	opened   bool
 	produced bool
 	closed   bool
@@ -95,11 +99,9 @@ type CTEProducer struct {
 	sel        []int
 
 	// Limit related info.
-	hasLimit       bool
-	limitBeg       uint64
-	limitEnd       uint64
-	cursor         uint64
-	meetFirstBatch bool
+	hasLimit bool
+	limitBeg uint64
+	limitEnd uint64
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
@@ -153,7 +155,7 @@ func (e *CTEExec) Close() (err error) {
 	return e.baseExecutor.Close()
 }
 
-func (p *CTEProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err error) {
+func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err error) {
 	if p.seedExec == nil {
 		return errors.New("seedExec for CTEExec is nil")
 	}
@@ -199,7 +201,7 @@ func (p *CTEProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	return nil
 }
 
-func (p *CTEProducer) closeProducer() (err error) {
+func (p *cteProducer) closeProducer() (err error) {
 	if err = p.seedExec.Close(); err != nil {
 		return err
 	}
@@ -218,8 +220,11 @@ func (p *CTEProducer) closeProducer() (err error) {
 	return nil
 }
 
-func (p *CTEProducer) getChunk(ctx context.Context, cteExec *CTEExec, req *chunk.Chunk) (err error) {
+func (p *cteProducer) getChunk(ctx context.Context, cteExec *CTEExec, req *chunk.Chunk) (err error) {
 	req.Reset()
+	if p.hasLimit {
+		return p.nextChunkLimit(cteExec, req)
+	}
 	if cteExec.chkIdx < p.resTbl.NumChunks() {
 		res, err := p.resTbl.GetChunk(cteExec.chkIdx)
 		if err != nil {
@@ -234,7 +239,51 @@ func (p *CTEProducer) getChunk(ctx context.Context, cteExec *CTEExec, req *chunk
 	return nil
 }
 
-func (p *CTEProducer) produce(ctx context.Context, cteExec *CTEExec) (err error) {
+func (p *cteProducer) nextChunkLimit(cteExec *CTEExec, req *chunk.Chunk) error {
+	if !cteExec.meetFirstBatch {
+		for cteExec.chkIdx < p.resTbl.NumChunks() {
+			res, err := p.resTbl.GetChunk(cteExec.chkIdx)
+			if err != nil {
+				return err
+			}
+			cteExec.chkIdx++
+			numRows := uint64(res.NumRows())
+			if newCursor := cteExec.cursor + numRows; newCursor >= p.limitBeg {
+				cteExec.meetFirstBatch = true
+				begInChk, endInChk := p.limitBeg-cteExec.cursor, numRows
+				if newCursor > p.limitEnd {
+					endInChk = p.limitEnd - cteExec.cursor
+				}
+				cteExec.cursor += endInChk
+				if begInChk == endInChk {
+					break
+				}
+				tmpChk := res.CopyConstructSel()
+				req.Append(tmpChk, int(begInChk), int(endInChk))
+				return nil
+			}
+			cteExec.cursor += numRows
+		}
+	}
+	if cteExec.chkIdx < p.resTbl.NumChunks() && cteExec.cursor < p.limitEnd {
+		res, err := p.resTbl.GetChunk(cteExec.chkIdx)
+		if err != nil {
+			return err
+		}
+		cteExec.chkIdx++
+		numRows := uint64(res.NumRows())
+		if cteExec.cursor+numRows > p.limitEnd {
+			numRows = p.limitEnd - cteExec.cursor
+			req.Append(res.CopyConstructSel(), 0, int(numRows))
+		} else {
+			req.SwapColumns(res.CopyConstructSel())
+		}
+		cteExec.cursor += numRows
+	}
+	return nil
+}
+
+func (p *cteProducer) produce(ctx context.Context, cteExec *CTEExec) (err error) {
 	if p.resTbl.Error() != nil {
 		return p.resTbl.Error()
 	}
@@ -267,7 +316,7 @@ func (p *CTEProducer) produce(ctx context.Context, cteExec *CTEExec) (err error)
 	return nil
 }
 
-func (p *CTEProducer) computeSeedPart(ctx context.Context) (err error) {
+func (p *cteProducer) computeSeedPart(ctx context.Context) (err error) {
 	defer func() {
 		if r := recover(); r != nil && err == nil {
 			err = errors.Errorf("%v", r)
@@ -306,7 +355,7 @@ func (p *CTEProducer) computeSeedPart(ctx context.Context) (err error) {
 	return
 }
 
-func (p *CTEProducer) computeRecursivePart(ctx context.Context) (err error) {
+func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 	defer func() {
 		if r := recover(); r != nil && err == nil {
 			err = errors.Errorf("%v", r)
@@ -363,7 +412,7 @@ func (p *CTEProducer) computeRecursivePart(ctx context.Context) (err error) {
 	return
 }
 
-func (p *CTEProducer) setupTblsForNewIteration() (err error) {
+func (p *cteProducer) setupTblsForNewIteration() (err error) {
 	num := p.iterOutTbl.NumChunks()
 	chks := make([]*chunk.Chunk, 0, num)
 	// Setup resTbl's data.
@@ -406,15 +455,13 @@ func (p *CTEProducer) setupTblsForNewIteration() (err error) {
 	return p.iterOutTbl.Reopen()
 }
 
-func (p *CTEProducer) reset() {
+func (p *cteProducer) reset() {
 	p.curIter = 0
 	p.chkIdx = 0
 	p.hashTbl = nil
-	p.cursor = 0
-	p.meetFirstBatch = false
 }
 
-func (p *CTEProducer) reopenTbls() (err error) {
+func (p *cteProducer) reopenTbls() (err error) {
 	if p.isDistinct {
 		p.hashTbl = newConcurrentMapHashTable()
 	}
@@ -425,11 +472,11 @@ func (p *CTEProducer) reopenTbls() (err error) {
 }
 
 // Check if tbl meets the requirement of limit.
-func (p *CTEProducer) limitDone(tbl cteutil.Storage) bool {
+func (p *cteProducer) limitDone(tbl cteutil.Storage) bool {
 	return p.hasLimit && uint64(tbl.NumRows()) >= p.limitEnd
 }
 
-func (p *CTEProducer) tryDedupAndAdd(chk *chunk.Chunk,
+func (p *cteProducer) tryDedupAndAdd(chk *chunk.Chunk,
 	storage cteutil.Storage,
 	hashTbl baseHashTable) (res *chunk.Chunk, err error) {
 	if p.isDistinct {
@@ -442,7 +489,7 @@ func (p *CTEProducer) tryDedupAndAdd(chk *chunk.Chunk,
 
 // Compute hash values in chk and put it in hCtx.hashVals.
 // Use the returned sel to choose the computed hash values.
-func (p *CTEProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) {
+func (p *cteProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) {
 	numRows := chk.NumRows()
 	p.hCtx.initHash(numRows)
 	// Continue to reset to make sure all hasher is new.
@@ -474,7 +521,7 @@ func (p *CTEProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) 
 
 // Use hashTbl to deduplicate rows, and unique rows will be added to hashTbl.
 // Duplicated rows are only marked to be removed by sel in Chunk, instead of really deleted.
-func (p *CTEProducer) deduplicate(chk *chunk.Chunk,
+func (p *cteProducer) deduplicate(chk *chunk.Chunk,
 	storage cteutil.Storage,
 	hashTbl baseHashTable) (chkNoDup *chunk.Chunk, err error) {
 	numRows := chk.NumRows()
@@ -540,7 +587,7 @@ func (p *CTEProducer) deduplicate(chk *chunk.Chunk,
 
 // Use the row's probe key to check if it already exists in chk or storage.
 // We also need to compare the row's real encoding value to avoid hash collision.
-func (p *CTEProducer) checkHasDup(probeKey uint64,
+func (p *cteProducer) checkHasDup(probeKey uint64,
 	row chunk.Row,
 	curChk *chunk.Chunk,
 	storage cteutil.Storage,
