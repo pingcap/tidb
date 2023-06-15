@@ -1025,7 +1025,7 @@ func TestHypoTiFlashReplica(t *testing.T) {
 	tk.MustExec(`alter table t set hypo tiflash replica 1`)
 
 	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
-		`TableReader_12 10000.00 root  MppVersion: 1, data:ExchangeSender_11`,
+		`TableReader_12 10000.00 root  MppVersion: 2, data:ExchangeSender_11`,
 		`└─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
 		`  └─TableFullScan_10 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo`))
 
