@@ -81,7 +81,9 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 	e.producer.resTbl.Lock()
 	defer e.producer.resTbl.Unlock()
 
-	e.producer.reset()
+	if e.producer.isInApply {
+		e.producer.reset()
+	}
 	if !e.producer.opened {
 		if err = e.producer.openProducer(ctx, e); err != nil {
 			return err
