@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -281,12 +282,16 @@ func (e *LoadDataController) VerifyChecksum(ctx context.Context, localChecksum v
 	if err2 != nil {
 		return errors.Trace(err2)
 	}
+	// if context cancelled before this line, it returns "[pd] failed to get cluster id", not context.Canceled.
 	pdCli, err2 := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tls.ToPDSecurityOption())
 	if err2 != nil {
 		return errors.Trace(err2)
 	}
 	defer pdCli.Close()
 
+	failpoint.Inject("waitCtxDone", func() {
+		<-ctx.Done()
+	})
 	tableInfo := &checkpoints.TidbTableInfo{
 		ID:   e.Table.Meta().ID,
 		Name: e.Table.Meta().Name.O,
