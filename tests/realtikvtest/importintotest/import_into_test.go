@@ -23,6 +23,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -822,7 +824,7 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	}, 1, 1, time.Second)
 	defer pool.Close()
 	taskManager := storage.NewTaskManager(context.Background(), pool)
-	subtasks, err := taskManager.GetSucceedSubtasksByStep(storage.TestLastTaskID.Load(), importinto.Import)
+	subtasks, err := taskManager.GetSucceedSubtasksByStep(storage.TestLastTaskID.Load(), importinto.StepImport)
 	s.NoError(err)
 	s.Len(subtasks, 1)
 	serverInfo, err := infosync.GetServerInfo()
@@ -956,6 +958,12 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	}()
 	// wait for the task to be registered
 	<-importinto.TestSyncChan
+	// cannot run 2 import job at the same time
+	tk2 := testkit.NewTestKit(s.T(), s.store)
+	err = tk2.QueryToErr(sql)
+	s.ErrorIs(err, exeerrors.ErrLoadDataPreCheckFailed)
+	s.ErrorContains(err, "there's pending or running jobs")
+
 	client, err := importer.GetEtcdClient()
 	s.NoError(err)
 	s.T().Cleanup(func() {
@@ -979,6 +987,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 }
 
 func (s *mockGCSSuite) TestAddIndexBySQL() {
+	s.T().Skip("enable after we support add-index option")
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
 	s.tk.MustExec(`CREATE TABLE load_data.add_index (a INT, b INT, c INT, PRIMARY KEY (a), unique key b(b), key c_1(c));`)
@@ -1133,4 +1142,34 @@ func (s *mockGCSSuite) TestDiskQuota() {
 	s.tk.MustQuery("SELECT count(1) FROM load_test_disk_quota.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
+}
+
+func (s *mockGCSSuite) TestAnalyze() {
+	s.T().Skip("skip for ci now")
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
+	s.tk.MustExec("CREATE DATABASE load_data;")
+
+	// test auto analyze
+	s.tk.MustExec("create table load_data.analyze_table(a int, b int, c int, index idx_ac(a,c), index idx_b(b))")
+	lineCount := 2000
+	data := make([]byte, 0, 1<<13)
+	for i := 0; i < lineCount; i++ {
+		data = append(data, []byte(fmt.Sprintf("1,%d,1\n", i))...)
+	}
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "analyze-1.tsv"},
+		Content:     data,
+	})
+
+	// without analyze, use idx_ac
+	s.tk.MustExec("SET GLOBAL tidb_enable_auto_analyze=ON;")
+	s.tk.MustQuery("EXPLAIN SELECT * FROM load_data.analyze_table WHERE a=1 and b=1 and c=1;").CheckContain("idx_ac(a, c)")
+
+	sql := fmt.Sprintf(`IMPORT INTO load_data.analyze_table FROM 'gs://test-load/analyze-1.tsv?endpoint=%s'`, gcsEndpoint)
+	s.tk.MustQuery(sql)
+	require.Eventually(s.T(), func() bool {
+		result := s.tk.MustQuery("EXPLAIN SELECT * FROM load_data.analyze_table WHERE a=1 and b=1 and c=1;")
+		return strings.Contains(result.Rows()[1][3].(string), "idx_b(b)")
+	}, 60*time.Second, time.Second)
+	s.tk.MustQuery("SHOW ANALYZE STATUS;").CheckContain("analyze_table")
 }

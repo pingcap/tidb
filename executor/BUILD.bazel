@@ -339,6 +339,7 @@ go_test(
         "show_placement_labels_test.go",
         "show_placement_test.go",
         "show_stats_test.go",
+        "show_test.go",
         "shuffle_test.go",
         "simple_test.go",
         "slow_query_sql_test.go",
