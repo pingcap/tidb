@@ -94,6 +94,9 @@ func newRunawayChecker(manager *RunawayManager, resourceGroupName string, settin
 
 // BeforeExecutor checks whether query is in watch list before executing and after compiling.
 func (r *RunawayChecker) BeforeExecutor() error {
+	if r == nil {
+		return nil
+	}
 	result := r.manager.ExamineWatchList(r.resourceGroupName, r.convict)
 	if result {
 		r.marked.Store(result)
