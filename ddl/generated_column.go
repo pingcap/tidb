@@ -41,15 +41,15 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 	attribute := colName2Generation[colName]
 	if attribute.generated {
 		for depCol := range attribute.dependences {
-			if attr, ok := colName2Generation[depCol]; ok {
-				if attr.generated && attribute.position <= attr.position {
-					// A generated column definition can refer to other
-					// generated columns occurring earlier in the table.
-					err := dbterror.ErrGeneratedColumnNonPrior.GenWithStackByArgs()
-					return errors.Trace(err)
-				}
-			} else {
+			attr, ok := colName2Generation[depCol]
+			if !ok {
 				err := dbterror.ErrBadField.GenWithStackByArgs(depCol, "generated column function")
+				return errors.Trace(err)
+			}
+			if attr.generated && attribute.position <= attr.position {
+				// A generated column definition can refer to other
+				// generated columns occurring earlier in the table.
+				err := dbterror.ErrGeneratedColumnNonPrior.GenWithStackByArgs()
 				return errors.Trace(err)
 			}
 		}

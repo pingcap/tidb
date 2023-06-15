@@ -231,6 +231,11 @@ func (c *Constant) getLazyDatum(row chunk.Row) (dt types.Datum, isLazy bool, err
 	return types.Datum{}, false, nil
 }
 
+// Traverse implements the TraverseDown interface.
+func (c *Constant) Traverse(action TraverseAction) Expression {
+	return action.Transform(c)
+}
+
 // Eval implements Expression interface.
 func (c *Constant) Eval(row chunk.Row) (types.Datum, error) {
 	if dt, lazy, err := c.getLazyDatum(row); lazy {
@@ -244,16 +249,15 @@ func (c *Constant) Eval(row chunk.Row) (types.Datum, error) {
 		if c.DeferredExpr != nil {
 			sf, sfOk := c.DeferredExpr.(*ScalarFunction)
 			if sfOk {
-				if dt.Kind() == types.KindMysqlDecimal {
-					if err := c.adjustDecimal(dt.GetMysqlDecimal()); err != nil {
-						return dt, err
-					}
-				} else {
+				if dt.Kind() != types.KindMysqlDecimal {
 					val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
 					if err != nil {
 						return dt, err
 					}
 					return val, nil
+				}
+				if err := c.adjustDecimal(dt.GetMysqlDecimal()); err != nil {
+					return dt, err
 				}
 			}
 		}

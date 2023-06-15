@@ -171,13 +171,13 @@ func hasSysDB(job *model.Job) bool {
 
 func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
 	if d.stateSyncer.IsUpgradingState() {
+		if job.IsPaused() {
+			return false, nil
+		}
 		// We need to turn the 'pausing' job to be 'paused' in ddl worker,
 		// and stop the reorganization workers
 		if job.IsPausing() || hasSysDB(job) {
 			return true, nil
-		}
-		if job.IsPaused() {
-			return false, nil
 		}
 		var errs []error
 		// During binary upgrade, pause all running DDL jobs
@@ -200,7 +200,7 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		return false, nil
 	}
 
-	if job.IsPausedBySystem() && !hasSysDB(job) {
+	if job.IsPausedBySystem() {
 		var errs []error
 		errs, err = ResumeJobsBySystem(sess.Session(), []int64{job.ID})
 		if len(errs) > 0 && errs[0] != nil {
@@ -551,8 +551,7 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 }
 
 func job2SchemaNames(job *model.Job) []string {
-	switch job.Type {
-	case model.ActionRenameTable:
+	if job.Type == model.ActionRenameTable {
 		var oldSchemaID int64
 		var oldSchemaName model.CIStr
 		var tableName model.CIStr
@@ -562,11 +561,9 @@ func job2SchemaNames(job *model.Job) []string {
 		names = append(names, strings.ToLower(job.SchemaName))
 		names = append(names, oldSchemaName.O)
 		return names
-	case model.ActionRenameTables:
-		// TODO: Get this action's schema names.
-	case model.ActionExchangeTablePartition:
-		// TODO: Get this action's schema names.
 	}
+	// TODO: consider about model.ActionRenameTables and model.ActionExchangeTablePartition, which need to get the schema names.
+
 	return []string{job.SchemaName}
 }
 

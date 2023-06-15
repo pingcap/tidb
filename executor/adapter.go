@@ -1756,8 +1756,8 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 			// so we have to iterate all hints from the customer and keep some other necessary hints.
 			switch tableHint.HintName.L {
 			case "memory_quota", "use_toja", "no_index_merge", "max_execution_time",
-				plannercore.HintAggToCop, plannercore.HintIgnoreIndex,
-				plannercore.HintReadFromStorage, plannercore.HintLimitToCop:
+				plannercore.HintIgnoreIndex, plannercore.HintReadFromStorage, plannercore.HintMerge,
+				plannercore.HintSemiJoinRewrite, plannercore.HintNoDecorrelate:
 				hints = append(hints, tableHint)
 			}
 		}
@@ -2072,7 +2072,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		SessionBindings:     handle.GetAllBindRecord(),
 		SessionVars:         sctx.GetSessionVars(),
 		ExecStmts:           []ast.StmtNode{stmtNode},
-		DebugTrace:          stmtCtx.OptimizerDebugTrace,
+		DebugTrace:          []interface{}{stmtCtx.OptimizerDebugTrace},
 		Analyze:             false,
 		IsCapture:           true,
 		IsContinuesCapture:  isContinuesCapture,

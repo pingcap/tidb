@@ -13,6 +13,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/store/mockstore/unistore",
     visibility = ["//visibility:public"],
     deps = [
+        "//domain/resourcegroup",
         "//parser/terror",
         "//store/mockstore/unistore/config",
         "//store/mockstore/unistore/lockstore",

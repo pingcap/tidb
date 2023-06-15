@@ -345,12 +345,11 @@ func NewImportControllerWithPauser(
 
 		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			if err := tikv.CheckTiKVVersion(ctx, tls, cfg.TiDB.PdAddr, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
-				if berrors.Is(err, berrors.ErrVersionMismatch) {
-					log.FromContext(ctx).Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
-					cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
-				} else {
+				if !berrors.Is(err, berrors.ErrVersionMismatch) {
 					return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()
 				}
+				log.FromContext(ctx).Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
+				cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
 			}
 		}
 

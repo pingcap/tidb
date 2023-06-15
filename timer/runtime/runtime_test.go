@@ -32,6 +32,7 @@ func TestRuntimeStartStop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	store := api.NewMemoryTimerStore()
+	defer store.Close()
 	cli := api.NewDefaultTimerClient(store)
 	_, err := cli.CreateTimer(ctx, api.TimerSpec{
 		Namespace:       "n1",
@@ -78,6 +79,7 @@ func TestRuntimeStartStop(t *testing.T) {
 
 func TestEnsureWorker(t *testing.T) {
 	store := api.NewMemoryTimerStore()
+	defer store.Close()
 	cli := api.NewDefaultTimerClient(store)
 
 	var factoryMock mock.Mock
@@ -112,7 +114,9 @@ func TestEnsureWorker(t *testing.T) {
 
 func TestTryTriggerTimer(t *testing.T) {
 	now := time.Now()
-	runtime := NewTimerRuntimeBuilder("g1", api.NewMemoryTimerStore()).Build()
+	store := api.NewMemoryTimerStore()
+	defer store.Close()
+	runtime := NewTimerRuntimeBuilder("g1", store).Build()
 	runtime.setNowFunc(func() time.Time {
 		return now
 	})
@@ -211,7 +215,9 @@ func TestTryTriggerTimer(t *testing.T) {
 
 func TestHandleHookWorkerResponse(t *testing.T) {
 	now := time.Now()
-	runtime := NewTimerRuntimeBuilder("g1", api.NewMemoryTimerStore()).Build()
+	store := api.NewMemoryTimerStore()
+	defer store.Close()
+	runtime := NewTimerRuntimeBuilder("g1", store).Build()
 	runtime.setNowFunc(func() time.Time {
 		return now
 	})
@@ -294,7 +300,9 @@ func TestHandleHookWorkerResponse(t *testing.T) {
 
 func TestNextTryTriggerDuration(t *testing.T) {
 	now := time.Now()
-	runtime := NewTimerRuntimeBuilder("g1", api.NewMemoryTimerStore()).Build()
+	store := api.NewMemoryTimerStore()
+	defer store.Close()
+	runtime := NewTimerRuntimeBuilder("g1", store).Build()
 	runtime.setNowFunc(func() time.Time {
 		return now
 	})
@@ -667,6 +675,7 @@ func TestTimerFullProcess(t *testing.T) {
 	setNow(time.UnixMilli(0))
 	var zeroTime time.Time
 	store := api.NewMemoryTimerStore()
+	defer store.Close()
 	cli := api.NewDefaultTimerClient(store)
 	hook := newMockHook()
 	runtime := NewTimerRuntimeBuilder("g1", store).
