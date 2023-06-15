@@ -72,7 +72,6 @@ type CTEProducer struct {
 	produced bool
 	closed   bool
 
-	// gjt todo
 	ctx sessionctx.Context
 
 	seedExec      Executor
@@ -121,7 +120,9 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 	defer e.producer.resTbl.Unlock()
 
 	if !e.producer.opened {
-		e.producer.openProducer(ctx, e)
+		if err = e.producer.openProducer(ctx, e); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -136,8 +137,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		}
 	}
 
-	e.producer.getChunk(ctx, e, req)
-	return nil
+	return e.producer.getChunk(ctx, e, req)
 }
 
 // Close implements the Executor interface.
@@ -151,28 +151,6 @@ func (e *CTEExec) Close() (err error) {
 		return err
 	}
 	return e.baseExecutor.Close()
-}
-
-func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentMemTracker *memory.Tracker,
-	parentDiskTracker *disk.Tracker) (actionSpill *chunk.SpillDiskAction) {
-	memTracker := tbl.GetMemTracker()
-	memTracker.SetLabel(memory.LabelForCTEStorage)
-	memTracker.AttachTo(parentMemTracker)
-
-	diskTracker := tbl.GetDiskTracker()
-	diskTracker.SetLabel(memory.LabelForCTEStorage)
-	diskTracker.AttachTo(parentDiskTracker)
-
-	if variable.EnableTmpStorageOnOOM.Load() {
-		actionSpill = tbl.ActionSpill()
-		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
-			if val.(bool) {
-				actionSpill = tbl.(*cteutil.StorageRC).ActionSpillForTest()
-			}
-		})
-		ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
-	}
-	return actionSpill
 }
 
 func (p *CTEProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err error) {
@@ -594,4 +572,26 @@ func (p *CTEProducer) checkHasDup(probeKey uint64,
 		}
 	}
 	return false, nil
+}
+
+func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentMemTracker *memory.Tracker,
+	parentDiskTracker *disk.Tracker) (actionSpill *chunk.SpillDiskAction) {
+	memTracker := tbl.GetMemTracker()
+	memTracker.SetLabel(memory.LabelForCTEStorage)
+	memTracker.AttachTo(parentMemTracker)
+
+	diskTracker := tbl.GetDiskTracker()
+	diskTracker.SetLabel(memory.LabelForCTEStorage)
+	diskTracker.AttachTo(parentDiskTracker)
+
+	if variable.EnableTmpStorageOnOOM.Load() {
+		actionSpill = tbl.ActionSpill()
+		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
+			if val.(bool) {
+				actionSpill = tbl.(*cteutil.StorageRC).ActionSpillForTest()
+			}
+		})
+		ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
+	}
+	return actionSpill
 }
