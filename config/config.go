@@ -263,10 +263,12 @@ type Config struct {
 	// one quarter of the total physical memory in the current system.
 	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
-	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
+	BallastObjectSize int        `toml:"ballast-object-size" json:"ballast-object-size"`
+	TrxSummary        TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
 	// EnableGlobalKill indicates whether to enable global kill.
-	TrxSummary       TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
-	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
+	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
+	// Enable32BitsConnectionID indicates whether to enable 32bits connection ID for global kill.
+	Enable32BitsConnectionID bool `toml:"enable-32bits-connection-id" json:"enable-32bits-connection-id"`
 	// InitializeSQLFile is a file that will be executed after first bootstrap only.
 	// It can be used to set GLOBAL system variable values
 	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
@@ -868,8 +870,6 @@ type Experimental struct {
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
-	// Whether enable 32bits global kill.
-	EnableGlobalKill32Bits bool `toml:"enable-global-kill-32bits" json:"enable-global-kill-32bits"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -1046,6 +1046,7 @@ var defaultConf = Config{
 	EnableForwarding:                     defTiKVCfg.EnableForwarding,
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
+	Enable32BitsConnectionID:             true,
 	TrxSummary:                           DefaultTrxSummary(),
 	DisaggregatedTiFlash:                 false,
 	TiFlashComputeAutoScalerType:         tiflashcompute.DefASStr,

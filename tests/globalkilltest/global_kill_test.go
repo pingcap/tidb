@@ -211,9 +211,9 @@ func (s *GlobalKillSuite) cleanCluster() (err error) {
 
 func (s *GlobalKillSuite) getTiDBConfigPath() string {
 	if s.enable32Bits {
-		return "./config-32.toml"
+		return "./config.toml"
 	}
-	return "./config.toml"
+	return "./config-64.toml"
 }
 
 func (s *GlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd *exec.Cmd, err error) {

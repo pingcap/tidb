@@ -13,6 +13,4 @@
 # limitations under the License.
 
 enable-global-kill=true
-
-[experimental]
-enable-global-kill-32bits=true
+enable-32bits-connection-id=false

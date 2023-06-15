@@ -1160,7 +1160,7 @@ func (do *Domain) Init(
 
 	// step 2: initialize the global kill, which depends on `globalInfoSyncer`.`
 	if config.GetGlobalConfig().EnableGlobalKill {
-		do.connIDAllocator = globalconn.NewGlobalAllocator(do.ServerID, config.GetGlobalConfig().Experimental.EnableGlobalKill32Bits)
+		do.connIDAllocator = globalconn.NewGlobalAllocator(do.ServerID, config.GetGlobalConfig().Enable32BitsConnectionID)
 
 		if do.etcdClient != nil {
 			err := do.acquireServerID(ctx)
@@ -2674,7 +2674,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 	conflictCnt := 0
 	for {
 		var proposeServerID uint64
-		if config.GetGlobalConfig().Experimental.EnableGlobalKill32Bits {
+		if config.GetGlobalConfig().Enable32BitsConnectionID {
 			proposeServerID, err = do.proposeServerID(ctx, conflictCnt)
 			if err != nil {
 				return errors.Trace(err)
