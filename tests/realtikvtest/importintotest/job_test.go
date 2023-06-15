@@ -65,6 +65,7 @@ func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row 
 }
 
 func (s *mockGCSSuite) TestShowJob() {
+	s.tk.MustExec("delete from mysql.tidb_import_jobs")
 	s.prepareAndUseDB("test_show_job")
 	s.tk.MustExec("CREATE TABLE t1 (i INT PRIMARY KEY);")
 	s.tk.MustExec("CREATE TABLE t2 (i INT PRIMARY KEY);")
@@ -138,7 +139,6 @@ func (s *mockGCSSuite) TestShowJob() {
 	jobInfo.CreatedBy = "test_show_job2@localhost"
 	jobInfo.Parameters.FileLocation = fmt.Sprintf(`gs://test-show-job/t.csv?endpoint=%s`, gcsEndpoint)
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
-	// if this case run twice, it might fail, start another cluster to solve this problem.
 	rows = s.tk.MustQuery("show import jobs").Rows()
 	s.Len(rows, 1)
 	s.Equal(result2, rows)

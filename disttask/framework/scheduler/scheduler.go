@@ -311,7 +311,7 @@ func createScheduler(task *proto.Task) (Scheduler, error) {
 	key := getKey(task.Type, task.Step)
 	constructor, ok := schedulerConstructors[key]
 	if !ok {
-		return nil, errors.Errorf("ctor of scheduler for key %s not found", key)
+		return nil, errors.Errorf("constructor of scheduler for key %s not found", key)
 	}
 	return constructor(task.ID, task.Meta, task.Step)
 }
@@ -320,7 +320,7 @@ func createSubtaskExecutor(minimalTask proto.MinimalTask, tp string, step int64)
 	key := getKey(tp, step)
 	constructor, ok := subtaskExecutorConstructors[key]
 	if !ok {
-		return nil, errors.Errorf("ctor of subtask executor for key %s not found", key)
+		return nil, errors.Errorf("constructor of subtask executor for key %s not found", key)
 	}
 	return constructor(minimalTask, step)
 }

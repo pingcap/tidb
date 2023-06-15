@@ -119,7 +119,7 @@ func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]pr
 
 	miniTask := make([]proto.MinimalTask, 0, len(subtaskMeta.Chunks))
 	for _, chunk := range subtaskMeta.Chunks {
-		miniTask = append(miniTask, MinimalTaskMeta{
+		miniTask = append(miniTask, &importStepMinimalTask{
 			Plan:       s.taskMeta.Plan,
 			Chunk:      chunk,
 			SharedVars: sharedVars,
@@ -198,15 +198,15 @@ type postStepScheduler struct {
 
 var _ scheduler.Scheduler = &postStepScheduler{}
 
-func (p *postStepScheduler) OnSubtaskFinished(ctx context.Context, metaBytes []byte) ([]byte, error) {
-	subtaskMeta := &PostProcessStepMeta{}
-	if err := json.Unmarshal(metaBytes, subtaskMeta); err != nil {
+func (p *postStepScheduler) SplitSubtask(_ context.Context, metaBytes []byte) ([]proto.MinimalTask, error) {
+	mTask := &postProcessStepMinimalTask{
+		taskMeta: p.taskMeta,
+		logger:   p.logger,
+	}
+	if err := json.Unmarshal(metaBytes, &mTask.meta); err != nil {
 		return nil, err
 	}
-	if err := postProcess(ctx, p.taskMeta, subtaskMeta, p.logger); err != nil {
-		return nil, err
-	}
-	return metaBytes, nil
+	return []proto.MinimalTask{mTask}, nil
 }
 
 func init() {
@@ -216,7 +216,6 @@ func init() {
 			return nil, nil, err
 		}
 		logger := logutil.BgLogger().With(
-			zap.String("component", "scheduler"),
 			zap.String("type", proto.ImportInto),
 			zap.Int64("task-id", taskID),
 			zap.String("step", stepStr(step)),

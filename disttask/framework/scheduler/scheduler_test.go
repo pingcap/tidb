@@ -38,7 +38,7 @@ func TestSchedulerRun(t *testing.T) {
 	mockSubtaskExecutor := &MockSubtaskExecutor{}
 
 	// 1. no scheduler constructor
-	schedulerRegisterErr := errors.Errorf("ctor of scheduler for key %s not found", getKey(tp, proto.StepOne))
+	schedulerRegisterErr := errors.Errorf("constructor of scheduler for key %s not found", getKey(tp, proto.StepOne))
 	scheduler := NewInternalScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
 	err := scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
@@ -83,7 +83,7 @@ func TestSchedulerRun(t *testing.T) {
 	require.EqualError(t, err, updateSubtaskErr.Error())
 
 	// 6. no subtask executor constructor
-	subtaskExecutorRegisterErr := errors.Errorf("ctor of subtask executor for key %s not found", getKey(tp, proto.StepOne))
+	subtaskExecutorRegisterErr := errors.Errorf("constructor of subtask executor for key %s not found", getKey(tp, proto.StepOne))
 	var concurrency uint64 = 10
 	mockScheduler.On("InitSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	mockPool.On("RunWithConcurrency", mock.Anything, mock.Anything).Return(nil).Once()
@@ -191,7 +191,7 @@ func TestSchedulerRollback(t *testing.T) {
 	mockScheduler := &MockScheduler{}
 
 	// 1. no scheduler constructor
-	schedulerRegisterErr := errors.Errorf("ctor of scheduler for key %s not found", getKey(tp, proto.StepOne))
+	schedulerRegisterErr := errors.Errorf("constructor of scheduler for key %s not found", getKey(tp, proto.StepOne))
 	scheduler := NewInternalScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
 	mockSubtaskTable.On("GetSubtaskInStates", "id", int64(1), []interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(nil, nil).Once()
 	err := scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, ID: 1, Type: tp})

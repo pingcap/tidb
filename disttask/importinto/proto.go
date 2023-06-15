@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
+	"go.uber.org/zap"
 )
 
 // Steps of IMPORT INTO, each step is represented by one or multiple subtasks.
@@ -86,16 +87,25 @@ type SharedVars struct {
 	Checksum *verification.KVChecksum
 }
 
-// MinimalTaskMeta is the minimal task of IMPORT INTO.
+// importStepMinimalTask is the minimal task of IMPORT INTO.
 // Scheduler will split the subtask into minimal tasks(Chunks -> Chunk)
-type MinimalTaskMeta struct {
+type importStepMinimalTask struct {
 	Plan       importer.Plan
 	Chunk      Chunk
 	SharedVars *SharedVars
 }
 
 // IsMinimalTask implements the MinimalTask interface.
-func (MinimalTaskMeta) IsMinimalTask() {}
+func (*importStepMinimalTask) IsMinimalTask() {}
+
+// postProcessStepMinimalTask is the minimal task of post process step.
+type postProcessStepMinimalTask struct {
+	meta     PostProcessStepMeta
+	taskMeta *TaskMeta
+	logger   *zap.Logger
+}
+
+func (*postProcessStepMinimalTask) IsMinimalTask() {}
 
 // Chunk records the chunk information.
 type Chunk struct {
