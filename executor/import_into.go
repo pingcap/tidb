@@ -93,14 +93,19 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		// need to return an empty req to indicate all results have been written
 		return nil
 	}
-
 	// todo: we don't need to do it here, remove it.
 	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 		return err2
 	}
 
-	sqlExec := e.userSctx.(sqlexec.SQLExecutor)
-	if err2 := e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
+	// must use a new session to pre-check, else the stmt in show processlist will be changed.
+	newSCtx, err2 := CreateSession(e.userSctx)
+	if err2 != nil {
+		return err2
+	}
+	defer CloseSession(newSCtx)
+	sqlExec := newSCtx.(sqlexec.SQLExecutor)
+	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
 		return err2
 	}
 

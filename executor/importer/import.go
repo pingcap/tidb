@@ -636,10 +636,7 @@ func (p *Plan) adjustOptions() {
 }
 
 func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
-	redactURL, err := storage.RedactURL(p.Path)
-	if err != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
-	}
+	redactURL := ast.RedactURL(p.Path)
 	var columnsAndVars, setClause string
 	var sb strings.Builder
 	formatCtx := pformat.NewRestoreCtx(pformat.DefaultRestoreFlags, &sb)
