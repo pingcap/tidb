@@ -119,6 +119,7 @@ func TestTimerRecordCond(t *testing.T) {
 		TimerSpec: TimerSpec{
 			Namespace: "n1",
 			Key:       "/path/to/key",
+			Tags:      []string{"tagA1", "tagA2"},
 		},
 	}
 
@@ -148,6 +149,28 @@ func TestTimerRecordCond(t *testing.T) {
 	require.True(t, cond.Match(tm))
 
 	cond = &TimerCond{Key: NewOptionalVal("/path/to2"), KeyPrefix: true}
+	require.False(t, cond.Match(tm))
+
+	// Tags
+	tm2 := tm.Clone()
+	tm2.Tags = nil
+
+	cond = &TimerCond{Tags: NewOptionalVal([]string{})}
+	require.True(t, cond.Match(tm))
+	require.True(t, cond.Match(tm2))
+
+	cond = &TimerCond{Tags: NewOptionalVal([]string{"tagA"})}
+	require.False(t, cond.Match(tm))
+	require.False(t, cond.Match(tm2))
+
+	cond = &TimerCond{Tags: NewOptionalVal([]string{"tagA1"})}
+	require.True(t, cond.Match(tm))
+	require.False(t, cond.Match(tm2))
+
+	cond = &TimerCond{Tags: NewOptionalVal([]string{"tagA1", "tagA2"})}
+	require.True(t, cond.Match(tm))
+
+	cond = &TimerCond{Tags: NewOptionalVal([]string{"tagA1", "tagB1"})}
 	require.False(t, cond.Match(tm))
 
 	// Combined condition
@@ -229,6 +252,7 @@ func TestTimerUpdate(t *testing.T) {
 		EventID:         NewOptionalVal("event1"),
 		EventData:       NewOptionalVal([]byte("eventdata1")),
 		EventStart:      NewOptionalVal(now.Add(time.Second)),
+		Tags:            NewOptionalVal([]string{"l1", "l2"}),
 	}
 
 	require.Equal(t, reflect.ValueOf(update).Elem().NumField()-2, len(update.FieldsSet()))
@@ -243,6 +267,7 @@ func TestTimerUpdate(t *testing.T) {
 	require.Equal(t, "event1", record.EventID)
 	require.Equal(t, []byte("eventdata1"), record.EventData)
 	require.Equal(t, now.Add(time.Second), record.EventStart)
+	require.Equal(t, []string{"l1", "l2"}, record.Tags)
 	require.Equal(t, tpl, *tm)
 
 	emptyUpdate := &TimerUpdate{}

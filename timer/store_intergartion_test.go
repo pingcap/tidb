@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/testkit"
@@ -154,8 +155,20 @@ func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *api.TimerStor
 	orgRecord, err := store.GetByID(ctx, tpl.ID)
 	require.NoError(t, err)
 	require.Equal(t, "1h", tpl.SchedPolicyExpr)
+	eventID := uuid.NewString()
+	eventStart := time.Unix(1234567, 0)
+	watermark := time.Unix(7890123, 0)
 	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
+		Tags:            api.NewOptionalVal([]string{"l1", "l2"}),
 		SchedPolicyExpr: api.NewOptionalVal("2h"),
+		EventStatus:     api.NewOptionalVal(api.SchedEventTrigger),
+		EventID:         api.NewOptionalVal(eventID),
+		EventData:       api.NewOptionalVal([]byte("eventdata1")),
+		EventStart:      api.NewOptionalVal(eventStart),
+		Watermark:       api.NewOptionalVal(watermark),
+		SummaryData:     api.NewOptionalVal([]byte("summary1")),
+		CheckVersion:    api.NewOptionalVal(orgRecord.Version),
+		CheckEventID:    api.NewOptionalVal(""),
 	})
 	require.NoError(t, err)
 	record, err := store.GetByID(ctx, tpl.ID)
@@ -164,6 +177,70 @@ func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *api.TimerStor
 	require.Greater(t, record.Version, tpl.Version)
 	tpl.Version = record.Version
 	tpl.SchedPolicyExpr = "2h"
+	tpl.Tags = []string{"l1", "l2"}
+	tpl.EventStatus = api.SchedEventTrigger
+	tpl.EventID = eventID
+	tpl.EventData = []byte("eventdata1")
+	require.Equal(t, eventStart.Unix(), record.EventStart.Unix())
+	tpl.EventStart = record.EventStart
+	require.Equal(t, watermark.Unix(), record.Watermark.Unix())
+	tpl.Watermark = record.Watermark
+	tpl.SummaryData = []byte("summary1")
+	require.Equal(t, *tpl, *record)
+
+	// tags full update again
+	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
+		Tags: api.NewOptionalVal([]string{"l3"}),
+	})
+	require.NoError(t, err)
+	record, err = store.GetByID(ctx, tpl.ID)
+	require.NoError(t, err)
+	tpl.Version = record.Version
+	tpl.Tags = []string{"l3"}
+	require.Equal(t, *tpl, *record)
+
+	// set some to empty
+	var zeroTime time.Time
+	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
+		Tags:        api.NewOptionalVal([]string(nil)),
+		EventStatus: api.NewOptionalVal(api.SchedEventIdle),
+		EventID:     api.NewOptionalVal(""),
+		EventData:   api.NewOptionalVal([]byte(nil)),
+		EventStart:  api.NewOptionalVal(zeroTime),
+		Watermark:   api.NewOptionalVal(zeroTime),
+		SummaryData: api.NewOptionalVal([]byte(nil)),
+	})
+	require.NoError(t, err)
+	record, err = store.GetByID(ctx, tpl.ID)
+	require.NoError(t, err)
+	tpl.Version = record.Version
+	tpl.Tags = nil
+	tpl.EventStatus = api.SchedEventIdle
+	tpl.EventID = ""
+	tpl.EventData = nil
+	tpl.EventStart = zeroTime
+	tpl.Watermark = zeroTime
+	tpl.SummaryData = nil
+	require.Equal(t, *tpl, *record)
+
+	// err check version
+	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
+		SchedPolicyExpr: api.NewOptionalVal("2h"),
+		CheckVersion:    api.NewOptionalVal(record.Version + 1),
+	})
+	require.EqualError(t, err, "timer version not match")
+	record, err = store.GetByID(ctx, tpl.ID)
+	require.NoError(t, err)
+	require.Equal(t, *tpl, *record)
+
+	// err check event ID
+	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
+		SchedPolicyExpr: api.NewOptionalVal("2h"),
+		CheckEventID:    api.NewOptionalVal("aabb"),
+	})
+	require.EqualError(t, err, "timer event id not match")
+	record, err = store.GetByID(ctx, tpl.ID)
+	require.NoError(t, err)
 	require.Equal(t, *tpl, *record)
 
 	// err update
@@ -210,6 +287,7 @@ func runTimerStoreInsertAndList(ctx context.Context, t *testing.T, store *api.Ti
 			Key:             "/path/to/key2",
 			SchedPolicyType: api.SchedEventInterval,
 			SchedPolicyExpr: "2h",
+			Tags:            []string{"tag1", "tag2"},
 		},
 		EventStatus: api.SchedEventIdle,
 	}
@@ -220,6 +298,7 @@ func runTimerStoreInsertAndList(ctx context.Context, t *testing.T, store *api.Ti
 			Key:             "/path/to/another",
 			SchedPolicyType: api.SchedEventInterval,
 			SchedPolicyExpr: "3h",
+			Tags:            []string{"tag2", "tag3"},
 		},
 		EventStatus: api.SchedEventIdle,
 	}
@@ -275,6 +354,72 @@ func runTimerStoreInsertAndList(ctx context.Context, t *testing.T, store *api.Ti
 	})
 	require.NoError(t, err)
 	checkList([]*api.TimerRecord{&recordTpl1, &recordTpl2}, timers)
+
+	timers, err = store.List(ctx, &api.TimerCond{
+		Key: api.NewOptionalVal("/path/to/k"),
+	})
+	require.NoError(t, err)
+	checkList([]*api.TimerRecord{}, timers)
+
+	timers, err = store.List(ctx, &api.TimerCond{
+		Namespace: api.NewOptionalVal("n2"),
+		Key:       api.NewOptionalVal("/path/to/key2"),
+	})
+	require.NoError(t, err)
+	checkList([]*api.TimerRecord{}, timers)
+
+	timers, err = store.List(ctx, &api.TimerCond{
+		Namespace: api.NewOptionalVal("n1"),
+		Key:       api.NewOptionalVal("/path/to/key2"),
+	})
+	require.NoError(t, err)
+	checkList([]*api.TimerRecord{&recordTpl2}, timers)
+
+	timers, err = store.List(ctx, &api.TimerCond{
+		Tags: api.NewOptionalVal([]string{"tag2"}),
+	})
+	require.NoError(t, err)
+	checkList([]*api.TimerRecord{&recordTpl2, &recordTpl3}, timers)
+
+	timers, err = store.List(ctx, &api.TimerCond{
+		Tags: api.NewOptionalVal([]string{"tag1", "tag3"}),
+	})
+	require.NoError(t, err)
+	checkList([]*api.TimerRecord{}, timers)
+
+	timers, err = store.List(ctx, &api.TimerCond{
+		Tags: api.NewOptionalVal([]string{"tag2", "tag3"}),
+	})
+	require.NoError(t, err)
+	checkList([]*api.TimerRecord{&recordTpl3}, timers)
+
+	timers, err = store.List(ctx, api.And(
+		&api.TimerCond{Namespace: api.NewOptionalVal("n1")},
+		&api.TimerCond{Tags: api.NewOptionalVal([]string{"tag2"})},
+	))
+	require.NoError(t, err)
+	checkList([]*api.TimerRecord{&recordTpl2}, timers)
+
+	timers, err = store.List(ctx, api.Not(api.And(
+		&api.TimerCond{Namespace: api.NewOptionalVal("n1")},
+		&api.TimerCond{Tags: api.NewOptionalVal([]string{"tag2"})},
+	)))
+	require.NoError(t, err)
+	checkList([]*api.TimerRecord{&recordTpl1, &recordTpl3}, timers)
+
+	timers, err = store.List(ctx, api.Or(
+		&api.TimerCond{Key: api.NewOptionalVal("/path/to/key2")},
+		&api.TimerCond{Tags: api.NewOptionalVal([]string{"tag3"})},
+	))
+	require.NoError(t, err)
+	checkList([]*api.TimerRecord{&recordTpl2, &recordTpl3}, timers)
+
+	timers, err = store.List(ctx, api.Not(api.Or(
+		&api.TimerCond{Key: api.NewOptionalVal("/path/to/key2")},
+		&api.TimerCond{Tags: api.NewOptionalVal([]string{"tag3"})},
+	)))
+	require.NoError(t, err)
+	checkList([]*api.TimerRecord{&recordTpl1}, timers)
 }
 
 func runTimerStoreWatchTest(t *testing.T, store *api.TimerStore) {
