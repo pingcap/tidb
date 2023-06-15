@@ -17,6 +17,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"net"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -240,4 +242,10 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	}
 	se.SetSessionManager(s.sm)
 	return se, nil
+}
+
+// ReportMPPTaskStatus implements tikv server interface
+func (s *rpcServer) ReportMPPTaskStatus(ctx context.Context, req *mpp.ReportTaskStatusRequest) (resp *mpp.ReportTaskStatusResponse, err error) {
+	resp = mppcoordmanager.InstanceMPPCoordinatorManager.ReportStatus(req)
+	return resp, nil
 }

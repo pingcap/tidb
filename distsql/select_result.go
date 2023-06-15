@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/telemetry"
@@ -76,8 +77,6 @@ type SelectResult interface {
 	Next(context.Context, *chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
-	// Dummy does nothing
-	Dummy()
 }
 
 type chunkRowHeap struct {
@@ -239,10 +238,6 @@ func (ssr *sortedSelectResults) Close() (err error) {
 	return nil
 }
 
-func (*sortedSelectResults) Dummy() {
-
-}
-
 // NewSerialSelectResults create a SelectResult which will read each SelectResult serially.
 func NewSerialSelectResults(selectResults []SelectResult) SelectResult {
 	return &serialSelectResults{
@@ -291,10 +286,6 @@ func (ssr *serialSelectResults) Close() (err error) {
 		}
 	}
 	return
-}
-
-func (*serialSelectResults) Dummy() {
-
 }
 
 type selectResult struct {
@@ -364,7 +355,6 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 	for {
 		r.respChkIdx = 0
 		startTime := time.Now()
-		//logutil.BgLogger().Info("Fetch from MPPCoord", zap.String("Label", r.label))
 		resultSubset, err := r.resp.Next(ctx)
 		duration := time.Since(startTime)
 		r.fetchDuration += duration
@@ -375,7 +365,6 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			r.memConsume(-atomic.LoadInt64(&r.selectRespSize))
 		}
 		if resultSubset == nil {
-			//logutil.BgLogger().Info("SelectResp is nil", zap.String("Label", r.label))
 			r.selectResp = nil
 			atomic.StoreInt64(&r.selectRespSize, 0)
 			if !r.durationReported {
@@ -425,25 +414,15 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			}
 		}
 		if len(r.selectResp.Chunks) != 0 {
-			//logutil.BgLogger().Info("SelectResp chunks not empty", zap.String("Label", r.label), zap.Int("ChunkSize", len(r.selectResp.Chunks)))
 			break
-		} else {
-			//logutil.BgLogger().Info("SelectResp chunks empty", zap.String("Label", r.label), zap.Int("ChunkSize", len(r.selectResp.Chunks)))
 		}
 	}
-	//logutil.BgLogger().Info("Finish one FetchResp", zap.String("Label", r.label))
 	return nil
 }
 
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	/*if r.selectResp != nil {
-		logutil.BgLogger().Info("ChkIdxCheck", zap.String("Label", r.label), zap.Int("RspChkIdx", r.respChkIdx), zap.Int("ChunksSize", len(r.selectResp.Chunks)))
-	} else {
-		logutil.BgLogger().Info("SelectResp is nil", zap.String("Label", r.label))
-	}*/
 	if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
-		//logutil.BgLogger().Info("ShortPath execution", zap.String("Label", r.label))
 		err := r.fetchResp(ctx)
 		if err != nil {
 			return err
@@ -459,7 +438,6 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return r.readFromDefault(ctx, chk)
 	case tipb.EncodeType_TypeChunk:
 		err := r.readFromChunk(ctx, chk)
-		//logutil.BgLogger().Info("DataSize", zap.String("Label", r.label), zap.Int("RowSize", chk.NumRows()))
 		return err
 	}
 	return errors.Errorf("unsupported encode type:%v", encodeType)
@@ -510,8 +488,6 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 	}
 
 	for !chk.IsFull() {
-		//logutil.BgLogger().Info("chkNotFull", zap.String("Label", r.label), zap.Int("NumRows", chk.NumRows()), zap.Int("RequiredRows", chk.RequiredRows()))
-		//logutil.BgLogger().Info("ChkIdxCheck", zap.String("Label", r.label), zap.Int("RspChkIdx", r.respChkIdx), zap.Int("ChunksSize", len(r.selectResp.Chunks)))
 		if r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.fetchResp(ctx)
 			if err != nil || r.selectResp == nil {
@@ -538,6 +514,30 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 		}
 	}
 	return nil
+}
+
+// FillDummySummaryForMppTasks fills dummy execution summaries for mpp tasks which lack summaries
+func FillDummySummaryForMppTasks(sctx *stmtctx.StatementContext, callee string, storeTypeName string, allPlanIDs []int, recordedPlanIDs map[int]int) {
+	num := uint64(0)
+	dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
+	for _, planID := range allPlanIDs {
+		if _, ok := recordedPlanIDs[planID]; !ok {
+			sctx.RuntimeStatsColl.RecordOneCopTask(planID, storeTypeName, callee, dummySummary)
+		}
+	}
+}
+
+// recordExecutionSummariesForMppTasks records mpp task execution summaries
+func recordExecutionSummariesForMppTasks(sctx *stmtctx.StatementContext, executionSummaries []*tipb.ExecutorExecutionSummary, callee string, storeTypeName string, allPlanIDs []int) {
+	var recordedPlanIDs = make(map[int]int)
+	for _, detail := range executionSummaries {
+		if detail != nil && detail.TimeProcessedNs != nil &&
+			detail.NumProducedRows != nil && detail.NumIterations != nil {
+			recordedPlanIDs[sctx.RuntimeStatsColl.
+				RecordOneCopTask(-1, storeTypeName, callee, detail)] = 0
+		}
+	}
+	FillDummySummaryForMppTasks(sctx, callee, storeTypeName, allPlanIDs, recordedPlanIDs)
 }
 
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) {
@@ -571,11 +571,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
 	}
 
-	// mpp request updates execution summaries themselves
-	if r.label == "mpp" {
-		return
-	}
-
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
 	hasExecutor := false
 	for _, detail := range r.selectResp.GetExecutionSummaries() {
@@ -588,22 +583,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		}
 	}
 	if hasExecutor {
-		var recorededPlanIDs = make(map[int]int)
-		for _, detail := range r.selectResp.GetExecutionSummaries() {
-			if detail != nil && detail.TimeProcessedNs != nil &&
-				detail.NumProducedRows != nil && detail.NumIterations != nil {
-				logutil.BgLogger().Info(fmt.Sprintf("StatsColl address: %p", r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl))
-				recorededPlanIDs[r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-					RecordOneCopTask(-1, r.storeType.Name(), callee, detail)] = 0
-			}
-		}
-		num := uint64(0)
-		dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
-		for _, planID := range r.copPlanIDs {
-			if _, ok := recorededPlanIDs[planID]; !ok {
-				r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType.Name(), callee, dummySummary)
-			}
-		}
+		recordExecutionSummariesForMppTasks(r.ctx.GetSessionVars().StmtCtx, r.selectResp.GetExecutionSummaries(), callee, r.storeType.Name(), r.copPlanIDs)
 	} else {
 		// For cop task cases, we still need this protection.
 		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
@@ -649,10 +629,6 @@ func (r *selectResult) memConsume(bytes int64) {
 	}
 }
 
-func (r *selectResult) Dummy () {
-	//logutil.BgLogger().Info("SelectResult for MPPResponse stats is null", zap.Bool("RuStatsNil", r.stats == nil))
-}
-
 // Close closes selectResult.
 func (r *selectResult) Close() error {
 	if r.feedback.Actual() >= 0 {
@@ -664,7 +640,6 @@ func (r *selectResult) Close() error {
 		r.memConsume(-respSize)
 	}
 	if r.stats != nil {
-		//logutil.BgLogger().Info("MPPTask Runtime stats not nil")
 		defer func() {
 			if ci, ok := r.resp.(copr.CopInfo); ok {
 				r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()

@@ -153,6 +153,11 @@ type Server struct {
 	printMDLLogTime     time.Time
 }
 
+// GetStatusServerAddr gets statusServer address
+func (s *Server) GetStatusServerAddr() (on bool, addr string) {
+	return s.cfg.Status.ReportStatus, s.statusAddr
+}
+
 // ConnectionCount gets current connection count.
 func (s *Server) ConnectionCount() int {
 	s.rwlock.RLock()

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/extension"
 	_ "github.com/pingcap/tidb/extension/_import"
 	"github.com/pingcap/tidb/keyspace"
@@ -810,6 +811,7 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 	cfg := config.GetGlobalConfig()
 	driver := server.NewTiDBDriver(storage)
 	svr, err := server.NewServer(cfg, driver)
+	mppcoordmanager.InstanceMPPCoordinatorManager.InitServerAddr(svr.GetStatusServerAddr())
 	// Both domain and storage have started, so we have to clean them before exiting.
 	if err != nil {
 		closeDomainAndStorage(storage, dom)

@@ -14,6 +14,7 @@
 
 package mppcoordmanager
 import (
+	"fmt"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -35,7 +36,21 @@ type CoordinatorUniqueID struct {
 // MPPCoordinatorManager manages all mpp coordinator instances
 type MPPCoordinatorManager struct {
 	mu             sync.Mutex
+	serverOn       bool
+	serverAddr     string
 	coordinatorMap map[CoordinatorUniqueID]kv.MppCoordinator
+}
+
+// InitServerAddr init grpcServer address
+func (m *MPPCoordinatorManager) InitServerAddr(serverOn bool, serverAddr string) {
+	m.serverOn = serverOn
+	if serverOn {
+		m.serverAddr = serverAddr
+	}
+}
+
+func (m *MPPCoordinatorManager) GetServerAddr() (serverOn bool, serverAddr string) {
+	return m.serverOn, m.serverAddr
 }
 
 // Register is to register mpp coordinator
@@ -62,28 +77,30 @@ func (m *MPPCoordinatorManager) Unregister(coordID CoordinatorUniqueID) error {
 }
 
 // ReportStatus reports mpp task execution status to specific coordinator
-func (m *MPPCoordinatorManager) ReportStatus(request *mpp.ReportStatusRequest) *mpp.ReportStatusResponse {
+func (m *MPPCoordinatorManager) ReportStatus(request *mpp.ReportTaskStatusRequest) *mpp.ReportTaskStatusResponse {
 	mppQueryID := kv.MPPQueryID{
-		QueryTs: request.Meta.QueryTs,
+		QueryTs:      request.Meta.QueryTs,
 		LocalQueryID: request.Meta.LocalQueryId,
-		ServerID: request.Meta.ServerId,
+		ServerID:     request.Meta.ServerId,
 	}
 	coordID := CoordinatorUniqueID{
 		MPPQueryID: mppQueryID,
-		GatherId: request.Meta.GatherId,
+		GatherId:   request.Meta.GatherId,
 	}
 	m.mu.Lock()
 	coord, exists := m.coordinatorMap[coordID]
 	m.mu.Unlock()
+	resp := new(mpp.ReportTaskStatusResponse)
 	if !exists {
-		//return mpp.ReportStatusResponse{Error: {-1, "sdf", request.Meta.MppVersion}}
-		return nil
+		resp.Error = &mpp.Error{MppVersion: request.Meta.MppVersion, Msg: fmt.Sprintf("MppTask not exists, taskID: %d", request.Meta.TaskId)}
+		return resp
 	}
-	err := coord.ReportStatus(kv.MCStatusInfo{Request: request})
-	if err  == nil {
-		return nil
+	err := coord.ReportStatus(kv.ReportStatusRequest{Request: request})
+	if err != nil {
+		resp.Error = &mpp.Error{MppVersion: request.Meta.MppVersion, Msg: err.Error()}
+		return resp
 	}
-	return nil
+	return resp
 }
 
 // newMPPCoordinatorManger is to create a new mpp coordinator manager

@@ -89,15 +89,13 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		return errors.Trace(err)
 	}
 
-
 	e.respIter = distsql.GenSelectResultFromResponse(e.ctx, e.retFieldTypes, planIDs, e.id, resp)
-	time.Sleep(time.Second*2)
-	coord.Close()
 	return nil
 }
 
 func (e *MPPGather) buildCoordinator(planIDs []int) kv.MppCoordinator {
-	coord := mpp.NewLocalMPPCoordinator(e.ctx, e.is, e.originalPlan, planIDs, e.startTS, e.mppQueryID, uint64(e.id), e.memTracker)
+	_, serverAddr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
+	coord := mpp.NewLocalMPPCoordinator(e.ctx, e.is, e.originalPlan, planIDs, e.startTS, e.mppQueryID, uint64(e.id), serverAddr, e.memTracker)
 	return coord
 }
 

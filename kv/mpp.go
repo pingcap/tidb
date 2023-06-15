@@ -37,7 +37,7 @@ const (
 	// MppVersionV1 supports TiFlash version [v6.6.x, ~]
 	MppVersionV1
 
-	// MppVersionV2
+	MppVersionV2
 	// MppVersionV3
 
 	mppVersionMax
@@ -141,18 +141,20 @@ type MPPDispatchRequest struct {
 	IsRoot  bool        // root task returns data to tidb directly.
 	Timeout uint64      // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
 	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
-	SchemaVar  int64
-	StartTs    uint64
-	MppQueryID MPPQueryID
-	GatherID   uint64
-	ID         int64 // identify a single task
-	MppVersion MppVersion
-	State      MppTaskStates
+	SchemaVar          int64
+	StartTs            uint64
+	MppQueryID         MPPQueryID
+	GatherID           uint64
+	ID                 int64 // identify a single task
+	MppVersion         MppVersion
+	CoordinatorAddress string
+	State              MppTaskStates
 }
 
 // CancelMPPTasksParam represents parameter for MPPClient's CancelMPPTasks
 type CancelMPPTasksParam struct {
-	Reqs []*MPPDispatchRequest
+	StoreAddr map[string]bool
+	Reqs      []*MPPDispatchRequest
 }
 
 // EstablishMPPConnsParam represents parameter for MPPClient's EstablishMPPConns
@@ -192,8 +194,9 @@ type MPPClient interface {
 	GetMPPStoreCount() (int, error)
 }
 
-type MCStatusInfo struct {
-	Request 	*mpp.ReportStatusRequest
+// ReportStatusRequest wraps mpp ReportStatusRequest
+type ReportStatusRequest struct {
+	Request *mpp.ReportTaskStatusRequest
 }
 
 // MppCoordinator describes the basic api for executing mpp physical plan.
@@ -203,7 +206,7 @@ type MppCoordinator interface {
 	// Next returns next data
 	Next(ctx context.Context) (ResultSubset, error)
 	// ReportStatus report task execution info to coordinator
-	ReportStatus(info MCStatusInfo) error
+	ReportStatus(info ReportStatusRequest) error
 	// Close and release the used resources.
 	Close() error
 }
