@@ -1294,21 +1294,21 @@ func getInstructions(repl []byte) ([]Instruction, error) {
 	replLen := len(repl)
 	for i := 0; i < replLen; i += 1 {
 		if repl[i] == '\\' {
-			if i+1 < replLen {
-				if stringutil.IsNumericASCII(repl[i+1]) { // Substitution
-					if len(literals) != 0 {
-						instructions = append(instructions, Instruction{SubstitutionNum: -1, Literal: literals})
-						literals = []byte{}
-					}
-					instructions = append(instructions, Instruction{SubstitutionNum: int(repl[i+1] - '0')})
-				} else {
-					literals = append(literals, repl[i+1]) // Escaping
-				}
-				i += 1
-			} else {
+			if i+1 >= replLen {
 				// This slash is in the end. Ignore it and break the loop.
 				break
 			}
+
+			if stringutil.IsNumericASCII(repl[i+1]) { // Substitution
+				if len(literals) != 0 {
+					instructions = append(instructions, Instruction{SubstitutionNum: -1, Literal: literals})
+					literals = []byte{}
+				}
+				instructions = append(instructions, Instruction{SubstitutionNum: int(repl[i+1] - '0')})
+			} else {
+				literals = append(literals, repl[i+1]) // Escaping
+			}
+			i += 1
 		} else {
 			literals = append(literals, repl[i]) // Plain character
 		}
