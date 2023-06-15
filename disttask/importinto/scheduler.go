@@ -32,9 +32,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// ImportScheduler is a scheduler for IMPORT INTO.
+// importStepScheduler is a scheduler for import step.
 // Scheduler is equivalent to a Lightning instance.
-type ImportScheduler struct {
+type importStepScheduler struct {
 	taskID        int64
 	taskMeta      *TaskMeta
 	tableImporter *importer.TableImporter
@@ -46,8 +46,7 @@ type ImportScheduler struct {
 	wg           sync.WaitGroup
 }
 
-// InitSubtaskExecEnv implements the Scheduler.InitSubtaskExecEnv interface.
-func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
+func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	s.logger.Info("InitSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
 
 	idAlloc := kv.NewPanickingAllocators(0)
@@ -87,10 +86,9 @@ func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	return nil
 }
 
-// SplitSubtask implements the Scheduler.SplitSubtask interface.
-func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
+func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
 	s.logger.Info("SplitSubtask", zap.Any("taskMeta", s.taskMeta))
-	var subtaskMeta SubtaskMeta
+	var subtaskMeta ImportStepMeta
 	err := json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
 		return nil, err
@@ -121,7 +119,7 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 
 	miniTask := make([]proto.MinimalTask, 0, len(subtaskMeta.Chunks))
 	for _, chunk := range subtaskMeta.Chunks {
-		miniTask = append(miniTask, MinimalTaskMeta{
+		miniTask = append(miniTask, &importStepMinimalTask{
 			Plan:       s.taskMeta.Plan,
 			Chunk:      chunk,
 			SharedVars: sharedVars,
@@ -130,10 +128,9 @@ func (s *ImportScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.
 	return miniTask, nil
 }
 
-// OnSubtaskFinished implements the Scheduler.OnSubtaskFinished interface.
-func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
+func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
 	s.logger.Info("OnSubtaskFinished", zap.Any("taskMeta", s.taskMeta))
-	var subtaskMeta SubtaskMeta
+	var subtaskMeta ImportStepMeta
 	if err := json.Unmarshal(subtaskMetaBytes, &subtaskMeta); err != nil {
 		return nil, err
 	}
@@ -179,37 +176,79 @@ func (s *ImportScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaByte
 	return json.Marshal(subtaskMeta)
 }
 
-// CleanupSubtaskExecEnv implements the Scheduler.CleanupSubtaskExecEnv interface.
-func (s *ImportScheduler) CleanupSubtaskExecEnv(_ context.Context) (err error) {
+func (s *importStepScheduler) CleanupSubtaskExecEnv(_ context.Context) (err error) {
 	s.logger.Info("CleanupSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
 	s.importCancel()
 	s.wg.Wait()
 	return s.tableImporter.Close()
 }
 
-// Rollback implements the Scheduler.Rollback interface.
-// TODO: add rollback
-func (s *ImportScheduler) Rollback(context.Context) error {
-	logutil.BgLogger().Info("rollback", zap.Any("taskMeta", s.taskMeta))
+func (s *importStepScheduler) Rollback(context.Context) error {
+	// TODO: add rollback
+	s.logger.Info("rollback", zap.Any("taskMeta", s.taskMeta))
 	return nil
 }
 
+type postStepScheduler struct {
+	scheduler.EmptyScheduler
+	taskID   int64
+	taskMeta *TaskMeta
+	logger   *zap.Logger
+}
+
+var _ scheduler.Scheduler = &postStepScheduler{}
+
+func (p *postStepScheduler) SplitSubtask(_ context.Context, metaBytes []byte) ([]proto.MinimalTask, error) {
+	mTask := &postProcessStepMinimalTask{
+		taskMeta: p.taskMeta,
+		logger:   p.logger,
+	}
+	if err := json.Unmarshal(metaBytes, &mTask.meta); err != nil {
+		return nil, err
+	}
+	return []proto.MinimalTask{mTask}, nil
+}
+
 func init() {
-	scheduler.RegisterSchedulerConstructor(
-		proto.ImportInto,
+	prepareFn := func(taskID int64, bs []byte, step int64) (*TaskMeta, *zap.Logger, error) {
+		taskMeta := TaskMeta{}
+		if err := json.Unmarshal(bs, &taskMeta); err != nil {
+			return nil, nil, err
+		}
+		logger := logutil.BgLogger().With(
+			zap.String("type", proto.ImportInto),
+			zap.Int64("task-id", taskID),
+			zap.String("step", stepStr(step)),
+		)
+		logger.Info("create step scheduler", zap.Any("taskMeta", taskMeta))
+		return &taskMeta, logger, nil
+	}
+	scheduler.RegisterTaskType(proto.ImportInto)
+	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepImport,
 		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
-			taskMeta := TaskMeta{}
-			if err := json.Unmarshal(bs, &taskMeta); err != nil {
+			taskMeta, logger, err := prepareFn(taskID, bs, step)
+			if err != nil {
 				return nil, err
 			}
-			logger := logutil.BgLogger().With(zap.String("component", "scheduler"), zap.String("type", proto.ImportInto), zap.Int64("table_id", taskMeta.Plan.TableInfo.ID))
-			logger.Info("create new IMPORT INTO scheduler", zap.Any("taskMeta", taskMeta))
-			return &ImportScheduler{
+			return &importStepScheduler{
 				taskID:   taskID,
-				taskMeta: &taskMeta,
+				taskMeta: taskMeta,
 				logger:   logger,
 			}, nil
 		},
 		scheduler.WithConcurrentSubtask(),
+	)
+	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepPostProcess,
+		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
+			taskMeta, logger, err := prepareFn(taskID, bs, step)
+			if err != nil {
+				return nil, err
+			}
+			return &postStepScheduler{
+				taskID:   taskID,
+				taskMeta: taskMeta,
+				logger:   logger,
+			}, nil
+		},
 	)
 }
