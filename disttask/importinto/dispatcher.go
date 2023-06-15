@@ -260,7 +260,7 @@ func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskH
 		zap.Int64("task-id", gTask.ID),
 		zap.String("step", stepStr(gTask.Step)),
 	)
-	logger.Info("process error flow", zap.ByteStrings("error message", receiveErr))
+	logger.Info("process error flow", zap.ByteStrings("error-message", receiveErr))
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -326,7 +326,7 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 
 // preProcess does the pre-processing for the task.
 func preProcess(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) error {
-	logger.Info("pre process", zap.Any("table_info", taskMeta.Plan.TableInfo))
+	logger.Info("pre process")
 	// TODO: drop table indexes depends on the option.
 	// if err := dropTableIndexes(ctx, handle, taskMeta, logger); err != nil {
 	// 	return err
