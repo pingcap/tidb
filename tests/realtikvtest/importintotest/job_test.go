@@ -15,6 +15,7 @@
 package importintotest
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/disttask/importinto"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
@@ -576,4 +579,37 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 	s.NoError(err)
 	jobInfo.ID = int64(jobID1)
 	s.compareJobInfoWithoutTime(jobInfo, result1[0])
+}
+
+func (s *mockGCSSuite) TestKillBeforeFinish() {
+	s.cleanupSysTables()
+	s.tk.MustExec("DROP DATABASE IF EXISTS kill_job;")
+	s.tk.MustExec("CREATE DATABASE kill_job;")
+	s.tk.MustExec(`CREATE TABLE kill_job.t (a INT, b INT, c int);`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "t-1.tsv"},
+		Content:     []byte("1,11,111"),
+	})
+
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/syncBeforeSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/executor/cancellableCtx", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/setLastImportJobID", `return(true)`)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sql := fmt.Sprintf(`IMPORT INTO kill_job.t FROM 'gs://test-load/t-*.tsv?endpoint=%s'`, gcsEndpoint)
+		err := s.tk.QueryToErr(sql)
+		s.ErrorIs(errors.Cause(err), context.Canceled)
+	}()
+	// wait for the task reach sort chunk
+	<-importinto.TestSyncChan
+	// cancel the job
+	executor.TestCancelFunc()
+	// continue the execution
+	importinto.TestSyncChan <- struct{}{}
+	wg.Wait()
+	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
+	s.Len(rows, 1)
+	s.Equal("cancelled", rows[0][5])
 }

@@ -119,7 +119,6 @@ func (ti *DistImporter) Result() importer.JobImportResult {
 		return result
 	}
 
-	ti.logger.Info("finish distribute IMPORT INTO")
 	var (
 		numWarnings uint64
 		numRecords  uint64
@@ -217,6 +216,11 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 func (*DistImporter) taskKey() string {
 	// task key is meaningless to IMPORT INTO, so we use a random uuid.
 	return fmt.Sprintf("%s/%s", proto.ImportInto, uuid.New().String())
+}
+
+// JobID returns the job id.
+func (ti *DistImporter) JobID() int64 {
+	return ti.jobID
 }
 
 func getTaskMeta(jobID int64) (*TaskMeta, error) {

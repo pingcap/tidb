@@ -301,7 +301,7 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) error {
 	if len(errStr) > 0 {
 		// Found an error when task is running.
-		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("task-id", gTask.ID), zap.Any("err msg", errStr))
+		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("task-id", gTask.ID), zap.ByteStrings("err msg", errStr))
 		return d.processErrFlow(gTask, errStr)
 	}
 	// previous step is finished.
