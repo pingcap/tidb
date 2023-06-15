@@ -219,9 +219,7 @@ func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, di
 			return err2
 		}
 		// use background, since ctx is canceled already.
-		if err2 = cancelImportJob(context.Background(), globalTaskManager, distImporter.JobID()); err2 != nil {
-			return err2
-		}
+		return cancelImportJob(context.Background(), globalTaskManager, distImporter.JobID())
 	}
 	if err2 := flushStats(ctx, se, e.importPlan.TableInfo.ID, distImporter.Result()); err2 != nil {
 		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))

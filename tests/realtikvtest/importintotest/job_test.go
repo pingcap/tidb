@@ -609,7 +609,17 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 	// continue the execution
 	importinto.TestSyncChan <- struct{}{}
 	wg.Wait()
-	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
+	jobID := importer.TestLastImportJobID.Load()
+	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
 	s.Len(rows, 1)
 	s.Equal("cancelled", rows[0][5])
+	globalTaskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	taskKey := importinto.TaskKey(jobID)
+	s.NoError(err)
+	s.Eventually(func() bool {
+		globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
+		s.NoError(err2)
+		return globalTask.State == proto.TaskStateReverted
+	}, 5*time.Second, 1*time.Second)
 }
