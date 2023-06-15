@@ -501,10 +501,10 @@ func (c *localMppCoordinator) ReportStatus(info kv.ReportStatusRequest) error {
 	defer c.mu.Unlock()
 	req, exists := c.reqMap[taskID]
 	if !exists {
-		return errors.Errorf("ReportMPPTaskStatus task not exists taskID: %s", taskID)
+		return errors.Errorf("ReportMPPTaskStatus task not exists taskID: %d", taskID)
 	}
 	if req.receivedReport {
-		return errors.Errorf("ReportMPPTaskStatus task already received taskID: %s", taskID)
+		return errors.Errorf("ReportMPPTaskStatus task already received taskID: %d", taskID)
 	}
 
 	req.receivedReport = true
@@ -525,7 +525,7 @@ func (c *localMppCoordinator) ReportStatus(info kv.ReportStatusRequest) error {
 
 func (c *localMppCoordinator) handleAllReports() {
 	if len(c.coordinatorAddr) > 0 && atomic.LoadUint32(&c.dispatchFailed) == 0 {
-		var timeoutInSec int = 3
+		timeoutInSec := 3
 		select {
 		case <-c.reportStatusCh:
 			var recordedPlanIDs = make(map[int]int)
