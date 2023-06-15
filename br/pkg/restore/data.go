@@ -24,6 +24,10 @@ import (
 	"google.golang.org/grpc/backoff"
 )
 
+const (
+	max_regions_per_task = 8
+)
+
 // RecoverData recover the tikv cluster
 // 1. read all meta data from tikvs
 // 2. make recovery plan and then recovery max allocate ID firstly
@@ -337,6 +341,7 @@ func (recovery *Recovery) FlashbackToVersion(ctx context.Context, resolveTS uint
 	}
 
 	runner := rangetask.NewRangeTaskRunner("br-flashback-runner", recovery.mgr.GetStorage().(tikv.Storage), int(recovery.concurrency), handler)
+	runner.SetRegionsPerTask(max_regions_per_task)
 	// Run flashback on the entire TiKV cluster. Empty keys means the range is unbounded.
 	err = runner.RunOnRange(ctx, []byte(""), []byte(""))
 	if err != nil {
