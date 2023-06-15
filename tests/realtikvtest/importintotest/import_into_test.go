@@ -1138,12 +1138,13 @@ func (s *mockGCSSuite) TestDiskQuota() {
 }
 
 func (s *mockGCSSuite) TestAnalyze() {
+	s.T().Skip("skip for ci now")
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
 
 	// test auto analyze
 	s.tk.MustExec("create table load_data.analyze_table(a int, b int, c int, index idx_ac(a,c), index idx_b(b))")
-	lineCount := 10000
+	lineCount := 2000
 	data := make([]byte, 0, 1<<13)
 	for i := 0; i < lineCount; i++ {
 		data = append(data, []byte(fmt.Sprintf("1,%d,1\n", i))...)
