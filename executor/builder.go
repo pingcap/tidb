@@ -5361,7 +5361,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 			b.err = err
 			return nil
 		}
-		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl, Producer: producer}
+		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl}
 
 		// Build recursive part.
 		recursiveExec := b.build(v.RecurPlan)
@@ -5389,6 +5389,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 			limitEnd:      v.CTE.LimitEnd,
 			isInApply:     v.CTE.IsInApply,
 		}
+		storageMap[v.CTE.IDForStorage].Producer = producer
 	}
 
 	return &CTEExec{
