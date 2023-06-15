@@ -35,20 +35,20 @@ var _ pd.Client = new(pdClient)
 
 type pdClient struct {
 	*us.MockPD
+	pd.ResourceManagerClient
 
 	serviceSafePoints map[string]uint64
 	gcSafePointMu     sync.Mutex
 	globalConfig      map[string]string
 	externalTimestamp atomic.Uint64
-	pd.ResourceManagerClient
 }
 
 func newPDClient(pd *us.MockPD) *pdClient {
 	return &pdClient{
 		MockPD:                pd,
+		ResourceManagerClient: infosync.NewMockResourceManagerClient(),
 		serviceSafePoints:     make(map[string]uint64),
 		globalConfig:          make(map[string]string),
-		ResourceManagerClient: infosync.NewMockResourceManagerClient(),
 	}
 }
 
