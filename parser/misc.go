@@ -707,6 +707,7 @@ var tokenMap = map[string]int{
 	"SUBSTRING":                substring,
 	"SUM":                      sum,
 	"SUPER":                    super,
+	"SURVIVAL_PREFERENCES":     survivalPreferences,
 	"SWAPS":                    swaps,
 	"SWITCHES":                 switchesSym,
 	"SYSTEM":                   system,
