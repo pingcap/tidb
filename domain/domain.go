@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -1232,38 +1233,77 @@ func (do *Domain) Init(
 
 func (do *Domain) runawayRecordFlushLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayRecordFlushLoop", nil, false)
-	ticker := time.NewTicker(time.Minute * 1)
-	defer func() {
-		ticker.Stop()
-	}()
-	flush := do.RunawayManager().FlushChannel()
-	for {
-		var records []*resourcegroup.RunawayWatchRecord
-		select {
-		case <-ticker.C:
-			records = do.runawayManager.FlushWatchRecords()
-		case <-flush:
-			records = do.runawayManager.FlushWatchRecords()
+	// this times is used to batch flushing rocords, with 1s duration,
+	// we can guarantee a watch record can be seen by the user within 1s.
+	timer := time.NewTimer(time.Second)
+	fired := false
+	recordCh := do.RunawayManager().RecordChan()
+	flushThrehold := do.runawayManager.FlushThreshold()
+	records := make([]*resourcegroup.RunawayWatchRecord, 0, flushThrehold)
+
+	flushRecords := func() {
+		if len(records) == 0 {
+			return
 		}
-		if len(records) > 0 {
-			se, err := do.sysSessionPool.Get()
-			if err != nil {
-				logutil.BgLogger().Warn("", zap.Error(err))
+		if err := do.flushRecords(records); err != nil {
+			logutil.BgLogger().Info("flush runaway records failed", zap.Error(err), zap.Int("count", len(records)))
+		}
+		records = records[:0]
+	}
+
+	for {
+		select {
+		case <-timer.C:
+			flushRecords()
+			fired = true
+		case r := <-recordCh:
+			records = append(records, r)
+			if len(records) >= flushThrehold {
+				flushRecords()
+			} else if fired {
+				// meet a new record, reset the timer.
+				timer.Reset(time.Second)
 			}
-			exec := se.(sqlexec.RestrictedSQLExecutor)
-			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-			for _, record := range records {
-				_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-					"insert into mysql.quarantine_watch VALUES (%?, %?, %?, %?, %?, %?, %?)",
-					record.ResourceGroupName, record.StartTime, record.EndTime, record.Type, record.SqlText, record.PlanDigest, record.From,
-				)
-				if err != nil {
-					logutil.BgLogger().Info("runawayRecordFlushLoop ExecRestrictedSQL", zap.Error(err), zap.Any("record", record))
-				}
-			}
-			do.sysSessionPool.Put(se)
 		}
 	}
+}
+
+func (do *Domain) flushRecords(records []*resourcegroup.RunawayWatchRecord) error {
+	se, err := do.sysSessionPool.Get()
+	defer func() {
+		do.sysSessionPool.Put(se)
+	}()
+	if err != nil {
+		return errors.Annotate(err, "get session failed")
+	}
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	sql, params := genQuarantineWatchStmt(records)
+	_, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		sql, params...,
+	)
+	return err
+
+}
+
+func genQuarantineWatchStmt(records []*resourcegroup.RunawayWatchRecord) (string, []interface{}) {
+	var builder strings.Builder
+	params := make([]interface{}, 0, len(records)*7)
+	builder.WriteString("insert into mysql.quarantine_watch VALUES ")
+	for count, r := range records {
+		if count > 0 {
+			builder.WriteByte(',')
+		}
+		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?)")
+		params = append(params, r.ResourceGroupName)
+		params = append(params, r.StartTime)
+		params = append(params, r.EndTime)
+		params = append(params, r.Type)
+		params = append(params, r.SqlText)
+		params = append(params, r.PlanDigest)
+		params = append(params, r.From)
+	}
+	return builder.String(), params
 }
 
 // SetOnClose used to set do.onClose func.
@@ -1283,7 +1323,12 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdCli pd.Cli
 	}
 	tikv.SetResourceControlInterceptor(control)
 	control.Start(ctx)
-	do.runawayManager = resourcegroup.NewRunawayManager(control, do.ServerID(), do.sysSessionPool)
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return err
+	}
+	serverAddr := net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
+	do.runawayManager = resourcegroup.NewRunawayManager(control, serverAddr, do.sysSessionPool)
 	do.resourceGroupsController = control
 	return nil
 }

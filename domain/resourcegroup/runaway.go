@@ -14,6 +14,7 @@
 package resourcegroup
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,7 +39,7 @@ type RunawayWatchRecord struct {
 	Type              string
 	SqlText           string
 	PlanDigest        string
-	From              uint64
+	From              string
 }
 
 type sessionPool interface {
@@ -47,25 +48,22 @@ type sessionPool interface {
 }
 
 type RunawayManager struct {
+	queryLock        sync.Mutex
 	resourceGroupCtl *rmclient.ResourceGroupsController
 	watchList        *ttlcache.Cache[string, struct{}]
-	serverID         uint64
-
-	pool sessionPool
-
+	serverID         string
+	pool             sessionPool
 	watchRecordCache chan *RunawayWatchRecord
-	flush            chan struct{}
 }
 
-func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serverID uint64, pool sessionPool) *RunawayManager {
+func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serverAddr string, pool sessionPool) *RunawayManager {
 	watchList := ttlcache.New[string, struct{}](ttlcache.WithCapacity[string, struct{}](maxWatchListCap))
 	go watchList.Start()
 	return &RunawayManager{
 		resourceGroupCtl: resourceGroupCtl,
 		watchList:        watchList,
+		serverID:         serverAddr,
 		watchRecordCache: make(chan *RunawayWatchRecord, maxWatchRecordChannelSize),
-		serverID:         serverID,
-		flush:            make(chan struct{}),
 		pool:             pool,
 	}
 }
@@ -80,45 +78,45 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName string, originalSql st
 }
 
 func (rm *RunawayManager) MarkRunaway(resourceGroupName, convict, originalSql, planDigest, watchType string, ttl time.Duration) {
-	rm.watchList.Set(resourceGroupName+"/"+convict, struct{}{}, ttl)
+	key := resourceGroupName + "/" + convict
+	recordQuery := false
+	if rm.watchList.Get(key) == nil {
+		rm.queryLock.Lock()
+		if rm.watchList.Get(key) == nil {
+			rm.watchList.Set(key, struct{}{}, ttl)
+			recordQuery = true
+		}
+		rm.queryLock.Unlock()
+	}
+	if !recordQuery {
+		rm.watchList.Set(key, struct{}{}, ttl)
+	}
+	if recordQuery {
+		// TODO: record runaway query
+	}
+
 	now := time.Now()
-	if len(rm.watchRecordCache) >= maxWatchRecordChannelSize/2 {
-		select {
-		case rm.flush <- struct{}{}:
-		default:
-		}
+	select {
+	case rm.watchRecordCache <- &RunawayWatchRecord{
+		ResourceGroupName: resourceGroupName,
+		StartTime:         now,
+		EndTime:           now.Add(ttl),
+		Type:              watchType,
+		SqlText:           originalSql,
+		PlanDigest:        planDigest,
+		From:              rm.serverID,
+	}:
+	default:
+		// TODO: add warning for discard flush records
 	}
-	go func() {
-		rm.watchRecordCache <- &RunawayWatchRecord{
-			ResourceGroupName: resourceGroupName,
-			StartTime:         now,
-			EndTime:           now.Add(ttl),
-			Type:              watchType,
-			SqlText:           originalSql,
-			PlanDigest:        planDigest,
-			From:              rm.serverID,
-		}
-	}()
 }
 
-func (rm *RunawayManager) FlushWatchRecords() (ret []*RunawayWatchRecord) {
-	ret = make([]*RunawayWatchRecord, 0)
-	for {
-		if len(ret) > maxWatchRecordChannelSize {
-			break
-		}
-		select {
-		case record := <-rm.watchRecordCache:
-			ret = append(ret, record)
-		default:
-			return ret
-		}
-	}
-	return ret
+func (rm *RunawayManager) FlushThreshold() int {
+	return maxWatchRecordChannelSize / 2
 }
 
-func (rm *RunawayManager) FlushChannel() <-chan struct{} {
-	return rm.flush
+func (rm *RunawayManager) RecordChan() <-chan *RunawayWatchRecord {
+	return rm.watchRecordCache
 }
 
 func (rm *RunawayManager) ExamineWatchList(resourceGroupName string, convict string) bool {

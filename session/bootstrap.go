@@ -612,7 +612,7 @@ const (
 		watch_type varchar(12) not null,
 		original_sql TEXT NOT NULL,
 		plan_digest TEXT NOT NULL,
-		tidb_server bigint(32),
+		tidb_server varchar(64),
 		INDEX sql_index(original_sql(700)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
