@@ -155,7 +155,7 @@ type Server struct {
 
 // GetStatusServerAddr gets statusServer address
 func (s *Server) GetStatusServerAddr() (on bool, addr string) {
-       return s.cfg.Status.ReportStatus, s.statusAddr
+	return s.cfg.Status.ReportStatus, s.statusAddr
 }
 
 // ConnectionCount gets current connection count.
