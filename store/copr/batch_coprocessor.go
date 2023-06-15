@@ -895,7 +895,6 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 					err = errors.Errorf("no less than %d region(s) can not be accessed by TiFlash in the zone [%s]: %setc", len(regionsInOtherZones), tidbZone, regionIDErrMsg)
 					// We need to reload the region cache here to avoid the failure throughout the region cache refresh TTL.
 					cache.OnSendFailForBatchRegions(bo, rpcCtx.Store, regionInfoInOtherZones, true, err)
-					regionInfoInOtherZones = nil
 					return nil, err
 				}
 			}
