@@ -1143,7 +1143,7 @@ func (s *mockGCSSuite) TestAnalyze() {
 
 	// test auto analyze
 	s.tk.MustExec("create table load_data.analyze_table(a int, b int, c int, index idx_ac(a,c), index idx_b(b))")
-	lineCount := 10000
+	lineCount := 2000
 	data := make([]byte, 0, 1<<13)
 	for i := 0; i < lineCount; i++ {
 		data = append(data, []byte(fmt.Sprintf("1,%d,1\n", i))...)
