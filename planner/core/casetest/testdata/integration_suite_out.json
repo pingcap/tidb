@@ -9462,9 +9462,10 @@
           "│   └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│     └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t._tidb_rowid)->Column#10",
           "│       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 9990.00 root  data:Selection",
-          "  └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "└─TableReader(Probe) 9990.00 root  MppVersion: 1, data:ExchangeSender",
+          "  └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
