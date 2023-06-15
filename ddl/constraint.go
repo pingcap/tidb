@@ -228,11 +228,10 @@ func (w *worker) onAlterCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job)
 		case model.StateWriteOnly:
 			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo, job)
 			if err != nil {
-				if table.ErrCheckConstraintViolated.Equal(err) {
-					constraintInfo.Enforced = !enforced
-				} else {
+				if !table.ErrCheckConstraintViolated.Equal(err) {
 					return ver, errors.Trace(err)
 				}
+				constraintInfo.Enforced = !enforced
 			}
 			constraintInfo.State = model.StatePublic
 			ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != constraintInfo.State)
