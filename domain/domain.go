@@ -1000,9 +1000,7 @@ func (do *Domain) Close() {
 		do.cancel()
 	}
 	do.wg.Wait()
-	if intest.InTest {
-		do.sysSessionPool.Close()
-	}
+	do.sysSessionPool.Close()
 	variable.UnregisterStatistics(do.bindHandle.Load())
 	if do.onClose != nil {
 		do.onClose()
