@@ -1122,7 +1122,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p Plan, taskType, id string, 
 	return jsonRow
 }
 
-func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, string, string) {
+func (e *Explain) getOperatorInfo(p Plan, id string) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
 	// For `explain for connection` statement, `e.ExplainRows` will be set.
 	for _, row := range e.ExplainRows {
 		if len(row) < 5 {
@@ -1134,9 +1134,9 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	}
 
 	pp, isPhysicalPlan := p.(PhysicalPlan)
-	estRows := "N/A"
-	estCost := "N/A"
-	costFormula := "N/A"
+	estRows = "N/A"
+	estCost = "N/A"
+	costFormula = "N/A"
 	if isPhysicalPlan {
 		estRows = strconv.FormatFloat(pp.getEstRowCountForDisplay(), 'f', 2, 64)
 		if e.ctx != nil && e.ctx.GetSessionVars().CostModelVersion == modelVer2 {
@@ -1153,7 +1153,6 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 
-	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
 		accessObject = plan.AccessObject().String()
 		operatorInfo = plan.OperatorInfo(false)

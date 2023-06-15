@@ -499,10 +499,6 @@
       "planner/core/rule_decorrelate.go": "planner/core/rule_decorrelate.go",
       "planner/core/plan_cache_utils.go": "planner/core/plan_cache_utils.go",
       "planner/core/expression_rewriter.go": "planner/core/expression_rewriter.go",
-      "planner/core/task.go": "planner/core/task.go",
-      "planner/core/preprocess.go": "planner/core/preprocess.go",
-      "planner/core/plan_cache_lru.go": "planner/core/plan_cache_lru.go",
-      "planner/core/common_plans.go": "planner/core/common_plans.go",
       "plugin/conn_ip_example/": "plugin/conn_ip_example/"
     },
     "only_files": {
