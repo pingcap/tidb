@@ -1237,9 +1237,9 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 }
 
 // checkDuplicateColumnName checks if index exists duplicated columns.
-func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecification) error {
-	colNames := make(map[string]struct{}, len(IndexPartSpecifications))
-	for _, IndexColNameWithExpr := range IndexPartSpecifications {
+func checkDuplicateColumnName(indexPartSpecifications []*ast.IndexPartSpecification) error {
+	colNames := make(map[string]struct{}, len(indexPartSpecifications))
+	for _, IndexColNameWithExpr := range indexPartSpecifications {
 		if IndexColNameWithExpr.Column != nil {
 			name := IndexColNameWithExpr.Column.Name
 			if _, ok := colNames[name.L]; ok {
@@ -1252,25 +1252,25 @@ func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecificat
 }
 
 // checkIndexInfo checks index name, index column names and prefix lengths.
-func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification) error {
+func checkIndexInfo(indexName string, indexPartSpecifications []*ast.IndexPartSpecification) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
 		return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
-	if len(IndexPartSpecifications) > mysql.MaxKeyParts {
+	if len(indexPartSpecifications) > mysql.MaxKeyParts {
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
 	}
-	for _, idxSpec := range IndexPartSpecifications {
+	for _, idxSpec := range indexPartSpecifications {
 		// -1 => unspecified/full, > 0 OK, 0 => error
 		if idxSpec.Expr == nil && idxSpec.Length == 0 {
 			return ErrKeyPart0.GenWithStackByArgs(idxSpec.Column.Name.O)
 		}
 	}
-	return checkDuplicateColumnName(IndexPartSpecifications)
+	return checkDuplicateColumnName(indexPartSpecifications)
 }
 
 // checkUnsupportedTableOptions checks if there exists unsupported table options
 func checkUnsupportedTableOptions(options []*ast.TableOption) error {
-	var err error = nil
+	var err error
 	for _, option := range options {
 		switch option.Tp {
 		case ast.TableOptionUnion:
@@ -1658,7 +1658,7 @@ func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
 	}
 }
 
-func (p *preprocessor) resolveCreateTableStmt(node *ast.CreateTableStmt) {
+func (*preprocessor) resolveCreateTableStmt(node *ast.CreateTableStmt) {
 	for _, val := range node.Constraints {
 		if val.Refer != nil && val.Refer.Table.Schema.String() == "" {
 			val.Refer.Table.Schema = node.Table.Schema
