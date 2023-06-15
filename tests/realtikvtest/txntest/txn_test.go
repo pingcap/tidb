@@ -17,7 +17,9 @@ package txntest
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -250,4 +252,33 @@ func TestAssertionWhenPessimisticLockLost(t *testing.T) {
 	tk1.MustExec("insert into t values (1, 'a') on duplicate key update val = concat(val, 'a')")
 	err := tk1.ExecToErr("commit")
 	require.NotContains(t, err.Error(), "assertion")
+}
+
+func TestSelectLockForPartitionTable(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(a int, b int, c int, primary key(a, b, c)) PARTITION BY HASH (c) PARTITIONS 10")
+	tk1.MustExec("insert into t values (1, 1, 1)")
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t where a = 1 and b = 1 for update")
+	var finish atomic.Bool
+	go func() {
+		finish.Store(false)
+		tk2.MustExec("use test")
+		tk2.MustExec("begin")
+		// block here, until tk1 finish
+		tk2.MustExec("select * from t where a = 1 and b = 1 for update")
+		finish.Store(true)
+	}()
+	time.Sleep(10 * time.Millisecond)
+	require.False(t, finish.Load())
+	tk1.MustExec("commit")
+
+	// wait until tk2 not block
+	for !finish.Load() {
+		time.Sleep(time.Millisecond)
+	}
 }
