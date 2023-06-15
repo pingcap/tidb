@@ -322,11 +322,12 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 }
 
 // preProcess does the pre-processing for the task.
-func preProcess(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) error {
+func preProcess(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) error {
 	logger.Info("pre process", zap.Any("table_info", taskMeta.Plan.TableInfo))
-	if err := dropTableIndexes(ctx, handle, taskMeta, logger); err != nil {
-		return err
-	}
+	// TODO: drop table indexes depends on the option.
+	// if err := dropTableIndexes(ctx, handle, taskMeta, logger); err != nil {
+	// 	return err
+	// }
 	return updateMeta(gTask, taskMeta)
 }
 
@@ -336,15 +337,16 @@ func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProce
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
 	})
-	globalTaskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
+	// TODO: create table indexes depends on the option.
+	// globalTaskManager, err := storage.GetTaskManager()
+	// if err != nil {
+	// 	return err
+	// }
 	// create table indexes even if the post process is failed.
-	defer func() {
-		err2 := createTableIndexes(ctx, globalTaskManager, taskMeta, logger)
-		err = multierr.Append(err, err2)
-	}()
+	// defer func() {
+	// 	err2 := createTableIndexes(ctx, globalTaskManager, taskMeta, logger)
+	// 	err = multierr.Append(err, err2)
+	// }()
 
 	controller, err := buildController(taskMeta)
 	if err != nil {
@@ -366,6 +368,7 @@ func verifyChecksum(ctx context.Context, controller *importer.LoadDataController
 	return controller.VerifyChecksum(ctx, localChecksum)
 }
 
+// nolint:unused
 func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tblInfo := taskMeta.Plan.TableInfo
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, tblInfo.Name.L)
