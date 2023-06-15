@@ -606,7 +606,7 @@ func (w *partialTableWorker) needPartitionHandle() bool {
 	outputOffsets := w.tableReader.(*TableReaderExecutor).dagPB.OutputOffsets
 	col := cols[outputOffsets[len(outputOffsets)-1]]
 	// no ExtraPidColID here, because a primary key couln't be a global index.
-	return col.ID == model.ExtraHandleID
+	return col.ID == model.ExtraPhysTblID
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask,
@@ -1453,7 +1453,7 @@ func (w *partialIndexWorker) needPartitionHandle() bool {
 	cols := w.plan[0].Schema().Columns
 	outputOffsets := w.dagPB.OutputOffsets
 	col := cols[outputOffsets[len(outputOffsets)-1]]
-	return col.ID == model.ExtraPidColID || col.ID == model.ExtraHandleID
+	return col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
 }
 
 func (w *partialIndexWorker) fetchHandles(
