@@ -13,15 +13,16 @@
 // limitations under the License.
 
 package mppcoordmanager
+
 import (
 	"fmt"
-	"github.com/pingcap/kvproto/pkg/mpp"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // InstanceMPPCoordinatorManager is a local instance mpp coordinator manager
