@@ -74,6 +74,6 @@ func GetTiFlashReplicaReadByStr(str string) ReplicaRead {
 }
 
 const (
-	// MaxRemoteReadCountPerNodeForClosestReplicas is the max remote read count per node for only local zone.
+	// MaxRemoteReadCountPerNodeForClosestReplicas is the max remote read count per node for "closest_replicas".
 	MaxRemoteReadCountPerNodeForClosestReplicas = 3
 )

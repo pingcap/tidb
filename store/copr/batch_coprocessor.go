@@ -475,7 +475,7 @@ func buildBatchCopTasksForNonPartitionedTable(
 	balanceWithContinuity bool,
 	balanceContinuousRegionCount int64,
 	dispatchPolicy tiflashcompute.DispatchPolicy,
-	nodeSelectionPolicy tiflash.ReplicaRead,
+	tiflashReplicaReadPolicy tiflash.ReplicaRead,
 	appendWarning func(error)) ([]*batchCopTask, error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		if config.GetGlobalConfig().UseAutoScaler {
@@ -483,7 +483,7 @@ func buildBatchCopTasksForNonPartitionedTable(
 		}
 		return buildBatchCopTasksConsistentHashForPD(bo, store, []*KeyRanges{ranges}, storeType, ttl, dispatchPolicy)
 	}
-	return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount, nodeSelectionPolicy, appendWarning)
+	return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount, tiflashReplicaReadPolicy, appendWarning)
 }
 
 func buildBatchCopTasksForPartitionedTable(
@@ -856,7 +856,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				}
 			}
 			if tiflashReplicaReadPolicy.IsPolicyClosestReplicas() {
-				maxRemoteReadCountAllowed = len(aliveStores) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
+				maxRemoteReadCountAllowed = len(aliveStoreIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
 			}
 		}
 		var batchTasks []*batchCopTask
