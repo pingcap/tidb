@@ -343,6 +343,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					stats:              e.stats,
 					idxID:              e.getPartitalPlanID(workID),
 					sc:                 e.ctx,
+					dagPB:              e.dagPBs[workID],
+					plan:               e.partialPlans[workID],
 					batchSize:          e.maxChunkSize,
 					maxBatchSize:       e.ctx.GetSessionVars().IndexLookupSize,
 					maxChunkSize:       e.maxChunkSize,
@@ -596,11 +598,15 @@ type partialTableWorker struct {
 }
 
 // hasExtralPidCol indicates whether we need create a partitonHandle or not.
-// If we want to keep order in IndexMerge for a partition table,
-// we should create a partitionHandle which contained pid information.
+// If the schema from planner part contains ExtraHandleID,
+// we need create a partitionHandle, otherwise create a normal handle.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
 func (w *partialTableWorker) hasExtralPidCol() bool {
-	return w.partitionTableMode && len(w.byItems) > 0
+	cols := w.tableReader.(*TableReaderExecutor).plans[0].Schema().Columns
+	outputOffsets := w.tableReader.(*TableReaderExecutor).dagPB.OutputOffsets
+	col := cols[outputOffsets[len(outputOffsets)-1]]
+	// no ExtraPidColID here, because a primary key couln't be a global index.
+	return col.ID == model.ExtraHandleID
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask,
@@ -1414,6 +1420,8 @@ type partialIndexWorker struct {
 	byItems            []*plannerutil.ByItems
 	scannedKeys        uint64
 	pushedLimit        *plannercore.PushedDownLimit
+	dagPB              *tipb.DAGRequest
+	plan               []plannercore.PhysicalPlan
 }
 
 func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexMergeTableTask, err error) {
@@ -1437,8 +1445,15 @@ func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexM
 	}
 }
 
+// hasExtralPidCol indicates whether we need create a partitonHandle or not.
+// If the schema from planner part contains ExtraPidColID or ExtraHandleID,
+// we need create a partitionHandle, otherwise create a normal handle.
+// In TableRowIDScan, the partitionHandle will be used to create key ranges.
 func (w *partialIndexWorker) hasExtralPidCol() bool {
-	return w.partitionTableMode && len(w.byItems) > 0
+	cols := w.plan[0].Schema().Columns
+	outputOffsets := w.dagPB.OutputOffsets
+	col := cols[outputOffsets[len(outputOffsets)-1]]
+	return col.ID == model.ExtraPidColID || col.ID == model.ExtraHandleID
 }
 
 func (w *partialIndexWorker) fetchHandles(

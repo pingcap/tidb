@@ -623,8 +623,20 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	return nil
 }
 
-func (e *IndexLookUpExecutor) hasExtralPidCol() bool {
-	return e.index.Global || (e.partitionTableMode && len(e.byItems) > 0)
+func (e *IndexLookUpExecutor) hasExtralPidCol(tp getHandleType) bool {
+	var col *expression.Column
+	if tp == getHandleFromIndex {
+		cols := e.idxPlans[0].Schema().Columns
+		outputOffsets := e.dagPB.OutputOffsets
+		col = cols[outputOffsets[len(outputOffsets)-1]]
+		return col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
+	}
+
+	cols := e.tblPlans[0].Schema().Columns
+	outputOffsets := e.tableRequest.OutputOffsets
+	col = cols[outputOffsets[len(outputOffsets)-1]]
+	// no ExtraPidColID here, because tableScan shouldn't contain it.
+	return col.ID == model.ExtraPhysTblID
 }
 
 func (e *IndexLookUpExecutor) isCommonHandle() bool {
@@ -645,7 +657,7 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	} else {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
-	if e.hasExtralPidCol() {
+	if e.hasExtralPidCol(getHandleFromIndex) {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 	if e.checkIndexValue != nil {
@@ -1030,7 +1042,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	numColsWithoutPid := chk.NumCols()
-	if w.idxLookup.hasExtralPidCol() {
+	if w.idxLookup.hasExtralPidCol(getHandleFromIndex) {
 		numColsWithoutPid = numColsWithoutPid - 1
 	}
 	handleOffset := make([]int, 0, len(w.idxLookup.handleCols))
@@ -1221,7 +1233,7 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			handle = kv.IntHandle(row.GetInt64(handleIdx[0]))
 		}
 	}
-	if e.hasExtralPidCol() {
+	if e.hasExtralPidCol(tp) {
 		pid := row.GetInt64(row.Len() - 1)
 		handle = kv.NewPartitionHandle(pid, handle)
 	}
