@@ -40,6 +40,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // batchCopTask comprises of multiple copTask that will send to same store.
