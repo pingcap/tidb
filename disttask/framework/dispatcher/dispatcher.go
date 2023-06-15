@@ -172,7 +172,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 					continue
 				}
 				// the task is not in runningGTasks set when:
-				// owner changed or task is cancelled when status is pending
+				// owner changed or task is cancelled when status is pending.
 				if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting || gTask.State == proto.TaskStateCancelling {
 					d.setRunningGTask(gTask)
 					cnt++
@@ -210,7 +210,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		if cancelling {
 			return false, [][]byte{[]byte("cancel")}
 		}
-		// check subtasks failed
+		// check subtasks failed.
 		cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateFailed)
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
@@ -224,7 +224,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 			}
 			return false, subTaskErr
 		}
-		// check subtasks pending or running
+		// check subtasks pending or running.
 		cnt, err = d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStatePending, proto.TaskStateRunning)
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
@@ -236,7 +236,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		return true, nil
 	}
 
-	// if gTask.State == TaskStateReverting, if will not convert to TaskStateCancelling again
+	// if gTask.State == TaskStateReverting, if will not convert to TaskStateCancelling again.
 	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateRevertPending, proto.TaskStateReverting)
 	if err != nil {
 		logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
@@ -304,7 +304,7 @@ func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) error {
 		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("taskID", gTask.ID), zap.Any("err msg", errStr))
 		return d.processErrFlow(gTask, errStr)
 	}
-	// previous step is finished
+	// previous step is finished.
 	if gTask.State == proto.TaskStateReverting {
 		// Finish the rollback step.
 		logutil.BgLogger().Info("process flow, update the task to reverted", zap.Int64("taskID", gTask.ID))
@@ -340,14 +340,14 @@ func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTask
 
 func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
-	// 1. generate the needed global task meta and subTask meta (dist-plan)
+	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	meta, err := GetTaskFlowHandle(gTask.Type).ProcessErrFlow(d.ctx, d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
 		return err
 	}
 
-	// 2. dispatch revert dist-plan to EligibleInstances
+	// 2. dispatch revert dist-plan to EligibleInstances.
 	return d.dispatchSubTask4Revert(gTask, meta)
 }
 
@@ -370,7 +370,7 @@ func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, meta []byte) erro
 }
 
 func (d *dispatcher) processNormalFlow(gTask *proto.Task) error {
-	// 1. generate the needed global task meta and subTask meta (dist-plan)
+	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
 		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
@@ -388,7 +388,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) error {
 	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),
 		zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Int("subtasks", len(metas)))
 
-	// 2. dispatch dist-plan to EligibleInstances
+	// 2. dispatch dist-plan to EligibleInstances.
 	return d.dispatchSubTask(gTask, handle, metas)
 }
 
