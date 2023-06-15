@@ -1006,18 +1006,18 @@ func TestAdjustOnDuplicate(t *testing.T) {
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
 	require.NoError(t, cfg.Adjust(ctx))
-	require.Equal(t, config.ReplaceOnDup, cfg.TikvImporter.OnDuplicate)
+	require.Equal(t, "", cfg.TikvImporter.OnDuplicate)
 
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
 	cfg.TikvImporter.IncrementalImport = true
-	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.incremental-import")
+	require.NoError(t, cfg.Adjust(ctx))
 
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
 	cfg.TikvImporter.IncrementalImport = false
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRemove
-	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution")
+	require.NoError(t, cfg.Adjust(ctx))
 }
 
 func TestAdjustMaxErrorRecords(t *testing.T) {
