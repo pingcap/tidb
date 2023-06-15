@@ -564,9 +564,9 @@ func TestForAnalyzeStatus(t *testing.T) {
 		"  `FAIL_REASON` longtext DEFAULT NULL,\n" +
 		"  `INSTANCE` varchar(512) DEFAULT NULL,\n" +
 		"  `PROCESS_ID` bigint(64) unsigned DEFAULT NULL,\n" +
-		"  `Remaining_seconds` bigint(64) unsigned DEFAULT NULL,\n" +
-		"  `Progress` varchar(20) DEFAULT NULL,\n" +
-		"  `Estimated_total_rows` bigint(64) unsigned DEFAULT NULL\n" +
+		"  `REMAINING_SECONDS` bigint(64) unsigned DEFAULT NULL,\n" +
+		"  `PROGRESS` varchar(20) DEFAULT NULL,\n" +
+		"  `ESTIMATED_TOTAL_ROWS` bigint(64) unsigned DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	tk.MustQuery("show create table information_schema.analyze_status").Check(testkit.Rows("ANALYZE_STATUS " + analyzeStatusTable))
 	tk.MustExec("delete from mysql.analyze_jobs")
