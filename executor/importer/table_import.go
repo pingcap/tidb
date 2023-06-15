@@ -64,13 +64,12 @@ func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (
 	importDir := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
 	sortDir := filepath.Join(importDir, strconv.FormatInt(taskID, 10))
 
-	info, err := os.Stat(importDir)
-	switch {
-	case err != nil && !os.IsNotExist(err):
-		e.logger.Error("stat import dir failed", zap.String("import_dir", importDir), zap.Error(err))
-		return "", errors.Trace(err)
-	case os.IsNotExist(err) || !info.IsDir():
-		if !os.IsNotExist(err) {
+	if info, err := os.Stat(importDir); err != nil || !info.IsDir() {
+		if err != nil && !os.IsNotExist(err) {
+			e.logger.Error("stat import dir failed", zap.String("import_dir", importDir), zap.Error(err))
+			return "", errors.Trace(err)
+		}
+		if info != nil && !info.IsDir() {
 			e.logger.Warn("import dir is not a dir, remove it", zap.String("import_dir", importDir))
 			if err := os.RemoveAll(importDir); err != nil {
 				return "", errors.Trace(err)
@@ -81,16 +80,15 @@ func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (
 			e.logger.Error("failed to make dir", zap.String("import_dir", importDir), zap.Error(err))
 			return "", errors.Trace(err)
 		}
-	default: // err==nil && info.IsDir()
 	}
 
 	// todo: remove this after we support checkpoint
-	_, err = os.Stat(sortDir)
-	switch {
-	case err != nil && !os.IsNotExist(err):
-		e.logger.Error("stat sort dir failed", zap.String("sort_dir", sortDir), zap.Error(err))
-		return "", errors.Trace(err)
-	case !os.IsNotExist(err):
+	if _, err := os.Stat(sortDir); err != nil {
+		if !os.IsNotExist(err) {
+			e.logger.Error("stat sort dir failed", zap.String("sort_dir", sortDir), zap.Error(err))
+			return "", errors.Trace(err)
+		}
+	} else {
 		e.logger.Warn("sort dir already exists, remove it", zap.String("sort_dir", sortDir))
 		if err := os.RemoveAll(sortDir); err != nil {
 			return "", errors.Trace(err)
