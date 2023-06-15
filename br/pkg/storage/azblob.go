@@ -77,6 +77,8 @@ func defineAzblobFlags(flags *pflag.FlagSet) {
 	flags.String(azblobAccountKey, "", "Specify the account key for azblob")
 	flags.String(azblobSASToken, "", "Specify the SAS (shared access signatures) for azblob")
 	flags.String(azblobEncryptionScope, "", "Specify the server side encryption scope")
+
+	_ = flags.MarkHidden(azblobEncryptionScope)
 }
 
 func hiddenAzblobFlags(flags *pflag.FlagSet) {
