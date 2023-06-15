@@ -21,8 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // InstanceMPPCoordinatorManager is a local instance mpp coordinator manager
@@ -65,17 +63,14 @@ func (m *MPPCoordinatorManager) Register(coordID CoordinatorUniqueID, mppCoord k
 		return errors.Errorf("Already added mpp coordinator: %d %d %d %d", coordID.MPPQueryID.QueryTs, coordID.MPPQueryID.LocalQueryID, coordID.MPPQueryID.ServerID, coordID.GatherID)
 	}
 	m.coordinatorMap[coordID] = mppCoord
-	logutil.BgLogger().Info("Register track mpp coordinator instances", zap.Int("CoordCounter", len(m.coordinatorMap)))
 	return nil
 }
 
 // Unregister is to unregister mpp coordinator
-func (m *MPPCoordinatorManager) Unregister(coordID CoordinatorUniqueID) error {
+func (m *MPPCoordinatorManager) Unregister(coordID CoordinatorUniqueID) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.coordinatorMap, coordID)
-	logutil.BgLogger().Info("Unregister track mpp coordinator instances", zap.Int("CoordCounter", len(m.coordinatorMap)))
-	return nil
 }
 
 // ReportStatus reports mpp task execution status to specific coordinator

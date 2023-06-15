@@ -16,12 +16,12 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/executor/mppcoordmanager"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/executor/internal/mpp"
+	"github.com/pingcap/tidb/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -83,7 +83,10 @@ func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 func (e *MPPGather) Open(ctx context.Context) (err error) {
 	planIDs := collectPlanIDS(e.originalPlan, nil)
 	coord := e.buildCoordinator(planIDs)
-	mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: uint64(e.id)}, coord)
+	err = mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: uint64(e.id)}, coord)
+	if err != nil {
+		return err
+	}
 	resp, err := coord.Execute(ctx)
 	if err != nil {
 		return errors.Trace(err)
