@@ -86,6 +86,8 @@ func hiddenAzblobFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(azblobAccessTierOption)
 	_ = flags.MarkHidden(azblobAccountName)
 	_ = flags.MarkHidden(azblobAccountKey)
+	_ = flags.MarkHidden(azblobSASToken)
+	//_ = flags.MarkHidden(azblobEncryptionScope)
 }
 
 func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
