@@ -59,6 +59,14 @@ func TestGetTimerOption(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "id1", id)
 	require.Equal(t, []string{"ID", "Key"}, cond.FieldsSet())
+
+	// test 'Tags' field
+	require.False(t, cond.Tags.Present())
+	WithTag("l1", "l2")(&cond)
+	tags, ok := cond.Tags.Get()
+	require.True(t, ok)
+	require.Equal(t, []string{"l1", "l2"}, tags)
+	require.Equal(t, []string{"ID", "Key", "Tags"}, cond.FieldsSet())
 }
 
 func TestUpdateTimerOption(t *testing.T) {
@@ -119,6 +127,18 @@ func TestUpdateTimerOption(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, []byte("hello"), summary)
 	require.Equal(t, []string{"Enable", "SchedPolicyType", "SchedPolicyExpr", "Watermark", "SummaryData"}, update.FieldsSet())
+
+	// test 'Tags' field
+	require.False(t, update.Tags.Present())
+	WithSetTags(nil)(&update)
+	tags, ok := update.Tags.Get()
+	require.True(t, ok)
+	require.Equal(t, 0, len(tags))
+	WithSetTags([]string{"l1", "l2"})(&update)
+	tags, ok = update.Tags.Get()
+	require.True(t, ok)
+	require.Equal(t, []string{"l1", "l2"}, tags)
+	require.Equal(t, []string{"Tags", "Enable", "SchedPolicyType", "SchedPolicyExpr", "Watermark", "SummaryData"}, update.FieldsSet())
 }
 
 func TestDefaultClient(t *testing.T) {
@@ -130,6 +150,7 @@ func TestDefaultClient(t *testing.T) {
 		SchedPolicyType: SchedEventInterval,
 		SchedPolicyExpr: "1h",
 		Data:            []byte("data1"),
+		Tags:            []string{"l1", "l2"},
 	}
 
 	// create
@@ -158,6 +179,21 @@ func TestDefaultClient(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, len(tms))
 	require.Equal(t, timer, tms[0])
+
+	// get by tag
+	tms, err = cli.GetTimers(ctx, WithTag("l1"))
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tms))
+	require.Equal(t, timer, tms[0])
+
+	tms, err = cli.GetTimers(ctx, WithTag("l1", "l2"))
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tms))
+	require.Equal(t, timer, tms[0])
+
+	tms, err = cli.GetTimers(ctx, WithTag("l3"))
+	require.NoError(t, err)
+	require.Equal(t, 0, len(tms))
 
 	// update
 	err = cli.UpdateTimer(ctx, timer.ID, WithSetSchedExpr(SchedEventInterval, "3h"))

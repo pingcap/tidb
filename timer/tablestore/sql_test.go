@@ -15,6 +15,7 @@
 package tablestore
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -26,11 +27,11 @@ import (
 func TestBuildInsertTimerSQL(t *testing.T) {
 	now := time.Now()
 	sql1 := "INSERT INTO `db1`.`t1` (NAMESPACE, TIMER_KEY, TIMER_DATA, TIMEZONE, SCHED_POLICY_TYPE, SCHED_POLICY_EXPR, " +
-		"HOOK_CLASS, WATERMARK, ENABLE, EVENT_ID, EVENT_STATUS, EVENT_START, EVENT_DATA, SUMMARY_DATA, VERSION) " +
-		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, FROM_UNIXTIME(%?), %?, %?, %?, FROM_UNIXTIME(%?), %?, %?, 1)"
+		"HOOK_CLASS, WATERMARK, ENABLE, TIMER_EXT, EVENT_ID, EVENT_STATUS, EVENT_START, EVENT_DATA, SUMMARY_DATA, VERSION) " +
+		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, FROM_UNIXTIME(%?), %?, %?, %?, %?, FROM_UNIXTIME(%?), %?, %?, 1)"
 	sql2 := "INSERT INTO `db1`.`t1` (NAMESPACE, TIMER_KEY, TIMER_DATA, TIMEZONE, SCHED_POLICY_TYPE, SCHED_POLICY_EXPR, " +
-		"HOOK_CLASS, WATERMARK, ENABLE, EVENT_ID, EVENT_STATUS, EVENT_START, EVENT_DATA, SUMMARY_DATA, VERSION) " +
-		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, 1)"
+		"HOOK_CLASS, WATERMARK, ENABLE, TIMER_EXT, EVENT_ID, EVENT_STATUS, EVENT_START, EVENT_DATA, SUMMARY_DATA, VERSION) " +
+		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, 1)"
 
 	cases := []struct {
 		sql    string
@@ -49,6 +50,7 @@ func TestBuildInsertTimerSQL(t *testing.T) {
 					HookClass:       "h1",
 					Watermark:       now,
 					Enable:          true,
+					Tags:            []string{"l1", "l2"},
 				},
 				EventID:     "e1",
 				EventStatus: api.SchedEventTrigger,
@@ -58,7 +60,8 @@ func TestBuildInsertTimerSQL(t *testing.T) {
 			},
 			args: []any{
 				"n1", "k1", []byte("data1"), "INTERVAL", "1h", "h1", now.Unix(),
-				true, "e1", "TRIGGER", now.Unix() + 1, []byte("event1"), []byte("summary1"),
+				true, json.RawMessage(`{"tags":["l1","l2"]}`),
+				"e1", "TRIGGER", now.Unix() + 1, []byte("event1"), []byte("summary1"),
 			},
 		},
 		{
@@ -73,14 +76,15 @@ func TestBuildInsertTimerSQL(t *testing.T) {
 			},
 			args: []any{
 				"n1", "k1", []byte(nil), "INTERVAL", "1h", "", nil,
-				false, "", "IDLE", nil, []byte(nil), []byte(nil),
+				false, json.RawMessage("{}"), "", "IDLE", nil, []byte(nil), []byte(nil),
 			},
 		},
 	}
 
 	for _, c := range cases {
 		require.Equal(t, strings.Count(c.sql, "%?"), len(c.args))
-		sql, args := buildInsertTimerSQL("db1", "t1", c.record)
+		sql, args, err := buildInsertTimerSQL("db1", "t1", c.record)
+		require.NoError(t, err)
 		require.Equal(t, c.sql, sql)
 		require.Equal(t, c.args, args)
 	}
@@ -147,6 +151,27 @@ func TestBuildCondCriteria(t *testing.T) {
 			},
 			criteria: "NAMESPACE = %? AND TIMER_KEY LIKE %?",
 			args:     []any{"ns1", "key1%"},
+		},
+		{
+			cond: &api.TimerCond{
+				Tags: api.NewOptionalVal([]string{}),
+			},
+			criteria: "1",
+			args:     []any{},
+		},
+		{
+			cond: &api.TimerCond{
+				Tags: api.NewOptionalVal([]string{"l1"}),
+			},
+			criteria: "JSON_EXTRACT(TIMER_EXT, '$.tags') IS NOT NULL AND JSON_CONTAINS((TIMER_EXT->'$.tags'), %?)",
+			args:     []any{json.RawMessage(`["l1"]`)},
+		},
+		{
+			cond: &api.TimerCond{
+				Tags: api.NewOptionalVal([]string{"l1", "l2"}),
+			},
+			criteria: "JSON_EXTRACT(TIMER_EXT, '$.tags') IS NOT NULL AND JSON_CONTAINS((TIMER_EXT->'$.tags'), %?)",
+			args:     []any{json.RawMessage(`["l1","l2"]`)},
 		},
 		{
 			cond: api.And(
@@ -302,7 +327,7 @@ func TestBuildCondCriteria(t *testing.T) {
 func TestBuildSelectTimerSQL(t *testing.T) {
 	prefix := "SELECT " +
 		"ID, NAMESPACE, TIMER_KEY, TIMER_DATA, TIMEZONE, SCHED_POLICY_TYPE, SCHED_POLICY_EXPR, " +
-		"HOOK_CLASS, WATERMARK, ENABLE, EVENT_STATUS, EVENT_ID, EVENT_DATA, EVENT_START, SUMMARY_DATA, " +
+		"HOOK_CLASS, WATERMARK, ENABLE, TIMER_EXT, EVENT_STATUS, EVENT_ID, EVENT_DATA, EVENT_START, SUMMARY_DATA, " +
 		"CREATE_TIME, UPDATE_TIME, VERSION FROM `db1`.`t1`"
 
 	cases := []struct {
@@ -367,6 +392,7 @@ func TestBuildUpdateCriteria(t *testing.T) {
 		{
 			update: &api.TimerUpdate{
 				Enable:          api.NewOptionalVal(false),
+				Tags:            api.NewOptionalVal([]string{"l1", "l2"}),
 				SchedPolicyType: api.NewOptionalVal(api.SchedEventInterval),
 				SchedPolicyExpr: api.NewOptionalVal("1h"),
 				EventStatus:     api.NewOptionalVal(api.SchedEventTrigger),
@@ -380,10 +406,12 @@ func TestBuildUpdateCriteria(t *testing.T) {
 			},
 			criteria: "ENABLE = %?, SCHED_POLICY_TYPE = %?, SCHED_POLICY_EXPR = %?, EVENT_STATUS = %?, " +
 				"EVENT_ID = %?, EVENT_DATA = %?, EVENT_START = FROM_UNIXTIME(%?), " +
-				"WATERMARK = FROM_UNIXTIME(%?), SUMMARY_DATA = %?, VERSION = VERSION + 1",
+				"WATERMARK = FROM_UNIXTIME(%?), SUMMARY_DATA = %?, " +
+				"TIMER_EXT = JSON_MERGE_PATCH(TIMER_EXT, %?), " +
+				"VERSION = VERSION + 1",
 			args: []any{
 				false, "INTERVAL", "1h", "TRIGGER", "event1", []byte("data1"), now.Unix(),
-				now.Unix() + 1, []byte("summary"),
+				now.Unix() + 1, []byte("summary"), json.RawMessage(`{"tags":["l1","l2"]}`),
 			},
 		},
 		{
@@ -394,10 +422,13 @@ func TestBuildUpdateCriteria(t *testing.T) {
 				EventStart:      api.NewOptionalVal(zeroTime),
 				Watermark:       api.NewOptionalVal(zeroTime),
 				SummaryData:     api.NewOptionalVal([]byte(nil)),
+				Tags:            api.NewOptionalVal([]string(nil)),
 			},
 			criteria: "SCHED_POLICY_EXPR = %?, EVENT_ID = %?, EVENT_DATA = %?, " +
-				"EVENT_START = NULL, WATERMARK = NULL, SUMMARY_DATA = %?, VERSION = VERSION + 1",
-			args: []any{"", "", []byte(nil), []byte(nil)},
+				"EVENT_START = NULL, WATERMARK = NULL, SUMMARY_DATA = %?, " +
+				"TIMER_EXT = JSON_MERGE_PATCH(TIMER_EXT, %?), " +
+				"VERSION = VERSION + 1",
+			args: []any{"", "", []byte(nil), []byte(nil), json.RawMessage(`{"tags":null}`)},
 		},
 		{
 			update: &api.TimerUpdate{
@@ -411,11 +442,13 @@ func TestBuildUpdateCriteria(t *testing.T) {
 
 	for _, c := range cases {
 		require.Equal(t, strings.Count(c.criteria, "%?"), len(c.args))
-		criteria, args := buildUpdateCriteria(c.update, []any{})
+		criteria, args, err := buildUpdateCriteria(c.update, []any{})
+		require.NoError(t, err)
 		require.Equal(t, c.criteria, criteria)
 		require.Equal(t, c.args, args)
 
-		criteria, args = buildUpdateCriteria(c.update, []any{1, "2", "3"})
+		criteria, args, err = buildUpdateCriteria(c.update, []any{1, "2", "3"})
+		require.NoError(t, err)
 		require.Equal(t, c.criteria, criteria)
 		require.Equal(t, append([]any{1, "2", "3"}, c.args...), args)
 	}
@@ -445,7 +478,8 @@ func TestBuildUpdateTimerSQL(t *testing.T) {
 
 	for _, c := range cases {
 		require.Equal(t, strings.Count(c.sql, "%?"), len(c.args))
-		sql, args := buildUpdateTimerSQL("db1", "tbl1", timerID, c.update)
+		sql, args, err := buildUpdateTimerSQL("db1", "tbl1", timerID, c.update)
+		require.NoError(t, err)
 		require.Equal(t, c.sql, sql)
 		require.Equal(t, c.args, args)
 	}

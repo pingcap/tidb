@@ -49,6 +49,13 @@ func WithID(id string) GetTimerOption {
 	}
 }
 
+// WithTag indicates to get a timer with the specified tags
+func WithTag(tags ...string) GetTimerOption {
+	return func(cond *TimerCond) {
+		cond.Tags.Set(tags)
+	}
+}
+
 // UpdateTimerOption is the option to update the timer
 type UpdateTimerOption func(*TimerUpdate)
 
@@ -78,6 +85,13 @@ func WithSetWatermark(watermark time.Time) UpdateTimerOption {
 func WithSetSummaryData(summary []byte) UpdateTimerOption {
 	return func(update *TimerUpdate) {
 		update.SummaryData.Set(summary)
+	}
+}
+
+// WithSetTags indicates to set the timer's tags
+func WithSetTags(tags []string) UpdateTimerOption {
+	return func(update *TimerUpdate) {
+		update.Tags.Set(tags)
 	}
 }
 

@@ -70,6 +70,8 @@ type TimerSpec struct {
 	Namespace string
 	// Key is the key of the timer. Key is unique in each namespace
 	Key string
+	// Tags is used to tag a timer
+	Tags []string
 	// Data is a binary which is defined by user
 	Data []byte
 	// SchedPolicyType is the type of the event schedule policy
