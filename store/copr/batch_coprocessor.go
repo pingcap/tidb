@@ -41,7 +41,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // batchCopTask comprises of multiple copTask that will send to same store.
@@ -773,7 +772,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 		})
 	}
 	// need to make sure the key ranges is sorted
-	slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+	sort.Slices(ranges, func(i, j kv.KeyRange) bool {
 		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
 	return buildBatchCopTasks(bo, b.store, NewKeyRanges(ranges), b.req.StoreType, nil, 0, false, 0)
