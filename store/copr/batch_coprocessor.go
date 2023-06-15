@@ -861,6 +861,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		}
 		var batchTasks []*batchCopTask
 		var regionsInOtherZones []uint64
+		var regionInfoInOtherZones []*coprocessor.RegionInfo
 		storeTaskMap := make(map[string]*batchCopTask)
 		needRetry := false
 		for _, task := range tasks {
@@ -882,24 +883,31 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			needCrossZoneAccess := false
 			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store, tikv.LabelFilterNoTiFlashWriteNode)
 			allStores, needCrossZoneAccess = filterAllStoresAccordingToTiFlashReplicaRead(allStores, aliveStoreIDsInTiDBZone, isTiDBLabelZoneSet, tiflashReplicaReadPolicy)
+			regionInfo := RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionIndex: task.partitionIndex}
+			var regionInfosNeedReload []RegionInfo
 			if needCrossZoneAccess && !tiflashReplicaReadPolicy.IsAllReplicas() {
 				regionsInOtherZones = append(regionsInOtherZones, task.region.GetID())
+				regionInfosNeedReload = append(regionInfosNeedReload, regionInfo)
 				if tiflashReplicaReadPolicy.IsClosestReplicas() && len(regionsInOtherZones) > maxRemoteReadCountAllowed {
 					regionIDErrMsg := ""
 					for i := 0; i < 3 && i < len(regionsInOtherZones); i++ {
 						regionIDErrMsg += fmt.Sprintf("%d, ", regionsInOtherZones[i])
 					}
-					return nil, errors.Errorf("no less than %d region(s) can not be accessed by TiFlash in the zone [%s]: %setc", len(regionsInOtherZones), tidbZone, regionIDErrMsg)
+					err = errors.Errorf("no less than %d region(s) can not be accessed by TiFlash in the zone [%s]: %setc", len(regionsInOtherZones), tidbZone, regionIDErrMsg)
+					// We need to reload the region cache here to avoid the failure throughout the region cache refresh TTL.
+					cache.OnSendFailForBatchRegions(bo, rpcCtx.Store, regionInfosNeedReload, true, err)
+					regionInfosNeedReload = nil
+					return nil, err
 				}
 			}
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
-				batchCop.regionInfos = append(batchCop.regionInfos, RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionIndex: task.partitionIndex})
+				batchCop.regionInfos = append(batchCop.regionInfos, regionInfo)
 			} else {
 				batchTask := &batchCopTask{
 					storeAddr:   rpcCtx.Addr,
 					cmdType:     cmdType,
 					ctx:         rpcCtx,
-					regionInfos: []RegionInfo{{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionIndex: task.partitionIndex}},
+					regionInfos: []RegionInfo{regionInfo},
 				}
 				storeTaskMap[rpcCtx.Addr] = batchTask
 			}
