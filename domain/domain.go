@@ -1382,13 +1382,6 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	return nil
 }
 
-// InitTaskManager initialize taskManager, only used in test.
-func (do *Domain) InitTaskManager() {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
-	storage.SetTaskManager(taskManager)
-}
-
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
