@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/etcd"
@@ -502,7 +503,6 @@ func generateImportStepMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMe
 		}
 		subtaskMeta := &ImportStepMeta{
 			ID:     id,
-			Plan:   taskMeta.Plan,
 			Chunks: chunkMap[id],
 		}
 		subtaskMetas = append(subtaskMetas, subtaskMeta)
@@ -582,6 +582,7 @@ func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle
 	taskMeta *TaskMeta, logger *zap.Logger) error {
 	h.switchTiKV2NormalMode(ctx, logger)
 	h.unregisterTask(ctx, gTask)
+	redactSensitiveInfo(gTask, taskMeta)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	return handle.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
@@ -593,10 +594,20 @@ func (h *flowHandle) failJob(ctx context.Context, handle dispatcher.TaskHandle, 
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
 	h.switchTiKV2NormalMode(ctx, logger)
 	h.unregisterTask(ctx, gTask)
+	redactSensitiveInfo(gTask, taskMeta)
 	return handle.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
 	})
+}
+
+func redactSensitiveInfo(gTask *proto.Task, taskMeta *TaskMeta) {
+	taskMeta.Stmt = ""
+	taskMeta.Plan.Path = ast.RedactURL(taskMeta.Plan.Path)
+	if err := updateMeta(gTask, taskMeta); err != nil {
+		// marshal failed, should not happen
+		logutil.BgLogger().Warn("failed to update task meta", zap.Error(err))
+	}
 }
 
 // isResumableErr checks whether it's possible to rely on checkpoint to re-import data after the error has been fixed.

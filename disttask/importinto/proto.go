@@ -61,7 +61,6 @@ type TaskMeta struct {
 // Dispatcher will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type ImportStepMeta struct {
-	Plan importer.Plan
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
 	Chunks   []Chunk
