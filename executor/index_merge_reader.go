@@ -597,11 +597,11 @@ type partialTableWorker struct {
 	pushedLimit        *plannercore.PushedDownLimit
 }
 
-// hasExtraCol indicates whether we need create a partitonHandle or not.
+// needPartitionHandle indicates whether we need create a partitonHandle or not.
 // If the schema from planner part contains ExtraHandleID,
 // we need create a partitionHandle, otherwise create a normal handle.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
-func (w *partialTableWorker) hasExtraCol() bool {
+func (w *partialTableWorker) needPartitionHandle() bool {
 	cols := w.tableReader.(*TableReaderExecutor).plans[0].Schema().Columns
 	outputOffsets := w.tableReader.(*TableReaderExecutor).dagPB.OutputOffsets
 	col := cols[outputOffsets[len(outputOffsets)-1]]
@@ -683,7 +683,7 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				}
 			}
 			var handle kv.Handle
-			if w.hasExtraCol() {
+			if w.needPartitionHandle() {
 				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
 			} else {
 				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
@@ -1445,11 +1445,11 @@ func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexM
 	}
 }
 
-// hasExtraCol indicates whether we need create a partitonHandle or not.
+// needPartitionHandle indicates whether we need create a partitonHandle or not.
 // If the schema from planner part contains ExtraPidColID or ExtraHandleID,
 // we need create a partitionHandle, otherwise create a normal handle.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
-func (w *partialIndexWorker) hasExtraCol() bool {
+func (w *partialIndexWorker) needPartitionHandle() bool {
 	cols := w.plan[0].Schema().Columns
 	outputOffsets := w.dagPB.OutputOffsets
 	col := cols[outputOffsets[len(outputOffsets)-1]]
@@ -1503,7 +1503,7 @@ func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannercore.Handle
 		}
 	}
 	tps = append(tps, handleCols.GetFieldsTypes()...)
-	if w.hasExtraCol() {
+	if w.needPartitionHandle() {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 	return tps
@@ -1549,7 +1549,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				}
 			}
 			var handle kv.Handle
-			if w.hasExtraCol() {
+			if w.needPartitionHandle() {
 				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
 			} else {
 				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
