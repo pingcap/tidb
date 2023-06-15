@@ -1191,41 +1191,19 @@ func (re *builtinRegexpReplaceFuncSig) replaceAllMatchedBinStr(reg *regexp.Regex
 
 func (re *builtinRegexpReplaceFuncSig) replaceOneMatchedBinStr(reg *regexp.Regexp, bexpr []byte, trimmedBexpr []byte, instructions []Instruction, pos int64, occurrence int64) ([]byte, error) {
 	replacedBStr := make([]byte, 0)
-	for {
-		res := reg.FindSubmatchIndex(trimmedBexpr)
-		if len(res) == 0 {
-			replacedBStr = append(replacedBStr, trimmedBexpr...) // Copy suffix
-			break
+	allResults := reg.FindAllSubmatchIndex(trimmedBexpr, int(occurrence))
+	if int(occurrence) > len(allResults) {
+		replacedBStr = trimmedBexpr
+	} else {
+		res := allResults[occurrence-1]
+		replacedBStr = append(replacedBStr, trimmedBexpr[:res[0]]...) // Copy prefix
+		err := re.copyReplacement(&replacedBStr, &trimmedBexpr, res, instructions)
+		if err != nil {
+			return []byte(""), err
 		}
 
-		occurrence -= 1
-		if occurrence == 0 {
-			replacedBStr = append(replacedBStr, trimmedBexpr[:res[0]]...) // Copy prefix
-			err := re.copyReplacement(&replacedBStr, &trimmedBexpr, res, instructions)
-			if err != nil {
-				return []byte(""), err
-			}
-
-			trimmedBexpr = trimmedBexpr[res[1]:]
-			replacedBStr = append(replacedBStr, trimmedBexpr...) // Copy suffix
-			break
-		}
-		if res[0] == res[1] {
-			// Matched string is an empty string, and this circmstance should be specially treated,
-			// such as regexp_replace("abc", "\d*", "d") -> result: dadbdcd
-			if len(trimmedBexpr) <= res[0] {
-				trimmedBexpr = []byte("")
-				break
-			}
-
-			// When the matched string is empty, we need to stride across one character
-			utf8Len := stringutil.Utf8Len(trimmedBexpr[res[0]])
-			replacedBStr = append(replacedBStr, trimmedBexpr[res[0]:res[0]+utf8Len]...)
-			trimmedBexpr = trimmedBexpr[res[0]+utf8Len:]
-		} else {
-			replacedBStr = append(replacedBStr, trimmedBexpr[:res[1]]...) // Copy prefix
-			trimmedBexpr = trimmedBexpr[res[1]:]
-		}
+		trimmedBexpr = trimmedBexpr[res[1]:]
+		replacedBStr = append(replacedBStr, trimmedBexpr...) // Copy suffix
 	}
 
 	return append(bexpr[:pos-1], replacedBStr...), nil
