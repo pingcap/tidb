@@ -35,13 +35,13 @@ const (
 	ClosestReplicasStr = "closest_replicas"
 )
 
-// IsPolicyAllReplicas return whether the policy is AllReplicas.
-func (policy ReplicaRead) IsPolicyAllReplicas() bool {
+// IsAllReplicas return whether the policy is AllReplicas.
+func (policy ReplicaRead) IsAllReplicas() bool {
 	return policy == AllReplicas
 }
 
-// IsPolicyClosestReplicas return whether the policy is ClosestReplicas.
-func (policy ReplicaRead) IsPolicyClosestReplicas() bool {
+// IsClosestReplicas return whether the policy is ClosestReplicas.
+func (policy ReplicaRead) IsClosestReplicas() bool {
 	return policy == ClosestReplicas
 }
 

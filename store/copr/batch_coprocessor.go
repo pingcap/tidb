@@ -823,7 +823,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		aliveStores               []*tikv.Store
 		aliveStoreIDsInTiDBZone   map[uint64]struct{}
 		maxRemoteReadCountAllowed int
-		careTiFlashReplicaRead    = !tiflashReplicaReadPolicy.IsPolicyAllReplicas() && isTiDBLabelZoneSet
+		careTiFlashReplicaRead    = !tiflashReplicaReadPolicy.IsAllReplicas() && isTiDBLabelZoneSet
 	)
 	for {
 		var tasks []*copTask
@@ -855,7 +855,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 					aliveStoreIDsInTiDBZone[as.StoreID()] = struct{}{}
 				}
 			}
-			if tiflashReplicaReadPolicy.IsPolicyClosestReplicas() {
+			if tiflashReplicaReadPolicy.IsClosestReplicas() {
 				maxRemoteReadCountAllowed = len(aliveStoreIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
 			}
 		}
@@ -882,9 +882,9 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			needCrossZoneAccess := false
 			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store, tikv.LabelFilterNoTiFlashWriteNode)
 			allStores, needCrossZoneAccess = filterAllStoresAccordingToTiFlashReplicaRead(allStores, aliveStoreIDsInTiDBZone, isTiDBLabelZoneSet, tiflashReplicaReadPolicy)
-			if needCrossZoneAccess && !tiflashReplicaReadPolicy.IsPolicyAllReplicas() {
+			if needCrossZoneAccess && !tiflashReplicaReadPolicy.IsAllReplicas() {
 				regionsInOtherZones = append(regionsInOtherZones, task.region.GetID())
-				if tiflashReplicaReadPolicy.IsPolicyClosestReplicas() && len(regionsInOtherZones) > maxRemoteReadCountAllowed {
+				if tiflashReplicaReadPolicy.IsClosestReplicas() && len(regionsInOtherZones) > maxRemoteReadCountAllowed {
 					regionIDErrMsg := ""
 					for i := 0; i < 3 && i < len(regionsInOtherZones); i++ {
 						regionIDErrMsg += fmt.Sprintf("%d, ", regionsInOtherZones[i])
