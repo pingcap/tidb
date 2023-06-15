@@ -6,6 +6,7 @@ require (
 	github.com/cznic/strutil v0.0.0-20181122101858-275e90344537
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63
+	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/log v1.1.0
 	github.com/stretchr/testify v1.8.4
 	go.uber.org/goleak v1.1.11

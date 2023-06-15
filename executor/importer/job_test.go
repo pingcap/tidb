@@ -94,6 +94,9 @@ func TestJobHappyPath(t *testing.T) {
 		require.True(t, gotJobInfo.StartTime.IsZero())
 		require.True(t, gotJobInfo.EndTime.IsZero())
 		jobInfoEqual(t, jobInfo, gotJobInfo)
+		cnt, err := importer.GetActiveJobCnt(ctx, conn)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), cnt)
 
 		// action before start, no effect
 		c.action(jobID)
@@ -111,9 +114,15 @@ func TestJobHappyPath(t *testing.T) {
 		jobInfo.Status = "running"
 		jobInfo.Step = importer.JobStepImporting
 		jobInfoEqual(t, jobInfo, gotJobInfo)
+		cnt, err = importer.GetActiveJobCnt(ctx, conn)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), cnt)
 
 		// change job step
 		require.NoError(t, importer.Job2Step(ctx, conn, jobID, importer.JobStepValidating))
+		cnt, err = importer.GetActiveJobCnt(ctx, conn)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), cnt)
 
 		// do action
 		c.action(jobID)
@@ -127,6 +136,10 @@ func TestJobHappyPath(t *testing.T) {
 		jobInfo.Summary = c.expectedSummary
 		jobInfo.ErrorMessage = c.expectedErrMsg
 		jobInfoEqual(t, jobInfo, gotJobInfo)
+		cnt, err = importer.GetActiveJobCnt(ctx, conn)
+		require.NoError(t, err)
+		require.Equal(t, int64(0), cnt)
+
 		// do action again, no effect
 		endTime := gotJobInfo.EndTime
 		c.action(jobID)
@@ -170,6 +183,9 @@ func TestGetAndCancelJob(t *testing.T) {
 	require.True(t, gotJobInfo.StartTime.IsZero())
 	require.True(t, gotJobInfo.EndTime.IsZero())
 	jobInfoEqual(t, jobInfo, gotJobInfo)
+	cnt, err := importer.GetActiveJobCnt(ctx, conn)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cnt)
 
 	// cancel job
 	require.NoError(t, importer.CancelJob(ctx, conn, jobID1))
@@ -182,6 +198,9 @@ func TestGetAndCancelJob(t *testing.T) {
 	jobInfo.Status = "cancelled"
 	jobInfo.ErrorMessage = "cancelled by user"
 	jobInfoEqual(t, jobInfo, gotJobInfo)
+	cnt, err = importer.GetActiveJobCnt(ctx, conn)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), cnt)
 
 	// call cancel twice is ok, caller should check job status before cancel.
 	require.NoError(t, importer.CancelJob(ctx, conn, jobID1))

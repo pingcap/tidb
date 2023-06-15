@@ -70,7 +70,7 @@ func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		case <-ticker.C:
 			found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
 			if err != nil {

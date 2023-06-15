@@ -29,6 +29,7 @@ go_library(
         "//parser/tidb",
         "//parser/types",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
     ],
 )
 

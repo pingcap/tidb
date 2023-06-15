@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -957,6 +958,12 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	}()
 	// wait for the task to be registered
 	<-importinto.TestSyncChan
+	// cannot run 2 import job at the same time
+	tk2 := testkit.NewTestKit(s.T(), s.store)
+	err = tk2.QueryToErr(sql)
+	s.ErrorIs(err, exeerrors.ErrLoadDataPreCheckFailed)
+	s.ErrorContains(err, "there's pending or running jobs")
+
 	client, err := importer.GetEtcdClient()
 	s.NoError(err)
 	s.T().Cleanup(func() {
