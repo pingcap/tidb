@@ -32,13 +32,13 @@ var TestSyncChan = make(chan struct{})
 
 // ImportMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
 type ImportMinimalTaskExecutor struct {
-	task *MinimalTaskMeta
+	mTtask *importStepMinimalTask
 }
 
 // Run implements the SubtaskExecutor.Run interface.
 func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
-	logger := logutil.BgLogger().With(zap.String("component", "minimal task executor"), zap.String("type", proto.ImportInto), zap.Int64("table_id", e.task.Plan.TableInfo.ID))
-	logger.Info("subtask executor run", zap.Any("task", e.task))
+	logger := logutil.BgLogger().With(zap.String("component", "minimal task executor"), zap.String("type", proto.ImportInto), zap.Int64("table_id", e.mTtask.Plan.TableInfo.ID))
+	logger.Info("subtask executor run", zap.Any("task", e.mTtask))
 	failpoint.Inject("waitBeforeSortChunk", func() {
 		time.Sleep(3 * time.Second)
 	})
@@ -49,8 +49,8 @@ func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
 	})
-	chunkCheckpoint := toChunkCheckpoint(e.task.Chunk)
-	sharedVars := e.task.SharedVars
+	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
+	sharedVars := e.mTtask.SharedVars
 	if err := importer.ProcessChunk(ctx, &chunkCheckpoint, sharedVars.TableImporter, sharedVars.DataEngine, sharedVars.IndexEngine, sharedVars.Progress, logger); err != nil {
 		return err
 	}
@@ -61,16 +61,33 @@ func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
 	return nil
 }
 
+type postProcessMinimalTaskExecutor struct {
+	mTask *postProcessStepMinimalTask
+}
+
+func (e *postProcessMinimalTaskExecutor) Run(ctx context.Context) error {
+	mTask := e.mTask
+	return postProcess(ctx, mTask.taskMeta, &mTask.meta, mTask.logger)
+}
+
 func init() {
-	scheduler.RegisterSubtaskExectorConstructor(
-		proto.ImportInto,
+	scheduler.RegisterSubtaskExectorConstructor(proto.ImportInto, StepImport,
 		// The order of the subtask executors is the same as the order of the subtasks.
 		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
-			task, ok := minimalTask.(MinimalTaskMeta)
+			task, ok := minimalTask.(*importStepMinimalTask)
 			if !ok {
 				return nil, errors.Errorf("invalid task type %T", minimalTask)
 			}
-			return &ImportMinimalTaskExecutor{task: &task}, nil
+			return &ImportMinimalTaskExecutor{mTtask: task}, nil
+		},
+	)
+	scheduler.RegisterSubtaskExectorConstructor(proto.ImportInto, StepPostProcess,
+		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
+			mTask, ok := minimalTask.(*postProcessStepMinimalTask)
+			if !ok {
+				return nil, errors.Errorf("invalid task type %T", minimalTask)
+			}
+			return &postProcessMinimalTaskExecutor{mTask: mTask}, nil
 		},
 	)
 }

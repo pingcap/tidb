@@ -60,9 +60,6 @@ const (
 	jobStepNone       = ""
 	JobStepImporting  = "importing"
 	JobStepValidating = "validating"
-	// JobStepAddingIndex is the step that add indexes to the table.
-	// todo: change to this step when it's implemented.
-	JobStepAddingIndex = "adding-index"
 
 	baseQuerySQL = `SELECT
 					id, create_time, start_time, end_time,

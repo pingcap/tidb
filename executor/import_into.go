@@ -48,6 +48,8 @@ var (
 	TestDetachedTaskFinished atomic.Bool
 )
 
+const unknownImportedRowCount = -1
+
 // ImportIntoExec represents a IMPORT INTO executor.
 type ImportIntoExec struct {
 	baseExecutor
@@ -164,7 +166,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	}); err != nil {
 		return err
 	}
-	fillOneImportJobInfo(info, req, 0)
+	fillOneImportJobInfo(info, req, unknownImportedRowCount)
 	return nil
 }
 

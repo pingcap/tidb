@@ -35,11 +35,19 @@ import (
 	"go.uber.org/zap"
 )
 
+// SessionExecutor defines the interface for executing SQLs in a session.
+type SessionExecutor interface {
+	// WithNewSession executes the function with a new session.
+	WithNewSession(fn func(se sessionctx.Context) error) error
+}
+
 // TaskManager is the manager of global/sub task.
 type TaskManager struct {
 	ctx    context.Context
 	sePool *pools.ResourcePool
 }
+
+var _ SessionExecutor = &TaskManager{}
 
 var taskManagerInstance atomic.Pointer[TaskManager]
 

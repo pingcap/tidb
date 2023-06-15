@@ -340,15 +340,5 @@ func (b *backfillSchedulerHandle) Rollback(context.Context) error {
 	return nil
 }
 
-// BackFillSubtaskExecutor is the executor for backfill subtask.
-type BackFillSubtaskExecutor struct {
-	Task proto.MinimalTask
-}
-
-// Run implements the Executor interface.
-func (*BackFillSubtaskExecutor) Run(_ context.Context) error {
-	return nil
-}
-
 // BackfillTaskType is the type of backfill task.
 const BackfillTaskType = "backfill"

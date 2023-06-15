@@ -23,12 +23,18 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
+	"go.uber.org/zap"
 )
 
-// TaskStep of IMPORT INTO.
+// Steps of IMPORT INTO, each step is represented by one or multiple subtasks.
+// the initial step is StepInit(-1)
+// steps are processed in the following order: StepInit -> StepImport -> StepPostProcess
 const (
-	// Import we sort source data and ingest it into TiKV in this step.
-	Import int64 = 1
+	// StepImport we sort source data and ingest it into TiKV in this step.
+	StepImport int64 = 1
+	// StepPostProcess we verify checksum and add index in this step.
+	// TODO: Might split into StepValidate and StepAddIndex later.
+	StepPostProcess int64 = 2
 )
 
 // TaskMeta is the task of IMPORT INTO.
@@ -50,16 +56,22 @@ type TaskMeta struct {
 	ChunkMap map[int32][]Chunk
 }
 
-// SubtaskMeta is the subtask of IMPORT INTO.
+// ImportStepMeta is the meta of import step.
 // Dispatcher will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
-type SubtaskMeta struct {
+type ImportStepMeta struct {
 	Plan importer.Plan
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
 	Chunks   []Chunk
 	Checksum Checksum
 	Result   Result
+}
+
+// PostProcessStepMeta is the meta of post process step.
+type PostProcessStepMeta struct {
+	// accumulated checksum of all subtasks in import step.
+	Checksum Checksum
 }
 
 // SharedVars is the shared variables between subtask and minimal tasks.
@@ -75,16 +87,25 @@ type SharedVars struct {
 	Checksum *verification.KVChecksum
 }
 
-// MinimalTaskMeta is the minimal task of IMPORT INTO.
+// importStepMinimalTask is the minimal task of IMPORT INTO.
 // Scheduler will split the subtask into minimal tasks(Chunks -> Chunk)
-type MinimalTaskMeta struct {
+type importStepMinimalTask struct {
 	Plan       importer.Plan
 	Chunk      Chunk
 	SharedVars *SharedVars
 }
 
 // IsMinimalTask implements the MinimalTask interface.
-func (MinimalTaskMeta) IsMinimalTask() {}
+func (*importStepMinimalTask) IsMinimalTask() {}
+
+// postProcessStepMinimalTask is the minimal task of post process step.
+type postProcessStepMinimalTask struct {
+	meta     PostProcessStepMeta
+	taskMeta *TaskMeta
+	logger   *zap.Logger
+}
+
+func (*postProcessStepMinimalTask) IsMinimalTask() {}
 
 // Chunk records the chunk information.
 type Chunk struct {

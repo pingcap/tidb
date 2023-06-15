@@ -29,7 +29,16 @@ type TaskFlowHandle interface {
 	// do it here, but don't do too much work here, because the ticker interval is small, and it will block
 	// the event is generated every checkTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
 	OnTicker(ctx context.Context, gTask *proto.Task)
+	// ProcessNormalFlow is used to move the task to next step, if returns no error and there's no new subtasks
+	// the task is finished.
+	// NOTE: don't change gTask.State inside, framework will manage it.
+	// it's called when:
+	// 	1. task is pending and entering it's first step.
+	// 	2. subtasks of previous step has all finished with no error.
 	ProcessNormalFlow(ctx context.Context, h TaskHandle, gTask *proto.Task) (subtaskMetas [][]byte, err error)
+	// ProcessErrFlow is called when:
+	// 	1. subtask is finished with error.
+	// 	2. task is cancelled after we have dispatched some subtasks.
 	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr [][]byte) (subtaskMeta []byte, err error)
 	// GetEligibleInstances is used to get the eligible instances for the global task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
