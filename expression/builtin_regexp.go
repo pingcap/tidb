@@ -1136,56 +1136,25 @@ func (re *builtinRegexpReplaceFuncSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (re *builtinRegexpReplaceFuncSig) processEmptyStr(reg *regexp.Regexp, instructions []Instruction, pos int64, occurrence int64) ([]byte, error) {
-	if occurrence > 1 || pos != 1 {
-		return []byte(""), nil
-	}
-
-	emptyStr := make([]byte, 0)
-	res := reg.FindSubmatchIndex(emptyStr)
-	if len(res) != 0 {
-		replacedBStr := make([]byte, 0)
-		err := re.copyReplacement(&replacedBStr, &emptyStr, res, instructions)
-		if err != nil {
-			return []byte(""), err
-		}
-		return replacedBStr, nil
-	}
-	return []byte(""), nil
-}
-
 func (re *builtinRegexpReplaceFuncSig) replaceAllMatchedBinStr(reg *regexp.Regexp, bexpr []byte, trimmedBexpr []byte, instructions []Instruction, pos int64) ([]byte, error) {
 	replacedBStr := make([]byte, 0)
-	for {
-		res := reg.FindSubmatchIndex(trimmedBexpr)
-		if len(res) == 0 {
-			break
+	allResults := reg.FindAllSubmatchIndex(trimmedBexpr, -1)
+	firstNotCopiedPos := 0
+	for _, res := range allResults {
+		if firstNotCopiedPos < res[0] {
+			replacedBStr = append(replacedBStr, trimmedBexpr[firstNotCopiedPos:res[0]]...) // Copy prefix
 		}
 
-		replacedBStr = append(replacedBStr, trimmedBexpr[:res[0]]...) // Copy prefix
+		// Put the replace string into expression
 		err := re.copyReplacement(&replacedBStr, &trimmedBexpr, res, instructions)
 		if err != nil {
 			return []byte(""), err
 		}
 
-		// Matched string is an empty string, and this circmstance should be specially treated,
-		// such as regexp_replace("abc", "\d*", "d") -> result: dadbdcd
-		if res[0] == res[1] {
-			if len(trimmedBexpr) <= res[0] {
-				trimmedBexpr = []byte("")
-				break
-			}
-
-			// When the matched string is empty, we need to stride across one character
-			utf8Len := stringutil.Utf8Len(trimmedBexpr[res[0]])
-			replacedBStr = append(replacedBStr, trimmedBexpr[res[0]:res[0]+utf8Len]...)
-			trimmedBexpr = trimmedBexpr[res[0]+utf8Len:]
-			continue
-		}
-		trimmedBexpr = trimmedBexpr[res[1]:]
+		firstNotCopiedPos = res[1]
 	}
 
-	replacedBStr = append(replacedBStr, trimmedBexpr...) // Copy suffix
+	replacedBStr = append(replacedBStr, trimmedBexpr[firstNotCopiedPos:]...) // Copy suffix
 	return append(bexpr[:pos-1], replacedBStr...), nil
 }
 
@@ -1226,14 +1195,6 @@ func (re *builtinRegexpReplaceFuncSig) replaceOneMatchedStr(reg *regexp.Regexp, 
 }
 
 func (re *builtinRegexpReplaceFuncSig) getReplacedBinStr(reg *regexp.Regexp, bexpr []byte, trimmedBexpr []byte, instructions []Instruction, pos int64, occurrence int64) (string, bool, error) {
-	if len(bexpr) == 0 {
-		replacedBStr, err := re.processEmptyStr(reg, instructions, pos, occurrence)
-		if err != nil {
-			return "", false, err
-		}
-		return fmt.Sprintf("0x%s", strings.ToUpper(hex.EncodeToString(replacedBStr))), false, nil
-	}
-
 	if occurrence == 0 {
 		replacedStr, err := re.replaceAllMatchedBinStr(reg, bexpr, trimmedBexpr, instructions, pos)
 		if err != nil {
@@ -1250,14 +1211,6 @@ func (re *builtinRegexpReplaceFuncSig) getReplacedBinStr(reg *regexp.Regexp, bex
 }
 
 func (re *builtinRegexpReplaceFuncSig) getReplacedStr(reg *regexp.Regexp, expr string, trimmedExpr string, instructions []Instruction, pos int64, occurrence int64) (string, bool, error) {
-	if len(expr) == 0 {
-		replacedStr, err := re.processEmptyStr(reg, instructions, pos, occurrence)
-		if err != nil {
-			return "", false, nil
-		}
-		return string(replacedStr), false, nil
-	}
-
 	if occurrence == 0 {
 		return re.replaceAllMatchedStr(reg, expr, trimmedExpr, instructions, pos)
 	}
