@@ -267,4 +267,6 @@ var booleanFunctions = map[string]struct{}{
 	ast.IsIPv4Compat:       {},
 	ast.IsIPv4Mapped:       {},
 	ast.IsIPv6:             {},
+	ast.JSONValid:          {},
+	ast.RegexpLike:         {},
 }

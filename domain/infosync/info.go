@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -264,7 +265,7 @@ func initResourceManagerClient(pdCli pd.Client) (cli pd.ResourceManagerClient) {
 		if val.(bool) {
 			_, err := cli.AddResourceGroup(context.TODO(),
 				&rmpb.ResourceGroup{
-					Name: "default",
+					Name: resourcegroup.DefaultResourceGroupName,
 					Mode: rmpb.GroupMode_RUMode,
 					RUSettings: &rmpb.GroupRequestUnitSettings{
 						RU: &rmpb.TokenBucket{

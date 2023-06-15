@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package resourcegroup
 
 import (
@@ -25,6 +26,9 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
+
+// DefaultResourceGroupName is the name of the default resource group.
+const DefaultResourceGroupName = "default"
 
 type RunawayManager struct {
 	resourceGroupCtl *rmclient.ResourceGroupsController

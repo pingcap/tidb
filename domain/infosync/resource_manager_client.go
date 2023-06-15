@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -35,8 +36,8 @@ func NewMockResourceManagerClient() pd.ResourceManagerClient {
 	mockMgr := &mockResourceManagerClient{
 		groups: make(map[string]*rmpb.ResourceGroup),
 	}
-	mockMgr.groups["default"] = &rmpb.ResourceGroup{
-		Name: "default",
+	mockMgr.groups[resourcegroup.DefaultResourceGroupName] = &rmpb.ResourceGroup{
+		Name: resourcegroup.DefaultResourceGroupName,
 		Mode: rmpb.GroupMode_RUMode,
 		RUSettings: &rmpb.GroupRequestUnitSettings{
 			RU: &rmpb.TokenBucket{
@@ -68,7 +69,7 @@ func (m *mockResourceManagerClient) GetResourceGroup(ctx context.Context, name s
 	defer m.RUnlock()
 	group, ok := m.groups[name]
 	if !ok {
-		return nil, nil
+		return nil, fmt.Errorf("the group %s does not exist", name)
 	}
 	return group, nil
 }
@@ -111,4 +112,12 @@ func (m *mockResourceManagerClient) LoadResourceGroups(ctx context.Context) ([]*
 
 func (m *mockResourceManagerClient) Watch(ctx context.Context, key []byte, opts ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
 	return nil, nil
+}
+
+func (m *mockResourceGroupManager) Watch(ctx context.Context, key []byte, opts ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
+	return nil, nil
+}
+
+func (m *mockResourceGroupManager) LoadResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, int64, error) {
+	return nil, 0, nil
 }
