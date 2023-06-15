@@ -1491,8 +1491,8 @@ type SessionVars struct {
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
 
-	// TiflashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
-	TiflashReplicaRead tiflash.ReplicaRead
+	// TiFlashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
+	TiFlashReplicaRead tiflash.ReplicaRead
 
 	// HypoTiFlashReplicas are for the Index Advisor.
 	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas

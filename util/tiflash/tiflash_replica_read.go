@@ -45,8 +45,8 @@ func (policy ReplicaRead) IsPolicyClosestReplicas() bool {
 	return policy == ClosestReplicas
 }
 
-// GetTiflashReplicaRead return corresponding policy string in integer.
-func GetTiflashReplicaRead(policy ReplicaRead) string {
+// GetTiFlashReplicaRead return corresponding policy string in integer.
+func GetTiFlashReplicaRead(policy ReplicaRead) string {
 	switch policy {
 	case AllReplicas:
 		return AllReplicaStr
@@ -59,8 +59,8 @@ func GetTiflashReplicaRead(policy ReplicaRead) string {
 	}
 }
 
-// GetTiflashReplicaReadByStr return corresponding policy in string.
-func GetTiflashReplicaReadByStr(str string) ReplicaRead {
+// GetTiFlashReplicaReadByStr return corresponding policy in string.
+func GetTiFlashReplicaReadByStr(str string) ReplicaRead {
 	switch str {
 	case AllReplicaStr:
 		return AllReplicas

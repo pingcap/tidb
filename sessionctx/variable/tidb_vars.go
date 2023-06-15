@@ -1350,7 +1350,7 @@ const (
 	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
 	DefAuthenticationLDAPSimpleInitPoolSize           = 10
 	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
-	DefTiflashReplicaRead                             = tiflash.AllReplicaStr
+	DefTiFlashReplicaRead                             = tiflash.AllReplicaStr
 	DefRuntimeFilterType                              = "IN"
 	DefRuntimeFilterMode                              = "OFF"
 )

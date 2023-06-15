@@ -302,12 +302,11 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 //
 // The second balance strategy: Not only consider the region count between TiFlash stores, but also try to make the regions' range continuous(stored in TiFlash closely).
 // If balanceWithContinuity is true, the second balance strategy is enable.
-func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
+func balanceBatchCopTask(ctx context.Context, aliveStores []*tikv.Store, originalTasks []*batchCopTask, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
 	if len(originalTasks) == 0 {
 		log.Info("Batch cop task balancer got an empty task set.")
 		return originalTasks
 	}
-	cache := kvStore.GetRegionCache()
 	storeTaskMap := make(map[uint64]*batchCopTask)
 	// storeCandidateRegionMap stores all the possible store->region map. Its content is
 	// store id -> region signature -> region info. We can see it as store id -> region lists.
@@ -315,8 +314,6 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 	totalRegionCandidateNum := 0
 	totalRemainingRegionNum := 0
 
-	stores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
-	aliveStores := filterAliveStores(ctx, stores, ttl, kvStore)
 	for _, s := range aliveStores {
 		storeTaskMap[s.StoreID()] = &batchCopTask{
 			storeAddr: s.GetAddr(),
@@ -784,7 +781,7 @@ func failpointCheckWhichPolicy(act tiflashcompute.DispatchPolicy) {
 	})
 }
 
-func filterAllStoresAccordingToTiflashReplicaRead(allStores []uint64, aliveStoreIDsInTiDBZone map[uint64]struct{}, isTiDBZoneSet bool, policy tiflash.ReplicaRead) (storesMatchedPolicy []uint64, needsCrossZoneAccess bool) {
+func filterAllStoresAccordingToTiFlashReplicaRead(allStores []uint64, aliveStoreIDsInTiDBZone map[uint64]struct{}, isTiDBZoneSet bool, policy tiflash.ReplicaRead) (storesMatchedPolicy []uint64, needsCrossZoneAccess bool) {
 	if policy == tiflash.AllReplicas || !isTiDBZoneSet {
 		return allStores, false
 	}
@@ -826,6 +823,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		aliveStores               []*tikv.Store
 		aliveStoreIDsInTiDBZone   map[uint64]struct{}
 		maxRemoteReadCountAllowed int
+		careTiFlashReplicaRead    = !tiflashReplicaReadPolicy.IsPolicyAllReplicas() && isTiDBLabelZoneSet
 	)
 	for {
 		var tasks []*copTask
@@ -847,9 +845,9 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			}
 		}
 
-		if !tiflashReplicaReadPolicy.IsPolicyAllReplicas() && isTiDBLabelZoneSet {
-			allTiflashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
-			aliveStores = filterAliveStores(bo.GetCtx(), allTiflashStores, ttl, store)
+		allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
+		aliveStores = filterAliveStores(bo.GetCtx(), allTiFlashStores, ttl, store)
+		if careTiFlashReplicaRead {
 			aliveStoreIDsInTiDBZone = make(map[uint64]struct{}, len(aliveStores))
 			for _, as := range aliveStores {
 				// If the `zone` label of the TiFlash store is not set, we treat it as a TiFlash store in other zones.
@@ -883,7 +881,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			}
 			needCrossZoneAccess := false
 			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store, tikv.LabelFilterNoTiFlashWriteNode)
-			allStores, needCrossZoneAccess = filterAllStoresAccordingToTiflashReplicaRead(allStores, aliveStoreIDsInTiDBZone, isTiDBLabelZoneSet, tiflashReplicaReadPolicy)
+			allStores, needCrossZoneAccess = filterAllStoresAccordingToTiFlashReplicaRead(allStores, aliveStoreIDsInTiDBZone, isTiDBLabelZoneSet, tiflashReplicaReadPolicy)
 			if needCrossZoneAccess && !tiflashReplicaReadPolicy.IsPolicyAllReplicas() {
 				regionsInOtherZones = append(regionsInOtherZones, task.region.GetID())
 				if tiflashReplicaReadPolicy.IsPolicyClosestReplicas() && len(regionsInOtherZones) > maxRemoteReadCountAllowed {
@@ -937,7 +935,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			logutil.BgLogger().Debug(msg)
 		}
 		balanceStart := time.Now()
-		batchTasks = balanceBatchCopTask(bo.GetCtx(), store, batchTasks, ttl, balanceWithContinuity, balanceContinuousRegionCount)
+		batchTasks = balanceBatchCopTask(bo.GetCtx(), aliveStores, batchTasks, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 		balanceElapsed := time.Since(balanceStart)
 		if log.GetLevel() <= zap.DebugLevel {
 			msg := "After region balance:"
@@ -1003,11 +1001,11 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 			keyRanges = append(keyRanges, NewKeyRanges(pi.KeyRanges))
 			partitionIDs = append(partitionIDs, pi.ID)
 		}
-		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store.kvStore, keyRanges, req.StoreType, false, 0, false, 0, partitionIDs, tiflashcompute.DispatchPolicyInvalid, option.TiflashReplicaRead, option.AppendWarning)
+		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store.kvStore, keyRanges, req.StoreType, false, 0, false, 0, partitionIDs, tiflashcompute.DispatchPolicyInvalid, option.TiFlashReplicaRead, option.AppendWarning)
 	} else {
 		// TODO: merge the if branch.
 		ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
-		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store.kvStore, ranges, req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid, option.TiflashReplicaRead, option.AppendWarning)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store.kvStore, ranges, req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid, option.TiFlashReplicaRead, option.AppendWarning)
 	}
 
 	if err != nil {
@@ -1020,7 +1018,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		vars:                       vars,
 		rpcCancel:                  tikv.NewRPCanceller(),
 		enableCollectExecutionInfo: option.EnableCollectExecutionInfo,
-		tiflashReplicaReadPolicy:   option.TiflashReplicaRead,
+		tiflashReplicaReadPolicy:   option.TiFlashReplicaRead,
 		appendWarning:              option.AppendWarning,
 	}
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)

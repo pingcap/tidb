@@ -2533,13 +2533,13 @@ var defaultSysVars = []*SysVar{
 		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashReplicaRead, Value: DefTiflashReplicaRead, Type: TypeEnum, PossibleValues: []string{DefTiflashReplicaRead, "closest_adaptive", "closest_replicas"},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashReplicaRead, Value: DefTiFlashReplicaRead, Type: TypeEnum, PossibleValues: []string{DefTiFlashReplicaRead, tiflash.ClosestAdaptiveStr, tiflash.ClosestReplicasStr},
 		SetSession: func(s *SessionVars, val string) error {
-			s.TiflashReplicaRead = tiflash.GetTiflashReplicaReadByStr(val)
+			s.TiFlashReplicaRead = tiflash.GetTiFlashReplicaReadByStr(val)
 			return nil
 		},
 		GetSession: func(s *SessionVars) (string, error) {
-			return tiflash.GetTiflashReplicaRead(s.TiflashReplicaRead), nil
+			return tiflash.GetTiFlashReplicaRead(s.TiFlashReplicaRead), nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLAuthMethodName, Value: DefAuthenticationLDAPSASLAuthMethodName, Type: TypeEnum, PossibleValues: []string{ldap.SASLAuthMethodSCRAMSHA1, ldap.SASLAuthMethodSCRAMSHA256, ldap.SASLAuthMethodGSSAPI}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
