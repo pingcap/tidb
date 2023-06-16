@@ -13,7 +13,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
@@ -57,8 +56,7 @@ func (push *pushDown) pushBackup(
 	req backuppb.BackupRequest,
 	pr *rtree.ProgressRange,
 	stores []*metapb.Store,
-	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.BackupKeyType, checkpoint.BackupValueType],
-	progressCallBack func(ProgressUnit),
+	backupCtx BackupContext,
 ) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("pushDown.pushBackup", opentracing.ChildOf(span.Context()))
@@ -76,6 +74,7 @@ func (push *pushDown) pushBackup(
 	for _, s := range stores {
 		store := s
 		storeID := s.GetId()
+		storeReq := req
 		lctx := logutil.ContextWithField(ctx, zap.Uint64("store-id", storeID))
 		if err := utils.CheckStoreLiveness(s); err != nil {
 			logutil.CL(lctx).Warn("skip store", logutil.ShortError(err))
@@ -91,8 +90,15 @@ func (push *pushDown) pushBackup(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			if backupCtx.UniqueIdStoreMap != nil {
+				uniqueId, ok := backupCtx.UniqueIdStoreMap.Load(storeID)
+				if ok {
+					storeReq.UniqueId = uniqueId.(string)
+					logutil.CL(lctx).Info("get unique id for store", zap.Int64("store", int64(storeID)), zap.String("unique_id", storeReq.UniqueId))
+				}
+			}
 			err := SendBackup(
-				lctx, storeID, client, req,
+				lctx, storeID, client, storeReq,
 				func(resp *backuppb.BackupResponse) error {
 					// Forward all responses (including error).
 					push.respCh <- responseAndStore{
@@ -163,24 +169,17 @@ func (push *pushDown) pushBackup(
 			})
 			if resp.GetError() == nil {
 				// None error means range has been backuped successfully.
-				if checkpointRunner != nil {
-					if err := checkpoint.AppendForBackup(
-						ctx,
-						checkpointRunner,
-						pr.GroupKey,
-						resp.StartKey,
-						resp.EndKey,
-						resp.Files,
-					); err != nil {
-						// the error is only from flush operator
-						return errors.Annotate(err, "failed to flush checkpoint")
-					}
+				err := backupCtx.CheckpointCallBack(resp)
+				if err != nil {
+					// the error is only from flush operator
+					return errors.Annotate(err, "failed to flush checkpoint")
 				}
+
 				pr.Res.Put(
 					resp.GetStartKey(), resp.GetEndKey(), resp.GetFiles())
 
 				// Update progress
-				progressCallBack(RegionUnit)
+				backupCtx.ProgressCallBack(RegionUnit)
 			} else {
 				errPb := resp.GetError()
 				switch v := errPb.Detail.(type) {

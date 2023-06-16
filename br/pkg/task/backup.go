@@ -675,7 +675,13 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}()
 	}
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
+	backupCtx := backup.BackupContext{
+		Concurrency:      uint(cfg.Concurrency),
+		ReplicaReadLabel: cfg.ReplicaReadLabel,
+		MetaWriter:       metawriter,
+		ProgressCallBack: progressCallBack,
+	}
+	err = client.BackupRanges(ctx, ranges, req, backupCtx)
 	if err != nil {
 		return errors.Trace(err)
 	}

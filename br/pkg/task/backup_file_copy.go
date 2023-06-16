@@ -5,6 +5,7 @@ package task
 import (
 	"context"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -156,6 +157,7 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 	prepareReq := backuppb.PrepareRequest{
 		SaveToStorage: false,
 	}
+	var uniqueIdStore sync.Map
 	workers := utils.NewWorkerPool(uint(len(allStores)), "prepare")
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, store := range allStores {
@@ -173,6 +175,7 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 			}
 			// TODO handle unique id in resp.
 			log.Info("prepare for store", zap.Any("store", store), zap.String("unique_id", resp.UniqueId))
+			uniqueIdStore.Store(storeId, resp.UniqueId)
 			return nil
 		})
 	}
@@ -264,7 +267,14 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 	}
 
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, ranges, backupReq, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
+	backupCtx := backup.BackupContext{
+		Concurrency:      uint(cfg.Concurrency),
+		ReplicaReadLabel: cfg.ReplicaReadLabel,
+		MetaWriter:       metawriter,
+		ProgressCallBack: progressCallBack,
+		UniqueIdStoreMap: &uniqueIdStore,
+	}
+	err = client.BackupRanges(ctx, ranges, backupReq, backupCtx)
 	if err != nil {
 		return errors.Trace(err)
 	}
