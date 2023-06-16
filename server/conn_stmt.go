@@ -57,6 +57,7 @@ import (
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/util"
@@ -300,6 +301,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		}
 	}
 
+	crs := wrapWithCursor(rs)
 	// if the client wants to use cursor
 	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
 	// Tell the client cursor exists in server by setting proper serverStatus.
@@ -310,32 +312,37 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		// the rows directly to avoid running executor and accessing shared params/variables in the session
 		// NOTE: chunk should not be allocated from the connection allocator, which will reset after executing this command
 		// but the rows are still needed in the following FETCH command.
-		//
-		// TODO: trace the memory used here
-		chk := rs.NewChunk(nil)
-		var rows []chunk.Row
+
+		// create the row container to manage spill
+		// this `rowContainer` will be released when the statement (or the connection) is closed.
+		rowContainer := chunk.NewRowContainer(crs.FieldTypes(), vars.MaxChunkSize)
+		rowContainer.GetMemTracker().AttachTo(vars.MemTracker)
+		rowContainer.GetMemTracker().SetLabel(memory.LabelForCursorFetch)
+		rowContainer.GetDiskTracker().AttachTo(vars.DiskTracker)
+		rowContainer.GetDiskTracker().SetLabel(memory.LabelForCursorFetch)
+		vars.MemTracker.FallbackOldAndSetNewAction(rowContainer.ActionSpill())
 		for {
-			if err = rs.Next(ctx, chk); err != nil {
+			chk := crs.NewChunk(nil)
+
+			if err = crs.Next(ctx, chk); err != nil {
 				return false, err
 			}
 			rowCount := chk.NumRows()
 			if rowCount == 0 {
 				break
 			}
-			// filling fetchedRows with chunk
-			for i := 0; i < rowCount; i++ {
-				row := chk.GetRow(i)
-				rows = append(rows, row)
-			}
-			chk = chunk.Renew(chk, vars.MaxChunkSize)
-		}
-		rs.StoreFetchedRows(rows)
 
-		stmt.StoreResultSet(rs)
-		if err = cc.writeColumnInfo(rs.Columns()); err != nil {
+			rowContainer.Add(chk)
+		}
+
+		iter := chunk.NewIterator4RowContainer(rowContainer)
+		crs.StoreRowIterator(iter)
+		stmt.StoreResultSet(crs)
+		stmt.StoreRowContainer(rowContainer)
+		if err = cc.writeColumnInfo(crs.Columns()); err != nil {
 			return false, err
 		}
-		if cl, ok := rs.(fetchNotifier); ok {
+		if cl, ok := crs.(fetchNotifier); ok {
 			cl.OnFetchReturned()
 		}
 
@@ -349,7 +356,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 
 		return false, cc.flush(ctx)
 	}
-	retryable, err := cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), 0)
+	retryable, err := cc.writeResultSet(ctx, crs, true, cc.ctx.Status(), 0)
 	if err != nil {
 		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
@@ -390,8 +397,8 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	}
 
 	sendingEOF := false
-	// if the `fetchedRows` are empty before writing result, we could say the `FETCH` command will send EOF
-	if len(rs.GetFetchedRows()) == 0 {
+	// if the iterator reached the end before writing result, we could say the `FETCH` command will send EOF
+	if rs.GetRowIterator().Current() != rs.GetRowIterator().End() {
 		sendingEOF = true
 	}
 	_, err = cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), int(fetchSize))
@@ -437,6 +444,7 @@ func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 }
 
 func (cc *clientConn) handleStmtReset(ctx context.Context, data []byte) (err error) {
+	// TODO: implement statement reset
 	if len(data) < 4 {
 		return mysql.ErrMalformPacket
 	}

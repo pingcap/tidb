@@ -110,7 +110,7 @@ func TestCursorWithParams(t *testing.T) {
 		0x0, 0x1, 0x3, 0x0, 0x3, 0x0,
 		0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0,
 	)))
-	rows := c.Context().stmts[stmt1.ID()].GetResultSet().GetFetchedRows()
+	rows := c.Context().stmts[stmt1.ID()].GetResultSet().GetRowIterator()
 	require.Len(t, rows, 1)
 	require.Equal(t, int64(1), rows[0].GetInt64(0))
 	require.Equal(t, int64(2), rows[0].GetInt64(1))
@@ -122,7 +122,7 @@ func TestCursorWithParams(t *testing.T) {
 		0x0, 0x1, 0x3, 0x0,
 		0x1, 0x0, 0x0, 0x0,
 	)))
-	rows = c.Context().stmts[stmt2.ID()].GetResultSet().GetFetchedRows()
+	rows = c.Context().stmts[stmt2.ID()].GetResultSet().GetRowIterator()
 	require.Len(t, rows, 2)
 	require.Equal(t, int64(1), rows[0].GetInt64(0))
 	require.Equal(t, int64(1), rows[0].GetInt64(1))
