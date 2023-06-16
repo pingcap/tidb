@@ -605,8 +605,15 @@ func (w *partialTableWorker) needPartitionHandle() bool {
 	cols := w.tableReader.(*TableReaderExecutor).plans[0].Schema().Columns
 	outputOffsets := w.tableReader.(*TableReaderExecutor).dagPB.OutputOffsets
 	col := cols[outputOffsets[len(outputOffsets)-1]]
+
+	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
 	// no ExtraPidColID here, because a primary key couln't be a global index.
-	return col.ID == model.ExtraPhysTblID
+	ret := col.ID == model.ExtraPhysTblID
+	// shouldn't happen
+	if needPartitionHandle != ret {
+		panic(fmt.Sprintf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret))
+	}
+	return ret
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask,
@@ -1453,7 +1460,14 @@ func (w *partialIndexWorker) needPartitionHandle() bool {
 	cols := w.plan[0].Schema().Columns
 	outputOffsets := w.dagPB.OutputOffsets
 	col := cols[outputOffsets[len(outputOffsets)-1]]
-	return col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
+
+	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
+	ret := col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
+	// shouldn't happen
+	if needPartitionHandle != ret {
+		panic(fmt.Sprintf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret))
+	}
+	return ret
 }
 
 func (w *partialIndexWorker) fetchHandles(

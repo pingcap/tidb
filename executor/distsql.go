@@ -625,18 +625,28 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 
 func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) bool {
 	var col *expression.Column
+	var needPartitionHandle, ret bool
 	if tp == getHandleFromIndex {
 		cols := e.idxPlans[0].Schema().Columns
 		outputOffsets := e.dagPB.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
-		return col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
+		needPartitionHandle = e.index.Global || (e.partitionTableMode && len(e.byItems) > 0)
+		ret = col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
+	} else {
+		cols := e.tblPlans[0].Schema().Columns
+		outputOffsets := e.tableRequest.OutputOffsets
+		col = cols[outputOffsets[len(outputOffsets)-1]]
+
+		// no ExtraPidColID and GlobalIndex here, because tableScan shouldn't contain them.
+		needPartitionHandle = e.partitionTableMode && len(e.byItems) > 0
+		ret = col.ID == model.ExtraPhysTblID
 	}
 
-	cols := e.tblPlans[0].Schema().Columns
-	outputOffsets := e.tableRequest.OutputOffsets
-	col = cols[outputOffsets[len(outputOffsets)-1]]
-	// no ExtraPidColID here, because tableScan shouldn't contain it.
-	return col.ID == model.ExtraPhysTblID
+	// shouldn't happen
+	if needPartitionHandle != ret {
+		panic(fmt.Sprintf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret))
+	}
+	return ret
 }
 
 func (e *IndexLookUpExecutor) isCommonHandle() bool {
