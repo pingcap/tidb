@@ -36,6 +36,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 		tk.MustExec("insert into t1(a,b,c,t) select a,b,c,t from t1;")
 	}
 	tk.MustExec("analyze table t1;")
+	tk.MustExec("set @@session.tidb_ban_tiflash_cop=OFF")
 
 	// Create virtual `tiflash` replica info.
 	is := dom.InfoSchema()
