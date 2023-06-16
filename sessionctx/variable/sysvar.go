@@ -2528,7 +2528,7 @@ var defaultSysVars = []*SysVar{
 			s.OptimizerFixControl = newMap
 			return nil
 		}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeSkipColumnTypes, Value: "json", Type: TypeStr,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeSkipColumnTypes, Value: "json,blob,mediumblob,longblob", Type: TypeStr,
 		SetSession: func(s *SessionVars, val string) error {
 			s.AnalyzeSkipColumnTypes = ParseAnalyzeSkipColumnTypes(val)
 			return nil
