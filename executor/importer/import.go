@@ -26,6 +26,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -460,9 +461,10 @@ func (e *LoadDataController) checkFieldParams() error {
 
 func (p *Plan) initDefaultOptions() {
 	threadCnt := runtime.NumCPU()
-	if p.Format == DataFormatParquet {
-		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
-	}
+	failpoint.Inject("mockNumCpu", func(val failpoint.Value) {
+		threadCnt = val.(int)
+	})
+	threadCnt = int(math.Max(1, float64(threadCnt)*0.5))
 
 	p.Checksum = config.OpLevelRequired
 	p.ThreadCnt = int64(threadCnt)

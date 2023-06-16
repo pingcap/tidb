@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/etcd"
@@ -75,7 +76,7 @@ func (t *taskInfo) register(ctx context.Context) {
 	if time.Since(t.lastRegisterTime) < refreshTaskTTLInterval {
 		return
 	}
-	logger := logutil.BgLogger().With(zap.Int64("task_id", t.taskID))
+	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
 	if t.taskRegister == nil {
 		client, err := importer.GetEtcdClient()
 		if err != nil {
@@ -99,7 +100,7 @@ func (t *taskInfo) register(ctx context.Context) {
 }
 
 func (t *taskInfo) close(ctx context.Context) {
-	logger := logutil.BgLogger().With(zap.Int64("task_id", t.taskID))
+	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
 	if t.taskRegister != nil {
 		timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
 		defer cancel()
@@ -161,7 +162,7 @@ func (h *flowHandle) switchTiKVMode(ctx context.Context, task *proto.Task) {
 		return
 	}
 
-	logger := logutil.BgLogger().With(zap.Int64("task_id", task.ID))
+	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
 	switcher, err := importer.GetTiKVModeSwitcher(logger)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
@@ -186,9 +187,8 @@ func (h *flowHandle) unregisterTask(ctx context.Context, task *proto.Task) {
 
 func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (_ [][]byte, err error) {
 	logger := logutil.BgLogger().With(
-		zap.String("component", "dispatcher"),
 		zap.String("type", gTask.Type),
-		zap.Int64("ID", gTask.ID),
+		zap.Int64("task-id", gTask.ID),
 		zap.String("step", stepStr(gTask.Step)),
 	)
 	taskMeta := &TaskMeta{}
@@ -196,7 +196,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("process normal flow", zap.Any("task_meta", taskMeta))
+	logger.Info("process normal flow")
 
 	var taskFinished bool
 	defer func() {
@@ -226,7 +226,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		if err != nil {
 			return nil, err
 		}
-		logger.Info("generate subtasks", zap.Any("subtask_metas", subtaskMetas))
+		logger.Info("move to import step", zap.Any("subtask-count", len(subtaskMetas)))
 		metaBytes := make([][]byte, 0, len(subtaskMetas))
 		for _, subtaskMeta := range subtaskMetas {
 			bs, err := json.Marshal(subtaskMeta)
@@ -246,7 +246,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 			return nil, err
 		}
 		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result),
-			zap.Any("step_meta", stepMeta))
+			zap.Any("step-meta", stepMeta))
 		bs, err := json.Marshal(stepMeta)
 		if err != nil {
 			return nil, err
@@ -265,8 +265,12 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 }
 
 func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
-	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
-	logger.Info("process error flow", zap.ByteStrings("error message", receiveErr))
+	logger := logutil.BgLogger().With(
+		zap.String("type", gTask.Type),
+		zap.Int64("task-id", gTask.ID),
+		zap.String("step", stepStr(gTask.Step)),
+	)
+	logger.Info("process error flow", zap.ByteStrings("error-message", receiveErr))
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -346,7 +350,7 @@ func (h *flowHandle) updateCurrentTask(task *proto.Task) {
 
 // preProcess does the pre-processing for the task.
 func preProcess(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) error {
-	logger.Info("pre process", zap.Any("table_info", taskMeta.Plan.TableInfo))
+	logger.Info("pre process")
 	// TODO: drop table indexes depends on the option.
 	// if err := dropTableIndexes(ctx, handle, taskMeta, logger); err != nil {
 	// 	return err
@@ -523,7 +527,6 @@ func generateImportStepMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMe
 		}
 		subtaskMeta := &ImportStepMeta{
 			ID:     id,
-			Plan:   taskMeta.Plan,
 			Chunks: chunkMap[id],
 		}
 		subtaskMetas = append(subtaskMetas, subtaskMeta)
@@ -603,6 +606,7 @@ func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle
 	taskMeta *TaskMeta, logger *zap.Logger) error {
 	h.switchTiKV2NormalMode(ctx, gTask, logger)
 	h.unregisterTask(ctx, gTask)
+	redactSensitiveInfo(gTask, taskMeta)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	return handle.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
@@ -614,10 +618,20 @@ func (h *flowHandle) failJob(ctx context.Context, handle dispatcher.TaskHandle, 
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
 	h.switchTiKV2NormalMode(ctx, gTask, logger)
 	h.unregisterTask(ctx, gTask)
+	redactSensitiveInfo(gTask, taskMeta)
 	return handle.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
 	})
+}
+
+func redactSensitiveInfo(gTask *proto.Task, taskMeta *TaskMeta) {
+	taskMeta.Stmt = ""
+	taskMeta.Plan.Path = ast.RedactURL(taskMeta.Plan.Path)
+	if err := updateMeta(gTask, taskMeta); err != nil {
+		// marshal failed, should not happen
+		logutil.BgLogger().Warn("failed to update task meta", zap.Error(err))
+	}
 }
 
 // isResumableErr checks whether it's possible to rely on checkpoint to re-import data after the error has been fixed.
@@ -633,7 +647,7 @@ func rollback(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Ta
 		return err
 	}
 
-	logger.Info("rollback", zap.Any("task_meta", taskMeta))
+	logger.Info("rollback")
 
 	//	// TODO: create table indexes depends on the option.
 	//	// create table indexes even if the rollback is failed.

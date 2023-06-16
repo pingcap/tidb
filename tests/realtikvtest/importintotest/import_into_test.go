@@ -834,6 +834,19 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	}
 }
 
+func (s *mockGCSSuite) checkTaskMetaRedacted(jobID int64) {
+	globalTaskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	taskKey := importinto.TaskKey(jobID)
+	s.NoError(err)
+	globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	s.NoError(err2)
+	s.Regexp(`[?&]access-key=xxxxxx`, string(globalTask.Meta))
+	s.Contains(string(globalTask.Meta), "secret-access-key=xxxxxx")
+	s.NotContains(string(globalTask.Meta), "aaaaaa")
+	s.NotContains(string(globalTask.Meta), "bbbbbb")
+}
+
 func (s *mockGCSSuite) TestImportMode() {
 	var intoImportTime, intoNormalTime time.Time
 	controller := gomock.NewController(s.T())
@@ -866,10 +879,15 @@ func (s *mockGCSSuite) TestImportMode() {
 
 	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
 	// better start a cluster without TiDB instance.
-	sql := fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
-	s.tk.MustQuery(sql)
+	s.enableFailpoint("github.com/pingcap/tidb/parser/ast/forceRedactURL", "return(true)")
+	sql := fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`, gcsEndpoint)
+	rows := s.tk.MustQuery(sql).Rows()
+	s.Len(rows, 1)
+	jobID, err := strconv.Atoi(rows[0][0].(string))
+	s.NoError(err)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.Greater(intoNormalTime, intoImportTime)
+	s.checkTaskMetaRedacted(int64(jobID))
 
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
 	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
@@ -892,10 +910,12 @@ func (s *mockGCSSuite) TestImportMode() {
 	// wait ToImportMode called
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/waitBeforeSortChunk", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/errorWhenSortChunk", "return(true)")
-	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
-	err := s.tk.QueryToErr(sql)
+	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/setLastImportJobID", `return(true)`)
+	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`, gcsEndpoint)
+	err = s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(intoNormalTime, intoImportTime)
+	s.checkTaskMetaRedacted(importer.TestLastImportJobID.Load())
 }
 
 func (s *mockGCSSuite) TestRegisterTask() {
