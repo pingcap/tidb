@@ -15,6 +15,7 @@
 package proto
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -104,6 +105,7 @@ func NewSubtask(taskID int64, tp, schedulerID string, meta []byte) *Subtask {
 type MinimalTask interface {
 	// IsMinimalTask is a marker to check if it is a minimal task for compiler.
 	IsMinimalTask()
+	fmt.Stringer
 }
 
 const (

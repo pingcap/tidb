@@ -30,6 +30,7 @@ go_library(
         "//errno",
         "//executor/asyncloaddata",
         "//executor/importer",
+        "//parser/ast",
         "//parser/mysql",
         "//sessionctx",
         "//table/tables",

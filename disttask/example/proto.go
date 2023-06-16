@@ -31,3 +31,8 @@ type MinimalTaskExample struct{}
 
 // IsMinimalTask is used to implement the proto.MinimalTask interface.
 func (MinimalTaskExample) IsMinimalTask() {}
+
+// String is used to implement the fmt.Stringer interface.
+func (MinimalTaskExample) String() string {
+	return "minimal task example"
+}

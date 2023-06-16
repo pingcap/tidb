@@ -16,7 +16,6 @@ package importer
 
 import (
 	"fmt"
-	"math"
 	"runtime"
 	"testing"
 
@@ -35,10 +34,11 @@ import (
 
 func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/importer/mockNumCpu", "return(1)"))
 	plan.initDefaultOptions()
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
-	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt)
+	require.Equal(t, int64(1), plan.ThreadCnt)
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
 	require.Equal(t, false, plan.SplitFile)
 	require.Equal(t, int64(100), plan.MaxRecordedErrors)
@@ -46,10 +46,9 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
 
-	plan = &Plan{Format: DataFormatParquet}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/importer/mockNumCpu", "return(10)"))
 	plan.initDefaultOptions()
-	require.Greater(t, plan.ThreadCnt, int64(0))
-	require.Equal(t, int64(math.Max(1, float64(runtime.NumCPU())*0.75)), plan.ThreadCnt)
+	require.Equal(t, int64(5), plan.ThreadCnt)
 }
 
 // for negative case see TestImportIntoOptionsNegativeCase

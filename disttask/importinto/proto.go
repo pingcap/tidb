@@ -15,6 +15,7 @@
 package importinto
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -60,7 +61,6 @@ type TaskMeta struct {
 // Dispatcher will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type ImportStepMeta struct {
-	Plan importer.Plan
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
 	Chunks   []Chunk
@@ -98,6 +98,10 @@ type importStepMinimalTask struct {
 // IsMinimalTask implements the MinimalTask interface.
 func (*importStepMinimalTask) IsMinimalTask() {}
 
+func (t *importStepMinimalTask) String() string {
+	return fmt.Sprintf("chunk:%s:%d", t.Chunk.Path, t.Chunk.Offset)
+}
+
 // postProcessStepMinimalTask is the minimal task of post process step.
 type postProcessStepMinimalTask struct {
 	meta     PostProcessStepMeta
@@ -106,6 +110,10 @@ type postProcessStepMinimalTask struct {
 }
 
 func (*postProcessStepMinimalTask) IsMinimalTask() {}
+
+func (*postProcessStepMinimalTask) String() string {
+	return "post process"
+}
 
 // Chunk records the chunk information.
 type Chunk struct {

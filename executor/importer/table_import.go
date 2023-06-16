@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -611,10 +612,12 @@ func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 
 	maxDiskQuota := int64(float64(sz.Capacity) * 0.8)
 	switch {
 	case diskQuota == 0:
-		logger.Info("use 0.8 of the storage size as default disk quota", zap.Int64("quota", maxDiskQuota))
+		logger.Info("use 0.8 of the storage size as default disk quota",
+			zap.String("quota", units.HumanSize(float64(maxDiskQuota))))
 		return maxDiskQuota
 	case diskQuota > maxDiskQuota:
-		logger.Warn("disk quota is larger than 0.8 of the storage size, use 0.8 of the storage size instead", zap.Int64("quota", maxDiskQuota))
+		logger.Warn("disk quota is larger than 0.8 of the storage size, use 0.8 of the storage size instead",
+			zap.String("quota", units.HumanSize(float64(maxDiskQuota))))
 		return maxDiskQuota
 	default:
 		return diskQuota
