@@ -45,6 +45,10 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	receiveReportTimeout = 3 * time.Second
+)
+
 // mppResponse wraps mpp data packet.
 type mppResponse struct {
 	pbResp   *mpp.MPPDataPacket
@@ -524,7 +528,6 @@ func (c *localMppCoordinator) ReportStatus(info kv.ReportStatusRequest) error {
 
 func (c *localMppCoordinator) handleAllReports() {
 	if len(c.coordinatorAddr) > 0 && atomic.LoadUint32(&c.dispatchFailed) == 0 {
-		timeoutInSec := 3
 		select {
 		case <-c.reportStatusCh:
 			var recordedPlanIDs = make(map[int]int)
@@ -538,8 +541,8 @@ func (c *localMppCoordinator) handleAllReports() {
 				}
 			}
 			distsql.FillDummySummariesForMppTasks(c.sessionCtx.GetSessionVars().StmtCtx, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
-		case <-time.After(time.Duration(timeoutInSec) * time.Second):
-			logutil.BgLogger().Warn(fmt.Sprintf("Not received all reports within %d seconds", timeoutInSec),
+		case <-time.After(receiveReportTimeout):
+			logutil.BgLogger().Warn(fmt.Sprintf("Not received all reports within %d seconds", int(receiveReportTimeout.Seconds())),
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Uint64("gatherID", c.gatherID),
 				zap.Int("expectCount", len(c.mppReqs)),

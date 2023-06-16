@@ -336,6 +336,7 @@ func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
 	copr.GlobalMPPFailedStoreProber.Run()
+	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
 	dom, err := session.BootstrapSession(storage)
 	terror.MustNil(err)
@@ -848,6 +849,7 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
 	dom.Close()
 	copr.GlobalMPPFailedStoreProber.Stop()
+	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
 }

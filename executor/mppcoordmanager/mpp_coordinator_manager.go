@@ -15,16 +15,25 @@
 package mppcoordmanager
 
 import (
+	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/copr"
 )
 
 // InstanceMPPCoordinatorManager is a local instance mpp coordinator manager
 var InstanceMPPCoordinatorManager = newMPPCoordinatorManger()
+
+const (
+	detectFrequency = 5 * time.Minute
+)
 
 // CoordinatorUniqueID identifies a unique coordinator
 type CoordinatorUniqueID struct {
@@ -38,6 +47,55 @@ type MPPCoordinatorManager struct {
 	serverOn       bool
 	serverAddr     string // empty if server is off
 	coordinatorMap map[CoordinatorUniqueID]kv.MppCoordinator
+	wg             *sync.WaitGroup
+	ctx            context.Context
+	cancel         context.CancelFunc
+	maxLifeTime    uint64 // in Nano
+}
+
+// Run use a loop to detect and remove out of time Coordinators
+func (m *MPPCoordinatorManager) Run() {
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+	m.wg.Add(1)
+	m.maxLifeTime = uint64(copr.TiFlashReadTimeoutUltraLong.Nanoseconds() + detectFrequency.Nanoseconds())
+	go func() {
+		defer m.wg.Done()
+		ticker := time.NewTicker(detectFrequency)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-m.ctx.Done():
+				return
+			case <-ticker.C:
+				m.detect()
+			}
+		}
+	}()
+}
+
+func (m *MPPCoordinatorManager) detect() {
+	var outOfTimeIDs []CoordinatorUniqueID
+	m.mu.Lock()
+	for id := range m.coordinatorMap {
+		if uint64(time.Now().UnixNano()) >= id.MPPQueryID.QueryTs+m.maxLifeTime {
+			outOfTimeIDs = append(outOfTimeIDs, id)
+			delete(m.coordinatorMap, id)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, deletedID := range outOfTimeIDs {
+		// Todo: add and update related metrics
+		logutil.BgLogger().Error("Delete MppCoordinator due to OutOfTime",
+			zap.Uint64("QueryID", deletedID.MPPQueryID.LocalQueryID),
+			zap.Uint64("QueryTs", deletedID.MPPQueryID.QueryTs))
+	}
+}
+
+// Stop stop background goroutine
+func (m *MPPCoordinatorManager) Stop() {
+	m.cancel()
+	m.wg.Wait()
 }
 
 // InitServerAddr init grpcServer address
@@ -100,7 +158,7 @@ func (m *MPPCoordinatorManager) ReportStatus(request *mpp.ReportTaskStatusReques
 	return resp
 }
 
-// newMPPCoordinatorManger is to create a new mpp coordinator manager
+// newMPPCoordinatorManger is to create a new mpp coordinator manager, only used to create global InstanceMPPCoordinatorManager
 func newMPPCoordinatorManger() *MPPCoordinatorManager {
 	return &MPPCoordinatorManager{coordinatorMap: make(map[CoordinatorUniqueID]kv.MppCoordinator)}
 }
