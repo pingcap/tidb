@@ -142,8 +142,13 @@ var updateStatusSQL = "SELECT LOW_PRIORITY table_id,parent_table_id,table_statis
 type TTLJob = ttlJob
 
 // LockNewJob is an exported version of lockNewJob for test
-func (m *JobManager) LockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, ignoreScheduleInterval bool) (*TTLJob, error) {
-	return m.lockNewJob(ctx, se, table, now, ignoreScheduleInterval)
+func (m *JobManager) LockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time) (*TTLJob, error) {
+	return m.lockNewJob(ctx, se, table, now, func(status *cache.TableStatus) error {
+		if !m.couldTrySchedule(status, table, now) {
+			return errors.New("couldn't schedule ttl job")
+		}
+		return nil
+	})
 }
 
 // RunningJobs returns the running jobs inside ttl job manager
@@ -190,7 +195,7 @@ func newMockTTLJob(tbl *cache.PhysicalTable, status cache.JobStatus) *ttlJob {
 
 func TestReadyForNewJobTables(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
-	m := NewJobManager("test-id", nil, nil, nil)
+	m := NewJobManager("test-id", nil, nil, nil, nil)
 	m.sessPool = newMockSessionPool(t, tbl)
 	se := newMockSession(t, tbl)
 
@@ -364,7 +369,7 @@ func TestLockNewTable(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			m := NewJobManager("test-id", newMockSessionPool(t), nil, nil)
+			m := NewJobManager("test-id", newMockSessionPool(t), nil, nil, nil)
 			m.infoSchemaCache.Tables[c.table.ID] = c.table
 			sqlCounter := 0
 			se := newMockSession(t)
@@ -380,7 +385,7 @@ func TestLockNewTable(t *testing.T) {
 			}
 			se.evalExpire = now
 
-			job, err := m.lockNewJob(context.Background(), se, c.table, now, false)
+			job, err := m.lockNewJob(context.Background(), se, c.table, now, nil)
 			if c.hasJob {
 				assert.NotNil(t, job)
 			} else {
@@ -400,7 +405,7 @@ func TestLocalJobs(t *testing.T) {
 	tbl1.ID = 1
 	tbl2 := newMockTTLTbl(t, "t2")
 	tbl2.ID = 2
-	m := NewJobManager("test-id", nil, nil, nil)
+	m := NewJobManager("test-id", nil, nil, nil, nil)
 	m.sessPool = newMockSessionPool(t, tbl1, tbl2)
 
 	m.runningJobs = []*ttlJob{{tbl: tbl1, id: "1"}, {tbl: tbl2, id: "2"}}
@@ -429,7 +434,7 @@ func TestRescheduleJobsOutOfWindow(t *testing.T) {
 	scanWorker2.Start()
 	scanWorker2.setOneRowResult(tbl, 2022)
 
-	m := NewJobManager("test-id", nil, nil, nil)
+	m := NewJobManager("test-id", nil, nil, nil, nil)
 	m.sessPool = newMockSessionPool(t, tbl)
 	m.taskManager.SetScanWorkers4Test([]worker{
 		scanWorker1,

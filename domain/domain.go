@@ -2800,7 +2800,8 @@ func (do *Domain) StartTTLJobManager() {
 			logutil.BgLogger().Info("ttlJobManager exited.")
 		}()
 
-		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient)
+		isOwner := do.DDL().OwnerManager().IsOwner
+		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, isOwner)
 		do.ttlJobManager.Store(ttlJobManager)
 		ttlJobManager.Start()
 

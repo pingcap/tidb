@@ -81,6 +81,13 @@ func WithSetWatermark(watermark time.Time) UpdateTimerOption {
 	}
 }
 
+// WithKeepWatermarkUnchanged indicates not to change watermark
+func WithKeepWatermarkUnchanged() UpdateTimerOption {
+	return func(update *TimerUpdate) {
+		update.Watermark.Clear()
+	}
+}
+
 // WithSetSummaryData indicates to set the timer's summary
 func WithSetSummaryData(summary []byte) UpdateTimerOption {
 	return func(update *TimerUpdate) {
@@ -176,7 +183,15 @@ func (c *defaultTimerClient) UpdateTimer(ctx context.Context, timerID string, op
 }
 
 func (c *defaultTimerClient) CloseTimerEvent(ctx context.Context, timerID string, eventID string, opts ...UpdateTimerOption) error {
-	update := &TimerUpdate{}
+	timer, err := c.GetTimerByID(ctx, timerID)
+	if err != nil {
+		return err
+	}
+
+	update := &TimerUpdate{
+		Watermark: NewOptionalVal(timer.EventStart),
+	}
+
 	for _, opt := range opts {
 		opt(update)
 	}
@@ -186,20 +201,12 @@ func (c *defaultTimerClient) CloseTimerEvent(ctx context.Context, timerID string
 		return errors.Errorf("The field(s) [%s] are not allowed to update when close event", strings.Join(fields, ", "))
 	}
 
-	timer, err := c.GetTimerByID(ctx, timerID)
-	if err != nil {
-		return err
-	}
-
 	var zeroTime time.Time
 	update.CheckEventID.Set(eventID)
 	update.EventStatus.Set(SchedEventIdle)
 	update.EventID.Set("")
 	update.EventData.Set(nil)
 	update.EventStart.Set(zeroTime)
-	if !update.Watermark.Present() {
-		update.Watermark.Set(timer.EventStart)
-	}
 	return c.store.Update(ctx, timerID, update)
 }
 

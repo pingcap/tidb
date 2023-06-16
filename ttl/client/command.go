@@ -71,6 +71,7 @@ type TriggerNewTTLJobRequest struct {
 // TriggerNewTTLJobTableResult is the table detail of `TriggerNewTTLJobResponse`
 type TriggerNewTTLJobTableResult struct {
 	TableID       int64  `json:"table_id"`
+	PartitionID   int64  `json:"partition_id"`
 	DBName        string `json:"db_name"`
 	TableName     string `json:"table_name"`
 	PartitionName string `json:"partition_name,omitempty"`

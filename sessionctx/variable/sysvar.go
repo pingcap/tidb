@@ -2296,6 +2296,12 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableTTLJob.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBTTLUseTimerFramework, Value: BoolToOnOff(false), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		TTLUseTimer.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(TTLUseTimer.Load()), nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBTTLScanBatchSize, Value: strconv.Itoa(DefTiDBTTLScanBatchSize), Type: TypeInt, MinValue: DefTiDBTTLScanBatchMinSize, MaxValue: DefTiDBTTLScanBatchMaxSize, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		val, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {

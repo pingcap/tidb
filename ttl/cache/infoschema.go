@@ -40,6 +40,11 @@ func NewInfoSchemaCache(updateInterval time.Duration) *InfoSchemaCache {
 	}
 }
 
+// SchemaVer returns the schema version of cache
+func (isc *InfoSchemaCache) SchemaVer() int64 {
+	return isc.schemaVer
+}
+
 // Update updates the info schema cache
 func (isc *InfoSchemaCache) Update(se session.Session) error {
 	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)

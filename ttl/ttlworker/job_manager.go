@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
@@ -106,10 +108,11 @@ type JobManager struct {
 	taskManager *taskManager
 
 	lastReportDelayMetricsTime time.Time
+	isOwnerFunc                func() bool
 }
 
 // NewJobManager creates a new ttl job manager
-func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *clientv3.Client) (manager *JobManager) {
+func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *clientv3.Client, isOwnerFunc func() bool) (manager *JobManager) {
 	manager = &JobManager{}
 	manager.id = id
 	manager.store = store
@@ -130,8 +133,52 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *c
 	}
 
 	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id, store)
+	manager.isOwnerFunc = isOwnerFunc
 
 	return
+}
+
+func (m *JobManager) isOwner() bool {
+	return m.isOwnerFunc != nil && m.isOwnerFunc()
+}
+
+func (m *JobManager) timersLoop(wg *sync.WaitGroup, triggerCh chan<- *triggerJobRequest) {
+	defer wg.Done()
+
+	helper := newTableStatusHelper(m.sessPool, triggerCh)
+
+	timers := newTTLTimers(helper, m.sessPool)
+	defer timers.Close()
+
+	checkOwnerTicker := time.NewTimer(time.Second)
+	defer checkOwnerTicker.Stop()
+
+	syncTimersTimer := time.NewTimer(0)
+	defer syncTimersTimer.Stop()
+
+	for {
+		syncTimers := false
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-syncTimersTimer.C:
+			syncTimersTimer.Reset(timers.SyncInterval())
+			syncTimers = true
+		case <-checkOwnerTicker.C:
+		}
+
+		if !m.isOwner() || !variable.TTLUseTimer.Load() {
+			timers.ResignOwner()
+			continue
+		}
+
+		if syncTimers {
+			if err := timers.SyncTimers(m.ctx); err != nil {
+				logutil.BgLogger().Error("failed to sync timers", zap.Error(err))
+			}
+		}
+		timers.BecomeOwner()
+	}
 }
 
 func (m *JobManager) jobLoop() error {
@@ -159,6 +206,12 @@ func (m *JobManager) jobLoop() error {
 	updateTaskHeartBeatTicker := time.Tick(ttlTaskHeartBeatTickerInterval)
 	taskCheckTicker := time.Tick(time.Second * 5)
 	checkScanTaskFinishedTicker := time.Tick(getTaskManagerLoopTickerInterval())
+
+	triggerCh := make(chan *triggerJobRequest)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	defer wg.Wait()
+	go m.timersLoop(&wg, triggerCh)
 
 	cmdWatcher := m.cmdCli.WatchCommand(m.ctx)
 	scanTaskNotificationWatcher := m.notificationCli.WatchNotification(m.ctx, scanTaskNotificationType)
@@ -194,6 +247,8 @@ func (m *JobManager) jobLoop() error {
 				logutil.Logger(m.ctx).Warn("fail to update job heart beat", zap.Error(err))
 			}
 			cancel()
+		case req := <-triggerCh:
+			m.handleTriggerJobRequest(m.ctx, se, req)
 		case <-jobCheckTicker:
 			m.checkFinishedJob(se)
 			m.checkNotOwnJob()
@@ -281,53 +336,57 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 		terror.Log(m.cmdCli.ResponseCommand(m.ctx, requestID, err))
 	}
 
-	if err = m.infoSchemaCache.Update(se); err != nil {
+	is, ok := se.GetDomainInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		responseErr(errors.Errorf("is is not a type of infoschema.InfoSchema"))
+		return
+	}
+
+	tbl, err := is.TableByName(model.NewCIStr(cmd.DBName), model.NewCIStr(cmd.TableName))
+	if err != nil {
 		responseErr(err)
 		return
 	}
 
-	if err = m.tableStatusCache.Update(m.ctx, se); err != nil {
-		responseErr(err)
-		return
-	}
-
-	var tables []*cache.PhysicalTable
-	for _, tbl := range m.infoSchemaCache.Tables {
-		if tbl.Schema.L == strings.ToLower(cmd.DBName) && tbl.Name.L == strings.ToLower(cmd.TableName) {
-			tables = append(tables, tbl)
+	tblInfo := tbl.Meta()
+	var results []*client.TriggerNewTTLJobTableResult
+	if tblInfo.Partition != nil {
+		defs := tblInfo.Partition.Definitions
+		results = make([]*client.TriggerNewTTLJobTableResult, len(defs))
+		for i := range defs {
+			results[i] = &client.TriggerNewTTLJobTableResult{
+				TableID:       tblInfo.ID,
+				PartitionID:   defs[i].ID,
+				DBName:        cmd.DBName,
+				TableName:     cmd.TableName,
+				PartitionName: defs[i].Name.O,
+			}
+		}
+	} else {
+		results = []*client.TriggerNewTTLJobTableResult{
+			{
+				TableID:   tblInfo.ID,
+				DBName:    cmd.DBName,
+				TableName: cmd.TableName,
+			},
 		}
 	}
 
-	if len(tables) == 0 {
-		responseErr(errors.Errorf("table %s.%s not exists", cmd.DBName, cmd.TableName))
-		return
-	}
-
-	now := time.Now()
-	tableResults := make([]*client.TriggerNewTTLJobTableResult, 0, len(tables))
 	allError := true
 	var firstError error
-	for _, ttlTbl := range tables {
-		tblResult := &client.TriggerNewTTLJobTableResult{
-			TableID:       ttlTbl.ID,
-			DBName:        cmd.DBName,
-			TableName:     cmd.TableName,
-			PartitionName: ttlTbl.Partition.O,
-		}
-
-		job, err := m.lockNewJob(m.ctx, se, ttlTbl, now, true)
+	var zeroTime time.Time
+	for _, r := range results {
+		job, err := m.triggerOneJob(m.ctx, se, r.TableID, r.PartitionID, zeroTime)
 		if err != nil {
 			firstError = err
-			tblResult.ErrorMessage = err.Error()
-			tableResults = append(tableResults, tblResult)
+			r.ErrorMessage = err.Error()
 			continue
 		}
 
 		allError = false
 		if job != nil {
 			m.appendJob(job)
-			tblResult.JobID = job.id
-			tableResults = append(tableResults, tblResult)
+			r.JobID = job.id
 		}
 	}
 
@@ -337,10 +396,10 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 	}
 
 	terror.Log(m.cmdCli.ResponseCommand(m.ctx, requestID, &client.TriggerNewTTLJobResponse{
-		TableResult: tableResults,
+		TableResult: results,
 	}))
 
-	tableResultsJSON, _ := json.Marshal(tableResults)
+	tableResultsJSON, _ := json.Marshal(results)
 	logutil.BgLogger().Info("Done to trigger a new TTL job",
 		zap.String("requestID", requestID),
 		zap.String("database", cmd.DBName),
@@ -429,6 +488,60 @@ j:
 	}
 }
 
+func (m *JobManager) handleTriggerJobRequest(ctx context.Context, se session.Session, req *triggerJobRequest) {
+	var resp triggerJobResp
+
+	if job, err := m.triggerOneJob(m.ctx, se, req.tblID, req.partitionID, req.checkMaxJobStart); err != nil {
+		resp.err = err
+	} else {
+		resp.job = &ttlJobBrief{
+			ID:        job.id,
+			StartTime: job.createTime,
+			Finished:  false,
+		}
+	}
+
+	select {
+	case <-ctx.Done():
+		return
+	case req.resp <- &resp:
+	}
+}
+
+func (m *JobManager) triggerOneJob(ctx context.Context, se session.Session, tableID, partitionID int64, checkMaxJobStartTime time.Time) (*ttlJob, error) {
+	is, ok := se.GetDomainInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		return nil, errors.New("is not a type of infoschema.InfoSchema")
+	}
+
+	tbl, err := cache.NewPhysicalTableByID(tableID, partitionID, is)
+	if err != nil {
+		return nil, err
+	}
+
+	logutil.Logger(m.ctx).Info("try lockNewJob", zap.Int64("tableID", tableID))
+	job, err := m.lockNewJob(ctx, se, tbl, time.Now(), func(status *cache.TableStatus) error {
+		if status.CurrentJobID != "" {
+			return errors.Errorf("A job with id '%s' is running", status.CurrentJobID)
+		}
+
+		if status.LastJobStartTime.After(checkMaxJobStartTime) {
+			return errors.Errorf("A finished job's start time is after %s", checkMaxJobStartTime)
+		}
+
+		return nil
+	})
+
+	if err != nil || job == nil {
+		logutil.Logger(m.ctx).Warn("fail to create new job", zap.Error(err))
+		return nil, err
+	}
+
+	logutil.Logger(m.ctx).Info("append new running job", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
+	m.appendJob(job)
+	return job, nil
+}
+
 func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 	if !variable.EnableTTLJob.Load() || !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now) {
 		if len(m.runningJobs) > 0 {
@@ -457,7 +570,12 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 	// when the heart beat is not sent
 	for _, table := range newJobTables {
 		logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
-		job, err := m.lockNewJob(m.ctx, se, table, now, false)
+		job, err := m.lockNewJob(m.ctx, se, table, now, func(status *cache.TableStatus) error {
+			if !m.couldTrySchedule(status, table, now) {
+				return errors.New("couldn't schedule ttl job")
+			}
+			return nil
+		})
 		if job != nil {
 			logutil.Logger(m.ctx).Info("append new running job", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
 			m.appendJob(job)
@@ -498,7 +616,7 @@ tblLoop:
 		}
 
 		status := m.tableStatusCache.Tables[table.ID]
-		ok := m.couldTrySchedule(status, table, now, false)
+		ok := m.couldTrySchedule(status, table, now)
 		if ok {
 			tables = append(tables, table)
 		}
@@ -508,7 +626,7 @@ tblLoop:
 }
 
 // couldTrySchedule returns whether a table should be tried to run TTL
-func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cache.PhysicalTable, now time.Time, ignoreScheduleInterval bool) bool {
+func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cache.PhysicalTable, now time.Time) bool {
 	if tableStatus == nil {
 		// if the table status hasn't been created, return true
 		return true
@@ -529,7 +647,11 @@ func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cac
 		return false
 	}
 
-	if ignoreScheduleInterval || tableStatus.LastJobStartTime.IsZero() {
+	if variable.TTLUseTimer.Load() {
+		return false
+	}
+
+	if tableStatus.LastJobStartTime.IsZero() {
 		return true
 	}
 
@@ -546,7 +668,7 @@ func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cac
 // occupyNewJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new
 // localJob and return it.
 // It could be nil, nil, if the table query doesn't return error but the job has been locked by other instances.
-func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, ignoreScheduleInterval bool) (*ttlJob, error) {
+func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, check func(*cache.TableStatus) error) (*ttlJob, error) {
 	var expireTime time.Time
 	var jobID string
 
@@ -575,12 +697,16 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 				return errors.New("table status row still doesn't exist after insertion")
 			}
 		}
+
 		tableStatus, err := cache.RowToTableStatus(se, rows[0])
 		if err != nil {
 			return err
 		}
-		if !m.couldTrySchedule(tableStatus, m.infoSchemaCache.Tables[tableStatus.TableID], now, ignoreScheduleInterval) {
-			return errors.New("couldn't schedule ttl job")
+
+		if check != nil {
+			if err = check(tableStatus); err != nil {
+				return err
+			}
 		}
 
 		expireTime, err = table.EvalExpireTime(m.ctx, se, now)
@@ -597,6 +723,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			expireTime = tableStatus.CurrentJobTTLExpire
 			jobExist = true
 		}
+
 		failpoint.Inject("set-job-uuid", func(val failpoint.Value) {
 			jobID = val.(string)
 		})

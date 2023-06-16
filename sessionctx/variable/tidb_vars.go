@@ -962,6 +962,8 @@ const (
 	TiDBExternalTS = "tidb_external_ts"
 	// TiDBTTLJobEnable is used to enable/disable scheduling ttl job
 	TiDBTTLJobEnable = "tidb_ttl_job_enable"
+	// TiDBTTLUseTimerFramework is used to use timer framework
+	TiDBTTLUseTimerFramework = "tidb_ttl_use_timer_framework"
 	// TiDBTTLScanBatchSize is used to control the batch size in the SELECT statement for TTL jobs
 	TiDBTTLScanBatchSize = "tidb_ttl_scan_batch_size"
 	// TiDBTTLDeleteBatchSize is used to control the batch size in the DELETE statement for TTL jobs
@@ -1414,6 +1416,7 @@ var (
 	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
 	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
 	EnableTTLJob                       = atomic.NewBool(DefTiDBTTLJobEnable)
+	TTLUseTimer                        = atomic.NewBool(false)
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
