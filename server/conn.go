@@ -143,7 +143,7 @@ type clientConn struct {
 		sync.RWMutex
 		*TiDBContext // an interface to execute sql statements.
 	}
-	attrs         map[string]string // attributes parsed from client handshake response, not used for now.
+	attrs         map[string]string // attributes parsed from client handshake response.
 	serverHost    string            // server host
 	peerHost      string            // peer host
 	peerPort      string            // peer port
@@ -604,13 +604,11 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	}
 
 	capability := uint32(binary.LittleEndian.Uint16(data[:2]))
-	if capability&mysql.ClientProtocol41 > 0 {
-		pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
-	} else {
+	if capability&mysql.ClientProtocol41 <= 0 {
 		logutil.Logger(ctx).Error("ClientProtocol41 flag is not set, please upgrade client")
 		return errNotSupportedAuthMode
 	}
-
+	pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
 	if err != nil {
 		terror.Log(err)
 		return err

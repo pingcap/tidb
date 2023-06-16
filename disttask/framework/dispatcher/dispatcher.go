@@ -66,8 +66,7 @@ type TaskHandle interface {
 	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error)
-	// ExecInNewSession executes the function with a new session.
-	ExecInNewSession(fn func(se sessionctx.Context) error) error
+	storage.SessionExecutor
 }
 
 func (d *dispatcher) getRunningGTaskCnt() int {
@@ -159,7 +158,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 			// TODO: Consider getting these tasks, in addition to the task being worked on..
 			gTasks, err := d.taskMgr.GetGlobalTasksInStates(proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStateCancelling)
 			if err != nil {
-				logutil.BgLogger().Warn("get unfinished(pending, running or reverting) tasks failed", zap.Error(err))
+				logutil.BgLogger().Warn("get unfinished(pending, running, reverting or cancelling) tasks failed", zap.Error(err))
 				break
 			}
 
@@ -172,7 +171,8 @@ func (d *dispatcher) DispatchTaskLoop() {
 				if d.isRunningGTask(gTask.ID) {
 					continue
 				}
-				// owner changed
+				// the task is not in runningGTasks set when:
+				// owner changed or task is cancelled when status is pending.
 				if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting || gTask.State == proto.TaskStateCancelling {
 					d.setRunningGTask(gTask)
 					cnt++
@@ -210,7 +210,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		if cancelling {
 			return false, [][]byte{[]byte("cancel")}
 		}
-		// check subtasks failed
+		// check subtasks failed.
 		cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateFailed)
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
@@ -219,25 +219,24 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		if cnt > 0 {
 			subTaskErr, err = d.taskMgr.CollectSubTaskError(gTask.ID)
 			if err != nil {
-				logutil.BgLogger().Warn("collate subtask error failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
+				logutil.BgLogger().Warn("collect subtask error failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
 				return false, nil
 			}
 			return false, subTaskErr
 		}
-		// check subtasks pending or running
+		// check subtasks pending or running.
 		cnt, err = d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStatePending, proto.TaskStateRunning)
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
 			return false, nil
 		}
 		if cnt > 0 {
-			logutil.BgLogger().Info("check task, subtasks aren't finished", zap.Int64("task ID", gTask.ID), zap.Int64("cnt", cnt))
 			return false, nil
 		}
 		return true, nil
 	}
 
-	// if gTask.State == TaskStateReverting, if will not convert to TaskStateCancelling again
+	// if gTask.State == TaskStateReverting, if will not convert to TaskStateCancelling again.
 	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateRevertPending, proto.TaskStateReverting)
 	if err != nil {
 		logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
@@ -305,7 +304,7 @@ func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) error {
 		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("taskID", gTask.ID), zap.Any("err msg", errStr))
 		return d.processErrFlow(gTask, errStr)
 	}
-	// previous step is finished
+	// previous step is finished.
 	if gTask.State == proto.TaskStateReverting {
 		// Finish the rollback step.
 		logutil.BgLogger().Info("process flow, update the task to reverted", zap.Int64("taskID", gTask.ID))
@@ -341,14 +340,14 @@ func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTask
 
 func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
-	// 1. generate the needed global task meta and subTask meta (dist-plan)
+	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	meta, err := GetTaskFlowHandle(gTask.Type).ProcessErrFlow(d.ctx, d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
 		return err
 	}
 
-	// 2. dispatch revert dist-plan to EligibleInstances
+	// 2. dispatch revert dist-plan to EligibleInstances.
 	return d.dispatchSubTask4Revert(gTask, meta)
 }
 
@@ -371,7 +370,7 @@ func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, meta []byte) erro
 }
 
 func (d *dispatcher) processNormalFlow(gTask *proto.Task) error {
-	// 1. generate the needed global task meta and subTask meta (dist-plan)
+	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
 		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
@@ -389,7 +388,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) error {
 	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),
 		zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Int("subtasks", len(metas)))
 
-	// 2. dispatch dist-plan to EligibleInstances
+	// 2. dispatch dist-plan to EligibleInstances.
 	return d.dispatchSubTask(gTask, handle, metas)
 }
 
@@ -425,6 +424,8 @@ func (d *dispatcher) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, m
 	}
 	// select all available TiDB nodes for this global tasks.
 	serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask)
+	logutil.BgLogger().Debug("eligible instances", zap.Int("num", len(serverNodes)))
+
 	if err1 != nil {
 		return err1
 	}
@@ -436,8 +437,11 @@ func (d *dispatcher) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, m
 		// we assign the subtask to the instance in a round-robin way.
 		pos := i % len(serverNodes)
 		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
+		logutil.BgLogger().Debug("create subtasks",
+			zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
+
 	return d.updateTask(gTask, gTask.State, subTasks, retrySQLTimes)
 }
 
@@ -474,21 +478,11 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 	}
 	ids := make([]string, 0, len(schedulerIDs))
 	for _, id := range schedulerIDs {
-		if ok := matchServerInfo(serverInfos, id); ok {
+		if ok := disttaskutil.MatchServerInfo(serverInfos, id); ok {
 			ids = append(ids, id)
 		}
 	}
 	return ids, nil
-}
-
-func matchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string) bool {
-	for _, serverInfo := range serverInfos {
-		serverID := disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port)
-		if serverID == schedulerID {
-			return true
-		}
-	}
-	return false
 }
 
 func (d *dispatcher) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error) {
@@ -504,7 +498,7 @@ func (d *dispatcher) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byt
 	return previousSubtaskMetas, nil
 }
 
-func (d *dispatcher) ExecInNewSession(fn func(se sessionctx.Context) error) error {
+func (d *dispatcher) WithNewSession(fn func(se sessionctx.Context) error) error {
 	return d.taskMgr.WithNewSession(fn)
 }
 

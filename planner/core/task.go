@@ -977,7 +977,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 // It can be pushed to the index side when all columns used by ByItems are available from the index side and
 //
 //	there's no prefix index column.
-func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
+func (*PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
 	// If we call canPushToIndexPlan and there's no index plan, we should go into the index merge case.
 	// Index merge case is specially handled for now. So we directly return false here.
 	// So we directly return false.
@@ -1169,87 +1169,86 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		}
 	}
 
-	if !copTsk.indexPlanFinished {
-		// If indexPlan side isn't finished, there's no selection on the table side.
-		if len(copTsk.idxMergePartPlans) > 0 {
-			// Deal with index merge case.
-			propMatched := p.checkSubScans(colsProp, isDesc, partialScans...)
-			if !propMatched {
-				// If there's one used index cannot match the prop.
-				return nil, false
-			}
-			newCopSubPlans := p.addPartialLimitForSubScans(clonedPartialPlan, partialScans, selSelectivityOnPartialScan)
-			copTsk.idxMergePartPlans = newCopSubPlans
-			cloned, err := copTsk.tablePlan.Clone()
-			if err != nil {
-				return nil, false
-			}
-			clonedTblScan := cloned.(*PhysicalTableScan)
-			clonedTblScan.statsInfo().ScaleByExpectCnt(float64(p.Count+p.Offset) * float64(len(copTsk.idxMergePartPlans)))
-			tblInfo := clonedTblScan.Table
-			if tblInfo.PKIsHandle {
-				pk := tblInfo.GetPkColInfo()
-				pkCol := expression.ColInfo2Col(clonedTblScan.tblCols, pk)
-				if !clonedTblScan.Schema().Contains(pkCol) {
-					clonedTblScan.Schema().Append(pkCol)
-					clonedTblScan.Columns = append(clonedTblScan.Columns, pk)
-					copTsk.needExtraProj = true
-				}
-			} else if tblInfo.IsCommonHandle {
-				idxInfo := tblInfo.GetPrimaryKey()
-				for _, idxCol := range idxInfo.Columns {
-					c := clonedTblScan.tblCols[idxCol.Offset]
-					if !clonedTblScan.Schema().Contains(c) {
-						clonedTblScan.Schema().Append(c)
-						clonedTblScan.Columns = append(clonedTblScan.Columns, c.ToInfo())
-						copTsk.needExtraProj = true
-					}
-				}
-			} else {
-				if !clonedTblScan.Schema().Contains(clonedTblScan.HandleCols.GetCol(0)) {
-					clonedTblScan.Schema().Append(clonedTblScan.HandleCols.GetCol(0))
-					clonedTblScan.Columns = append(clonedTblScan.Columns, model.NewExtraHandleColInfo())
-					copTsk.needExtraProj = true
-				}
-			}
-			// global index for tableScan with keepOrder also need PhysicalTblID
-			if clonedTblScan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-				clonedTblScan.Columns = append(clonedTblScan.Columns, model.NewExtraPhysTblIDColInfo())
-				clonedTblScan.Schema().Append(&expression.Column{
-					RetType:  types.NewFieldType(mysql.TypeLonglong),
-					UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-					ID:       model.ExtraPhysTblID,
-				})
+	if copTsk.indexPlanFinished {
+		return nil, false
+	}
+	// If indexPlan side isn't finished, there's no selection on the table side.
+	if len(copTsk.idxMergePartPlans) > 0 {
+		// Deal with index merge case.
+		propMatched := p.checkSubScans(colsProp, isDesc, partialScans...)
+		if !propMatched {
+			// If there's one used index cannot match the prop.
+			return nil, false
+		}
+		newCopSubPlans := p.addPartialLimitForSubScans(clonedPartialPlan, partialScans, selSelectivityOnPartialScan)
+		copTsk.idxMergePartPlans = newCopSubPlans
+		cloned, err := copTsk.tablePlan.Clone()
+		if err != nil {
+			return nil, false
+		}
+		clonedTblScan := cloned.(*PhysicalTableScan)
+		clonedTblScan.statsInfo().ScaleByExpectCnt(float64(p.Count+p.Offset) * float64(len(copTsk.idxMergePartPlans)))
+		tblInfo := clonedTblScan.Table
+		if tblInfo.PKIsHandle {
+			pk := tblInfo.GetPkColInfo()
+			pkCol := expression.ColInfo2Col(clonedTblScan.tblCols, pk)
+			if !clonedTblScan.Schema().Contains(pkCol) {
+				clonedTblScan.Schema().Append(pkCol)
+				clonedTblScan.Columns = append(clonedTblScan.Columns, pk)
 				copTsk.needExtraProj = true
 			}
-			clonedTblScan.HandleCols, err = clonedTblScan.HandleCols.ResolveIndices(clonedTblScan.Schema())
-			if err != nil {
-				return nil, false
-			}
-			if copTsk.needExtraProj {
-				copTsk.originSchema = copTsk.tablePlan.Schema()
-			}
-			copTsk.tablePlan = clonedTblScan
-			copTsk.indexPlanFinished = true
-			rootTask := copTsk.convertToRootTask(p.ctx)
-			indexMerge, ok := rootTask.p.(*PhysicalIndexMergeReader)
-			if !ok {
-				// needExtraProj == true
-				indexMerge, ok = rootTask.p.Children()[0].(*PhysicalIndexMergeReader)
-				if !ok {
-					return nil, false
+		} else if tblInfo.IsCommonHandle {
+			idxInfo := tblInfo.GetPrimaryKey()
+			for _, idxCol := range idxInfo.Columns {
+				c := clonedTblScan.tblCols[idxCol.Offset]
+				if !clonedTblScan.Schema().Contains(c) {
+					clonedTblScan.Schema().Append(c)
+					clonedTblScan.Columns = append(clonedTblScan.Columns, c.ToInfo())
+					copTsk.needExtraProj = true
 				}
 			}
-			indexMerge.PushedLimit = &PushedDownLimit{
-				Offset: p.Offset,
-				Count:  p.Count,
+		} else {
+			if !clonedTblScan.Schema().Contains(clonedTblScan.HandleCols.GetCol(0)) {
+				clonedTblScan.Schema().Append(clonedTblScan.HandleCols.GetCol(0))
+				clonedTblScan.Columns = append(clonedTblScan.Columns, model.NewExtraHandleColInfo())
+				copTsk.needExtraProj = true
 			}
-			indexMerge.ByItems = p.ByItems
-			indexMerge.KeepOrder = true
-			return rootTask, true
 		}
-	} else {
-		return nil, false
+		// global index for tableScan with keepOrder also need PhysicalTblID
+		if clonedTblScan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			clonedTblScan.Columns = append(clonedTblScan.Columns, model.NewExtraPhysTblIDColInfo())
+			clonedTblScan.Schema().Append(&expression.Column{
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+				ID:       model.ExtraPhysTblID,
+			})
+			copTsk.needExtraProj = true
+		}
+		clonedTblScan.HandleCols, err = clonedTblScan.HandleCols.ResolveIndices(clonedTblScan.Schema())
+		if err != nil {
+			return nil, false
+		}
+		if copTsk.needExtraProj {
+			copTsk.originSchema = copTsk.tablePlan.Schema()
+		}
+		copTsk.tablePlan = clonedTblScan
+		copTsk.indexPlanFinished = true
+		rootTask := copTsk.convertToRootTask(p.ctx)
+		indexMerge, ok := rootTask.p.(*PhysicalIndexMergeReader)
+		if !ok {
+			// needExtraProj == true
+			indexMerge, ok = rootTask.p.Children()[0].(*PhysicalIndexMergeReader)
+			if !ok {
+				return nil, false
+			}
+		}
+		indexMerge.PushedLimit = &PushedDownLimit{
+			Offset: p.Offset,
+			Count:  p.Count,
+		}
+		indexMerge.ByItems = p.ByItems
+		indexMerge.KeepOrder = true
+		return rootTask, true
 	}
 
 	rootTask := copTsk.convertToRootTask(p.ctx)
@@ -1345,6 +1344,17 @@ func (p *PhysicalTopN) addPartialLimitForSubScans(copSubPlans []PhysicalPlan, fi
 		limitAddedPlan = append(limitAddedPlan, pushedLimit)
 	}
 	return limitAddedPlan
+}
+
+func (p *PhysicalExpand) attach2Task(tasks ...task) task {
+	t := tasks[0].copy()
+	// current expand can only be run in MPP TiFlash mode.
+	if mpp, ok := t.(*mppTask); ok {
+		p.SetChildren(mpp.p)
+		mpp.p = p
+		return mpp
+	}
+	return invalidTask
 }
 
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
@@ -2109,7 +2119,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 
 // cpuCostDivisor computes the concurrency to which we would amortize CPU cost
 // for hash aggregation.
-func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (float64, float64) {
+func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (divisor, con float64) {
 	if hasDistinct {
 		return 0, 0
 	}
@@ -2183,11 +2193,11 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 	}
 	sumNDV := float64(0)
 	for _, groupingSet := range groupingSets {
-		// for every grouping set, pick its cols out, and combine with normal group cols to get the NDV.
+		// for every grouping set, pick its cols out, and combine with normal group cols to get the ndv.
 		groupingSetCols := groupingSet.ExtractCols()
 		groupingSetCols = append(groupingSetCols, normalGbyCols...)
-		NDV, _ := getColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
-		sumNDV += NDV
+		ndv, _ := getColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
+		sumNDV += ndv
 	}
 	// After group operator, all same rows are grouped into one row, that means all
 	// change the sub-agg's stats

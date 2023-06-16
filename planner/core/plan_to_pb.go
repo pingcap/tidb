@@ -157,16 +157,14 @@ func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType
 		Exprs: exprs,
 	}
 	executorID := ""
-	if storeType == kv.TiFlash || storeType == kv.TiKV {
-		var err error
-		projExec.Child, err = p.children[0].ToPB(ctx, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		executorID = p.ExplainID().String()
-	} else {
+	if !(storeType == kv.TiFlash || storeType == kv.TiKV) {
 		return nil, errors.Errorf("the projection can only be pushed down to TiFlash or TiKV now, not %s", storeType.Name())
 	}
+	projExec.Child, err = p.children[0].ToPB(ctx, storeType)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	executorID = p.ExplainID().String()
 	return &tipb.Executor{Tp: tipb.ExecType_TypeProjection, Projection: projExec, ExecutorId: &executorID}, nil
 }
 
