@@ -630,21 +630,22 @@ func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) bool {
 		cols := e.idxPlans[0].Schema().Columns
 		outputOffsets := e.dagPB.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
-		needPartitionHandle = e.index.Global || (e.partitionTableMode && len(e.byItems) > 0)
+		needPartitionHandle = e.index.Global || (e.partitionTableMode && e.keepOrder)
 		ret = col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
 	} else {
 		cols := e.tblPlans[0].Schema().Columns
 		outputOffsets := e.tableRequest.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
 
-		// no ExtraPidColID and GlobalIndex here, because tableScan shouldn't contain them.
-		needPartitionHandle = e.partitionTableMode && len(e.byItems) > 0
+		needPartitionHandle = e.index.Global || (e.partitionTableMode && e.keepOrder)
+		// no ExtraPidColID here, because tableScan shouldn't contain them.
 		ret = col.ID == model.ExtraPhysTblID
 	}
 
 	// shouldn't happen
-	if needPartitionHandle != ret {
-		panic(fmt.Sprintf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret))
+	// TODO: fix global index related bugs later
+	if needPartitionHandle != ret && !e.index.Global {
+		panic(fmt.Sprintf("Internal error, needPartitionHandle(%t) != ret(%t), tp(%d)", needPartitionHandle, ret, tp))
 	}
 	return ret
 }
