@@ -608,7 +608,7 @@ const (
 	CreateRunawayTable = `CREATE TABLE IF NOT EXISTS mysql.runaway_queries (
 		resource_group_name varchar(32) not null,
 		time TIMESTAMP NOT NULL,
-		match_type ENUM('identify', 'watch') NOT NULL,
+		match_type varchar(12) NOT NULL,
 		action varchar(12) NOT NULL,
 		original_sql TEXT NOT NULL,
 		plan_digest TEXT NOT NULL,
@@ -622,7 +622,7 @@ const (
 		resource_group_name varchar(32) not null,
 		start_time TIMESTAMP NOT NULL,
 		end_time TIMESTAMP NOT NULL,
-		watch ENUM('exact', 'similar') NOT NULL,
+		watch varchar(12) NOT NULL,
 		watch_text TEXT NOT NULL,
 		tidb_server varchar(64),
 		INDEX sql_index(watch_text(700)) COMMENT "accelerate the speed when add global binding query",

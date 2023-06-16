@@ -186,6 +186,7 @@ type RunawayChecker struct {
 
 	deadline time.Time
 	setting  *rmpb.RunawaySettings
+	action   string
 
 	marked atomic.Bool
 }
@@ -199,6 +200,7 @@ func newRunawayChecker(manager *RunawayManager, resourceGroupName string, settin
 		deadline:          time.Now().Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond),
 		setting:           setting,
 		marked:            atomic.Bool{},
+		action:            strings.ToLower(setting.Action.String()),
 	}
 }
 
@@ -212,7 +214,7 @@ func (r *RunawayChecker) BeforeExecutor() error {
 		r.marked.Store(result)
 		if result {
 			now := time.Now()
-			r.markRunaway(RunawayMatchTypeIdentify, &now)
+			r.markRunaway(RunawayMatchTypeWatch, &now)
 		}
 		switch r.setting.Action {
 		case rmpb.RunawayAction_Kill:
@@ -281,11 +283,11 @@ func (r *RunawayChecker) markQuarantine(now *time.Time) {
 	watchType := strings.ToLower(r.setting.Watch.Type.String())
 	ttl := time.Duration(r.setting.Watch.LastingDurationMs) * time.Millisecond
 
-	r.manager.MarkQuarantine(r.resourceGroupName, r.getConvictIdentifier(), watchType, ttl, strings.ToLower(r.setting.Action.String()), now)
+	r.manager.MarkQuarantine(r.resourceGroupName, r.getConvictIdentifier(), watchType, ttl, r.action, now)
 }
 
 func (r *RunawayChecker) markRunaway(matchType RunawayMatchType, now *time.Time) {
-	r.manager.MarkRunaway(r.resourceGroupName, r.originalSQL, r.planDigest, strings.ToLower(r.setting.Action.String()), matchType, now)
+	r.manager.MarkRunaway(r.resourceGroupName, r.originalSQL, r.planDigest, r.action, matchType, now)
 }
 
 func (r *RunawayChecker) getConvictIdentifier() string {
