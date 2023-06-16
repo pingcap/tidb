@@ -20,23 +20,27 @@ import (
 	"math"
 	"sync"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	pd "github.com/tikv/pd/client"
 )
 
 type mockResourceManagerClient struct {
 	sync.RWMutex
-	groups map[string]*rmpb.ResourceGroup
+	groups  map[string]*rmpb.ResourceGroup
+	eventCh chan []*meta_storagepb.Event
 }
 
 // NewMockResourceManagerClient return a mock ResourceManagerClient for test usage.
 func NewMockResourceManagerClient() pd.ResourceManagerClient {
 	mockMgr := &mockResourceManagerClient{
-		groups: make(map[string]*rmpb.ResourceGroup),
+		groups:  make(map[string]*rmpb.ResourceGroup),
+		eventCh: make(chan []*meta_storagepb.Event, 100),
 	}
-	mockMgr.groups["default"] = &rmpb.ResourceGroup{
-		Name: "default",
+	mockMgr.groups[resourcegroup.DefaultResourceGroupName] = &rmpb.ResourceGroup{
+		Name: resourcegroup.DefaultResourceGroupName,
 		Mode: rmpb.GroupMode_RUMode,
 		RUSettings: &rmpb.GroupRequestUnitSettings{
 			RU: &rmpb.TokenBucket{
@@ -68,7 +72,7 @@ func (m *mockResourceManagerClient) GetResourceGroup(ctx context.Context, name s
 	defer m.RUnlock()
 	group, ok := m.groups[name]
 	if !ok {
-		return nil, nil
+		return nil, fmt.Errorf("the group %s does not exist", name)
 	}
 	return group, nil
 }
@@ -80,6 +84,16 @@ func (m *mockResourceManagerClient) AddResourceGroup(ctx context.Context, group 
 		return "", fmt.Errorf("the group %s already exists", group.Name)
 	}
 	m.groups[group.Name] = group
+	value, err := proto.Marshal(group)
+	if err != nil {
+		return "", err
+	}
+	m.eventCh <- []*meta_storagepb.Event{{
+		Type: meta_storagepb.Event_PUT,
+		Kv: &meta_storagepb.KeyValue{
+			Value: value,
+		}}}
+
 	return "Success!", nil
 }
 
@@ -87,13 +101,32 @@ func (m *mockResourceManagerClient) ModifyResourceGroup(ctx context.Context, gro
 	m.Lock()
 	defer m.Unlock()
 	m.groups[group.Name] = group
+	value, err := proto.Marshal(group)
+	if err != nil {
+		return "", err
+	}
+	m.eventCh <- []*meta_storagepb.Event{{
+		Type: meta_storagepb.Event_PUT,
+		Kv: &meta_storagepb.KeyValue{
+			Value: value,
+		}}}
 	return "Success!", nil
 }
 
 func (m *mockResourceManagerClient) DeleteResourceGroup(ctx context.Context, name string) (string, error) {
 	m.Lock()
 	defer m.Unlock()
+	group := m.groups[name]
 	delete(m.groups, name)
+	value, err := proto.Marshal(group)
+	if err != nil {
+		return "", err
+	}
+	m.eventCh <- []*meta_storagepb.Event{{
+		Type: meta_storagepb.Event_DELETE,
+		Kv: &meta_storagepb.KeyValue{
+			Value: value,
+		}}}
 	return "Success!", nil
 }
 
@@ -110,5 +143,5 @@ func (m *mockResourceManagerClient) LoadResourceGroups(ctx context.Context) ([]*
 }
 
 func (m *mockResourceManagerClient) Watch(ctx context.Context, key []byte, opts ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
-	return nil, nil
+	return m.eventCh, nil
 }

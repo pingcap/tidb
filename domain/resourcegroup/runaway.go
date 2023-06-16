@@ -116,40 +116,33 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName string, originalSql st
 	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSql, planDigest)
 }
 
-func (rm *RunawayManager) MarkRunaway(resourceGroupName, convict, originalSql, planDigest, watchType string, ttl time.Duration, action string, matchType RunawayMatchType) {
+func (rm *RunawayManager) MarkQuarantine(resourceGroupName, convict, watchType string, ttl time.Duration, action string, now *time.Time) {
 	key := resourceGroupName + "/" + convict
-	shouldQuarantine := false
-	if watchType != "" && matchType == RunawayMatchTypeIdentify && rm.watchList.Get(key) == nil {
+	if rm.watchList.Get(key) == nil {
 		rm.queryLock.Lock()
 		if rm.watchList.Get(key) == nil {
 			rm.watchList.Set(key, struct{}{}, ttl)
-			shouldQuarantine = true
 		}
 		rm.queryLock.Unlock()
 	}
-	if !shouldQuarantine {
-		rm.watchList.Set(key, struct{}{}, ttl)
+	select {
+	case rm.quarantineChan <- &QuarantineRecord{
+		ResourceGroupName: resourceGroupName,
+		StartTime:         *now,
+		EndTime:           now.Add(ttl),
+		Watch:             watchType,
+		WatchText:         convict,
+		From:              rm.serverID,
+	}:
+	default:
+		// TODO: add warning for discard flush records
 	}
-	now := time.Now()
-	if shouldQuarantine {
-		select {
-		case rm.quarantineChan <- &QuarantineRecord{
-			ResourceGroupName: resourceGroupName,
-			StartTime:         now,
-			EndTime:           now.Add(ttl),
-			Watch:             watchType,
-			WatchText:         convict,
-			From:              rm.serverID,
-		}:
-		default:
-			// TODO: add warning for discard flush records
-		}
-	}
-
+}
+func (rm *RunawayManager) MarkRunaway(resourceGroupName, originalSql, planDigest string, action string, matchType RunawayMatchType, now *time.Time) {
 	select {
 	case rm.runawayQueriesChan <- &RunawayRecord{
 		ResourceGroupName: resourceGroupName,
-		Time:              now,
+		Time:              *now,
 		Match:             matchType.String(),
 		Action:            action,
 		SqlText:           originalSql,
@@ -177,8 +170,11 @@ func (rm *RunawayManager) ExamineWatchList(resourceGroupName string, convict str
 	return rm.watchList.Get(resourceGroupName+"/"+convict) != nil
 }
 
+// Stop stops the watchList which is a ttlcache.
 func (rm *RunawayManager) Stop() {
-	rm.watchList.Stop()
+	if rm.watchList != nil {
+		rm.watchList.Stop()
+	}
 }
 
 // RunawayChecker is used to check if the query is runaway.
@@ -211,11 +207,12 @@ func (r *RunawayChecker) BeforeExecutor() error {
 	if r == nil {
 		return nil
 	}
-	result := r.manager.ExamineWatchList(r.resourceGroupName, r.getConvictName())
+	result := r.manager.ExamineWatchList(r.resourceGroupName, r.getConvictIdentifier())
 	if result {
 		r.marked.Store(result)
 		if result {
-			r.markRunaway(RunawayMatchTypeWatch)
+			now := time.Now()
+			r.markRunaway(RunawayMatchTypeIdentify, &now)
 		}
 		switch r.setting.Action {
 		case rmpb.RunawayAction_Kill:
@@ -232,9 +229,6 @@ func (r *RunawayChecker) BeforeExecutor() error {
 
 // BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.
 func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
-	if r == nil {
-		return nil
-	}
 	marked := r.marked.Load()
 	if !marked {
 		until := time.Until(r.deadline)
@@ -249,12 +243,14 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 		}
 		// execution time exceeds the threshold, mark the query as runaway
 		if r.marked.CompareAndSwap(false, true) {
-			r.markRunaway(RunawayMatchTypeIdentify)
+			now := time.Now()
+			r.markRunaway(RunawayMatchTypeIdentify, &now)
+			r.markQuarantine(&now)
 		}
 	}
 	switch r.setting.Action {
 	case rmpb.RunawayAction_Kill:
-		return exeerrors.ErrResourceGroupQueryRunaway
+		return exeerrors.ErrResourceGroupQueryRunawayInterrupted
 	case rmpb.RunawayAction_CoolDown:
 		req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
 		return nil
@@ -265,31 +261,34 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 	}
 }
 
+// AfterCopRequest checks runaway after receiving coprocessor response.
 func (r *RunawayChecker) AfterCopRequest() {
-	if r == nil {
-		return
-	}
 	// Do not perform action here as it may be the last cop request and just let it finish. If it's not the last cop request, action would be performed in `BeforeCopRequest` when handling the next cop request.
 	// Here only marks the query as runaway
 	if !r.marked.Load() && r.deadline.Before(time.Now()) {
 		if r.marked.CompareAndSwap(false, true) {
-			r.markRunaway(RunawayMatchTypeIdentify)
+			now := time.Now()
+			r.markRunaway(RunawayMatchTypeIdentify, &now)
+			r.markQuarantine(&now)
 		}
 	}
 }
 
-func (r *RunawayChecker) markRunaway(matchType RunawayMatchType) {
-	watchType := ""
-	var ttl time.Duration
-	if r.setting.Watch != nil {
-		watchType = strings.ToLower(r.setting.Watch.Type.String())
-		ttl = time.Duration(r.setting.Watch.LastingDurationMs) * time.Millisecond
+func (r *RunawayChecker) markQuarantine(now *time.Time) {
+	if r.setting.Watch == nil {
+		return
 	}
+	watchType := strings.ToLower(r.setting.Watch.Type.String())
+	ttl := time.Duration(r.setting.Watch.LastingDurationMs) * time.Millisecond
 
-	r.manager.MarkRunaway(r.resourceGroupName, r.getConvictName(), r.originalSQL, r.planDigest, watchType, ttl, strings.ToLower(r.setting.Action.String()), matchType)
+	r.manager.MarkQuarantine(r.resourceGroupName, r.getConvictIdentifier(), watchType, ttl, strings.ToLower(r.setting.Action.String()), now)
 }
 
-func (r *RunawayChecker) getConvictName() string {
+func (r *RunawayChecker) markRunaway(matchType RunawayMatchType, now *time.Time) {
+	r.manager.MarkRunaway(r.resourceGroupName, r.originalSQL, r.planDigest, strings.ToLower(r.setting.Action.String()), matchType, now)
+}
+
+func (r *RunawayChecker) getConvictIdentifier() string {
 	if r.setting.Watch == nil {
 		return ""
 	}
