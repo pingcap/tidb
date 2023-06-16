@@ -149,7 +149,7 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 	}
 	switch r.setting.Action {
 	case rmpb.RunawayAction_Kill:
-		return exeerrors.ErrResourceGroupQueryRunaway
+		return exeerrors.ErrResourceGroupQueryRunawayInterrupted
 	case rmpb.RunawayAction_CoolDown:
 		req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
 		return nil
