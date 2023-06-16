@@ -77,7 +77,9 @@ func (rm *RunawayManager) ExamineWatchList(resourceGroupName string, convict str
 
 // Stop stops the watchList which is a ttlcache.
 func (rm *RunawayManager) Stop() {
-	rm.watchList.Stop()
+	if rm.watchList != nil {
+		rm.watchList.Stop()
+	}
 }
 
 // RunawayChecker is used to check if the query is runaway.
