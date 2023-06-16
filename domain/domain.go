@@ -1380,7 +1380,7 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 		return err
 	}
 	serverAddr := net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
-	do.runawayManager = resourcegroup.NewRunawayManager(control, serverAddr, do.sysSessionPool)
+	do.runawayManager = resourcegroup.NewRunawayManager(control, serverAddr)
 	do.resourceGroupsController = control
 	return nil
 }

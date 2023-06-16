@@ -162,4 +162,17 @@ func TestImportIntoOptionsNegativeCase(t *testing.T) {
 			require.ErrorIs(t, err, c.Err, sql)
 		}
 	}
+
+	parameterCheck := []struct {
+		sql string
+		Err error
+	}{
+		{sql: "import into t from ''", Err: exeerrors.ErrLoadDataEmptyPath},
+		{sql: "import into t from '/a.csv' format 'xx'", Err: exeerrors.ErrLoadDataUnsupportedFormat},
+	}
+
+	for _, c := range parameterCheck {
+		err := tk.ExecToErr(c.sql)
+		require.ErrorIs(t, err, c.Err, c.sql)
+	}
 }

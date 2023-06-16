@@ -279,20 +279,20 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 			if !stepIsFinished && len(errStr) == 0 {
 				GetTaskFlowHandle(gTask.Type).OnTicker(d.ctx, gTask)
 				logutil.BgLogger().Debug("detect task, this task keeps current state",
-					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
+					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State))
 				break
 			}
 
 			err := d.processFlow(gTask, errStr)
 			if err == nil && gTask.IsFinished() {
 				logutil.BgLogger().Info("detect task, task is finished",
-					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
+					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State))
 				d.delRunningGTask(gTask.ID)
 				return
 			}
 			if !d.isRunningGTask(gTask.ID) {
 				logutil.BgLogger().Info("detect task, this task can't run",
-					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
+					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State))
 			}
 		}
 	}
@@ -301,17 +301,17 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) error {
 	if len(errStr) > 0 {
 		// Found an error when task is running.
-		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("taskID", gTask.ID), zap.Any("err msg", errStr))
+		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("task-id", gTask.ID), zap.ByteStrings("err msg", errStr))
 		return d.processErrFlow(gTask, errStr)
 	}
 	// previous step is finished.
 	if gTask.State == proto.TaskStateReverting {
 		// Finish the rollback step.
-		logutil.BgLogger().Info("process flow, update the task to reverted", zap.Int64("taskID", gTask.ID))
+		logutil.BgLogger().Info("process flow, update the task to reverted", zap.Int64("task-id", gTask.ID))
 		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	// Finish the normal step.
-	logutil.BgLogger().Info("process flow, process normal", zap.Int64("taskID", gTask.ID))
+	logutil.BgLogger().Info("process flow, process normal", zap.Int64("task-id", gTask.ID))
 	return d.processNormalFlow(gTask)
 }
 
@@ -324,14 +324,14 @@ func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTask
 			break
 		}
 		if i%10 == 0 {
-			logutil.BgLogger().Warn("updateTask first failed", zap.Int64("taskID", gTask.ID),
+			logutil.BgLogger().Warn("updateTask first failed", zap.Int64("task-id", gTask.ID),
 				zap.String("previous state", prevState), zap.String("curr state", gTask.State),
 				zap.Int("retry times", retryTimes), zap.Error(err))
 		}
 		time.Sleep(retrySQLInterval)
 	}
 	if err != nil && retryTimes != nonRetrySQLTime {
-		logutil.BgLogger().Warn("updateTask failed and delete running task info", zap.Int64("taskID", gTask.ID),
+		logutil.BgLogger().Warn("updateTask failed and delete running task info", zap.Int64("task-id", gTask.ID),
 			zap.String("previous state", prevState), zap.String("curr state", gTask.State), zap.Int("retry times", retryTimes), zap.Error(err))
 		d.delRunningGTask(gTask.ID)
 	}

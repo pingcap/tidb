@@ -47,7 +47,7 @@ type importStepScheduler struct {
 }
 
 func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
-	s.logger.Info("InitSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
+	s.logger.Info("init subtask env")
 
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, s.taskMeta.Plan.TableInfo)
@@ -87,12 +87,12 @@ func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 }
 
 func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
-	s.logger.Info("SplitSubtask", zap.Any("taskMeta", s.taskMeta))
 	var subtaskMeta ImportStepMeta
 	err := json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
 		return nil, err
 	}
+	s.logger.Info("split subtask", zap.Int32("engine-id", subtaskMeta.ID))
 
 	dataEngine, err := s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
 	if err != nil {
@@ -129,11 +129,11 @@ func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]pr
 }
 
 func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
-	s.logger.Info("OnSubtaskFinished", zap.Any("taskMeta", s.taskMeta))
 	var subtaskMeta ImportStepMeta
 	if err := json.Unmarshal(subtaskMetaBytes, &subtaskMeta); err != nil {
 		return nil, err
 	}
+	s.logger.Info("on subtask finished", zap.Int32("engine-id", subtaskMeta.ID))
 
 	val, ok := s.sharedVars.Load(subtaskMeta.ID)
 	if !ok {
@@ -145,7 +145,7 @@ func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMeta
 	}
 
 	// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
-	s.logger.Info("import data engine", zap.Any("id", subtaskMeta.ID))
+	s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
 	closedDataEngine, err := sharedVars.DataEngine.Close(ctx)
 	if err != nil {
 		return nil, err
@@ -155,7 +155,7 @@ func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMeta
 		return nil, err
 	}
 
-	logutil.BgLogger().Info("import index engine", zap.Any("id", subtaskMeta.ID))
+	s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
 	if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
 		return nil, err
 	} else if _, err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
@@ -177,7 +177,7 @@ func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMeta
 }
 
 func (s *importStepScheduler) CleanupSubtaskExecEnv(_ context.Context) (err error) {
-	s.logger.Info("CleanupSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
+	s.logger.Info("cleanup subtask env")
 	s.importCancel()
 	s.wg.Wait()
 	return s.tableImporter.Close()
@@ -185,7 +185,7 @@ func (s *importStepScheduler) CleanupSubtaskExecEnv(_ context.Context) (err erro
 
 func (s *importStepScheduler) Rollback(context.Context) error {
 	// TODO: add rollback
-	s.logger.Info("rollback", zap.Any("taskMeta", s.taskMeta))
+	s.logger.Info("rollback")
 	return nil
 }
 
@@ -220,7 +220,7 @@ func init() {
 			zap.Int64("task-id", taskID),
 			zap.String("step", stepStr(step)),
 		)
-		logger.Info("create step scheduler", zap.Any("taskMeta", taskMeta))
+		logger.Info("create step scheduler")
 		return &taskMeta, logger, nil
 	}
 	scheduler.RegisterTaskType(proto.ImportInto)

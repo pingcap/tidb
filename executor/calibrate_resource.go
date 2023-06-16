@@ -183,6 +183,11 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	return e.staticCalibrate(ctx, req, exec)
 }
 
+var (
+	errLowUsage          = errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
+	errNoCPUQuotaMetrics = errors.Normalize("There is no CPU quota metrics, %v")
+)
+
 func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
 	startTs, endTs, err := e.parseCalibrateDuration(ctx)
 	if err != nil {
@@ -193,11 +198,11 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	rus, err := getRUPerSec(ctx, e.ctx, exec, startTime, endTime)
 	if err != nil {
@@ -243,10 +248,10 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		tikvCPUs.next()
 	}
 	if len(quotas) < 5 {
-		return errors.Errorf("There are too few metrics points available in selected time window")
+		return errLowUsage
 	}
 	if float64(len(quotas))/float64(len(quotas)+lowCount) <= percentOfPass {
-		return errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
+		return errLowUsage
 	}
 	sort.Slice(quotas, func(i, j int) bool {
 		return quotas[i] > quotas[j]
@@ -274,11 +279,11 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 
 	// The default workload to calculate the RU capacity.
@@ -377,9 +382,6 @@ func getValuesFromMetrics(ctx context.Context, sctx sessionctx.Context, exec sql
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return nil, errors.Errorf("metrics '%s' is empty", metrics)
 	}
 	ret := make([]*timePointValue, 0, len(rows))
 	for _, row := range rows {

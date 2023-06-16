@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
-	"github.com/ngaut/pools"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
@@ -76,22 +75,16 @@ type QuarantineRecord struct {
 	From              string
 }
 
-type sessionPool interface {
-	Get() (pools.Resource, error)
-	Put(pools.Resource)
-}
-
 type RunawayManager struct {
 	queryLock          sync.Mutex
 	resourceGroupCtl   *rmclient.ResourceGroupsController
 	watchList          *ttlcache.Cache[string, struct{}]
 	serverID           string
-	pool               sessionPool
 	runawayQueriesChan chan *RunawayRecord
 	quarantineChan     chan *QuarantineRecord
 }
 
-func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serverAddr string, pool sessionPool) *RunawayManager {
+func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serverAddr string) *RunawayManager {
 	watchList := ttlcache.New[string, struct{}](ttlcache.WithCapacity[string, struct{}](maxWatchListCap))
 	go watchList.Start()
 	return &RunawayManager{
@@ -100,7 +93,6 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 		serverID:           serverAddr,
 		runawayQueriesChan: make(chan *RunawayRecord, maxWatchRecordChannelSize),
 		quarantineChan:     make(chan *QuarantineRecord, maxWatchRecordChannelSize),
-		pool:               pool,
 	}
 }
 
