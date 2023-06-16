@@ -33,6 +33,7 @@ go_library(
         "//parser/mysql",
         "//sessionctx",
         "//table/tables",
+        "//util/dbterror/exeerrors",
         "//util/etcd",
         "//util/logutil",
         "//util/sqlexec",
