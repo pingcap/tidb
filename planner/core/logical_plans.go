@@ -2017,6 +2017,8 @@ type FrameBound struct {
 	CalcFuncs []expression.Expression
 	// CmpFuncs is used to decide whether one row is included in the current frame.
 	CmpFuncs []expression.CompareFunc
+	// This field is used for passing information to tiflash
+	CmpDataType tipb.RangeCmpDataType
 }
 
 // Clone copies a frame bound totally.

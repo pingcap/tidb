@@ -3500,8 +3500,9 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sum = "h1:J2HQyR5v1AcoBzx5/AYJW9XFSIl6si6YoC6yGI1W89c=",
-        version = "v0.0.0-20230602100112-acb7942db1ca",
+        replace = "github.com/pingcap/tipb",
+        sum = "h1:8IqL7inmVH2i2bWFhoXRWCl2Ce9UePk0epMEAc11FG4=",
+        version = "v0.0.0-20230616080414-aa19c2d12587",
     )
     go_repository(
         name = "com_github_pkg_browser",
