@@ -630,14 +630,14 @@ func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) bool {
 		cols := e.idxPlans[0].Schema().Columns
 		outputOffsets := e.dagPB.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
-		needPartitionHandle = e.index.Global || (e.partitionTableMode && len(e.byItems) > 0)
+		needPartitionHandle = e.index.Global || (e.partitionTableMode && e.keepOrder)
 		ret = col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
 	} else {
 		cols := e.tblPlans[0].Schema().Columns
 		outputOffsets := e.tableRequest.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
 
-		needPartitionHandle = e.index.Global || (e.partitionTableMode && len(e.byItems) > 0)
+		needPartitionHandle = e.index.Global || (e.partitionTableMode && e.keepOrder)
 		// no ExtraPidColID here, because tableScan shouldn't contain them.
 		ret = col.ID == model.ExtraPhysTblID
 	}
@@ -655,6 +655,9 @@ func (e *IndexLookUpExecutor) isCommonHandle() bool {
 }
 
 func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
+	if e.checkIndexValue != nil {
+		return e.idxColTps
+	}
 	var tps []*types.FieldType
 	if len(e.byItems) != 0 {
 		for _, item := range e.byItems {
@@ -670,9 +673,6 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	}
 	if e.needPartitionHandle(getHandleFromIndex) {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
-	}
-	if e.checkIndexValue != nil {
-		tps = e.idxColTps
 	}
 	return tps
 }
