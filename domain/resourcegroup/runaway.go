@@ -41,7 +41,6 @@ type RunawayManager struct {
 	watchList        *ttlcache.Cache[string, struct{}]
 }
 
-// NewRunawayManager creates a new RunawayManager.
 func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController) *RunawayManager {
 	watchList := ttlcache.New[string, struct{}]()
 	go watchList.Start()
@@ -84,18 +83,21 @@ func (rm *RunawayManager) Stop() {
 type RunawayChecker struct {
 	manager           *RunawayManager
 	resourceGroupName string
-	convict           string
-	setting           *rmpb.RunawaySettings
-	deadline          time.Time
-	marked            atomic.Bool
+	originalSQL       string
+	planDigest        string
+
+	deadline time.Time
+	setting  *rmpb.RunawaySettings
+
+	marked atomic.Bool
 }
 
-func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSql string, planDigest string) *RunawayChecker {
-	convict := getConvictName(setting, originalSql, planDigest)
+func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSQL string, planDigest string) *RunawayChecker {
 	return &RunawayChecker{
 		manager:           manager,
 		resourceGroupName: resourceGroupName,
-		convict:           convict,
+		originalSQL:       originalSQL,
+		planDigest:        planDigest,
 		deadline:          time.Now().Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond),
 		setting:           setting,
 		marked:            atomic.Bool{},
@@ -107,7 +109,7 @@ func (r *RunawayChecker) BeforeExecutor() error {
 	if r == nil {
 		return nil
 	}
-	result := r.manager.ExamineWatchList(r.resourceGroupName, r.convict)
+	result := r.manager.ExamineWatchList(r.resourceGroupName, r.getConvictName())
 	if result {
 		r.marked.Store(result)
 		switch r.setting.Action {
@@ -125,13 +127,9 @@ func (r *RunawayChecker) BeforeExecutor() error {
 
 // BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.
 func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
-	if r == nil {
-		return nil
-	}
 	marked := r.marked.Load()
 	if !marked {
 		until := time.Until(r.deadline)
-		// execution time exceeds the threshold, mark the query as runaway
 		if until > 0 {
 			if r.setting.Action == rmpb.RunawayAction_Kill {
 				// if the execution time is close to the threshold, set a timeout
@@ -174,18 +172,18 @@ func (r *RunawayChecker) markRunaway() {
 	if r.setting.Watch == nil {
 		return
 	}
-	r.manager.MarkRunaway(r.resourceGroupName, r.convict, time.Duration(r.setting.Watch.LastingDurationMs)*time.Millisecond)
+	r.manager.MarkRunaway(r.resourceGroupName, r.getConvictName(), time.Duration(r.setting.Watch.LastingDurationMs)*time.Millisecond)
 }
 
-func getConvictName(settings *rmpb.RunawaySettings, originalSql string, planDigest string) string {
-	if settings.Watch == nil {
+func (r *RunawayChecker) getConvictName() string {
+	if r.setting.Watch == nil {
 		return ""
 	}
-	switch settings.Watch.Type {
+	switch r.setting.Watch.Type {
 	case rmpb.RunawayWatchType_Similar:
-		return planDigest
+		return r.planDigest
 	case rmpb.RunawayWatchType_Exact:
-		return originalSql
+		return r.originalSQL
 	default:
 		return ""
 	}
