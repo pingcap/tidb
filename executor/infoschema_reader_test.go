@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -383,9 +382,6 @@ func TestUserPrivilegesTable(t *testing.T) {
 
 func TestDataForTableStatsField(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	oldExpiryTime := executor.TableStatsCacheExpiry
-	executor.TableStatsCacheExpiry = 0
-	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
 	h := dom.StatsHandle()
 	h.Clear()
 	is := dom.InfoSchema()
@@ -431,9 +427,6 @@ func TestDataForTableStatsField(t *testing.T) {
 
 func TestPartitionsTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	oldExpiryTime := executor.TableStatsCacheExpiry
-	executor.TableStatsCacheExpiry = 0
-	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
 	h := dom.StatsHandle()
 	h.Clear()
 	is := dom.InfoSchema()
@@ -616,8 +609,10 @@ func TestForAnalyzeStatus(t *testing.T) {
 	}
 	rows2 := tk.MustQuery("show analyze status where TABLE_NAME='t1'").Sort().Rows()
 	require.Equal(t, len(rows), len(rows2))
-	for i, row2 := range rows2 {
-		require.Equal(t, rows[i], row2)
+	for i, row := range rows {
+		for j, r := range row {
+			require.Equal(t, r, rows2[i][j])
+		}
 	}
 }
 

@@ -992,22 +992,6 @@ func EncodeTablePrefix(tableID int64) kv.Key {
 	return key
 }
 
-// EncodeTablePrefixSeekKey encodes the table prefix and encodecValue into a kv.Key.
-// It used for seek justly.
-func EncodeTablePrefixSeekKey(tableID int64, encodecValue []byte) kv.Key {
-	key := make([]byte, 0, tablePrefixLength+idLen+len(encodecValue))
-	key = appendTablePrefix(key, tableID)
-	key = append(key, encodecValue...)
-	return key
-}
-
-// appendTablePrefix appends table prefix "t[tableID]" into buf.
-func appendTablePrefix(buf []byte, tableID int64) []byte {
-	buf = append(buf, tablePrefix...)
-	buf = codec.EncodeInt(buf, tableID)
-	return buf
-}
-
 // appendTableRecordPrefix appends table record prefix  "t[tableID]_r".
 func appendTableRecordPrefix(buf []byte, tableID int64) []byte {
 	buf = append(buf, tablePrefix...)

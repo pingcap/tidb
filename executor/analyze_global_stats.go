@@ -80,7 +80,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 					globalStatsID.tableID, info.isIndex, info.histIDs,
 					tableAllPartitionStats)
 				if err != nil {
-					logutil.BgLogger().Error("merge global stats failed",
+					logutil.BgLogger().Warn("merge global stats failed",
 						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
 					if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 						// When we find some partition-level stats are missing, we need to report warning.

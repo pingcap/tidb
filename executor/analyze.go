@@ -171,7 +171,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
 		dom := domain.GetDomain(e.ctx)
-		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
+		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 	})
 	for _, task := range tasks {
 		taskCh <- task
@@ -194,7 +194,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
 		dom := domain.GetDomain(e.ctx)
-		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
+		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 	})
 
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
@@ -324,7 +324,6 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 		} else {
 			finishJobWithLog(e.ctx, results.Job, nil)
 		}
-		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			finishJobWithLog(e.ctx, results.Job, exeerrors.ErrQueryInterrupted)
 			return errors.Trace(exeerrors.ErrQueryInterrupted)

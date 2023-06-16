@@ -1000,7 +1000,7 @@ func (b *batchCopIterator) run(ctx context.Context) {
 	// We run workers for every batch cop.
 	for _, task := range b.tasks {
 		b.wg.Add(1)
-		boMaxSleep := copNextMaxBackoff
+		boMaxSleep := CopNextMaxBackoff
 		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
 			if value.(bool) {
 				boMaxSleep = 2
@@ -1099,6 +1099,10 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 				ranges = append(ranges, *ran)
 			})
 		}
+		// need to make sure the key ranges is sorted
+		slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		})
 		ret, err := buildBatchCopTasksForNonPartitionedTable(ctx, bo, b.store, NewKeyRanges(ranges), b.req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid)
 		return ret, err
 	}
@@ -1116,6 +1120,10 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 				})
 			}
 		}
+		// need to make sure the key ranges is sorted
+		slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		})
 		keyRanges = append(keyRanges, NewKeyRanges(ranges))
 	}
 	ret, err := buildBatchCopTasksForPartitionedTable(ctx, bo, b.store, keyRanges, b.req.StoreType, false, 0, false, 0, pid, tiflashcompute.DispatchPolicyInvalid)

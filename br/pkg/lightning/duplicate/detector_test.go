@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"math/rand"
 	"sync"
 	"testing"
@@ -159,4 +160,28 @@ func (r *collector) End() error {
 
 func (r *collector) Close() error {
 	return nil
+}
+
+func TestDetectorFail(t *testing.T) {
+	sorter, err := extsort.OpenDiskSorter(t.TempDir(), nil)
+	require.NoError(t, err)
+
+	d := duplicate.NewDetector(sorter, log.L())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	adder, err := d.KeyAdder(ctx)
+	require.NoError(t, err)
+	require.NoError(t, adder.Add([]byte("key"), []byte("keyID")))
+	require.NoError(t, adder.Close())
+
+	mockErr := errors.New("mock error")
+	_, err = d.Detect(ctx, &duplicate.DetectOptions{
+		Concurrency: 4,
+		HandlerConstructor: func(ctx context.Context) (duplicate.Handler, error) {
+			return nil, mockErr
+		},
+	})
+	require.ErrorIs(t, err, mockErr)
 }

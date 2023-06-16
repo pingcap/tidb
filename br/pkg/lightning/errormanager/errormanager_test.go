@@ -37,22 +37,27 @@ func TestInit(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := config.NewConfig()
-	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRecord
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
+	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
+	cfg.App.MaxErrorRecords = 100
 	cfg.App.MaxError.Type.Store(10)
 	cfg.App.TaskInfoSchemaName = "lightning_errors"
 
 	em := New(db, cfg, log.L())
-	require.Equal(t, cfg.TikvImporter.DuplicateResolution, em.dupResolution)
+	require.False(t, em.conflictV1Enabled)
+	require.True(t, em.conflictV2Enabled)
 	require.Equal(t, cfg.App.MaxError.Type.Load(), em.remainingError.Type.Load())
 	require.Equal(t, cfg.App.MaxError.Conflict.Load(), em.remainingError.Conflict.Load())
 
 	em.remainingError.Type.Store(0)
-	em.dupResolution = config.DupeResAlgNone
+	em.conflictV1Enabled = false
+	em.conflictV2Enabled = false
 	ctx := context.Background()
 	err = em.Init(ctx)
 	require.NoError(t, err)
 
-	em.dupResolution = config.DupeResAlgRecord
+	em.conflictV1Enabled = true
 	mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_errors`;").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v1.*").
@@ -60,21 +65,15 @@ func TestInit(t *testing.T) {
 	err = em.Init(ctx)
 	require.NoError(t, err)
 
-	em.dupResolution = config.DupeResAlgNone
-	em.remainingError.Type.Store(1)
-	mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_errors`;").
-		WillReturnResult(sqlmock.NewResult(3, 1))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.type_error_v1.*").
-		WillReturnResult(sqlmock.NewResult(4, 1))
-	err = em.Init(ctx)
-	require.NoError(t, err)
-	em.dupResolution = config.DupeResAlgRecord
+	em.conflictV2Enabled = true
 	em.remainingError.Type.Store(1)
 	mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_errors`.*").
 		WillReturnResult(sqlmock.NewResult(5, 1))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.type_error_v1.*").
 		WillReturnResult(sqlmock.NewResult(6, 1))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v1.*").
+		WillReturnResult(sqlmock.NewResult(7, 1))
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v2.*").
 		WillReturnResult(sqlmock.NewResult(7, 1))
 	err = em.Init(ctx)
 	require.NoError(t, err)
@@ -230,9 +229,10 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 		Conflict: *atomic.NewInt64(100),
 	}
 	em := &ErrorManager{
-		configError:    &cfg.App.MaxError,
-		remainingError: cfg.App.MaxError,
-		schemaEscaped:  "`error_info`",
+		configError:       &cfg.App.MaxError,
+		remainingError:    cfg.App.MaxError,
+		schemaEscaped:     "`error_info`",
+		conflictV1Enabled: true,
 	}
 
 	output := em.Output()

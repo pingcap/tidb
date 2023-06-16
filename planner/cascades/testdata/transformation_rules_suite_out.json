@@ -6,32 +6,28 @@
         "SQL": "select a, b from (select a, b from t as t1 order by a) as t2 where t2.b > 10",
         "Result": [
           "Group#0 Schema:[test.t.a,test.t.b]",
-          "    Projection_5 input:[Group#1], test.t.a, test.t.b",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b",
           "Group#1 Schema:[test.t.a,test.t.b]",
-          "    Sort_3 input:[Group#2], test.t.a",
+          "    Projection_2 input:[Group#2], test.t.a, test.t.b",
           "Group#2 Schema:[test.t.a,test.t.b]",
-          "    Projection_2 input:[Group#3], test.t.a, test.t.b",
+          "    TiKVSingleGather_7 input:[Group#3], table:t1",
           "Group#3 Schema:[test.t.a,test.t.b]",
-          "    TiKVSingleGather_8 input:[Group#4], table:t1",
+          "    Selection_8 input:[Group#4], gt(test.t.b, 10)",
           "Group#4 Schema:[test.t.a,test.t.b]",
-          "    Selection_9 input:[Group#5], gt(test.t.b, 10)",
-          "Group#5 Schema:[test.t.a,test.t.b]",
-          "    TableScan_7 table:t1, pk col:test.t.a"
+          "    TableScan_6 table:t1, pk col:test.t.a"
         ]
       },
       {
         "SQL": "select a, b from (select a, b from t as t1 order by a) as t2 where t2.a > 10",
         "Result": [
           "Group#0 Schema:[test.t.a,test.t.b]",
-          "    Projection_5 input:[Group#1], test.t.a, test.t.b",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b",
           "Group#1 Schema:[test.t.a,test.t.b]",
-          "    Sort_3 input:[Group#2], test.t.a",
+          "    Projection_2 input:[Group#2], test.t.a, test.t.b",
           "Group#2 Schema:[test.t.a,test.t.b]",
-          "    Projection_2 input:[Group#3], test.t.a, test.t.b",
+          "    TiKVSingleGather_7 input:[Group#3], table:t1",
           "Group#3 Schema:[test.t.a,test.t.b]",
-          "    TiKVSingleGather_8 input:[Group#4], table:t1",
-          "Group#4 Schema:[test.t.a,test.t.b]",
-          "    TableScan_10 table:t1, pk col:test.t.a, cond:[gt(test.t.a, 10)]"
+          "    TableScan_9 table:t1, pk col:test.t.a, cond:[gt(test.t.a, 10)]"
         ]
       },
       {

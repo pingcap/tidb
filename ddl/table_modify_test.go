@@ -20,12 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
@@ -217,9 +216,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 			sess := testkit.NewTestKit(t, store).Session()
 			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
-			txn, err := sess.Txn(true)
-			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
+			jobs, err := ddl.GetAllDDLJobs(sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 2 {
@@ -245,9 +242,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 			sess := testkit.NewTestKit(t, store).Session()
 			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
-			txn, err := sess.Txn(true)
-			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
+			jobs, err := ddl.GetAllDDLJobs(sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 1 {

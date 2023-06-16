@@ -162,7 +162,7 @@ func initSessCtx(sessCtx sessionctx.Context, sqlMode mysql.SQLMode, tzLocation *
 	return nil
 }
 
-func (b *txnBackfillScheduler) expectedWorkerSize() (size int) {
+func (*txnBackfillScheduler) expectedWorkerSize() (size int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
 	return mathutil.Min(workerCnt, maxBackfillWorkerSize)
 }
@@ -438,7 +438,7 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
-func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
+func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
 	readerSize = mathutil.Min(workerCnt/2, maxBackfillWorkerSize)
 	readerSize = mathutil.Max(readerSize, 1)
@@ -495,7 +495,7 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 	w.resultCh <- result
 }
 
-func (w *addIndexIngestWorker) Close() {}
+func (*addIndexIngestWorker) Close() {}
 
 type taskIDAllocator struct {
 	id int

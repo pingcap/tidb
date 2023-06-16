@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -898,7 +898,7 @@ func generatePartitionTableByNum(num int) string {
 		if i > 0 {
 			buf.WriteString(",")
 		}
-		buf.WriteString(fmt.Sprintf("partition p%v values in (%v)", i, i))
+		fmt.Fprintf(buf, "partition p%v values in (%v)", i, i)
 	}
 	buf.WriteString(")")
 	return buf.String()
@@ -1589,7 +1589,7 @@ func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec(`CREATE TABLE t1 (id int, c varchar(128), key c(c)) partition by range (id) (
-		partition p0 values less than (10), 
+		partition p0 values less than (10),
 		partition p1 values less than MAXVALUE)`)
 	re := tk.MustQuery("show table t1 regions")
 	rows := re.Rows()
@@ -3569,11 +3569,10 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 	// check records num after drop database.
 	for i := 0; i < waitForCleanDataRound; i++ {
 		recordsNum = getPartitionTableRecordsNum(t, ctx, tbl.(table.PartitionedTable))
-		if recordsNum != 0 {
-			time.Sleep(waitForCleanDataInterval)
-		} else {
+		if recordsNum == 0 {
 			break
 		}
+		time.Sleep(waitForCleanDataInterval)
 	}
 	require.Equal(t, 0, recordsNum)
 }
@@ -4519,13 +4518,12 @@ func checkCreateSyntax(t *testing.T, tk *testkit.TestKit, ok bool, sql, showCrea
 	for i, sqlStmt := range []string{sql, showCreate} {
 		_, err := tk.Exec(sqlStmt)
 		// ignore warnings for now
-		if ok {
-			require.NoError(t, err, "%d sql: %s", i, sql)
-		} else {
+		if !ok {
 			require.Error(t, err, "sql: %s", sql)
 			// If not ok, no need to check anything else
 			return
 		}
+		require.NoError(t, err, "%d sql: %s", i, sql)
 		res := tk.MustQuery("show create table t")
 		require.Equal(t, showCreate, res.Rows()[0][1], "Compatible! (%d) sql: %s", i, sqlStmt)
 		tk.MustExec("drop table t")

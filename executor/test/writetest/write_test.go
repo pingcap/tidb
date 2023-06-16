@@ -1465,7 +1465,7 @@ func checkCases(
 			nil)
 		require.NoError(t, err)
 
-		err = ld.TestLoad(parser)
+		err = ld.TestLoadLocal(parser)
 		require.NoError(t, err)
 		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), tt.expected)
 		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))
@@ -3550,4 +3550,15 @@ func TestMutipleReplaceAndInsertInOneSession(t *testing.T) {
 	tk2.MustExec(`INSERT INTO t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type)`)
 
 	tk2.MustQuery("select * from t_securities").Sort().Check(testkit.Rows("1 1 2 7", "2 7 1 7", "3 8 1 7", "8 9 1 7"))
+}
+
+func TestHandleColumnWithOnUpdateCurrentTimestamp(t *testing.T) {
+	// Test https://github.com/pingcap/tidb/issues/44565
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a timestamp on update current_timestamp(0), b int, primary key (a) clustered, key idx (a))")
+	tk.MustExec("insert into t values ('2023-06-11 10:00:00', 1)")
+	tk.MustExec("update t force index(primary) set b = 10 where a = '2023-06-11 10:00:00'")
+	tk.MustExec("admin check table t")
 }

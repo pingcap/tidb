@@ -292,35 +292,35 @@ func TestTimeValidation(t *testing.T) {
 func TestGetNativeValType(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: Off, Type: TypeBool}
 
-	nativeVal, nativeType, unsignedFlag := sv.GetNativeValType("ON")
-	require.Equal(t, mysql.TypeLong, nativeType)
-	require.Equal(t, uint(0), unsignedFlag)
+	nativeVal, nativeType, flag := sv.GetNativeValType("ON")
+	require.Equal(t, mysql.TypeLonglong, nativeType)
+	require.Equal(t, mysql.BinaryFlag, flag)
 	require.Equal(t, types.NewIntDatum(1), nativeVal)
 
-	nativeVal, nativeType, unsignedFlag = sv.GetNativeValType("OFF")
-	require.Equal(t, mysql.TypeLong, nativeType)
-	require.Equal(t, uint(0), unsignedFlag)
+	nativeVal, nativeType, flag = sv.GetNativeValType("OFF")
+	require.Equal(t, mysql.TypeLonglong, nativeType)
+	require.Equal(t, mysql.BinaryFlag, flag)
 	require.Equal(t, types.NewIntDatum(0), nativeVal)
 
-	nativeVal, nativeType, unsignedFlag = sv.GetNativeValType("bogus")
-	require.Equal(t, mysql.TypeLong, nativeType)
-	require.Equal(t, uint(0), unsignedFlag)
+	nativeVal, nativeType, flag = sv.GetNativeValType("bogus")
+	require.Equal(t, mysql.TypeLonglong, nativeType)
+	require.Equal(t, mysql.BinaryFlag, flag)
 	require.Equal(t, types.NewIntDatum(0), nativeVal)
 
 	sv = SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: Off, Type: TypeUnsigned}
-	nativeVal, nativeType, unsignedFlag = sv.GetNativeValType("1234")
+	nativeVal, nativeType, flag = sv.GetNativeValType("1234")
 	require.Equal(t, mysql.TypeLonglong, nativeType)
-	require.Equal(t, mysql.UnsignedFlag, unsignedFlag)
+	require.Equal(t, mysql.UnsignedFlag|mysql.BinaryFlag, flag)
 	require.Equal(t, types.NewUintDatum(1234), nativeVal)
-	nativeVal, nativeType, unsignedFlag = sv.GetNativeValType("bogus")
+	nativeVal, nativeType, flag = sv.GetNativeValType("bogus")
 	require.Equal(t, mysql.TypeLonglong, nativeType)
-	require.Equal(t, mysql.UnsignedFlag, unsignedFlag)
+	require.Equal(t, mysql.UnsignedFlag|mysql.BinaryFlag, flag)
 	require.Equal(t, types.NewUintDatum(0), nativeVal) // converts to zero
 
 	sv = SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "abc"}
-	nativeVal, nativeType, unsignedFlag = sv.GetNativeValType("1234")
+	nativeVal, nativeType, flag = sv.GetNativeValType("1234")
 	require.Equal(t, mysql.TypeVarString, nativeType)
-	require.Equal(t, uint(0), unsignedFlag)
+	require.Equal(t, uint(0), flag)
 	require.Equal(t, types.NewStringDatum("1234"), nativeVal)
 }
 

@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mpp",
+    srcs = ["local_mpp_coordinator.go"],
+    importpath = "github.com/pingcap/tidb/executor/internal/mpp",
+    visibility = ["//executor:__subpackages__"],
+    deps = [
+        "//config",
+        "//distsql",
+        "//executor/internal/builder",
+        "//executor/internal/util",
+        "//infoschema",
+        "//kv",
+        "//planner/core",
+        "//sessionctx",
+        "//store/copr",
+        "//store/driver/backoff",
+        "//store/driver/error",
+        "//util/execdetails",
+        "//util/logutil",
+        "//util/memory",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/mpp",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_zap//:zap",
+    ],
+)
