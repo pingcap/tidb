@@ -17,8 +17,6 @@ package mppcoordmanager
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"sync"
 	"time"
 
@@ -26,6 +24,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // InstanceMPPCoordinatorManager is a local instance mpp coordinator manager
@@ -67,13 +67,13 @@ func (m *MPPCoordinatorManager) Run() {
 			case <-m.ctx.Done():
 				return
 			case <-ticker.C:
-				m.detect()
+				m.detectAndDelete()
 			}
 		}
 	}()
 }
 
-func (m *MPPCoordinatorManager) detect() {
+func (m *MPPCoordinatorManager) detectAndDelete() {
 	var outOfTimeIDs []CoordinatorUniqueID
 	m.mu.Lock()
 	for id := range m.coordinatorMap {
@@ -85,7 +85,7 @@ func (m *MPPCoordinatorManager) detect() {
 	m.mu.Unlock()
 
 	for _, deletedID := range outOfTimeIDs {
-		// Todo: add and update related metrics
+		// Todo: add and update related metrics, and add uts for detect logic
 		logutil.BgLogger().Error("Delete MppCoordinator due to OutOfTime",
 			zap.Uint64("QueryID", deletedID.MPPQueryID.LocalQueryID),
 			zap.Uint64("QueryTs", deletedID.MPPQueryID.QueryTs))
