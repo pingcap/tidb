@@ -41,6 +41,7 @@ type RunawayManager struct {
 	watchList        *ttlcache.Cache[string, struct{}]
 }
 
+// NewRunawayManager creates a new RunawayManager.
 func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController) *RunawayManager {
 	watchList := ttlcache.New[string, struct{}]()
 	go watchList.Start()
@@ -109,7 +110,7 @@ func (r *RunawayChecker) BeforeExecutor() error {
 	if r == nil {
 		return nil
 	}
-	result := r.manager.ExamineWatchList(r.resourceGroupName, r.getConvictName())
+	result := r.manager.ExamineWatchList(r.resourceGroupName, r.getConvictIdentifier())
 	if result {
 		r.marked.Store(result)
 		switch r.setting.Action {
@@ -172,10 +173,10 @@ func (r *RunawayChecker) markRunaway() {
 	if r.setting.Watch == nil {
 		return
 	}
-	r.manager.MarkRunaway(r.resourceGroupName, r.getConvictName(), time.Duration(r.setting.Watch.LastingDurationMs)*time.Millisecond)
+	r.manager.MarkRunaway(r.resourceGroupName, r.getConvictIdentifier(), time.Duration(r.setting.Watch.LastingDurationMs)*time.Millisecond)
 }
 
-func (r *RunawayChecker) getConvictName() string {
+func (r *RunawayChecker) getConvictIdentifier() string {
 	if r.setting.Watch == nil {
 		return ""
 	}

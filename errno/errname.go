@@ -1139,7 +1139,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrResourceGroupConfigUnavailable:      mysql.Message("Resource group configuration is unavailable", nil),
 	ErrResourceGroupThrottled:              mysql.Message("Exceeded resource group quota limitation", nil),
 	ErrResourceGroupQueryRunaway:           mysql.Message("Query execution was interrupted, identified as runaway query", nil),
-	ErrResourceGroupQueryRunawayQuarantine: mysql.Message("Quarantined and interrupted because of being watch list", nil),
+	ErrResourceGroupQueryRunawayQuarantine: mysql.Message("Quarantined and interrupted because of being in runaway watch list", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),
