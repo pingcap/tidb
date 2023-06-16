@@ -258,24 +258,42 @@ func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMs
 }
 
 func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
+	// start_time, end_time, summary, error_message can be NULL, need to use row.IsNull() to check.
+	startTime, endTime := types.ZeroTime, types.ZeroTime
+	if !row.IsNull(2) {
+		startTime = row.GetTime(2)
+	}
+	if !row.IsNull(3) {
+		endTime = row.GetTime(3)
+	}
+
 	parameters := ImportParameters{}
 	parametersStr := row.GetString(8)
 	if err := json.Unmarshal([]byte(parametersStr), &parameters); err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	var summary *JobSummary
-	summaryStr := row.GetString(12)
+	var summaryStr string
+	if !row.IsNull(12) {
+		summaryStr = row.GetString(12)
+	}
 	if len(summaryStr) > 0 {
 		summary = &JobSummary{}
 		if err := json.Unmarshal([]byte(summaryStr), summary); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
+
+	var errMsg string
+	if !row.IsNull(13) {
+		errMsg = row.GetString(13)
+	}
 	return &JobInfo{
 		ID:             row.GetInt64(0),
 		CreateTime:     row.GetTime(1),
-		StartTime:      row.GetTime(2),
-		EndTime:        row.GetTime(3),
+		StartTime:      startTime,
+		EndTime:        endTime,
 		TableSchema:    row.GetString(4),
 		TableName:      row.GetString(5),
 		TableID:        row.GetInt64(6),
@@ -285,7 +303,7 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 		Status:         row.GetString(10),
 		Step:           row.GetString(11),
 		Summary:        summary,
-		ErrorMessage:   row.GetString(13),
+		ErrorMessage:   errMsg,
 	}, nil
 }
 
