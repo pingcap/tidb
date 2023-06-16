@@ -45,10 +45,23 @@ const (
 // todo: check all items and return all errors at once.
 func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec.SQLExecutor) error {
 	// todo: maybe we can reuse checker in lightning
+	if err := e.checkTotalFileSize(); err != nil {
+		return err
+	}
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
 		return err
 	}
 	return e.checkCDCPiTRTasks(ctx)
+}
+
+func (e *LoadDataController) checkTotalFileSize() error {
+	if e.TotalFileSize == 0 {
+		// this happens when:
+		// 1. no file matched when using wildcard
+		// 2. all matched file is empty(with or without wildcard)
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("No file matched, or the file is empty. Please provide a valid file location.")
+	}
+	return nil
 }
 
 func (e *LoadDataController) checkTableEmpty(ctx context.Context, conn sqlexec.SQLExecutor) error {

@@ -185,7 +185,8 @@ func (h *flowHandle) unregisterTask(ctx context.Context, task *proto.Task) {
 	}
 }
 
-func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (_ [][]byte, err error) {
+func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (
+	resSubtaskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
@@ -198,8 +199,9 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	}
 	logger.Info("process normal flow")
 
-	var taskFinished bool
 	defer func() {
+		// currently, framework will take the task as finished when err is not nil or resSubtaskMeta is empty.
+		taskFinished := err == nil && len(resSubtaskMeta) == 0
 		if taskFinished {
 			// todo: we're not running in a transaction with task update
 			if err2 := h.finishJob(ctx, handle, gTask, taskMeta, logger); err2 != nil {
@@ -257,7 +259,6 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		gTask.Step = StepPostProcess
 		return [][]byte{bs}, nil
 	case StepPostProcess:
-		taskFinished = true
 		return nil, nil
 	default:
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
