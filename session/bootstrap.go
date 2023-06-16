@@ -605,15 +605,27 @@ const (
        KEY (create_user));`
 
 	// CreateQuarantineWatchTable stores the sql bind info which is used to update globalBindCache.
-	CreateQuarantineWatchTable = `CREATE TABLE IF NOT EXISTS mysql.quarantine_watch (
+	CreateRunawayTable = `CREATE TABLE IF NOT EXISTS mysql.runaway_queries (
 		resource_group_name varchar(32) not null,
-		start_time TIMESTAMP NOT NULL,
-		end_time TIMESTAMP NOT NULL,
-		watch_type varchar(12) not null,
+		time TIMESTAMP NOT NULL,
+		match ENUM('identify', 'watch') NOT NULL,
+		action varchar(12) NOT NULL,
 		original_sql TEXT NOT NULL,
 		plan_digest TEXT NOT NULL,
 		tidb_server varchar(64),
-		INDEX sql_index(original_sql(700)) COMMENT "accelerate the speed when add global binding query",
+		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when add global binding query",
+		INDEX time_index(time) COMMENT "accelerate the speed when querying with active watch"
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
+
+	// CreateQuarantineWatchTable stores the sql bind info which is used to update globalBindCache.
+	CreateQuarantineWatchTable = `CREATE TABLE IF NOT EXISTS mysql.quarantined_watch (
+		resource_group_name varchar(32) not null,
+		start_time TIMESTAMP NOT NULL,
+		end_time TIMESTAMP NOT NULL,
+		watch ENUM('exact', 'similar') NOT NULL,
+		watch_text TEXT NOT NULL,
+		tidb_server varchar(64),
+		INDEX sql_index(watch_text(700)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 )
@@ -2792,6 +2804,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateLoadDataJobs)
 	// create quarantine_watch
 	mustExecute(s, CreateQuarantineWatchTable)
+	// create runaway_queries
+	mustExecute(s, CreateRunawayTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

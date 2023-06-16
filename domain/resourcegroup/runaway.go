@@ -32,13 +32,40 @@ const (
 	maxWatchRecordChannelSize = 1024
 )
 
-type RunawayWatchRecord struct {
+type RunawayMatchType uint
+
+const (
+	RunawayMatchTypeWatch RunawayMatchType = iota
+	RunawayMatchTypeIdentify
+)
+
+func (t RunawayMatchType) String() string {
+	switch t {
+	case RunawayMatchTypeWatch:
+		return "watch"
+	case RunawayMatchTypeIdentify:
+		return "identify"
+	default:
+		panic("unknown type")
+	}
+}
+
+type RunawayRecord struct {
+	ResourceGroupName string
+	Time              time.Time
+	Match             string
+	Action            string
+	SqlText           string
+	PlanDigest        string
+	From              string
+}
+
+type QuarantineRecord struct {
 	ResourceGroupName string
 	StartTime         time.Time
 	EndTime           time.Time
-	Type              string
-	SqlText           string
-	PlanDigest        string
+	Watch             string
+	WatchText         string
 	From              string
 }
 
@@ -48,23 +75,25 @@ type sessionPool interface {
 }
 
 type RunawayManager struct {
-	queryLock        sync.Mutex
-	resourceGroupCtl *rmclient.ResourceGroupsController
-	watchList        *ttlcache.Cache[string, struct{}]
-	serverID         string
-	pool             sessionPool
-	watchRecordCache chan *RunawayWatchRecord
+	queryLock          sync.Mutex
+	resourceGroupCtl   *rmclient.ResourceGroupsController
+	watchList          *ttlcache.Cache[string, struct{}]
+	serverID           string
+	pool               sessionPool
+	runawayQueriesChan chan *RunawayRecord
+	quarantineChan     chan *QuarantineRecord
 }
 
 func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serverAddr string, pool sessionPool) *RunawayManager {
 	watchList := ttlcache.New[string, struct{}](ttlcache.WithCapacity[string, struct{}](maxWatchListCap))
 	go watchList.Start()
 	return &RunawayManager{
-		resourceGroupCtl: resourceGroupCtl,
-		watchList:        watchList,
-		serverID:         serverAddr,
-		watchRecordCache: make(chan *RunawayWatchRecord, maxWatchRecordChannelSize),
-		pool:             pool,
+		resourceGroupCtl:   resourceGroupCtl,
+		watchList:          watchList,
+		serverID:           serverAddr,
+		runawayQueriesChan: make(chan *RunawayRecord, maxWatchRecordChannelSize),
+		quarantineChan:     make(chan *QuarantineRecord, maxWatchRecordChannelSize),
+		pool:               pool,
 	}
 }
 
@@ -77,31 +106,41 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName string, originalSql st
 	return newRunawayChecker(rm, resourceGroupName, meta.RunawaySettings, originalSql, planDigest)
 }
 
-func (rm *RunawayManager) MarkRunaway(resourceGroupName, convict, originalSql, planDigest, watchType string, ttl time.Duration) {
+func (rm *RunawayManager) MarkRunaway(resourceGroupName, convict, originalSql, planDigest, action string, ttl time.Duration, matchType RunawayMatchType) {
 	key := resourceGroupName + "/" + convict
-	recordQuery := false
-	if rm.watchList.Get(key) == nil {
+	shouldQuarantine := false
+	if matchType == RunawayMatchTypeIdentify && rm.watchList.Get(key) == nil {
 		rm.queryLock.Lock()
 		if rm.watchList.Get(key) == nil {
 			rm.watchList.Set(key, struct{}{}, ttl)
-			recordQuery = true
+			shouldQuarantine = true
 		}
 		rm.queryLock.Unlock()
 	}
-	if !recordQuery {
+	if !shouldQuarantine {
 		rm.watchList.Set(key, struct{}{}, ttl)
 	}
-	if recordQuery {
-		// TODO: record runaway query
+	now := time.Now()
+	if shouldQuarantine {
+		select {
+		case rm.quarantineChan <- &QuarantineRecord{
+			ResourceGroupName: resourceGroupName,
+			StartTime:         now,
+			EndTime:           now.Add(ttl),
+			Watch:             matchType.String(),
+			WatchText:         convict,
+			From:              rm.serverID,
+		}:
+		default:
+			// TODO: add warning for discard flush records
+		}
 	}
 
-	now := time.Now()
 	select {
-	case rm.watchRecordCache <- &RunawayWatchRecord{
+	case rm.runawayQueriesChan <- &RunawayRecord{
 		ResourceGroupName: resourceGroupName,
-		StartTime:         now,
-		EndTime:           now.Add(ttl),
-		Type:              watchType,
+		Time:              now,
+		Action:            action,
 		SqlText:           originalSql,
 		PlanDigest:        planDigest,
 		From:              rm.serverID,
@@ -115,8 +154,12 @@ func (rm *RunawayManager) FlushThreshold() int {
 	return maxWatchRecordChannelSize / 2
 }
 
-func (rm *RunawayManager) RecordChan() <-chan *RunawayWatchRecord {
-	return rm.watchRecordCache
+func (rm *RunawayManager) RunawayRecordChan() <-chan *RunawayRecord {
+	return rm.runawayQueriesChan
+}
+
+func (rm *RunawayManager) QuarantineRecordChan() <-chan *QuarantineRecord {
+	return rm.quarantineChan
 }
 
 func (rm *RunawayManager) ExamineWatchList(resourceGroupName string, convict string) bool {
@@ -157,6 +200,9 @@ func (r *RunawayChecker) BeforeExecutor() error {
 	result := r.manager.ExamineWatchList(r.resourceGroupName, r.getConvictName())
 	if result {
 		r.marked.Store(result)
+		if result {
+			r.markRunaway(RunawayMatchTypeIdentify)
+		}
 		switch r.setting.Action {
 		case rmpb.RunawayAction_Kill:
 			return exeerrors.ErrResourceGroupQueryRunawayQuarantine
@@ -181,7 +227,7 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 		// execution time exceeds the threshold, mark the query as runaway
 		if until <= 0 {
 			r.marked.Store(true)
-			r.markRunaway()
+			r.markRunaway(RunawayMatchTypeWatch)
 		} else {
 			if r.setting.Action == rmpb.RunawayAction_Kill {
 				// if the execution time is close to the threshold, set a timeout
@@ -213,15 +259,15 @@ func (r *RunawayChecker) AfterCopRequest() {
 	// Here only marks the query as runaway
 	if !r.marked.Load() && r.deadline.Before(time.Now()) {
 		r.marked.Store(true)
-		r.markRunaway()
+		r.markRunaway(RunawayMatchTypeWatch)
 	}
 }
 
-func (r *RunawayChecker) markRunaway() {
+func (r *RunawayChecker) markRunaway(matchType RunawayMatchType) {
 	if r.setting.Watch == nil {
 		return
 	}
-	r.manager.MarkRunaway(r.resourceGroupName, r.getConvictName(), r.originalSql, r.planDigest, r.setting.Watch.Type.String(), time.Duration(r.setting.Watch.LastingDurationMs)*time.Millisecond)
+	r.manager.MarkRunaway(r.resourceGroupName, r.getConvictName(), r.originalSql, r.planDigest, r.setting.Watch.Type.String(), time.Duration(r.setting.Watch.LastingDurationMs)*time.Millisecond, matchType)
 }
 
 func (r *RunawayChecker) getConvictName() string {

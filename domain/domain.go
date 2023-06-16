@@ -1237,29 +1237,49 @@ func (do *Domain) runawayRecordFlushLoop() {
 	// we can guarantee a watch record can be seen by the user within 1s.
 	timer := time.NewTimer(time.Second)
 	fired := false
-	recordCh := do.RunawayManager().RecordChan()
+	recordCh := do.RunawayManager().RunawayRecordChan()
+	quarantineRecordCh := do.RunawayManager().QuarantineRecordChan()
 	flushThrehold := do.runawayManager.FlushThreshold()
-	records := make([]*resourcegroup.RunawayWatchRecord, 0, flushThrehold)
+	records := make([]*resourcegroup.RunawayRecord, 0, flushThrehold)
+	quarantineRecords := make([]*resourcegroup.QuarantineRecord, 0)
 
-	flushRecords := func() {
+	flushRunawayRecords := func() {
 		if len(records) == 0 {
 			return
 		}
-		if err := do.flushRecords(records); err != nil {
+		sql, params := genRunawayQueriesStmt(records)
+		if err := do.execFlushSQL(sql, params); err != nil {
 			logutil.BgLogger().Info("flush runaway records failed", zap.Error(err), zap.Int("count", len(records)))
 		}
 		records = records[:0]
+	}
+	flushQuarantineRecords := func() {
+		if len(quarantineRecords) == 0 {
+			return
+		}
+		sql, params := genRunawayQueriesStmt(records)
+		if err := do.execFlushSQL(sql, params); err != nil {
+			logutil.BgLogger().Info("flush runaway records failed", zap.Error(err), zap.Int("count", len(records)))
+		}
+		quarantineRecords = quarantineRecords[:0]
 	}
 
 	for {
 		select {
 		case <-timer.C:
-			flushRecords()
+			flushRunawayRecords()
 			fired = true
+		case r := <-quarantineRecordCh:
+			quarantineRecords = append(quarantineRecords, r)
+			// we expect quarantine record should not be triggered very often, so always
+			// flush as soon as possible.
+			if len(quarantineRecordCh) == 0 || len(quarantineRecords) >= flushThrehold {
+				flushQuarantineRecords()
+			}
 		case r := <-recordCh:
 			records = append(records, r)
 			if len(records) >= flushThrehold {
-				flushRecords()
+				flushRunawayRecords()
 			} else if fired {
 				// meet a new record, reset the timer.
 				timer.Reset(time.Second)
@@ -1268,7 +1288,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 	}
 }
 
-func (do *Domain) flushRecords(records []*resourcegroup.RunawayWatchRecord) error {
+func (do *Domain) execFlushSQL(sql string, params []interface{}) error {
 	se, err := do.sysSessionPool.Get()
 	defer func() {
 		do.sysSessionPool.Put(se)
@@ -1278,7 +1298,6 @@ func (do *Domain) flushRecords(records []*resourcegroup.RunawayWatchRecord) erro
 	}
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	sql, params := genQuarantineWatchStmt(records)
 	_, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
 		sql, params...,
 	)
@@ -1286,21 +1305,40 @@ func (do *Domain) flushRecords(records []*resourcegroup.RunawayWatchRecord) erro
 
 }
 
-func genQuarantineWatchStmt(records []*resourcegroup.RunawayWatchRecord) (string, []interface{}) {
+func genRunawayQueriesStmt(records []*resourcegroup.RunawayRecord) (string, []interface{}) {
 	var builder strings.Builder
 	params := make([]interface{}, 0, len(records)*7)
-	builder.WriteString("insert into mysql.quarantine_watch VALUES ")
+	builder.WriteString("insert into mysql.runaway_queries VALUES ")
 	for count, r := range records {
 		if count > 0 {
 			builder.WriteByte(',')
 		}
 		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?)")
 		params = append(params, r.ResourceGroupName)
-		params = append(params, r.StartTime)
-		params = append(params, r.EndTime)
-		params = append(params, r.Type)
+		params = append(params, r.Time)
+		params = append(params, r.Match)
+		params = append(params, r.Action)
 		params = append(params, r.SqlText)
 		params = append(params, r.PlanDigest)
+		params = append(params, r.From)
+	}
+	return builder.String(), params
+}
+
+func genQuarantineQueriesStmt(records []*resourcegroup.QuarantineRecord) (string, []interface{}) {
+	var builder strings.Builder
+	params := make([]interface{}, 0, len(records)*7)
+	builder.WriteString("insert into mysql.qurantined_watch VALUES ")
+	for count, r := range records {
+		if count > 0 {
+			builder.WriteByte(',')
+		}
+		builder.WriteString("(%?, %?, %?, %?, %?, %?)")
+		params = append(params, r.ResourceGroupName)
+		params = append(params, r.StartTime)
+		params = append(params, r.EndTime)
+		params = append(params, r.Watch)
+		params = append(params, r.WatchText)
 		params = append(params, r.From)
 	}
 	return builder.String(), params
