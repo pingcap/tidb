@@ -2203,10 +2203,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	stmt, err := compiler.Compile(ctx, stmtNode)
 	// session resource-group might be changed by query hint, ensure restore it back when
 	// the execution finished.
-	if s.GetSessionVars().ResourceGroupName != originalResourceGroup {
+	if sessVars.ResourceGroupName != originalResourceGroup {
 		defer func() {
 			// Restore the resource group for the session
-			s.GetSessionVars().ResourceGroupName = originalResourceGroup
+			sessVars.ResourceGroupName = originalResourceGroup
 		}()
 	}
 	if err != nil {

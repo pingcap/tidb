@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//util/dbterror/exeerrors",
         "//util/logutil",
+        "@com_github_jellydator_ttlcache_v3//:ttlcache",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",

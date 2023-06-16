@@ -1169,7 +1169,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
-	failpoint.Inject("sleepCoprRequest", nil)
+	failpoint.Inject("sleepCoprRequest", func(v failpoint.Value) {
+		//nolint:durationcheck
+		time.Sleep(time.Millisecond * time.Duration(v.(int)))
+	})
 
 	if worker.req.RunawayChecker != nil {
 		if err := worker.req.RunawayChecker.BeforeCopRequest(req); err != nil {
