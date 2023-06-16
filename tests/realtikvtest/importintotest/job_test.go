@@ -147,7 +147,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.Len(rows, 1)
 	s.Equal(result2, rows)
 
-	// test with root
+	// show import jobs with root
 	checkJobsMatch := func(rows [][]interface{}) {
 		s.GreaterOrEqual(len(rows), 2) // other cases may create import jobs
 		var matched int
@@ -166,6 +166,16 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	rows = s.tk.MustQuery("show import jobs").Rows()
 	checkJobsMatch(rows)
+	// show import job by id with root
+	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
+	s.Len(rows, 1)
+	s.Equal(result2, rows)
+	jobInfo.ID = importer.TestLastImportJobID.Load()
+	jobInfo.TableName = "t2"
+	jobInfo.TableID = tableID2
+	jobInfo.CreatedBy = "test_show_job2@localhost"
+	jobInfo.Parameters.FileLocation = fmt.Sprintf(`gs://test-show-job/t.csv?endpoint=%s`, gcsEndpoint)
+	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
 	// grant SUPER to test_show_job2, now it can see all jobs
 	s.tk.MustExec(`GRANT SUPER on *.* to 'test_show_job2'@'localhost'`)
