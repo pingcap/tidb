@@ -781,9 +781,16 @@ func failpointCheckWhichPolicy(act tiflashcompute.DispatchPolicy) {
 	})
 }
 
-func filterAllStoresAccordingToTiFlashReplicaRead(allStores []uint64, aliveStoreIDsInTiDBZone map[uint64]struct{}, isTiDBZoneSet bool, policy tiflash.ReplicaRead) (storesMatchedPolicy []uint64, needsCrossZoneAccess bool) {
+func filterAllStoresAccordingToTiFlashReplicaRead(allStores []uint64, aliveStoreIDs map[uint64]struct{}, aliveStoreIDsInTiDBZone map[uint64]struct{}, isTiDBZoneSet bool, policy tiflash.ReplicaRead) (storesMatchedPolicy []uint64, needsCrossZoneAccess bool) {
 	if policy == tiflash.AllReplicas || !isTiDBZoneSet {
-		return allStores, false
+		// Check whether the stores in allStores is alive, if not, report an error, and invalidate this region.
+		// Or, return the alive stores in allStores.
+		for _, id := range allStores {
+			if _, ok := aliveStoreIDs[id]; ok {
+				storesMatchedPolicy = append(storesMatchedPolicy, id)
+			}
+		}
+		return
 	}
 	// Check whether exists available stores in TiDB zone. If so, we only need to access TiFlash stores in TiDB zone.
 	for _, id := range allStores {
@@ -809,6 +816,59 @@ func filterAllStoresAccordingToTiFlashReplicaRead(allStores []uint64, aliveStore
 	return
 }
 
+// getAliveStoresAndStoreIDs gets all alive TiFlash stores and their IDs.
+// If `careTiFlashReplicaRead` is true, it will also return the IDs of the alive TiFlash stores in TiDB zone.
+func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, ttl time.Duration, store *kvStore, careTiFlashReplicaRead bool, tidbZone string) (aliveStores []*tikv.Store, aliveStoreIDsInAllZones, aliveStoreIDsInTiDBZone map[uint64]struct{}) {
+	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
+	aliveStores = filterAliveStores(ctx, allTiFlashStores, ttl, store)
+	if careTiFlashReplicaRead {
+		aliveStoreIDsInTiDBZone = make(map[uint64]struct{}, len(aliveStores))
+		for _, as := range aliveStores {
+			// If the `zone` label of the TiFlash store is not set, we treat it as a TiFlash store in other zones.
+			if tiflashZone, isSet := as.GetLabelValue(placement.DCLabelKey); isSet && tiflashZone == tidbZone {
+				aliveStoreIDsInTiDBZone[as.StoreID()] = struct{}{}
+			}
+		}
+	} else {
+		aliveStoreIDsInAllZones = make(map[uint64]struct{}, len(aliveStores))
+		for _, as := range aliveStores {
+			aliveStoreIDsInAllZones[as.StoreID()] = struct{}{}
+		}
+	}
+	return aliveStores, aliveStoreIDsInAllZones, aliveStoreIDsInTiDBZone
+}
+
+// filterAccessableStores filters the stores that can be accessed according to:
+// 1. tiflash_replica_read policy
+// 2. whether the store is alive
+func filterAccessableStores(cache *RegionCache, bo *Backoffer, task *copTask, rpcCtx *tikv.RPCContext, aliveStoreIDsInAllZones, aliveStoreIDsInTiDBZone map[uint64]struct{}, isTiDBLabelZoneSet bool, tiflashReplicaReadPolicy tiflash.ReplicaRead, regionInfoNeedsReloadOnSendFail []RegionInfo, regionsInOtherZones []uint64, maxRemoteReadCountAllowed int, tidbZone string) (_ []RegionInfo, _ []uint64, regionInfo RegionInfo, err error) {
+	needCrossZoneAccess := false
+	allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store, tikv.LabelFilterNoTiFlashWriteNode)
+	regionInfo = RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionIndex: task.partitionIndex}
+	allStores, needCrossZoneAccess = filterAllStoresAccordingToTiFlashReplicaRead(allStores, aliveStoreIDsInAllZones, aliveStoreIDsInTiDBZone, isTiDBLabelZoneSet, tiflashReplicaReadPolicy)
+	if len(allStores) == 0 {
+		regionInfoNeedsReloadOnSendFail = append(regionInfoNeedsReloadOnSendFail, regionInfo)
+		err = errors.Errorf("no TiFlash store available for region %d", task.region.GetID())
+		cache.OnSendFailForBatchRegions(bo, rpcCtx.Store, regionInfoNeedsReloadOnSendFail, true, err)
+		return nil, nil, regionInfo, err
+	}
+	if needCrossZoneAccess && !tiflashReplicaReadPolicy.IsAllReplicas() {
+		regionsInOtherZones = append(regionsInOtherZones, task.region.GetID())
+		regionInfoNeedsReloadOnSendFail = append(regionInfoNeedsReloadOnSendFail, regionInfo)
+		if tiflashReplicaReadPolicy.IsClosestReplicas() && len(regionsInOtherZones) > maxRemoteReadCountAllowed {
+			regionIDErrMsg := ""
+			for i := 0; i < 3 && i < len(regionsInOtherZones); i++ {
+				regionIDErrMsg += fmt.Sprintf("%d, ", regionsInOtherZones[i])
+			}
+			err = errors.Errorf("no less than %d region(s) can not be accessed by TiFlash in the zone [%s]: %setc", len(regionsInOtherZones), tidbZone, regionIDErrMsg)
+			// We need to reload the region cache here to avoid the failure throughout the region cache refresh TTL.
+			cache.OnSendFailForBatchRegions(bo, rpcCtx.Store, regionInfoNeedsReloadOnSendFail, true, err)
+			return nil, nil, regionInfo, err
+		}
+	}
+	return regionInfoNeedsReloadOnSendFail, regionsInOtherZones, regionInfo, nil
+}
+
 // When `partitionIDs != nil`, it means that buildBatchCopTasksCore is constructing a batch cop tasks for PartitionTableScan.
 // At this time, `len(rangesForEachPhysicalTable) == len(partitionIDs)` and `rangesForEachPhysicalTable[i]` is for partition `partitionIDs[i]`.
 // Otherwise, `rangesForEachPhysicalTable[0]` indicates the range for the single physical table.
@@ -821,6 +881,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 	tidbZone, isTiDBLabelZoneSet := config.GetGlobalConfig().Labels[placement.DCLabelKey]
 	var (
 		aliveStores               []*tikv.Store
+		aliveStoreIDsInAllZones   map[uint64]struct{}
 		aliveStoreIDsInTiDBZone   map[uint64]struct{}
 		maxRemoteReadCountAllowed int
 		careTiFlashReplicaRead    = !tiflashReplicaReadPolicy.IsAllReplicas() && isTiDBLabelZoneSet
@@ -844,24 +905,13 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				})
 			}
 		}
-
-		allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
-		aliveStores = filterAliveStores(bo.GetCtx(), allTiFlashStores, ttl, store)
-		if careTiFlashReplicaRead {
-			aliveStoreIDsInTiDBZone = make(map[uint64]struct{}, len(aliveStores))
-			for _, as := range aliveStores {
-				// If the `zone` label of the TiFlash store is not set, we treat it as a TiFlash store in other zones.
-				if tiflashZone, isSet := as.GetLabelValue(placement.DCLabelKey); isSet && tiflashZone == tidbZone {
-					aliveStoreIDsInTiDBZone[as.StoreID()] = struct{}{}
-				}
-			}
-			if tiflashReplicaReadPolicy.IsClosestReplicas() {
-				maxRemoteReadCountAllowed = len(aliveStoreIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
-			}
+		aliveStores, aliveStoreIDsInAllZones, aliveStoreIDsInTiDBZone = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, ttl, store, careTiFlashReplicaRead, tidbZone)
+		if tiflashReplicaReadPolicy.IsClosestReplicas() {
+			maxRemoteReadCountAllowed = len(aliveStoreIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
 		}
 		var batchTasks []*batchCopTask
-		var regionsInOtherZones []uint64
-		var regionInfoInOtherZones []RegionInfo
+		var regionIDsInOtherZones []uint64
+		var regionInfosNeedReloadOnSendFail []RegionInfo
 		storeTaskMap := make(map[string]*batchCopTask)
 		needRetry := false
 		for _, task := range tasks {
@@ -880,23 +930,10 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				// Then `splitRegion` will reloads these regions.
 				continue
 			}
-			needCrossZoneAccess := false
-			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store, tikv.LabelFilterNoTiFlashWriteNode)
-			allStores, needCrossZoneAccess = filterAllStoresAccordingToTiFlashReplicaRead(allStores, aliveStoreIDsInTiDBZone, isTiDBLabelZoneSet, tiflashReplicaReadPolicy)
-			regionInfo := RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionIndex: task.partitionIndex}
-			if needCrossZoneAccess && !tiflashReplicaReadPolicy.IsAllReplicas() {
-				regionsInOtherZones = append(regionsInOtherZones, task.region.GetID())
-				regionInfoInOtherZones = append(regionInfoInOtherZones, regionInfo)
-				if tiflashReplicaReadPolicy.IsClosestReplicas() && len(regionsInOtherZones) > maxRemoteReadCountAllowed {
-					regionIDErrMsg := ""
-					for i := 0; i < 3 && i < len(regionsInOtherZones); i++ {
-						regionIDErrMsg += fmt.Sprintf("%d, ", regionsInOtherZones[i])
-					}
-					err = errors.Errorf("no less than %d region(s) can not be accessed by TiFlash in the zone [%s]: %setc", len(regionsInOtherZones), tidbZone, regionIDErrMsg)
-					// We need to reload the region cache here to avoid the failure throughout the region cache refresh TTL.
-					cache.OnSendFailForBatchRegions(bo, rpcCtx.Store, regionInfoInOtherZones, true, err)
-					return nil, err
-				}
+			var regionInfo RegionInfo
+			regionInfosNeedReloadOnSendFail, regionIDsInOtherZones, regionInfo, err = filterAccessableStores(cache, bo, task, rpcCtx, aliveStoreIDsInAllZones, aliveStoreIDsInTiDBZone, isTiDBLabelZoneSet, tiflashReplicaReadPolicy, regionInfosNeedReloadOnSendFail, regionIDsInOtherZones, maxRemoteReadCountAllowed, tidbZone)
+			if err != nil {
+				return nil, err
 			}
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
 				batchCop.regionInfos = append(batchCop.regionInfos, regionInfo)
@@ -920,11 +957,11 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			}
 			continue
 		}
-		if len(regionsInOtherZones) != 0 {
-			warningMsg := fmt.Sprintf("total %d region(s) can not be accessed by TiFlash in the zone [%s]:", len(regionsInOtherZones), tidbZone)
+		if len(regionIDsInOtherZones) != 0 {
+			warningMsg := fmt.Sprintf("total %d region(s) can not be accessed by TiFlash in the zone [%s]:", len(regionIDsInOtherZones), tidbZone)
 			regionIDErrMsg := ""
-			for i := 0; i < 3 && i < len(regionsInOtherZones); i++ {
-				regionIDErrMsg += fmt.Sprintf("%d, ", regionsInOtherZones[i])
+			for i := 0; i < 3 && i < len(regionIDsInOtherZones); i++ {
+				regionIDErrMsg += fmt.Sprintf("%d, ", regionIDsInOtherZones[i])
 			}
 			warningMsg += regionIDErrMsg + "etc"
 			appendWarning(errors.Errorf(warningMsg))
