@@ -78,14 +78,16 @@ go_test(
     srcs = [
         "import_test.go",
         "job_test.go",
+        "table_import_test.go",
     ],
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 9,
+    shard_count = 10,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/config",
+        "//config",
         "//expression",
         "//parser",
         "//parser/ast",
@@ -98,5 +100,6 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
     ],
 )
