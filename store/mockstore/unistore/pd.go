@@ -17,7 +17,6 @@ package unistore
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -26,7 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/domain/resourcegroup"
+	"github.com/pingcap/tidb/domain/infosync"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -36,45 +35,20 @@ var _ pd.Client = new(pdClient)
 
 type pdClient struct {
 	*us.MockPD
+	pd.ResourceManagerClient
 
-	serviceSafePoints    map[string]uint64
-	gcSafePointMu        sync.Mutex
-	globalConfig         map[string]string
-	externalTimestamp    atomic.Uint64
-	resourceGroupManager *resourceGroupManager
-}
-
-type resourceGroupManager struct {
-	sync.RWMutex
-	groups map[string]*rmpb.ResourceGroup
-}
-
-func newResourceGroupManager() *resourceGroupManager {
-	mgr := &resourceGroupManager{
-		groups: make(map[string]*rmpb.ResourceGroup),
-	}
-	mgr.groups[resourcegroup.DefaultResourceGroupName] = &rmpb.ResourceGroup{
-		Name: resourcegroup.DefaultResourceGroupName,
-		Mode: rmpb.GroupMode_RUMode,
-		RUSettings: &rmpb.GroupRequestUnitSettings{
-			RU: &rmpb.TokenBucket{
-				Settings: &rmpb.TokenLimitSettings{
-					FillRate:   math.MaxInt32,
-					BurstLimit: -1,
-				},
-			},
-		},
-		Priority: 8,
-	}
-	return mgr
+	serviceSafePoints map[string]uint64
+	gcSafePointMu     sync.Mutex
+	globalConfig      map[string]string
+	externalTimestamp atomic.Uint64
 }
 
 func newPDClient(pd *us.MockPD) *pdClient {
 	return &pdClient{
-		MockPD:               pd,
-		serviceSafePoints:    make(map[string]uint64),
-		globalConfig:         make(map[string]string),
-		resourceGroupManager: newResourceGroupManager(),
+		MockPD:                pd,
+		ResourceManagerClient: infosync.NewMockResourceManagerClient(),
+		serviceSafePoints:     make(map[string]uint64),
+		globalConfig:          make(map[string]string),
 	}
 }
 
@@ -216,54 +190,6 @@ func (c *pdClient) UpdateKeyspaceState(ctx context.Context, id uint32, state key
 	return nil, nil
 }
 
-func (c *pdClient) ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
-	c.resourceGroupManager.RLock()
-	defer c.resourceGroupManager.RUnlock()
-	groups := make([]*rmpb.ResourceGroup, 0, len(c.resourceGroupManager.groups))
-	for _, group := range c.resourceGroupManager.groups {
-		groups = append(groups, group)
-	}
-	return groups, nil
-}
-
-func (c *pdClient) GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, error) {
-	c.resourceGroupManager.RLock()
-	defer c.resourceGroupManager.RUnlock()
-	group, ok := c.resourceGroupManager.groups[name]
-	if !ok {
-		return nil, nil
-	}
-	return group, nil
-}
-
-func (c *pdClient) AddResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
-	c.resourceGroupManager.Lock()
-	defer c.resourceGroupManager.Unlock()
-	if _, ok := c.resourceGroupManager.groups[group.Name]; ok {
-		return "", fmt.Errorf("the group %s already exists", group.Name)
-	}
-	c.resourceGroupManager.groups[group.Name] = group
-	return "Success!", nil
-}
-
-func (c *pdClient) ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
-	c.resourceGroupManager.Lock()
-	defer c.resourceGroupManager.Unlock()
-	c.resourceGroupManager.groups[group.Name] = group
-	return "Success!", nil
-}
-
-func (c *pdClient) DeleteResourceGroup(ctx context.Context, name string) (string, error) {
-	c.resourceGroupManager.Lock()
-	defer c.resourceGroupManager.Unlock()
-	delete(c.resourceGroupManager.groups, name)
-	return "Success!", nil
-}
-
-func (c *pdClient) WatchResourceGroup(ctx context.Context, revision int64) (chan []*rmpb.ResourceGroup, error) {
-	return nil, nil
-}
-
 func (c *pdClient) AcquireTokenBuckets(ctx context.Context, request *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
 	return nil, nil
 }
@@ -310,10 +236,6 @@ func (c *pdClient) GetLocalTSWithinKeyspace(ctx context.Context, dcLocation stri
 
 func (c *pdClient) GetLocalTSWithinKeyspaceAsync(ctx context.Context, dcLocation string, keyspaceID uint32) pd.TSFuture {
 	return nil
-}
-
-func (c *pdClient) Watch(ctx context.Context, key []byte, opts ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
-	return nil, nil
 }
 
 func (c *pdClient) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*meta_storagepb.GetResponse, error) {

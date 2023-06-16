@@ -18,6 +18,7 @@ go_library(
     deps = [
         "//config",
         "//domain/infosync",
+        "//domain/resourcegroup",
         "//errno",
         "//kv",
         "//metrics",

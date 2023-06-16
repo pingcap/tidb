@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/globalconfigsync"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
@@ -86,6 +87,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
@@ -147,17 +149,19 @@ type Domain struct {
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
 	// TODO: use Run for each process in future pr
-	wg                    *util.WaitGroupEnhancedWrapper
-	statsUpdating         atomicutil.Int32
-	cancel                context.CancelFunc
-	indexUsageSyncLease   time.Duration
-	dumpFileGcChecker     *dumpFileGcChecker
-	planReplayerHandle    *planReplayerHandle
-	extractTaskHandle     *ExtractHandle
-	expiredTimeStamp4PC   types.Time
-	logBackupAdvancer     *daemon.OwnerDaemon
-	historicalStatsWorker *HistoricalStatsWorker
-	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
+	wg                       *util.WaitGroupEnhancedWrapper
+	statsUpdating            atomicutil.Int32
+	cancel                   context.CancelFunc
+	indexUsageSyncLease      time.Duration
+	dumpFileGcChecker        *dumpFileGcChecker
+	planReplayerHandle       *planReplayerHandle
+	extractTaskHandle        *ExtractHandle
+	expiredTimeStamp4PC      types.Time
+	logBackupAdvancer        *daemon.OwnerDaemon
+	historicalStatsWorker    *HistoricalStatsWorker
+	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
+	runawayManager           *resourcegroup.RunawayManager
+	resourceGroupsController *rmclient.ResourceGroupsController
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -1179,6 +1183,10 @@ func (do *Domain) Init(
 	if err != nil {
 		return err
 	}
+	err = do.initResourceGroupsController(ctx, pdCli)
+	if err != nil {
+		return err
+	}
 	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdCli)
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
@@ -1233,6 +1241,23 @@ func (do *Domain) InitInfo4Test() {
 // SetOnClose used to set do.onClose func.
 func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose
+}
+
+func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.Client) error {
+	if pdClient == nil {
+		logutil.BgLogger().Warn("cannot setup up resource controller, not using tikv storage")
+		// return nil as unistore doesn't support it
+		return nil
+	}
+
+	control, err := rmclient.NewResourceGroupController(ctx, do.ServerID(), pdClient, nil, rmclient.WithMaxWaitDuration(resourcegroup.MaxWaitDuration))
+	if err != nil {
+		return err
+	}
+	control.Start(ctx)
+	do.runawayManager = resourcegroup.NewRunawayManager(control)
+	do.resourceGroupsController = control
+	return nil
 }
 
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
@@ -1915,6 +1940,21 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 		}
 		do.planReplayerHandle.planReplayerTaskDumpHandle.workers = append(do.planReplayerHandle.planReplayerTaskDumpHandle.workers, worker)
 	}
+}
+
+// RunawayManager returns the runaway manager.
+func (do *Domain) RunawayManager() *resourcegroup.RunawayManager {
+	return do.runawayManager
+}
+
+// ResourceGroupsController returns the resource groups controller.
+func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController {
+	return do.resourceGroupsController
+}
+
+// SetResourceGroupsController is only used in test.
+func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroupsController) {
+	do.resourceGroupsController = controller
 }
 
 // SetupHistoricalStatsWorker setups worker
