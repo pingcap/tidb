@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 const maxColumnNameSize = 256
@@ -52,7 +53,7 @@ func (column *ColumnInfo) dump(buffer []byte, d *resultEncoder, withDefault bool
 	if d == nil {
 		d = newResultEncoder(charset.CharsetUTF8MB4)
 	}
-	nameDump, orgnameDump := []byte(column.Name), []byte(column.OrgName)
+	nameDump, orgnameDump := hack.Slice(column.Name), hack.Slice(column.OrgName)
 	if len(nameDump) > maxColumnNameSize {
 		nameDump = nameDump[0:maxColumnNameSize]
 	}
@@ -60,9 +61,9 @@ func (column *ColumnInfo) dump(buffer []byte, d *resultEncoder, withDefault bool
 		orgnameDump = orgnameDump[0:maxColumnNameSize]
 	}
 	buffer = dumpLengthEncodedString(buffer, []byte("def"))
-	buffer = dumpLengthEncodedString(buffer, d.encodeMeta([]byte(column.Schema)))
-	buffer = dumpLengthEncodedString(buffer, d.encodeMeta([]byte(column.Table)))
-	buffer = dumpLengthEncodedString(buffer, d.encodeMeta([]byte(column.OrgTable)))
+	buffer = dumpLengthEncodedString(buffer, d.encodeMeta(hack.Slice(column.Schema)))
+	buffer = dumpLengthEncodedString(buffer, d.encodeMeta(hack.Slice(column.Table)))
+	buffer = dumpLengthEncodedString(buffer, d.encodeMeta(hack.Slice(column.OrgTable)))
 	buffer = dumpLengthEncodedString(buffer, d.encodeMeta(nameDump))
 	buffer = dumpLengthEncodedString(buffer, d.encodeMeta(orgnameDump))
 

@@ -63,3 +63,17 @@ func TestMutable(t *testing.T) {
 		t.Fatal("test mutable string fail")
 	}
 }
+
+func BenchmarkStringToSliceWithHack(b *testing.B) {
+	s := "name"
+	for i := 0; i < b.N; i++ {
+		Slice(s)
+	}
+}
+
+func BenchmarkStringToSliceWithCommon(b *testing.B) {
+	s := "name"
+	for i := 0; i < b.N; i++ {
+		var _ = []byte(s)
+	}
+}
