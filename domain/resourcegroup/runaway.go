@@ -38,10 +38,13 @@ const (
 	maxWatchRecordChannelSize = 1024
 )
 
+// RunawayMatchType is used to indicates whether qurey was interrupted by runaway identification or quarantine watch.
 type RunawayMatchType uint
 
 const (
+	// RunawayMatchType shows quarantine watch.
 	RunawayMatchTypeWatch RunawayMatchType = iota
+	// RunawayMatchTypeIdentify shows identification.
 	RunawayMatchTypeIdentify
 )
 
@@ -56,6 +59,7 @@ func (t RunawayMatchType) String() string {
 	}
 }
 
+// RunawayRecord is used to save records which will be insert into mysql.runaway_queries.
 type RunawayRecord struct {
 	ResourceGroupName string
 	Time              time.Time
@@ -66,6 +70,7 @@ type RunawayRecord struct {
 	From              string
 }
 
+// QuarantineRecord is used to save records which will be insert into mysql.runaway_queries.quarantined_watch.
 type QuarantineRecord struct {
 	ResourceGroupName string
 	StartTime         time.Time
