@@ -36,7 +36,7 @@ type CoordinatorUniqueID struct {
 type MPPCoordinatorManager struct {
 	mu             sync.Mutex
 	serverOn       bool
-	serverAddr     string
+	serverAddr     string // empty if server is off
 	coordinatorMap map[CoordinatorUniqueID]kv.MppCoordinator
 }
 

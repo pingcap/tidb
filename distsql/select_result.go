@@ -514,8 +514,8 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
-// FillDummySummaryForMppTasks fills dummy execution summaries for mpp tasks which lack summaries
-func FillDummySummaryForMppTasks(sctx *stmtctx.StatementContext, callee string, storeTypeName string, allPlanIDs []int, recordedPlanIDs map[int]int) {
+// FillDummySummariesForMppTasks fills dummy execution summaries for mpp tasks which lack summaries
+func FillDummySummariesForMppTasks(sctx *stmtctx.StatementContext, callee string, storeTypeName string, allPlanIDs []int, recordedPlanIDs map[int]int) {
 	num := uint64(0)
 	dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
 	for _, planID := range allPlanIDs {
@@ -535,7 +535,7 @@ func recordExecutionSummariesForMppTasks(sctx *stmtctx.StatementContext, executi
 				RecordOneCopTask(-1, storeTypeName, callee, detail)] = 0
 		}
 	}
-	FillDummySummaryForMppTasks(sctx, callee, storeTypeName, allPlanIDs, recordedPlanIDs)
+	FillDummySummariesForMppTasks(sctx, callee, storeTypeName, allPlanIDs, recordedPlanIDs)
 }
 
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) {

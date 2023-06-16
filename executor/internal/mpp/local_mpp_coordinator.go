@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	//"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -66,7 +65,7 @@ func (*mppResponse) GetStartKey() kv.Key {
 	return nil
 }
 
-// GetExecDetails is unavailable currently.
+// GetCopRuntimeStats is unavailable currently.
 func (m *mppResponse) GetCopRuntimeStats() *copr.CopRuntimeStats {
 	return m.detail
 }
@@ -113,7 +112,7 @@ type localMppCoordinator struct {
 
 	respChan chan *mppResponse
 
-	reportStatusCh chan struct{}
+	reportStatusCh chan struct{} // used to notify inside coordinator that all reports has been received
 
 	cancelFunc context.CancelFunc
 
@@ -538,7 +537,7 @@ func (c *localMppCoordinator) handleAllReports() {
 					}
 				}
 			}
-			distsql.FillDummySummaryForMppTasks(c.sessionCtx.GetSessionVars().StmtCtx, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
+			distsql.FillDummySummariesForMppTasks(c.sessionCtx.GetSessionVars().StmtCtx, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
 		case <-time.After(time.Duration(timeoutInSec) * time.Second):
 			logutil.BgLogger().Warn(fmt.Sprintf("Not received all reports within %d seconds", timeoutInSec),
 				zap.Uint64("txnStartTS", c.startTS),
@@ -565,6 +564,7 @@ func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, res
 	if response.Error != nil {
 		c.mu.Lock()
 		defer c.mu.Unlock()
+		// firstErrMsg is only used when already received error response from root tasks, avoid false error messages caused by cancel-by-limit
 		if len(c.firstErrMsg) > 0 {
 			err = errors.Errorf("other error for mpp stream: %s", c.firstErrMsg)
 		} else {
@@ -627,7 +627,6 @@ func (c *localMppCoordinator) nextImpl(ctx context.Context) (resp *mppResponse, 
 func (c *localMppCoordinator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	resp, ok, closed, err := c.nextImpl(ctx)
 	if err != nil {
-		// Kill path, no need and not easy to wait and collect execution summaries
 		return nil, errors.Trace(err)
 	}
 	if !ok || closed {
@@ -640,7 +639,6 @@ func (c *localMppCoordinator) Next(ctx context.Context) (kv.ResultSubset, error)
 
 	err = c.sessionCtx.GetMPPClient().CheckVisibility(c.startTS)
 	if err != nil {
-		// Data invisibility error, no need and not easy to wait and collect execution summaries
 		return nil, errors.Trace(derr.ErrQueryInterrupted)
 	}
 	return resp, nil
