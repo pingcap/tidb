@@ -883,6 +883,12 @@ func (s *mockGCSSuite) TestImportMode() {
 		return nil
 	}).Times(1)
 	s.tk.MustExec("truncate table load_data.import_mode;")
+
+	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s' WITH disable_tikv_import_mode`, gcsEndpoint)
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
+	s.tk.MustExec("truncate table load_data.import_mode;")
+
 	// wait ToImportMode called
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/waitBeforeSortChunk", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/errorWhenSortChunk", "return(true)")

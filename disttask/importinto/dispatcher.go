@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/atomic"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -128,6 +127,11 @@ type flowHandle struct {
 	lastSwitchTime atomic.Time
 	// taskInfoMap is a map from taskID to taskInfo
 	taskInfoMap sync.Map
+
+	// currTaskID is the taskID of the current running task.
+	// It may be changed when we switch to a new task or switch to a new owner.
+	currTaskID            atomic.Int64
+	disableTiKVImportMode atomic.Bool
 }
 
 var _ dispatcher.TaskFlowHandle = (*flowHandle)(nil)
@@ -142,6 +146,11 @@ func (h *flowHandle) OnTicker(ctx context.Context, task *proto.Task) {
 }
 
 func (h *flowHandle) switchTiKVMode(ctx context.Context, task *proto.Task) {
+	h.updateCurrentTask(task)
+	if h.disableTiKVImportMode.Load() {
+		return
+	}
+
 	if time.Since(h.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
 		return
 	}
@@ -306,7 +315,12 @@ func (*flowHandle) IsRetryableErr(error) bool {
 	return false
 }
 
-func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logger) {
+func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
+	h.updateCurrentTask(task)
+	if h.disableTiKVImportMode.Load() {
+		return
+	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -319,6 +333,15 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 
 	// clear it, so next task can switch TiKV mode again.
 	h.lastSwitchTime.Store(time.Time{})
+}
+
+func (h *flowHandle) updateCurrentTask(task *proto.Task) {
+	if h.currTaskID.Swap(task.ID) != task.ID {
+		taskMeta := &TaskMeta{}
+		if err := json.Unmarshal(task.Meta, taskMeta); err == nil {
+			h.disableTiKVImportMode.Store(taskMeta.Plan.DisableTiKVImportMode)
+		}
+	}
 }
 
 // preProcess does the pre-processing for the task.
@@ -368,7 +391,7 @@ func verifyChecksum(ctx context.Context, controller *importer.LoadDataController
 	return controller.VerifyChecksum(ctx, localChecksum)
 }
 
-// nolint:unused
+// nolint:deadcode
 func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tblInfo := taskMeta.Plan.TableInfo
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, tblInfo.Name.L)
@@ -395,6 +418,7 @@ func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMet
 	return nil
 }
 
+// nolint:deadcode
 func createTableIndexes(ctx context.Context, executor storage.SessionExecutor, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
 	singleSQL, multiSQLs := common.BuildAddIndexSQL(tableName, taskMeta.Plan.TableInfo, taskMeta.Plan.DesiredTableInfo)
@@ -577,7 +601,7 @@ func job2Step(ctx context.Context, taskMeta *TaskMeta, step string) error {
 
 func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger) error {
-	h.switchTiKV2NormalMode(ctx, logger)
+	h.switchTiKV2NormalMode(ctx, gTask, logger)
 	h.unregisterTask(ctx, gTask)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	return handle.WithNewSession(func(se sessionctx.Context) error {
@@ -588,7 +612,7 @@ func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle
 
 func (h *flowHandle) failJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
-	h.switchTiKV2NormalMode(ctx, logger)
+	h.switchTiKV2NormalMode(ctx, gTask, logger)
 	h.unregisterTask(ctx, gTask)
 	return handle.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
@@ -611,11 +635,12 @@ func rollback(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Ta
 
 	logger.Info("rollback", zap.Any("task_meta", taskMeta))
 
-	// create table indexes even if the rollback is failed.
-	defer func() {
-		err2 := createTableIndexes(ctx, handle, taskMeta, logger)
-		err = multierr.Append(err, err2)
-	}()
+	//	// TODO: create table indexes depends on the option.
+	//	// create table indexes even if the rollback is failed.
+	//	defer func() {
+	//		err2 := createTableIndexes(ctx, handle, taskMeta, logger)
+	//		err = multierr.Append(err, err2)
+	//	}()
 
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
 	// truncate the table
