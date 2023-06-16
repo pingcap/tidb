@@ -491,6 +491,28 @@ func (p *cteProducer) limitDone(tbl cteutil.Storage) bool {
 	return p.hasLimit && uint64(tbl.NumRows()) >= p.limitEnd
 }
 
+func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentMemTracker *memory.Tracker,
+	parentDiskTracker *disk.Tracker) (actionSpill *chunk.SpillDiskAction) {
+	memTracker := tbl.GetMemTracker()
+	memTracker.SetLabel(memory.LabelForCTEStorage)
+	memTracker.AttachTo(parentMemTracker)
+
+	diskTracker := tbl.GetDiskTracker()
+	diskTracker.SetLabel(memory.LabelForCTEStorage)
+	diskTracker.AttachTo(parentDiskTracker)
+
+	if variable.EnableTmpStorageOnOOM.Load() {
+		actionSpill = tbl.ActionSpill()
+		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
+			if val.(bool) {
+				actionSpill = tbl.(*cteutil.StorageRC).ActionSpillForTest()
+			}
+		})
+		ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
+	}
+	return actionSpill
+}
+
 func (p *cteProducer) tryDedupAndAdd(chk *chunk.Chunk,
 	storage cteutil.Storage,
 	hashTbl baseHashTable) (res *chunk.Chunk, err error) {
@@ -634,26 +656,4 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 		}
 	}
 	return false, nil
-}
-
-func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentMemTracker *memory.Tracker,
-	parentDiskTracker *disk.Tracker) (actionSpill *chunk.SpillDiskAction) {
-	memTracker := tbl.GetMemTracker()
-	memTracker.SetLabel(memory.LabelForCTEStorage)
-	memTracker.AttachTo(parentMemTracker)
-
-	diskTracker := tbl.GetDiskTracker()
-	diskTracker.SetLabel(memory.LabelForCTEStorage)
-	diskTracker.AttachTo(parentDiskTracker)
-
-	if variable.EnableTmpStorageOnOOM.Load() {
-		actionSpill = tbl.ActionSpill()
-		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
-			if val.(bool) {
-				actionSpill = tbl.(*cteutil.StorageRC).ActionSpillForTest()
-			}
-		})
-		ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
-	}
-	return actionSpill
 }
