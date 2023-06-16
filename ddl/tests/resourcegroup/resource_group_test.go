@@ -231,8 +231,8 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
 	tk.MustExec("create resource group rg2 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT duration '1m')")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg2'").Check(testkit.Rows("rg2 2000 MEDIUM YES EXEC_ELAPSED=50ms, ACTION=KILL, WATCH=EXACT[1m0s]"))
-	tk.MustQuery("select  /*+ resource_group(rg1) */ * from t").Check(testkit.Rows("1"))
-	tk.MustQuery("select  /*+ resource_group(rg2) */ * from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ resource_group(rg1) */ * from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select + resource_group(rg2) */ * from t").Check(testkit.Rows("1"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/sleepCoprRequest", fmt.Sprintf("return(%d)", 60)))
 	defer func() {
@@ -247,9 +247,9 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.MustExec("alter resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='100ms' ACTION=DRYRUN)")
 	tk.MustQuery("select /*+ resource_group(rg1) */ * from t")
 
-	err = tk.QueryToErr("select  /*+ resource_group(rg2) */ * from t")
+	err = tk.QueryToErr("select /*+ resource_group(rg2) */ * from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
-	tk.MustGetErrCode("select  /*+ resource_group(rg2) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
+	tk.MustGetErrCode("select /*+ resource_group(rg2) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
 }
 
 func TestResourceGroupHint(t *testing.T) {
