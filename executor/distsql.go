@@ -630,14 +630,14 @@ func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) bool {
 		cols := e.idxPlans[0].Schema().Columns
 		outputOffsets := e.dagPB.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
-		needPartitionHandle = e.index.Global || (e.partitionTableMode && e.keepOrder)
+		needPartitionHandle = e.index.Global || (e.partitionTableMode && len(e.byItems) > 0)
 		ret = col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
 	} else {
 		cols := e.tblPlans[0].Schema().Columns
 		outputOffsets := e.tableRequest.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
 
-		needPartitionHandle = e.index.Global || (e.partitionTableMode && e.keepOrder)
+		needPartitionHandle = e.index.Global || (e.partitionTableMode && len(e.byItems) > 0)
 		// no ExtraPidColID here, because tableScan shouldn't contain them.
 		ret = col.ID == model.ExtraPhysTblID
 	}
