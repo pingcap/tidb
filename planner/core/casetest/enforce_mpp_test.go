@@ -43,7 +43,7 @@ func TestEnforceMPP(t *testing.T) {
 	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
-	tk.MustExec("set @@session.tidb_ban_tiflash_cop=OFF")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -399,7 +399,7 @@ func TestMPPSkewedGroupDistinctRewrite(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b bigint not null, c bigint, d date, e varchar(20))")
 	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
-	tk.MustExec("set @@session.tidb_ban_tiflash_cop=OFF")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())

@@ -371,7 +371,7 @@ func TestAggPushDownEngine(t *testing.T) {
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
-	tk.MustExec("set @@session.tidb_ban_tiflash_cop=OFF")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -4174,7 +4174,7 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 	tk.MustExec("insert into t values(null);")
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
-	tk.MustExec("set @@session.tidb_ban_tiflash_cop=OFF")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -5182,7 +5182,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 	tk.MustExec("CREATE TABLE t (c1 int DEFAULT 0, c2 int GENERATED ALWAYS AS (abs(c1)) VIRTUAL);")
 	tk.MustExec("insert into t(c1) values(1), (-1), (2), (-2), (99), (-99);")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tikv'")
-	tk.MustExec("set @@session.tidb_ban_tiflash_cop=OFF")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// TopN to tikv.
 	rows := [][]interface{}{

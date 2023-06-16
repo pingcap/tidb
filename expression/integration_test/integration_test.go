@@ -3796,7 +3796,7 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int , b date)")
-	tk.MustExec("set @@session.tidb_ban_tiflash_cop=OFF")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())

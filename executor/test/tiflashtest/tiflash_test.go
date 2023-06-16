@@ -93,7 +93,7 @@ func TestReadPartitionTable(t *testing.T) {
 	tk.MustExec("insert into t values(2,0)")
 	tk.MustExec("insert into t values(3,0)")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
-	tk.MustExec("set @@session.tidb_ban_tiflash_cop=OFF")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
@@ -1180,7 +1180,7 @@ func TestTiflashPartitionTableScan(t *testing.T) {
 	tk.MustExec("insert into t values(1),(11),(21),(31),(41);")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
-	tk.MustExec("set @@session.tidb_ban_tiflash_cop=OFF")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 	// MPP
 	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
 	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))

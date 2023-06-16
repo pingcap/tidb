@@ -1171,7 +1171,7 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
-	tk.MustExec("set @@session.tidb_ban_tiflash_cop=OFF")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// create virtual tiflash replica.
 	is := dom.InfoSchema()
