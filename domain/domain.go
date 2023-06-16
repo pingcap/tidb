@@ -1352,7 +1352,8 @@ func (do *Domain) SetOnClose(onClose func()) {
 func (do *Domain) initResourceGroupsController(ctx context.Context, pdCli pd.Client) error {
 	pdClient := do.GetPDClient()
 	if pdClient == nil {
-		return errors.New("cannot setup up resource controller, should use tikv storage")
+		log.Warn("cannot setup up resource controller, should use tikv storage")
+		return nil
 	}
 
 	control, err := rmclient.NewResourceGroupController(ctx, do.ServerID(), pdClient, nil, rmclient.WithMaxWaitDuration(time.Second*30))

@@ -608,7 +608,7 @@ const (
 	CreateRunawayTable = `CREATE TABLE IF NOT EXISTS mysql.runaway_queries (
 		resource_group_name varchar(32) not null,
 		time TIMESTAMP NOT NULL,
-		match ENUM('identify', 'watch') NOT NULL,
+		match_type ENUM('identify', 'watch') NOT NULL,
 		action varchar(12) NOT NULL,
 		original_sql TEXT NOT NULL,
 		plan_digest TEXT NOT NULL,
