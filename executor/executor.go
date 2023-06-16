@@ -2445,11 +2445,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	}
 
 	se, err := w.e.base().getSysSession()
-	se.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	if err != nil {
 		trySaveErr(err)
 		return
 	}
+	se.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	defer func() {
 		se.GetSessionVars().OptimizerUseInvisibleIndexes = false
 		w.e.base().releaseSysSession(ctx, se)
@@ -2457,7 +2457,6 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 
 	var pkCols []string
 	var pkTypes []*types.FieldType
-	var primaryIdx *model.IndexInfo
 	switch {
 	case w.e.table.Meta().IsCommonHandle:
 		pkColsInfo := w.e.table.Meta().GetPrimaryKey().Columns
@@ -2465,10 +2464,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 			colStr := colInfo.Name.O
 			pkCols = append(pkCols, colStr)
 		}
-		primaryIdx = tables.FindPrimaryIndex(w.table.Meta())
 	case w.e.table.Meta().PKIsHandle:
 		pkCols = append(pkCols, w.e.table.Meta().GetPkName().O)
-		primaryIdx = tables.FindPrimaryIndex(w.table.Meta())
 	default: // support decoding _tidb_rowid.
 		pkCols = append(pkCols, model.ExtraHandleName.O)
 	}
@@ -2656,7 +2653,6 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 				handleDatum = append(handleDatum, row.GetDatum(i, t))
 			}
 			if w.table.Meta().IsCommonHandle {
-				tablecodec.TruncateIndexValues(w.table.Meta(), primaryIdx, handleDatum)
 				handleBytes, err := codec.EncodeKey(w.sctx.GetSessionVars().StmtCtx, nil, handleDatum...)
 				if err != nil {
 					return nil, err
