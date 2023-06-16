@@ -21,12 +21,14 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -34,9 +36,8 @@ import (
 func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{}
 	plan.initDefaultOptions()
-	require.Equal(t, config.ByteSize(50<<30), plan.DiskQuota)
+	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
-	require.Equal(t, config.OpLevelOptional, plan.Analyze)
 	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt)
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
 	require.Equal(t, false, plan.SplitFile)
@@ -81,7 +82,6 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		skipRowsOption+"=3, "+
 		diskQuotaOption+"='100gib', "+
 		checksumTableOption+"='optional', "+
-		analyzeTableOption+"='required', "+
 		threadOption+"=100000, "+
 		maxWriteSpeedOption+"='200mib', "+
 		splitFileOption+", "+
@@ -100,7 +100,6 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, uint64(3), plan.IgnoreLines, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
-	require.Equal(t, config.OpLevelRequired, plan.Analyze, sql)
 	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
 	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
 	require.True(t, plan.SplitFile, sql)
@@ -115,9 +114,20 @@ func TestAdjustOptions(t *testing.T) {
 		MaxWriteSpeed: 10,
 	}
 	plan.adjustOptions()
-	require.Equal(t, minDiskQuota, plan.DiskQuota)
 	require.Equal(t, int64(runtime.NumCPU()), plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
+}
+
+func TestAdjustDiskQuota(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/common/GetStorageSize", "return(2048)")
+	require.NoError(t, err)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/GetStorageSize")
+	}()
+	d := t.TempDir()
+	require.Equal(t, int64(1638), adjustDiskQuota(0, d, logutil.BgLogger()))
+	require.Equal(t, int64(1), adjustDiskQuota(1, d, logutil.BgLogger()))
+	require.Equal(t, int64(1638), adjustDiskQuota(2000, d, logutil.BgLogger()))
 }
 
 func TestGetMsgFromBRError(t *testing.T) {

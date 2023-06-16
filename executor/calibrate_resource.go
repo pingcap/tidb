@@ -23,6 +23,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 var (
@@ -76,20 +76,7 @@ var (
 			writeReqCount:    3550,
 		},
 	}
-
-	// resourceGroupCtl is the ResourceGroupController in pd client
-	resourceGroupCtl *rmclient.ResourceGroupsController
 )
-
-// SetResourceGroupController set a inited ResourceGroupsController for calibrate usage.
-func SetResourceGroupController(rc *rmclient.ResourceGroupsController) {
-	resourceGroupCtl = rc
-}
-
-// GetResourceGroupController returns the ResourceGroupsController.
-func GetResourceGroupController() *rmclient.ResourceGroupsController {
-	return resourceGroupCtl
-}
 
 // the resource cost rate of a specified workload per 1 tikv cpu.
 type baseResourceCost struct {
@@ -258,21 +245,20 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	if len(quotas) < 5 {
 		return errors.Errorf("There are too few metrics points available in selected time window")
 	}
-	if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
-		sort.Slice(quotas, func(i, j int) bool {
-			return quotas[i] > quotas[j]
-		})
-		lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
-		upperBound := len(quotas) - lowerBound
-		sum := 0.
-		for i := lowerBound; i < upperBound; i++ {
-			sum += quotas[i]
-		}
-		quota := sum / float64(upperBound-lowerBound)
-		req.AppendUint64(0, uint64(quota))
-	} else {
+	if float64(len(quotas))/float64(len(quotas)+lowCount) <= percentOfPass {
 		return errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
 	}
+	sort.Slice(quotas, func(i, j int) bool {
+		return quotas[i] > quotas[j]
+	})
+	lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
+	upperBound := len(quotas) - lowerBound
+	sum := 0.
+	for i := lowerBound; i < upperBound; i++ {
+		sum += quotas[i]
+	}
+	quota := sum / float64(upperBound-lowerBound)
+	req.AppendUint64(0, uint64(quota))
 	return nil
 }
 
@@ -280,6 +266,7 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 	if !variable.EnableResourceControl.Load() {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
+	resourceGroupCtl := domain.GetDomain(e.ctx).ResourceGroupsController()
 	// first fetch the ru settings config.
 	if resourceGroupCtl == nil {
 		return errors.New("resource group controller is not initialized")

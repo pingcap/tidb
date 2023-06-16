@@ -890,6 +890,8 @@ const (
 	ErrWindowNoGroupOrderUnused                              = 3597
 	ErrWindowExplainJSON                                     = 3598
 	ErrWindowFunctionIgnoresFrame                            = 3599
+	ErrInvalidNumberOfArgs                                   = 3601
+	ErrFieldInGroupingNotGroupBy                             = 3602
 	ErrIllegalPrivilegeLevel                                 = 3619
 	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
@@ -1136,6 +1138,7 @@ const (
 	ErrResourceGroupSupportDisabled   = 8250
 	ErrResourceGroupConfigUnavailable = 8251
 	ErrResourceGroupThrottled         = 8252
+	ErrResourceGroupQueryRunaway      = 8253
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

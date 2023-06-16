@@ -844,12 +844,11 @@ func (e *ShowDDLJobQueriesWithRangeExec) Next(ctx context.Context, req *chunk.Ch
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		// i is make true to be >= int(e.offset)
-		if i < int(e.offset+e.limit) {
-			req.AppendString(0, strconv.FormatInt(e.jobs[i].ID, 10))
-			req.AppendString(1, e.jobs[i].Query)
-		} else {
+		if i >= int(e.offset+e.limit) {
 			break
 		}
+		req.AppendString(0, strconv.FormatInt(e.jobs[i].ID, 10))
+		req.AppendString(1, e.jobs[i].Query)
 	}
 	e.cursor += numCurBatch
 	return nil
@@ -2170,6 +2169,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InExplainStmt = true
 		sc.InVerboseExplain = strings.ToLower(explainForStmt.Format) == types.ExplainFormatVerbose
 	}
+
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
 	// IgnoreErr and StrictSQLMode) to avoid setting the same bool variables and
@@ -2293,6 +2293,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DurationWaitTS = 0
 	vars.CurrInsertBatchExtraCols = nil
 	vars.CurrInsertValues = chunk.Row{}
+
 	return
 }
 

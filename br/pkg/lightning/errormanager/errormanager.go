@@ -133,7 +133,7 @@ const (
 	insertIntoConflictErrorV2 = `
 		INSERT INTO %s.` + conflictErrorV2TableName + `
 		(task_id, table_name, path, offset, error, row_id, row_data)
-		VALUES (?, ?, ?, ?, ?, ?, ?);	
+		VALUES (?, ?, ?, ?, ?, ?, ?);
 	`
 )
 
@@ -154,6 +154,11 @@ type ErrorManager struct {
 // TypeErrorsRemain returns the number of type errors that can be recorded.
 func (em *ErrorManager) TypeErrorsRemain() int64 {
 	return em.remainingError.Type.Load()
+}
+
+// RemainRecord returns the number of errors that need be recorded.
+func (em *ErrorManager) RemainRecord() int64 {
+	return em.maxErrRecords.Load()
 }
 
 // New creates a new error manager.

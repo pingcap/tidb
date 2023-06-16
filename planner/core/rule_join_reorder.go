@@ -398,17 +398,47 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 	var leadingJoinGroup []LogicalPlan
 	leftJoinGroup := make([]LogicalPlan, len(curJoinGroup))
 	copy(leftJoinGroup, curJoinGroup)
+	queryBlockNames := *(s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load())
 	for _, hintTbl := range hintInfo.leadingJoinOrder {
+		match := false
 		for i, joinGroup := range leftJoinGroup {
 			tableAlias := extractTableAlias(joinGroup, joinGroup.SelectBlockOffset())
 			if tableAlias == nil {
 				continue
 			}
 			if hintTbl.dbName.L == tableAlias.dbName.L && hintTbl.tblName.L == tableAlias.tblName.L && hintTbl.selectOffset == tableAlias.selectOffset {
+				match = true
 				leadingJoinGroup = append(leadingJoinGroup, joinGroup)
 				leftJoinGroup = append(leftJoinGroup[:i], leftJoinGroup[i+1:]...)
 				break
 			}
+		}
+		if match {
+			continue
+		}
+
+		// consider query block alias: select /*+ leading(t1, t2) */ * from (select ...) t1, t2 ...
+		groupIdx := -1
+		for i, joinGroup := range leftJoinGroup {
+			blockOffset := joinGroup.SelectBlockOffset()
+			if blockOffset > 1 && blockOffset < len(queryBlockNames) {
+				blockName := queryBlockNames[blockOffset]
+				if hintTbl.dbName.L == blockName.DBName.L && hintTbl.tblName.L == blockName.TableName.L {
+					// this can happen when multiple join groups are from the same block, for example:
+					//   select /*+ leading(tx) */ * from (select * from t1, t2 ...) tx, ...
+					// `tx` is split to 2 join groups `t1` and `t2`, and they have the same block offset.
+					// TODO: currently we skip this case for simplification, we can support it in the future.
+					if groupIdx != -1 {
+						groupIdx = -1
+						break
+					}
+					groupIdx = i
+				}
+			}
+		}
+		if groupIdx != -1 {
+			leadingJoinGroup = append(leadingJoinGroup, leftJoinGroup[groupIdx])
+			leftJoinGroup = append(leftJoinGroup[:groupIdx], leftJoinGroup[groupIdx+1:]...)
 		}
 	}
 	if len(leadingJoinGroup) != len(hintInfo.leadingJoinOrder) || leadingJoinGroup == nil {
@@ -638,7 +668,7 @@ func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt 
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(fmt.Sprintf("[%s, cost:%v]", join, tracer.cost[join]))
+			fmt.Fprintf(buffer, "[%s, cost:%v]", join, tracer.cost[join])
 		}
 		buffer.WriteString("]")
 		return buffer.String()
