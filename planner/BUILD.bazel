@@ -23,6 +23,7 @@ go_library(
         "//sessiontxn",
         "//types",
         "//util/hint",
+        "//util/intest",
         "//util/logutil",
         "//util/parser",
         "//util/topsql",

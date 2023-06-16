@@ -112,6 +112,7 @@ go_library(
         "//util/sqlexec",
         "//util/stringutil",
         "//util/vitess",
+        "//util/zeropool",
         "@com_github_gogo_protobuf//proto",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",

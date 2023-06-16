@@ -1514,7 +1514,10 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
-			err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.BlockEncryptionMode, testCase.aesModes)
+			if testCase.aesModes == "" {
+				testCase.aesModes = "aes-128-ecb"
+			}
+			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
 			require.NoError(t, err)
 			if funcName == ast.CurrentUser || funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
@@ -1730,6 +1733,9 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
+			if testCase.aesModes == "" {
+				testCase.aesModes = "aes-128-ecb"
+			}
 			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
 			if err != nil {
 				panic(err)

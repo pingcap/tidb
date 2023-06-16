@@ -69,36 +69,32 @@ func TestGetInstance(t *testing.T) {
 	// test no server
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
-	instanceID, _ := dispatcher.GetEligibleInstance(serverNodes, 0)
-	require.Lenf(t, instanceID, 0, "instanceID:%d", instanceID)
+	_, err := dispatcher.GenerateSchedulerNodes(ctx)
 	require.EqualError(t, err, "not found instance")
 	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, 1)
-	require.Lenf(t, instanceIDs, 0, "instanceID:%d", instanceID)
+	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs when there's no subtask")
 	require.NoError(t, err)
 
 	// test 2 servers
 	// server ids: uuid0, uuid1
 	// subtask instance ids: nil
 	uuids := []string{"ddl_id_1", "ddl_id_2"}
+	serverIDs := []string{"10.123.124.10:32457", "[ABCD:EF01:2345:6789:ABCD:EF01:2345:6789]:65535"}
 	mockedAllServerInfos = map[string]*infosync.ServerInfo{
 		uuids[0]: {
-			ID: uuids[0],
+			ID:   uuids[0],
+			IP:   "10.123.124.10",
+			Port: 32457,
 		},
 		uuids[1]: {
-			ID: uuids[1],
+			ID:   uuids[1],
+			IP:   "ABCD:EF01:2345:6789:ABCD:EF01:2345:6789",
+			Port: 65535,
 		},
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	serverNodes, err = dispatcher.GenerateSchedulerNodes(ctx)
-	require.NoError(t, err)
-	instanceID, err = dispatcher.GetEligibleInstance(serverNodes, 0)
-	require.NoError(t, err)
-	if instanceID != uuids[0] && instanceID != uuids[1] {
-		require.FailNowf(t, "expected uuids:%d,%d, actual uuid:%d", uuids[0], uuids[1], instanceID)
-	}
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, 1)
-	require.Lenf(t, instanceIDs, 0, "instanceID:%d", instanceID)
+	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs")
 	require.NoError(t, err)
 
 	// server ids: uuid0, uuid1
@@ -107,26 +103,26 @@ func TestGetInstance(t *testing.T) {
 	subtask := &proto.Subtask{
 		Type:        proto.TaskTypeExample,
 		TaskID:      gTaskID,
-		SchedulerID: uuids[1],
+		SchedulerID: serverIDs[1],
 	}
 	err = mgr.AddNewSubTask(gTaskID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
-	require.Equal(t, []string{uuids[1]}, instanceIDs)
+	require.Equal(t, []string{serverIDs[1]}, instanceIDs)
 	// server ids: uuid0, uuid1
 	// subtask instance ids: uuid0, uuid1
 	subtask = &proto.Subtask{
 		Type:        proto.TaskTypeExample,
 		TaskID:      gTaskID,
-		SchedulerID: uuids[0],
+		SchedulerID: serverIDs[0],
 	}
 	err = mgr.AddNewSubTask(gTaskID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
 	require.NoError(t, err)
-	require.Len(t, instanceIDs, len(uuids))
-	require.ElementsMatch(t, instanceIDs, uuids)
+	require.Len(t, instanceIDs, len(serverIDs))
+	require.ElementsMatch(t, instanceIDs, serverIDs)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo"))
 }
@@ -290,7 +286,11 @@ func TestParallelCancelFlow(t *testing.T) {
 
 const taskTypeExample = "task_example"
 
-type NumberExampleHandle struct {
+type NumberExampleHandle struct{}
+
+var _ dispatcher.TaskFlowHandle = (*NumberExampleHandle)(nil)
+
+func (NumberExampleHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
 func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
@@ -316,4 +316,12 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
+}
+
+func (NumberExampleHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+	return dispatcher.GenerateSchedulerNodes(ctx)
+}
+
+func (NumberExampleHandle) IsRetryableErr(error) bool {
+	return true
 }

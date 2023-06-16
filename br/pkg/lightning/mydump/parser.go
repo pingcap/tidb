@@ -22,7 +22,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/zeropool"
 	"github.com/spkg/bom"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -48,7 +48,7 @@ type blockParser struct {
 	// The list of column names of the last INSERT statement.
 	columns []string
 
-	rowPool *sync.Pool
+	rowPool *zeropool.Pool[[]types.Datum]
 	lastRow Row
 	// Current file offset.
 	pos int64
@@ -69,18 +69,17 @@ func makeBlockParser(
 	metrics *metric.Metrics,
 	logger log.Logger,
 ) blockParser {
+	pool := zeropool.New[[]types.Datum](func() []types.Datum {
+		return make([]types.Datum, 0, 16)
+	})
 	return blockParser{
 		reader:    MakePooledReader(reader, ioWorkers),
 		blockBuf:  make([]byte, blockBufSize*config.BufferSizeScale),
 		remainBuf: &bytes.Buffer{},
 		appendBuf: &bytes.Buffer{},
 		Logger:    logger,
-		rowPool: &sync.Pool{
-			New: func() interface{} {
-				return make([]types.Datum, 0, 16)
-			},
-		},
-		metrics: metrics,
+		rowPool:   &pool,
+		metrics:   metrics,
 	}
 }
 
@@ -584,17 +583,12 @@ func (parser *blockParser) LastRow() Row {
 func (parser *blockParser) RecycleRow(row Row) {
 	// We need farther benchmarking to make sure whether send a pointer
 	// (instead of a slice) here can improve performance.
-	//nolint:staticcheck
 	parser.rowPool.Put(row.Row[:0])
 }
 
 // acquireDatumSlice allocates an empty []types.Datum
 func (parser *blockParser) acquireDatumSlice() []types.Datum {
-	datum, ok := parser.rowPool.Get().([]types.Datum)
-	if !ok {
-		return []types.Datum{}
-	}
-	return datum
+	return parser.rowPool.Get()
 }
 
 // ReadChunks parses the entire file and splits it into continuous chunks of

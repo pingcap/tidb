@@ -1894,34 +1894,33 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 	var partitionColName model.CIStr
 	switch pi.Type {
 	case model.PartitionTypeHash:
-		if col, ok := partitionExpr.OrigExpr.(*ast.ColumnNameExpr); ok {
-			partitionColName = col.Name.Name
-		} else {
+		col, ok := partitionExpr.OrigExpr.(*ast.ColumnNameExpr)
+		if !ok {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
+		partitionColName = col.Name.Name
 	case model.PartitionTypeKey:
-		if len(partitionExpr.KeyPartCols) == 1 {
-			colInfo := findColNameByColID(tbl.Columns, partitionExpr.KeyPartCols[0])
-			partitionColName = colInfo.Name
-		} else {
+		if len(partitionExpr.KeyPartCols) != 1 {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
+		colInfo := findColNameByColID(tbl.Columns, partitionExpr.KeyPartCols[0])
+		partitionColName = colInfo.Name
 	case model.PartitionTypeRange:
 		// left range columns partition for future development
-		if col, ok := partitionExpr.Expr.(*expression.Column); ok && len(pi.Columns) == 0 {
-			colInfo := findColNameByColID(tbl.Columns, col)
-			partitionColName = colInfo.Name
-		} else {
+		col, ok := partitionExpr.Expr.(*expression.Column)
+		if !(ok && len(pi.Columns) == 0) {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
+		colInfo := findColNameByColID(tbl.Columns, col)
+		partitionColName = colInfo.Name
 	case model.PartitionTypeList:
 		// left list columns partition for future development
-		if locateExpr, ok := partitionExpr.ForListPruning.LocateExpr.(*expression.Column); ok && partitionExpr.ForListPruning.ColPrunes == nil {
-			colInfo := findColNameByColID(tbl.Columns, locateExpr)
-			partitionColName = colInfo.Name
-		} else {
+		locateExpr, ok := partitionExpr.ForListPruning.LocateExpr.(*expression.Column)
+		if !(ok && partitionExpr.ForListPruning.ColPrunes == nil) {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
+		colInfo := findColNameByColID(tbl.Columns, locateExpr)
+		partitionColName = colInfo.Name
 	}
 
 	return getColumnPosInIndex(idx, &partitionColName), nil

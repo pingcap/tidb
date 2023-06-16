@@ -5,6 +5,7 @@ package storage
 import (
 	"context"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -126,4 +127,31 @@ func TestWalkDirWithSoftLinkFile(t *testing.T) {
 		return errors.Errorf("find other file: %s", path)
 	})
 	require.NoError(t, err)
+}
+
+func TestWalkDirSkipSubDir(t *testing.T) {
+	tempDir := t.TempDir()
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "test1.txt"), []byte("test1"), 0o644))
+	require.NoError(t, os.MkdirAll(path.Join(tempDir, "sub"), 0o755))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "sub", "test2.txt"), []byte("test2"), 0o644))
+
+	sb, err := ParseBackend(tempDir, &BackendOptions{})
+	require.NoError(t, err)
+	store, err := Create(context.TODO(), sb, true)
+	require.NoError(t, err)
+	names := []string{"sub/test2.txt", "test1.txt"}
+	i := 0
+	require.NoError(t, store.WalkDir(context.Background(), &WalkOption{}, func(path string, size int64) error {
+		require.Equal(t, names[i], path)
+		i++
+		return nil
+	}))
+
+	names = []string{"test1.txt"}
+	i = 0
+	require.NoError(t, store.WalkDir(context.Background(), &WalkOption{SkipSubDir: true}, func(path string, size int64) error {
+		require.Equal(t, names[i], path)
+		i++
+		return nil
+	}))
 }

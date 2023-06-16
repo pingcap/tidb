@@ -82,12 +82,12 @@ func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregati
 			cols := make([]*expression.Column, 0, len(af.Args))
 			canEliminate := true
 			for _, arg := range af.Args {
-				if col, ok := arg.(*expression.Column); ok {
-					cols = append(cols, col)
-				} else {
+				col, ok := arg.(*expression.Column)
+				if !ok {
 					canEliminate = false
 					break
 				}
+				cols = append(cols, col)
 			}
 			if canEliminate {
 				distinctByUniqueKey := false

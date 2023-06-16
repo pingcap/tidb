@@ -66,6 +66,7 @@ go_library(
         "//util/sqlexec",
         "//util/table-filter",
         "@com_github_emirpasic_gods//maps/treemap",
+        "@com_github_fatih_color//:color",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_google_uuid//:uuid",
         "@com_github_opentracing_opentracing_go//:opentracing-go",

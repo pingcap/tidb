@@ -36,6 +36,7 @@ import (
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -106,6 +107,7 @@ type ownerManager struct {
 	etcdCli        *clientv3.Client
 	cancel         context.CancelFunc
 	elec           unsafe.Pointer
+	sessionLease   *atomicutil.Int64
 	wg             sync.WaitGroup
 	beOwnerHook    func()
 	campaignCancel context.CancelFunc
@@ -116,14 +118,15 @@ func NewOwnerManager(ctx context.Context, etcdCli *clientv3.Client, prompt, id, 
 	logPrefix := fmt.Sprintf("[%s] %s ownerManager %s", prompt, key, id)
 	ctx, cancelFunc := context.WithCancel(ctx)
 	return &ownerManager{
-		etcdCli:   etcdCli,
-		id:        id,
-		key:       key,
-		ctx:       ctx,
-		prompt:    prompt,
-		cancel:    cancelFunc,
-		logPrefix: logPrefix,
-		logCtx:    logutil.WithKeyValue(context.Background(), "owner info", logPrefix),
+		etcdCli:      etcdCli,
+		id:           id,
+		key:          key,
+		ctx:          ctx,
+		prompt:       prompt,
+		cancel:       cancelFunc,
+		logPrefix:    logPrefix,
+		logCtx:       logutil.WithKeyValue(context.Background(), "owner info", logPrefix),
+		sessionLease: atomicutil.NewInt64(0),
 	}
 }
 
@@ -177,6 +180,7 @@ func (m *ownerManager) CampaignOwner() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	m.sessionLease.Store(int64(session.Lease()))
 	m.wg.Add(1)
 	go m.campaignLoop(session)
 	return nil
@@ -248,6 +252,7 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 				m.revokeSession(logPrefix, leaseID)
 				return
 			}
+			m.sessionLease.Store(int64(etcdSession.Lease()))
 		case <-campaignContext.Done():
 			failpoint.Inject("MockDelOwnerKey", func(v failpoint.Value) {
 				if v.(string) == "delOwnerKeyAndNotOwner" {
@@ -392,9 +397,10 @@ func (m *ownerManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
 		}
 	})
 
+	leaseOp := clientv3.WithLease(clientv3.LeaseID(m.sessionLease.Load()))
 	resp, err := m.etcdCli.Txn(ctx).
 		If(clientv3.Compare(clientv3.ModRevision(ownerKey), "=", modRevision)).
-		Then(clientv3.OpPut(ownerKey, string(newOwnerVal))).
+		Then(clientv3.OpPut(ownerKey, string(newOwnerVal), leaseOp)).
 		Commit()
 	logutil.BgLogger().Info("set owner op value", zap.String("owner key", ownerKey), zap.ByteString("ownerID", ownerID),
 		zap.Stringer("old Op", currOp), zap.Stringer("op", op), zap.Bool("isSuc", resp.Succeeded), zap.Error(err))

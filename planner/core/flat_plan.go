@@ -200,7 +200,7 @@ func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
 	return res
 }
 
-func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperator {
+func (*FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperator {
 	// Some operators are not initialized and given an ExplainID. So their explain IDs are "_0"
 	// (when in EXPLAIN FORMAT = 'brief' it will be ""), we skip such operators.
 	// Examples: Explain, Execute
@@ -356,7 +356,10 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		// for details) to affect the row count display of the independent CTE plan tree.
 		copiedCTE := *plan
 		copiedCTE.probeParents = nil
-		f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)
+		if info.isRoot {
+			// If it's executed in TiDB, we need to record it since we don't have producer and consumer
+			f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)
+		}
 	case *Insert:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true

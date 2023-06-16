@@ -635,8 +635,9 @@ func (m *DupeDetector) buildIndexDupTasks() ([]dupTask, error) {
 			tid := tablecodec.DecodeTableID(ranges[0].StartKey)
 			for _, r := range ranges {
 				tasks = append(tasks, dupTask{
-					KeyRange: r,
-					tableID:  tid,
+					KeyRange:  r,
+					tableID:   tid,
+					indexInfo: indexInfo,
 				})
 			}
 		})
@@ -853,6 +854,7 @@ func (m *DupeDetector) processRemoteDupTask(
 	importClientFactory ImportClientFactory,
 	regionPool *utils.WorkerPool,
 ) error {
+	regionErrRetryAttempts := split.WaitRegionOnlineAttemptTimes
 	remainAttempts := maxDupCollectAttemptTimes
 	remainKeyRanges := newPendingKeyRanges(task.KeyRange)
 	for {
@@ -869,6 +871,16 @@ func (m *DupeDetector) processRemoteDupTask(
 			return errors.Trace(err)
 		}
 		if !madeProgress {
+			_, isRegionErr := errors.Cause(err).(regionError)
+			if isRegionErr && regionErrRetryAttempts > 0 {
+				regionErrRetryAttempts--
+				if regionErrRetryAttempts%10 == 0 {
+					logger.Warn("[detect-dupe] process remote dupTask encounters region error, retrying",
+						log.ShortError(err), zap.Int("remainRegionErrAttempts", regionErrRetryAttempts))
+				}
+				continue
+			}
+
 			remainAttempts--
 			if remainAttempts <= 0 {
 				logger.Error("[detect-dupe] all attempts to process the remote dupTask have failed", log.ShortError(err))

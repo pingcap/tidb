@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/stretchr/testify/require"
@@ -875,6 +877,18 @@ func TestNonPreparedPlanParameterType(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`explain format = 'plan_cache' select * from t where a='1'`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: '1' may be converted to INT`))
+}
+
+func TestIssue43852(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t6 (a date, b date, key(a))`)
+	tk.MustExec(`insert into t6 values ('2023-01-21', '2023-01-05')`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustQuery(`select * from t6 where a in (2015, '8')`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t6 where a in (2009, '2023-01-21')`).Check(testkit.Rows(`2023-01-21 2023-01-05`))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
 func TestNonPreparedPlanTypeRandomly(t *testing.T) {
@@ -1982,7 +1996,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have generated columns are not supported",
 		"skip non-prepared plan-cache: queries that access views are not supported",
 		"skip non-prepared plan-cache: query has null constants",
-		"skip non-prepared plan-cache: get a TableDual plan",
+		"skip non-prepared plan-cache: some parameters may be overwritten when constant propagation",
 	}
 
 	all := append(supported, unsupported...)
@@ -2276,6 +2290,52 @@ func TestNonPreparedPlanCacheAutoStmtRetry(t *testing.T) {
 	require.NoError(t, err)
 	wg.Wait()
 	require.ErrorContains(t, tk2Err, "Duplicate entry")
+}
+
+func TestIssue43667Concurrency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cycle (pk int key, val int)")
+	var wg sync.WaitGroup
+	concurrency := 30
+	for i := 0; i < concurrency; i++ {
+		tk.MustExec(fmt.Sprintf("insert into cycle values (%v,%v)", i, i))
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
+			query := fmt.Sprintf("select (val) from cycle where pk = %v", id)
+			for j := 0; j < 5000; j++ {
+				tk.MustQuery(query).Check(testkit.Rows(fmt.Sprintf("%v", id)))
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+func TestIssue43667(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`create table cycle (pk int not null primary key, sk int not null, val int)`)
+	tk.MustExec(`insert into cycle values (4, 4, 4)`)
+	tk.MustExec(`insert into cycle values (7, 7, 7)`)
+
+	tk.MustQuery(`select (val) from cycle where pk = 4`).Check(testkit.Rows("4"))
+	tk.MustQuery(`select (val) from cycle where pk = 7`).Check(testkit.Rows("7"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	updateAST := func(stmt ast.StmtNode) {
+		v := stmt.(*ast.SelectStmt).Where.(*ast.BinaryOperationExpr).R.(*driver.ValueExpr)
+		v.Datum.SetInt64(7)
+	}
+
+	tctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestIssue43667, updateAST)
+	tk.MustQueryWithContext(tctx, `select (val) from cycle where pk = 4`).Check(testkit.Rows("4"))
 }
 
 func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {

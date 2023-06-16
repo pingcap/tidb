@@ -392,6 +392,32 @@ func TestFunctionDecodeSQLDigestsPrivilege(t *testing.T) {
 	tk.MustExec("select tidb_decode_sql_digests('[\"aa\"]')")
 }
 
+func TestFunctionEncodeSQLDigest(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := createRPCServer(t, dom)
+	defer srv.Stop()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("drop table if exists test_func_encode_sql_digest")
+	tk.MustExec("create table test_func_encode_sql_digest(id int primary key, v int)")
+
+	q1 := "begin"
+	digest1 := parser.DigestHash(q1)
+	q2 := "select @@tidb_current_ts"
+	digest2 := parser.DigestHash(q2)
+	q3 := "select id, v from test_func_decode_sql_digests where id = 1 for update"
+	digest3 := parser.DigestHash(q3)
+
+	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q1)).Check(testkit.Rows(digest1.String()))
+	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q2)).Check(testkit.Rows(digest2.String()))
+	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q3)).Check(testkit.Rows(digest3.String()))
+
+	tk.MustQuery("select tidb_encode_sql_digest(null)").Check(testkit.Rows("<nil>"))
+	tk.MustGetErrCode("select tidb_encode_sql_digest()", 1582)
+}
+
 func prepareLogs(t *testing.T, logData []string, fileNames []string) {
 	for i, log := range logData {
 		f, err := os.OpenFile(fileNames[i], os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)

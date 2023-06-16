@@ -29,13 +29,14 @@ import (
 
 // MockSessionManager is a mocked session manager which is used for test.
 type MockSessionManager struct {
-	PS      []*util.ProcessInfo
-	PSMu    sync.RWMutex
-	SerID   uint64
-	TxnInfo []*txninfo.TxnInfo
-	Dom     *domain.Domain
-	Conn    map[uint64]session.Session
-	mu      sync.Mutex
+	PS       []*util.ProcessInfo
+	PSMu     sync.RWMutex
+	SerID    uint64
+	TxnInfo  []*txninfo.TxnInfo
+	Dom      *domain.Domain
+	Conn     map[uint64]session.Session
+	mu       sync.Mutex
+	ConAttrs map[uint64]map[string]string
 
 	internalSessions map[interface{}]struct{}
 }
@@ -103,8 +104,13 @@ func (msm *MockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 	return &util.ProcessInfo{}, false
 }
 
+// GetConAttrs returns the connection attributes of all connections
+func (msm *MockSessionManager) GetConAttrs() map[uint64]map[string]string {
+	return msm.ConAttrs
+}
+
 // Kill implements the SessionManager.Kill interface.
-func (*MockSessionManager) Kill(uint64, bool) {
+func (*MockSessionManager) Kill(uint64, bool, bool) {
 }
 
 // KillAllConnections implements the SessionManager.KillAllConnections interface.
@@ -118,6 +124,11 @@ func (*MockSessionManager) UpdateTLSConfig(*tls.Config) {
 // ServerID get server id.
 func (msm *MockSessionManager) ServerID() uint64 {
 	return msm.SerID
+}
+
+// GetAutoAnalyzeProcID implement SessionManager interface.
+func (msm *MockSessionManager) GetAutoAnalyzeProcID() uint64 {
+	return uint64(1)
 }
 
 // StoreInternalSession is to store internal session.
@@ -159,12 +170,12 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 		processInfo := se.ShowProcess()
 		ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
 		if !ok {
-			msm.Kill(se.GetSessionVars().ConnectionID, false)
+			msm.Kill(se.GetSessionVars().ConnectionID, false, false)
 			continue
 		}
 		_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
 		if !ok {
-			msm.Kill(se.GetSessionVars().ConnectionID, false)
+			msm.Kill(se.GetSessionVars().ConnectionID, false, false)
 			continue
 		}
 	}

@@ -63,6 +63,31 @@ func exprHasSetVarOrSleep(expr expression.Expression) bool {
 	return false
 }
 
+// PruneColumns implement the Expand OP's column pruning logic.
+// logicExpand is built in the logical plan building phase, where all the column prune is not done yet. So the
+// expand projection expressions is meaningless if it built at that time. (we only maintain its schema, while
+// the level projection expressions construction is left to the last logical optimize rule)
+//
+// so when do the rule_column_pruning here, we just prune the schema is enough.
+func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+	child := p.children[0]
+	// Expand need those extra redundant distinct group by columns projected from underlying projection.
+	// distinct GroupByCol must be used by aggregate above, to make sure this, append distinctGroupByCol again.
+	parentUsedCols = append(parentUsedCols, p.distinctGroupByCol...)
+	used := expression.GetUsedList(parentUsedCols, p.Schema())
+	prunedColumns := make([]*expression.Column, 0)
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] {
+			prunedColumns = append(prunedColumns, p.schema.Columns[i])
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			p.names = append(p.names[:i], p.names[i+1:]...)
+		}
+	}
+	appendColumnPruneTraceStep(p, prunedColumns, opt)
+	// Underlying still need to keep the distinct group by columns and parent used columns.
+	return child.PruneColumns(parentUsedCols, opt)
+}
+
 // PruneColumns implements LogicalPlan interface.
 // If any expression has SetVar function or Sleep function, we do not prune it.
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
@@ -665,4 +690,15 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		}
 	}
 	return resultColumn, resultColumnInfo
+}
+
+// PruneColumns implements the interface of LogicalPlan.
+// LogicalCTE just do a empty function call. It's logical optimize is indivisual phase.
+func (*LogicalCTE) PruneColumns(_ []*expression.Column, _ *logicalOptimizeOp) error {
+	return nil
+}
+
+// PruneColumns implements the interface of LogicalPlan.
+func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+	return p.children[len(p.children)-1].PruneColumns(parentUsedCols, opt)
 }

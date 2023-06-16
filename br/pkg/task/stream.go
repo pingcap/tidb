@@ -1158,13 +1158,13 @@ func RunStreamRestore(
 			return errors.Trace(err)
 		}
 		cfg.Config.Storage = logStorage
-	} else {
+	} else if len(cfg.FullBackupStorage) > 0 {
 		skipMsg := []byte(fmt.Sprintf("%s command is skipped due to checkpoint mode for restore\n", FullRestoreCmd))
 		if _, err := glue.GetConsole(g).Out().Write(skipMsg); err != nil {
 			return errors.Trace(err)
 		}
 		if curTaskInfo != nil && curTaskInfo.TiFlashItems != nil {
-			log.Info("load tiflash records from checkpoint")
+			log.Info("load tiflash records of snapshot restore from checkpoint")
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1296,7 +1296,7 @@ func restoreStream(
 		}
 		defer func() {
 			log.Info("wait for flush checkpoint...")
-			checkpointRunner.WaitForFinish(ctx)
+			checkpointRunner.WaitForFinish(ctx, !gcDisabledRestorable)
 		}()
 	}
 
@@ -1412,7 +1412,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
 	}
 
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, g, mgr.GetStorage()); err != nil {
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, g, mgr.GetStorage(), taskName); err != nil {
 		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
@@ -1780,6 +1780,8 @@ func checkPiTRTaskInfo(
 		doFullRestore = (len(cfg.FullBackupStorage) > 0)
 
 		curTaskInfo *checkpoint.CheckpointTaskInfoForLogRestore
+
+		errTaskMsg string
 	)
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, true, conn.StreamVersionChecker)
@@ -1807,10 +1809,18 @@ func checkPiTRTaskInfo(
 			if curTaskInfo.StartTS == cfg.StartTS && curTaskInfo.RestoreTS == cfg.RestoreTS {
 				// the same task, check whether skip snapshot restore
 				doFullRestore = doFullRestore && (curTaskInfo.Progress == checkpoint.InSnapshotRestore)
+				// update the snapshot restore task name to clean up in final
+				if !doFullRestore && (len(cfg.FullBackupStorage) > 0) {
+					_ = cfg.generateSnapshotRestoreTaskName(clusterID)
+				}
 				log.Info("the same task", zap.Bool("skip-snapshot-restore", !doFullRestore))
 			} else {
 				// not the same task, so overwrite the taskInfo with a new task
 				log.Info("not the same task, start to restore from scratch")
+				errTaskMsg = fmt.Sprintf(
+					"a new task [start-ts=%d] [restored-ts=%d] while the last task info: [start-ts=%d] [restored-ts=%d] [skip-snapshot-restore=%t]",
+					cfg.StartTS, cfg.RestoreTS, curTaskInfo.StartTS, curTaskInfo.RestoreTS, curTaskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersist)
+
 				curTaskInfo = nil
 			}
 		}
@@ -1823,6 +1833,12 @@ func checkPiTRTaskInfo(
 			// skip checking requirements.
 			log.Info("check pitr requirements for the first execution")
 			if err := checkPiTRRequirements(ctx, g, cfg, mgr); err != nil {
+				if len(errTaskMsg) > 0 {
+					err = errors.Annotatef(err, "The current restore task is regarded as %s. "+
+						"If you ensure that no changes have been made to the cluster since the last execution, "+
+						"you can adjust the `start-ts` or `restored-ts` to continue with the previous execution. "+
+						"Otherwise, if you want to restore from scratch, please clean the cluster at first", errTaskMsg)
+				}
 				return nil, false, errors.Trace(err)
 			}
 		}

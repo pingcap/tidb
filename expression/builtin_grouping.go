@@ -17,6 +17,7 @@ package expression
 import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -28,7 +29,7 @@ var (
 )
 
 var (
-	_ builtinFunc = &builtinGroupingImplSig{}
+	_ builtinFunc = &BuiltinGroupingImplSig{}
 )
 
 type groupingImplFunctionClass struct {
@@ -44,27 +45,29 @@ func (c *groupingImplFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(1)
-	sig := &builtinGroupingImplSig{bf, 0, map[int64]struct{}{}, false}
+	// grouping(x,y,z) is a singed UInt64 (while MySQL is Int64 which is unreasonable)
+	bf.tp.SetFlag(bf.tp.GetFlag() | mysql.UnsignedFlag)
+	sig := &BuiltinGroupingImplSig{bf, 0, []map[uint64]struct{}{}, false}
 	sig.setPbCode(tipb.ScalarFuncSig_GroupingSig)
 	return sig, nil
 }
 
-// grouping functions called by user is actually executed by this builtinGroupingImplSig.
+// BuiltinGroupingImplSig grouping functions called by user is actually executed by this.
 // Users will designate a column as parameter to pass into the grouping function, and tidb
 // will rewrite it to convert the parameter to the meta info. Then, tidb will generate grouping id
 // which is a indicator to be calculated with meta info, these grouping id are actually what
-// builtinGroupingImplSig receives.
-type builtinGroupingImplSig struct {
+// BuiltinGroupingImplSig receives.
+type BuiltinGroupingImplSig struct {
 	baseBuiltinFunc
 
 	// TODO these are two temporary fields for tests
 	mode          tipb.GroupingMode
-	groupingMarks map[int64]struct{}
+	groupingMarks []map[uint64]struct{}
 	isMetaInited  bool
 }
 
-func (b *builtinGroupingImplSig) SetMetadata(mode tipb.GroupingMode, groupingMarks map[int64]struct{}) error {
+// SetMetadata will fill grouping function with comparison groupingMarks when rewriting grouping function.
+func (b *BuiltinGroupingImplSig) SetMetadata(mode tipb.GroupingMode, groupingMarks []map[uint64]struct{}) error {
 	b.setGroupingMode(mode)
 	b.setMetaGroupingMarks(groupingMarks)
 	b.isMetaInited = true
@@ -76,96 +79,138 @@ func (b *builtinGroupingImplSig) SetMetadata(mode tipb.GroupingMode, groupingMar
 	return nil
 }
 
-func (b *builtinGroupingImplSig) setGroupingMode(mode tipb.GroupingMode) {
+func (b *BuiltinGroupingImplSig) setGroupingMode(mode tipb.GroupingMode) {
 	b.mode = mode
 }
 
-func (b *builtinGroupingImplSig) setMetaGroupingMarks(groupingMarks map[int64]struct{}) {
+func (b *BuiltinGroupingImplSig) setMetaGroupingMarks(groupingMarks []map[uint64]struct{}) {
 	b.groupingMarks = groupingMarks
 }
 
-func (b *builtinGroupingImplSig) getGroupingMode() tipb.GroupingMode {
+func (b *BuiltinGroupingImplSig) getGroupingMode() tipb.GroupingMode {
 	return b.mode
 }
 
 // metadata returns the metadata of grouping functions
-func (b *builtinGroupingImplSig) metadata() proto.Message {
+func (b *BuiltinGroupingImplSig) metadata() proto.Message {
 	err := b.checkMetadata()
 	if err != nil {
 		return &tipb.GroupingFunctionMetadata{}
 	}
 	args := &tipb.GroupingFunctionMetadata{}
-	*(args.Mode) = b.mode
-	for groupingMark := range b.groupingMarks {
-		args.GroupingMarks = append(args.GroupingMarks, uint64(groupingMark))
+	args.Mode = &b.mode
+	for _, groupingMark := range b.groupingMarks {
+		gm := &tipb.GroupingMark{
+			GroupingNums: make([]uint64, 0, len(groupingMark)),
+		}
+		for k := range groupingMark {
+			gm.GroupingNums = append(gm.GroupingNums, k)
+		}
+		args.GroupingMarks = append(args.GroupingMarks, gm)
 	}
 	return args
 }
 
-func (b *builtinGroupingImplSig) Clone() builtinFunc {
-	newSig := &builtinGroupingImplSig{}
+// Clone implementing the builtinFunc interface.
+func (b *BuiltinGroupingImplSig) Clone() builtinFunc {
+	newSig := &BuiltinGroupingImplSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.mode = b.mode
 	newSig.groupingMarks = b.groupingMarks
 	return newSig
 }
 
-func (b *builtinGroupingImplSig) getMetaGroupingMarks() map[int64]struct{} {
+func (b *BuiltinGroupingImplSig) getMetaGroupingMarks() []map[uint64]struct{} {
 	return b.groupingMarks
 }
 
-func (b *builtinGroupingImplSig) getMetaGroupingID() int64 {
-	var metaGroupingID int64
-	groupingIDs := b.getMetaGroupingMarks()
-	for key := range groupingIDs {
-		metaGroupingID = key
-	}
-	return metaGroupingID
-}
-
-func (b *builtinGroupingImplSig) checkMetadata() error {
+func (b *BuiltinGroupingImplSig) checkMetadata() error {
 	if !b.isMetaInited {
 		return errors.Errorf("Meta data hasn't been initialized")
 	}
 	mode := b.getGroupingMode()
-	groupingIDs := b.getMetaGroupingMarks()
+	groupingMarks := b.getMetaGroupingMarks()
 	if mode != tipb.GroupingMode_ModeBitAnd && mode != tipb.GroupingMode_ModeNumericCmp && mode != tipb.GroupingMode_ModeNumericSet {
 		return errors.Errorf("Mode of meta data in grouping function is invalid. input mode: %d", mode)
-	} else if (mode == tipb.GroupingMode_ModeBitAnd || mode == tipb.GroupingMode_ModeNumericCmp) && len(groupingIDs) != 1 {
-		return errors.Errorf("Invalid number of groupingID. mode: %d, number of groupingID: %d", mode, len(b.groupingMarks))
+	} else if mode == tipb.GroupingMode_ModeBitAnd || mode == tipb.GroupingMode_ModeNumericCmp {
+		for _, groupingMark := range groupingMarks {
+			if len(groupingMark) != 1 {
+				return errors.Errorf("Invalid number of groupingID. mode: %d, number of groupingID: %d", mode, len(b.groupingMarks))
+			}
+		}
 	}
 	return nil
 }
 
-func (b *builtinGroupingImplSig) groupingImplBitAnd(groupingID int64, metaGroupingID int64) int64 {
-	if groupingID&metaGroupingID > 0 {
-		return 1
+func (b *BuiltinGroupingImplSig) groupingImplBitAnd(groupingID uint64) int64 {
+	groupingMarks := b.getMetaGroupingMarks()
+	res := uint64(0)
+	for _, groupingMark := range groupingMarks {
+		// for Bit-And mode, there is only one element in groupingMark.
+		for k := range groupingMark {
+			res <<= 1
+			if groupingID&k <= 0 {
+				// col is not needed, being filled with null and grouped. = 1
+				res += 1
+			}
+			// col is needed in this grouping set, meaning not being grouped. = 0
+		}
 	}
-	return 0
+	return int64(res)
 }
 
-func (b *builtinGroupingImplSig) groupingImplNumericCmp(groupingID int64, metaGroupingID int64) int64 {
-	if groupingID > metaGroupingID {
-		return 1
+func (b *BuiltinGroupingImplSig) groupingImplNumericCmp(groupingID uint64) int64 {
+	groupingMarks := b.getMetaGroupingMarks()
+	res := uint64(0)
+	for _, groupingMark := range groupingMarks {
+		// for Num-Cmp mode, there is only one element in groupingMark.
+		for k := range groupingMark {
+			res <<= 1
+			if groupingID <= k {
+				// col is not needed, being filled with null and grouped. = 1
+				res += 1
+			}
+			// col is needed, meaning not being grouped. = 0
+		}
 	}
-	return 0
+	return int64(res)
 }
 
-func (b *builtinGroupingImplSig) groupingImplNumericSet(groupingID int64) int64 {
-	groupingIDs := b.getMetaGroupingMarks()
-	_, ok := groupingIDs[groupingID]
-	if ok {
-		return 0
+func (b *BuiltinGroupingImplSig) groupingImplNumericSet(groupingID uint64) int64 {
+	groupingMarks := b.getMetaGroupingMarks()
+	res := uint64(0)
+	for _, groupingMark := range groupingMarks {
+		res <<= 1
+		// for Num-Set mode, traverse the slice to find the match.
+		_, ok := groupingMark[groupingID]
+		if !ok {
+			// in Num-Set mode, this map maintains the needed-col's grouping set (GIDs)
+			// when ok is NOT true, col is not needed, being filled with null and grouped. = 1
+			res += 1
+		}
+		// it means col is needed, meaning not being filled with null and grouped. = 0
 	}
-	return 1
+	return int64(res)
 }
 
-func (b *builtinGroupingImplSig) grouping(groupingID int64) int64 {
+// since grouping function may have multi args like grouping(a,b), so the source columns may greater than 1.
+// reference: https://dev.mysql.com/blog-archive/mysql-8-0-grouping-function/
+// Let's say GROUPING(b,a) group by a,b with rollup. (Note the b,a sequence is reversed from gby item)
+// if GROUPING (b,a) returns 3 (11 in bits), it means that NULL in column “b” and NULL in column “a” for that
+// row is produced by a ROLLUP operation. If result is 2 (10 in bits), meaning NULL in column “a” alone is the
+// result of ROLLUP operation.
+//
+// Formula: GROUPING(x,y,z) = GROUPING(x) << 2 + GROUPING(y) << 1 + GROUPING(z)
+//
+// so for the multi args GROUPING FUNCTION, we should return all the simple col grouping marks. When evaluating,
+// after all grouping marks & with gid in sequence, the final res is derived as the formula said. This also means
+// that the grouping function accepts a maximum of 64 parameters, obviously the result is an uint64.
+func (b *BuiltinGroupingImplSig) grouping(groupingID uint64) int64 {
 	switch b.mode {
 	case tipb.GroupingMode_ModeBitAnd:
-		return b.groupingImplBitAnd(groupingID, b.getMetaGroupingID())
+		return b.groupingImplBitAnd(groupingID)
 	case tipb.GroupingMode_ModeNumericCmp:
-		return b.groupingImplNumericCmp(groupingID, b.getMetaGroupingID())
+		return b.groupingImplNumericCmp(groupingID)
 	case tipb.GroupingMode_ModeNumericSet:
 		return b.groupingImplNumericSet(groupingID)
 	}
@@ -173,41 +218,39 @@ func (b *builtinGroupingImplSig) grouping(groupingID int64) int64 {
 }
 
 // evalInt evals a builtinGroupingSig.
-func (b *builtinGroupingImplSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (b *BuiltinGroupingImplSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if !b.isMetaInited {
 		return 0, false, errors.Errorf("Meta data is not initialzied")
 	}
-
+	// grouping function should be rewritten from raw column ref to built gid column and groupingMarks meta.
 	groupingID, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
 
-	return b.grouping(groupingID), false, nil
+	return b.grouping(uint64(groupingID)), false, nil
 }
 
-func (b *builtinGroupingImplSig) groupingVec(groupingIds *chunk.Column, rowNum int, result *chunk.Column) {
+func (b *BuiltinGroupingImplSig) groupingVec(groupingIds *chunk.Column, rowNum int, result *chunk.Column) {
 	result.ResizeInt64(rowNum, false)
 	resContainer := result.Int64s()
 	switch b.mode {
 	case tipb.GroupingMode_ModeBitAnd:
-		metaGroupingID := b.getMetaGroupingID()
 		for i := 0; i < rowNum; i++ {
-			resContainer[i] = b.groupingImplBitAnd(groupingIds.GetInt64(i), metaGroupingID)
+			resContainer[i] = b.groupingImplBitAnd(groupingIds.GetUint64(i))
 		}
 	case tipb.GroupingMode_ModeNumericCmp:
-		metaGroupingID := b.getMetaGroupingID()
 		for i := 0; i < rowNum; i++ {
-			resContainer[i] = b.groupingImplNumericCmp(groupingIds.GetInt64(i), metaGroupingID)
+			resContainer[i] = b.groupingImplNumericCmp(groupingIds.GetUint64(i))
 		}
 	case tipb.GroupingMode_ModeNumericSet:
 		for i := 0; i < rowNum; i++ {
-			resContainer[i] = b.groupingImplNumericSet(groupingIds.GetInt64(i))
+			resContainer[i] = b.groupingImplNumericSet(groupingIds.GetUint64(i))
 		}
 	}
 }
 
-func (b *builtinGroupingImplSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *BuiltinGroupingImplSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	if !b.isMetaInited {
 		return errors.Errorf("Meta data is not initialzied")
 	}

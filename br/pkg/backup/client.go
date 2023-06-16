@@ -318,9 +318,9 @@ func (bc *Client) StartCheckpointRunner(
 	return errors.Trace(err)
 }
 
-func (bc *Client) WaitForFinishCheckpoint(ctx context.Context) {
+func (bc *Client) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 	if bc.checkpointRunner != nil {
-		bc.checkpointRunner.WaitForFinish(ctx)
+		bc.checkpointRunner.WaitForFinish(ctx, flush)
 	}
 }
 
@@ -760,7 +760,7 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	newestMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(version.Ver)))
 	allJobs := make([]*model.Job, 0)
 	err = g.UseOneShotSession(store, !needDomain, func(se glue.Session) error {
-		allJobs, err = ddl.GetAllDDLJobs(se.GetSessionCtx(), newestMeta)
+		allJobs, err = ddl.GetAllDDLJobs(se.GetSessionCtx())
 		if err != nil {
 			return errors.Trace(err)
 		}

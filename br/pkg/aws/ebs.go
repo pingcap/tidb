@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
@@ -21,6 +22,11 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+)
+
+const (
+	pollingPendingSnapshotInterval = 30 * time.Second
+	errCodeTooManyPendingSnapshots = "PendingSnapshotLimitExceeded"
 )
 
 type EC2Session struct {
@@ -93,6 +99,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 			if err != nil {
 				return snapIDMap, nil, errors.Trace(err)
 			}
+
 			for j := range resp1.Reservations[0].Instances[0].BlockDeviceMappings {
 				device := resp1.Reservations[0].Instances[0].BlockDeviceMappings[j]
 				// skip root volume
@@ -120,14 +127,13 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				instanceSpecification := ec2.InstanceSpecification{}
 				createSnapshotInput := ec2.CreateSnapshotsInput{}
 
-				instanceSpecification.SetInstanceId(*ec2InstanceId)
-				instanceSpecification.SetExcludeBootVolume(true)
-				instanceSpecification.SetExcludeDataVolumeIds(excludedVolumeIDs)
+				instanceSpecification.SetInstanceId(aws.StringValue(ec2InstanceId)).SetExcludeBootVolume(true).SetExcludeDataVolumeIds(excludedVolumeIDs)
 
-				createSnapshotInput.SetCopyTagsFromSource("volume")
 				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
+				// Copy tags from source volume
+				createSnapshotInput.SetCopyTagsFromSource("volume")
+				resp, err := e.createSnapshotsWithRetry(context.TODO(), &createSnapshotInput)
 
-				resp, err := e.ec2.CreateSnapshots(&createSnapshotInput)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -152,6 +158,24 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 	}
 
 	return snapIDMap, volAZs, nil
+}
+
+func (e *EC2Session) createSnapshotsWithRetry(ctx context.Context, input *ec2.CreateSnapshotsInput) (*ec2.CreateSnapshotsOutput, error) {
+	for {
+		res, err := e.ec2.CreateSnapshotsWithContext(ctx, input)
+		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == errCodeTooManyPendingSnapshots {
+			log.Warn("the pending snapshots exceeds the limit. waiting...",
+				zap.String("instance", aws.StringValue(input.InstanceSpecification.InstanceId)),
+				zap.Strings("volumns", aws.StringValueSlice(input.InstanceSpecification.ExcludeDataVolumeIds)),
+			)
+			time.Sleep(pollingPendingSnapshotInterval)
+			continue
+		}
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to create snapshot for request %s", input)
+		}
+		return res, nil
+	}
 }
 
 func (e *EC2Session) extractSnapProgress(str *string) int64 {
@@ -260,17 +284,9 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 // CreateVolumes create volumes from snapshots
 // if err happens in the middle, return half-done result
 // returned map: store id -> old volume id -> new volume id
-func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64) (map[string]string, error) {
+func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, targetAZ string) (map[string]string, error) {
 	template := ec2.CreateVolumeInput{
 		VolumeType: &volumeType,
-		TagSpecifications: []*ec2.TagSpecification{
-			{
-				ResourceType: aws.String(ec2.ResourceTypeVolume),
-				Tags: []*ec2.Tag{
-					ec2Tag("TiDBCluster-BR", "new"),
-				},
-			},
-		},
 	}
 	if iops > 0 {
 		template.SetIops(iops)
@@ -287,6 +303,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 		defer mutex.Unlock()
 		newVolumeIDMap[oldVol.ID] = *newVol.VolumeId
 	}
+
 	workerPool := utils.NewWorkerPool(e.concurrency, "create volume")
 	for i := range meta.TiKVComponent.Stores {
 		store := meta.TiKVComponent.Stores[i]
@@ -295,8 +312,46 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
 				req := template
+
 				req.SetSnapshotId(oldVol.SnapshotID)
-				req.SetAvailabilityZone(oldVol.VolumeAZ)
+
+				// set target AZ
+				if targetAZ == "" {
+					req.SetAvailabilityZone(oldVol.VolumeAZ)
+				} else {
+					req.SetAvailabilityZone(targetAZ)
+				}
+
+				// Copy interested tags of snapshots to the restored volume
+				tags := []*ec2.Tag{
+					ec2Tag("TiDBCluster-BR", "new"),
+					ec2Tag("ebs.csi.aws.com/cluster", "true"),
+					ec2Tag("snapshot/createdFromSnapshotId", oldVol.SnapshotID),
+				}
+				snapshotIds := make([]*string, 0)
+
+				snapshotIds = append(snapshotIds, &oldVol.SnapshotID)
+				resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{SnapshotIds: snapshotIds})
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if len(resp.Snapshots) <= 0 {
+					return errors.Errorf("specified snapshot [%s] is not found", oldVol.SnapshotID)
+				}
+
+				// Copy tags from source snapshots
+				for j := range resp.Snapshots[0].Tags {
+					tags = append(tags,
+						ec2Tag("snapshot/"+aws.StringValue(resp.Snapshots[0].Tags[j].Key), aws.StringValue(resp.Snapshots[0].Tags[j].Value)))
+				}
+
+				req.SetTagSpecifications([]*ec2.TagSpecification{
+					{
+						ResourceType: aws.String(ec2.ResourceTypeVolume),
+						Tags:         tags,
+					},
+				})
+
 				newVol, err := e.ec2.CreateVolume(&req)
 				if err != nil {
 					return errors.Trace(err)

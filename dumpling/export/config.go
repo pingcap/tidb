@@ -83,7 +83,7 @@ const (
 type Config struct {
 	storage.BackendOptions
 
-	specifiedTables          bool
+	SpecifiedTables          bool
 	AllowCleartextPasswords  bool
 	SortByPk                 bool
 	NoViews                  bool
@@ -160,41 +160,45 @@ var ServerInfoUnknown = version.ServerInfo{
 func DefaultConfig() *Config {
 	allFilter, _ := filter.Parse([]string{"*.*"})
 	return &Config{
-		Databases:           nil,
-		Host:                "127.0.0.1",
-		User:                "root",
-		Port:                3306,
-		Password:            "",
-		Threads:             4,
-		Logger:              nil,
-		StatusAddr:          ":8281",
-		FileSize:            UnspecifiedSize,
-		StatementSize:       DefaultStatementSize,
-		OutputDirPath:       ".",
-		ServerInfo:          ServerInfoUnknown,
-		SortByPk:            true,
-		Tables:              nil,
-		Snapshot:            "",
-		Consistency:         ConsistencyTypeAuto,
-		NoViews:             true,
-		NoSequences:         true,
-		Rows:                UnspecifiedSize,
-		Where:               "",
-		FileType:            "",
-		NoHeader:            false,
-		NoSchemas:           false,
-		NoData:              false,
-		CsvNullValue:        "\\N",
-		SQL:                 "",
-		TableFilter:         allFilter,
-		DumpEmptyDatabase:   true,
-		SessionParams:       make(map[string]interface{}),
-		OutputFileTemplate:  DefaultOutputFileTemplate,
-		PosAfterConnect:     false,
-		CollationCompatible: LooseCollationCompatible,
-		specifiedTables:     false,
-		PromFactory:         promutil.NewDefaultFactory(),
-		PromRegistry:        promutil.NewDefaultRegistry(),
+		Databases:                nil,
+		Host:                     "127.0.0.1",
+		User:                     "root",
+		Port:                     3306,
+		Password:                 "",
+		Threads:                  4,
+		Logger:                   nil,
+		StatusAddr:               ":8281",
+		FileSize:                 UnspecifiedSize,
+		StatementSize:            DefaultStatementSize,
+		OutputDirPath:            ".",
+		ServerInfo:               ServerInfoUnknown,
+		SortByPk:                 true,
+		Tables:                   nil,
+		Snapshot:                 "",
+		Consistency:              ConsistencyTypeAuto,
+		NoViews:                  true,
+		NoSequences:              true,
+		Rows:                     UnspecifiedSize,
+		Where:                    "",
+		EscapeBackslash:          true,
+		FileType:                 "",
+		NoHeader:                 false,
+		NoSchemas:                false,
+		NoData:                   false,
+		CsvNullValue:             "\\N",
+		SQL:                      "",
+		TableFilter:              allFilter,
+		DumpEmptyDatabase:        true,
+		CsvDelimiter:             "\"",
+		CsvSeparator:             ",",
+		SessionParams:            make(map[string]interface{}),
+		OutputFileTemplate:       DefaultOutputFileTemplate,
+		PosAfterConnect:          false,
+		CollationCompatible:      LooseCollationCompatible,
+		SpecifiedTables:          false,
+		PromFactory:              promutil.NewDefaultFactory(),
+		PromRegistry:             promutil.NewDefaultRegistry(),
+		TransactionalConsistency: true,
 	}
 }
 
@@ -496,7 +500,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	conf.specifiedTables = len(tablesList) > 0
+	conf.SpecifiedTables = len(tablesList) > 0
 	conf.Tables, err = GetConfTables(tablesList)
 	if err != nil {
 		return errors.Trace(err)

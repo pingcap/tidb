@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -509,8 +510,8 @@ func (e *ShowExec) fetchShowHistogramsInFlight() {
 	e.appendRow([]interface{}{statistics.HistogramNeededItems.Length()})
 }
 
-func (e *ShowExec) fetchShowAnalyzeStatus() error {
-	rows, err := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
+func (e *ShowExec) fetchShowAnalyzeStatus(ctx context.Context) error {
+	rows, err := dataForAnalyzeStatusHelper(ctx, e.baseExecutor.ctx)
 	if err != nil {
 		return err
 	}

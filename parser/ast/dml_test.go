@@ -14,8 +14,10 @@
 package ast_test
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/parser"
 	. "github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/stretchr/testify/require"
@@ -35,6 +37,7 @@ func TestDMLVisitorCover(t *testing.T) {
 			Order: &OrderByClause{}, Limit: &Limit{Count: ce, Offset: ce}}, 4, 4},
 		{&ShowStmt{Table: &TableName{}, Column: &ColumnName{}, Pattern: &PatternLikeOrIlikeExpr{Expr: ce, Pattern: ce}, Where: ce}, 3, 3},
 		{&LoadDataStmt{Table: &TableName{}, Columns: []*ColumnName{{}}, FieldsInfo: &FieldsClause{}, LinesInfo: &LinesClause{}}, 0, 0},
+		{&ImportIntoStmt{Table: &TableName{}}, 0, 0},
 		{&Assignment{Column: &ColumnName{}, Expr: ce}, 1, 1},
 		{&ByItem{Expr: ce}, 1, 1},
 		{&GroupByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}}, 2, 2},
@@ -507,20 +510,33 @@ func TestLoadDataRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
-func TestLoadDataActions(t *testing.T) {
+func TestImportActions(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{
-			sourceSQL: "show load data jobs",
-			expectSQL: "SHOW LOAD DATA JOBS",
+			sourceSQL: "cancel import job 123",
+			expectSQL: "CANCEL IMPORT JOB 123",
 		},
 		{
-			sourceSQL: "show load data job 123",
-			expectSQL: "SHOW LOAD DATA JOB 123",
+			sourceSQL: "show import jobs",
+			expectSQL: "SHOW IMPORT JOBS",
 		},
 		{
-			sourceSQL: "show load data jobs where aa > 1",
-			expectSQL: "SHOW LOAD DATA JOBS WHERE `aa`>1",
+			sourceSQL: "show import job 123",
+			expectSQL: "SHOW IMPORT JOB 123",
 		},
+		{
+			sourceSQL: "show import jobs where aa > 1",
+			expectSQL: "SHOW IMPORT JOBS WHERE `aa`>1",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestLoadDataActions(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
 		{
 			sourceSQL: "pause load data job 123",
 			expectSQL: "PAUSE LOAD DATA JOB 123",
@@ -528,10 +544,6 @@ func TestLoadDataActions(t *testing.T) {
 		{
 			sourceSQL: "resume load data job 123",
 			expectSQL: "RESUME LOAD DATA JOB 123",
-		},
-		{
-			sourceSQL: "Cancel load data job 123",
-			expectSQL: "CANCEL LOAD DATA JOB 123",
 		},
 		{
 			sourceSQL: "drop   load data job 123",
@@ -544,8 +556,80 @@ func TestLoadDataActions(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
+func TestImportIntoRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			sourceSQL: "IMPORT INTO t from '/file.csv'",
+			expectSQL: "IMPORT INTO `t` FROM '/file.csv'",
+		},
+		{
+			sourceSQL: "IMPORT INTO t (a, @1, c) from '/file.csv'",
+			expectSQL: "IMPORT INTO `t` (`a`,@`1`,`c`) FROM '/file.csv'",
+		},
+		{
+			sourceSQL: "IMPORT INTO t set a=100 from '/file.csv'",
+			expectSQL: "IMPORT INTO `t` SET `a`=100 FROM '/file.csv'",
+		},
+		{
+			sourceSQL: "IMPORT INTO t (b, c) set a=100 from '/file.csv'",
+			expectSQL: "IMPORT INTO `t` (`b`,`c`) SET `a`=100 FROM '/file.csv'",
+		},
+		{
+			sourceSQL: "IMPORT INTO t from '/file.csv' format 'csv'",
+			expectSQL: "IMPORT INTO `t` FROM '/file.csv' FORMAT 'csv'",
+		},
+		{
+			sourceSQL: "IMPORT INTO `t` from '/file.csv' with detached",
+			expectSQL: "IMPORT INTO `t` FROM '/file.csv' WITH detached",
+		},
+		{
+			sourceSQL: "IMPORT INTO `t` from '/file.csv' with detached, thread=1",
+			expectSQL: "IMPORT INTO `t` FROM '/file.csv' WITH detached, thread=1",
+		},
+		{
+			// if we don't include _UTF8MB4, when comparing Stmt object, the token position will be different
+			sourceSQL: "IMPORT INTO `t` from '/file.csv' with fields_terminated_by=_UTF8MB4'\t', detached",
+			expectSQL: "IMPORT INTO `t` FROM '/file.csv' WITH fields_terminated_by=_UTF8MB4'\t', detached",
+		},
+		{
+			sourceSQL: "IMPORT INTO `t` from '/file.csv' with fields_terminated_by=_UTF8MB4'\t', detached, thread=1",
+			expectSQL: "IMPORT INTO `t` FROM '/file.csv' WITH fields_terminated_by=_UTF8MB4'\t', detached, thread=1",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*ImportIntoStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
 func TestFulltextSearchModifier(t *testing.T) {
 	require.False(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsBooleanMode())
 	require.True(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsNaturalLanguageMode())
 	require.False(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).WithQueryExpansion())
+}
+
+func TestImportIntoSecureText(t *testing.T) {
+	testCases := []struct {
+		input   string
+		secured string
+	}{
+		{
+			input:   "import into t from 's3://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'",
+			secured: `^IMPORT INTO .t. FROM \Q's3://bucket/prefix?\E((access-key=xxxxxx|secret-access-key=xxxxxx)(&|'$)){2}`,
+		},
+		{
+			input:   "import into t from 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'",
+			secured: "\\QIMPORT INTO `t` FROM 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'\\E",
+		},
+	}
+
+	p := parser.New()
+	for _, tc := range testCases {
+		comment := fmt.Sprintf("input = %s", tc.input)
+		node, err := p.ParseOneStmt(tc.input, "", "")
+		require.NoError(t, err, comment)
+		n, ok := node.(SensitiveStmtNode)
+		require.True(t, ok, comment)
+		require.Regexp(t, tc.secured, n.SecureText(), comment)
+	}
 }

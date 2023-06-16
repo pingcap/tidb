@@ -675,10 +675,17 @@ func buildBatchCopTasksConsistentHash(
 		if err != nil {
 			return nil, err
 		}
+		storesBefFilter := len(storesStr)
 		storesStr = filterAliveStoresStr(ctx, storesStr, ttl, kvStore)
 		logutil.BgLogger().Info("topo filter alive", zap.Any("topo", storesStr))
 		if len(storesStr) == 0 {
-			retErr := errors.New("Cannot find proper topo from AutoScaler")
+			errMsg := "Cannot find proper topo to dispatch MPPTask: "
+			if storesBefFilter == 0 {
+				errMsg += "topo from AutoScaler is empty"
+			} else {
+				errMsg += "detect aliveness failed, no alive ComputeNode"
+			}
+			retErr := errors.New(errMsg)
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because FetchAndGetTopo return empty topo", zap.Int("retryNum", retryNum))
 			if intest.InTest && retryNum > 3 {
 				return nil, retErr
@@ -993,7 +1000,7 @@ func (b *batchCopIterator) run(ctx context.Context) {
 	// We run workers for every batch cop.
 	for _, task := range b.tasks {
 		b.wg.Add(1)
-		boMaxSleep := copNextMaxBackoff
+		boMaxSleep := CopNextMaxBackoff
 		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
 			if value.(bool) {
 				boMaxSleep = 2
@@ -1092,6 +1099,10 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 				ranges = append(ranges, *ran)
 			})
 		}
+		// need to make sure the key ranges is sorted
+		slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		})
 		ret, err := buildBatchCopTasksForNonPartitionedTable(ctx, bo, b.store, NewKeyRanges(ranges), b.req.StoreType, false, 0, false, 0, tiflashcompute.DispatchPolicyInvalid)
 		return ret, err
 	}
@@ -1109,6 +1120,10 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 				})
 			}
 		}
+		// need to make sure the key ranges is sorted
+		slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		})
 		keyRanges = append(keyRanges, NewKeyRanges(ranges))
 	}
 	ret, err := buildBatchCopTasksForPartitionedTable(ctx, bo, b.store, keyRanges, b.req.StoreType, false, 0, false, 0, pid, tiflashcompute.DispatchPolicyInvalid)

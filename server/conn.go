@@ -102,15 +102,15 @@ import (
 const (
 	connStatusDispatching int32 = iota
 	connStatusReading
-	connStatusShutdown     // Closed by server.
-	connStatusWaitShutdown // Notified by server to close.
+	connStatusShutdown     = variable.ConnStatusShutdown // Closed by server.
+	connStatusWaitShutdown = 3                           // Notified by server to close.
 )
 
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
 	return &clientConn{
 		server:       s,
-		connectionID: s.globalConnID.NextID(),
+		connectionID: s.dom.NextConnID(),
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 		chunkAlloc:   chunk.NewAllocator(),
@@ -143,7 +143,7 @@ type clientConn struct {
 		sync.RWMutex
 		*TiDBContext // an interface to execute sql statements.
 	}
-	attrs         map[string]string // attributes parsed from client handshake response, not used for now.
+	attrs         map[string]string // attributes parsed from client handshake response.
 	serverHost    string            // server host
 	peerHost      string            // peer host
 	peerPort      string            // peer port
@@ -186,6 +186,21 @@ func (cc *clientConn) String() string {
 	return fmt.Sprintf("id:%d, addr:%s status:%b, collation:%s, user:%s",
 		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
+}
+
+func (cc *clientConn) setStatus(status int32) {
+	atomic.StoreInt32(&cc.status, status)
+	if ctx := cc.getCtx(); ctx != nil {
+		atomic.StoreInt32(&ctx.GetSessionVars().ConnectionStatus, status)
+	}
+}
+
+func (cc *clientConn) getStatus() int32 {
+	return atomic.LoadInt32(&cc.status)
+}
+
+func (cc *clientConn) CompareAndSwapStatus(oldStatus, newStatus int32) bool {
+	return atomic.CompareAndSwapInt32(&cc.status, oldStatus, newStatus)
 }
 
 // authSwitchRequest is used by the server to ask the client to switch to a different authentication
@@ -315,6 +330,7 @@ func (cc *clientConn) Close() error {
 
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
+	cc.server.dom.ReleaseConnID(cc.connectionID)
 	if cc.bufReadConn != nil {
 		err := cc.bufReadConn.Close()
 		if err != nil {
@@ -588,13 +604,11 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	}
 
 	capability := uint32(binary.LittleEndian.Uint16(data[:2]))
-	if capability&mysql.ClientProtocol41 > 0 {
-		pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
-	} else {
+	if capability&mysql.ClientProtocol41 <= 0 {
 		logutil.Logger(ctx).Error("ClientProtocol41 flag is not set, please upgrade client")
 		return errNotSupportedAuthMode
 	}
-
+	pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
 	if err != nil {
 		terror.Log(err)
 		return err
@@ -1079,7 +1093,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
-		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
+		if cc.getStatus() != connStatusShutdown {
 			err := cc.Close()
 			terror.Log(err)
 		}
@@ -1102,10 +1116,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 			}
 		}
 
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) ||
+		if !cc.CompareAndSwapStatus(connStatusDispatching, connStatusReading) ||
 			// The judge below will not be hit by all means,
 			// But keep it stayed as a reminder and for the code reference for connStatusWaitShutdown.
-			atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+			cc.getStatus() == connStatusWaitShutdown {
 			return
 		}
 
@@ -1119,7 +1133,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
-					if atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+					if cc.getStatus() == connStatusWaitShutdown {
 						logutil.Logger(ctx).Info("read packet timeout because of killed connection")
 					} else {
 						idleTime := time.Since(start)
@@ -1146,7 +1160,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
+		if !cc.CompareAndSwapStatus(connStatusReading, connStatusDispatching) {
 			return
 		}
 
@@ -1450,7 +1464,7 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (node ast.StmtNode, 
 	}
 	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
 	if err != nil {
-		return nil, err
+		return stmts[0], err
 	}
 	cc.dbname = db
 	return stmts[0], err
@@ -2120,7 +2134,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	}
 
 	if rs != nil {
-		if connStatus := atomic.LoadInt32(&cc.status); connStatus == connStatusShutdown {
+		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
 		}
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {

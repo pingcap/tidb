@@ -152,13 +152,15 @@ type CheckpointRunner[K KeyType, V ValueType] struct {
 	meta     map[K]*RangeGroup[K, V]
 	checksum ChecksumItems
 
+	valueMarshaler func(*RangeGroup[K, V]) ([]byte, error)
+
 	storage storage.ExternalStorage
 	cipher  *backuppb.CipherInfo
 	timer   GlobalTimer
 
 	appendCh       chan *CheckpointMessage[K, V]
 	checksumCh     chan *ChecksumItem
-	doneCh         chan struct{}
+	doneCh         chan bool
 	metaCh         chan map[K]*RangeGroup[K, V]
 	checksumMetaCh chan ChecksumItems
 	lockCh         chan struct{}
@@ -175,6 +177,7 @@ func newCheckpointRunner[K KeyType, V ValueType](
 	cipher *backuppb.CipherInfo,
 	timer GlobalTimer,
 	f flushPosition,
+	vm func(*RangeGroup[K, V]) ([]byte, error),
 ) *CheckpointRunner[K, V] {
 	return &CheckpointRunner[K, V]{
 		flushPosition: f,
@@ -182,13 +185,15 @@ func newCheckpointRunner[K KeyType, V ValueType](
 		meta:     make(map[K]*RangeGroup[K, V]),
 		checksum: ChecksumItems{Items: make([]*ChecksumItem, 0)},
 
+		valueMarshaler: vm,
+
 		storage: storage,
 		cipher:  cipher,
 		timer:   timer,
 
 		appendCh:       make(chan *CheckpointMessage[K, V]),
 		checksumCh:     make(chan *ChecksumItem),
-		doneCh:         make(chan struct{}, 1),
+		doneCh:         make(chan bool, 1),
 		metaCh:         make(chan map[K]*RangeGroup[K, V]),
 		checksumMetaCh: make(chan ChecksumItems),
 		lockCh:         make(chan struct{}),
@@ -254,10 +259,10 @@ func (r *CheckpointRunner[K, V]) Append(
 }
 
 // Note: Cannot be parallel with `Append` function
-func (r *CheckpointRunner[K, V]) WaitForFinish(ctx context.Context) {
+func (r *CheckpointRunner[K, V]) WaitForFinish(ctx context.Context, flush bool) {
 	if r.doneCh != nil {
 		select {
-		case r.doneCh <- struct{}{}:
+		case r.doneCh <- flush:
 
 		default:
 			log.Warn("[checkpoint] not the first close the checkpoint runner")
@@ -444,13 +449,15 @@ func (r *CheckpointRunner[K, V]) startCheckpointMainLoop(
 				groups.Group = append(groups.Group, msg.Group...)
 			case msg := <-r.checksumCh:
 				r.checksum.Items = append(r.checksum.Items, msg)
-			case <-r.doneCh:
+			case flush := <-r.doneCh:
 				log.Info("stop checkpoint runner")
-				// NOTE: the exit step, don't send error any more.
-				if err := r.flushMeta(ctx, errCh); err != nil {
-					log.Error("failed to flush checkpoint meta", zap.Error(err))
-				} else if err := r.flushChecksum(ctx, errCh); err != nil {
-					log.Error("failed to flush checkpoint checksum", zap.Error(err))
+				if flush {
+					// NOTE: the exit step, don't send error any more.
+					if err := r.flushMeta(ctx, errCh); err != nil {
+						log.Error("failed to flush checkpoint meta", zap.Error(err))
+					} else if err := r.flushChecksum(ctx, errCh); err != nil {
+						log.Error("failed to flush checkpoint checksum", zap.Error(err))
+					}
 				}
 				// close the channel to flush worker
 				// and wait it to consumes all the metas
@@ -527,7 +534,7 @@ func (r *CheckpointRunner[K, V]) doFlush(ctx context.Context, meta map[K]*RangeG
 		}
 
 		// Flush the metaFile to storage
-		content, err := json.Marshal(group)
+		content, err := r.valueMarshaler(group)
 		if err != nil {
 			return errors.Trace(err)
 		}
