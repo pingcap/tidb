@@ -172,11 +172,10 @@ func (s *Schema) ColumnsIndices(cols []*Column) (ret []int) {
 	ret = make([]int, 0, len(cols))
 	for _, col := range cols {
 		pos := s.ColumnIndex(col)
-		if pos != -1 {
-			ret = append(ret, pos)
-		} else {
+		if pos == -1 {
 			return nil
 		}
+		ret = append(ret, pos)
 	}
 	return
 }

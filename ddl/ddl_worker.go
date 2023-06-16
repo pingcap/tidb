@@ -481,13 +481,14 @@ func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client) {
 	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), sql, "delete-mdl-info")
 	if err != nil {
-		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Error(err))
+		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", jobID), zap.Error(err))
+		return
 	}
 	if ec != nil {
 		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)
 		_, err = ec.Delete(context.Background(), path, clientv3.WithPrefix())
 		if err != nil {
-			logutil.BgLogger().Warn("[ddl] delete versions failed", zap.Any("job id", jobID), zap.Error(err))
+			logutil.BgLogger().Warn("[ddl] delete versions failed", zap.Int64("job ID", jobID), zap.Error(err))
 		}
 	}
 }
@@ -939,7 +940,7 @@ func (w *worker) countForError(err error, job *model.Job) error {
 		logutil.Logger(w.logCtx).Info("[ddl] DDL job is cancelled normally", zap.Error(err))
 		return nil
 	}
-	logutil.Logger(w.logCtx).Error("[ddl] run DDL job error", zap.Error(err))
+	logutil.Logger(w.logCtx).Warn("[ddl] run DDL job error", zap.Error(err))
 
 	// Load global DDL variables.
 	if err1 := loadDDLVars(w); err1 != nil {
@@ -1129,6 +1130,12 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onTTLInfoChange(d, t, job)
 	case model.ActionAlterTTLRemove:
 		ver, err = onTTLInfoRemove(d, t, job)
+	case model.ActionAddCheckConstraint:
+		ver, err = w.onAddCheckConstraint(d, t, job)
+	case model.ActionDropCheckConstraint:
+		ver, err = onDropCheckConstraint(d, t, job)
+	case model.ActionAlterCheckConstraint:
+		ver, err = w.onAlterCheckConstraint(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

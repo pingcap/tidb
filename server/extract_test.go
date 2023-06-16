@@ -50,6 +50,10 @@ func TestExtractHandler(t *testing.T) {
 	require.NoError(t, err)
 	defer server.Close()
 
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
+
 	client.port = getPortFromTCPAddr(server.listener.Addr())
 	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
@@ -62,8 +66,6 @@ func TestExtractHandler(t *testing.T) {
 	prepareData4ExtractPlanTask(t, client)
 	time.Sleep(time.Second)
 	endTime := time.Now()
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
 	eh := &ExtractTaskServeHandler{extractHandler: dom.GetExtractHandle()}
 	router := mux.NewRouter()
 	router.Handle("/extract_task/dump", eh)

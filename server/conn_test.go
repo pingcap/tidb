@@ -1006,9 +1006,9 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustExec(dml)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/internal/mpp/ReduceCopNextMaxBackoff", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/ReduceCopNextMaxBackoff"))
 	}()
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))

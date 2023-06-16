@@ -42,7 +42,7 @@ type exprPrefixAdder struct {
 	lengths   []int
 }
 
-func (s *ppdSolver) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (*ppdSolver) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	_, p := lp.PredicatePushDown(nil, opt)
 	return p, nil
 }
@@ -553,6 +553,7 @@ func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expressio
 // (a > 1 and avg(b) > 1) or (a < 3), and `avg(b) > 1` can't be pushed-down.
 // Then condsToPush: (a < 3) and (a > 1), ret: (a > 1 and avg(b) > 1) or (a < 3)
 func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
+	//nolint: prealloc
 	var condsToPush []expression.Expression
 	var ret []expression.Expression
 	subDNFItem := expression.SplitDNFItems(cond)
@@ -561,11 +562,10 @@ func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expressio
 	}
 	for _, item := range subDNFItem {
 		condsToPushForItem, retForItem := la.pushDownCNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)
-		if len(condsToPushForItem) > 0 {
-			condsToPush = append(condsToPush, expression.ComposeCNFCondition(la.ctx, condsToPushForItem...))
-		} else {
+		if len(condsToPushForItem) <= 0 {
 			return nil, []expression.Expression{cond}
 		}
+		condsToPush = append(condsToPush, expression.ComposeCNFCondition(la.ctx, condsToPushForItem...))
 		if len(retForItem) > 0 {
 			ret = append(ret, expression.ComposeCNFCondition(la.ctx, retForItem...))
 		}
@@ -822,7 +822,7 @@ func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions [
 				}
 				buffer.WriteString(cond.String())
 			}
-			buffer.WriteString(fmt.Sprintf("] in %v_%v are pushed down", p.TP(), p.ID()))
+			fmt.Fprintf(buffer, "] in %v_%v are pushed down", p.TP(), p.ID())
 			return buffer.String()
 		}
 	}
@@ -844,7 +844,7 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *logicalOpti
 			}
 			buffer.WriteString(cond.String())
 		}
-		buffer.WriteString(fmt.Sprintf("] are pushed down across %v_%v", ds.TP(), ds.ID()))
+		fmt.Fprintf(buffer, "] are pushed down across %v_%v", ds.TP(), ds.ID())
 		return buffer.String()
 	}
 	opt.appendStepToCurrent(ds.ID(), ds.TP(), reason, action)
@@ -896,17 +896,17 @@ func (ds *DataSource) AddPrefix4ShardIndexes(sc sessionctx.Context, conds []expr
 
 func (ds *DataSource) addExprPrefixCond(sc sessionctx.Context, path *util.AccessPath,
 	conds []expression.Expression) ([]expression.Expression, error) {
-	IdxCols, IdxColLens :=
+	idxCols, idxColLens :=
 		expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
-	if len(IdxCols) == 0 {
+	if len(idxCols) == 0 {
 		return conds, nil
 	}
 
 	adder := &exprPrefixAdder{
 		sctx:      sc,
 		OrigConds: conds,
-		cols:      IdxCols,
-		lengths:   IdxColLens,
+		cols:      idxCols,
+		lengths:   idxColLens,
 	}
 
 	return adder.addExprPrefix4ShardIndex()

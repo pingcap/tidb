@@ -185,6 +185,67 @@ func TestGroupingSetsMergeOneUnitTest(t *testing.T) {
 	require.Equal(t, len(newGroupingSets[0][3]), 4)
 }
 
+func TestRollupGroupingSets(t *testing.T) {
+	defer view.Stop()
+	aTp := types.NewFieldType(mysql.TypeLong)
+	aTp.SetFlag(mysql.NotNullFlag)
+	a := &Column{
+		UniqueID: 1,
+		RetType:  aTp,
+	}
+	bTp := types.NewFieldType(mysql.TypeLong)
+	bTp.SetFlag(mysql.NotNullFlag)
+	b := &Column{
+		UniqueID: 2,
+		RetType:  bTp,
+	}
+	cTp := types.NewFieldType(mysql.TypeLong)
+	cTp.SetFlag(mysql.NotNullFlag)
+	c := &Column{
+		UniqueID: 3,
+		RetType:  cTp,
+	}
+	dTp := types.NewFieldType(mysql.TypeLong)
+	dTp.SetFlag(mysql.NotNullFlag)
+	// un-related col.
+	d := &Column{
+		UniqueID: 4,
+		RetType:  dTp,
+	}
+	rollupExprs := make([]Expression, 0, 4)
+	rollupExprs = append(rollupExprs, a, b, c)
+	rollupGroupingSets := RollupGroupingSets(rollupExprs)
+	require.Equal(t, len(rollupGroupingSets), 4)
+	require.Equal(t, len(rollupGroupingSets[0]), 1)
+	require.Equal(t, len(rollupGroupingSets[0][0]), 0)
+
+	require.Equal(t, len(rollupGroupingSets[1]), 1)
+	require.Equal(t, len(rollupGroupingSets[1][0]), 1)
+
+	require.Equal(t, len(rollupGroupingSets[2]), 1)
+	require.Equal(t, len(rollupGroupingSets[2][0]), 2)
+
+	require.Equal(t, len(rollupGroupingSets[3]), 1)
+	require.Equal(t, len(rollupGroupingSets[3][0]), 3)
+
+	expandSchema := NewSchema(a, b, c, d)
+	expandSchema2 := expandSchema.Clone()
+	// remove the first grouping set {}
+	// so the {a,b,c},{a,b},{a}, a is every grouping set, and it should be changed as nullable.
+	rollupGroupingSets2 := rollupGroupingSets[1:]
+	AdjustNullabilityFromGroupingSets(rollupGroupingSets2, expandSchema2)
+	require.Equal(t, mysql.HasNotNullFlag(expandSchema2.Columns[0].RetType.GetFlag()), true)
+	require.Equal(t, mysql.HasNotNullFlag(expandSchema2.Columns[1].RetType.GetFlag()), false)
+	require.Equal(t, mysql.HasNotNullFlag(expandSchema2.Columns[2].RetType.GetFlag()), false)
+	require.Equal(t, mysql.HasNotNullFlag(expandSchema2.Columns[3].RetType.GetFlag()), true)
+
+	AdjustNullabilityFromGroupingSets(rollupGroupingSets, expandSchema)
+	require.Equal(t, mysql.HasNotNullFlag(expandSchema.Columns[0].RetType.GetFlag()), false)
+	require.Equal(t, mysql.HasNotNullFlag(expandSchema.Columns[1].RetType.GetFlag()), false)
+	require.Equal(t, mysql.HasNotNullFlag(expandSchema.Columns[2].RetType.GetFlag()), false)
+	require.Equal(t, mysql.HasNotNullFlag(expandSchema.Columns[3].RetType.GetFlag()), true)
+}
+
 func TestGroupingSetsMergeUnitTest(t *testing.T) {
 	defer view.Stop()
 	a := &Column{
@@ -353,25 +414,25 @@ func TestDistinctGroupingSets(t *testing.T) {
 	// for every col id, mapping them to a slice of gid.
 	require.Equal(t, len(id2Gids), 3)
 	// 0 -->  when grouping(column#1), the corresponding affected gids should be {0}
-	//            +--- explanation: when grouping(a), a is only grouped when grouping id = 0.
-	require.Equal(t, len(id2Gids[1]), 1)
-	_, ok := id2Gids[1][0]
+	//            +--- explanation: when grouping(a), col-a is needed when grouping id = 1,2,3.
+	require.Equal(t, len(id2Gids[1]), 3)
+	_, ok := id2Gids[1][1]
+	require.Equal(t, ok, true)
+	_, ok = id2Gids[1][2]
+	require.Equal(t, ok, true)
+	_, ok = id2Gids[1][3]
 	require.Equal(t, ok, true)
 	// 1 --> when grouping(column#2), the corresponding affected gids should be {0,1}
-	//            +--- explanation: when grouping(b), b is only grouped when grouping id = 0 or 1.
+	//            +--- explanation: when grouping(b), col-b is needed when grouping id = 2 or 3.
 	require.Equal(t, len(id2Gids[2]), 2)
-	_, ok = id2Gids[2][0]
+	_, ok = id2Gids[2][2]
 	require.Equal(t, ok, true)
-	_, ok = id2Gids[2][1]
+	_, ok = id2Gids[2][3]
 	require.Equal(t, ok, true)
 	// 2 --> when grouping(column#3), the corresponding affected gids should be {0,1,2}
-	//            +--- explanation: when grouping(c), c is only grouped when grouping id = 0 or 1 or 2.
-	require.Equal(t, len(id2Gids[3]), 3)
-	_, ok = id2Gids[3][0]
-	require.Equal(t, ok, true)
-	_, ok = id2Gids[3][1]
-	require.Equal(t, ok, true)
-	_, ok = id2Gids[3][2]
+	//            +--- explanation: when grouping(c), col-c is needed when grouping id = 3.
+	require.Equal(t, len(id2Gids[3]), 1)
+	_, ok = id2Gids[3][3]
 	require.Equal(t, ok, true)
 	// column d is not in the grouping set columns, so it won't be here.
 }

@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"golang.org/x/exp/slices"
 )
 
 type optionalVal interface {
@@ -106,6 +107,8 @@ type TimerCond struct {
 	// If `KeyPrefix is` true, it will check whether the timer's key is prefixed with `TimerCond.Key`.
 	// Otherwise, it will check whether the timer's key equals `TimerCond.Key`.
 	KeyPrefix bool
+	// Tags indicates to filter the timer record with specified tags
+	Tags OptionalVal[[]string]
 }
 
 // Match will return whether the condition match the timer record
@@ -125,6 +128,14 @@ func (c *TimerCond) Match(t *TimerRecord) bool {
 
 		if !c.KeyPrefix && t.Key != val {
 			return false
+		}
+	}
+
+	if vals, ok := c.Tags.Get(); ok {
+		for _, val := range vals {
+			if !slices.Contains(t.Tags, val) {
+				return false
+			}
 		}
 	}
 
@@ -153,6 +164,8 @@ func (c *TimerCond) Clear() {
 
 // TimerUpdate indicates how to update a timer
 type TimerUpdate struct {
+	// Tags indicates to set all tags for a timer
+	Tags OptionalVal[[]string]
 	// Enable indicates to set the timer's `Enable` field
 	Enable OptionalVal[bool]
 	// SchedPolicyType indicates to set the timer's `SchedPolicyType` field
@@ -188,6 +201,13 @@ func (u *TimerUpdate) Apply(record *TimerRecord) (*TimerRecord, error) {
 	}
 
 	record = record.Clone()
+	if v, ok := u.Tags.Get(); ok {
+		if len(v) == 0 {
+			v = nil
+		}
+		record.Tags = v
+	}
+
 	if v, ok := u.Enable.Get(); ok {
 		record.Enable = v
 	}
@@ -368,6 +388,8 @@ type TimerStoreCore interface {
 	// Watch watches all changes of the store. A chan will be returned to receive `WatchTimerResponse`
 	// The returned chan be closed when the context in the argument is done.
 	Watch(ctx context.Context) WatchTimerChan
+	// Close closes the store
+	Close()
 }
 
 // TimerStore extends TimerStoreCore to provide some extra methods for timer operations
@@ -398,4 +420,15 @@ func (s *TimerStore) getOneRecord(ctx context.Context, cond Cond) (record *Timer
 	}
 
 	return records[0], nil
+}
+
+// TimerWatchEventNotifier is used to notify timer watch events
+type TimerWatchEventNotifier interface {
+	// Watch watches all changes of the store. A chan will be returned to receive `WatchTimerResponse`
+	// The returned chan be closed when the context in the argument is done.
+	Watch(ctx context.Context) WatchTimerChan
+	// Notify sends the event to watchers
+	Notify(tp WatchTimerEventType, timerID string)
+	// Close closes the notifier
+	Close()
 }

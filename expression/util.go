@@ -558,11 +558,10 @@ Loop:
 		switch {
 		case unicode.IsDigit(c) || unicode.IsLower(c) || unicode.IsUpper(c):
 			c = unicode.ToUpper(c)
-			if c < upper {
-				validLen = i + 1
-			} else {
+			if c >= upper {
 				break Loop
 			}
+			validLen = i + 1
 		case c == '+' || c == '-':
 			if i != 0 {
 				break Loop

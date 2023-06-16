@@ -63,7 +63,7 @@ func InitGlobalLightningEnv() {
 	}
 	LitSortPath = sPath
 	LitBackCtxMgr = newLitBackendCtxMgr(LitSortPath, maxMemoryQuota)
-	LitRLimit = util.GenRLimit()
+	LitRLimit = util.GenRLimit("ddl-ingest")
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
 		zap.Uint64("memory limitation", maxMemoryQuota),

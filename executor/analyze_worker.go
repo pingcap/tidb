@@ -68,7 +68,6 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 		} else {
 			finishJobWithLog(worker.sctx, results.Job, nil)
 		}
-		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 		if err != nil {
 			return
 		}

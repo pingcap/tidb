@@ -747,6 +747,12 @@ func EstimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableC
 	}
 	totalRawFileSize *= factor
 
+	return EstimateCompactionThreshold2(totalRawFileSize)
+}
+
+// EstimateCompactionThreshold2 estimate SST files compression threshold by total row file size
+// see EstimateCompactionThreshold for more details.
+func EstimateCompactionThreshold2(totalRawFileSize int64) int64 {
 	// try restrict the total file number within 512
 	threshold := totalRawFileSize / 512
 	threshold = utils.NextPowerOfTwo(threshold)

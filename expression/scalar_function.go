@@ -352,6 +352,11 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 	return sf
 }
 
+// Traverse implements the TraverseDown interface.
+func (sf *ScalarFunction) Traverse(action TraverseAction) Expression {
+	return action.Transform(sf)
+}
+
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	var (
@@ -464,7 +469,7 @@ func ExpressionsSemanticEqual(ctx sessionctx.Context, expr1, expr2 Expression) b
 	return bytes.Equal(expr1.HashCode(sc), expr2.HashCode(sc))
 }
 
-// canonicalizedHashCode is used to judge whether two expression is semantically equal.
+// simpleCanonicalizedHashCode is used to judge whether two expression is semantically equal.
 func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContext) {
 	if sf.canonicalhashcode != nil {
 		sf.canonicalhashcode = sf.canonicalhashcode[:0]

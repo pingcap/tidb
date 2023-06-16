@@ -95,7 +95,14 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 			return errors.Trace(err)
 		}
 
-		if f == nil || f.IsDir() {
+		if f == nil {
+			return nil
+		}
+		if f.IsDir() {
+			// walk will call this for base itself.
+			if path != base && opt.SkipSubDir {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		// in mac osx, the path parameter is absolute path; in linux, the path is relative path to execution base dir,
