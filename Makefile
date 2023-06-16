@@ -489,33 +489,35 @@ bazel_golangcilinter:
 		@com_github_golangci_golangci_lint//cmd/golangci-lint:golangci-lint \
 	-- run  $$($(PACKAGE_DIRECTORIES)) --config ./.golangci.yaml
 
-bazel_brietest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+bazel_integration_test_prepare: failpoint-enable bazel_ci_prepare
+
+bazel_brietest: bazel_integration_test_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --combined_report=lcov --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/brietest/...
 
-bazel_pessimistictest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+bazel_pessimistictest: bazel_integration_test_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --combined_report=lcov --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/pessimistictest/...
 
-bazel_sessiontest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+bazel_sessiontest: bazel_integration_test_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --combined_report=lcov --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/sessiontest/...
 
-bazel_statisticstest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+bazel_statisticstest: bazel_integration_test_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --combined_report=lcov --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/statisticstest/...
 
-bazel_txntest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+bazel_txntest: bazel_integration_test_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --combined_report=lcov --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/txntest/...
 
-bazel_addindextest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+bazel_addindextest: bazel_integration_test_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --combined_report=lcov --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/addindextest/...
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
-bazel_importintotest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+bazel_importintotest: bazel_integration_test_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --combined_report=lcov --test_arg=-with-real-tikv --test_output=all --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/importintotest/...
 
 bazel_lint: bazel_prepare
