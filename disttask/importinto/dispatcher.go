@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/atomic"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -392,7 +391,7 @@ func verifyChecksum(ctx context.Context, controller *importer.LoadDataController
 	return controller.VerifyChecksum(ctx, localChecksum)
 }
 
-// nolint:unused
+// nolint:deadcode
 func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tblInfo := taskMeta.Plan.TableInfo
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, tblInfo.Name.L)
@@ -419,6 +418,7 @@ func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMet
 	return nil
 }
 
+// nolint:deadcode
 func createTableIndexes(ctx context.Context, executor storage.SessionExecutor, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
 	singleSQL, multiSQLs := common.BuildAddIndexSQL(tableName, taskMeta.Plan.TableInfo, taskMeta.Plan.DesiredTableInfo)
@@ -635,11 +635,12 @@ func rollback(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Ta
 
 	logger.Info("rollback", zap.Any("task_meta", taskMeta))
 
-	// create table indexes even if the rollback is failed.
-	defer func() {
-		err2 := createTableIndexes(ctx, handle, taskMeta, logger)
-		err = multierr.Append(err, err2)
-	}()
+	//	// TODO: create table indexes depends on the option.
+	//	// create table indexes even if the rollback is failed.
+	//	defer func() {
+	//		err2 := createTableIndexes(ctx, handle, taskMeta, logger)
+	//		err = multierr.Append(err, err2)
+	//	}()
 
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
 	// truncate the table
