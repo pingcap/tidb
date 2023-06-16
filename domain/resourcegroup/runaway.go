@@ -21,13 +21,19 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
+	"go.uber.org/zap"
 )
 
-// DefaultResourceGroupName is the default resource group name.
-const DefaultResourceGroupName = "default"
+const (
+	// DefaultResourceGroupName is the default resource group name.
+	DefaultResourceGroupName = "default"
+	// MaxWaitDuration is the max duration to wait for acquiring token buckets.
+	MaxWaitDuration = time.Second * 30
+)
 
 // RunawayManager is used to detect and record runaway queries.
 type RunawayManager struct {
@@ -46,13 +52,17 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController) *Run
 }
 
 // DeriveChecker derives a RunawayChecker from the given resource group
-func (rm *RunawayManager) DeriveChecker(resourceGroupName string, originalSql string, planDigest string) *RunawayChecker {
-	meta, err := rm.resourceGroupCtl.GetResourceGroup(resourceGroupName)
-	if err != nil || meta == nil || meta.RunawaySettings == nil {
+func (rm *RunawayManager) DeriveChecker(resourceGroupName string, originalSQL string, planDigest string) *RunawayChecker {
+	group, err := rm.resourceGroupCtl.GetResourceGroup(resourceGroupName)
+	if err != nil || group == nil {
+		logutil.BgLogger().Warn("cannot setup up runaway checker", zap.Error(err))
+		return nil
+	}
+	if group.RunawaySettings == nil {
 		return nil
 	}
 
-	return newRunawayChecker(rm, resourceGroupName, meta.RunawaySettings, originalSql, planDigest)
+	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, planDigest)
 }
 
 // MarkRunaway marks the query as runaway.

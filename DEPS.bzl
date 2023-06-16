@@ -4238,8 +4238,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:BDQQDtqhUo3epgVc8HOPYLg9w8zehRaegEX+1bHMyVg=",
-        version = "v2.0.8-0.20230614032106-0b4b0ca00e74",
+        sum = "h1:k6GnsFTv7l9UdAiaZYlWLsTVDzOVFJY3lf/FCcDHoQ4=",
+        version = "v2.0.8-0.20230615161845-b32f340d0609",
     )
     go_repository(
         name = "com_github_tikv_pd",
@@ -4253,19 +4253,8 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-<<<<<<< HEAD
-<<<<<<< HEAD
-        replace = "github.com/CabinfeverB/pd/client",
-        sum = "h1:rwzgdzfBUFofG6wrzaHLmXNbG8315HZs8QYOZV8I5ns=",
-        version = "v0.0.0-20230601154623-a209ebf2b67c",
-=======
         sum = "h1:a5SATBxu/0Z6qNnz4KXDN91gDA06waaYcHM6dkb6lz4=",
         version = "v0.0.0-20230613052906-7158cb319935",
->>>>>>> resource_manager/runaway_bokang
-=======
-        sum = "h1:GZdnq41Gs/Zxz0Ne/cZ/rKual+GD8F3h434OwhZogfA=",
-        version = "v0.0.0-20230608061541-026ddf08a351",
->>>>>>> master
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
