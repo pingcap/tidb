@@ -598,7 +598,7 @@ type partialTableWorker struct {
 }
 
 // needPartitionHandle indicates whether we need create a partitonHandle or not.
-// If the schema from planner part contains ExtraHandleID,
+// If the schema from planner part contains ExtraPhysTblID,
 // we need create a partitionHandle, otherwise create a normal handle.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
 func (w *partialTableWorker) needPartitionHandle() bool {
@@ -1453,7 +1453,7 @@ func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexM
 }
 
 // needPartitionHandle indicates whether we need create a partitonHandle or not.
-// If the schema from planner part contains ExtraPidColID or ExtraHandleID,
+// If the schema from planner part contains ExtraPidColID or ExtraPhysTblID,
 // we need create a partitionHandle, otherwise create a normal handle.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
 func (w *partialIndexWorker) needPartitionHandle() bool {
