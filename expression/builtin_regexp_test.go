@@ -926,11 +926,11 @@ func TestRegexpReplace(t *testing.T) {
 	url1 := "https://go.mail/folder-1/online/ru-en/#lingvo/#1О 50000&price_ashka/rav4/page=/check.xml"
 	url2 := "http://saint-peters-total=меньше 1000-rublyayusche/catalogue/kolasuryat-v-2-kadyirovka-personal/serial_id=0&input_state/apartments/mokrotochki.net/upravda.ru/yandex.ru/GameMain.aspx?mult]/on/orders/50195&text=мыс и орелка в Балаш смотреть онлайн бесплатно в хорошем камбалакс&lr=20030393833539353862643188&op_promo=C-Teaser_id=06d162.html"
 
-	url1Repl := "a$12$13"
+	url1Repl := "a\\12\\13"
 	url1Res := "ago.mail2go.mail3"
 	url1BinRes := "0x61676F2E6D61696C32676F2E6D61696C33"
 
-	url2Repl := "aaa$1233"
+	url2Repl := "aaa\\1233"
 	url2Res := "aaasaint-peters-total=меньше 1000-rublyayusche233"
 	url2BinRes := "0x6161617361696E742D7065746572732D746F74616C3DC390C2BCC390C2B5C390C2BDC391C592C391CB86C390C2B520313030302D7275626C7961797573636865323333"
 
@@ -948,6 +948,9 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc abd abe", "ab.", "cz", "cz cz cz", "0x637A20637A20637A", nil},
 		{"你好 好的", "好", "逸", "你逸 逸的", "0xE4BDA0E980B820E980B8E79A84", nil},
 		{"", "^$", "123", "123", "0x313233", nil},
+		{"stackoverflow", "(.{5})(.*)", `\\+\2+\1+\2+\1\`, `\+overflow+stack+overflow+stack`, "0x5C2B6F766572666C6F772B737461636B2B6F766572666C6F772B737461636B", nil},
+		{"fooabcdefghij fooABCDEFGHIJ", "foo(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)", `\\\9\\\8-\7\\\6-\5\\\4-\3\\\2-\1\\`, `\i\h-g\f-e\d-c\b-a\ \I\H-G\F-E\D-C\B-A\`, "0x5C395C382D375C362D355C342D335C322D315C205C395C382D375C362D355C342D335C322D315C", nil},
+		{"fool food foo", "foo(.?)", `\0+\1`, "fool+l food+d foo+", "0x5C302B5C31205C302B5C31205C302B5C31", nil},
 		{url1, urlPat, url1Repl, url1Res, url1BinRes, nil},
 		{url2, urlPat, url2Repl, url2Res, url2BinRes, nil},
 		{"abc", nil, nil, nil, nil, nil},
@@ -999,8 +1002,8 @@ func TestRegexpReplace(t *testing.T) {
 		{"seafood fool", "foo(.?)", "123", int64(3), "sea123 123", "0x73656131323320313233", nil}, // index 5
 		{"seafood fool", "foo(.?)", "123", int64(5), "seafood 123", "0x736561666F6F6420313233", nil},
 		{"seafood fool", "foo(.?)", "123", int64(10), "seafood fool", "0x736561666F6F6420666F6F6C", nil},
-		{"seafood fool", "foo(.?)", "z$12", int64(3), "seazd2 zl2", "0x7365617A6432207A6C32", nil},
-		{"seafood fool", "foo(.?)", "z$12", int64(5), "seafood zl2", "0x736561666F6F64207A6C32", nil},
+		{"seafood fool", "foo(.?)", "z\\12", int64(3), "seazd2 zl2", "0x7365617A6432207A6C32", nil},
+		{"seafood fool", "foo(.?)", "z\\12", int64(5), "seafood zl2", "0x736561666F6F64207A6C32", nil},
 		// Invalid position index tests
 		{"", "^$", "a", int64(2), "", "", ErrRegexp}, // index 10
 		{"", "^&", "a", int64(0), "", "", ErrRegexp},
@@ -1057,8 +1060,8 @@ func TestRegexpReplace(t *testing.T) {
 		{"seafood fool", "foo(.?)", "123", int64(1), int(1), "sea123 fool", "0x73656131323320666F6F6C", nil},
 		{"seafood fool", "foo(.?)", "123", int64(1), int(2), "seafood 123", "0x736561666F6F6420313233", nil},
 		{"seafood fool", "foo(.?)", "123", int64(1), int(10), "seafood fool", "0x736561666F6F6420666F6F6C", nil},
-		{"seafood fool", "foo(.?)", "z$12", int64(1), int(1), "seazd2 fool", "0x7365617A643220666F6F6C", nil}, // index 10
-		{"seafood fool", "foo(.?)", "z$12", int64(1), int(2), "seafood zl2", "0x736561666F6F64207A6C32", nil},
+		{"seafood fool", "foo(.?)", "z\\12", int64(1), int(1), "seazd2 fool", "0x7365617A643220666F6F6C", nil}, // index 10
+		{"seafood fool", "foo(.?)", "z\\12", int64(1), int(2), "seafood zl2", "0x736561666F6F64207A6C32", nil},
 		{"", "^$", "cc", int64(1), int64(1), "cc", "0x6363", nil},
 		{"", "^$", "cc", int64(1), int64(2), "", "0x", nil},
 		{"", "^$", "cc", int64(1), int64(-1), "cc", "0x6363", nil},
@@ -1111,7 +1114,7 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc", "aB.", "cc", int64(1), int64(0), "i", "cc", "0x6363", nil},
 		{"good\nday", "od$", "cc", int64(1), int64(0), "m", "gocc\nday", "0x676F63630A646179", nil},
 		{"good\nday", "oD$", "cc", int64(1), int64(0), "mi", "gocc\nday", "0x676F63630A646179", nil},
-		{"Good\nday", "a(B)", "a$12", int64(2), int64(0), "msi", "Good\nday", "0x476F6F640A646179", nil},
+		{"Good\nday", "a(B)", "a\\12", int64(2), int64(0), "msi", "Good\nday", "0x476F6F640A646179", nil},
 		{"Good\nday", "(.)", "cc", int64(1), int64(3), "ci", "Goccd\nday", "0x476F6363640A646179", nil},
 		{"seafood fool", "foo(.?)", "的", int64(1), int64(2), "m", "seafood 的", "0x736561666F6F6420C3A7C5A1E2809E", nil},
 		{"abc abd abe", "(.)", "cc", int64(4), int64(1), "cii", "abcccabd abe", "0x616263636361626420616265", nil},
@@ -1151,7 +1154,7 @@ func TestRegexpReplace(t *testing.T) {
 func TestRegexpReplaceVec(t *testing.T) {
 	var expr []string = []string{"abc abd abe", "你好啊啊啊啊啊", "好的 好滴 好~", "Good\nday", "seafood fool"} // , "\n\n\n\n\n\n"
 	var pattern []string = []string{"(^$)", "(a)b.", "a(B).", "(ab)c", "(好)", "(好).", "(o)d$", "^da(y)", "(d)ay$", "(.)", "foo(.?)", "foo(d|l)"}
-	var repl []string = []string{"cc", "的", "a$12"}
+	var repl []string = []string{"cc", "的", "a\\12"}
 	var position []int = []int{1, 5}
 	var occurrence []int = []int{-1, 5}
 	var matchType []string = []string{"m", "i", "icc", "cii", "s", "msi"}
