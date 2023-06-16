@@ -1050,7 +1050,7 @@ func TestRegexpReplace(t *testing.T) {
 		matchBin   interface{} // bin result
 		err        error
 	}{
-		{"abc abd", "ab.", "cc", int64(1), int64(1), "cc abd", "0x636320616264", nil},
+		{"abc abd", "ab.", "cc", int64(1), int64(1), "cc abd", "0x636320616264", nil}, // index 0
 		{"abc abd", "ab.", "cc", int64(1), int64(2), "abc cc", "0x616263206363", nil},
 		{"abc abd", "ab.", "cc", int64(1), int64(0), "cc cc", "0x6363206363", nil},
 		{"abc abd abe", "ab.", "cc", int64(3), int64(2), "abc abd cc", "0x61626320616264206363", nil},
