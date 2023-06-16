@@ -75,39 +75,41 @@ const (
 	// 0 means no limit
 	unlimitedWriteSpeed = config.ByteSize(0)
 
-	characterSetOption        = "character_set"
-	fieldsTerminatedByOption  = "fields_terminated_by"
-	fieldsEnclosedByOption    = "fields_enclosed_by"
-	fieldsEscapedByOption     = "fields_escaped_by"
-	fieldsDefinedNullByOption = "fields_defined_null_by"
-	linesTerminatedByOption   = "lines_terminated_by"
-	skipRowsOption            = "skip_rows"
-	splitFileOption           = "split_file"
-	diskQuotaOption           = "disk_quota"
-	threadOption              = "thread"
-	maxWriteSpeedOption       = "max_write_speed"
-	checksumTableOption       = "checksum_table"
-	recordErrorsOption        = "record_errors"
-	detachedOption            = "detached"
+	characterSetOption          = "character_set"
+	fieldsTerminatedByOption    = "fields_terminated_by"
+	fieldsEnclosedByOption      = "fields_enclosed_by"
+	fieldsEscapedByOption       = "fields_escaped_by"
+	fieldsDefinedNullByOption   = "fields_defined_null_by"
+	linesTerminatedByOption     = "lines_terminated_by"
+	skipRowsOption              = "skip_rows"
+	splitFileOption             = "split_file"
+	diskQuotaOption             = "disk_quota"
+	threadOption                = "thread"
+	maxWriteSpeedOption         = "max_write_speed"
+	checksumTableOption         = "checksum_table"
+	recordErrorsOption          = "record_errors"
+	detachedOption              = "detached"
+	disableTiKVImportModeOption = "disable_tikv_import_mode"
 )
 
 var (
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
-		characterSetOption:        true,
-		fieldsTerminatedByOption:  true,
-		fieldsEnclosedByOption:    true,
-		fieldsEscapedByOption:     true,
-		fieldsDefinedNullByOption: true,
-		linesTerminatedByOption:   true,
-		skipRowsOption:            true,
-		splitFileOption:           false,
-		diskQuotaOption:           true,
-		threadOption:              true,
-		maxWriteSpeedOption:       true,
-		checksumTableOption:       true,
-		recordErrorsOption:        true,
-		detachedOption:            false,
+		characterSetOption:          true,
+		fieldsTerminatedByOption:    true,
+		fieldsEnclosedByOption:      true,
+		fieldsEscapedByOption:       true,
+		fieldsDefinedNullByOption:   true,
+		linesTerminatedByOption:     true,
+		skipRowsOption:              true,
+		splitFileOption:             false,
+		diskQuotaOption:             true,
+		threadOption:                true,
+		maxWriteSpeedOption:         true,
+		checksumTableOption:         true,
+		recordErrorsOption:          true,
+		detachedOption:              false,
+		disableTiKVImportModeOption: false,
 	}
 
 	csvOnlyOptions = map[string]struct{}{
@@ -172,13 +174,14 @@ type Plan struct {
 	plannercore.LineFieldsInfo
 	IgnoreLines uint64
 
-	DiskQuota         config.ByteSize
-	Checksum          config.PostOpLevel
-	ThreadCnt         int64
-	MaxWriteSpeed     config.ByteSize
-	SplitFile         bool
-	MaxRecordedErrors int64
-	Detached          bool
+	DiskQuota             config.ByteSize
+	Checksum              config.PostOpLevel
+	ThreadCnt             int64
+	MaxWriteSpeed         config.ByteSize
+	SplitFile             bool
+	MaxRecordedErrors     int64
+	Detached              bool
+	DisableTiKVImportMode bool
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -467,6 +470,7 @@ func (p *Plan) initDefaultOptions() {
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
 	p.Detached = false
+	p.DisableTiKVImportMode = false
 
 	v := "utf8mb4"
 	p.Charset = &v
@@ -620,6 +624,9 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 	}
 	if _, ok := specifiedOptions[detachedOption]; ok {
 		p.Detached = true
+	}
+	if _, ok := specifiedOptions[disableTiKVImportModeOption]; ok {
+		p.DisableTiKVImportMode = true
 	}
 
 	p.adjustOptions()
