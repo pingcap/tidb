@@ -1135,11 +1135,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
 		}
 	})
-	failpoint.Inject("sleepCoprRequest", func(v failpoint.Value) {
-		fmt.Println("&&&&&&&&&&&&", time.Now(), v.(int))
-		time.Sleep(time.Millisecond * time.Duration(v.(int)))
-		fmt.Println("&&&&&&&&&&&&2", time.Now(), v.(int))
-	})
 
 	if task.paging {
 		task.pagingTaskIdx = atomic.AddUint32(worker.pagingTaskIdx, 1)
