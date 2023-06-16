@@ -67,11 +67,13 @@ type TiDBStatement struct {
 	boundParams [][]byte
 	paramsType  []byte
 	ctx         *TiDBContext
-	// this result set should have been closed before stored here. Only the `fetchedRows` are used here. This field is
+	// this result set should have been closed before stored here. Only the `rowIterator` are used here. This field is
 	// not moved out to reuse the logic inside functions `writeResultSet...`
 	// TODO: move the `fetchedRows` into the statement, and remove the `ResultSet` from statement.
-	rs  ResultSet
-	sql string
+	rs cursorResultSet
+	// the `rowContainer` should contain all pre-fetched results of the statement in `EXECUTE` command.
+	rowContainer *chunk.RowContainer
+	sql          string
 
 	hasActiveCursor bool
 }
@@ -132,7 +134,7 @@ func (ts *TiDBStatement) GetParamsType() []byte {
 }
 
 // StoreResultSet stores ResultSet for stmt fetching
-func (ts *TiDBStatement) StoreResultSet(rs ResultSet) {
+func (ts *TiDBStatement) StoreResultSet(rs cursorResultSet) {
 	// refer to https://dev.mysql.com/doc/refman/5.7/en/cursor-restrictions.html
 	// You can have open only a single cursor per prepared statement.
 	// closing previous ResultSet before associating a new ResultSet with this statement
@@ -144,7 +146,7 @@ func (ts *TiDBStatement) StoreResultSet(rs ResultSet) {
 }
 
 // GetResultSet gets ResultSet associated this statement
-func (ts *TiDBStatement) GetResultSet() ResultSet {
+func (ts *TiDBStatement) GetResultSet() cursorResultSet {
 	return ts.rs
 }
 
@@ -158,6 +160,16 @@ func (ts *TiDBStatement) Reset() {
 
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
+	if ts.rowContainer != nil {
+		ts.rowContainer.GetMemTracker().Detach()
+		ts.rowContainer.GetDiskTracker().Detach()
+
+		err := ts.rowContainer.Close()
+		if err != nil {
+			return err
+		}
+	}
+
 	// TODO close at tidb level
 	if ts.ctx.GetSessionVars().TxnCtx != nil && ts.ctx.GetSessionVars().TxnCtx.CouldRetry {
 		err := ts.ctx.DropPreparedStmt(ts.id)
@@ -195,6 +207,16 @@ func (ts *TiDBStatement) GetCursorActive() bool {
 // SetCursorActive implements PreparedStatement SetCursorActive method.
 func (ts *TiDBStatement) SetCursorActive(fetchEnd bool) {
 	ts.hasActiveCursor = fetchEnd
+}
+
+// StoreRowContainer stores a row container into the prepared statement
+func (ts *TiDBStatement) StoreRowContainer(c *chunk.RowContainer) {
+	ts.rowContainer = c
+}
+
+// GetRowContainer returns the row container of the statement
+func (ts *TiDBStatement) GetRowContainer() *chunk.RowContainer {
+	return ts.rowContainer
 }
 
 // OpenCtx implements IDriver.
@@ -416,7 +438,6 @@ func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, sctx sessionctx.
 type tidbResultSet struct {
 	recordSet    sqlexec.RecordSet
 	columns      []*column.Info
-	rows         []chunk.Row
 	closed       int32
 	preparedStmt *core.PlanCacheStmt
 }
@@ -427,17 +448,6 @@ func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 
 func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.Chunk) error {
 	return trs.recordSet.Next(ctx, req)
-}
-
-func (trs *tidbResultSet) StoreFetchedRows(rows []chunk.Row) {
-	trs.rows = rows
-}
-
-func (trs *tidbResultSet) GetFetchedRows() []chunk.Row {
-	if trs.rows == nil {
-		trs.rows = make([]chunk.Row, 0, 1024)
-	}
-	return trs.rows
 }
 
 func (trs *tidbResultSet) Close() error {
@@ -484,6 +494,30 @@ func (trs *tidbResultSet) Columns() []*column.Info {
 		}
 	}
 	return trs.columns
+}
+
+func (trs *tidbResultSet) FieldTypes() []*types.FieldType {
+	fts := make([]*types.FieldType, 0, len(trs.recordSet.Fields()))
+	for _, f := range trs.recordSet.Fields() {
+		fts = append(fts, &f.Column.FieldType)
+	}
+	return fts
+}
+
+var _ cursorResultSet = &tidbCursorResultSet{}
+
+type tidbCursorResultSet struct {
+	ResultSet
+
+	iter chunk.Iterator
+}
+
+func (tcrs *tidbCursorResultSet) StoreRowIterator(iter chunk.Iterator) {
+	tcrs.iter = iter
+}
+
+func (tcrs *tidbCursorResultSet) GetRowIterator() chunk.Iterator {
+	return tcrs.iter
 }
 
 func convertColumnInfo(fld *ast.ResultField) (ci *column.Info) {
