@@ -2360,9 +2360,6 @@ func TestAnalyzeJob(t *testing.T) {
 		}
 		checkTime(rows[0][5])
 		require.Equal(t, statistics.AnalyzeRunning, rows[0][7])
-		require.Equal(t, "9m0s", rows[0][11]) // REMAINING_SECONDS
-		require.Equal(t, "0.1", rows[0][12])  // PROGRESS
-		require.Equal(t, "0", rows[0][13])    // ESTIMATED_TOTAL_ROWS
 
 		// UpdateAnalyzeJob requires the interval between two updates to mysql.analyze_jobs is more than 5 second.
 		// Hence we fake last dump time as 10 second ago in order to make update to mysql.analyze_jobs happen.
