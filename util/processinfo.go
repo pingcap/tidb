@@ -41,6 +41,8 @@ type OOMAlarmVariablesInfo struct {
 type ProcessInfo struct {
 	Time                  time.Time
 	ExpensiveLogTime      time.Time
+	ExpensiveTxnLogTime   time.Time
+	CurTxnCreateTime      time.Time
 	Plan                  interface{}
 	StmtCtx               *stmtctx.StatementContext
 	RefCountOfStmtCtx     *stmtctx.ReferenceCount
@@ -199,4 +201,6 @@ type SessionManager interface {
 	CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string)
 	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
 	KillNonFlashbackClusterConn()
+	// GetConAttrs gets the connection attributes
+	GetConAttrs() map[uint64]map[string]string
 }

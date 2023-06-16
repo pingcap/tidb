@@ -34,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
-	internalutil "github.com/pingcap/tidb/executor/internal/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -61,9 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -2014,115 +2011,22 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 			procID = chunkRow.GetUint64(10)
 		}
 
-		var remainDurationStr, progressStr, estimatedRowCntStr interface{}
-		if state == statistics.AnalyzeRunning {
-			startTime, ok := startTime.(types.Time)
-			if !ok {
-				return nil, errors.New("invalid start time")
-			}
-			RemainingDuration, progress, estimatedRowCnt, RemainDurationErr :=
-				getRemainDurationForAnalyzeStatusHelper(ctx, sctx, &startTime,
-					dbName, tableName, partitionName, processedRows)
-			if RemainDurationErr != nil {
-				logutil.BgLogger().Warn("get remaining duration failed", zap.Error(RemainDurationErr))
-			}
-			if RemainingDuration != nil {
-				remainDurationStr = execdetails.FormatDuration(*RemainingDuration)
-			}
-			progressStr = progress
-			estimatedRowCntStr = int64(estimatedRowCnt)
-		}
 		row := types.MakeDatums(
-			dbName,             // TABLE_SCHEMA
-			tableName,          // TABLE_NAME
-			partitionName,      // PARTITION_NAME
-			jobInfo,            // JOB_INFO
-			processedRows,      // ROW_COUNT
-			startTime,          // START_TIME
-			endTime,            // END_TIME
-			state,              // STATE
-			failReason,         // FAIL_REASON
-			instance,           // INSTANCE
-			procID,             // PROCESS_ID
-			remainDurationStr,  // REMAINING_SECONDS
-			progressStr,        // PROGRESS
-			estimatedRowCntStr, // ESTIMATED_TOTAL_ROWS
+			dbName,        // TABLE_SCHEMA
+			tableName,     // TABLE_NAME
+			partitionName, // PARTITION_NAME
+			jobInfo,       // JOB_INFO
+			processedRows, // ROW_COUNT
+			startTime,     // START_TIME
+			endTime,       // END_TIME
+			state,         // STATE
+			failReason,    // FAIL_REASON
+			instance,      // INSTANCE
+			procID,        // PROCESS_ID
 		)
 		rows = append(rows, row)
 	}
 	return
-}
-
-func getRemainDurationForAnalyzeStatusHelper(
-	ctx context.Context,
-	sctx sessionctx.Context, startTime *types.Time,
-	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, float64, float64, error) {
-	var RemainingDuration = time.Duration(0)
-	var percentage = 0.0
-	var totalCnt = float64(0)
-	if startTime != nil {
-		start, err := startTime.GoTime(time.UTC)
-		if err != nil {
-			return nil, percentage, totalCnt, err
-		}
-		duration := time.Now().UTC().Sub(start)
-		if intest.InTest {
-			if val := ctx.Value(AnalyzeProgressTest); val != nil {
-				RemainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
-				return &RemainingDuration, percentage, totalCnt, nil
-			}
-		}
-		var tid int64
-		is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-		tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
-		if err != nil {
-			return nil, percentage, totalCnt, err
-		}
-		statsHandle := domain.GetDomain(sctx).StatsHandle()
-		if statsHandle != nil {
-			var statsTbl *statistics.Table
-			meta := tb.Meta()
-			if partitionName != "" {
-				pt := meta.GetPartitionInfo()
-				tid = pt.GetPartitionIDByName(partitionName)
-				statsTbl = statsHandle.GetPartitionStats(meta, tid)
-			} else {
-				statsTbl = statsHandle.GetTableStats(meta)
-				tid = meta.ID
-			}
-			if statsTbl != nil && statsTbl.RealtimeCount != 0 {
-				totalCnt = float64(statsTbl.RealtimeCount)
-			}
-		}
-		if tid > 0 && totalCnt == 0 {
-			totalCnt, _ = internalutil.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
-		}
-		RemainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
-	}
-	return &RemainingDuration, percentage, totalCnt, nil
-}
-
-func calRemainInfoForAnalyzeStatus(ctx context.Context, totalCnt int64, processedRows int64, duration time.Duration) (time.Duration, float64) {
-	if intest.InTest {
-		if val := ctx.Value(AnalyzeProgressTest); val != nil {
-			totalCnt = 100 // But in final result, it is still 0.
-			processedRows = 10
-			duration = 1 * time.Minute
-		}
-	}
-	if totalCnt == 0 {
-		return 0, 100.0
-	}
-	remainLine := totalCnt - processedRows
-	if processedRows == 0 {
-		processedRows = 1
-	}
-	if duration == 0 {
-		duration = 1 * time.Second
-	}
-	i := float64(remainLine) * duration.Seconds() / float64(processedRows)
-	persentage := float64(processedRows) / float64(totalCnt)
-	return time.Duration(i) * time.Second, persentage
 }
 
 // setDataForAnalyzeStatus gets all the analyze jobs.
@@ -3037,13 +2941,13 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 		return nil, errors.Trace(err)
 	}
 	var result tiFlashSQLExecuteResponse
-	if tiflashResp, ok := resp.Resp.(*kvrpcpb.TiFlashSystemTableResponse); ok {
-		err = json.Unmarshal(tiflashResp.Data, &result)
-		if err != nil {
-			return nil, errors.Wrapf(err, "Failed to decode JSON from TiFlash")
-		}
-	} else {
+	tiflashResp, ok := resp.Resp.(*kvrpcpb.TiFlashSystemTableResponse)
+	if !ok {
 		return nil, errors.Errorf("Unexpected response type: %T", resp.Resp)
+	}
+	err = json.Unmarshal(tiflashResp.Data, &result)
+	if err != nil {
+		return nil, errors.Wrapf(err, "Failed to decode JSON from TiFlash")
 	}
 
 	// Map result columns back to our columns. It is possible that some columns cannot be
@@ -3253,7 +3157,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 		burstable := burstdisableStr
 		priority := model.PriorityValueToName(uint64(group.Priority))
 		fillrate := unlimitedFillRate
-		isDefaultInReservedSetting := group.Name == "default" && group.RUSettings.RU.Settings.FillRate == math.MaxInt32
+		isDefaultInReservedSetting := group.Name == resourcegroup.DefaultResourceGroupName && group.RUSettings.RU.Settings.FillRate == math.MaxInt32
 		if !isDefaultInReservedSetting {
 			fillrate = strconv.FormatUint(group.RUSettings.RU.Settings.FillRate, 10)
 		}
@@ -3266,7 +3170,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			}
 			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
 			runawayRule = fmt.Sprintf("%s=%s", "EXEC_ELAPSED", dur.String())
-			runawayAction = fmt.Sprintf("%s=%s", "ACTION", model.RunawayActionType(setting.Action).String())
+			runawayAction = fmt.Sprintf("%s=%s", "ACTION", model.RunawayActionType(setting.Action+1).String())
 			if setting.Watch != nil {
 				dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
 				runawayWatch = fmt.Sprintf("%s=%s[%s]", "WATCH", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())

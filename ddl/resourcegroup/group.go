@@ -44,10 +44,11 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 			return nil, ErrInvalidResourceGroupRunawayExecElapsedTime
 		}
 		runaway.Rule.ExecElapsedTimeMs = options.Runaway.ExecElapsedTimeMs
-		if options.Runaway.Action == 0 {
+		if options.Runaway.Action == model.RunawayActionNone {
 			return nil, ErrUnknownResourceGroupRunawayAction
 		}
-		runaway.Action = rmpb.RunawayAction(options.Runaway.Action)
+		// because RunawayActionNone is only defined in tidb, sub 1.
+		runaway.Action = rmpb.RunawayAction(options.Runaway.Action - 1)
 		if options.Runaway.WatchDurationMs > 0 {
 			runaway.Watch = &rmpb.RunawayWatch{}
 			runaway.Watch.Type = rmpb.RunawayWatchType(options.Runaway.WatchType)

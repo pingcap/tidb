@@ -1174,6 +1174,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
+	failpoint.Inject("sleepCoprRequest", nil)
 	if err := worker.req.RunawayChecker.BeforeCopRequest(req); err != nil {
 		return nil, err
 	}
@@ -1212,6 +1213,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = storeAddr
+
 	costTime := time.Since(startTime)
 	copResp := resp.Resp.(*coprocessor.Response)
 
@@ -1532,20 +1534,19 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 	}
 	if regionErr := resp.GetRegionError(); regionErr != nil && regionErr.ServerIsBusy != nil &&
 		regionErr.ServerIsBusy.EstimatedWaitMs > 0 && len(remainTasks) != 0 {
-		if len(batchResps) == 0 {
-			busyThresholdFallback = true
-			handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower)
-			for _, task := range remainTasks {
-				// do not set busy threshold again.
-				task.busyThreshold = 0
-				if err = handler.handle(task); err != nil {
-					return nil, err
-				}
-			}
-			remainTasks = handler.build()
-		} else {
+		if len(batchResps) != 0 {
 			return nil, errors.New("store batched coprocessor with server is busy error shouldn't contain responses")
 		}
+		busyThresholdFallback = true
+		handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower)
+		for _, task := range remainTasks {
+			// do not set busy threshold again.
+			task.busyThreshold = 0
+			if err = handler.handle(task); err != nil {
+				return nil, err
+			}
+		}
+		remainTasks = handler.build()
 	}
 	return remainTasks, nil
 }

@@ -409,6 +409,9 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set @@tidb_expensive_query_time_threshold=70")
 	tk.MustQuery("select @@tidb_expensive_query_time_threshold;").Check(testkit.Rows("70"))
 
+	tk.MustExec("set @@tidb_expensive_txn_time_threshold=120")
+	tk.MustQuery("select @@tidb_expensive_txn_time_threshold;").Check(testkit.Rows("120"))
+
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@global.tidb_store_limit = 100")
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))

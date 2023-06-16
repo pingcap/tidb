@@ -887,11 +887,10 @@ func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn
 			partitions, err = GetPartitionNames(tctx, conn, db, tbl)
 		}
 		if err == nil {
-			if len(partitions) == 0 {
-				handleColNames, handleVals, err = d.selectTiDBTableRegionFunc(tctx, conn, meta)
-			} else {
+			if len(partitions) != 0 {
 				return d.concurrentDumpTiDBPartitionTables(tctx, conn, meta, taskChan, partitions)
 			}
+			handleColNames, handleVals, err = d.selectTiDBTableRegionFunc(tctx, conn, meta)
 		}
 	}
 	if err != nil {
@@ -1146,7 +1145,7 @@ func getListTableTypeByConf(conf *Config) listTableType {
 }
 
 func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) error {
-	if conf.specifiedTables {
+	if conf.SpecifiedTables {
 		return nil
 	}
 	databases, err := prepareDumpingDatabases(tctx, conf, db)

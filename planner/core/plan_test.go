@@ -371,7 +371,7 @@ func TestExplainFormatHint(t *testing.T) {
 		"/*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ " +
 		"count(1) from t t1 " +
 		"where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12)").Check(testkit.Rows(
-		"hash_agg(@`sel_1`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` `idx_c2`), use_index(@`sel_1` `test`.`t1` `idx_c2`)"))
+		"hash_agg(@`sel_1`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` `idx_c2`), no_order_index(@`sel_2` `test`.`t2` `idx_c2`), agg_to_cop(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), no_order_index(@`sel_1` `test`.`t1` `idx_c2`)"))
 }
 
 func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
@@ -420,11 +420,11 @@ func TestNthPlanHint(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, index(a), index(b), index(a,b))")
 	tk.MustQuery("explain format='hint' select * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t` `a_2`)"))
+		"use_index(@`sel_1` `test`.`t` `a_2`), no_order_index(@`sel_1` `test`.`t` `a_2`)"))
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) */ * from t where a=1 and b=1").Check(testkit.Rows(
 		"use_index(@`sel_1` `test`.`t` ), nth_plan(1)"))
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(2)"))
+		"use_index(@`sel_1` `test`.`t` `a_2`), no_order_index(@`sel_1` `test`.`t` `a_2`), nth_plan(2)"))
 
 	tk.MustExec("explain format='hint' select /*+ nth_plan(3) */ * from t where a=1 and b=1")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
@@ -436,7 +436,7 @@ func TestNthPlanHint(t *testing.T) {
 
 	// Test warning for multiply hints.
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(1), nth_plan(2)"))
+		"use_index(@`sel_1` `test`.`t` `a_2`), no_order_index(@`sel_1` `test`.`t` `a_2`), nth_plan(1), nth_plan(2)"))
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)",
 		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)"))
@@ -1010,4 +1010,28 @@ func TestHypoIndexPlan(t *testing.T) {
 
 	tk.MustQuery(`explain select a from t where a = 1`).Check(testkit.Rows(
 		`Point_Get_5 1.00 root table:t, index:hypo_a(a) `))
+}
+
+func TestHypoTiFlashReplica(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+
+	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
+		`TableReader_5 10000.00 root  data:TableFullScan_4`,
+		`└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+
+	tk.MustExec(`alter table t set hypo tiflash replica 1`)
+
+	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
+		`TableReader_11 10000.00 root  MppVersion: 1, data:ExchangeSender_10`,
+		`└─ExchangeSender_10 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
+		`  └─TableFullScan_9 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo`))
+
+	tk.MustExec(`alter table t set hypo tiflash replica 0`)
+
+	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
+		`TableReader_5 10000.00 root  data:TableFullScan_4`,
+		`└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 }

@@ -18,6 +18,20 @@ config_setting(
     visibility = ["//visibility:public"],
 )
 
+bool_flag(
+    name = "with_rbe_flag",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "without_rbe",
+    flag_values = {
+        ":with_rbe_flag": "false",
+    },
+    visibility = ["//visibility:public"],
+)
+
 STATICHECK_ANALYZERS = [
     "S1000",
     "S1001",
@@ -82,6 +96,7 @@ STATICHECK_ANALYZERS = [
     "SA6005",
     "QF1002",
     "QF1004",
+    "QF1012",
     "U1000",
 ]
 
@@ -151,9 +166,14 @@ nogo(
                "//build:with_nogo": [
                    "//build/linter/allrevive",
                    "//build/linter/errcheck",
-                   "//build/linter/filepermission",
                    "//build/linter/lll",
                    "//build/linter/revive",
+               ],
+               "//conditions:default": [],
+           }) +
+           select({
+               "//build:without_rbe": [
+                   "//build/linter/filepermission",
                ],
                "//conditions:default": [],
            }),

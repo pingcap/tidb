@@ -5,7 +5,9 @@
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "/rules_go_work-*": "ignore generated code",
-      ".*_/testmain\\.go$": "ignore code"
+      ".*_/testmain\\.go$": "ignore code",
+      "extension/enterprise/audit/entry.go": "extension/enterprise/audit/entry.go",
+      "extension/enterprise/audit/filter.go": "extension/enterprise/audit/filter.go"
     }
   },
   "asciicheck": {
@@ -491,20 +493,12 @@
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code",
       "planner/core/resolve_indices.go": "planner/core/resolve_indices.go",
-      "planner/core/rule_aggregation_push_down.go": "planner/core/rule_aggregation_push_down.go", 
-      "planner/core/rule_max_min_eliminate.go": "planner/core/rule_max_min_eliminate.go",
-      "planner/core/indexmerge_path.go": "planner/core/indexmerge_path.go", 
-      "planner/core/rule_join_reorder.go": "planner/core/rule_join_reorder.go", 
-      "planner/core/plan_cacheable_checker.go": "planner/core/plan_cacheable_checker.go", 
-      "planner/core/rule_decorrelate.go": "planner/core/rule_decorrelate.go", 
-      "planner/core/plan_cache_utils.go": "planner/core/plan_cache_utils.go", 
-      "planner/core/rule_aggregation_skew_rewrite.go": "planner/core/rule_aggregation_skew_rewrite.go", 
-      "planner/core/rule_topn_push_down.go": "planner/core/rule_topn_push_down.go",
+      "planner/core/indexmerge_path.go": "planner/core/indexmerge_path.go",
+      "planner/core/rule_join_reorder.go": "planner/core/rule_join_reorder.go",
+      "planner/core/plan_cacheable_checker.go": "planner/core/plan_cacheable_checker.go",
+      "planner/core/rule_decorrelate.go": "planner/core/rule_decorrelate.go",
+      "planner/core/plan_cache_utils.go": "planner/core/plan_cache_utils.go",
       "planner/core/expression_rewriter.go": "planner/core/expression_rewriter.go",
-      "planner/core/task.go": "planner/core/task.go", 
-      "planner/core/preprocess.go": "planner/core/preprocess.go",
-      "planner/core/plan_cache_lru.go": "planner/core/plan_cache_lru.go", 
-      "planner/core/common_plans.go": "planner/core/common_plans.go",
       "plugin/conn_ip_example/": "plugin/conn_ip_example/"
     },
     "only_files": {
@@ -939,7 +933,8 @@
       "br/pkg/lightning/checkpoints/checkpoints.go": "cfg.TikvImporter.Addr is deprecated",
       "br/pkg/lightning/checkpoints/glue_checkpoint.go": "cfg.TikvImporter.Addr is deprecated",
       "br/pkg/lightning/backend/local/local.go": "grpc Compressor/Decompressor is deprecated",
-      "br/pkg/lightning/backend/local/compress.go": "grpc Compressor/Decompressor is deprecated"
+      "br/pkg/lightning/backend/local/compress.go": "grpc Compressor/Decompressor is deprecated",
+      "domain/infosync/resource_manager_client.go": "github.com/golang/protobuf deprecated"
     },
     "only_files": {
       "expression/bench_test.go": "expression/bench_test.go",
@@ -1187,6 +1182,14 @@
     }
   },
   "QF1004": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      ".*_test.go": "ignore test code",
+      "external/": "no need to vet third party code",
+      "/cgo/": "no need to vet third party code for cgo"
+    }
+  },
+  "QF1012": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",

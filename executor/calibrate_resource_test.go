@@ -44,13 +44,6 @@ func TestCalibrateResource(t *testing.T) {
 
 	tk.MustExec("SET GLOBAL tidb_enable_resource_control='ON';")
 
-	// resource group controller is not inited.
-	rs, err = tk.Exec("CALIBRATE RESOURCE")
-	require.NoError(t, err)
-	require.NotNil(t, rs)
-	err = rs.Next(context.Background(), rs.NewChunk(nil))
-	require.ErrorContains(t, err, "resource group controller is not initialized")
-
 	do := domain.GetDomain(tk.Session())
 	oldResourceCtl := do.ResourceGroupsController()
 	defer func() {
