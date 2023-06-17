@@ -1924,8 +1924,9 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 		return nil, nil, err
 	}
 
-	for _, dbName := range GetDBNames(se.GetSessionVars()) {
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
+	vars := se.GetSessionVars()
+	for _, dbName := range GetDBNames(vars) {
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.ResourceGroupName).Observe(time.Since(startTime).Seconds())
 	}
 	return rows, rs.Fields(), err
 }
@@ -2099,8 +2100,9 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 			return nil, nil, err
 		}
 
-		for _, dbName := range GetDBNames(se.GetSessionVars()) {
-			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
+		vars := se.GetSessionVars()
+		for _, dbName := range GetDBNames(vars) {
+			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.ResourceGroupName).Observe(time.Since(startTime).Seconds())
 		}
 		return rows, rs.Fields(), err
 	})
