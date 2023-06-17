@@ -201,8 +201,6 @@ const (
 	InternalDistTask = "DistTask"
 	// InternalTimer is the type of internal timer
 	InternalTimer = "Timer"
-	// InternalRunaway is the type of runaway query task.
-	InternalRunaway = "runaway"
 )
 
 // The bitmap:
