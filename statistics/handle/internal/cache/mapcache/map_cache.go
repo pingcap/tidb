@@ -33,6 +33,7 @@ func (c cacheItem) copy() cacheItem {
 	}
 }
 
+// MapCache is a cache based on map.
 type MapCache struct {
 	tables   map[int64]cacheItem
 	memUsage int64

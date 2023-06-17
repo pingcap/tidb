@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/metrics"
 )
 
+// StatsInnerCache is the LRU cache for statistics.
 type StatsInnerCache struct {
 	elements map[int64]*lruMapElement
 	// lru maintains item lru cache
@@ -31,6 +32,7 @@ type StatsInnerCache struct {
 	sync.RWMutex
 }
 
+// NewStatsLruCache creates a new LRU cache for statistics.
 func NewStatsLruCache(c int64) *StatsInnerCache {
 	s := &StatsInnerCache{
 		elements: make(map[int64]*lruMapElement),
@@ -212,6 +214,7 @@ func (s *StatsInnerCache) Cost() int64 {
 	return s.lru.trackingCost
 }
 
+// TotalCost returns the total memory usage of all tables.
 func (s *StatsInnerCache) TotalCost() int64 {
 	s.Lock()
 	defer s.Unlock()
