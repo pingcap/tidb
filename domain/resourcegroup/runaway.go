@@ -60,7 +60,7 @@ func (t RunawayMatchType) String() string {
 	}
 }
 
-// RunawayRecord is used to save records which will be insert into mysql.runaway_queries.
+// RunawayRecord is used to save records which will be insert into mysql.tidb_runaway_queries.
 type RunawayRecord struct {
 	ResourceGroupName string
 	Time              time.Time
@@ -71,7 +71,7 @@ type RunawayRecord struct {
 	From              string
 }
 
-// QuarantineRecord is used to save records which will be insert into mysql.runaway_queries.quarantined_watch.
+// QuarantineRecord is used to save records which will be insert into mysql.tidb_runaway_quarantined_watch.
 type QuarantineRecord struct {
 	ResourceGroupName string
 	StartTime         time.Time

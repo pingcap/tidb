@@ -1327,7 +1327,7 @@ func (do *Domain) execFlushSQL(sql string, params []interface{}) error {
 func genRunawayQueriesStmt(records []*resourcegroup.RunawayRecord) (string, []interface{}) {
 	var builder strings.Builder
 	params := make([]interface{}, 0, len(records)*7)
-	builder.WriteString("insert into mysql.runaway_queries VALUES ")
+	builder.WriteString("insert into mysql.tidb_runaway_queries VALUES ")
 	for count, r := range records {
 		if count > 0 {
 			builder.WriteByte(',')
@@ -1347,7 +1347,7 @@ func genRunawayQueriesStmt(records []*resourcegroup.RunawayRecord) (string, []in
 func genQuarantineQueriesStmt(records []*resourcegroup.QuarantineRecord) (string, []interface{}) {
 	var builder strings.Builder
 	params := make([]interface{}, 0, len(records)*7)
-	builder.WriteString("insert into mysql.quarantined_watch VALUES ")
+	builder.WriteString("insert into mysql.tidb_runaway_quarantined_watch VALUES ")
 	for count, r := range records {
 		if count > 0 {
 			builder.WriteByte(',')
