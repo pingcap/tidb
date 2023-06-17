@@ -604,7 +604,7 @@ const (
        KEY (create_time),
        KEY (create_user));`
 
-	// CreateQuarantineWatchTable stores the sql bind info which is used to update globalBindCache.
+	// CreateRunawayTable stores the query which is identified as runaway or quarantined because of in watch list.
 	CreateRunawayTable = `CREATE TABLE IF NOT EXISTS mysql.runaway_queries (
 		resource_group_name varchar(32) not null,
 		time TIMESTAMP NOT NULL,
@@ -617,7 +617,7 @@ const (
 		INDEX time_index(time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
-	// CreateQuarantineWatchTable stores the sql bind info which is used to update globalBindCache.
+	// CreateQuarantineWatchTable stores the condition which is used to check whether query should be quarantined.
 	CreateQuarantineWatchTable = `CREATE TABLE IF NOT EXISTS mysql.quarantined_watch (
 		resource_group_name varchar(32) not null,
 		start_time TIMESTAMP NOT NULL,

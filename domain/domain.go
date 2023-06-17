@@ -1300,6 +1300,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 			if len(records) >= flushThrehold {
 				flushRunawayRecords()
 			} else if fired {
+				fired = false
 				// meet a new record, reset the timer.
 				timer.Reset(time.Second)
 			}
@@ -1337,7 +1338,7 @@ func genRunawayQueriesStmt(records []*resourcegroup.RunawayRecord) (string, []in
 		params = append(params, r.Time)
 		params = append(params, r.Match)
 		params = append(params, r.Action)
-		params = append(params, r.SqlText)
+		params = append(params, r.SQLText)
 		params = append(params, r.PlanDigest)
 		params = append(params, r.From)
 	}
