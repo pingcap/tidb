@@ -336,7 +336,7 @@ func (tc *TiDBContext) EncodeSessionStates(ctx context.Context, sctx sessionctx.
 	for preparedID, preparedObj := range sessionVars.PreparedStmts {
 		preparedStmt, ok := preparedObj.(*core.PlanCacheStmt)
 		if !ok {
-			return errors.Errorf("invalid CachedPreparedStmt type")
+			return errors.Errorf("invalid PlanCacheStmt type")
 		}
 		sessionStates.PreparedStmts[preparedID] = &sessionstates.PreparedStmtInfo{
 			StmtText: preparedStmt.StmtText,
