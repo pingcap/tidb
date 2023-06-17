@@ -2464,6 +2464,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		for _, colInfo := range pkColsInfo {
 			colStr := colInfo.Name.O
 			pkCols = append(pkCols, colStr)
+			pkTypes = append(pkTypes, &w.e.table.Meta().Columns[colInfo.Offset].FieldType)
 		}
 	case w.e.table.Meta().PKIsHandle:
 		pkCols = append(pkCols, w.e.table.Meta().GetPkName().O)
