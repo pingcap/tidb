@@ -605,7 +605,7 @@ const (
        KEY (create_user));`
 
 	// CreateRunawayTable stores the query which is identified as runaway or quarantined because of in watch list.
-	CreateRunawayTable = `CREATE TABLE IF NOT EXISTS mysql.runaway_queries (
+	CreateRunawayTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_queries (
 		resource_group_name varchar(32) not null,
 		time TIMESTAMP NOT NULL,
 		match_type varchar(12) NOT NULL,
@@ -617,8 +617,8 @@ const (
 		INDEX time_index(time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
-	// CreateQuarantineWatchTable stores the condition which is used to check whether query should be quarantined.
-	CreateQuarantineWatchTable = `CREATE TABLE IF NOT EXISTS mysql.quarantined_watch (
+	// CreateRunawayQuarantineWatchTable stores the condition which is used to check whether query should be quarantined.
+	CreateRunawayQuarantineWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_quarantined_watch (
 		resource_group_name varchar(32) not null,
 		start_time TIMESTAMP NOT NULL,
 		end_time TIMESTAMP NOT NULL,
@@ -941,11 +941,12 @@ const (
 	// version 167 add column `step` to `mysql.tidb_background_subtask`
 	version167 = 167
 	version168 = 168
+	version169 = 169
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version168
+var currentBootstrapVersion int64 = version169
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1082,6 +1083,7 @@ var (
 		upgradeToVer146,
 		upgradeToVer167,
 		upgradeToVer168,
+		upgradeToVer169,
 	}
 )
 
@@ -2721,6 +2723,14 @@ func upgradeToVer168(s Session, ver int64) {
 	mustExecute(s, CreateImportJobs)
 }
 
+func upgradeToVer169(s Session, ver int64) {
+	if ver >= version169 {
+		return
+	}
+	mustExecute(s, CreateRunawayQuarantineWatchTable)
+	mustExecute(s, CreateRunawayTable)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2838,7 +2848,7 @@ func doDDLWorks(s Session) {
 	// Create tidb_import_jobs
 	mustExecute(s, CreateImportJobs)
 	// create quarantine_watch
-	mustExecute(s, CreateQuarantineWatchTable)
+	mustExecute(s, CreateRunawayQuarantineWatchTable)
 	// create runaway_queries
 	mustExecute(s, CreateRunawayTable)
 }
