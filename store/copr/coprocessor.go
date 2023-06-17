@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	tidbmetrics "github.com/pingcap/tidb/metrics"
@@ -183,6 +184,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		replicaReadSeed:  c.replicaReadSeed,
 		rpcCancel:        tikv.NewRPCanceller(),
 		buildTaskElapsed: *buildOpt.elapsed,
+		runawayChecker:   req.RunawayChecker,
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -683,6 +685,8 @@ type copIterator struct {
 	buildTaskElapsed        time.Duration
 	storeBatchedNum         atomic.Uint64
 	storeBatchedFallbackNum atomic.Uint64
+
+	runawayChecker *resourcegroup.RunawayChecker
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -1165,6 +1169,16 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
+	failpoint.Inject("sleepCoprRequest", func(v failpoint.Value) {
+		//nolint:durationcheck
+		time.Sleep(time.Millisecond * time.Duration(v.(int)))
+	})
+
+	if worker.req.RunawayChecker != nil {
+		if err := worker.req.RunawayChecker.BeforeCopRequest(req); err != nil {
+			return nil, err
+		}
+	}
 	req.StoreTp = getEndPointType(task.storeType)
 	startTime := time.Now()
 	if worker.kvclient.Stats == nil {
@@ -1200,12 +1214,17 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = storeAddr
+
 	costTime := time.Since(startTime)
 	copResp := resp.Resp.(*coprocessor.Response)
 
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, copResp)
 	}
+	if worker.req.RunawayChecker != nil {
+		worker.req.RunawayChecker.AfterCopRequest()
+	}
+
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
 	isInternal := util.IsRequestSourceInternal(&task.requestSource)
 	scope := metrics.LblGeneral
@@ -1518,20 +1537,19 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 	}
 	if regionErr := resp.GetRegionError(); regionErr != nil && regionErr.ServerIsBusy != nil &&
 		regionErr.ServerIsBusy.EstimatedWaitMs > 0 && len(remainTasks) != 0 {
-		if len(batchResps) == 0 {
-			busyThresholdFallback = true
-			handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower)
-			for _, task := range remainTasks {
-				// do not set busy threshold again.
-				task.busyThreshold = 0
-				if err = handler.handle(task); err != nil {
-					return nil, err
-				}
-			}
-			remainTasks = handler.build()
-		} else {
+		if len(batchResps) != 0 {
 			return nil, errors.New("store batched coprocessor with server is busy error shouldn't contain responses")
 		}
+		busyThresholdFallback = true
+		handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower)
+		for _, task := range remainTasks {
+			// do not set busy threshold again.
+			task.busyThreshold = 0
+			if err = handler.handle(task); err != nil {
+				return nil, err
+			}
+		}
+		remainTasks = handler.build()
 	}
 	return remainTasks, nil
 }

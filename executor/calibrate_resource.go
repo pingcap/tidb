@@ -23,6 +23,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 var (
@@ -76,20 +76,7 @@ var (
 			writeReqCount:    3550,
 		},
 	}
-
-	// resourceGroupCtl is the ResourceGroupController in pd client
-	resourceGroupCtl *rmclient.ResourceGroupsController
 )
-
-// SetResourceGroupController set a inited ResourceGroupsController for calibrate usage.
-func SetResourceGroupController(rc *rmclient.ResourceGroupsController) {
-	resourceGroupCtl = rc
-}
-
-// GetResourceGroupController returns the ResourceGroupsController.
-func GetResourceGroupController() *rmclient.ResourceGroupsController {
-	return resourceGroupCtl
-}
 
 // the resource cost rate of a specified workload per 1 tikv cpu.
 type baseResourceCost struct {
@@ -196,6 +183,11 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	return e.staticCalibrate(ctx, req, exec)
 }
 
+var (
+	errLowUsage          = errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
+	errNoCPUQuotaMetrics = errors.Normalize("There is no CPU quota metrics, %v")
+)
+
 func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
 	startTs, endTs, err := e.parseCalibrateDuration(ctx)
 	if err != nil {
@@ -206,11 +198,11 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	rus, err := getRUPerSec(ctx, e.ctx, exec, startTime, endTime)
 	if err != nil {
@@ -256,23 +248,22 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		tikvCPUs.next()
 	}
 	if len(quotas) < 5 {
-		return errors.Errorf("There are too few metrics points available in selected time window")
+		return errLowUsage
 	}
-	if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
-		sort.Slice(quotas, func(i, j int) bool {
-			return quotas[i] > quotas[j]
-		})
-		lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
-		upperBound := len(quotas) - lowerBound
-		sum := 0.
-		for i := lowerBound; i < upperBound; i++ {
-			sum += quotas[i]
-		}
-		quota := sum / float64(upperBound-lowerBound)
-		req.AppendUint64(0, uint64(quota))
-	} else {
-		return errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
+	if float64(len(quotas))/float64(len(quotas)+lowCount) <= percentOfPass {
+		return errLowUsage
 	}
+	sort.Slice(quotas, func(i, j int) bool {
+		return quotas[i] > quotas[j]
+	})
+	lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
+	upperBound := len(quotas) - lowerBound
+	sum := 0.
+	for i := lowerBound; i < upperBound; i++ {
+		sum += quotas[i]
+	}
+	quota := sum / float64(upperBound-lowerBound)
+	req.AppendUint64(0, uint64(quota))
 	return nil
 }
 
@@ -280,6 +271,7 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 	if !variable.EnableResourceControl.Load() {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
+	resourceGroupCtl := domain.GetDomain(e.ctx).ResourceGroupsController()
 	// first fetch the ru settings config.
 	if resourceGroupCtl == nil {
 		return errors.New("resource group controller is not initialized")
@@ -287,11 +279,11 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 
 	// The default workload to calculate the RU capacity.
@@ -390,9 +382,6 @@ func getValuesFromMetrics(ctx context.Context, sctx sessionctx.Context, exec sql
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return nil, errors.Errorf("metrics '%s' is empty", metrics)
 	}
 	ret := make([]*timePointValue, 0, len(rows))
 	for _, row := range rows {

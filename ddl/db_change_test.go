@@ -652,7 +652,7 @@ func TestDeleteOnly(t *testing.T) {
 
 	sqls := make([]sqlWithErr, 5)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
-		errors.Errorf("[ddl:1054]Unknown column 'c1' in 'field list'")}
+		errors.Errorf("[planner:1054]Unknown column 'c1' in 'field list'")}
 	sqls[1] = sqlWithErr{"update t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
 		errors.Errorf("[planner:1054]Unknown column 'c1' in 'field list'")}
 	sqls[2] = sqlWithErr{"delete from t where c1='a'",
@@ -744,7 +744,7 @@ func TestDeleteOnlyForDropColumns(t *testing.T) {
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
-		errors.Errorf("[ddl:1054]Unknown column 'c1' in 'field list'")}
+		errors.Errorf("[planner:1054]Unknown column 'c1' in 'field list'")}
 	dropColumnsSQL := "alter table t drop column c1, drop column c3"
 	runTestInSchemaState(t, tk, store, dom, model.StateDeleteOnly, true, dropColumnsSQL, sqls, nil)
 }
@@ -1687,11 +1687,10 @@ func TestCreateExpressionIndex(t *testing.T) {
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
-			if reorgTime < 2 {
-				reorgTime++
-			} else {
+			if reorgTime >= 2 {
 				return
 			}
+			reorgTime++
 			for _, sql := range stateWriteReorganizationSQLs {
 				_, checkErr = tk1.Exec(sql)
 				if checkErr != nil {
@@ -1783,11 +1782,10 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
-			if reorgTime < 2 {
-				reorgTime++
-			} else {
+			if reorgTime >= 2 {
 				return
 			}
+			reorgTime++
 			_, checkErr = tk1.Exec("insert into t values (10, 10) on duplicate key update a = 11")
 			if checkErr != nil {
 				return
@@ -1922,11 +1920,10 @@ func TestParallelRenameTable(t *testing.T) {
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateNone:
-			if firstDDL {
-				firstDDL = false
-			} else {
+			if !firstDDL {
 				return
 			}
+			firstDDL = false
 			wg.Add(1)
 			go func() {
 				if concurrentDDLQueryPre != "" {

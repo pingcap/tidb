@@ -869,35 +869,32 @@ func (tiflash *MockTiFlash) GetRuleGroupIndex() int {
 // Compare supposed rule, and we actually get from TableInfo
 func isRuleMatch(rule placement.TiFlashRule, startKey []byte, endKey []byte, count int, labels []string) bool {
 	// Compute startKey
-	if bytes.Equal(rule.StartKey, startKey) && bytes.Equal(rule.EndKey, endKey) {
-		ok := false
-		for _, c := range rule.Constraints {
-			if c.Key == "engine" && len(c.Values) == 1 && c.Values[0] == "tiflash" && c.Op == placement.In {
-				ok = true
-				break
-			}
+	if !(bytes.Equal(rule.StartKey, startKey) && bytes.Equal(rule.EndKey, endKey)) {
+		return false
+	}
+	ok := false
+	for _, c := range rule.Constraints {
+		if c.Key == "engine" && len(c.Values) == 1 && c.Values[0] == "tiflash" && c.Op == placement.In {
+			ok = true
+			break
 		}
-		if !ok {
-			return false
-		}
+	}
+	if !ok {
+		return false
+	}
 
-		if len(rule.LocationLabels) == len(labels) {
-			for i, lb := range labels {
-				if lb != rule.LocationLabels[i] {
-					return false
-				}
-			}
-		} else {
+	if len(rule.LocationLabels) != len(labels) {
+		return false
+	}
+	for i, lb := range labels {
+		if lb != rule.LocationLabels[i] {
 			return false
 		}
-
-		if rule.Count != count {
-			return false
-		}
-		if rule.Role != placement.Learner {
-			return false
-		}
-	} else {
+	}
+	if rule.Count != count {
+		return false
+	}
+	if rule.Role != placement.Learner {
 		return false
 	}
 	return true

@@ -23,9 +23,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -42,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/syncutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -50,32 +54,49 @@ import (
 // NewTiKVModeSwitcher make it a var, so we can mock it in tests.
 var NewTiKVModeSwitcher = local.NewTiKVModeSwitcher
 
-func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
-	tidbCfg := tidb.GetGlobalConfig()
-	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
-	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix, strconv.FormatInt(jobID, 10))
+var (
+	// CheckDiskQuotaInterval is the default time interval to check disk quota.
+	// TODO: make it dynamically adjusting according to the speed of import and the disk size.
+	CheckDiskQuotaInterval = time.Minute
+)
 
-	if info, err := os.Stat(sortPath); err != nil {
-		if !os.IsNotExist(err) {
-			e.logger.Error("stat sort dir failed", zap.String("path", sortPath), zap.Error(err))
+// prepareSortDir creates a new directory for import, remove previous sort directory if exists.
+func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (string, error) {
+	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
+	importDir := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+	sortDir := filepath.Join(importDir, strconv.FormatInt(taskID, 10))
+
+	if info, err := os.Stat(importDir); err != nil || !info.IsDir() {
+		if err != nil && !os.IsNotExist(err) {
+			e.logger.Error("stat import dir failed", zap.String("import_dir", importDir), zap.Error(err))
 			return "", errors.Trace(err)
 		}
-	} else if info.IsDir() {
-		// Currently remove all dir to clean garbage data.
-		// TODO: when do checkpoint should change follow logic.
-		err := os.RemoveAll(sortPath)
-		if err != nil {
-			e.logger.Error("remove sort dir failed", zap.String("path", sortPath), zap.Error(err))
+		if info != nil && !info.IsDir() {
+			e.logger.Warn("import dir is not a dir, remove it", zap.String("import_dir", importDir))
+			if err := os.RemoveAll(importDir); err != nil {
+				return "", errors.Trace(err)
+			}
+		}
+		e.logger.Info("import dir not exists, create it", zap.String("import_dir", importDir))
+		if err := os.MkdirAll(importDir, 0o700); err != nil {
+			e.logger.Error("failed to make dir", zap.String("import_dir", importDir), zap.Error(err))
+			return "", errors.Trace(err)
 		}
 	}
 
-	err := os.MkdirAll(sortPath, 0o700)
-	if err != nil {
-		e.logger.Error("failed to make sort dir", zap.String("path", sortPath), zap.Error(err))
-		return "", errors.Trace(err)
+	// todo: remove this after we support checkpoint
+	if _, err := os.Stat(sortDir); err != nil {
+		if !os.IsNotExist(err) {
+			e.logger.Error("stat sort dir failed", zap.String("sort_dir", sortDir), zap.Error(err))
+			return "", errors.Trace(err)
+		}
+	} else {
+		e.logger.Warn("sort dir already exists, remove it", zap.String("sort_dir", sortDir))
+		if err := os.RemoveAll(sortDir); err != nil {
+			return "", errors.Trace(err)
+		}
 	}
-	e.logger.Info("sort dir prepared", zap.String("path", sortPath))
-	return sortPath, nil
+	return sortDir, nil
 }
 
 // GetTiKVModeSwitcher creates a new TiKV mode switcher.
@@ -116,7 +137,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 
 	tidbCfg := tidb.GetGlobalConfig()
 	// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
-	dir, err := prepareSortDir(e, taskID)
+	dir, err := prepareSortDir(e, taskID, tidbCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -145,13 +166,11 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
 		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
-		KVWriteBatchCount:      config.KVWriteBatchCount,
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
-		// todo: local backend report error when the sort-dir already exists & checkpoint disabled.
-		// set to false when we fix it.
-		CheckpointEnabled:       true,
+		// enable after we support checkpoint
+		CheckpointEnabled:       false,
 		MemTableSize:            config.DefaultEngineMemCacheSize,
 		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
 		ShouldCheckTiKV:         true,
@@ -186,6 +205,8 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		logger:          e.logger,
 		regionSplitSize: int64(config.SplitRegionSize),
 		regionSplitKeys: int64(config.SplitRegionKeys),
+		diskQuota:       adjustDiskQuota(int64(e.DiskQuota), dir, e.logger),
+		diskQuotaLock:   new(syncutil.RWMutex),
 	}, nil
 }
 
@@ -207,7 +228,9 @@ type TableImporter struct {
 	regionSplitKeys int64
 	// the smallest auto-generated ID in current import.
 	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
-	lastInsertID uint64
+	lastInsertID  uint64
+	diskQuota     int64
+	diskQuotaLock *syncutil.RWMutex
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
@@ -270,12 +293,16 @@ func (e *LoadDataController) VerifyChecksum(ctx context.Context, localChecksum v
 	if err2 != nil {
 		return errors.Trace(err2)
 	}
+	// if context cancelled before this line, it returns "[pd] failed to get cluster id", not context.Canceled.
 	pdCli, err2 := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tls.ToPDSecurityOption())
 	if err2 != nil {
 		return errors.Trace(err2)
 	}
 	defer pdCli.Close()
 
+	failpoint.Inject("waitCtxDone", func() {
+		<-ctx.Done()
+	})
 	tableInfo := &checkpoints.TidbTableInfo{
 		ID:   e.Table.Meta().ID,
 		Name: e.Table.Meta().Name.O,
@@ -286,9 +313,7 @@ func (e *LoadDataController) VerifyChecksum(ctx context.Context, localChecksum v
 	if err2 != nil {
 		return err2
 	}
-	if remoteChecksum.IsEqual(&localChecksum) {
-		e.logger.Info("checksum pass", zap.Object("local", &localChecksum))
-	} else {
+	if !remoteChecksum.IsEqual(&localChecksum) {
 		err3 := common.ErrChecksumMismatch.GenWithStackByArgs(
 			remoteChecksum.Checksum, localChecksum.Sum(),
 			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
@@ -300,6 +325,7 @@ func (e *LoadDataController) VerifyChecksum(ctx context.Context, localChecksum v
 		}
 		return err3
 	}
+	e.logger.Info("checksum pass", zap.Object("local", &localChecksum))
 	return nil
 }
 
@@ -495,5 +521,105 @@ func (ti *TableImporter) setLastInsertID(id uint64) {
 	}
 	if ti.lastInsertID == 0 || id < ti.lastInsertID {
 		ti.lastInsertID = id
+	}
+}
+
+// CheckDiskQuota checks disk quota.
+func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
+	var locker sync.Locker
+	lockDiskQuota := func() {
+		if locker == nil {
+			ti.diskQuotaLock.Lock()
+			locker = ti.diskQuotaLock
+		}
+	}
+	unlockDiskQuota := func() {
+		if locker != nil {
+			locker.Unlock()
+			locker = nil
+		}
+	}
+
+	defer unlockDiskQuota()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(CheckDiskQuotaInterval):
+		}
+
+		largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := local.CheckDiskQuota(ti.backend, ti.diskQuota)
+		if len(largeEngines) == 0 && inProgressLargeEngines == 0 {
+			unlockDiskQuota()
+			continue
+		}
+
+		ti.logger.Warn("disk quota exceeded",
+			zap.Int64("diskSize", totalDiskSize),
+			zap.Int64("memSize", totalMemSize),
+			zap.Int64("quota", ti.diskQuota),
+			zap.Int("largeEnginesCount", len(largeEngines)),
+			zap.Int("inProgressLargeEnginesCount", inProgressLargeEngines))
+
+		lockDiskQuota()
+
+		if len(largeEngines) == 0 {
+			ti.logger.Warn("all large engines are already importing, keep blocking all writes")
+			continue
+		}
+
+		if err := ti.backend.FlushAllEngines(ctx); err != nil {
+			ti.logger.Error("flush engine for disk quota failed, check again later", log.ShortError(err))
+			unlockDiskQuota()
+			continue
+		}
+
+		// at this point, all engines are synchronized on disk.
+		// we then import every large engines one by one and complete.
+		// if any engine failed to import, we just try again next time, since the data are still intact.
+		var importErr error
+		for _, engine := range largeEngines {
+			// Use a larger split region size to avoid split the same region by many times.
+			if err := ti.backend.UnsafeImportAndReset(
+				ctx,
+				engine,
+				ti.regionSplitSize*int64(config.MaxSplitRegionSizeRatio),
+				ti.regionSplitKeys*int64(config.MaxSplitRegionSizeRatio),
+			); err != nil {
+				importErr = multierr.Append(importErr, err)
+			}
+		}
+		if importErr != nil {
+			// discuss: should we return the error and cancel the import?
+			ti.logger.Error("import large engines failed, check again later", log.ShortError(importErr))
+		}
+		unlockDiskQuota()
+	}
+}
+
+func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 {
+	sz, err := common.GetStorageSize(sortDir)
+	if err != nil {
+		logger.Warn("failed to get storage size", zap.Error(err))
+		if diskQuota != 0 {
+			return diskQuota
+		}
+		logger.Info("use default quota instead", zap.Int64("quota", int64(DefaultDiskQuota)))
+		return int64(DefaultDiskQuota)
+	}
+
+	maxDiskQuota := int64(float64(sz.Capacity) * 0.8)
+	switch {
+	case diskQuota == 0:
+		logger.Info("use 0.8 of the storage size as default disk quota",
+			zap.String("quota", units.HumanSize(float64(maxDiskQuota))))
+		return maxDiskQuota
+	case diskQuota > maxDiskQuota:
+		logger.Warn("disk quota is larger than 0.8 of the storage size, use 0.8 of the storage size instead",
+			zap.String("quota", units.HumanSize(float64(maxDiskQuota))))
+		return maxDiskQuota
+	default:
+		return diskQuota
 	}
 }

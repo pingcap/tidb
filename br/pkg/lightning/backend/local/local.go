@@ -395,8 +395,7 @@ type BackendConfig struct {
 	ConnCompressType config.CompressionType
 	// concurrency of generateJobForRange and import(write & ingest) workers
 	WorkerConcurrency int
-	// batch kv count and size when writing to TiKV
-	KVWriteBatchCount      int
+	// batch kv size when writing to TiKV
 	KVWriteBatchSize       int64
 	RegionSplitBatchSize   int
 	RegionSplitConcurrency int
@@ -432,7 +431,6 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName string)
 		MaxConnPerStore:         cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:        cfg.TikvImporter.CompressKVPairs,
 		WorkerConcurrency:       cfg.TikvImporter.RangeConcurrency * 2,
-		KVWriteBatchCount:       cfg.TikvImporter.SendKVPairs,
 		KVWriteBatchSize:        int64(cfg.TikvImporter.SendKVSize),
 		RegionSplitBatchSize:    cfg.TikvImporter.RegionSplitBatchSize,
 		RegionSplitConcurrency:  cfg.TikvImporter.RegionSplitConcurrency,
@@ -895,6 +893,8 @@ func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig,
 		logger:             log.FromContext(ctx),
 	})
 	engine := e.(*Engine)
+	engine.lock(importMutexStateOpen)
+	defer engine.unlock()
 	engine.db = db
 	engine.sstIngester = dbSSTIngester{e: engine}
 	if err = engine.loadEngineMeta(); err != nil {

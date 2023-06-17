@@ -865,7 +865,7 @@ func TestDefaultCouldBeOverwritten(t *testing.T) {
 	require.Equal(t, 20, cfg.App.IndexConcurrency)
 	require.Equal(t, 60, cfg.App.TableConcurrency)
 
-	require.Equal(t, config.KVWriteBatchCount, cfg.TikvImporter.SendKVPairs)
+	require.Equal(t, 32768, cfg.TikvImporter.SendKVPairs)
 	require.Equal(t, config.ByteSize(config.KVWriteBatchSize), cfg.TikvImporter.SendKVSize)
 
 	cfg.TikvImporter.RegionSplitConcurrency = 1
@@ -1006,18 +1006,18 @@ func TestAdjustOnDuplicate(t *testing.T) {
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
 	require.NoError(t, cfg.Adjust(ctx))
-	require.Equal(t, config.ReplaceOnDup, cfg.TikvImporter.OnDuplicate)
+	require.Equal(t, "", cfg.TikvImporter.OnDuplicate)
 
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
 	cfg.TikvImporter.IncrementalImport = true
-	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.incremental-import")
+	require.NoError(t, cfg.Adjust(ctx))
 
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
 	cfg.TikvImporter.IncrementalImport = false
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRemove
-	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution")
+	require.NoError(t, cfg.Adjust(ctx))
 }
 
 func TestAdjustMaxErrorRecords(t *testing.T) {

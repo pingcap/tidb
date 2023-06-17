@@ -238,10 +238,7 @@ func main() {
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreAndDomain(keyspaceName)
 	svr := createServer(storage, dom)
-	err = driver.TrySetupGlobalResourceController(context.Background(), dom.ServerID(), storage)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to setup global resource controller", zap.Error(err))
-	}
+	tikv.SetResourceControlInterceptor(dom.ResourceGroupsController())
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
 	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
@@ -700,6 +697,7 @@ func setGlobalVars() {
 	variable.IsSandBoxModeEnabled.Store(!cfg.Security.DisconnectOnExpiredPassword)
 	atomic.StoreUint32(&variable.DDLSlowOprThreshold, cfg.Instance.DDLSlowOprThreshold)
 	atomic.StoreUint64(&variable.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
+	atomic.StoreUint64(&variable.ExpensiveTxnTimeThreshold, cfg.Instance.ExpensiveTxnTimeThreshold)
 
 	if len(cfg.ServerVersion) > 0 {
 		mysql.ServerVersion = cfg.ServerVersion
