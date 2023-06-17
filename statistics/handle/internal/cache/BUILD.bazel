@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "cache",
+    srcs = ["inner.go"],
+    importpath = "github.com/pingcap/tidb/statistics/handle/internal/cache",
+    visibility = ["//statistics/handle:__subpackages__"],
+    deps = ["//statistics"],
+)
