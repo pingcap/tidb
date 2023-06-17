@@ -1322,7 +1322,6 @@ func (do *Domain) execFlushSQL(sql string, params []interface{}) error {
 		sql, params...,
 	)
 	return err
-
 }
 
 func genRunawayQueriesStmt(records []*resourcegroup.RunawayRecord) (string, []interface{}) {
