@@ -61,7 +61,7 @@ const (
 	msgErrConnectPD = "connect PD err: %v. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=<ip:port>[,<ip:port>]"
 )
 
-// GlobakKillSuite is used for automated test of "Global Kill" feature.
+// GlobalKillSuite is used for automated test of "Global Kill" feature.
 // See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
 type GlobalKillSuite struct {
 	enable32Bits bool
@@ -293,9 +293,10 @@ func (s *GlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	dsn := fmt.Sprintf("root@(%s)/test", addr)
 	sleepTime := 250 * time.Millisecond
+	sleepTimeLimit := 1 * time.Second
+	maxRetryDuration := 20 * time.Second
 	startTime := time.Now()
-	maxRetry := 10
-	for i := 0; i < maxRetry; i++ {
+	for i := 0; time.Since(startTime) < maxRetryDuration; i++ {
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
 			log.Warn("open addr failed",
@@ -314,16 +315,12 @@ func (s *GlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 			zap.Int("retry count", i),
 			zap.Error(err),
 		)
-		if i == maxRetry-1 {
-			return
-		}
 
-		err = db.Close()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		db.Close()
 		time.Sleep(sleepTime)
-		sleepTime += sleepTime
+		if sleepTime < sleepTimeLimit {
+			sleepTime += sleepTime
+		}
 	}
 	if err != nil {
 		log.Error("connect to server addr failed",
@@ -617,7 +614,7 @@ func doTestLostConnection(t *testing.T, enable32Bits bool) {
 	// disconnect to PD by shutting down PD process.
 	log.Info("shutdown PD to simulate lost connection to PD.")
 	err = s.stopPD()
-	log.Info(fmt.Sprintf("pd shutdown: %s", err))
+	log.Info(fmt.Sprintf("pd shutdown: %v", err))
 	require.NoError(t, err)
 
 	// wait for "lostConnectionToPDTimeout" elapsed.
