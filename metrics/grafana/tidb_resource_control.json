@@ -46,7 +46,7 @@
   "gnetId": null,
   "graphTooltip": 1,
   "id": null,
-  "iteration": 1686958610163,
+  "iteration": 1686975465551,
   "links": [],
   "panels": [
     {
@@ -884,14 +884,14 @@
       "id": 37,
       "legend": {
         "alignAsTable": true,
-        "avg": false,
-        "current": false,
-        "max": false,
+        "avg": true,
+        "current": true,
+        "max": true,
         "min": false,
         "rightSide": true,
         "show": true,
         "total": false,
-        "values": false
+        "values": true
       },
       "lines": true,
       "linewidth": 1,
@@ -912,7 +912,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "histogram_quantile(1.0, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le,resource_group))",
+          "expr": "histogram_quantile(1.0, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (le,resource_group))",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
@@ -992,7 +992,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 2
+            "y": 31
           },
           "hiddenSeries": false,
           "id": 20,
@@ -1108,7 +1108,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 2
+            "y": 31
           },
           "hiddenSeries": false,
           "id": 21,
@@ -1245,7 +1245,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 9
+            "y": 38
           },
           "hiddenSeries": false,
           "id": 22,
@@ -1362,7 +1362,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 9
+            "y": 38
           },
           "hiddenSeries": false,
           "id": 23,
@@ -1479,7 +1479,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 17
+            "y": 46
           },
           "hiddenSeries": false,
           "id": 24,
@@ -1595,7 +1595,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 17
+            "y": 46
           },
           "hiddenSeries": false,
           "id": 25,
@@ -1711,7 +1711,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 25
+            "y": 54
           },
           "hiddenSeries": false,
           "id": 26,
@@ -1828,7 +1828,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 25
+            "y": 54
           },
           "hiddenSeries": false,
           "id": 27,
