@@ -741,6 +741,19 @@
         ]
       },
       {
+        "SQL": "select * from t where c = 10 and (a = 'xx' or (a = 'hh' and b > 2))",
+        "Plan": [
+          "IndexLookUp_11 0.04 root  ",
+          "├─IndexRangeScan_8(Build) 43.33 cop[tikv] table:t, index:idx_ab(a, b) range:(\"hh\" 2,\"hh\" +inf], [\"xx\",\"xx\"], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.04 cop[tikv]  eq(test.t.c, 10)",
+          "  └─TableRowIDScan_9 43.33 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "hh 3 10",
+          "xx 4 10"
+        ]
+      },
+      {
         "SQL": "select * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)))",
         "Plan": [
           "IndexLookUp_11 0.02 root  ",

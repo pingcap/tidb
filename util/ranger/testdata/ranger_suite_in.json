@@ -121,6 +121,7 @@
     "name": "TestIssue44389",
     "cases": [
       "select * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1))",
+      "select * from t where c = 10 and (a = 'xx' or (a = 'hh' and b > 2))",
       "select * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)))"
     ]
   }

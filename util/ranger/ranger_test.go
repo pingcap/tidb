@@ -17,6 +17,8 @@ package ranger_test
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
@@ -2619,4 +2622,44 @@ func TestIssue44389(t *testing.T) {
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func checkIndexRange(t *testing.T, tk *testkit.TestKit, expectedIndexName, expectedIndexRange string) {
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Rows()
+	useIndex := false
+	for _, row := range rows {
+		if strings.Contains(row[4].(string), expectedIndexName) {
+			require.True(t, strings.Contains(row[6].(string), expectedIndexRange))
+			useIndex = true
+			break
+		}
+	}
+	require.True(t, useIndex)
+}
+
+func TestIssue44389ForPreparedPlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_ab(a, b))")
+	tk.MustExec("set @@tidb_opt_fix_control = '44389:ON'")
+
+	// The plan using CNF item index range result, it
+	tk.MustExec("prepare stmt1 from 'select * from t where c = 10 and (a = 1 or (a = 3 and b = ?))'")
+	tk.MustExec("set @x = 2")
+	tk.MustExec("execute stmt1 using @x")
+	checkIndexRange(t, tk, "idx_ab", "[1,1], [3 2,3 2]")
+	tk.MustExec("execute stmt1 using @x")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt2 from 'select * from t where c = 10 and (a = 1 or (a >= ? and a <= ? and b = 2))'")
+	tk.MustExec("set @x = 3, @y = 3")
+	tk.MustExec("execute stmt2 using @x, @y")
+	checkIndexRange(t, tk, "idx_ab", "[1,1], [3 2,3 2]")
+	tk.MustExec("execute stmt1 using @x")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
