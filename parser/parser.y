@@ -3157,7 +3157,7 @@ AnalyzeOption:
 
 /*******************************************************************************************/
 Assignment:
-	ColumnName eq ExprOrDefault
+	ColumnName EqOrAssignmentEq ExprOrDefault
 	{
 		$$ = &ast.Assignment{Column: $1.(*ast.ColumnName), Expr: $3}
 	}
