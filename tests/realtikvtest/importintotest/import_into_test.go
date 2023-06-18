@@ -891,7 +891,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	s.Greater(intoNormalTime, intoImportTime)
 	s.checkTaskMetaRedacted(int64(jobID))
 
-	// after import step, we should not enter normal mode, i.e. we only call ToImportMode once
+	// after import step, we should enter normal mode, i.e. we only call ToImportMode once
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
 	switcher.EXPECT().ToImportMode(gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
 	switcher.EXPECT().ToNormalMode(gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
