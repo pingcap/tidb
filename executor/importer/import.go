@@ -460,7 +460,7 @@ func (e *LoadDataController) checkFieldParams() error {
 }
 
 func (p *Plan) initDefaultOptions() {
-	threadCnt := runtime.NumCPU()
+	threadCnt := runtime.GOMAXPROCS(0)
 	failpoint.Inject("mockNumCpu", func(val failpoint.Value) {
 		threadCnt = val.(int)
 	})
@@ -637,7 +637,7 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 
 func (p *Plan) adjustOptions() {
 	// max value is cpu-count
-	numCPU := int64(runtime.NumCPU())
+	numCPU := int64(runtime.GOMAXPROCS(0))
 	if p.ThreadCnt > numCPU {
 		log.L().Info("IMPORT INTO thread count is larger than cpu-count, set to cpu-count")
 		p.ThreadCnt = numCPU
