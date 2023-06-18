@@ -243,6 +243,9 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		return metaBytes, nil
 	case StepImport:
 		h.switchTiKV2NormalMode(ctx, gTask, logger)
+		failpoint.Inject("clearLastSwitchTime", func() {
+			h.lastSwitchTime.Store(time.Time{})
+		})
 		stepMeta, err2 := toPostProcessStep(handle, gTask, taskMeta)
 		if err2 != nil {
 			return nil, err2
