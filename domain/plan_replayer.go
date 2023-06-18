@@ -17,7 +17,7 @@ package domain
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -87,11 +87,17 @@ func (p *dumpFileGcChecker) setupSctx(sctx sessionctx.Context) {
 }
 
 func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationDefault, gcDurationForCapture time.Duration) {
-	files, err := ioutil.ReadDir(path)
+	entries, err := os.ReadDir(path)
 	if err != nil {
-		if !os.IsNotExist(err) {
+		logutil.BgLogger().Warn("[dumpFileGcChecker] open plan replayer directory failed", zap.Error(err))
+	}
+	files := make([]fs.FileInfo, 0, len(entries))
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
 			logutil.BgLogger().Warn("[dumpFileGcChecker] open plan replayer directory failed", zap.Error(err))
 		}
+		files = append(files, info)
 	}
 
 	gcTargetTimeDefault := time.Now().Add(-gcDurationDefault)
