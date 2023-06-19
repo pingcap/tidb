@@ -293,9 +293,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	switch argTp {
 	case types.ETInt:
 		// check WrapWithCastAsString()
-		if args[0].GetType().GetType() == mysql.TypeBit {
-			bf.tp.SetFlen((args[0].GetType().GetFlen() + 7) / 8)
-		} else if bf.tp.GetFlen() == types.UnspecifiedLength {
+		if bf.tp.GetFlen() == types.UnspecifiedLength {
 			if args[0].GetType().GetType() == mysql.TypeLong {
 				bf.tp.SetFlen(mysql.MaxIntWidth)
 			} else {
@@ -1878,6 +1876,9 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETString:
 		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		if expr.GetType().GetType() == mysql.TypeBit {
+			tp.SetFlen((expr.GetType().GetFlen() + 7) / 8)
+		}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	terror.Log(err)
