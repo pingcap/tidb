@@ -444,7 +444,10 @@ func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 }
 
 func (cc *clientConn) handleStmtReset(ctx context.Context, data []byte) (err error) {
-	// TODO: implement statement reset
+	// A reset command should reset the statement to the state when it was right after prepare
+	// Then the following state should be cleared:
+	// 1.The opened cursor, including the rowContainer (and its cursor/memTracker).
+	// 2.The argument sent through `SEND_LONG_DATA`.
 	if len(data) < 4 {
 		return mysql.ErrMalformPacket
 	}
@@ -455,8 +458,12 @@ func (cc *clientConn) handleStmtReset(ctx context.Context, data []byte) (err err
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.Itoa(stmtID), "stmt_reset")
 	}
-	stmt.Reset()
-	stmt.StoreResultSet(nil)
+	err = stmt.Reset()
+	if err != nil {
+		// The only case for this error is: the `rowContainer` has spilled the data in disk, but failed to close the file
+		return mysql.NewErr(mysql.ErrInternal)
+	}
+
 	return cc.writeOK(ctx)
 }
 

@@ -60,8 +60,8 @@ type PreparedStatement interface {
 	// GetResultSet gets ResultSet associated this statement
 	GetResultSet() cursorResultSet
 
-	// Reset removes all bound parameters.
-	Reset()
+	// Reset removes all bound parameters and opened resultSet/rowContainer.
+	Reset() error
 
 	// Close closes the statement.
 	Close() error

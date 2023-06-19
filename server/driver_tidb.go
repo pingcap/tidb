@@ -72,6 +72,7 @@ type TiDBStatement struct {
 	// TODO: move the `fetchedRows` into the statement, and remove the `ResultSet` from statement.
 	rs cursorResultSet
 	// the `rowContainer` should contain all pre-fetched results of the statement in `EXECUTE` command.
+	// it's stored here to be closed in RESET and CLOSE command
 	rowContainer *chunk.RowContainer
 	sql          string
 
@@ -135,13 +136,8 @@ func (ts *TiDBStatement) GetParamsType() []byte {
 
 // StoreResultSet stores ResultSet for stmt fetching
 func (ts *TiDBStatement) StoreResultSet(rs cursorResultSet) {
-	// refer to https://dev.mysql.com/doc/refman/5.7/en/cursor-restrictions.html
-	// You can have open only a single cursor per prepared statement.
-	// closing previous ResultSet before associating a new ResultSet with this statement
-	// if it exists
-	if ts.rs != nil {
-		terror.Call(ts.rs.Close)
-	}
+	// the original reset set should have been closed, and it's only used to store the iterator through the rowContainer
+	// so it's fine to just overwrite it.
 	ts.rs = rs
 }
 
@@ -151,11 +147,25 @@ func (ts *TiDBStatement) GetResultSet() cursorResultSet {
 }
 
 // Reset implements PreparedStatement Reset method.
-func (ts *TiDBStatement) Reset() {
+func (ts *TiDBStatement) Reset() error {
 	for i := range ts.boundParams {
 		ts.boundParams[i] = nil
 	}
 	ts.hasActiveCursor = false
+
+	if ts.rowContainer != nil {
+		ts.rowContainer.GetMemTracker().Detach()
+		ts.rowContainer.GetDiskTracker().Detach()
+
+		err := ts.rowContainer.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	ts.rs = nil
+
+	return nil
 }
 
 // Close implements PreparedStatement Close method.
