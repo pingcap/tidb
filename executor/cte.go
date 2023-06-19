@@ -660,6 +660,7 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
 	var changed bool
 	for i, corCol := range p.corCols {
+		corCol.CleanHashCode()
 		newHashCode := corCol.HashCode(p.ctx.GetSessionVars().StmtCtx)
 		if !sameHashCode(newHashCode, p.corColHashCodes[i]) {
 			changed = true

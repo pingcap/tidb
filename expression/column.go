@@ -225,10 +225,8 @@ func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error
 
 // HashCode implements Expression interface.
 func (col *CorrelatedColumn) HashCode(sc *stmtctx.StatementContext) []byte {
-	if len(col.hashcode) != 0 {
-		return col.hashcode
-	}
-
+	// Doesn't check len(hashcode) because col.Data can be changed anytime,
+	// So always use newest Datum to calc hash code.
 	col.Column.HashCode(sc)
 	if col.Data != nil {
 		col.hashcode = codec.HashCode(col.hashcode, *col.Data)
