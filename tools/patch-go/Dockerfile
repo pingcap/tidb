@@ -26,6 +26,6 @@ RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.
     apt-get update && apt-get install google-cloud-cli
 RUN curl -fsSL "$GOLANG_DOWNLOAD_URL" -o golang.tar.gz \
 	&& tar -C /usr/local -xzf golang.tar.gz \
-	&& rm golang.tar.gz && mkdir /artifacts \
+	&& rm golang.tar.gz && mkdir /artifacts
 
 
