@@ -4164,8 +4164,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:BDQQDtqhUo3epgVc8HOPYLg9w8zehRaegEX+1bHMyVg=",
-        version = "v2.0.8-0.20230614032106-0b4b0ca00e74",
+        sum = "h1:7JvBwc+e1x4AXHtwXp9IK1X04Iokol+HgrWdukU5iqM=",
+        version = "v2.0.8-0.20230605085112-28247160f497",
     )
     go_repository(
         name = "com_github_tikv_pd",
@@ -4179,13 +4179,8 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-<<<<<<< HEAD
         sum = "h1:dO0YtekJ9IKiO9dXMZz0rNHPBiGCo+c37RUsnshoLwo=",
         version = "v0.0.0-20230519121736-d15a686a670e",
-=======
-        sum = "h1:GZdnq41Gs/Zxz0Ne/cZ/rKual+GD8F3h434OwhZogfA=",
-        version = "v0.0.0-20230608061541-026ddf08a351",
->>>>>>> 3ca5d3d6187 (planner,txn: fix the bug that RESOURCE_GROUP() hint can not take effect for write … (#44513))
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
