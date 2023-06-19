@@ -22,7 +22,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"io/ioutil"
+	"os"
 	osuser "os/user"
 	"strconv"
 	"strings"
@@ -2862,7 +2862,7 @@ func doBootstrapSQLFile(s Session) error {
 		return nil
 	}
 	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
-	b, err := ioutil.ReadFile(sqlFile) //nolint:gosec
+	b, err := os.ReadFile(sqlFile) //nolint:gosec
 	if err != nil {
 		if intest.InTest {
 			return err

@@ -18,7 +18,6 @@ import (
 	"fmt"
 	gofmt "go/format"
 	"go/token"
-	"io/ioutil"
 	"os"
 	"regexp"
 	"strings"
@@ -54,7 +53,7 @@ func Format(inputFilename string, goldenFilename string) (err error) {
 }
 
 func parseFileToSpec(inputFilename string) (*parser.Specification, error) {
-	src, err := ioutil.ReadFile(inputFilename)
+	src, err := os.ReadFile(inputFilename)
 	if err != nil {
 		return nil, err
 	}
