@@ -301,11 +301,12 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		}
 	}
 
-	crs := wrapWithCursor(rs)
 	// if the client wants to use cursor
 	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
 	// Tell the client cursor exists in server by setting proper serverStatus.
 	if useCursor {
+		crs := wrapWithCursor(rs)
+
 		cc.initResultEncoder(ctx)
 		defer cc.rsEncoder.Clean()
 		// fetch all results of the resultSet, and stored them locally, so that the future `FETCH` command can read
@@ -356,7 +357,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 
 		return false, cc.flush(ctx)
 	}
-	retryable, err := cc.writeResultSet(ctx, crs, true, cc.ctx.Status(), 0)
+	retryable, err := cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), 0)
 	if err != nil {
 		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
@@ -396,17 +397,13 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
-	sendingEOF := false
-	// if the iterator reached the end before writing result, we could say the `FETCH` command will send EOF
-	if rs.GetRowIterator().Current() != rs.GetRowIterator().End() {
-		sendingEOF = true
-	}
 	_, err = cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), int(fetchSize))
+	// if the iterator reached the end before writing result, we could say the `FETCH` command will send EOF
+	if rs.GetRowIterator().Current() == rs.GetRowIterator().End() {
+		stmt.SetCursorActive(false)
+	}
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
-	}
-	if sendingEOF {
-		stmt.SetCursorActive(false)
 	}
 
 	return nil
