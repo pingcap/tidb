@@ -17,6 +17,7 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -223,7 +224,7 @@ func init() {
 		logger.Info("create step scheduler")
 		return &taskMeta, logger, nil
 	}
-	scheduler.RegisterTaskType(proto.ImportInto)
+	scheduler.RegisterTaskType(proto.ImportInto, scheduler.WithPoolSize(int32(runtime.GOMAXPROCS(0))))
 	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepImport,
 		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
 			taskMeta, logger, err := prepareFn(taskID, bs, step)

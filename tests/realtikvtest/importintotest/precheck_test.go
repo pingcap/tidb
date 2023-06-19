@@ -28,6 +28,27 @@ import (
 	"go.uber.org/zap"
 )
 
+func (s *mockGCSSuite) TestPreCheckTotalFileSize0() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "precheck-file-empty",
+			Name:       "empty.csv",
+		},
+		Content: []byte(``),
+	})
+	s.prepareAndUseDB("load_data")
+	s.tk.MustExec("drop table if exists t;")
+	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
+	s.tk.MustExec("insert into t values(9, 'test9', 99);")
+	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://precheck-file-empty/non-exist/file-*.csv?endpoint=%s'`, gcsEndpoint)
+	err := s.tk.QueryToErr(sql)
+	require.ErrorIs(s.T(), err, exeerrors.ErrLoadDataPreCheckFailed)
+
+	sql = fmt.Sprintf(`IMPORT INTO t FROM 'gs://precheck-file-empty/empty.csv?endpoint=%s'`, gcsEndpoint)
+	err = s.tk.QueryToErr(sql)
+	require.ErrorIs(s.T(), err, exeerrors.ErrLoadDataPreCheckFailed)
+}
+
 func (s *mockGCSSuite) TestPreCheckTableNotEmpty() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{

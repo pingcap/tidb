@@ -88,7 +88,7 @@ func InitServerMetrics() {
 			Name:      "handle_query_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
-		}, []string{LblSQLType, LblDb})
+		}, []string{LblSQLType, LblDb, LblResourceGroup})
 
 	QueryTotalCounter = NewCounterVec(
 		prometheus.CounterOpts{

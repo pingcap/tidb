@@ -441,6 +441,13 @@ bazel_prepare:
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
 
+bazel_ci_prepare_rbe:
+	bazel run //:gazelle
+	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable
+	bazel run --//build:with_rbe_flag=true \
+		--run_under="cd $(CURDIR) && " \
+		 //tools/tazel:tazel
+
 check-bazel-prepare:
 	@echo "make bazel_prepare"
 	./tools/check/check-bazel-prepare.sh
