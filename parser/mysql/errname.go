@@ -269,7 +269,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrKeyRefDoNotMatchTableRef:                 Message("Key reference and table reference don't match", nil),
 	ErrOperandColumns:                           Message("Operand should contain %d column(s)", nil),
 	ErrSubqueryNo1Row:                           Message("Subquery returns more than 1 row", nil),
-	ErrUnknownStmtHandler:                       Message("Unknown prepared statement handler (%.*s) given to %s", nil),
+	ErrUnknownStmtHandler:                       Message("Unknown prepared statement handler %s given to %s", nil),
 	ErrCorruptHelpDB:                            Message("Help database is corrupt or does not exist", nil),
 	ErrCyclicReference:                          Message("Cyclic reference on subqueries", nil),
 	ErrAutoConvert:                              Message("Converting column '%s' from %s to %s", nil),
