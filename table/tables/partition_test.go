@@ -2407,7 +2407,11 @@ func TestKeyPartitionTableDDL(t *testing.T) {
 	require.Regexp(t, "Unsupported reorganize partition", err)
 	err = tk.ExecToErr("ALTER TABLE tkey16 REORGANIZE PARTITION p0 INTO (PARTITION p4)")
 	require.Regexp(t, "Unsupported reorganize partition", err)
+	tk.MustContainErrMsg("ALTER TABLE tkey15 PARTITION BY KEY(col3) PARTITIONS 4", "[ddl:8200]Unsupported PARTITION BY, tidb_enable_alter_partition_by is not enabled")
+	tk.MustExec("set tidb_enable_alter_partition_by = 1")
 	tk.MustExec("ALTER TABLE tkey15 PARTITION BY KEY(col3) PARTITIONS 4")
+	tk.MustContainErrMsg("ALTER TABLE tkey16 REMOVE PARTITIONING", "[ddl:8200]Unsupported REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
+	tk.MustExec("set tidb_enable_remove_partitioning = 1")
 	tk.MustExec("ALTER TABLE tkey16 REMOVE PARTITIONING")
 
 	tk.MustExec("CREATE TABLE tkey17 (" +
@@ -2457,11 +2461,14 @@ func (c *testCallback) OnJobRunBefore(job *model.Job) {
 // or see if there are ways to speed this up :)
 // Leaving the test here, for reference and completeness testing
 func TestPartitionByIntListExtensivePart(t *testing.T) {
+	t.Skip()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByIntListExtensive"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
+	tk.MustExec(`set global tidb_enable_alter_partition_by = 1`)
+	tk.MustExec(`set session tidb_enable_alter_partition_by = 1`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + schemaName)
 
@@ -2567,6 +2574,7 @@ func getInt7ValuesFunc() func(string, bool, *rand.Rand) string {
 // or see if there are ways to speed this up :)
 // Leaving the test here, for reference and completeness testing
 func TestPartitionByIntExtensivePart(t *testing.T) {
+	t.Skip()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByIntExtensive"
@@ -2574,6 +2582,8 @@ func TestPartitionByIntExtensivePart(t *testing.T) {
 	tk.MustExec("use " + schemaName)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + schemaName)
+	tk.MustExec(`set global tidb_enable_alter_partition_by = 1`)
+	tk.MustExec(`set session tidb_enable_alter_partition_by = 1`)
 
 	tBase := `(a int unsigned, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, primary key (a), key (b), key (c,b), key (d,c), key(e))`
 	t2Str := `create table t2 ` + tBase
@@ -2688,7 +2698,11 @@ func TestRangePartitionByRange(t *testing.T) {
 	tk.MustExec("use " + schemaName)
 	tk.MustExec(`create table t (a int) partition by range(a) (partition p0 values less than (0), partition p1M values less than (1000000))`)
 	tk.MustExec(`insert into t values (-1),(0),(1)`)
+	tk.MustContainErrMsg(`alter table t partition by range(a) (partition p0 values less than (0), partition p1M values less than (1000000))`, "ddl:8200]Unsupported PARTITION BY, tidb_enable_alter_partition_by is not enabled")
+	tk.MustExec(`set session tidb_enable_alter_partition_by = 1`)
 	tk.MustExec(`alter table t partition by range(a) (partition p0 values less than (0), partition p1M values less than (1000000))`)
+	tk.MustContainErrMsg(`alter table t remove partitioning`, "[ddl:8200]Unsupported REMOVE PARTITIONING, tidb_enable_remove_partitioning is not enabled")
+	tk.MustExec(`set session tidb_enable_remove_partitioning = 1`)
 	tk.MustExec(`alter table t remove partitioning`)
 	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("-1", "0", "1"))
 }
@@ -2704,6 +2718,10 @@ func TestPartitionByExtensivePart(t *testing.T) {
 	tk.MustExec("use " + schemaName)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + schemaName)
+	tk.MustExec(`set global tidb_enable_alter_partition_by = 1`)
+	tk.MustExec(`set session tidb_enable_alter_partition_by = 1`)
+	tk.MustExec(`set global tidb_enable_remove_partitioning = 1`)
+	tk.MustExec(`set session tidb_enable_remove_partitioning = 1`)
 
 	tBase := `(a varchar(255) collate utf8mb4_unicode_ci, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, primary key (a), key (b), key (c,b), key (d,c), key(e))`
 	t2Str := `create table t2 ` + tBase
