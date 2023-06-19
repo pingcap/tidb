@@ -615,7 +615,7 @@ const (
 		tidb_server varchar(64),
 		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when select runaway query",
 		INDEX time_index(time) COMMENT "accelerate the speed when querying with active watch"
-	) TTL = ` + "time" + ` + INTERVAL 7 DAY TTL_ENABLE = 'OFF' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRunawayQuarantineWatchTable stores the condition which is used to check whether query should be quarantined.
 	CreateRunawayQuarantineWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_quarantined_watch (
@@ -627,7 +627,7 @@ const (
 		tidb_server varchar(64),
 		INDEX sql_index(watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
 		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
-	) TTL = ` + "end_time" + ` + INTERVAL 10 YEAR TTL_ENABLE = 'OFF' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateImportJobs is a table that IMPORT INTO uses.
 	CreateImportJobs = `CREATE TABLE IF NOT EXISTS mysql.tidb_import_jobs (
