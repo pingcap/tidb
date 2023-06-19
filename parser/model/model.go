@@ -1159,12 +1159,15 @@ type PartitionInfo struct {
 	Enable bool `json:"enable"`
 
 	Definitions []PartitionDefinition `json:"definitions"`
-	// AddingDefinitions is filled when adding a partition that is in the mid state.
+	// AddingDefinitions is filled when adding partitions that is in the mid state.
 	AddingDefinitions []PartitionDefinition `json:"adding_definitions"`
-	// DroppingDefinitions is filled when dropping a partition that is in the mid state.
+	// DroppingDefinitions is filled when dropping/truncating partitions that is in the mid state.
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
-	States              []PartitionState      `json:"states"`
-	Num                 uint64                `json:"num"`
+	// NewPartitionIDs is filled when truncating partitions that is in the mid state.
+	NewPartitionIDs []int64
+
+	States []PartitionState `json:"states"`
+	Num    uint64           `json:"num"`
 	// Only used during ReorganizePartition so far
 	DDLState SchemaState `json:"ddl_state"`
 }
@@ -1250,6 +1253,16 @@ func (pi *PartitionInfo) GCPartitionStates() {
 		}
 	}
 	pi.States = newStates
+}
+
+// HasTruncatingPartitionID checks whether the pid is truncating.
+func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
+	for i := range pi.NewPartitionIDs {
+		if pi.NewPartitionIDs[i] == pid {
+			return true
+		}
+	}
+	return false
 }
 
 // PartitionState is the state of the partition.
