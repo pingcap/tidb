@@ -94,6 +94,9 @@ func TestJobHappyPath(t *testing.T) {
 		require.True(t, gotJobInfo.StartTime.IsZero())
 		require.True(t, gotJobInfo.EndTime.IsZero())
 		jobInfoEqual(t, jobInfo, gotJobInfo)
+		cnt, err := importer.GetActiveJobCnt(ctx, conn)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), cnt)
 
 		// action before start, no effect
 		c.action(jobID)
@@ -111,9 +114,15 @@ func TestJobHappyPath(t *testing.T) {
 		jobInfo.Status = "running"
 		jobInfo.Step = importer.JobStepImporting
 		jobInfoEqual(t, jobInfo, gotJobInfo)
+		cnt, err = importer.GetActiveJobCnt(ctx, conn)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), cnt)
 
 		// change job step
 		require.NoError(t, importer.Job2Step(ctx, conn, jobID, importer.JobStepValidating))
+		cnt, err = importer.GetActiveJobCnt(ctx, conn)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), cnt)
 
 		// do action
 		c.action(jobID)
@@ -127,6 +136,10 @@ func TestJobHappyPath(t *testing.T) {
 		jobInfo.Summary = c.expectedSummary
 		jobInfo.ErrorMessage = c.expectedErrMsg
 		jobInfoEqual(t, jobInfo, gotJobInfo)
+		cnt, err = importer.GetActiveJobCnt(ctx, conn)
+		require.NoError(t, err)
+		require.Equal(t, int64(0), cnt)
+
 		// do action again, no effect
 		endTime := gotJobInfo.EndTime
 		c.action(jobID)
@@ -170,6 +183,9 @@ func TestGetAndCancelJob(t *testing.T) {
 	require.True(t, gotJobInfo.StartTime.IsZero())
 	require.True(t, gotJobInfo.EndTime.IsZero())
 	jobInfoEqual(t, jobInfo, gotJobInfo)
+	cnt, err := importer.GetActiveJobCnt(ctx, conn)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cnt)
 
 	// cancel job
 	require.NoError(t, importer.CancelJob(ctx, conn, jobID1))
@@ -182,6 +198,9 @@ func TestGetAndCancelJob(t *testing.T) {
 	jobInfo.Status = "cancelled"
 	jobInfo.ErrorMessage = "cancelled by user"
 	jobInfoEqual(t, jobInfo, gotJobInfo)
+	cnt, err = importer.GetActiveJobCnt(ctx, conn)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), cnt)
 
 	// call cancel twice is ok, caller should check job status before cancel.
 	require.NoError(t, importer.CancelJob(ctx, conn, jobID1))
@@ -259,4 +278,57 @@ func TestJobInfo_CanCancel(t *testing.T) {
 		jobInfo.Status = c.status
 		require.Equal(t, c.canCancel, jobInfo.CanCancel(), c.status)
 	}
+}
+
+func TestGetJobInfoNullField(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := context.Background()
+	conn := tk.Session().(sqlexec.SQLExecutor)
+	jobInfo := &importer.JobInfo{
+		TableSchema: "test",
+		TableName:   "t",
+		TableID:     1,
+		CreatedBy:   "user-for-test@%",
+		Parameters: importer.ImportParameters{
+			ColumnsAndVars: "(a, b, c)",
+			SetClause:      "d = 1",
+			Format:         importer.DataFormatCSV,
+			Options: map[string]interface{}{
+				"skip_rows": float64(1), // json unmarshal will convert number to float64
+				"detached":  nil,
+			},
+		},
+		SourceFileSize: 123,
+		Status:         "pending",
+	}
+	// create jobs
+	jobID1, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
+		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+	require.NoError(t, err)
+	require.NoError(t, importer.StartJob(ctx, conn, jobID1))
+	require.NoError(t, importer.FailJob(ctx, conn, jobID1, "failed"))
+	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
+		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+	require.NoError(t, err)
+	gotJobInfos, err := importer.GetAllViewableJobs(ctx, conn, "", true)
+	require.NoError(t, err)
+	require.Len(t, gotJobInfos, 2)
+	// result should be in order, jobID1, jobID2
+	jobInfo.ID = jobID1
+	jobInfo.Status = "failed"
+	jobInfo.Step = importer.JobStepImporting
+	jobInfo.ErrorMessage = "failed"
+	jobInfoEqual(t, jobInfo, gotJobInfos[0])
+	require.False(t, gotJobInfos[0].StartTime.IsZero())
+	require.False(t, gotJobInfos[0].EndTime.IsZero())
+	jobInfo.ID = jobID2
+	jobInfo.Status = "pending"
+	jobInfo.Step = ""
+	// err msg of jobID2 should be empty
+	jobInfo.ErrorMessage = ""
+	jobInfoEqual(t, jobInfo, gotJobInfos[1])
+	// start/end time of jobID2 should be zero
+	require.True(t, gotJobInfos[1].StartTime.IsZero())
+	require.True(t, gotJobInfos[1].EndTime.IsZero())
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
@@ -69,10 +70,11 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 // DistExecutionTestContext is the context
 // that used in Distributed execution test for Dist task framework and DDL.
 type DistExecutionTestContext struct {
-	Store   kv.Storage
-	domains []*domain.Domain
-	t       testing.TB
-	mu      sync.Mutex
+	Store          kv.Storage
+	domains        []*domain.Domain
+	deletedDomains []*domain.Domain
+	t              testing.TB
+	mu             sync.Mutex
 }
 
 // InitOwner select the last domain as DDL owner.
@@ -128,7 +130,10 @@ func (d *DistExecutionTestContext) DeleteServer(idx int) {
 		d.SetOwner(0)
 		d.mu.Lock()
 	}
+
+	d.deletedDomains = append(d.deletedDomains, d.domains[idx])
 	d.domains = append(d.domains[:idx], d.domains[idx+1:]...)
+
 	err := infosync.MockGlobalServerInfoManagerEntry.Delete(idx)
 	require.NoError(d.t, err)
 }
@@ -139,9 +144,17 @@ func (d *DistExecutionTestContext) Close() {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		gctuner.GlobalMemoryLimitTuner.Stop()
-		for _, dom := range d.domains {
-			dom.Close()
+
+		var wg tidbutil.WaitGroupWrapper
+		for _, dom := range d.deletedDomains {
+			wg.Run(dom.Close)
 		}
+
+		for _, dom := range d.domains {
+			wg.Run(dom.Close)
+		}
+
+		wg.Wait()
 		err := d.Store.Close()
 		require.NoError(d.t, err)
 	})
@@ -166,7 +179,7 @@ func NewDistExecutionTestContext(t testing.TB, serverNum int) *DistExecutionTest
 	}
 
 	res := DistExecutionTestContext{
-		schematracker.UnwrapStorage(store), domains, t, sync.Mutex{}}
+		schematracker.UnwrapStorage(store), domains, []*domain.Domain{}, t, sync.Mutex{}}
 	res.InitOwner()
 	return &res
 }

@@ -58,6 +58,7 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/iancoleman/strcase v0.2.0
 	github.com/jedib0t/go-pretty/v6 v6.2.2
+	github.com/jellydator/ttlcache/v3 v3.0.1
 	github.com/jingyugao/rowserrcheck v1.1.1
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
 	github.com/kisielk/errcheck v1.6.3
@@ -96,8 +97,8 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20230605085112-28247160f497
-	github.com/tikv/pd/client v0.0.0-20230419153320-f1d1a80feb95
+	github.com/tikv/client-go/v2 v2.0.8-0.20230619051818-18b17d4b72f3
+	github.com/tikv/pd/client v0.0.0-20230613052906-7158cb319935
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -130,10 +131,11 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 	honnef.co/go/tools v0.4.3
 	k8s.io/api v0.27.2
-	k8s.io/utils v0.0.0-20230209194617-a36077c30491
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+require k8s.io/utils v0.0.0-20230209194617-a36077c30491 // indirect
 
 require (
 	cloud.google.com/go v0.110.0 // indirect

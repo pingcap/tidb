@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -56,7 +57,7 @@ func NewDistImporter(param *importer.JobImportParam, plan *importer.Plan, stmt s
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
-		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
+		logger:         logutil.BgLogger(),
 		sourceFileSize: sourceFileSize,
 	}, nil
 }
@@ -71,7 +72,7 @@ func NewDistImporterCurrNode(param *importer.JobImportParam, plan *importer.Plan
 		JobImportParam: param,
 		plan:           plan,
 		stmt:           stmt,
-		logger:         logutil.BgLogger().With(zap.String("component", "importer")),
+		logger:         logutil.BgLogger(),
 		instance:       serverInfo,
 		sourceFileSize: sourceFileSize,
 	}, nil
@@ -118,7 +119,6 @@ func (ti *DistImporter) Result() importer.JobImportResult {
 		return result
 	}
 
-	ti.logger.Info("finish distribute IMPORT INTO", zap.Any("task meta", taskMeta))
 	var (
 		numWarnings uint64
 		numRecords  uint64
@@ -158,6 +158,18 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	if err = globalTaskManager.WithNewTxn(func(se sessionctx.Context) error {
 		var err2 error
 		exec := se.(sqlexec.SQLExecutor)
+		// If 2 client try to execute IMPORT INTO concurrently, there's chance that both of them will pass the check.
+		// We can enforce ONLY one import job running by:
+		// 	- using LOCK TABLES, but it requires enable-table-lock=true, it's not enabled by default.
+		// 	- add a key to PD as a distributed lock, but it's a little complex, and we might support job queuing later.
+		// So we only add this simple soft check here and doc it.
+		activeJobCnt, err2 := importer.GetActiveJobCnt(ctx, exec)
+		if err2 != nil {
+			return err2
+		}
+		if activeJobCnt > 0 {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("there's pending or running jobs")
+		}
 		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
 			plan.User, plan.Parameters, ti.sourceFileSize)
 		if err2 != nil {
@@ -204,6 +216,11 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 func (*DistImporter) taskKey() string {
 	// task key is meaningless to IMPORT INTO, so we use a random uuid.
 	return fmt.Sprintf("%s/%s", proto.ImportInto, uuid.New().String())
+}
+
+// JobID returns the job id.
+func (ti *DistImporter) JobID() int64 {
+	return ti.jobID
 }
 
 func getTaskMeta(jobID int64) (*TaskMeta, error) {

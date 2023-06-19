@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -177,7 +178,7 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 		s.subtaskWg.Done()
 		return
 	}
-	logutil.Logger(s.logCtx).Info("split subTask", zap.Int("cnt", len(minimalTasks)), zap.Int64("subtask_id", subtask.ID))
+	logutil.Logger(s.logCtx).Info("split subTask", zap.Int("cnt", len(minimalTasks)), zap.Int64("subtask-id", subtask.ID))
 
 	// fast path for ADD INDEX.
 	// ADD INDEX is a special case now, no minimal tasks will be generated.
@@ -199,15 +200,21 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 				cnt++
 				// last minimal task should mark subtask as finished
 				if cnt == len(minimalTasks) {
-					logutil.BgLogger().Info("ywq test onsubtask")
 					s.onSubtaskFinished(ctx, scheduler, subtask)
 					s.subtaskWg.Done()
 				}
 			}()
-
 			s.runMinimalTask(ctx, j, subtask.Type, step)
 		}
 	}
+	failpoint.Inject("waitUntilError", func() {
+		for i := 0; i < 10; i++ {
+			if s.getError() != nil {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	})
 }
 
 func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask) {
@@ -238,7 +245,7 @@ func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler
 }
 
 func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, minimalTask proto.MinimalTask, tp string, step int64) {
-	logutil.Logger(s.logCtx).Info("scheduler run a minimalTask", zap.Any("step", step), zap.Any("minimal_task", minimalTask))
+	logutil.Logger(s.logCtx).Info("scheduler run a minimalTask", zap.Any("step", step), zap.Stringer("minimal-task", minimalTask))
 	select {
 	case <-minimalTaskCtx.Done():
 		s.onError(minimalTaskCtx.Err())

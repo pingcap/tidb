@@ -71,14 +71,6 @@ type BackfillSubTaskMeta struct {
 	EndKey          []byte `json:"end_key"`
 }
 
-// BackfillMinimalTask is the minimal-task for backfilling index.
-type BackfillMinimalTask struct {
-}
-
-// IsMinimalTask implements the MinimalTask interface.
-func (*BackfillMinimalTask) IsMinimalTask() {
-}
-
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
 func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl, stepForImport bool) (scheduler.Scheduler, error) {
 	bh := &backfillSchedulerHandle{d: d}

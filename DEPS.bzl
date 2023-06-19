@@ -2348,6 +2348,14 @@ def go_deps():
         version = "v2.5.1",
     )
     go_repository(
+        name = "com_github_jellydator_ttlcache_v3",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/jellydator/ttlcache/v3",
+        sum = "h1:cHgCSMS7TdQcoprXnWUptJZzyFsqs18Lt8VVhRuZYVU=",
+        version = "v3.0.1",
+    )
+
+    go_repository(
         name = "com_github_jgautheron_goconst",
         build_file_proto_mode = "disable",
         importpath = "github.com/jgautheron/goconst",
@@ -4230,8 +4238,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:7JvBwc+e1x4AXHtwXp9IK1X04Iokol+HgrWdukU5iqM=",
-        version = "v2.0.8-0.20230605085112-28247160f497",
+        sum = "h1:1jm3uyt3KFzBcsk3ZGJVyVJp+blP2NX30al2vxiKtMo=",
+        version = "v2.0.8-0.20230619051818-18b17d4b72f3",
     )
     go_repository(
         name = "com_github_tikv_pd",
@@ -4245,8 +4253,8 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sum = "h1:177X/S43/qjxDyFq9CBB4Nts0nwLvjJFXzoav2XCUSA=",
-        version = "v0.0.0-20230419153320-f1d1a80feb95",
+        sum = "h1:a5SATBxu/0Z6qNnz4KXDN91gDA06waaYcHM6dkb6lz4=",
+        version = "v0.0.0-20230613052906-7158cb319935",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
@@ -6041,15 +6049,15 @@ def go_deps():
         name = "org_golang_google_genproto_googleapis_api",
         build_file_proto_mode = "disable",
         importpath = "google.golang.org/genproto/googleapis/api",
-        sum = "h1:AZX1ra8YbFMSb7+1pI8S9v4rrgRR7jU1FmuFSSjTVcQ=",
-        version = "v0.0.0-20230526203410-71b5a4ffd15e",
+        sum = "h1:HiYVD+FGJkTo+9zj1gqz0anapsa1JxjiSrN+BJKyUmE=",
+        version = "v0.0.0-20230525234020-1aefcd67740a",
     )
     go_repository(
         name = "org_golang_google_genproto_googleapis_rpc",
         build_file_proto_mode = "disable",
         importpath = "google.golang.org/genproto/googleapis/rpc",
-        sum = "h1:0nDDozoAU19Qb2HwhXadU8OcsiO/09cnTqhUtq2MEOM=",
-        version = "v0.0.0-20230525234030-28d5490b6b19",
+        sum = "h1:XSJ8Vk1SWuNr8S18z1NZSziL0CPIXLCCMDOEFtHBOFc=",
+        version = "v0.0.0-20230530153820-e85fd2cbaebc",
     )
 
     go_repository(

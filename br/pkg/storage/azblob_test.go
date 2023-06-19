@@ -61,7 +61,7 @@ func TestAzblob(t *testing.T) {
 	}
 	builder := &sharedKeyAzuriteClientBuilder{}
 	skip, err := createContainer(ctx, builder, options.Bucket)
-	if skip {
+	if skip || err != nil {
 		t.Log("azurite is not running, skip test")
 		return
 	}

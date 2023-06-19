@@ -1276,8 +1276,9 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		server_metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
 	}
 
-	for _, dbName := range session.GetDBNames(cc.getCtx().GetSessionVars()) {
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName).Observe(cost.Seconds())
+	vars := cc.getCtx().GetSessionVars()
+	for _, dbName := range session.GetDBNames(vars) {
+		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.ResourceGroupName).Observe(cost.Seconds())
 	}
 }
 

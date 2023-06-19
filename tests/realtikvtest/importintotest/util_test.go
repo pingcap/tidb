@@ -73,3 +73,9 @@ func (s *mockGCSSuite) enableFailpoint(path, term string) {
 		_ = failpoint.Disable(path)
 	})
 }
+
+func (s *mockGCSSuite) cleanupSysTables() {
+	s.tk.MustExec("delete from mysql.tidb_import_jobs")
+	s.tk.MustExec("delete from mysql.tidb_global_task")
+	s.tk.MustExec("delete from mysql.tidb_background_subtask")
+}

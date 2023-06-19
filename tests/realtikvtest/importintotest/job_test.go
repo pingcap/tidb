@@ -15,14 +15,17 @@
 package importintotest
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -30,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/disttask/importinto"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
@@ -97,7 +101,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	// test show job by id using test_show_job1
 	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/setLastImportJobID", `return(true)`)
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/storage/testSetLastTaskID", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/br/pkg/storage/forceRedactURL", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/parser/ast/forceRedactURL", "return(true)")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job1", Hostname: "localhost"}, nil, nil, nil))
 	result1 := s.tk.MustQuery(fmt.Sprintf(`import into t1 FROM 'gs://test-show-job/t.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`,
 		gcsEndpoint)).Rows()
@@ -113,7 +117,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		TableID:     tableID1,
 		CreatedBy:   "test_show_job1@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-job/t.csv?access-key=redacted&secret-access-key=redacted&endpoint=%s`, gcsEndpoint),
+			FileLocation: fmt.Sprintf(`gs://test-show-job/t.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=%s`, gcsEndpoint),
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -143,7 +147,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.Len(rows, 1)
 	s.Equal(result2, rows)
 
-	// test with root
+	// show import jobs with root
 	checkJobsMatch := func(rows [][]interface{}) {
 		s.GreaterOrEqual(len(rows), 2) // other cases may create import jobs
 		var matched int
@@ -162,6 +166,16 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	rows = s.tk.MustQuery("show import jobs").Rows()
 	checkJobsMatch(rows)
+	// show import job by id with root
+	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
+	s.Len(rows, 1)
+	s.Equal(result2, rows)
+	jobInfo.ID = importer.TestLastImportJobID.Load()
+	jobInfo.TableName = "t2"
+	jobInfo.TableID = tableID2
+	jobInfo.CreatedBy = "test_show_job2@localhost"
+	jobInfo.Parameters.FileLocation = fmt.Sprintf(`gs://test-show-job/t.csv?endpoint=%s`, gcsEndpoint)
+	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
 	// grant SUPER to test_show_job2, now it can see all jobs
 	s.tk.MustExec(`GRANT SUPER on *.* to 'test_show_job2'@'localhost'`)
@@ -194,7 +208,7 @@ func (s *mockGCSSuite) TestShowJob() {
 			TableID:     tableID3,
 			CreatedBy:   "test_show_job2@localhost",
 			Parameters: importer.ImportParameters{
-				FileLocation: fmt.Sprintf(`gs://test-show-job/t*.csv?endpoint=%s`, gcsEndpoint),
+				FileLocation: fmt.Sprintf(`gs://test-show-job/t*.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=%s`, gcsEndpoint),
 				Format:       importer.DataFormatCSV,
 			},
 			SourceFileSize: 6,
@@ -209,6 +223,22 @@ func (s *mockGCSSuite) TestShowJob() {
 		rows = tk2.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 		s.Len(rows, 1)
 		s.compareJobInfoWithoutTime(jobInfo, rows[0])
+		// show processlist, should be redacted too
+		procRows := tk2.MustQuery("show full processlist").Rows()
+
+		var got bool
+		for _, r := range procRows {
+			user := r[1].(string)
+			sql := r[7].(string)
+			if user == "test_show_job2" && strings.Contains(sql, "IMPORT INTO") {
+				s.Contains(sql, "access-key=xxxxxx")
+				s.Contains(sql, "secret-access-key=xxxxxx")
+				s.NotContains(sql, "aaaaaa")
+				s.NotContains(sql, "bbbbbb")
+				got = true
+			}
+		}
+		s.True(got)
 
 		// resume the scheduler
 		scheduler.TestSyncChan <- struct{}{}
@@ -222,7 +252,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		s.NoError(failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/syncAfterSubtaskFinish"))
 		scheduler.TestSyncChan <- struct{}{}
 	}()
-	s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-job/t*.csv?endpoint=%s'`, gcsEndpoint))
+	s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-job/t*.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`, gcsEndpoint))
 	wg.Wait()
 	s.tk.MustQuery("select * from t3").Sort().Check(testkit.Rows("1", "2", "3", "4"))
 }
@@ -559,4 +589,47 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 	s.NoError(err)
 	jobInfo.ID = int64(jobID1)
 	s.compareJobInfoWithoutTime(jobInfo, result1[0])
+}
+
+func (s *mockGCSSuite) TestKillBeforeFinish() {
+	s.cleanupSysTables()
+	s.tk.MustExec("DROP DATABASE IF EXISTS kill_job;")
+	s.tk.MustExec("CREATE DATABASE kill_job;")
+	s.tk.MustExec(`CREATE TABLE kill_job.t (a INT, b INT, c int);`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "t-1.tsv"},
+		Content:     []byte("1,11,111"),
+	})
+
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/syncBeforeSortChunk", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/executor/cancellableCtx", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/executor/importer/setLastImportJobID", `return(true)`)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sql := fmt.Sprintf(`IMPORT INTO kill_job.t FROM 'gs://test-load/t-*.tsv?endpoint=%s'`, gcsEndpoint)
+		err := s.tk.QueryToErr(sql)
+		s.ErrorIs(errors.Cause(err), context.Canceled)
+	}()
+	// wait for the task reach sort chunk
+	<-importinto.TestSyncChan
+	// cancel the job
+	executor.TestCancelFunc()
+	// continue the execution
+	importinto.TestSyncChan <- struct{}{}
+	wg.Wait()
+	jobID := importer.TestLastImportJobID.Load()
+	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
+	s.Len(rows, 1)
+	s.Equal("cancelled", rows[0][5])
+	globalTaskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	taskKey := importinto.TaskKey(jobID)
+	s.NoError(err)
+	s.Eventually(func() bool {
+		globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
+		s.NoError(err2)
+		return globalTask.State == proto.TaskStateReverted
+	}, 5*time.Second, 1*time.Second)
 }

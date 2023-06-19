@@ -30,7 +30,8 @@ import (
 var (
 	schedulerPoolSize       int32 = 4
 	subtaskExecutorPoolSize int32 = 10
-	checkTime                     = time.Second
+	// same as dispatcher
+	checkTime = 300 * time.Millisecond
 )
 
 // ManagerBuilder is used to build a Manager.

@@ -79,6 +79,10 @@ type testMiniTask struct{}
 
 func (testMiniTask) IsMinimalTask() {}
 
+func (testMiniTask) String() string {
+	return ""
+}
+
 type testScheduler struct{}
 
 func (*testScheduler) InitSubtaskExecEnv(_ context.Context) error { return nil }
