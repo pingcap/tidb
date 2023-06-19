@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -137,7 +138,7 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 	for {
 		// check if any error occurs
 		if err := s.getError(); err != nil {
-			return err
+			break
 		}
 
 		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending)
@@ -190,18 +191,27 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 	for _, minimalTask := range minimalTasks {
 		j := minimalTask
 		minimalTaskCh <- func() {
+			defer func() {
+				mu.Lock()
+				defer mu.Unlock()
+				cnt++
+				// last minimal task should mark subtask as finished
+				if cnt == len(minimalTasks) {
+					s.onSubtaskFinished(ctx, scheduler, subtask)
+					s.subtaskWg.Done()
+				}
+			}()
 			s.runMinimalTask(ctx, j, subtask.Type, step)
-
-			mu.Lock()
-			defer mu.Unlock()
-			cnt++
-			// last minimal task should mark subtask as finished
-			if cnt == len(minimalTasks) {
-				s.onSubtaskFinished(ctx, scheduler, subtask)
-				s.subtaskWg.Done()
-			}
 		}
 	}
+	failpoint.Inject("waitUntilError", func() {
+		for i := 0; i < 10; i++ {
+			if s.getError() != nil {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	})
 }
 
 func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask) {

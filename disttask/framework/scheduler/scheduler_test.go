@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/mock"
@@ -173,6 +174,49 @@ func TestSchedulerRun(t *testing.T) {
 	time.Sleep(time.Second)
 	runCancel()
 	wg.Wait()
+
+	// 11. run subtask concurrently, on error, we should wait all minimal task finished before call CleanupSubtaskExecEnv
+	syncCh := make(chan struct{})
+	lastMinimalTaskFinishTime, cleanupTime := time.Time{}, time.Time{}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/waitUntilError", `return(true)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/waitUntilError"))
+	})
+	mockScheduler.On("InitSubtaskExecEnv", mock.Anything).Return(nil).Once()
+	mockPool.On("RunWithConcurrency", mock.Anything, mock.Anything).Return(nil).Once()
+	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1, Type: tp}, nil).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateRunning).Return(nil).Once()
+	mockScheduler.On("SplitSubtask", mock.Anything, mock.Anything).Return([]proto.MinimalTask{MockMinimalTask{}, MockMinimalTask{}}, nil).Once()
+	mockSubtaskExecutor.On("Run", mock.Anything).Return(nil).Once().Run(func(args mock.Arguments) {
+		<-syncCh
+		lastMinimalTaskFinishTime = time.Now()
+	})
+	mockSubtaskExecutor.On("Run", mock.Anything).Return(context.Canceled).Once()
+	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateCanceled).Return(nil).Once()
+	// GetSubtaskInStates should not be called again, we should break on first check in the foo loop of scheduler.Run
+	mockScheduler.On("CleanupSubtaskExecEnv", mock.Anything).Return(nil).Once().Run(func(args mock.Arguments) {
+		cleanupTime = time.Now()
+	})
+	scheduler = NewInternalScheduler(ctx, "id", 1, mockSubtaskTable, mockPool)
+	runCtx2, runCancel2 := context.WithCancel(ctx)
+	defer runCancel2()
+	wg = sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		err = scheduler.Run(runCtx2, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
+		require.EqualError(t, err, context.Canceled.Error())
+	}()
+	go func() {
+		defer wg.Done()
+		time.Sleep(3 * time.Second)
+		syncCh <- struct{}{}
+	}()
+	wg.Wait()
+	runCancel2()
+	require.False(t, lastMinimalTaskFinishTime.IsZero())
+	require.False(t, cleanupTime.IsZero())
+	require.Greater(t, cleanupTime, lastMinimalTaskFinishTime)
 
 	mockSubtaskTable.AssertExpectations(t)
 	mockScheduler.AssertExpectations(t)
