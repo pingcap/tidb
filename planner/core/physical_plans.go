@@ -784,19 +784,19 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 // AddExtraPhysTblIDColumn for partition table.
 // For keepOrder with partition table,
 // we need use partitionHandle to distinct two handles,
-// the `_tidb_rowid` in differenct partition will same in some scenario.
-func (p *PhysicalIndexScan) AddExtraPhysTblIDColumn() bool {
-	// The first column will return 0 when has more than two ExtraPhysTblID columns.
-	if FindColumnInfoByID(p.Columns, model.ExtraPhysTblID) != nil {
-		return false
+// the `_tidb_rowid` in different partitions can have the same value.
+func AddExtraPhysTblIDColumn(sctx sessionctx.Context, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
+	// Not adding the ExtraPhysTblID if already exists
+	if FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
+		return columns, schema, false
 	}
-	p.Columns = append(p.Columns, model.NewExtraPhysTblIDColInfo())
-	p.schema.Append(&expression.Column{
+	columns = append(columns, model.NewExtraPhysTblIDColInfo())
+	schema.Append(&expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraPhysTblID,
 	})
-	return true
+	return columns, schema, true
 }
 
 // PhysicalMemTable reads memory table.
@@ -1008,24 +1008,6 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 // SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
 func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool) {
 	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
-}
-
-// AddExtraPhysTblIDColumn for partition table.
-// For keepOrder with partition table,
-// we need use partitionHandle to distinct two handles,
-// the `_tidb_rowid` in differenct partition will same in some scenario.
-func (ts *PhysicalTableScan) AddExtraPhysTblIDColumn() bool {
-	// The first column will return 0 when has more than two ExtraPhysTblID columns.
-	if FindColumnInfoByID(ts.Columns, model.ExtraPhysTblID) != nil {
-		return false
-	}
-	ts.Columns = append(ts.Columns, model.NewExtraPhysTblIDColInfo())
-	ts.schema.Append(&expression.Column{
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		UniqueID: ts.ctx.GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraPhysTblID,
-	})
-	return true
 }
 
 const emptyPhysicalTableScanSize = int64(unsafe.Sizeof(PhysicalTableScan{}))
