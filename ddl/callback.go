@@ -45,6 +45,7 @@ func (*BaseInterceptor) OnGetInfoSchema(_ sessionctx.Context, is infoschema.Info
 
 // Callback is used for DDL.
 type Callback interface {
+	ReorgCallback
 	// OnChanged is called after a ddl statement is finished.
 	OnChanged(err error) error
 	// OnSchemaStateChanged is called after a schema state is changed.
@@ -65,6 +66,7 @@ type Callback interface {
 
 // BaseCallback implements Callback.OnChanged interface.
 type BaseCallback struct {
+	BaseReorgCallBack
 }
 
 // OnChanged implements Callback interface.
@@ -112,6 +114,16 @@ type DomainReloader interface {
 	Reload() error
 }
 
+type ReorgCallback interface {
+	OnUpdateReorgInfo(job *model.Job, pid int64)
+}
+
+type BaseReorgCallBack struct {
+}
+
+func (*BaseReorgCallBack) OnUpdateReorgInfo(_ *model.Job, _ int64) {
+}
+
 // ****************************** Start of Customized DDL Callback Instance ****************************************
 
 // DefaultCallback is the default callback that TiDB will use.
@@ -144,7 +156,7 @@ func (c *DefaultCallback) OnSchemaStateChanged(_ int64) {
 }
 
 func newDefaultCallBack(do DomainReloader) Callback {
-	return &DefaultCallback{do: do}
+	return &DefaultCallback{BaseCallback: &BaseCallback{BaseReorgCallBack: BaseReorgCallBack{}}, do: do}
 }
 
 // ****************************** End of Default DDL Callback Instance *********************************************
