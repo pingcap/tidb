@@ -49,7 +49,8 @@ const (
 var (
 	serviceSafePointTTL int64 = 10 * 60 // 10 min in seconds
 
-	minDistSQLScanConcurrency = 4
+	// MinDistSQLScanConcurrency is the minimum value of tidb_distsql_scan_concurrency.
+	MinDistSQLScanConcurrency = 4
 )
 
 // RemoteChecksum represents a checksum result got from tidb.
@@ -111,7 +112,11 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	// +---------+------------+---------------------+-----------+-------------+
 
 	cs := RemoteChecksum{}
-	err = common.SQLWithRetry{DB: e.db, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
+	exec := common.SQLWithRetry{DB: e.db, Logger: task.Logger}
+	if err := exec.Exec(ctx, "increase tidb_backoff_weight", "SET SESSION tidb_backoff_weight = '6';"); err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = exec.QueryRow(ctx, "compute remote checksum",
 		"ADMIN CHECKSUM TABLE "+tableName, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,
 	)
 	dur := task.End(zap.ErrorLevel, err)
@@ -286,8 +291,8 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 		if !common.IsRetryableError(err) {
 			break
 		}
-		if distSQLScanConcurrency > minDistSQLScanConcurrency {
-			distSQLScanConcurrency = mathutil.Max(distSQLScanConcurrency/2, minDistSQLScanConcurrency)
+		if distSQLScanConcurrency > MinDistSQLScanConcurrency {
+			distSQLScanConcurrency = mathutil.Max(distSQLScanConcurrency/2, MinDistSQLScanConcurrency)
 		}
 	}
 
