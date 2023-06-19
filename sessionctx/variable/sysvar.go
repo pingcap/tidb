@@ -2529,6 +2529,9 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeSkipColumnTypes, Value: "json,blob,mediumblob,longblob", Type: TypeStr,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			return ValidAnalyzeSkipColumnTypes(normalizedValue)
+		},
 		SetSession: func(s *SessionVars, val string) error {
 			s.AnalyzeSkipColumnTypes = ParseAnalyzeSkipColumnTypes(val)
 			return nil
