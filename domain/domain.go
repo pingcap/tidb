@@ -1262,7 +1262,12 @@ func (do *Domain) gcSystemTable(tableName, colName string, expiredDuration time.
 		return
 	}
 	tbInfo := tbl.Meta()
-	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, model.NewCIStr(""), tbInfo.FindPublicColumnByName(colName))
+	col := tbInfo.FindPublicColumnByName(colName)
+	if col == nil {
+		logutil.BgLogger().Info("time column is not public in table", zap.String("table", tableName), zap.String("column", colName))
+		return
+	}
+	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, model.NewCIStr(""), col)
 	if err != nil {
 		logutil.BgLogger().Info("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
