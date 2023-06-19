@@ -484,7 +484,8 @@ func TestCTEPanic(t *testing.T) {
 }
 
 func TestCTEDelSpillFile(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2;")
