@@ -3239,3 +3239,16 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	require.True(t, stats.Indices[tblInfo.Indices[0].ID].IsStatsInitialized())
 	require.False(t, stats.Indices[tblInfo.Indices[1].ID].IsStatsInitialized())
 }
+
+func TestManualAnalyzeSkipColumnTypes(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
+	tk.MustExec("set @@session.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%analyze table%'").Check(testkit.Rows("analyze table columns a, b, d with 256 buckets, 500 topn, 1 samplerate"))
+	tk.MustExec("delete from mysql.analyze_jobs")
+	tk.MustExec("analyze table t columns a, e")
+	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%analyze table%'").Check(testkit.Rows("analyze table columns a, d with 256 buckets, 500 topn, 1 samplerate"))
+}

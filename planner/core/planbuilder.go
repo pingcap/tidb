@@ -2470,17 +2470,30 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		filterSkipColumnTypes := func(origin []*model.ColumnInfo) (result []*model.ColumnInfo) {
 			skipTypes := b.ctx.GetSessionVars().AnalyzeSkipColumnTypes
 			if b.ctx.GetSessionVars().InRestrictedSQL {
+				// For auto analyze, we need to use @@global.tidb_analyze_skip_column_types.
 				val, err1 := b.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
 				if err1 != nil {
 					logutil.BgLogger().Error("loading tidb_analyze_skip_column_types failed", zap.Error(err1))
-				} else {
-					skipTypes = variable.ParseAnalyzeSkipColumnTypes(val)
+					result = origin
+					return
 				}
+				skipTypes = variable.ParseAnalyzeSkipColumnTypes(val)
+			}
+			mustAnalyze, err1 := b.getMustAnalyzedColumns(tbl, &mustAnalyzedCols)
+			if err1 != nil {
+				logutil.BgLogger().Error("getting must-analyzed columns failed", zap.Error(err1))
+				result = origin
+				return
 			}
 			for _, colInfo := range origin {
-				if _, ok := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]; !ok {
-					result = append(result, colInfo)
+				_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]
+				// Currently, if the column exists in some index(except MV Index), we need to bring the column's sample values
+				// into TiDB to build the index statistics.
+				_, keep := mustAnalyze[colInfo.ID]
+				if skip && !keep {
+					continue
 				}
+				result = append(result, colInfo)
 			}
 			return
 		}
