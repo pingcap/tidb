@@ -7,20 +7,6 @@ GOVERS=1.20.5
 GOLINK=https://go.dev/dl/go$GOVERS.src.tar.gz
 SRCSHASUM=9a15c133ba2cfafe79652f4815b62e7cfc267f68df1b9454c6ab2a3ca8b96a88
 
-apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    apt-transport-https \
-    ca-certificates \
-    clang-10 \
-    cmake \
-    curl \
-    git \
-    gnupg2 \
-    make \
-    python-is-python3 \
-    python3 \
-    python3.8-venv
-
 update-alternatives --install /usr/bin/clang clang /usr/bin/clang-10 100 \
     --slave /usr/bin/clang++ clang++ /usr/bin/clang++-10
 
