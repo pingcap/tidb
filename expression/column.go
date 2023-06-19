@@ -223,6 +223,16 @@ func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error
 	}, nil
 }
 
+func (col *CorrelatedColumn) HashCode(sc *stmtctx.StatementContext) []byte {
+	if len(col.hashcode) != 0 {
+		return col.hashcode
+	}
+
+	col.Column.HashCode(sc)
+	col.hashcode = codec.HashCode(col.hashcode, *col.Data)
+	return col.hashcode
+}
+
 // Column represents a column.
 type Column struct {
 	RetType *types.FieldType

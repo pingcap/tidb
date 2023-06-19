@@ -17,6 +17,8 @@ package executor
 import (
 	"context"
 
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx"
@@ -81,10 +83,19 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 	e.producer.resTbl.Lock()
 	defer e.producer.resTbl.Unlock()
 
-	if e.producer.isInApply {
+	if e.id == 34 {
+		logutil.BgLogger().Info("gjt debug in Open")
+	}
+	if e.producer.checkAndUpdateCorColHashCode() {
 		e.producer.reset()
+		if err = e.producer.reopenTbls(); err != nil {
+			return err
+		}
 	}
 	if !e.producer.opened {
+		if e.id == 34 {
+			logutil.BgLogger().Info("gjt debug in openProducer")
+		}
 		if err = e.producer.openProducer(ctx, e); err != nil {
 			return err
 		}
@@ -155,10 +166,9 @@ type cteProducer struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
-	// isInApply indicates whether CTE is in inner side of Apply
-	// and should resTbl/iterInTbl be reset for each outer row of Apply.
-	// Because we reset them when SQL is finished instead of when CTEExec.Close() is called.
-	isInApply bool
+	// Correlated Column.
+	corCols []*expression.CorrelatedColumn
+	corColHashCodes [][]byte
 }
 
 func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err error) {
@@ -224,11 +234,6 @@ func (p *cteProducer) closeProducer() (err error) {
 		}
 	}
 	p.closed = true
-	if p.isInApply {
-		if err = p.reopenTbls(); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -656,4 +661,28 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 		}
 	}
 	return false, nil
+}
+
+func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
+	same := true
+	for i, corCol := range p.corCols {
+		newHashCode := corCol.HashCode(p.ctx.GetSessionVars().StmtCtx)
+		if !sameHashCode(newHashCode, p.corColHashCodes[i]) {
+			same = false
+			p.corColHashCodes[i] = newHashCode
+		}
+	}
+	return same
+}
+
+func sameHashCode(c1 []byte, c2 []byte) bool {
+	if len(c1) != len(c2) {
+		return false
+	}
+	for i := 0; i < len(c1); i++ {
+		if c1[i] != c2[i] {
+			return false
+		}
+	}
+	return true
 }

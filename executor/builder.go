@@ -5343,7 +5343,12 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		iterInTbl = storages.IterInTbl
 		producer = storages.Producer
 	} else {
+		if v.SeedPlan == nil {
+			b.err = errors.New("cte.seedPlan cannot be nil")
+			return nil
+		}
 		// Build seed part.
+		corCols := plannercore.ExtractCorrelatedCols4PhysicalPlan(v.SeedPlan)
 		seedExec := b.build(v.SeedPlan)
 		if b.err != nil {
 			return nil
@@ -5364,16 +5369,26 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl}
 
 		// Build recursive part.
-		recursiveExec := b.build(v.RecurPlan)
-		if b.err != nil {
-			return nil
+		var recursiveExec Executor
+		if v.RecurPlan != nil {
+			recursiveExec = b.build(v.RecurPlan)
+			if b.err != nil {
+				return nil
+			}
+			corCols = append(corCols, plannercore.ExtractCorrelatedCols4PhysicalPlan(v.RecurPlan)...)
 		}
+
 		var sel []int
 		if v.CTE.IsDistinct {
 			sel = make([]int, chkSize)
 			for i := 0; i < chkSize; i++ {
 				sel[i] = i
 			}
+		}
+
+		var corColHashCodes [][]byte
+		for _, corCol := range corCols {
+			corColHashCodes = append(corColHashCodes, corCol.HashCode(b.ctx.GetSessionVars().StmtCtx))
 		}
 
 		producer = &cteProducer{
@@ -5387,7 +5402,8 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 			hasLimit:      v.CTE.HasLimit,
 			limitBeg:      v.CTE.LimitBeg,
 			limitEnd:      v.CTE.LimitEnd,
-			isInApply:     v.CTE.IsInApply,
+			corCols:       corCols,
+			corColHashCodes: corColHashCodes,
 		}
 		storageMap[v.CTE.IDForStorage].Producer = producer
 	}
