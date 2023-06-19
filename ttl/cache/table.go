@@ -113,10 +113,6 @@ func NewBasePhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition mo
 		return nil, errors.Errorf("table '%s.%s' is not a public table", schema, tbl.Name)
 	}
 
-	if timeColumn == nil {
-		return nil, errors.Errorf("time column '%s' is not public in table '%s.%s'", timeColumn.Name, schema, tbl.Name)
-	}
-
 	keyColumns, keyColumTypes, err := getTableKeyColumns(tbl)
 	if err != nil {
 		return nil, err
