@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//errno",
+        "//parser/model",
         "//parser/types",
         "//sessionctx/stmtctx",
         "//types",

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package loaddata
+package importinto
 
 import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -21,6 +21,10 @@ import (
 
 func toChunkCheckpoint(chunk Chunk) checkpoints.ChunkCheckpoint {
 	return checkpoints.ChunkCheckpoint{
+		Key: checkpoints.ChunkCheckpointKey{
+			Path:   chunk.Path,
+			Offset: chunk.Offset,
+		},
 		FileMeta: mydump.SourceFileMeta{
 			Path:        chunk.Path,
 			Type:        chunk.Type,

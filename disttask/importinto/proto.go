@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package loaddata
+package importinto
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -23,15 +24,21 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
+	"go.uber.org/zap"
 )
 
-// TaskStep of LoadData.
+// Steps of IMPORT INTO, each step is represented by one or multiple subtasks.
+// the initial step is StepInit(-1)
+// steps are processed in the following order: StepInit -> StepImport -> StepPostProcess
 const (
-	// Import we sort source data and ingest it into TiKV in this step.
-	Import int64 = 1
+	// StepImport we sort source data and ingest it into TiKV in this step.
+	StepImport int64 = 1
+	// StepPostProcess we verify checksum and add index in this step.
+	// TODO: Might split into StepValidate and StepAddIndex later.
+	StepPostProcess int64 = 2
 )
 
-// TaskMeta is the task of LoadData.
+// TaskMeta is the task of IMPORT INTO.
 // All the field should be serializable.
 type TaskMeta struct {
 	// IMPORT INTO job id.
@@ -40,8 +47,8 @@ type TaskMeta struct {
 	Stmt   string
 	Result Result
 	// eligible instances to run this task, we run on all instances if it's empty.
-	// we only need this when run LOAD DATA without distributed option now, i.e.
-	// running on the instance that initiate the LOAD DATA.
+	// we only need this when run IMPORT INTO without distributed option now, i.e.
+	// running on the instance that initiate the IMPORT INTO.
 	EligibleInstances []*infosync.ServerInfo
 	// the file chunks to import, when import from server file, we need to pass those
 	// files to the framework dispatcher which might run on another instance.
@@ -50,16 +57,21 @@ type TaskMeta struct {
 	ChunkMap map[int32][]Chunk
 }
 
-// SubtaskMeta is the subtask of LoadData.
+// ImportStepMeta is the meta of import step.
 // Dispatcher will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
-type SubtaskMeta struct {
-	Plan importer.Plan
+type ImportStepMeta struct {
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
 	Chunks   []Chunk
 	Checksum Checksum
 	Result   Result
+}
+
+// PostProcessStepMeta is the meta of post process step.
+type PostProcessStepMeta struct {
+	// accumulated checksum of all subtasks in import step.
+	Checksum Checksum
 }
 
 // SharedVars is the shared variables between subtask and minimal tasks.
@@ -75,16 +87,33 @@ type SharedVars struct {
 	Checksum *verification.KVChecksum
 }
 
-// MinimalTaskMeta is the minimal task of LoadData.
+// importStepMinimalTask is the minimal task of IMPORT INTO.
 // Scheduler will split the subtask into minimal tasks(Chunks -> Chunk)
-type MinimalTaskMeta struct {
+type importStepMinimalTask struct {
 	Plan       importer.Plan
 	Chunk      Chunk
 	SharedVars *SharedVars
 }
 
 // IsMinimalTask implements the MinimalTask interface.
-func (MinimalTaskMeta) IsMinimalTask() {}
+func (*importStepMinimalTask) IsMinimalTask() {}
+
+func (t *importStepMinimalTask) String() string {
+	return fmt.Sprintf("chunk:%s:%d", t.Chunk.Path, t.Chunk.Offset)
+}
+
+// postProcessStepMinimalTask is the minimal task of post process step.
+type postProcessStepMinimalTask struct {
+	meta     PostProcessStepMeta
+	taskMeta *TaskMeta
+	logger   *zap.Logger
+}
+
+func (*postProcessStepMinimalTask) IsMinimalTask() {}
+
+func (*postProcessStepMinimalTask) String() string {
+	return "post process"
+}
 
 // Chunk records the chunk information.
 type Chunk struct {
@@ -110,4 +139,5 @@ type Checksum struct {
 type Result struct {
 	ReadRowCnt   uint64
 	LoadedRowCnt uint64
+	ColSizeMap   map[int64]int64
 }

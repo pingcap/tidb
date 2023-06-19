@@ -69,6 +69,7 @@ const (
 	tableNamePDProfileAllocs                 = "pd_profile_allocs"
 	tableNamePDProfileBlock                  = "pd_profile_block"
 	tableNamePDProfileGoroutines             = "pd_profile_goroutines"
+	tableNameSessionConnectAttrs             = "session_connect_attrs"
 	tableNameSessionVariables                = "session_variables"
 )
 
@@ -104,6 +105,7 @@ var tableIDMap = map[string]int64{
 	tableNamePDProfileBlock:                  autoid.PerformanceSchemaDBID + 29,
 	tableNamePDProfileGoroutines:             autoid.PerformanceSchemaDBID + 30,
 	tableNameSessionVariables:                autoid.PerformanceSchemaDBID + 31,
+	tableNameSessionConnectAttrs:             autoid.PerformanceSchemaDBID + 32,
 }
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -257,6 +259,8 @@ func (vt *perfSchemaTable) getRows(ctx context.Context, sctx sessionctx.Context,
 		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/goroutine?debug=2", true)
 	case tableNameSessionVariables:
 		fullRows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
+	case tableNameSessionConnectAttrs:
+		fullRows, err = infoschema.GetDataFromSessionConnectAttrs(sctx)
 	}
 	if err != nil {
 		return

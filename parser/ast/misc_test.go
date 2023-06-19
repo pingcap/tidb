@@ -372,3 +372,36 @@ func TestCompactTableStmtRestore(t *testing.T) {
 	}
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
+
+func TestRedactURL(t *testing.T) {
+	type args struct {
+		str string
+	}
+	tests := []struct {
+		args args
+		want string
+	}{
+		{args{""}, ""},
+		{args{":"}, ":"},
+		{args{"~/file"}, "~/file"},
+		{args{"gs://bucket/file"}, "gs://bucket/file"},
+		// gs don't have access-key/secret-access-key, so it will NOT be redacted
+		{args{"gs://bucket/file?access-key=123"}, "gs://bucket/file?access-key=123"},
+		{args{"gs://bucket/file?secret-access-key=123"}, "gs://bucket/file?secret-access-key=123"},
+		{args{"s3://bucket/file"}, "s3://bucket/file"},
+		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123"},
+		{args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=xxxxxx"},
+		{args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=xxxxxx"},
+		// underline
+		{args{"s3://bucket/file?access_key=123"}, "s3://bucket/file?access_key=xxxxxx"},
+		{args{"s3://bucket/file?secret_access_key=123"}, "s3://bucket/file?secret_access_key=xxxxxx"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.args.str, func(t *testing.T) {
+			got := ast.RedactURL(tt.args.str)
+			if got != tt.want {
+				t.Errorf("RedactURL() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

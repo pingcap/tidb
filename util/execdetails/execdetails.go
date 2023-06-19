@@ -845,7 +845,7 @@ func (e *RootRuntimeStats) String() string {
 	for _, group := range groups {
 		str := group.String()
 		if len(str) > 0 {
-			strs = append(strs, group.String())
+			strs = append(strs, str)
 		}
 	}
 	return strings.Join(strs, ", ")

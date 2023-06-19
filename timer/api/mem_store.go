@@ -31,7 +31,7 @@ type memStoreWatcher struct {
 }
 
 type memoryStoreCore struct {
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	namespaces map[string]map[string]*TimerRecord
 	id2Timers  map[string]*TimerRecord
 	notifier   TimerWatchEventNotifier
@@ -103,8 +103,8 @@ func (s *memoryStoreCore) Create(_ context.Context, record *TimerRecord) (string
 }
 
 func (s *memoryStoreCore) List(_ context.Context, cond Cond) ([]*TimerRecord, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	result := make([]*TimerRecord, 0, 1)
 	for _, ns := range s.namespaces {
@@ -177,7 +177,7 @@ func (s *memoryStoreCore) Close() {
 }
 
 type memTimerWatchEventNotifier struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	ctx      context.Context
 	wg       sync.WaitGroup
 	cancel   func()
@@ -241,8 +241,8 @@ func (n *memTimerWatchEventNotifier) Watch(ctx context.Context) WatchTimerChan {
 }
 
 func (n *memTimerWatchEventNotifier) Notify(tp WatchTimerEventType, timerID string) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	n.mu.RLock()
+	defer n.mu.RUnlock()
 	if n.cancel == nil {
 		return
 	}

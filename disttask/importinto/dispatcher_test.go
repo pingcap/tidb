@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package loaddata
+package importinto
 
 import (
 	"context"
@@ -23,26 +23,27 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
-type loadDataSuite struct {
+type importIntoSuite struct {
 	suite.Suite
 }
 
-func TestLoadData(t *testing.T) {
-	suite.Run(t, &loadDataSuite{})
+func TestImportInto(t *testing.T) {
+	suite.Run(t, &importIntoSuite{})
 }
 
-func (s *loadDataSuite) enableFailPoint(path, term string) {
+func (s *importIntoSuite) enableFailPoint(path, term string) {
 	require.NoError(s.T(), failpoint.Enable(path, term))
 	s.T().Cleanup(func() {
 		_ = failpoint.Disable(path)
 	})
 }
 
-func (s *loadDataSuite) TestFlowHandleGetEligibleInstances() {
+func (s *importIntoSuite) TestFlowHandleGetEligibleInstances() {
 	makeFailpointRes := func(v interface{}) string {
 		bytes, err := json.Marshal(v)
 		s.NoError(err)
@@ -75,4 +76,32 @@ func (s *loadDataSuite) TestFlowHandleGetEligibleInstances() {
 	eligibleInstances, err = h.GetEligibleInstances(context.Background(), gTask)
 	s.NoError(err)
 	s.Equal([]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}}, eligibleInstances)
+}
+
+func (s *importIntoSuite) TestUpdateCurrentTask() {
+	taskMeta := TaskMeta{
+		Plan: importer.Plan{
+			DisableTiKVImportMode: true,
+		},
+	}
+	bs, err := json.Marshal(taskMeta)
+	require.NoError(s.T(), err)
+
+	h := flowHandle{}
+	require.Equal(s.T(), int64(0), h.currTaskID.Load())
+	require.False(s.T(), h.disableTiKVImportMode.Load())
+
+	h.updateCurrentTask(&proto.Task{
+		ID:   1,
+		Meta: bs,
+	})
+	require.Equal(s.T(), int64(1), h.currTaskID.Load())
+	require.True(s.T(), h.disableTiKVImportMode.Load())
+
+	h.updateCurrentTask(&proto.Task{
+		ID:   1,
+		Meta: bs,
+	})
+	require.Equal(s.T(), int64(1), h.currTaskID.Load())
+	require.True(s.T(), h.disableTiKVImportMode.Load())
 }

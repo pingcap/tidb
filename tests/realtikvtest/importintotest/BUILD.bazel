@@ -1,13 +1,13 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "loaddatatest_test",
+    name = "importintotest_test",
     timeout = "long",
     srcs = [
         "detach_test.go",
         "from_server_test.go",
+        "import_into_test.go",
         "job_test.go",
-        "load_data_test.go",
         "main_test.go",
         "one_parquet_test.go",
         "operate_test.go",
@@ -30,7 +30,7 @@ go_test(
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
         "//disttask/framework/storage",
-        "//disttask/loaddata",
+        "//disttask/importinto",
         "//domain/infosync",
         "//executor",
         "//executor/asyncloaddata",
@@ -48,6 +48,7 @@ go_test(
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_golang_mock//gomock",
         "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",

@@ -70,7 +70,7 @@ func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		case <-ticker.C:
 			found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
 			if err != nil {
@@ -85,7 +85,7 @@ func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
 			case proto.TaskStateSucceed:
 				return nil
 			case proto.TaskStateReverted:
-				logutil.BgLogger().Error("global task reverted", zap.Int64("taskID", globalTask.ID), zap.String("error", string(found.Error)))
+				logutil.BgLogger().Error("global task reverted", zap.Int64("task-id", globalTask.ID), zap.String("error", string(found.Error)))
 				return errors.New(string(found.Error))
 			case proto.TaskStateFailed, proto.TaskStateCanceled:
 				return errors.Errorf("task stopped with state %s, err %s", found.State, found.Error)

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package loaddatatest
+package importintotest
 
 import (
 	"fmt"
@@ -72,4 +72,10 @@ func (s *mockGCSSuite) enableFailpoint(path, term string) {
 	s.T().Cleanup(func() {
 		_ = failpoint.Disable(path)
 	})
+}
+
+func (s *mockGCSSuite) cleanupSysTables() {
+	s.tk.MustExec("delete from mysql.tidb_import_jobs")
+	s.tk.MustExec("delete from mysql.tidb_global_task")
+	s.tk.MustExec("delete from mysql.tidb_background_subtask")
 }
