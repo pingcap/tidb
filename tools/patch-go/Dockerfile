@@ -1,5 +1,4 @@
 FROM ubuntu:focal
-ADD go1.20.1.patch /bootstrap/diff.patch
 ADD build.sh /
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     sudo \
@@ -16,6 +15,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     python3 \
     python3.8-venv
 ENV GOLANG_VERSION 1.20.5
+ADD go$GOLANG_VERSION.patch /bootstrap/diff.patch
 ENV ARCH amd64
 ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-$ARCH.tar.gz
 ENV GOPATH /go
