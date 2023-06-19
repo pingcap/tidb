@@ -4585,10 +4585,10 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 
 	availableStatsColIDs := make(map[int64]struct{})
 	availableStatsIdxIDs := make(map[int64]struct{})
-	if !statsTbl.Pseudo && !ctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
+	if !ctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
 		analyzeCount := mathutil.Max(int64(statsTbl.GetAnalyzeRowCount()), 0)
 		if statsTbl.RealtimeCount != analyzeCount || statsTbl.ModifyCount != 0 {
-			if statsTbl.RealtimeCount > 0 && analyzeCount == 0 {
+			if !statsTbl.Pseudo && statsTbl.RealtimeCount > 0 && analyzeCount == 0 {
 				for id := range statsTbl.Columns {
 					availableStatsColIDs[id] = struct{}{}
 				}
