@@ -1382,6 +1382,7 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 	serverAddr := net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
 	do.runawayManager = resourcegroup.NewRunawayManager(control, serverAddr)
 	do.resourceGroupsController = control
+	tikv.SetResourceControlInterceptor(control)
 	return nil
 }
 
