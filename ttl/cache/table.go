@@ -107,8 +107,12 @@ type PhysicalTable struct {
 	TimeColumn *model.ColumnInfo
 }
 
-// NewBasePhysicalTable create a new PhysicalTable
-func NewBasePhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.CIStr, timeColumn *model.ColumnInfo) (*PhysicalTable, error) {
+// NewBasePhysicalTable create a new PhysicalTable with specific timeColunm.
+func NewBasePhysicalTable(schema model.CIStr,
+	tbl *model.TableInfo,
+	partition model.CIStr,
+	timeColumn *model.ColumnInfo,
+) (*PhysicalTable, error) {
 	if tbl.State != model.StatePublic {
 		return nil, errors.Errorf("table '%s.%s' is not a public table", schema, tbl.Name)
 	}
