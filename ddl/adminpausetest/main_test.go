@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package pausetest
+package adminpausetest
 
 import (
 	"testing"
@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
+
+const dbTestLease = 600 * time.Millisecond
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()

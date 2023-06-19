@@ -192,7 +192,8 @@ var allTestCase = []testCancelJob{
 	{"alter table t drop index mul_idx1, drop index mul_idx2", false, testutil.SubStates{model.StateDeleteReorganization, model.StateWriteOnly}, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
 	{"alter table t drop index mul_idx1, drop index mul_idx2", false, testutil.SubStates{model.StateDeleteReorganization, model.StateWriteOnly}, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
 	// Alter db placement.
-	{"alter database db_placement placement policy = 'alter_x'", true, model.StateNone, true, false, []string{"create placement policy alter_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";", "create database db_placement"}},
+	{"alter database db_placement placement policy = 'alter_x'", true, model.StateNone, true, false,
+		[]string{"create placement policy alter_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";", "create database db_placement"}},
 	{"alter database db_placement placement policy = 'alter_x'", false, model.StatePublic, false, true, nil},
 	// Rename index.
 	{"alter table t rename index rename_idx1 to rename_idx2", true, model.StateNone, true, false, []string{"alter table t add index rename_idx1(c1)"}},
