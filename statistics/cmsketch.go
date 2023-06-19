@@ -526,7 +526,8 @@ func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
 
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
-	TopN []TopNMeta
+	TopN             []TopNMeta
+	CachedTotalCount uint64
 }
 
 // AppendTopN appends a topn into the TopN struct.
@@ -709,10 +710,14 @@ func (c *TopN) TotalCount() uint64 {
 	if c == nil {
 		return 0
 	}
+	if c.CachedTotalCount != 0 {
+		return c.CachedTotalCount
+	}
 	total := uint64(0)
 	for _, t := range c.TopN {
 		total += t.Count
 	}
+	c.CachedTotalCount = total
 	return total
 }
 
