@@ -54,17 +54,6 @@ go_rules_dependencies()
 
 go_download_sdk(
     name = "go_sdk",
-    urls = [
-        "http://ats.apps.svc/golang/{}",
-        "http://bazel-cache.pingcap.net:8080/golang/{}",
-        "https://mirrors.aliyun.com/golang/{}",
-        "https://dl.google.com/go/{}",
-    ],
-    version = "1.20.5",
-)
-
-go_download_sdk(
-    name = "go_sdk_patchgo",
     sdks = {
         "darwin_amd64": ("go1.19.10.darwin-amd64.tar.gz", "4524fac6858f8170941bb023d218c4a322a38c6b565d7b83f8a80f525c507079"),
         "darwin_arm64": ("go1.19.10.darwin-arm64.tar.gz", "9bb1564c241e97d9c254a61136601da8a241e11aaa4ff70e5ad2505c5d1e27d1"),
