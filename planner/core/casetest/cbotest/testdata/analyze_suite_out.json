@@ -71,9 +71,9 @@
         "EnablePseudoForOutdatedStats": true,
         "RatioOfPseudoEstimate": 0.7,
         "Plan": [
-          "TableReader 1.10 root  data:Selection",
-          "└─Selection 1.10 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-          "  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 3.60 root  data:Selection",
+          "└─Selection 3.60 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "  └─TableFullScan 10.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
