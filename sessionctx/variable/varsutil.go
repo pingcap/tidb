@@ -574,3 +574,41 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.JSONKeys:          {},
 	ast.JSONLength:        {},
 }
+
+var analyzeSkipAllowedTypes = map[string]struct{}{
+	"json":       {},
+	"text":       {},
+	"mediumtext": {},
+	"longtext":   {},
+	"blob":       {},
+	"mediumblob": {},
+	"longblob":   {},
+}
+
+// ValidAnalyzeSkipColumnTypes makes validation for tidb_analyze_skip_column_types.
+func ValidAnalyzeSkipColumnTypes(val string) (string, error) {
+	if val == "" {
+		return "", nil
+	}
+	items := strings.Split(strings.ToLower(val), ",")
+	columnTypes := make([]string, 0, len(items))
+	for _, item := range items {
+		columnType := strings.TrimSpace(item)
+		if _, ok := analyzeSkipAllowedTypes[columnType]; !ok {
+			return val, ErrWrongValueForVar.GenWithStackByArgs(TiDBAnalyzeSkipColumnTypes, val)
+		}
+		columnTypes = append(columnTypes, columnType)
+	}
+	return strings.Join(columnTypes, ","), nil
+}
+
+// ParseAnalyzeSkipColumnTypes converts tidb_analyze_skip_column_types to the map form.
+func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
+	skipTypes := make(map[string]struct{})
+	for _, columnType := range strings.Split(strings.ToLower(val), ",") {
+		if _, ok := analyzeSkipAllowedTypes[columnType]; ok {
+			skipTypes[columnType] = struct{}{}
+		}
+	}
+	return skipTypes
+}

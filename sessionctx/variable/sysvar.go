@@ -2528,6 +2528,14 @@ var defaultSysVars = []*SysVar{
 			s.OptimizerFixControl = newMap
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeSkipColumnTypes, Value: "json,blob,mediumblob,longblob", Type: TypeStr,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			return ValidAnalyzeSkipColumnTypes(normalizedValue)
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.AnalyzeSkipColumnTypes = ParseAnalyzeSkipColumnTypes(val)
+			return nil
+		}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPlanCacheInvalidationOnFreshStats, Value: BoolToOnOff(DefTiDBPlanCacheInvalidationOnFreshStats), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
 		return nil
