@@ -223,6 +223,7 @@ func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error
 	}, nil
 }
 
+// HashCode implements Expression interface.
 func (col *CorrelatedColumn) HashCode(sc *stmtctx.StatementContext) []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
