@@ -607,7 +607,7 @@ func (w *partialTableWorker) needPartitionHandle() (bool, error) {
 	col := cols[outputOffsets[len(outputOffsets)-1]]
 
 	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
-	// no ExtraPidColID here, because a primary key couln't be a global index.
+	// no ExtraPidColID here, because a clustered index couldn't be a global index.
 	ret := col.ID == model.ExtraPhysTblID
 
 	if needPartitionHandle != ret {

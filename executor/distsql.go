@@ -638,7 +638,7 @@ func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error
 		col = cols[outputOffsets[len(outputOffsets)-1]]
 
 		needPartitionHandle = e.index.Global || (e.partitionTableMode && e.keepOrder)
-		// no ExtraPidColID here, because tableScan shouldn't contain them.
+		// no ExtraPidColID here, because TableScan shouldn't contain them.
 		ret = col.ID == model.ExtraPhysTblID
 	}
 
