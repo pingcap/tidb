@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -83,9 +82,6 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 	e.producer.resTbl.Lock()
 	defer e.producer.resTbl.Unlock()
 
-	if e.id == 34 {
-		logutil.BgLogger().Info("gjt debug in Open")
-	}
 	if e.producer.checkAndUpdateCorColHashCode() {
 		e.producer.reset()
 		if err = e.producer.reopenTbls(); err != nil {
@@ -93,9 +89,6 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 		}
 	}
 	if !e.producer.opened {
-		if e.id == 34 {
-			logutil.BgLogger().Info("gjt debug in openProducer")
-		}
 		if err = e.producer.openProducer(ctx, e); err != nil {
 			return err
 		}
@@ -663,16 +656,17 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 	return false, nil
 }
 
+// Return true if cor col has changed.
 func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
-	same := true
+	var changed bool
 	for i, corCol := range p.corCols {
 		newHashCode := corCol.HashCode(p.ctx.GetSessionVars().StmtCtx)
 		if !sameHashCode(newHashCode, p.corColHashCodes[i]) {
-			same = false
+			changed = true
 			p.corColHashCodes[i] = newHashCode
 		}
 	}
-	return same
+	return changed
 }
 
 func sameHashCode(c1 []byte, c2 []byte) bool {
