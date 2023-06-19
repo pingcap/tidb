@@ -148,7 +148,9 @@ func (h *flowHandle) OnTicker(ctx context.Context, task *proto.Task) {
 
 func (h *flowHandle) switchTiKVMode(ctx context.Context, task *proto.Task) {
 	h.updateCurrentTask(task)
-	if h.disableTiKVImportMode.Load() {
+	// only import step need to switch to IMPORT mode,
+	// If TiKV is in IMPORT mode during checksum, coprocessor will time out.
+	if h.disableTiKVImportMode.Load() || task.Step != StepImport {
 		return
 	}
 
@@ -185,7 +187,8 @@ func (h *flowHandle) unregisterTask(ctx context.Context, task *proto.Task) {
 	}
 }
 
-func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (_ [][]byte, err error) {
+func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (
+	resSubtaskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
@@ -198,11 +201,12 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	}
 	logger.Info("process normal flow")
 
-	var taskFinished bool
 	defer func() {
+		// currently, framework will take the task as finished when err is not nil or resSubtaskMeta is empty.
+		taskFinished := err == nil && len(resSubtaskMeta) == 0
 		if taskFinished {
 			// todo: we're not running in a transaction with task update
-			if err2 := h.finishJob(ctx, handle, gTask, taskMeta, logger); err2 != nil {
+			if err2 := h.finishJob(ctx, handle, gTask, taskMeta); err2 != nil {
 				err = err2
 			}
 		} else if err != nil && !h.IsRetryableErr(err) {
@@ -238,6 +242,10 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		gTask.Step = StepImport
 		return metaBytes, nil
 	case StepImport:
+		h.switchTiKV2NormalMode(ctx, gTask, logger)
+		failpoint.Inject("clearLastSwitchTime", func() {
+			h.lastSwitchTime.Store(time.Time{})
+		})
 		stepMeta, err2 := toPostProcessStep(handle, gTask, taskMeta)
 		if err2 != nil {
 			return nil, err2
@@ -257,7 +265,6 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		gTask.Step = StepPostProcess
 		return [][]byte{bs}, nil
 	case StepPostProcess:
-		taskFinished = true
 		return nil, nil
 	default:
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
@@ -602,9 +609,7 @@ func job2Step(ctx context.Context, taskMeta *TaskMeta, step string) error {
 	})
 }
 
-func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task,
-	taskMeta *TaskMeta, logger *zap.Logger) error {
-	h.switchTiKV2NormalMode(ctx, gTask, logger)
+func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
 	h.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
