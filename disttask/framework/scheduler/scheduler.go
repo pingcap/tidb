@@ -222,7 +222,6 @@ func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler
 
 		if errors.Cause(err) == context.Canceled {
 			logutil.BgLogger().Info("ywq test update cancel")
-
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, "")
 		} else {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError().Error())
@@ -258,8 +257,7 @@ func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, m
 	logutil.Logger(s.logCtx).Info("ywq test run minimal task ")
 	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
 		if val.(bool) {
-			logutil.Logger(s.logCtx).Info("ywq test err")
-			s.onError(context.Canceled)
+			s.onError(errors.New("MockExecutorRunErr"))
 		}
 	})
 	if err = executor.Run(minimalTaskCtx); err != nil {

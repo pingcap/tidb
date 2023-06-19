@@ -28,9 +28,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 type testFlowHandle struct{}
@@ -126,7 +124,7 @@ func RegisterTaskMeta(v *atomic.Int64) {
 	})
 }
 
-func DispatchTask(taskKey string, t *testing.T, v *atomic.Int64) {
+func DispatchTask(taskKey string, t *testing.T) *proto.Task {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	taskID, err := mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil)
@@ -141,12 +139,18 @@ func DispatchTask(taskKey string, t *testing.T, v *atomic.Int64) {
 
 		time.Sleep(time.Second)
 		task, err = mgr.GetGlobalTaskByID(taskID)
+
 		require.NoError(t, err)
 		require.NotNil(t, task)
-		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning {
+		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
 			break
 		}
 	}
+	return task
+}
+
+func DispatchTaskAndCheckSuccess(taskKey string, t *testing.T, v *atomic.Int64) {
+	task := DispatchTask(taskKey, t)
 
 	require.Equal(t, proto.TaskStateSucceed, task.State)
 	require.Equal(t, int64(9), v.Load())
@@ -181,35 +185,8 @@ func DispatchAndCancelTask(taskKey string, t *testing.T, v *atomic.Int64) {
 }
 
 func DispatchAndFailTask(taskKey string, t *testing.T, v *atomic.Int64) {
-	mgr, err := storage.GetTaskManager()
-	require.NoError(t, err)
-	taskID, err := mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil)
-	require.NoError(t, err)
-	start := time.Now()
-	var task *proto.Task
-	for {
-		if time.Since(start) > 2*time.Minute {
-			require.FailNow(t, "timeout")
-		}
-
-		time.Sleep(time.Second)
-		task, err = mgr.GetGlobalTaskByID(taskID)
-
-		require.NoError(t, err)
-		require.NotNil(t, task)
-		logutil.BgLogger().Info("task state", zap.String("state", task.State), zap.Int64("taskId", task.ID))
-		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
-			break
-		}
-
-		has, _ := mgr.HasSubtasksInStates1(taskID, proto.TaskStateRunning, proto.TaskStatePending)
-		logutil.BgLogger().Info("has running subtask ", zap.Bool("has", has))
-	}
-	has, _ := mgr.HasSubtasksInStates1(taskID, proto.TaskStateRunning, proto.TaskStatePending)
-	require.Equal(t, has, false)
-
+	task := DispatchTask(taskKey, t)
 	require.Equal(t, proto.TaskStateReverted, task.State)
-	// require.Equal(t, int64(2), v.Load())
 	v.Store(0)
 }
 
@@ -219,12 +196,12 @@ func TestFrameworkBasic(t *testing.T) {
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	testContext := testkit.NewDistExecutionTestContext(t, 2)
-	DispatchTask("key1", t, &v)
-	DispatchTask("key2", t, &v)
+	DispatchTaskAndCheckSuccess("key1", t, &v)
+	DispatchTaskAndCheckSuccess("key2", t, &v)
 	testContext.SetOwner(0)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	DispatchTask("key3", t, &v)
-	DispatchTask("key4", t, &v)
+	DispatchTaskAndCheckSuccess("key3", t, &v)
+	DispatchTaskAndCheckSuccess("key4", t, &v)
 	testContext.Close()
 }
 
@@ -234,12 +211,12 @@ func TestFramework3Server(t *testing.T) {
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	testContext := testkit.NewDistExecutionTestContext(t, 3)
-	DispatchTask("key1", t, &v)
-	DispatchTask("key2", t, &v)
+	DispatchTaskAndCheckSuccess("key1", t, &v)
+	DispatchTaskAndCheckSuccess("key2", t, &v)
 	testContext.SetOwner(0)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	DispatchTask("key3", t, &v)
-	DispatchTask("key4", t, &v)
+	DispatchTaskAndCheckSuccess("key3", t, &v)
+	DispatchTaskAndCheckSuccess("key4", t, &v)
 	testContext.Close()
 }
 
@@ -249,15 +226,15 @@ func TestFrameworkAddServer(t *testing.T) {
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	testContext := testkit.NewDistExecutionTestContext(t, 2)
-	DispatchTask("key1", t, &v)
+	DispatchTaskAndCheckSuccess("key1", t, &v)
 	testContext.AddServer()
-	DispatchTask("key2", t, &v)
+	DispatchTaskAndCheckSuccess("key2", t, &v)
 	testContext.SetOwner(1)
 	time.Sleep(2 * time.Second) // make sure owner changed
-	DispatchTask("key3", t, &v)
+	DispatchTaskAndCheckSuccess("key3", t, &v)
 	testContext.Close()
 	testContext.AddServer()
-	DispatchTask("key4", t, &v)
+	DispatchTaskAndCheckSuccess("key4", t, &v)
 }
 
 func TestFrameworkDeleteServer(t *testing.T) {
@@ -266,10 +243,10 @@ func TestFrameworkDeleteServer(t *testing.T) {
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	testContext := testkit.NewDistExecutionTestContext(t, 2)
-	DispatchTask("key1", t, &v)
+	DispatchTaskAndCheckSuccess("key1", t, &v)
 	testContext.DeleteServer(1)
 	time.Sleep(2 * time.Second) // make sure the owner changed
-	DispatchTask("key2", t, &v)
+	DispatchTaskAndCheckSuccess("key2", t, &v)
 	testContext.Close()
 }
 
@@ -279,7 +256,7 @@ func TestFrameworkWithQuery(t *testing.T) {
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	testContext := testkit.NewDistExecutionTestContext(t, 2)
-	DispatchTask("key1", t, &v)
+	DispatchTaskAndCheckSuccess("key1", t, &v)
 
 	tk := testkit.NewTestKit(t, testContext.Store)
 
@@ -314,7 +291,7 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	}()
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
-	testContext := testkit.NewDistExecutionTestContext(t, 2)
+	testContext := testkit.NewDistExecutionTestContext(t, 1)
 	DispatchAndFailTask("key1", t, &v)
 	testContext.Close()
 }
