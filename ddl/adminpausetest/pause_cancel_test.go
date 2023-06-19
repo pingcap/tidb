@@ -135,7 +135,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 
 	hook.OnJobRunBeforeExported = localPCRPauseFunc(adminCommandKit, stmtCase)
 	hook.OnGetJobBeforeExported = localPCRCancelFunc(adminCommandKit, stmtCase)
-	dom.DDL().SetHook(hook)
+	dom.DDL().SetHook(hook.Clone())
 
 	localPCRIsPaused.Store(false)
 	localPCRIsCancelled.Store(false)

@@ -46,7 +46,6 @@ func TestPauseOnWriteConflict(t *testing.T) {
 	hook := &callback.TestDDLCallback{Do: dom}
 	d := dom.DDL()
 	originalHook := d.GetHook()
-	d.SetHook(hook)
 	defer d.SetHook(originalHook)
 
 	jobID := atomic.NewInt64(0)
@@ -83,6 +82,8 @@ func TestPauseOnWriteConflict(t *testing.T) {
 			cancelRS, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
 	}
+	d.SetHook(hook.Clone())
+
 	tk1.MustGetErrCode("alter table t add index (id)", errno.ErrCancelledDDLJob)
 	require.NoError(t, pauseErr)
 	require.NoError(t, cancelErr)
@@ -110,7 +111,6 @@ func TestPauseFailedOnCommit(t *testing.T) {
 	hook := &callback.TestDDLCallback{Do: dom}
 	originalHook := d.GetHook()
 	defer d.SetHook(originalHook)
-	d.SetHook(hook)
 	// Test when pause cannot be retried and adding index succeeds.
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
@@ -124,6 +124,8 @@ func TestPauseFailedOnCommit(t *testing.T) {
 			jobErrs, pauseErr = ddl.PauseJobs(tk2.Session(), []int64{jobID.Load()})
 		}
 	}
+	d.SetHook(hook.Clone())
+
 	tk1.MustExec("alter table t add index (id)")
 	require.EqualError(t, pauseErr, "mock commit failed on admin command on ddl jobs")
 	require.Len(t, jobErrs, 1)

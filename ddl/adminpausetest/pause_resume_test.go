@@ -168,7 +168,6 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 
 	var hook = &callback.TestDDLCallback{Do: dom}
 	originalHook := dom.DDL().GetHook()
-	dom.DDL().SetHook(hook)
 
 	hook.OnJobRunBeforeExported = localPRCPauseFunc(adminCommandKit, stmtCase)
 	var rf = localPRCResumeFunc(adminCommandKit, stmtCase)
@@ -179,6 +178,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 		if doCancel {
 			hook.OnGetJobBeforeExported = localPRCCancelFunc(adminCommandKit, stmtCase)
 		}
+		dom.DDL().SetHook(hook.Clone())
 
 		if doCancel {
 			stmtKit.MustGetErrCode(stmtCase.stmt, errno.ErrCancelledDDLJob)
