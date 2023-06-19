@@ -59,7 +59,7 @@
         "Plan": [
           "Union 3.67 root  ",
           "├─Batch_Point_Get 2.00 root table:t2, clustered index:PRIMARY(a) keep order:false, desc:false",
-          "└─Projection 1.67 root  cast(test.t1.a, varchar(20) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, test.t1.c",
+          "└─Projection 1.67 root  cast(test.t1.a, varchar(20) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, test.t1.c->Column#7",
           "  └─Batch_Point_Get 2.00 root table:t1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
         ],
         "Res": [
