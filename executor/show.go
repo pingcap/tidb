@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1902,6 +1903,9 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 
 // createRegistry returns an ectd registry
 func createRegistry(urls string) (*node.EtcdRegistry, error) {
+	if pumpClient := binloginfo.GetPumpsClient(); pumpClient != nil {
+		return pumpClient.EtcdRegistry, nil
+	}
 	ectdEndpoints, err := util.ParseHostPortAddr(urls)
 	if err != nil {
 		return nil, errors.Trace(err)
