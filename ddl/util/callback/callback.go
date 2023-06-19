@@ -45,7 +45,6 @@ func (ti *TestInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema
 // TestDDLCallback is used to customize user callback themselves.
 type TestDDLCallback struct {
 	*ddl.BaseCallback
-	TestReorgCallBack
 	// We recommended to pass the domain parameter to the test ddl callback, it will ensure
 	// domain to reload schema before your ddl stepping into the next state change.
 	Do ddl.DomainReloader
@@ -59,19 +58,8 @@ type TestDDLCallback struct {
 	OnGetJobBeforeExported  func(string)
 	OnGetJobAfterExported   func(string, *model.Job)
 	OnJobSchemaStateChanged func(int64)
-}
 
-// TestReorgCallBack is used to customize reorg callback.
-type TestReorgCallBack struct {
 	OnUpdateReorgInfoExported func(job *model.Job, pid int64)
-}
-
-// OnUpdateReorgInfo mock the same behavior with the main DDL reorg hook.
-func (tc *TestReorgCallBack) OnUpdateReorgInfo(job *model.Job, pid int64) {
-	logutil.BgLogger().Info("on reorg info updated", zap.String("job", job.String()), zap.Int64("pid", pid))
-	if tc.OnUpdateReorgInfoExported != nil {
-		tc.OnUpdateReorgInfoExported(job, pid)
-	}
 }
 
 // OnChanged mock the same behavior with the main DDL hook.
@@ -175,4 +163,11 @@ func (tc *TestDDLCallback) OnGetJobAfter(jobType string, job *model.Job) {
 // Clone copies the callback and take its reference
 func (tc *TestDDLCallback) Clone() *TestDDLCallback {
 	return &*tc
+}
+
+// OnUpdateReorgInfo mock the same behavior with the main DDL reorg hook.
+func (tc *TestDDLCallback) OnUpdateReorgInfo(job *model.Job, pid int64) {
+	if tc.OnUpdateReorgInfoExported != nil {
+		tc.OnUpdateReorgInfoExported(job, pid)
+	}
 }

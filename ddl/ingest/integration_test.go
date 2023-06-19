@@ -314,9 +314,9 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 		}
 	}
 	tc.SetOwner(0)
-	hook0 := &callback.TestDDLCallback{TestReorgCallBack: callback.TestReorgCallBack{}}
+	hook0 := &callback.TestDDLCallback{}
 	hook0.OnUpdateReorgInfoExported = changeOwner0To1
-	hook1 := &callback.TestDDLCallback{TestReorgCallBack: callback.TestReorgCallBack{}}
+	hook1 := &callback.TestDDLCallback{}
 	hook1.OnUpdateReorgInfoExported = changeOwner1To2
 	tc.GetDomain(0).DDL().SetHook(hook0)
 	tc.GetDomain(1).DDL().SetHook(hook1)

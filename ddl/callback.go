@@ -66,7 +66,6 @@ type Callback interface {
 
 // BaseCallback implements Callback.OnChanged interface.
 type BaseCallback struct {
-	BaseReorgCallBack
 }
 
 // OnChanged implements Callback interface.
@@ -109,6 +108,10 @@ func (*BaseCallback) OnGetJobAfter(_ string, _ *model.Job) {
 	// Nothing to do.
 }
 
+// OnUpdateReorgInfo implements ReorgCallback interface.
+func (*BaseCallback) OnUpdateReorgInfo(_ *model.Job, _ int64) {
+}
+
 // DomainReloader is used to avoid import loop.
 type DomainReloader interface {
 	Reload() error
@@ -118,14 +121,6 @@ type DomainReloader interface {
 type ReorgCallback interface {
 	// OnUpdateReorgInfo is called after updating reorg info for partitions.
 	OnUpdateReorgInfo(job *model.Job, pid int64)
-}
-
-// BaseReorgCallBack implements ReorgCallback.
-type BaseReorgCallBack struct {
-}
-
-// OnUpdateReorgInfo implements ReorgCallback interface.
-func (*BaseReorgCallBack) OnUpdateReorgInfo(_ *model.Job, _ int64) {
 }
 
 // ****************************** Start of Customized DDL Callback Instance ****************************************
@@ -160,7 +155,7 @@ func (c *DefaultCallback) OnSchemaStateChanged(_ int64) {
 }
 
 func newDefaultCallBack(do DomainReloader) Callback {
-	return &DefaultCallback{BaseCallback: &BaseCallback{BaseReorgCallBack: BaseReorgCallBack{}}, do: do}
+	return &DefaultCallback{BaseCallback: &BaseCallback{}, do: do}
 }
 
 // ****************************** End of Default DDL Callback Instance *********************************************
