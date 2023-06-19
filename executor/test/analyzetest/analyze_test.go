@@ -3242,7 +3242,7 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 }
 
 func TestManualAnalyzeSkipColumnTypes(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
@@ -3252,4 +3252,24 @@ func TestManualAnalyzeSkipColumnTypes(t *testing.T) {
 	tk.MustExec("delete from mysql.analyze_jobs")
 	tk.MustExec("analyze table t columns a, e")
 	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%analyze table%'").Check(testkit.Rows("analyze table columns a, d with 256 buckets, 500 topn, 1 samplerate"))
+}
+
+func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
+	tk.MustExec("insert into t values (1, 2, null, 'xxx', 'yyy', null, null)")
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
+
+	originalVal := handle.AutoAnalyzeMinCnt
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = originalVal
+	}()
+	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table columns a, b, d with 256 buckets, 500 topn, 1 samplerate"))
 }
