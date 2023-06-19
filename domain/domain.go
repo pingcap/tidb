@@ -1252,7 +1252,10 @@ func (do *Domain) runawayRecordFlushLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayRecordFlushLoop", nil, false)
 	// this times is used to batch flushing rocords, with 1s duration,
 	// we can guarantee a watch record can be seen by the user within 1s.
-	timer := time.NewTimer(time.Second)
+	runawayRecordFluashTimer := time.NewTimer(time.Second)
+	runawayRecordGCTimer := time.NewTimer(time.Hour * 12)
+	quarantineRecordGCTimer := time.NewTimer(time.Minute * 30)
+
 	fired := false
 	recordCh := do.RunawayManager().RunawayRecordChan()
 	quarantineRecordCh := do.RunawayManager().QuarantineRecordChan()
@@ -1276,16 +1279,30 @@ func (do *Domain) runawayRecordFlushLoop() {
 		}
 		sql, params := genQuarantineQueriesStmt(quarantineRecords)
 		if err := do.execFlushSQL(sql, params); err != nil {
-			logutil.BgLogger().Info("flush quarantine records failed", zap.Error(err), zap.Int("count", len(records)))
+			logutil.BgLogger().Info("flush quarantine records failed", zap.Error(err), zap.Int("count", len(quarantineRecords)))
 		}
 		quarantineRecords = quarantineRecords[:0]
+	}
+	gcQuarantineRecords := func() {
+		sql := "DELETE FROM mysql.tidb_runaway_quarantined_watch WHERE end_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)"
+		params := getFormatCurrentTimeParam()
+		if err := do.execFlushSQL(sql, params); err != nil {
+			logutil.BgLogger().Info("delete quarantine records failed", zap.Error(err))
+		}
+	}
+	gcRunawayRecords := func() {
+		sql := "DELETE FROM mysql.tidb_runaway_queries WHERE time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)"
+		params := getFormatCurrentTimeParam()
+		if err := do.execFlushSQL(sql, params); err != nil {
+			logutil.BgLogger().Info("delete runaway records failed", zap.Error(err))
+		}
 	}
 
 	for {
 		select {
 		case <-do.exit:
 			return
-		case <-timer.C:
+		case <-runawayRecordFluashTimer.C:
 			flushRunawayRecords()
 			fired = true
 		case r := <-quarantineRecordCh:
@@ -1294,6 +1311,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 			// flush as soon as possible.
 			if len(quarantineRecordCh) == 0 || len(quarantineRecords) >= flushThrehold {
 				flushQuarantineRecords()
+				gcQuarantineRecords()
 			}
 		case r := <-recordCh:
 			records = append(records, r)
@@ -1302,8 +1320,12 @@ func (do *Domain) runawayRecordFlushLoop() {
 			} else if fired {
 				fired = false
 				// meet a new record, reset the timer.
-				timer.Reset(time.Second)
+				runawayRecordFluashTimer.Reset(time.Second)
 			}
+		case <-runawayRecordGCTimer.C:
+			gcRunawayRecords()
+		case <-quarantineRecordGCTimer.C:
+			gcQuarantineRecords()
 		}
 	}
 }
@@ -1322,6 +1344,10 @@ func (do *Domain) execFlushSQL(sql string, params []interface{}) error {
 		sql, params...,
 	)
 	return err
+}
+
+func getFormatCurrentTimeParam() []interface{} {
+	return []interface{}{time.Now().UTC().Format(types.TimeFormat)}
 }
 
 func genRunawayQueriesStmt(records []*resourcegroup.RunawayRecord) (string, []interface{}) {
