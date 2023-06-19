@@ -623,8 +623,30 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	return nil
 }
 
-func (e *IndexLookUpExecutor) hasExtralPidCol() bool {
-	return e.index.Global || (e.partitionTableMode && len(e.byItems) > 0)
+func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {
+	var col *expression.Column
+	var needPartitionHandle, ret bool
+	if tp == getHandleFromIndex {
+		cols := e.idxPlans[0].Schema().Columns
+		outputOffsets := e.dagPB.OutputOffsets
+		col = cols[outputOffsets[len(outputOffsets)-1]]
+		needPartitionHandle = e.index.Global || (e.partitionTableMode && e.keepOrder)
+		ret = col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
+	} else {
+		cols := e.tblPlans[0].Schema().Columns
+		outputOffsets := e.tableRequest.OutputOffsets
+		col = cols[outputOffsets[len(outputOffsets)-1]]
+
+		needPartitionHandle = e.index.Global || (e.partitionTableMode && e.keepOrder)
+		// no ExtraPidColID here, because TableScan shouldn't contain them.
+		ret = col.ID == model.ExtraPhysTblID
+	}
+
+	// TODO: fix global index related bugs later
+	if needPartitionHandle != ret && !e.index.Global {
+		return ret, errors.Errorf("Internal error, needPartitionHandle(%t) != ret(%t), tp(%d)", needPartitionHandle, ret, tp)
+	}
+	return ret, nil
 }
 
 func (e *IndexLookUpExecutor) isCommonHandle() bool {
@@ -632,6 +654,9 @@ func (e *IndexLookUpExecutor) isCommonHandle() bool {
 }
 
 func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
+	if e.checkIndexValue != nil {
+		return e.idxColTps
+	}
 	var tps []*types.FieldType
 	if len(e.byItems) != 0 {
 		for _, item := range e.byItems {
@@ -645,11 +670,8 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	} else {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
-	if e.hasExtralPidCol() {
+	if ok, _ := e.needPartitionHandle(getHandleFromIndex); ok {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
-	}
-	if e.checkIndexValue != nil {
-		tps = e.idxColTps
 	}
 	return tps
 }
@@ -1030,7 +1052,11 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	numColsWithoutPid := chk.NumCols()
-	if w.idxLookup.hasExtralPidCol() {
+	ok, err := w.idxLookup.needPartitionHandle(getHandleFromIndex)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ok {
 		numColsWithoutPid = numColsWithoutPid - 1
 	}
 	handleOffset := make([]int, 0, len(w.idxLookup.handleCols))
@@ -1221,7 +1247,11 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			handle = kv.IntHandle(row.GetInt64(handleIdx[0]))
 		}
 	}
-	if e.hasExtralPidCol() {
+	ok, err := e.needPartitionHandle(tp)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		pid := row.GetInt64(row.Len() - 1)
 		handle = kv.NewPartitionHandle(pid, handle)
 	}
