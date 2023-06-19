@@ -369,6 +369,12 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	cc.ctx.GetSessionVars().ClearAlloc(nil, false)
 	cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
 	defer cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
+	// Reset the warn count. TODO: consider whether it's better to reset the whole session context/statement context.
+	if cc.ctx.GetSessionVars().StmtCtx != nil {
+		cc.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+	}
+	cc.ctx.GetSessionVars().SysErrorCount = 0
+	cc.ctx.GetSessionVars().SysWarningCount = 0
 
 	stmtID, fetchSize, err := parse.StmtFetchCmd(data)
 	if err != nil {
