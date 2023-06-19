@@ -15,7 +15,6 @@
 package watcher
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -321,16 +320,12 @@ func listForName(name string) (map[string]os.FileInfo, error) {
 	if err != nil {
 		return nil, errors.Annotatef(err, "directory %s", name)
 	}
-	fInfoList := make([]fs.FileInfo, 0, len(entries))
+
 	for _, entry := range entries {
-		info, err := entry.Info()
+		fi, err := entry.Info()
 		if err != nil {
 			return nil, errors.Annotatef(err, "directory %s", name)
 		}
-		fInfoList = append(fInfoList, info)
-	}
-
-	for _, fi := range fInfoList {
 		fp := filepath.Join(name, fi.Name())
 		list[fp] = fi
 	}

@@ -17,7 +17,6 @@ package domain
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -91,18 +90,14 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationDefault, gc
 	if err != nil {
 		logutil.BgLogger().Warn("[dumpFileGcChecker] open plan replayer directory failed", zap.Error(err))
 	}
-	files := make([]fs.FileInfo, 0, len(entries))
-	for _, entry := range entries {
-		info, err := entry.Info()
-		if err != nil {
-			logutil.BgLogger().Warn("[dumpFileGcChecker] open plan replayer directory failed", zap.Error(err))
-		}
-		files = append(files, info)
-	}
 
 	gcTargetTimeDefault := time.Now().Add(-gcDurationDefault)
 	gcTargetTimeForCapture := time.Now().Add(-gcDurationForCapture)
-	for _, f := range files {
+	for _, entry := range entries {
+		f, err := entry.Info()
+		if err != nil {
+			logutil.BgLogger().Warn("[dumpFileGcChecker] open plan replayer directory failed", zap.Error(err))
+		}
 		fileName := f.Name()
 		createTime, err := parseTime(fileName)
 		if err != nil {
