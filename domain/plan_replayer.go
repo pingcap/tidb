@@ -17,7 +17,6 @@ package domain
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -87,16 +86,18 @@ func (p *dumpFileGcChecker) setupSctx(sctx sessionctx.Context) {
 }
 
 func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationDefault, gcDurationForCapture time.Duration) {
-	files, err := ioutil.ReadDir(path)
+	entries, err := os.ReadDir(path)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			logutil.BgLogger().Warn("[dumpFileGcChecker] open plan replayer directory failed", zap.Error(err))
-		}
+		logutil.BgLogger().Warn("[dumpFileGcChecker] open plan replayer directory failed", zap.Error(err))
 	}
 
 	gcTargetTimeDefault := time.Now().Add(-gcDurationDefault)
 	gcTargetTimeForCapture := time.Now().Add(-gcDurationForCapture)
-	for _, f := range files {
+	for _, entry := range entries {
+		f, err := entry.Info()
+		if err != nil {
+			logutil.BgLogger().Warn("[dumpFileGcChecker] open plan replayer directory failed", zap.Error(err))
+		}
 		fileName := f.Name()
 		createTime, err := parseTime(fileName)
 		if err != nil {
@@ -392,7 +393,6 @@ func (w *planReplayerTaskDumpWorker) handleTask(task *PlanReplayerDumpTask) {
 	occupy := true
 	handleTask := true
 	defer func() {
-		util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpWorker", nil, false)
 		logutil.BgLogger().Debug("[plan-replayer-capture] handle task",
 			zap.String("sql-digest", sqlDigest),
 			zap.String("plan-digest", planDigest),
@@ -400,6 +400,8 @@ func (w *planReplayerTaskDumpWorker) handleTask(task *PlanReplayerDumpTask) {
 			zap.Bool("occupy", occupy),
 			zap.Bool("handle", handleTask))
 	}()
+	defer util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpWorker", nil, false)
+
 	if task.IsContinuesCapture {
 		if w.status.checkTaskKeyFinishedBefore(task) {
 			check = false
@@ -547,7 +549,7 @@ type PlanReplayerDumpTask struct {
 	SessionVars     *variable.SessionVars
 	ExecStmts       []ast.StmtNode
 	Analyze         bool
-	DebugTrace      interface{}
+	DebugTrace      []interface{}
 
 	FileName string
 	Zf       *os.File

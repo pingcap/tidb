@@ -157,6 +157,8 @@ const (
 	inSequenceFunction
 	// initTxnContextProvider is set when we should init txn context in preprocess
 	initTxnContextProvider
+	// inImportInto is set when visiting an import into statement.
+	inImportInto
 )
 
 // Make linter happy.
@@ -335,6 +337,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// The RepairTable should consist of the logic for creating tables and renaming tables.
 		p.flag |= inRepairTable
 		p.checkRepairTableGrammar(node)
+	case *ast.ImportIntoStmt:
+		p.stmtTp = TypeImportInto
+		p.flag |= inImportInto
 	case *ast.CreateSequenceStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -439,6 +444,8 @@ const (
 	TypeShow
 	// TypeExecute for ExecuteStmt
 	TypeExecute
+	// TypeImportInto for ImportIntoStmt
+	TypeImportInto
 )
 
 func bindableStmtType(node ast.StmtNode) byte {
@@ -1230,9 +1237,9 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 }
 
 // checkDuplicateColumnName checks if index exists duplicated columns.
-func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecification) error {
-	colNames := make(map[string]struct{}, len(IndexPartSpecifications))
-	for _, IndexColNameWithExpr := range IndexPartSpecifications {
+func checkDuplicateColumnName(indexPartSpecifications []*ast.IndexPartSpecification) error {
+	colNames := make(map[string]struct{}, len(indexPartSpecifications))
+	for _, IndexColNameWithExpr := range indexPartSpecifications {
 		if IndexColNameWithExpr.Column != nil {
 			name := IndexColNameWithExpr.Column.Name
 			if _, ok := colNames[name.L]; ok {
@@ -1245,25 +1252,25 @@ func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecificat
 }
 
 // checkIndexInfo checks index name, index column names and prefix lengths.
-func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification) error {
+func checkIndexInfo(indexName string, indexPartSpecifications []*ast.IndexPartSpecification) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
 		return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
-	if len(IndexPartSpecifications) > mysql.MaxKeyParts {
+	if len(indexPartSpecifications) > mysql.MaxKeyParts {
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
 	}
-	for _, idxSpec := range IndexPartSpecifications {
+	for _, idxSpec := range indexPartSpecifications {
 		// -1 => unspecified/full, > 0 OK, 0 => error
 		if idxSpec.Expr == nil && idxSpec.Length == 0 {
 			return ErrKeyPart0.GenWithStackByArgs(idxSpec.Column.Name.O)
 		}
 	}
-	return checkDuplicateColumnName(IndexPartSpecifications)
+	return checkDuplicateColumnName(indexPartSpecifications)
 }
 
 // checkUnsupportedTableOptions checks if there exists unsupported table options
 func checkUnsupportedTableOptions(options []*ast.TableOption) error {
-	var err error = nil
+	var err error
 	for _, option := range options {
 		switch option.Tp {
 		case ast.TableOptionUnion:
@@ -1501,6 +1508,8 @@ func (p *preprocessor) stmtType() string {
 		return "SELECT, INSERT"
 	case TypeShow:
 		return "SHOW"
+	case TypeImportInto:
+		return "IMPORT INTO"
 	default:
 		return "SELECT" // matches Select and uncaught cases.
 	}
@@ -1561,10 +1570,13 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.String() != "" {
 		currentDB = tn.Schema.L
 	}
-	table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
-	if err != nil {
-		p.err = err
-		return
+
+	if !p.skipLockMDL() {
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
+		if err != nil {
+			p.err = err
+			return
+		}
 	}
 
 	tableInfo := table.Meta()
@@ -1646,7 +1658,7 @@ func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
 	}
 }
 
-func (p *preprocessor) resolveCreateTableStmt(node *ast.CreateTableStmt) {
+func (*preprocessor) resolveCreateTableStmt(node *ast.CreateTableStmt) {
 	for _, val := range node.Constraints {
 		if val.Refer != nil && val.Refer.Table.Schema.String() == "" {
 			val.Refer.Table.Schema = node.Table.Schema
@@ -1898,4 +1910,11 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		return tbl, nil
 	}
 	return tbl, nil
+}
+
+// skipLockMDL returns true if the preprocessor should skip the lock of MDL.
+func (p *preprocessor) skipLockMDL() bool {
+	// skip lock mdl for IMPORT INTO statement,
+	// because it's a batch process and will do both DML and DDL.
+	return p.flag&inImportInto > 0
 }

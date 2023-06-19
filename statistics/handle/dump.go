@@ -39,24 +39,24 @@ import (
 
 // JSONTable is used for dumping statistics.
 type JSONTable struct {
-	IsHistoricalStats bool                   `json:"is_historical_stats"`
-	DatabaseName      string                 `json:"database_name"`
-	TableName         string                 `json:"table_name"`
 	Columns           map[string]*jsonColumn `json:"columns"`
 	Indices           map[string]*jsonColumn `json:"indices"`
+	Partitions        map[string]*JSONTable  `json:"partitions"`
+	DatabaseName      string                 `json:"database_name"`
+	TableName         string                 `json:"table_name"`
 	ExtStats          []*jsonExtendedStats   `json:"ext_stats"`
 	Count             int64                  `json:"count"`
 	ModifyCount       int64                  `json:"modify_count"`
-	Partitions        map[string]*JSONTable  `json:"partitions"`
 	Version           uint64                 `json:"version"`
+	IsHistoricalStats bool                   `json:"is_historical_stats"`
 }
 
 type jsonExtendedStats struct {
 	StatsName  string  `json:"stats_name"`
-	ColIDs     []int64 `json:"cols"`
-	Tp         uint8   `json:"type"`
-	ScalarVals float64 `json:"scalar_vals"`
 	StringVals string  `json:"string_vals"`
+	ColIDs     []int64 `json:"cols"`
+	ScalarVals float64 `json:"scalar_vals"`
+	Tp         uint8   `json:"type"`
 }
 
 func dumpJSONExtendedStats(statsColl *statistics.ExtendedStatsColl) []*jsonExtendedStats {
@@ -95,15 +95,15 @@ func extendedStatsFromJSON(statsColl []*jsonExtendedStats) *statistics.ExtendedS
 }
 
 type jsonColumn struct {
-	Histogram         *tipb.Histogram `json:"histogram"`
-	CMSketch          *tipb.CMSketch  `json:"cm_sketch"`
-	FMSketch          *tipb.FMSketch  `json:"fm_sketch"`
-	NullCount         int64           `json:"null_count"`
-	TotColSize        int64           `json:"tot_col_size"`
-	LastUpdateVersion uint64          `json:"last_update_version"`
-	Correlation       float64         `json:"correlation"`
+	Histogram *tipb.Histogram `json:"histogram"`
+	CMSketch  *tipb.CMSketch  `json:"cm_sketch"`
+	FMSketch  *tipb.FMSketch  `json:"fm_sketch"`
 	// StatsVer is a pointer here since the old version json file would not contain version information.
-	StatsVer *int64 `json:"stats_ver"`
+	StatsVer          *int64  `json:"stats_ver"`
+	NullCount         int64   `json:"null_count"`
+	TotColSize        int64   `json:"tot_col_size"`
+	LastUpdateVersion uint64  `json:"last_update_version"`
+	Correlation       float64 `json:"correlation"`
 }
 
 func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn *statistics.TopN, FMSketch *statistics.FMSketch, statsVer *int64) *jsonColumn {

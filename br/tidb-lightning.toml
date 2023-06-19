@@ -173,6 +173,7 @@ no-schema = false
 # - utf8mb4: Indicates that the source data file uses UTF-8 encoding.
 # - GB18030: Indicates that the source data file uses the GB-18030 encoding.
 # - GBK: The source data file uses GBK encoding (GBK encoding is an extension of the GB-2312 character set, also known as Code Page 936).
+# - latin1: IANA Windows1252
 # - binary: Indicates that Lightning does not convert the encoding (by default).
 # If left blank, the default value "binary" is used, that is to say, Lightning does not convert the encoding.
 # Note that Lightning does not predict about the character set of the source data file and only converts the source file and import the data based on this configuration.

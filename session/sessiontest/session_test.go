@@ -3553,3 +3553,52 @@ func TestHandleAssertionFailureForPartitionedTable(t *testing.T) {
 	require.ErrorContains(t, err, "assertion")
 	hook.CheckLogCount(t, 0)
 }
+
+func TestRandomBinary(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	allBytes := [][]byte{
+		{4, 0, 0, 0, 0, 0, 0, 4, '2'},
+		{4, 0, 0, 0, 0, 0, 0, 4, '.'},
+		{4, 0, 0, 0, 0, 0, 0, 4, '*'},
+		{4, 0, 0, 0, 0, 0, 0, 4, '('},
+		{4, 0, 0, 0, 0, 0, 0, 4, '\''},
+		{4, 0, 0, 0, 0, 0, 0, 4, '!'},
+		{4, 0, 0, 0, 0, 0, 0, 4, 29},
+		{4, 0, 0, 0, 0, 0, 0, 4, 28},
+		{4, 0, 0, 0, 0, 0, 0, 4, 23},
+		{4, 0, 0, 0, 0, 0, 0, 4, 16},
+	}
+	sql := "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values "
+	var val string
+	for i, bytes := range allBytes {
+		if i == 0 {
+			val += sqlexec.MustEscapeSQL("(874, 0, 1, %?, 3)", bytes)
+		} else {
+			val += sqlexec.MustEscapeSQL(",(874, 0, 1, %?, 3)", bytes)
+		}
+	}
+	sql += val
+	tk.MustExec("set sql_mode = 'NO_BACKSLASH_ESCAPES';")
+	_, err := tk.Session().ExecuteInternal(ctx, sql)
+	require.NoError(t, err)
+}
+
+func TestSQLModeOp(t *testing.T) {
+	s := mysql.ModeNoBackslashEscapes | mysql.ModeOnlyFullGroupBy
+	d := mysql.DelSQLMode(s, mysql.ModeANSIQuotes)
+	require.Equal(t, s, d)
+
+	d = mysql.DelSQLMode(s, mysql.ModeNoBackslashEscapes)
+	require.Equal(t, mysql.ModeOnlyFullGroupBy, d)
+
+	s = mysql.ModeNoBackslashEscapes | mysql.ModeOnlyFullGroupBy
+	a := mysql.SetSQLMode(s, mysql.ModeOnlyFullGroupBy)
+	require.Equal(t, s, a)
+
+	a = mysql.SetSQLMode(s, mysql.ModeAllowInvalidDates)
+	require.Equal(t, mysql.ModeNoBackslashEscapes|mysql.ModeOnlyFullGroupBy|mysql.ModeAllowInvalidDates, a)
+}

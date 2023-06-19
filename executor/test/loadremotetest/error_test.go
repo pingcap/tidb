@@ -54,14 +54,14 @@ func (s *mockGCSSuite) TestErrorMessage() {
 	checkClientErrorMessage(s.T(), err, "ERROR 1054 (42S22): Unknown column 'wrong' in 'field list'")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 'abc://1' INTO TABLE t;")
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8158 (HY000): The URI of INFILE is invalid. Reason: storage abc not support yet. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'")
+		"ERROR 8158 (HY000): The URI of file location is invalid. Reason: storage abc not support yet. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 's3://no-network' INTO TABLE t;")
 	checkClientErrorMessage(s.T(), err,
 		"ERROR 8159 (HY000): Access to the source file has been denied. Reason: failed to get region of bucket no-network. Please check the URI, access key and secret access key are correct")
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://wrong-bucket/p?endpoint=%s'
 		INTO TABLE t;`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8160 (HY000): Failed to read source files. Reason: the object doesn't exist, file info: input.bucket='wrong-bucket', input.key='p'. Please check the INFILE path is correct")
+		"ERROR 8160 (HY000): Failed to read source files. Reason: the object doesn't exist, file info: input.bucket='wrong-bucket', input.key='p'. Please check the file location is correct")
 
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
@@ -71,14 +71,6 @@ func (s *mockGCSSuite) TestErrorMessage() {
 		Content: []byte("1\t2\n" +
 			"1\t4\n"),
 	})
-	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
-		FORMAT '123' INTO TABLE t;`, gcsEndpoint))
-	checkClientErrorMessage(s.T(), err,
-		"ERROR 8157 (HY000): The FORMAT '123' is not supported")
-	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
-		FORMAT 'sql file' INTO TABLE t;`, gcsEndpoint))
-	checkClientErrorMessage(s.T(), err,
-		"ERROR 8160 (HY000): Failed to read source files. Reason: syntax error: unexpected Integer (1) at offset 1, expecting start of row. Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)")
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
 		INTO TABLE t LINES STARTING BY '\n';`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err,
@@ -269,4 +261,48 @@ func (s *mockGCSSuite) TestDataError() {
 		"Warning 1062 Duplicate entry '100' for key 't3.c2'"))
 	s.tk.MustQuery("SELECT * FROM t3;").Check(testkit.Rows(
 		"3 100"))
+}
+
+func (s *mockGCSSuite) TestIssue43555() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-csv",
+			Name:       "43555.csv",
+		},
+		Content: []byte("6\n" +
+			"7.1\n"),
+	})
+
+	s.tk.MustExec("CREATE DATABASE load_csv;")
+	s.tk.MustExec("USE load_csv;")
+
+	s.tk.MustExec("CREATE TABLE t (id CHAR(1), id1 INT);")
+	s.tk.MustExec("SET SESSION sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
+
+	err := s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-csv/43555.csv?endpoint=%s'
+		IGNORE INTO TABLE t;`, gcsEndpoint))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 3", s.tk.Session().LastMessage())
+
+	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
+		"Warning 1261 Row 1 doesn't contain data for all columns",
+		"Warning 1261 Row 2 doesn't contain data for all columns",
+		"Warning 1265 Data truncated for column 'id' at row 2"))
+	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows(
+		"6 <nil>",
+		"7 <nil>"))
+
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-csv/43555.csv?endpoint=%s'
+		INTO TABLE t (id);`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err, "ERROR 1265 (01000): Data truncated for column 'id' at row 2")
+
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-csv/43555.csv?endpoint=%s'
+		IGNORE INTO TABLE t (id1) SET id='7.1';`, gcsEndpoint))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2", s.tk.Session().LastMessage())
+	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
+		"Warning 1265 Data truncated for column 'id' at row 1",
+		"Warning 1265 Data truncated for column 'id' at row 2"))
 }

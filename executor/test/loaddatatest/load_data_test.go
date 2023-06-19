@@ -51,7 +51,7 @@ func checkCases(
 			nil)
 		require.NoError(t, err)
 
-		err = ld.TestLoad(parser)
+		err = ld.TestLoadLocal(parser)
 		require.NoError(t, err)
 		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), tt.expected)
 		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))
@@ -71,28 +71,6 @@ func TestLoadDataInitParam(t *testing.T) {
 
 	require.ErrorIs(t, tk.ExecToErr("load data infile '' into table load_data_test"),
 		exeerrors.ErrLoadDataEmptyPath)
-	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format '' into table load_data_test"),
-		exeerrors.ErrLoadDataUnsupportedFormat)
-	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format 'aaa' into table load_data_test"),
-		exeerrors.ErrLoadDataUnsupportedFormat)
-	require.ErrorIs(t, tk.ExecToErr("load data local infile '/a' format 'parquet' into table load_data_test"),
-		exeerrors.ErrLoadParquetFromLocal)
-	require.ErrorIs(t, tk.ExecToErr("load data local infile '/a' into table load_data_test with detached"),
-		exeerrors.ErrLoadDataLocalUnsupportedOption)
-	require.ErrorIs(t, tk.ExecToErr("load data local infile '/a' into table load_data_test with import_mode='physical'"),
-		exeerrors.ErrLoadDataLocalUnsupportedOption)
-	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'sql file' into table load_data_test fields terminated by 'a'"),
-		"cannot specify FIELDS ... or LINES")
-	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'parquet' into table load_data_test fields terminated by 'a'"),
-		"cannot specify FIELDS ... or LINES")
-	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'sql file' into table load_data_test lines terminated by 'a'"),
-		"cannot specify FIELDS ... or LINES")
-	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'parquet' into table load_data_test lines terminated by 'a'"),
-		"cannot specify FIELDS ... or LINES")
-	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'parquet' into table load_data_test ignore 0 lines"),
-		"cannot specify FIELDS ... or LINES")
-	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'parquet' into table load_data_test ignore 3 lines"),
-		"cannot specify FIELDS ... or LINES")
 	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' into table load_data_test fields defined null by 'a' optionally enclosed"),
 		"must specify FIELDS [OPTIONALLY] ENCLOSED BY")
 	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' into table load_data_test lines terminated by ''"),

@@ -129,7 +129,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	partitions := make(map[int64]*partition, len(pi.Definitions))
 	for _, p := range pi.Definitions {
 		var t partition
-		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs)
+		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs, tbl.Constraints)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -230,7 +230,7 @@ func unsetIndexesState(t *partitionedTable, orig []*model.IndexInfo) {
 
 func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partition, error) {
 	var newPart partition
-	err := initTableCommonWithIndices(&newPart.TableCommon, t.meta, def.ID, t.Columns, t.allocs)
+	err := initTableCommonWithIndices(&newPart.TableCommon, t.meta, def.ID, t.Columns, t.allocs, t.Constraints)
 	if err != nil {
 		return nil, err
 	}
@@ -1455,8 +1455,12 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	pi.Columns = pi.DDLColumns
 	tblInfo.ID = pi.NewTableID
 
+	constraints, err := table.LoadCheckConstraint(tblInfo)
+	if err != nil {
+		return nil, err
+	}
 	var tc TableCommon
-	initTableCommon(&tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil))
+	initTableCommon(&tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints)
 
 	// and rebuild the partitioning structure
 	return newPartitionedTable(&tc, tblInfo)
@@ -1498,6 +1502,9 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 		if _, ok := partitionSelection[pid]; !ok {
 			return nil, errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
+	}
+	if t.Meta().Partition.HasTruncatingPartitionID(pid) {
+		return nil, errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
 	}
 	tbl := t.GetPartition(pid)
 	recordID, err = tbl.AddRecord(ctx, r, opts...)
@@ -1620,6 +1627,9 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 		if _, ok := partitionSelection[from]; !ok {
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
+	}
+	if t.Meta().Partition.HasTruncatingPartitionID(to) {
+		return errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
 	}
 
 	// The old and new data locate in different partitions.

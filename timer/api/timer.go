@@ -70,6 +70,8 @@ type TimerSpec struct {
 	Namespace string
 	// Key is the key of the timer. Key is unique in each namespace
 	Key string
+	// Tags is used to tag a timer
+	Tags []string
 	// Data is a binary which is defined by user
 	Data []byte
 	// SchedPolicyType is the type of the event schedule policy
@@ -78,6 +80,8 @@ type TimerSpec struct {
 	SchedPolicyExpr string
 	// HookClass is the class of the hook
 	HookClass string
+	// Watermark indicates the progress the timer's event schedule
+	Watermark time.Time
 	// Enable indicated whether the timer is enabled.
 	// If it is false, the new timer event will not be scheduled even it is up to time.
 	Enable bool
@@ -92,11 +96,15 @@ func (t *TimerSpec) Clone() *TimerSpec {
 // Validate validates the TimerSpec
 func (t *TimerSpec) Validate() error {
 	if t.Namespace == "" {
-		return errors.New("field 'namespace' should not be empty")
+		return errors.New("field 'Namespace' should not be empty")
 	}
 
 	if t.Key == "" {
-		return errors.New("field 'key' should not be empty")
+		return errors.New("field 'Key' should not be empty")
+	}
+
+	if t.SchedPolicyType == "" {
+		return errors.New("field 'SchedPolicyType' should not be empty")
 	}
 
 	if _, err := t.CreateSchedEventPolicy(); err != nil {
@@ -108,11 +116,16 @@ func (t *TimerSpec) Validate() error {
 
 // CreateSchedEventPolicy creates a SchedEventPolicy according to `SchedPolicyType` and `SchedPolicyExpr`
 func (t *TimerSpec) CreateSchedEventPolicy() (SchedEventPolicy, error) {
-	switch t.SchedPolicyType {
+	return CreateSchedEventPolicy(t.SchedPolicyType, t.SchedPolicyExpr)
+}
+
+// CreateSchedEventPolicy creates a SchedEventPolicy according to `SchedPolicyType` and `SchedPolicyExpr`
+func CreateSchedEventPolicy(tp SchedPolicyType, expr string) (SchedEventPolicy, error) {
+	switch tp {
 	case SchedEventInterval:
-		return NewSchedIntervalPolicy(t.SchedPolicyExpr)
+		return NewSchedIntervalPolicy(expr)
 	default:
-		return nil, errors.Errorf("invalid schedule event type: '%s'", t.SchedPolicyExpr)
+		return nil, errors.Errorf("invalid schedule event type: '%s'", tp)
 	}
 }
 
@@ -131,8 +144,6 @@ type TimerRecord struct {
 	TimerSpec
 	// ID is the id of timer, it is unique and auto assigned by the store when created.
 	ID string
-	// Watermark indicates the progress the timer's event schedule
-	Watermark time.Time
 	// EventStatus indicates the current schedule status of the timer's event
 	EventStatus SchedEventStatus
 	// EventID indicates the id of current triggered event
@@ -149,6 +160,8 @@ type TimerRecord struct {
 	SummaryData []byte
 	// CreateTime is the creation time of the timer
 	CreateTime time.Time
+	// Version is the version of the record, when the record updated, version will be increased.
+	Version uint64
 }
 
 // Clone returns a cloned TimerRecord

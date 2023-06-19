@@ -6,11 +6,13 @@ go_test(
     srcs = ["framework_test.go"],
     flaky = True,
     race = "on",
+    shard_count = 6,
     deps = [
         "//disttask/framework/dispatcher",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
         "//disttask/framework/storage",
+        "//domain/infosync",
         "//testkit",
         "@com_github_stretchr_testify//require",
     ],

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -997,6 +998,9 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "FAIL_REASON", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 512},
 	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "REMAINING_SECONDS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "PROGRESS", tp: mysql.TypeVarchar, size: 20},
+	{name: "ESTIMATED_TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 }
 
 // TableTiKVRegionStatusCols is TiKV region status mem table columns.
@@ -1490,6 +1494,7 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: txninfo.DBStr, tp: mysql.TypeVarchar, size: 64, comment: "The schema this transaction works on"},
 	{name: txninfo.AllSQLDigestsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
 	{name: txninfo.RelatedTableIDsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the table IDs that the transaction has accessed"},
+	{name: txninfo.WaitingTimeStr, tp: mysql.TypeDouble, size: 22, comment: "Current lock waiting time"},
 }
 
 var tableDeadlocksCols = []columnInfo{
@@ -1597,6 +1602,7 @@ var tableResourceGroupsCols = []columnInfo{
 	{name: "RU_PER_SEC", tp: mysql.TypeVarchar, size: 21},
 	{name: "PRIORITY", tp: mysql.TypeVarchar, size: 6},
 	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 3},
+	{name: "QUERY_LIMIT", tp: mysql.TypeVarchar, size: 256},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1999,6 +2005,37 @@ func GetDataFromSessionVariables(ctx context.Context, sctx sessionctx.Context) (
 		}
 		row := types.MakeDatums(v.Name, value)
 		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// GetDataFromSessionConnectAttrs produces the rows for the session_connect_attrs table.
+func GetDataFromSessionConnectAttrs(sctx sessionctx.Context) ([][]types.Datum, error) {
+	sm := sctx.GetSessionManager()
+	if sm == nil {
+		return nil, nil
+	}
+	allAttrs := sm.GetConAttrs()
+	rows := make([][]types.Datum, 0, len(allAttrs)*10) // 10 Attributes per connection
+	for pid, attrs := range allAttrs {                 // Note: PID is not ordered.
+		// Sorts the attributes by key and gives ORDINAL_POSITION based on this. This is needed as we didn't store the
+		// ORDINAL_POSITION and a map doesn't have a guaranteed sort order. This is needed to keep the ORDINAL_POSITION
+		// stable over multiple queries.
+		attrnames := make([]string, 0, len(attrs))
+		for attrname := range attrs {
+			attrnames = append(attrnames, attrname)
+		}
+		sort.Strings(attrnames)
+
+		for ord, attrkey := range attrnames {
+			row := types.MakeDatums(
+				pid,
+				attrkey,
+				attrs[attrkey],
+				ord,
+			)
+			rows = append(rows, row)
+		}
 	}
 	return rows, nil
 }

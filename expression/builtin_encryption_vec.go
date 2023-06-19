@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
+	"github.com/pingcap/tidb/util/zeropool"
 )
 
 //revive:disable:defer
@@ -563,18 +563,16 @@ func (b *builtinCompressSig) vectorized() bool {
 
 var (
 	defaultByteSliceSize = 1024
-	bytePool             = sync.Pool{
-		New: func() interface{} {
-			return make([]byte, defaultByteSliceSize)
-		},
-	}
+	bytePool             = zeropool.New[[]byte](func() []byte {
+		return make([]byte, defaultByteSliceSize)
+	})
 )
 
 func allocByteSlice(n int) []byte {
 	if n > defaultByteSliceSize {
 		return make([]byte, n)
 	}
-	return bytePool.Get().([]byte)
+	return bytePool.Get()
 }
 
 func deallocateByteSlice(b []byte) {

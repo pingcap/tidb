@@ -297,6 +297,7 @@
         "BinaryPlan": {
           "main": {
             "name": "CTEFullScan_17",
+            "cost": 0.8982000000000001,
             "est_rows": 1.8,
             "act_rows": 5,
             "task_type": 1,
@@ -363,6 +364,7 @@
                   "operator_info": "cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5"
                 }
               ],
+              "cost": 0.8982000000000001,
               "est_rows": 1.8,
               "act_rows": 5,
               "task_type": 1,

@@ -50,7 +50,7 @@ type Hook interface {
 	// For example, if `TimerShedEvent.Delay` is a non-zero value, the event triggering will be postponed.
 	// Notice that `event.Timer().EventID` will be empty because the current event is not actually triggered,
 	// use `event.EventID()` to get the event id instead.
-	OnPreSchedEvent(ctx context.Context, event TimerShedEvent) (*TimerShedEvent, error)
+	OnPreSchedEvent(ctx context.Context, event TimerShedEvent) (PreSchedEventResult, error)
 	// OnSchedEvent will be called when a new event is triggered.
 	OnSchedEvent(ctx context.Context, event TimerShedEvent) error
 }

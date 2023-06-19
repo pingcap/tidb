@@ -16,7 +16,7 @@ package executor_test
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -328,7 +328,7 @@ func TestAnalyzePartitionTableForFloat(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t1 ( id bigint(20) unsigned NOT NULL AUTO_INCREMENT, num float(9,8) DEFAULT NULL, PRIMARY KEY (id)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (id) PARTITIONS 128;")
 	// To reproduce the error we meet in https://github.com/pingcap/tidb/issues/35910, we should use the data provided in this issue
-	b, err := ioutil.ReadFile("testdata/analyze_test_data.sql")
+	b, err := os.ReadFile("testdata/analyze_test_data.sql")
 	require.NoError(t, err)
 	sqls := strings.Split(string(b), ";")
 	for _, sql := range sqls {

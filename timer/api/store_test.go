@@ -15,10 +15,12 @@
 package api
 
 import (
+	"reflect"
 	"testing"
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -117,6 +119,7 @@ func TestTimerRecordCond(t *testing.T) {
 		TimerSpec: TimerSpec{
 			Namespace: "n1",
 			Key:       "/path/to/key",
+			Tags:      []string{"tagA1", "tagA2"},
 		},
 	}
 
@@ -148,6 +151,28 @@ func TestTimerRecordCond(t *testing.T) {
 	cond = &TimerCond{Key: NewOptionalVal("/path/to2"), KeyPrefix: true}
 	require.False(t, cond.Match(tm))
 
+	// Tags
+	tm2 := tm.Clone()
+	tm2.Tags = nil
+
+	cond = &TimerCond{Tags: NewOptionalVal([]string{})}
+	require.True(t, cond.Match(tm))
+	require.True(t, cond.Match(tm2))
+
+	cond = &TimerCond{Tags: NewOptionalVal([]string{"tagA"})}
+	require.False(t, cond.Match(tm))
+	require.False(t, cond.Match(tm2))
+
+	cond = &TimerCond{Tags: NewOptionalVal([]string{"tagA1"})}
+	require.True(t, cond.Match(tm))
+	require.False(t, cond.Match(tm2))
+
+	cond = &TimerCond{Tags: NewOptionalVal([]string{"tagA1", "tagA2"})}
+	require.True(t, cond.Match(tm))
+
+	cond = &TimerCond{Tags: NewOptionalVal([]string{"tagA1", "tagB1"})}
+	require.False(t, cond.Match(tm))
+
 	// Combined condition
 	cond = &TimerCond{ID: NewOptionalVal("123"), Key: NewOptionalVal("/path/to/key")}
 	require.True(t, cond.Match(tm))
@@ -156,7 +181,7 @@ func TestTimerRecordCond(t *testing.T) {
 	require.False(t, cond.Match(tm))
 }
 
-func TestTimerUpdate(t *testing.T) {
+func TestOperatorCond(t *testing.T) {
 	tm := &TimerRecord{
 		ID: "123",
 		TimerSpec: TimerSpec{
@@ -165,25 +190,88 @@ func TestTimerUpdate(t *testing.T) {
 		},
 	}
 
-	now := time.Now()
-	data := []byte("aabbcc")
+	cond1 := &TimerCond{ID: NewOptionalVal("123")}
+	cond2 := &TimerCond{ID: NewOptionalVal("456")}
+	cond3 := &TimerCond{Namespace: NewOptionalVal("n1")}
+	cond4 := &TimerCond{Namespace: NewOptionalVal("n2")}
+
+	require.True(t, And(cond1, cond3).Match(tm))
+	require.False(t, And(cond1, cond2, cond3).Match(tm))
+	require.False(t, Or(cond2, cond4).Match(tm))
+	require.True(t, Or(cond2, cond1, cond4).Match(tm))
+
+	require.False(t, Not(And(cond1, cond3)).Match(tm))
+	require.True(t, Not(And(cond1, cond2, cond3)).Match(tm))
+	require.True(t, Not(Or(cond2, cond4)).Match(tm))
+	require.False(t, Not(Or(cond2, cond1, cond4)).Match(tm))
+
+	require.False(t, Not(cond1).Match(tm))
+	require.True(t, Not(cond2).Match(tm))
+}
+
+func TestTimerUpdate(t *testing.T) {
+	tpl := TimerRecord{
+		ID: "123",
+		TimerSpec: TimerSpec{
+			Namespace: "n1",
+			Key:       "/path/to/key",
+		},
+		Version: 567,
+	}
+	tm := tpl.Clone()
+
+	// test check version
 	update := &TimerUpdate{
+		Enable:       NewOptionalVal(true),
+		CheckVersion: NewOptionalVal(uint64(0)),
+	}
+	_, err := update.Apply(tm)
+	require.Error(t, err)
+	require.True(t, errors.ErrorEqual(err, ErrVersionNotMatch))
+	require.Equal(t, tpl, *tm)
+
+	// test check event id
+	update = &TimerUpdate{
+		Enable:       NewOptionalVal(true),
+		CheckEventID: NewOptionalVal("aa"),
+	}
+	_, err = update.Apply(tm)
+	require.Error(t, err)
+	require.True(t, errors.ErrorEqual(err, ErrEventIDNotMatch))
+	require.Equal(t, tpl, *tm)
+
+	// test apply without check
+	now := time.Now()
+	update = &TimerUpdate{
 		Enable:          NewOptionalVal(true),
 		SchedPolicyType: NewOptionalVal(SchedEventInterval),
-		SchedPolicyExpr: NewOptionalVal("1h"),
+		SchedPolicyExpr: NewOptionalVal("5h"),
 		Watermark:       NewOptionalVal(now),
-		SummaryData:     NewOptionalVal(data),
+		SummaryData:     NewOptionalVal([]byte("summarydata1")),
+		EventStatus:     NewOptionalVal(SchedEventTrigger),
+		EventID:         NewOptionalVal("event1"),
+		EventData:       NewOptionalVal([]byte("eventdata1")),
+		EventStart:      NewOptionalVal(now.Add(time.Second)),
+		Tags:            NewOptionalVal([]string{"l1", "l2"}),
 	}
 
-	require.NoError(t, update.Apply(tm))
-	require.True(t, tm.Enable)
-	require.Equal(t, SchedEventInterval, tm.SchedPolicyType)
-	require.Equal(t, "1h", tm.SchedPolicyExpr)
-	require.Equal(t, now, tm.Watermark)
-	require.Equal(t, data, tm.SummaryData)
+	require.Equal(t, reflect.ValueOf(update).Elem().NumField()-2, len(update.FieldsSet()))
+	record, err := update.Apply(tm)
+	require.NoError(t, err)
+	require.True(t, record.Enable)
+	require.Equal(t, SchedEventInterval, record.SchedPolicyType)
+	require.Equal(t, "5h", record.SchedPolicyExpr)
+	require.Equal(t, now, record.Watermark)
+	require.Equal(t, []byte("summarydata1"), record.SummaryData)
+	require.Equal(t, SchedEventTrigger, record.EventStatus)
+	require.Equal(t, "event1", record.EventID)
+	require.Equal(t, []byte("eventdata1"), record.EventData)
+	require.Equal(t, now.Add(time.Second), record.EventStart)
+	require.Equal(t, []string{"l1", "l2"}, record.Tags)
+	require.Equal(t, tpl, *tm)
 
 	emptyUpdate := &TimerUpdate{}
-	tm2 := tm.Clone()
-	require.NoError(t, emptyUpdate.Apply(tm2))
-	require.Equal(t, tm, tm2)
+	record, err = emptyUpdate.Apply(tm)
+	require.NoError(t, err)
+	require.Equal(t, tpl, *record)
 }

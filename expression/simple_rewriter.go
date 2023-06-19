@@ -129,9 +129,7 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 		if !name.NotExplicitUsable && (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
 			(colName.L == name.ColName.L) {
-			if idx == -1 {
-				idx = i
-			} else {
+			if idx != -1 {
 				if names[idx].Redundant || name.Redundant {
 					if !name.Redundant {
 						idx = i
@@ -140,6 +138,7 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 				}
 				return -1, errNonUniq.GenWithStackByArgs(astCol.String(), "field list")
 			}
+			idx = i
 		}
 	}
 	return idx, nil

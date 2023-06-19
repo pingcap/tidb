@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/internal/builder"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -162,7 +163,7 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
 	e.initRuntimeStats()
 	if e.isCorColInTableFilter {
-		e.tableRequest.Executors, err = constructDistExec(e.ctx, e.tblPlans)
+		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.ctx, e.tblPlans)
 		if err != nil {
 			return err
 		}
@@ -342,6 +343,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					stats:              e.stats,
 					idxID:              e.getPartitalPlanID(workID),
 					sc:                 e.ctx,
+					dagPB:              e.dagPBs[workID],
+					plan:               e.partialPlans[workID],
 					batchSize:          e.maxChunkSize,
 					maxBatchSize:       e.ctx.GetSessionVars().IndexLookupSize,
 					maxChunkSize:       e.maxChunkSize,
@@ -355,7 +358,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
 					var err error
-					if e.dagPBs[workID].Executors, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.ctx, e.partialPlans[workID]); err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
@@ -494,7 +497,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				}
 
 				if e.isCorColInPartialFilters[workID] {
-					if e.dagPBs[workID].Executors, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.ctx, e.partialPlans[workID]); err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
@@ -594,12 +597,23 @@ type partialTableWorker struct {
 	pushedLimit        *plannercore.PushedDownLimit
 }
 
-// hasExtralPidCol indicates whether we need create a partitonHandle or not.
-// If we want to keep order in IndexMerge for a partition table,
-// we should create a partitionHandle which contained pid information.
+// needPartitionHandle indicates whether we need create a partitonHandle or not.
+// If the schema from planner part contains ExtraPhysTblID,
+// we need create a partitionHandle, otherwise create a normal handle.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
-func (w *partialTableWorker) hasExtralPidCol() bool {
-	return w.partitionTableMode && len(w.byItems) > 0
+func (w *partialTableWorker) needPartitionHandle() (bool, error) {
+	cols := w.tableReader.(*TableReaderExecutor).plans[0].Schema().Columns
+	outputOffsets := w.tableReader.(*TableReaderExecutor).dagPB.OutputOffsets
+	col := cols[outputOffsets[len(outputOffsets)-1]]
+
+	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
+	// no ExtraPidColID here, because a clustered index couldn't be a global index.
+	ret := col.ID == model.ExtraPhysTblID
+
+	if needPartitionHandle != ret {
+		return ret, errors.Errorf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret)
+	}
+	return ret, nil
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask,
@@ -676,7 +690,11 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				}
 			}
 			var handle kv.Handle
-			if w.hasExtralPidCol() {
+			ok, err1 := w.needPartitionHandle()
+			if err1 != nil {
+				return nil, nil, err1
+			}
+			if ok {
 				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
 			} else {
 				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
@@ -1413,6 +1431,8 @@ type partialIndexWorker struct {
 	byItems            []*plannerutil.ByItems
 	scannedKeys        uint64
 	pushedLimit        *plannercore.PushedDownLimit
+	dagPB              *tipb.DAGRequest
+	plan               []plannercore.PhysicalPlan
 }
 
 func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexMergeTableTask, err error) {
@@ -1436,8 +1456,22 @@ func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexM
 	}
 }
 
-func (w *partialIndexWorker) hasExtralPidCol() bool {
-	return w.partitionTableMode && len(w.byItems) > 0
+// needPartitionHandle indicates whether we need create a partitonHandle or not.
+// If the schema from planner part contains ExtraPidColID or ExtraPhysTblID,
+// we need create a partitionHandle, otherwise create a normal handle.
+// In TableRowIDScan, the partitionHandle will be used to create key ranges.
+func (w *partialIndexWorker) needPartitionHandle() (bool, error) {
+	cols := w.plan[0].Schema().Columns
+	outputOffsets := w.dagPB.OutputOffsets
+	col := cols[outputOffsets[len(outputOffsets)-1]]
+
+	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
+	ret := col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
+
+	if needPartitionHandle != ret {
+		return ret, errors.Errorf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret)
+	}
+	return ret, nil
 }
 
 func (w *partialIndexWorker) fetchHandles(
@@ -1487,7 +1521,7 @@ func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannercore.Handle
 		}
 	}
 	tps = append(tps, handleCols.GetFieldsTypes()...)
-	if w.hasExtralPidCol() {
+	if ok, _ := w.needPartitionHandle(); ok {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 	return tps
@@ -1533,7 +1567,11 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				}
 			}
 			var handle kv.Handle
-			if w.hasExtralPidCol() {
+			ok, err1 := w.needPartitionHandle()
+			if err1 != nil {
+				return nil, nil, err1
+			}
+			if ok {
 				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
 			} else {
 				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
@@ -1681,11 +1719,24 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 	}
 
 	if w.indexMergeExec.keepOrder {
+		// Because len(outputOffsets) == tableScan.Schema().Len(),
+		// so we could use row.GetInt64(idx) to get partition ID here.
+		// TODO: We could add plannercore.PartitionHandleCols to unify them.
+		physicalTableIDIdx := -1
+		for i, c := range w.indexMergeExec.Schema().Columns {
+			if c.ID == model.ExtraPhysTblID {
+				physicalTableIDIdx = i
+				break
+			}
+		}
 		task.rowIdx = make([]int, 0, len(task.rows))
 		for _, row := range task.rows {
 			handle, err := w.indexMergeExec.handleCols.BuildHandle(row)
 			if err != nil {
 				return err
+			}
+			if physicalTableIDIdx != -1 {
+				handle = kv.NewPartitionHandle(row.GetInt64(physicalTableIDIdx), handle)
 			}
 			rowIdx, _ := task.indexOrder.Get(handle)
 			task.rowIdx = append(task.rowIdx, rowIdx.(int))
@@ -1725,7 +1776,7 @@ func (e *IndexMergeRuntimeStat) String() string {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf(" table_task:{num:%d, concurrency:%d, fetch_row:%s, wait_time:%s}", e.TableTaskNum, e.Concurrency, time.Duration(e.FetchRow), time.Duration(e.WaitTime)))
+		fmt.Fprintf(&buf, " table_task:{num:%d, concurrency:%d, fetch_row:%s, wait_time:%s}", e.TableTaskNum, e.Concurrency, time.Duration(e.FetchRow), time.Duration(e.WaitTime))
 	}
 	return buf.String()
 }

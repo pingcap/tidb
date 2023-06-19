@@ -3474,3 +3474,71 @@ func TestIssue43243(t *testing.T) {
 	// Check data consistency
 	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 1", "2 3", "3 13", "4 14", "5 15"))
 }
+
+func TestIssue42937(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk2.MustExec("use test")
+	tk2.MustExec("set @@tidb_enable_async_commit = 0")
+	tk2.MustExec("set @@tidb_enable_1pc = 0")
+	tk3.MustExec("use test")
+
+	tk.MustExec("create table t(id int primary key, v int unique)")
+	tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30), (4, 40)")
+	tk.MustExec("create table t2 (id int primary key, v int)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2)")
+
+	require.NoError(t, failpoint.Enable("tikvclient/beforeAsyncPessimisticRollback", `return("skip")`))
+	require.NoError(t, failpoint.Enable("tikvclient/twoPCRequestBatchSizeLimit", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/beforeAsyncPessimisticRollback"))
+		require.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
+	}()
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 1 where id = 2")
+
+	require.NoError(t, failpoint.Enable("tikvclient/twoPCShortLockTTL", "return"))
+	require.NoError(t, failpoint.Enable("tikvclient/shortPessimisticLockTTL", "return"))
+	ch := mustExecAsync(tk, `
+		with
+			c as (select /*+ MERGE() */ v from t2 where id = 1 or id = 2)
+		update c join t on c.v = t.id set t.v = t.v + 1`)
+	mustTimeout(t, ch, time.Millisecond*100)
+
+	tk3.MustExec("update t2 set v = v + 2")
+	tk2.MustExec("commit")
+	<-ch
+
+	tk.MustQuery("select id, v from t order by id").Check(testkit.Rows("1 10", "2 20", "3 31", "4 41"))
+	tk.MustExec("update t set v = 0 where id = 1")
+
+	require.NoError(t, failpoint.Enable("tikvclient/beforeCommit", `1*return("delay(500)")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/beforeCommit"))
+	}()
+
+	ch = mustExecAsync(tk, "commit")
+	mustTimeout(t, ch, time.Millisecond*100)
+
+	require.NoError(t, failpoint.Disable("tikvclient/twoPCShortLockTTL"))
+	require.NoError(t, failpoint.Disable("tikvclient/shortPessimisticLockTTL"))
+
+	tk2.MustExec("insert into t values (5, 11)")
+
+	mustRecv(t, ch)
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows(
+		"1 0",
+		"2 21",
+		"3 31",
+		"4 41",
+		"5 11",
+	))
+}

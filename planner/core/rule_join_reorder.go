@@ -181,7 +181,7 @@ func extractJoinGroup(p LogicalPlan) *joinGroupResult {
 	tmpOtherConds = append(tmpOtherConds, join.OtherConditions...)
 	tmpOtherConds = append(tmpOtherConds, join.LeftConditions...)
 	tmpOtherConds = append(tmpOtherConds, join.RightConditions...)
-	if join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin {
+	if join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin || join.JoinType == LeftOuterSemiJoin || join.JoinType == AntiLeftOuterSemiJoin {
 		for range join.EqualConditions {
 			abType := &joinTypeWithExtMsg{JoinType: join.JoinType}
 			// outer join's other condition should be bound with the connecting edge.
@@ -233,6 +233,10 @@ func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *logi
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
+	if _, ok := p.(*LogicalCTE); ok {
+		return p, nil
+	}
+
 	var err error
 
 	result := extractJoinGroup(p)
@@ -394,17 +398,47 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 	var leadingJoinGroup []LogicalPlan
 	leftJoinGroup := make([]LogicalPlan, len(curJoinGroup))
 	copy(leftJoinGroup, curJoinGroup)
+	queryBlockNames := *(s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load())
 	for _, hintTbl := range hintInfo.leadingJoinOrder {
+		match := false
 		for i, joinGroup := range leftJoinGroup {
 			tableAlias := extractTableAlias(joinGroup, joinGroup.SelectBlockOffset())
 			if tableAlias == nil {
 				continue
 			}
 			if hintTbl.dbName.L == tableAlias.dbName.L && hintTbl.tblName.L == tableAlias.tblName.L && hintTbl.selectOffset == tableAlias.selectOffset {
+				match = true
 				leadingJoinGroup = append(leadingJoinGroup, joinGroup)
 				leftJoinGroup = append(leftJoinGroup[:i], leftJoinGroup[i+1:]...)
 				break
 			}
+		}
+		if match {
+			continue
+		}
+
+		// consider query block alias: select /*+ leading(t1, t2) */ * from (select ...) t1, t2 ...
+		groupIdx := -1
+		for i, joinGroup := range leftJoinGroup {
+			blockOffset := joinGroup.SelectBlockOffset()
+			if blockOffset > 1 && blockOffset < len(queryBlockNames) {
+				blockName := queryBlockNames[blockOffset]
+				if hintTbl.dbName.L == blockName.DBName.L && hintTbl.tblName.L == blockName.TableName.L {
+					// this can happen when multiple join groups are from the same block, for example:
+					//   select /*+ leading(tx) */ * from (select * from t1, t2 ...) tx, ...
+					// `tx` is split to 2 join groups `t1` and `t2`, and they have the same block offset.
+					// TODO: currently we skip this case for simplification, we can support it in the future.
+					if groupIdx != -1 {
+						groupIdx = -1
+						break
+					}
+					groupIdx = i
+				}
+			}
+		}
+		if groupIdx != -1 {
+			leadingJoinGroup = append(leadingJoinGroup, leftJoinGroup[groupIdx])
+			leftJoinGroup = append(leftJoinGroup[:groupIdx], leftJoinGroup[groupIdx+1:]...)
 		}
 	}
 	if len(leadingJoinGroup) != len(hintInfo.leadingJoinOrder) || leadingJoinGroup == nil {
@@ -503,6 +537,13 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPla
 	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
 		return expression.ExprFromSchema(expr, mergedSchema)
 	})
+	if (joinType.JoinType == LeftOuterJoin || joinType.JoinType == RightOuterJoin || joinType.JoinType == LeftOuterSemiJoin || joinType.JoinType == AntiLeftOuterSemiJoin) && len(otherConds) > 0 {
+		// the original outer join's other conditions has been bound to the outer join Edge,
+		// these remained other condition here shouldn't be appended to it because on-mismatch
+		// logic will produce more append-null rows which is banned in original semantic.
+		remainOtherConds = append(remainOtherConds, otherConds...) // nozero
+		otherConds = otherConds[:0]
+	}
 	if len(joinType.outerBindCondition) > 0 {
 		remainOBOtherConds := make([]expression.Expression, len(joinType.outerBindCondition))
 		copy(remainOBOtherConds, joinType.outerBindCondition)
@@ -545,6 +586,14 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 			resultJoinGroup = append(resultJoinGroup, newJoin)
 		}
 		cartesianJoinGroup, resultJoinGroup = resultJoinGroup, cartesianJoinGroup
+	}
+	// other conditions may be possible to exist across different cartesian join group, resolving cartesianJoin first then adding another selection.
+	if len(s.otherConds) > 0 {
+		additionSelection := LogicalSelection{
+			Conditions: s.otherConds,
+		}.Init(cartesianJoinGroup[0].SCtx(), cartesianJoinGroup[0].SelectBlockOffset())
+		additionSelection.SetChildren(cartesianJoinGroup[0])
+		cartesianJoinGroup[0] = additionSelection
 	}
 	return cartesianJoinGroup[0]
 }
@@ -619,7 +668,7 @@ func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt 
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(fmt.Sprintf("[%s, cost:%v]", join, tracer.cost[join]))
+			fmt.Fprintf(buffer, "[%s, cost:%v]", join, tracer.cost[join])
 		}
 		buffer.WriteString("]")
 		return buffer.String()

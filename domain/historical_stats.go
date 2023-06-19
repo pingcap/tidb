@@ -66,12 +66,11 @@ func (w *HistoricalStatsWorker) DumpHistoricalStats(tableID int64, statsHandle *
 	tbl, existed := is.TableByID(tableID)
 	if !existed {
 		tbl, db, p := is.FindTableByPartitionID(tableID)
-		if tbl != nil && db != nil && p != nil {
-			isPartition = true
-			tblInfo = tbl.Meta()
-		} else {
+		if !(tbl != nil && db != nil && p != nil) {
 			return errors.Errorf("cannot get table by id %d", tableID)
 		}
+		isPartition = true
+		tblInfo = tbl.Meta()
 	} else {
 		tblInfo = tbl.Meta()
 	}

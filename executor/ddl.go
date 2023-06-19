@@ -538,7 +538,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 }
 
 func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error {
-	flashbackTS, err := staleread.CalculateAsOfTsExpr(e.ctx, s.FlashbackTS)
+	flashbackTS, err := staleread.CalculateAsOfTsExpr(context.Background(), e.ctx, s.FlashbackTS)
 	if err != nil {
 		return err
 	}
@@ -720,7 +720,7 @@ func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
 }
 
 func (e *DDLExec) executeRepairTable(s *ast.RepairTableStmt) error {
-	return domain.GetDomain(e.ctx).DDL().RepairTable(e.ctx, s.Table, s.CreateStmt)
+	return domain.GetDomain(e.ctx).DDL().RepairTable(e.ctx, s.CreateStmt)
 }
 
 func (e *DDLExec) executeCreateSequence(s *ast.CreateSequenceStmt) error {

@@ -380,11 +380,11 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 
 			if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
 				if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
-					logutil.BgLogger().Warn("[ddl] pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
+					logutil.BgLogger().Warn("[ddl-upgrading] pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
 					task.cacheErr = err
 					continue
 				}
-				logutil.BgLogger().Info("[ddl] pause user DDL by system successful", zap.Stringer("job", job))
+				logutil.BgLogger().Info("[ddl-upgrading] pause user DDL by system successful", zap.Stringer("job", job))
 			}
 
 			jobTasks = append(jobTasks, job)
@@ -481,13 +481,14 @@ func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client) {
 	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), sql, "delete-mdl-info")
 	if err != nil {
-		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Error(err))
+		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", jobID), zap.Error(err))
+		return
 	}
 	if ec != nil {
 		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)
 		_, err = ec.Delete(context.Background(), path, clientv3.WithPrefix())
 		if err != nil {
-			logutil.BgLogger().Warn("[ddl] delete versions failed", zap.Any("job id", jobID), zap.Error(err))
+			logutil.BgLogger().Warn("[ddl] delete versions failed", zap.Int64("job ID", jobID), zap.Error(err))
 		}
 	}
 }
@@ -819,10 +820,13 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	w.registerSync(job)
 
 	if runJobErr != nil {
-		// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
-		// which may act like a deadlock.
-		logutil.Logger(w.logCtx).Info("[ddl] run DDL job failed, sleeps a while then retries it.",
-			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
+		// Omit the ErrPausedDDLJob
+		if !dbterror.ErrPausedDDLJob.Equal(runJobErr) {
+			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
+			// which may act like a deadlock.
+			logutil.Logger(w.logCtx).Info("[ddl] run DDL job failed, sleeps a while then retries it.",
+				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
+		}
 
 		// In test and job is cancelling we can ignore the sleep
 		if !(intest.InTest && job.IsCancelling()) {
@@ -937,7 +941,7 @@ func (w *worker) countForError(err error, job *model.Job) error {
 		logutil.Logger(w.logCtx).Info("[ddl] DDL job is cancelled normally", zap.Error(err))
 		return nil
 	}
-	logutil.Logger(w.logCtx).Error("[ddl] run DDL job error", zap.Error(err))
+	logutil.Logger(w.logCtx).Warn("[ddl] run DDL job error", zap.Error(err))
 
 	// Load global DDL variables.
 	if err1 := loadDDLVars(w); err1 != nil {
@@ -949,6 +953,19 @@ func (w *worker) countForError(err error, job *model.Job) error {
 		job.State = model.JobStateCancelling
 	}
 	return err
+}
+
+func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable bool, err error) {
+	if job.IsPaused() {
+		logutil.Logger(w.logCtx).Debug("[ddl] paused DDL job ", zap.String("job", job.String()))
+		return false, err
+	}
+	if job.IsPausing() {
+		logutil.Logger(w.logCtx).Debug("[ddl] pausing DDL job ", zap.String("job", job.String()))
+		job.State = model.JobStatePaused
+		return false, pauseReorgWorkers(w, d, job)
+	}
+	return true, nil
 }
 
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
@@ -976,17 +993,18 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		return ver, err
 	}
 
-	if job.IsPaused() || job.IsPausing() {
-		logutil.Logger(w.logCtx).Info("[ddl] DDL job paused", zap.String("job", job.String()))
-		return ver, pauseReorgWorkers(w, d, job)
-	}
-
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
 		logutil.Logger(w.logCtx).Debug("[ddl] cancel DDL job", zap.String("job", job.String()))
 		return convertJob2RollbackJob(w, d, t, job)
 	}
 
+	isRunnable, err := w.processJobPausingRequest(d, job)
+	if !isRunnable {
+		return ver, err
+	}
+
+	// It would be better to do the positive check, but no idea to list all valid states here now.
 	if !job.IsRollingback() {
 		job.State = model.JobStateRunning
 	}
@@ -1020,7 +1038,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(d, t, job)
 	case model.ActionTruncateTablePartition:
-		ver, err = onTruncateTablePartition(d, t, job)
+		ver, err = w.onTruncateTablePartition(d, t, job)
 	case model.ActionExchangeTablePartition:
 		ver, err = w.onExchangeTablePartition(d, t, job)
 	case model.ActionAddColumn:
@@ -1114,6 +1132,12 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onTTLInfoChange(d, t, job)
 	case model.ActionAlterTTLRemove:
 		ver, err = onTTLInfoRemove(d, t, job)
+	case model.ActionAddCheckConstraint:
+		ver, err = w.onAddCheckConstraint(d, t, job)
+	case model.ActionDropCheckConstraint:
+		ver, err = onDropCheckConstraint(d, t, job)
+	case model.ActionAlterCheckConstraint:
+		ver, err = w.onAlterCheckConstraint(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -1124,7 +1148,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	if err != nil {
 		err = w.countForError(err, job)
 	}
-	return
+	return ver, err
 }
 
 func loadDDLVars(w *worker) error {

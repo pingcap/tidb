@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/internal/builder"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -132,7 +133,7 @@ func buildTableReader(sctx sessionctx.Context) Executor {
 }
 
 func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
-	req, err := constructDAGReq(sctx, []core.PhysicalPlan{&core.PhysicalTableScan{
+	req, err := builder.ConstructDAGReq(sctx, []core.PhysicalPlan{&core.PhysicalTableScan{
 		Columns: []*model.ColumnInfo{},
 		Table:   &model.TableInfo{ID: 12345, PKIsHandle: false},
 		Desc:    false,

@@ -69,12 +69,10 @@ func TestGetInstance(t *testing.T) {
 	// test no server
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
-	instanceID, _ := dispatcher.GetEligibleInstance(serverNodes, 0)
-	require.Lenf(t, instanceID, 0, "instanceID:%d", instanceID)
+	_, err := dispatcher.GenerateSchedulerNodes(ctx)
 	require.EqualError(t, err, "not found instance")
 	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, 1)
-	require.Lenf(t, instanceIDs, 0, "instanceID:%d", instanceID)
+	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs when there's no subtask")
 	require.NoError(t, err)
 
 	// test 2 servers
@@ -95,18 +93,8 @@ func TestGetInstance(t *testing.T) {
 		},
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	serverNodes, err = dispatcher.GenerateSchedulerNodes(ctx)
-	require.NoError(t, err)
-	instanceID, err = dispatcher.GetEligibleInstance(serverNodes, 0)
-	require.NoError(t, err)
-	require.Equal(t, serverIDs[0], instanceID)
-	instanceID, err = dispatcher.GetEligibleInstance(serverNodes, 1)
-	require.NoError(t, err)
-	if instanceID != serverIDs[0] && instanceID != serverIDs[1] {
-		require.FailNowf(t, "expected uuids:%d,%d, actual uuid:%d", uuids[0], uuids[1], instanceID)
-	}
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, 1)
-	require.Lenf(t, instanceIDs, 0, "instanceID:%d", instanceID)
+	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs")
 	require.NoError(t, err)
 
 	// server ids: uuid0, uuid1
@@ -298,7 +286,11 @@ func TestParallelCancelFlow(t *testing.T) {
 
 const taskTypeExample = "task_example"
 
-type NumberExampleHandle struct {
+type NumberExampleHandle struct{}
+
+var _ dispatcher.TaskFlowHandle = (*NumberExampleHandle)(nil)
+
+func (NumberExampleHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
 func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
@@ -324,6 +316,10 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
+}
+
+func (NumberExampleHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 
 func (NumberExampleHandle) IsRetryableErr(error) bool {

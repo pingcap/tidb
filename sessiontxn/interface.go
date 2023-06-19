@@ -163,8 +163,6 @@ type TxnManager interface {
 	// If the session is not in any transaction, for example: between two autocommit statements,
 	// this method will return the latest information schema in session that is same with `sessionctx.GetDomainInfoSchema()`
 	GetTxnInfoSchema() infoschema.InfoSchema
-	// SetTxnInfoSchema sets the information schema used by txn.
-	SetTxnInfoSchema(infoschema.InfoSchema)
 	// GetTxnScope returns the current txn scope
 	GetTxnScope() string
 	// GetReadReplicaScope returns the read replica scope

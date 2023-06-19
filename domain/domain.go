@@ -19,13 +19,13 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/globalconfigsync"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
@@ -75,6 +76,7 @@ import (
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/gctuner"
+	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -86,6 +88,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
@@ -125,7 +128,7 @@ type Domain struct {
 	infoCache       *infoschema.InfoCache
 	privHandle      *privileges.Handle
 	bindHandle      atomic.Pointer[bindinfo.BindHandle]
-	statsHandle     unsafe.Pointer
+	statsHandle     atomic.Pointer[handle.Handle]
 	statsLease      time.Duration
 	ddl             ddl.DDL
 	info            *infosync.InfoSyncer
@@ -147,23 +150,27 @@ type Domain struct {
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
 	// TODO: use Run for each process in future pr
-	wg                    *util.WaitGroupEnhancedWrapper
-	statsUpdating         atomicutil.Int32
-	cancel                context.CancelFunc
-	indexUsageSyncLease   time.Duration
-	dumpFileGcChecker     *dumpFileGcChecker
-	planReplayerHandle    *planReplayerHandle
-	extractTaskHandle     *ExtractHandle
-	expiredTimeStamp4PC   types.Time
-	logBackupAdvancer     *daemon.OwnerDaemon
-	historicalStatsWorker *HistoricalStatsWorker
-	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
+	wg                       *util.WaitGroupEnhancedWrapper
+	statsUpdating            atomicutil.Int32
+	cancel                   context.CancelFunc
+	indexUsageSyncLease      time.Duration
+	dumpFileGcChecker        *dumpFileGcChecker
+	planReplayerHandle       *planReplayerHandle
+	extractTaskHandle        *ExtractHandle
+	expiredTimeStamp4PC      types.Time
+	logBackupAdvancer        *daemon.OwnerDaemon
+	historicalStatsWorker    *HistoricalStatsWorker
+	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
+	runawayManager           *resourcegroup.RunawayManager
+	resourceGroupsController *rmclient.ResourceGroupsController
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
-	onClose              func()
-	sysExecutorFactory   func(*Domain) (pools.Resource, error)
+	connIDAllocator      globalconn.Allocator
+
+	onClose            func()
+	sysExecutorFactory func(*Domain) (pools.Resource, error)
 
 	sysProcesses SysProcesses
 
@@ -662,8 +669,10 @@ func (do *Domain) topNSlowQueryLoop() {
 func (do *Domain) infoSyncerKeeper() {
 	defer func() {
 		logutil.BgLogger().Info("infoSyncerKeeper exited.")
-		util.Recover(metrics.LabelDomain, "infoSyncerKeeper", nil, false)
 	}()
+
+	defer util.Recover(metrics.LabelDomain, "infoSyncerKeeper", nil, false)
+
 	ticker := time.NewTicker(infosync.ReportInterval)
 	defer ticker.Stop()
 	for {
@@ -686,8 +695,10 @@ func (do *Domain) infoSyncerKeeper() {
 func (do *Domain) globalConfigSyncerKeeper() {
 	defer func() {
 		logutil.BgLogger().Info("globalConfigSyncerKeeper exited.")
-		util.Recover(metrics.LabelDomain, "globalConfigSyncerKeeper", nil, false)
 	}()
+
+	defer util.Recover(metrics.LabelDomain, "globalConfigSyncerKeeper", nil, false)
+
 	for {
 		select {
 		case entry := <-do.globalCfgSyncer.NotifyCh:
@@ -984,6 +995,9 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
+	if rm := do.RunawayManager(); rm != nil {
+		rm.Stop()
+	}
 
 	if do.unprefixedEtcdCli != nil {
 		terror.Log(errors.Trace(do.unprefixedEtcdCli.Close()))
@@ -1001,6 +1015,12 @@ func (do *Domain) Close() {
 	}
 	gctuner.WaitMemoryLimitTunerExitInTest()
 	close(do.mdlCheckCh)
+
+	// close MockGlobalServerInfoManagerEntry in order to refresh mock server info.
+	if intest.InTest {
+		infosync.MockGlobalServerInfoManagerEntry.Close()
+	}
+
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -1137,6 +1157,8 @@ func (do *Domain) Init(
 	}
 
 	if config.GetGlobalConfig().EnableGlobalKill {
+		do.connIDAllocator = globalconn.NewGlobalAllocator(do.ServerID)
+
 		if do.etcdClient != nil {
 			err := do.acquireServerID(ctx)
 			if err != nil {
@@ -1152,6 +1174,8 @@ func (do *Domain) Init(
 			// set serverID for standalone deployment to enable 'KILL'.
 			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
 		}
+	} else {
+		do.connIDAllocator = globalconn.NewSimpleAllocator()
 	}
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
@@ -1160,6 +1184,10 @@ func (do *Domain) Init(
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, do.Store().GetCodec(),
 		skipRegisterToDashboard)
+	if err != nil {
+		return err
+	}
+	err = do.initResourceGroupsController(ctx, pdCli)
 	if err != nil {
 		return err
 	}
@@ -1192,6 +1220,7 @@ func (do *Domain) Init(
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
+	do.wg.Run(do.runawayRecordFlushLoop, "runawayRecordFlushLoop")
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
 	}
@@ -1209,9 +1238,152 @@ func (do *Domain) Init(
 	return nil
 }
 
+// InitInfo4Test init infosync for distributed execution test.
+func (do *Domain) InitInfo4Test() {
+	infosync.MockGlobalServerInfoManagerEntry.Add(do.ddl.GetID(), do.ServerID)
+}
+
 // SetOnClose used to set do.onClose func.
 func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose
+}
+
+func (do *Domain) runawayRecordFlushLoop() {
+	defer util.Recover(metrics.LabelDomain, "runawayRecordFlushLoop", nil, false)
+	// this times is used to batch flushing rocords, with 1s duration,
+	// we can guarantee a watch record can be seen by the user within 1s.
+	timer := time.NewTimer(time.Second)
+	fired := false
+	recordCh := do.RunawayManager().RunawayRecordChan()
+	quarantineRecordCh := do.RunawayManager().QuarantineRecordChan()
+	flushThrehold := do.runawayManager.FlushThreshold()
+	records := make([]*resourcegroup.RunawayRecord, 0, flushThrehold)
+	quarantineRecords := make([]*resourcegroup.QuarantineRecord, 0)
+
+	flushRunawayRecords := func() {
+		if len(records) == 0 {
+			return
+		}
+		sql, params := genRunawayQueriesStmt(records)
+		if err := do.execFlushSQL(sql, params); err != nil {
+			logutil.BgLogger().Info("flush runaway records failed", zap.Error(err), zap.Int("count", len(records)))
+		}
+		records = records[:0]
+	}
+	flushQuarantineRecords := func() {
+		if len(quarantineRecords) == 0 {
+			return
+		}
+		sql, params := genQuarantineQueriesStmt(quarantineRecords)
+		if err := do.execFlushSQL(sql, params); err != nil {
+			logutil.BgLogger().Info("flush quarantine records failed", zap.Error(err), zap.Int("count", len(records)))
+		}
+		quarantineRecords = quarantineRecords[:0]
+	}
+
+	for {
+		select {
+		case <-do.exit:
+			return
+		case <-timer.C:
+			flushRunawayRecords()
+			fired = true
+		case r := <-quarantineRecordCh:
+			quarantineRecords = append(quarantineRecords, r)
+			// we expect quarantine record should not be triggered very often, so always
+			// flush as soon as possible.
+			if len(quarantineRecordCh) == 0 || len(quarantineRecords) >= flushThrehold {
+				flushQuarantineRecords()
+			}
+		case r := <-recordCh:
+			records = append(records, r)
+			if len(records) >= flushThrehold {
+				flushRunawayRecords()
+			} else if fired {
+				fired = false
+				// meet a new record, reset the timer.
+				timer.Reset(time.Second)
+			}
+		}
+	}
+}
+
+func (do *Domain) execFlushSQL(sql string, params []interface{}) error {
+	se, err := do.sysSessionPool.Get()
+	defer func() {
+		do.sysSessionPool.Put(se)
+	}()
+	if err != nil {
+		return errors.Annotate(err, "get session failed")
+	}
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	_, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		sql, params...,
+	)
+	return err
+}
+
+func genRunawayQueriesStmt(records []*resourcegroup.RunawayRecord) (string, []interface{}) {
+	var builder strings.Builder
+	params := make([]interface{}, 0, len(records)*7)
+	builder.WriteString("insert into mysql.tidb_runaway_queries VALUES ")
+	for count, r := range records {
+		if count > 0 {
+			builder.WriteByte(',')
+		}
+		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?)")
+		params = append(params, r.ResourceGroupName)
+		params = append(params, r.Time)
+		params = append(params, r.Match)
+		params = append(params, r.Action)
+		params = append(params, r.SQLText)
+		params = append(params, r.PlanDigest)
+		params = append(params, r.From)
+	}
+	return builder.String(), params
+}
+
+func genQuarantineQueriesStmt(records []*resourcegroup.QuarantineRecord) (string, []interface{}) {
+	var builder strings.Builder
+	params := make([]interface{}, 0, len(records)*7)
+	builder.WriteString("insert into mysql.tidb_runaway_quarantined_watch VALUES ")
+	for count, r := range records {
+		if count > 0 {
+			builder.WriteByte(',')
+		}
+		builder.WriteString("(%?, %?, %?, %?, %?, %?)")
+		params = append(params, r.ResourceGroupName)
+		params = append(params, r.StartTime)
+		params = append(params, r.EndTime)
+		params = append(params, r.Watch)
+		params = append(params, r.WatchText)
+		params = append(params, r.From)
+	}
+	return builder.String(), params
+}
+
+func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.Client) error {
+	if pdClient == nil {
+		logutil.BgLogger().Warn("cannot setup up resource controller, not using tikv storage")
+		// return nil as unistore doesn't support it
+		return nil
+	}
+
+	control, err := rmclient.NewResourceGroupController(ctx, do.ServerID(), pdClient, nil, rmclient.WithMaxWaitDuration(resourcegroup.MaxWaitDuration))
+	if err != nil {
+		return err
+	}
+	control.Start(ctx)
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return err
+	}
+	serverAddr := net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
+	do.runawayManager = resourcegroup.NewRunawayManager(control, serverAddr)
+	do.resourceGroupsController = control
+	tikv.SetResourceControlInterceptor(control)
+	return nil
 }
 
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
@@ -1370,7 +1542,14 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	})
 
 	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
-	serverID := generateSubtaskExecID(ctx, do.ddl.GetID())
+	var serverID string
+	if intest.InTest {
+		do.InitInfo4Test()
+		serverID = disttaskutil.GenerateSubtaskExecID4Test(do.ddl.GetID())
+	} else {
+		serverID = disttaskutil.GenerateSubtaskExecID(ctx, do.ddl.GetID())
+	}
+
 	if serverID == "" {
 		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
 		return errors.New(errMsg)
@@ -1390,17 +1569,6 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	return nil
 }
 
-func generateSubtaskExecID(ctx context.Context, ID string) string {
-	serverInfos, err := infosync.GetAllServerInfo(ctx)
-	if err != nil || len(serverInfos) == 0 {
-		return ""
-	}
-	if serverNode, ok := serverInfos[ID]; ok {
-		return disttaskutil.GenerateExecID(serverNode.IP, serverNode.Port)
-	}
-	return ""
-}
-
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
 	schedulerManager.Start()
 	logutil.BgLogger().Info("dist task scheduler started")
@@ -1415,7 +1583,6 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if dispatch != nil {
 			return
 		}
-
 		newDispatch, err := dispatcher.NewDispatcher(ctx, taskManager)
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
@@ -1423,14 +1590,13 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		}
 		dispatch = newDispatch
 		dispatch.Start()
-		logutil.BgLogger().Info("a new dist task dispatcher started for current node becomes the DDL owner")
 	}
 	stopDispatchIfNeeded := func() {
 		if dispatch != nil {
-			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore")
+			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
 			dispatch.Stop()
 			dispatch = nil
-			logutil.BgLogger().Info("dist task dispatcher stopped")
+			logutil.BgLogger().Info("dist task dispatcher stopped", zap.String("id", do.ddl.GetID()))
 		}
 	}
 
@@ -1505,6 +1671,7 @@ func (p *sessionPool) Put(resource pools.Resource) {
 		resource.Close()
 	}
 }
+
 func (p *sessionPool) Close() {
 	p.mu.Lock()
 	if p.mu.closed {
@@ -1568,8 +1735,9 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("loadPrivilegeInLoop exited.")
-			util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
+
 		var count int
 		for {
 			ok := true
@@ -1617,8 +1785,9 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("LoadSysVarCacheLoop exited.")
-			util.Recover(metrics.LabelDomain, "LoadSysVarCacheLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "LoadSysVarCacheLoop", nil, false)
+
 		var count int
 		for {
 			ok := true
@@ -1675,8 +1844,8 @@ func (do *Domain) WatchTiFlashComputeNodeChange() error {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("WatchTiFlashComputeNodeChange exit")
-			util.Recover(metrics.LabelDomain, "WatchTiFlashComputeNodeChange", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "WatchTiFlashComputeNodeChange", nil, false)
 
 		var count int
 		var logCount int
@@ -1752,8 +1921,9 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("globalBindHandleWorkerLoop exited.")
-			util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
+
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
 		gcBindTicker := time.NewTicker(100 * bindinfo.Lease)
 		defer func() {
@@ -1794,8 +1964,9 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("handleEvolvePlanTasksLoop exited.")
-			util.Recover(metrics.LabelDomain, "handleEvolvePlanTasksLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "handleEvolvePlanTasksLoop", nil, false)
+
 		for {
 			select {
 			case <-do.exit:
@@ -1825,8 +1996,9 @@ func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("TelemetryReportLoop exited.")
-			util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
+
 		owner := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
 		for {
 			select {
@@ -1853,8 +2025,9 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("TelemetryRotateSubWindowLoop exited.")
-			util.Recover(metrics.LabelDomain, "TelemetryRotateSubWindowLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "TelemetryRotateSubWindowLoop", nil, false)
+
 		for {
 			select {
 			case <-do.exit:
@@ -1893,6 +2066,21 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 		}
 		do.planReplayerHandle.planReplayerTaskDumpHandle.workers = append(do.planReplayerHandle.planReplayerTaskDumpHandle.workers, worker)
 	}
+}
+
+// RunawayManager returns the runaway manager.
+func (do *Domain) RunawayManager() *resourcegroup.RunawayManager {
+	return do.runawayManager
+}
+
+// ResourceGroupsController returns the resource groups controller.
+func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController {
+	return do.resourceGroupsController
+}
+
+// SetResourceGroupsController is only used in test.
+func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroupsController) {
+	do.resourceGroupsController = controller
 }
 
 // SetupHistoricalStatsWorker setups worker
@@ -1942,9 +2130,10 @@ func (do *Domain) StartPlanReplayerHandle() {
 		tikcer := time.NewTicker(time.Duration(lease))
 		defer func() {
 			tikcer.Stop()
-			util.Recover(metrics.LabelDomain, "PlanReplayerTaskCollectHandle", nil, false)
 			logutil.BgLogger().Info("PlanReplayerTaskCollectHandle exited.")
 		}()
+		defer util.Recover(metrics.LabelDomain, "PlanReplayerTaskCollectHandle", nil, false)
+
 		for {
 			select {
 			case <-do.exit:
@@ -1961,9 +2150,10 @@ func (do *Domain) StartPlanReplayerHandle() {
 	do.wg.Run(func() {
 		logutil.BgLogger().Info("PlanReplayerTaskDumpHandle started")
 		defer func() {
-			util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
 			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
 		}()
+		defer util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
+
 		for _, worker := range do.planReplayerHandle.planReplayerTaskDumpHandle.workers {
 			go worker.run()
 		}
@@ -1994,9 +2184,10 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 		gcTicker := time.NewTicker(do.dumpFileGcChecker.gcLease)
 		defer func() {
 			gcTicker.Stop()
-			util.Recover(metrics.LabelDomain, "dumpFileGcCheckerLoop", nil, false)
 			logutil.BgLogger().Info("dumpFileGcChecker exited.")
 		}()
+		defer util.Recover(metrics.LabelDomain, "dumpFileGcCheckerLoop", nil, false)
+
 		for {
 			select {
 			case <-do.exit:
@@ -2024,9 +2215,10 @@ func (do *Domain) StartHistoricalStatsWorker() {
 	do.wg.Run(func() {
 		logutil.BgLogger().Info("HistoricalStatsWorker started")
 		defer func() {
-			util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
 			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
 		}()
+		defer util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
+
 		for {
 			select {
 			case <-do.exit:
@@ -2047,16 +2239,16 @@ func (do *Domain) StartHistoricalStatsWorker() {
 
 // StatsHandle returns the statistic handle.
 func (do *Domain) StatsHandle() *handle.Handle {
-	return (*handle.Handle)(atomic.LoadPointer(&do.statsHandle))
+	return do.statsHandle.Load()
 }
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
+	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
 	if err != nil {
 		return err
 	}
-	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(h))
+	do.statsHandle.Store(h)
 	return nil
 }
 
@@ -2128,11 +2320,11 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
+	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
 	if err != nil {
 		return err
 	}
-	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
+	do.statsHandle.Store(statsHandle)
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
@@ -2145,6 +2337,8 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		}, "syncIndexUsageWorker")
 	}
 	if do.statsLease <= 0 {
+		// For statsLease > 0, `updateStatsWorker` handles the quit of stats owner.
+		do.wg.Run(func() { quitStatsOwner(do, owner) }, "quitStatsOwner")
 		return nil
 	}
 	do.SetStatsUpdating(true)
@@ -2152,6 +2346,11 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.wg.Run(func() { do.autoAnalyzeWorker(owner) }, "autoAnalyzeWorker")
 	do.wg.Run(func() { do.gcAnalyzeHistory(owner) }, "gcAnalyzeHistory")
 	return nil
+}
+
+func quitStatsOwner(do *Domain, mgr owner.Manager) {
+	<-do.exit
+	mgr.Cancel()
 }
 
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
@@ -2168,7 +2367,7 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
 	var statsOwner owner.Manager
 	if do.etcdClient == nil {
-		statsOwner = owner.NewMockManager(context.Background(), id)
+		statsOwner = owner.NewMockManager(context.Background(), id, do.store, ownerKey)
 	} else {
 		statsOwner = owner.NewOwnerManager(context.Background(), do.etcdClient, prompt, id, ownerKey)
 	}
@@ -2309,9 +2508,10 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		deltaUpdateTicker.Stop()
 		readMemTricker.Stop()
 		do.SetStatsUpdating(false)
-		util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
+	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
+
 	for {
 		select {
 		case <-do.exit:
@@ -2493,8 +2693,9 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Debug("loadSigningCertLoop exited.")
-			util.Recover(metrics.LabelDomain, "LoadSigningCertLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "LoadSigningCertLoop", nil, false)
+
 		for {
 			select {
 			case <-time.After(sessionstates.LoadCertInterval):
@@ -2516,12 +2717,31 @@ func (do *Domain) IsLostConnectionToPD() bool {
 	return do.isLostConnectionToPD.Load() != 0
 }
 
+// NextConnID return next connection ID.
+func (do *Domain) NextConnID() uint64 {
+	return do.connIDAllocator.NextID()
+}
+
+// ReleaseConnID releases connection ID.
+func (do *Domain) ReleaseConnID(connID uint64) {
+	do.connIDAllocator.Release(connID)
+}
+
+// GetAutoAnalyzeProcID returns processID for auto analyze
+// TODO: support IDs for concurrent auto-analyze
+func (do *Domain) GetAutoAnalyzeProcID() uint64 {
+	return do.connIDAllocator.GetReservedConnID(reservedConnAnalyze)
+}
+
 const (
 	serverIDEtcdPath               = "/tidb/server_id"
 	refreshServerIDRetryCnt        = 3
 	acquireServerIDRetryInterval   = 300 * time.Millisecond
 	acquireServerIDTimeout         = 10 * time.Second
 	retrieveServerIDSessionTimeout = 10 * time.Second
+
+	// reservedConnXXX must be within [0, globalconn.ReservedCount)
+	reservedConnAnalyze = 0
 )
 
 var (
@@ -2615,8 +2835,8 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 	}
 
 	for {
-		// get a random serverID: [1, MaxServerID]
-		randServerID := rand.Int63n(int64(util.MaxServerID)) + 1 // #nosec G404
+		// get a random serverID: [1, MaxServerID64]
+		randServerID := rand.Int63n(int64(globalconn.MaxServerID64)) + 1 // #nosec G404
 		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, randServerID)
 		cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
 		value := "0"

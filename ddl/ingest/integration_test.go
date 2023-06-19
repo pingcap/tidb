@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -247,4 +248,30 @@ func TestAddIndexIngestClientError(t *testing.T) {
 	tk.MustExec("CREATE TABLE t1 (f1 json);")
 	tk.MustExec(`insert into t1(f1) values (cast("null" as json));`)
 	tk.MustGetErrCode("create index i1 on t1((cast(f1 as unsigned array)));", errno.ErrInvalidJSONValueForFuncIndex)
+}
+
+func TestAddIndexCancelOnNoneState(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tkCancel := testkit.NewTestKit(t, store)
+	defer injectMockBackendMgr(t, store)()
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
+	tk.MustExec("insert into t values(1, 1, 1);")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	first := true
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState == model.StateNone && first {
+			_, err := tkCancel.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
+			assert.NoError(t, err)
+			first = false
+		}
+	}
+	dom.DDL().SetHook(hook.Clone())
+	tk.MustGetErrCode("alter table t add index idx1(c1)", errno.ErrCancelledDDLJob)
+	available, err := ingest.LitBackCtxMgr.CheckAvailable()
+	require.NoError(t, err)
+	require.True(t, available)
 }

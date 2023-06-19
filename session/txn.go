@@ -271,7 +271,7 @@ func (txn *LazyTxn) changeToPending(future *txnFuture) {
 	txn.txnFuture = future
 }
 
-func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
+func (txn *LazyTxn) changePendingToValid(ctx context.Context, sctx sessionctx.Context) error {
 	if txn.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -305,6 +305,9 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 		uint64(txn.Transaction.Len()),
 		txn.mu.TxnInfo.CurrentSQLDigest,
 		txn.mu.TxnInfo.AllSQLDigests)
+
+	// set resource group name for kv request such as lock pessimistic keys.
+	kv.SetTxnResourceGroup(txn, sctx.GetSessionVars().ResourceGroupName)
 
 	return nil
 }
@@ -477,13 +480,12 @@ func (txn *LazyTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn fu
 func (txn *LazyTxn) StartFairLocking() error {
 	if txn.Valid() {
 		return txn.Transaction.StartFairLocking()
-	} else if txn.pending() {
-		txn.enterFairLockingOnValid = true
-	} else {
+	} else if !txn.pending() {
 		err := errors.New("trying to start fair locking on a transaction in invalid state")
 		logutil.BgLogger().Error("unexpected error when starting fair locking", zap.Error(err), zap.Stringer("txn", txn))
 		return err
 	}
+	txn.enterFairLockingOnValid = true
 	return nil
 }
 
@@ -503,19 +505,17 @@ func (txn *LazyTxn) RetryFairLocking(ctx context.Context) error {
 func (txn *LazyTxn) CancelFairLocking(ctx context.Context) error {
 	if txn.Valid() {
 		return txn.Transaction.CancelFairLocking(ctx)
-	} else if txn.pending() {
-		if txn.enterFairLockingOnValid {
-			txn.enterFairLockingOnValid = false
-		} else {
-			err := errors.New("trying to cancel fair locking when it's not started")
-			logutil.BgLogger().Error("unexpected error when cancelling fair locking", zap.Error(err), zap.Stringer("txnStartTS", txn))
-			return err
-		}
-	} else {
+	} else if !txn.pending() {
 		err := errors.New("trying to cancel fair locking on a transaction in invalid state")
 		logutil.BgLogger().Error("unexpected error when cancelling fair locking", zap.Error(err), zap.Stringer("txnStartTS", txn))
 		return err
 	}
+	if !txn.enterFairLockingOnValid {
+		err := errors.New("trying to cancel fair locking when it's not started")
+		logutil.BgLogger().Error("unexpected error when cancelling fair locking", zap.Error(err), zap.Stringer("txnStartTS", txn))
+		return err
+	}
+	txn.enterFairLockingOnValid = false
 	return nil
 }
 
@@ -523,19 +523,18 @@ func (txn *LazyTxn) CancelFairLocking(ctx context.Context) error {
 func (txn *LazyTxn) DoneFairLocking(ctx context.Context) error {
 	if txn.Valid() {
 		return txn.Transaction.DoneFairLocking(ctx)
-	} else if txn.pending() {
-		if txn.enterFairLockingOnValid {
-			txn.enterFairLockingOnValid = false
-		} else {
-			err := errors.New("trying to finish fair locking when it's not started")
-			logutil.BgLogger().Error("unexpected error when finishing fair locking")
-			return err
-		}
-	} else {
+	}
+	if !txn.pending() {
 		err := errors.New("trying to cancel fair locking on a transaction in invalid state")
 		logutil.BgLogger().Error("unexpected error when finishing fair locking")
 		return err
 	}
+	if !txn.enterFairLockingOnValid {
+		err := errors.New("trying to finish fair locking when it's not started")
+		logutil.BgLogger().Error("unexpected error when finishing fair locking")
+		return err
+	}
+	txn.enterFairLockingOnValid = false
 	return nil
 }
 
@@ -593,7 +592,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
-		if err := txn.changePendingToValid(ctx); err != nil {
+		if err := txn.changePendingToValid(ctx, sctx); err != nil {
 			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
 			txn.cleanup()
@@ -601,8 +600,6 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 			return txn, err
 		}
 		txn.lazyUniquenessCheckEnabled = !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic
-		// set resource group name for kv request such as lock pessimistic keys.
-		txn.SetOption(kv.ResourceGroupName, sctx.GetSessionVars().ResourceGroupName)
 	}
 	return txn, nil
 }

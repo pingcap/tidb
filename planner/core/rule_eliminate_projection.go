@@ -28,6 +28,14 @@ import (
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
 // returns true if every expression is a single column.
 func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
+	// project for expand will assign a new col id for col ref, because these column should be
+	// data cloned in the execution time and may be filled with null value at the same time.
+	// so it's not a REAL column reference. Detect the column ref in projection here and do
+	// the elimination here will restore the Expand's grouping sets column back to use the
+	// original column ref again. (which is not right)
+	if p.Proj4Expand {
+		return false
+	}
 	for _, expr := range p.Exprs {
 		_, ok := expr.(*expression.Column)
 		if !ok {
@@ -168,6 +176,10 @@ func (pe *projectionEliminator) optimize(_ context.Context, lp LogicalPlan, opt 
 
 // eliminate eliminates the redundant projection in a logical plan.
 func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*expression.Column, canEliminate bool, opt *logicalOptimizeOp) LogicalPlan {
+	// LogicalCTE's logical optimization is independent.
+	if _, ok := p.(*LogicalCTE); ok {
+		return p
+	}
 	proj, isProj := p.(*LogicalProjection)
 	childFlag := canEliminate
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
