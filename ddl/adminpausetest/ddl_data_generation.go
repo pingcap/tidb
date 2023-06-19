@@ -22,8 +22,10 @@ import (
 	"github.com/pingcap/tidb/testkit"
 )
 
+// AgeMax limits the max number of tuple generated for t_user.age
 const AgeMax int = 120
 
+// TestTableUser indicates the columns of table `t_user` to generate tuples
 type TestTableUser struct {
 	id          int
 	tenant      string

@@ -17,7 +17,6 @@ package adminpausetest
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/errno"
 	"strconv"
 	"sync"
 	"testing"
@@ -26,6 +25,7 @@ import (
 	ddlctrl "github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -154,7 +154,7 @@ func localPRCVerifyCancelResult(t *testing.T, adminCommandKit *testkit.TestKit) 
 
 func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit *testkit.TestKit, dom *domain.Domain, stmtCase *AdminPauseResumeStmtCase, doCancel bool) {
 	Logger.Info("pauseResumeAndCancel: case start,",
-		zap.Int("GlobalID", stmtCase.global_id),
+		zap.Int("GlobalID", stmtCase.globalID),
 		zap.String("statement", stmtCase.stmt),
 		zap.String("schema state", stmtCase.schemaState.String()),
 		zap.Strings("pre-condition", stmtCase.preConditionStmts),

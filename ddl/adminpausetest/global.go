@@ -5,6 +5,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 )
 
+// Logger
 var Logger = logutil.BgLogger()
 
 // SubStates is a slice of SchemaState.

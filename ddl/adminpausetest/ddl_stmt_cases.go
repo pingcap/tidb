@@ -15,9 +15,10 @@
 package adminpausetest
 
 import (
+	"sync"
+
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
-	"sync"
 )
 
 type autoIncrsedID struct {
@@ -41,7 +42,7 @@ var ai autoIncrsedID
 // DDL case may be referenced for more than one test cases, before which `AdminPauseTestTable` should have been created.
 //
 // Definitions:
-//   - `global_id` indicates the sequence number among all cases, even in different case array
+//   - `globalID` indicates the sequence number among all cases, even in different case array
 //   - `stmt` is normally the case you care
 //   - `jobState`, refer to model.SchemaState, the target state of the DDL which we want to pause
 //   - `isJobPausable` indicates that the `admin pause` should return true within certain `AdminPauseResumeStmtCase` object
@@ -49,7 +50,7 @@ var ai autoIncrsedID
 //   - `rollbackStmts` should be run if necessary to clean the object created by the 'preConditionStmts' or `stmt`, no
 //     matter what is the result of `stmt`
 type AdminPauseResumeStmtCase struct {
-	global_id         int
+	globalID          int
 	stmt              string
 	schemaState       model.SchemaState
 	isJobPausable     bool
