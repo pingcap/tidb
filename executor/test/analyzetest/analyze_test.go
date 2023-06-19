@@ -243,6 +243,7 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 	value := fmt.Sprintf(`{"x":"%s"}`, strings.Repeat("x", mysql.MaxFieldVarCharLength))
 	tk.MustExec(fmt.Sprintf("insert into t values ('%s')", value))
 
+	tk.MustExec("set @@session.tidb_analyze_skip_column_types = ''")
 	tk.MustExec("analyze table t")
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
