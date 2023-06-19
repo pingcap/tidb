@@ -23,7 +23,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	"runtime/debug"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -1017,9 +1016,6 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) error {
 // 1. Got err when remove disk spill file.
 // 2. Some logical error like ref count of CTEStorage is less than 0.
 func resetCTEStorageMap(se sessionctx.Context) error {
-	if se.GetSessionVars().ConnectionID != 0 {
-		logutil.BgLogger().Info("gjt debug", zap.Any("stack", string(debug.Stack())), zap.Any("sql", se.GetSessionVars().StmtCtx.OriginalSQL))
-	}
 	tmp := se.GetSessionVars().StmtCtx.CTEStorageMap
 	if tmp == nil {
 		// Close() is already called, so no need to reset. Such as TraceExec.
