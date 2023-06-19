@@ -67,6 +67,9 @@ type postProcessMinimalTaskExecutor struct {
 
 func (e *postProcessMinimalTaskExecutor) Run(ctx context.Context) error {
 	mTask := e.mTask
+	failpoint.Inject("waitBeforePostProcess", func() {
+		time.Sleep(5 * time.Second)
+	})
 	return postProcess(ctx, mTask.taskMeta, &mTask.meta, mTask.logger)
 }
 

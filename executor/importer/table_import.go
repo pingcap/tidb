@@ -198,13 +198,16 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),
 		},
-		encTable:        tbl,
-		dbID:            e.DBID,
-		store:           e.dataStore,
-		kvStore:         kvStore,
-		logger:          e.logger,
-		regionSplitSize: int64(config.SplitRegionSize),
-		regionSplitKeys: int64(config.SplitRegionKeys),
+		encTable: tbl,
+		dbID:     e.DBID,
+		store:    e.dataStore,
+		kvStore:  kvStore,
+		logger:   e.logger,
+		// this is the value we use for 50TiB data parallel import.
+		// this might not be the optimal value.
+		// todo: use different default for single-node import and distributed import.
+		regionSplitSize: 2 * int64(config.SplitRegionSize),
+		regionSplitKeys: 2 * int64(config.SplitRegionKeys),
 		diskQuota:       adjustDiskQuota(int64(e.DiskQuota), dir, e.logger),
 		diskQuotaLock:   new(syncutil.RWMutex),
 	}, nil
@@ -584,8 +587,8 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 			if err := ti.backend.UnsafeImportAndReset(
 				ctx,
 				engine,
-				ti.regionSplitSize*int64(config.MaxSplitRegionSizeRatio),
-				ti.regionSplitKeys*int64(config.MaxSplitRegionSizeRatio),
+				int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio),
+				int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio),
 			); err != nil {
 				importErr = multierr.Append(importErr, err)
 			}
