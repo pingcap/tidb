@@ -115,8 +115,6 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 		return s.getError()
 	}
 	defer func() {
-		logutil.Logger(s.logCtx).Info("ywq test cleanup")
-
 		err := scheduler.CleanupSubtaskExecEnv(runCtx)
 		if err != nil {
 			logutil.Logger(s.logCtx).Error("cleanup subtask exec env failed", zap.Error(err))
@@ -139,7 +137,6 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 	}
 	for {
 		// check if any error occurs
-		logutil.Logger(s.logCtx).Info("ywq test check err", zap.Bool("concurrentSubtask", concurrentSubtask))
 		if err := s.getError(); err != nil {
 			break
 		}
@@ -225,10 +222,7 @@ func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler
 		}
 	}
 	if err := s.getError(); err != nil {
-		logutil.BgLogger().Info("ywq test update subtask")
-
 		if errors.Cause(err) == context.Canceled {
-			logutil.BgLogger().Info("ywq test update cancel")
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, "")
 		} else {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError().Error())
@@ -261,7 +255,6 @@ func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, m
 		s.onError(err)
 		return
 	}
-	logutil.Logger(s.logCtx).Info("ywq test run minimal task ")
 	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
 		if val.(bool) {
 			s.onError(errors.New("MockExecutorRunErr"))

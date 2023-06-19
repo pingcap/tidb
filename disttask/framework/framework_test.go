@@ -87,9 +87,7 @@ type testScheduler struct{}
 
 func (*testScheduler) InitSubtaskExecEnv(_ context.Context) error { return nil }
 
-func (t *testScheduler) CleanupSubtaskExecEnv(_ context.Context) error {
-	return nil
-}
+func (t *testScheduler) CleanupSubtaskExecEnv(_ context.Context) error { return nil }
 
 func (t *testScheduler) Rollback(_ context.Context) error { return nil }
 
@@ -110,7 +108,6 @@ type testSubtaskExecutor struct {
 }
 
 func (e *testSubtaskExecutor) Run(_ context.Context) error {
-	time.Sleep(1 * time.Second)
 	e.v.Add(1)
 	return nil
 }
