@@ -472,10 +472,12 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 			if sc.DiskTracker != nil {
 				sc.DiskTracker.DetachFromGlobalTracker()
 			}
-			cteErr := resetCTEStorageMap(a.Ctx)
-			if err == nil {
-				// Only overwrite err when it's nil.
-				err = cteErr
+			if handled {
+				cteErr := resetCTEStorageMap(a.Ctx)
+				if err == nil {
+					// Only overwrite err when it's nil.
+					err = cteErr
+				}
 			}
 		}
 	}()
