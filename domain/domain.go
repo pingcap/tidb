@@ -1253,15 +1253,16 @@ func (do *Domain) SetOnClose(onClose func()) {
 
 var systemSchemaCIStr = model.NewCIStr("mysql")
 
-func (do *Domain) gcSystemTable(tableName string, expiredDuration time.Duration) {
+func (do *Domain) gcSystemTable(tableName, colName string, expiredDuration time.Duration) {
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := model.NewCIStr(tableName)
-	tbInfo, err := do.InfoSchema().TableByName(systemSchemaCIStr, tbCIStr)
+	tbl, err := do.InfoSchema().TableByName(systemSchemaCIStr, tbCIStr)
 	if err != nil {
 		logutil.BgLogger().Info("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
 	}
-	tb, err := cache.NewPhysicalTable(systemSchemaCIStr, tbInfo.Meta(), model.NewCIStr(""))
+	tbInfo := tbl.Meta()
+	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, model.NewCIStr(""), tbInfo.FindPublicColumnByName(colName))
 	if err != nil {
 		logutil.BgLogger().Info("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
@@ -1332,9 +1333,9 @@ func (do *Domain) gcSystemTable(tableName string, expiredDuration time.Duration)
 func (do *Domain) runawayRecordFlushLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayRecordFlushLoop", nil, false)
 
-	quarantineRecordGCInterval := time.Second * 30
-	runawayRecordGCInterval := time.Hour * 24
-	runawayRecordExpiredDuration := time.Hour * 24 * 7
+	quarantineRecordGCInterval := time.Second * 15   //time.Minute * 15
+	runawayRecordGCInterval := time.Second * 15      //time.Hour * 24
+	runawayRecordExpiredDuration := time.Duration(0) //time.Hour * 24 * 7
 
 	// this times is used to batch flushing rocords, with 1s duration,
 	// we can guarantee a watch record can be seen by the user within 1s.
@@ -1384,7 +1385,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 			if len(quarantineRecordCh) == 0 || len(quarantineRecords) >= flushThrehold {
 				flushQuarantineRecords()
 				if owner.IsOwner() {
-					do.gcSystemTable("tidb_runaway_quarantined_watch", time.Duration(0))
+					do.gcSystemTable("tidb_runaway_quarantined_watch", "end_time", time.Duration(0))
 					quarantineRecordGCTicker.Reset(quarantineRecordGCInterval)
 				}
 			}
@@ -1399,11 +1400,11 @@ func (do *Domain) runawayRecordFlushLoop() {
 			}
 		case <-runawayRecordGCTicker.C:
 			if owner.IsOwner() {
-				do.gcSystemTable("tidb_runaway_queries", runawayRecordExpiredDuration)
+				do.gcSystemTable("tidb_runaway_queries", "time", runawayRecordExpiredDuration)
 			}
 		case <-quarantineRecordGCTicker.C:
 			if owner.IsOwner() {
-				do.gcSystemTable("tidb_runaway_quarantined_watch", time.Duration(0))
+				do.gcSystemTable("tidb_runaway_quarantined_watch", "end_time", time.Duration(0))
 			}
 		}
 	}
