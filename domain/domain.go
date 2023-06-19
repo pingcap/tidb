@@ -1426,10 +1426,6 @@ func (do *Domain) execRestrictedSQL(sql string, params []interface{}) ([]chunk.R
 	return r, err
 }
 
-func getFormatCurrentTimeParam() []interface{} {
-	return []interface{}{time.Now().UTC().Format(types.TimeFormat)}
-}
-
 func genRunawayQueriesStmt(records []*resourcegroup.RunawayRecord) (string, []interface{}) {
 	var builder strings.Builder
 	params := make([]interface{}, 0, len(records)*7)
