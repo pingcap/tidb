@@ -393,14 +393,20 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	cc.ctx.SetProcessInfo(sql, time.Now(), mysql.ComStmtExecute, 0)
 	rs := stmt.GetResultSet()
 	if rs == nil {
-		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
-			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
+		return errors.Annotate(mysql.NewErr(mysql.ErrSpCursorNotOpen), cc.preparedStmt2String(stmtID))
 	}
 
 	_, err = cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), int(fetchSize))
 	// if the iterator reached the end before writing result, we could say the `FETCH` command will send EOF
 	if rs.GetRowIterator().Current() == rs.GetRowIterator().End() {
 		stmt.SetCursorActive(false)
+
+		// also reset the statement
+		err = stmt.Reset()
+		if err != nil {
+			// The only case for this error is: the `rowContainer` has spilled the data in disk, but failed to close the file
+			return errors.Annotate(mysql.NewErr(mysql.ErrInternal), cc.preparedStmt2String(stmtID))
+		}
 	}
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
