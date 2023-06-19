@@ -183,7 +183,6 @@ go_library(
         "//util/cteutil",
         "//util/dbterror",
         "//util/dbterror/exeerrors",
-        "//util/dbutil",
         "//util/deadlockhistory",
         "//util/disk",
         "//util/etcd",

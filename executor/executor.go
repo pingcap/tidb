@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/dbutil"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -2477,7 +2476,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	var md5HandleAndIndexCol strings.Builder
 	md5HandleAndIndexCol.WriteString("crc32(md5(concat_ws(0x2, ")
 	for _, col := range pkCols {
-		md5HandleAndIndexCol.WriteString(dbutil.ColumnName(col))
+		md5HandleAndIndexCol.WriteString(ColumnName(col))
 		md5HandleAndIndexCol.WriteString(", ")
 	}
 	for offset, col := range idxInfo.Columns {
@@ -2486,7 +2485,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		if tblCol.IsGenerated() && !tblCol.GeneratedStored {
 			md5HandleAndIndexCol.WriteString(tblCol.GeneratedExprString)
 		} else {
-			md5HandleAndIndexCol.WriteString(dbutil.ColumnName(col.Name.O))
+			md5HandleAndIndexCol.WriteString(ColumnName(col.Name.O))
 		}
 		md5HandleAndIndexCol.WriteString(", 0x1)")
 		if offset != len(idxInfo.Columns)-1 {
@@ -2499,7 +2498,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	var md5Handle strings.Builder
 	md5Handle.WriteString("crc32(md5(concat_ws(0x2, ")
 	for i, col := range pkCols {
-		md5Handle.WriteString(dbutil.ColumnName(col))
+		md5Handle.WriteString(ColumnName(col))
 		if i != len(pkCols)-1 {
 			md5Handle.WriteString(", ")
 		}
@@ -2509,7 +2508,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 	handleColumnField := strings.Join(pkCols, ", ")
 	var indexColumnField strings.Builder
 	for offset, col := range idxInfo.Columns {
-		indexColumnField.WriteString(dbutil.ColumnName(col.Name.O))
+		indexColumnField.WriteString(ColumnName(col.Name.O))
 		if offset != len(idxInfo.Columns)-1 {
 			indexColumnField.WriteString(", ")
 		}
@@ -2551,8 +2550,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		}
 		checkOnce = true
 
-		tblQuery := fmt.Sprintf("select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s", dbutil.TableName(w.e.dbName, w.e.table.Meta().Name.String()), md5HandleAndIndexCol.String(), groupByKey, dbutil.TableName(w.e.dbName, w.e.table.Meta().Name.String()), whereKey, groupByKey)
-		idxQuery := fmt.Sprintf("select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s", md5HandleAndIndexCol.String(), groupByKey, dbutil.TableName(w.e.dbName, w.e.table.Meta().Name.String()), idxInfo.Name, whereKey, groupByKey)
+		tblQuery := fmt.Sprintf("select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s", TableName(w.e.dbName, w.e.table.Meta().Name.String()), md5HandleAndIndexCol.String(), groupByKey, TableName(w.e.dbName, w.e.table.Meta().Name.String()), whereKey, groupByKey)
+		idxQuery := fmt.Sprintf("select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s", md5HandleAndIndexCol.String(), groupByKey, TableName(w.e.dbName, w.e.table.Meta().Name.String()), idxInfo.Name, whereKey, groupByKey)
 
 		logutil.BgLogger().Info("fast check table by group", zap.String("table name", w.table.Meta().Name.String()), zap.String("index name", idxInfo.Name.String()), zap.Int("times", times), zap.Int("current offset", offset), zap.Int("current mod", mod), zap.String("table sql", tblQuery), zap.String("index sql", idxQuery))
 
@@ -2636,8 +2635,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 
 	if meetError {
 		groupByKey := fmt.Sprintf("((%s - %d) %% %d)", md5Handle.String(), offset, mod)
-		indexSQL := fmt.Sprintf("select %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), dbutil.TableName(w.e.dbName, w.e.table.Meta().Name.String()), idxInfo.Name, groupByKey, handleColumnField)
-		tableSQL := fmt.Sprintf("select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s = 0 order by %s", dbutil.TableName(w.e.dbName, w.e.table.Meta().Name.String()), handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), dbutil.TableName(w.e.dbName, w.e.table.Meta().Name.String()), groupByKey, handleColumnField)
+		indexSQL := fmt.Sprintf("select %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s", handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), TableName(w.e.dbName, w.e.table.Meta().Name.String()), idxInfo.Name, groupByKey, handleColumnField)
+		tableSQL := fmt.Sprintf("select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s = 0 order by %s", TableName(w.e.dbName, w.e.table.Meta().Name.String()), handleColumnField, indexColumnField.String(), md5HandleAndIndexCol.String(), TableName(w.e.dbName, w.e.table.Meta().Name.String()), groupByKey, handleColumnField)
 
 		idxRow, err := queryToRow(se, indexSQL)
 		if err != nil {
@@ -2817,4 +2816,18 @@ func (e *FastCheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	return *p
+}
+
+// TableName returns `schema`.`table`
+func TableName(schema, table string) string {
+	return fmt.Sprintf("`%s`.`%s`", escapeName(schema), escapeName(table))
+}
+
+// ColumnName returns `column`
+func ColumnName(column string) string {
+	return fmt.Sprintf("`%s`", escapeName(column))
+}
+
+func escapeName(name string) string {
+	return strings.ReplaceAll(name, "`", "``")
 }
