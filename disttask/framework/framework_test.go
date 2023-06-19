@@ -194,9 +194,10 @@ func DispatchAndFailTask(taskKey string, t *testing.T, v *atomic.Int64) {
 
 		time.Sleep(time.Second)
 		task, err = mgr.GetGlobalTaskByID(taskID)
+
 		require.NoError(t, err)
 		require.NotNil(t, task)
-		logutil.BgLogger().Info("task state", zap.String("state", task.State))
+		logutil.BgLogger().Info("task state", zap.String("state", task.State), zap.Int64("taskId", task.ID))
 		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
 			break
 		}

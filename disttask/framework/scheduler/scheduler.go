@@ -199,6 +199,7 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 				cnt++
 				// last minimal task should mark subtask as finished
 				if cnt == len(minimalTasks) {
+					logutil.BgLogger().Info("ywq test onsubtask")
 					s.onSubtaskFinished(ctx, scheduler, subtask)
 					s.subtaskWg.Done()
 				}
@@ -217,7 +218,11 @@ func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler
 		}
 	}
 	if err := s.getError(); err != nil {
+		logutil.BgLogger().Info("ywq test update subtask")
+
 		if errors.Cause(err) == context.Canceled {
+			logutil.BgLogger().Info("ywq test update cancel")
+
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, "")
 		} else {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError().Error())
