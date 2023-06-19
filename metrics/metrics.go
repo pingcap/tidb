@@ -186,6 +186,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DbStmtNodeCounter)
 	prometheus.MustRegister(ExecPhaseDuration)
 	prometheus.MustRegister(OngoingTxnDurationHistogram)
+	prometheus.MustRegister(MppCoordinatorCounter)
 	prometheus.MustRegister(StoreQueryFeedbackCounter)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionDuration)

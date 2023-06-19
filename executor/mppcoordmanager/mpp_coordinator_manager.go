@@ -86,7 +86,7 @@ func (m *MPPCoordinatorManager) detectAndDelete() {
 	m.mu.Unlock()
 
 	for _, deletedID := range outOfTimeIDs {
-		// Todo: add and update related metrics, and add uts for detect logic
+		metrics.MppCoordinatorCounterOverTimeCounter.Inc()
 		logutil.BgLogger().Error("Delete MppCoordinator due to OutOfTime",
 			zap.Uint64("QueryID", deletedID.MPPQueryID.LocalQueryID),
 			zap.Uint64("QueryTs", deletedID.MPPQueryID.QueryTs))

@@ -127,8 +127,9 @@ var (
 	PhaseDurationObserverMap         map[string]prometheus.Observer
 	PhaseDurationObserverMapInternal map[string]prometheus.Observer
 
-	MppCoordinatorCounterTotalCounter               prometheus.Counter
-	MppCoordinatorCounterReportNotReceived            prometheus.Counter
+	MppCoordinatorCounterTotalCounter      prometheus.Counter
+	MppCoordinatorCounterOverTimeCounter   prometheus.Counter
+	MppCoordinatorCounterReportNotReceived prometheus.Counter
 )
 
 func init() {
@@ -215,6 +216,7 @@ func InitMetricsVars() {
 	TransactionDurationOptimisticRollbackGeneral = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback, metrics.LblGeneral)
 
 	MppCoordinatorCounterTotalCounter = metrics.MppCoordinatorCounter.WithLabelValues("total")
+	MppCoordinatorCounterOverTimeCounter = metrics.MppCoordinatorCounter.WithLabelValues("overTime")
 	MppCoordinatorCounterReportNotReceived = metrics.MppCoordinatorCounter.WithLabelValues("reportNotRcv")
 }
 
