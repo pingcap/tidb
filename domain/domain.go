@@ -66,9 +66,12 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -1248,13 +1251,96 @@ func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose
 }
 
+var systemSchemaCIStr = model.NewCIStr("mysql")
+
+func (do *Domain) gcSystemTable(tableName string, expiredDuration time.Duration) {
+	expiredTime := time.Now().Add(-expiredDuration)
+	tbCIStr := model.NewCIStr(tableName)
+	tbInfo, err := do.InfoSchema().TableByName(systemSchemaCIStr, tbCIStr)
+	if err != nil {
+		logutil.BgLogger().Info("delete system table failed", zap.String("table", tableName), zap.Error(err))
+		return
+	}
+	tb, err := cache.NewPhysicalTable(systemSchemaCIStr, tbInfo.Meta(), model.NewCIStr(""))
+	if err != nil {
+		logutil.BgLogger().Info("delete system table failed", zap.String("table", tableName), zap.Error(err))
+		return
+	}
+	generator, err := sqlbuilder.NewScanQueryGenerator(tb, expiredTime, nil, nil)
+	if err != nil {
+		logutil.BgLogger().Info("delete system table failed", zap.String("table", tableName), zap.Error(err))
+		return
+	}
+	var leftRows [][]types.Datum
+	for {
+		sql := ""
+		limit := int(variable.TTLScanBatchSize.Load())
+		if sql, err = generator.NextSQL(leftRows, limit); err != nil {
+			logutil.BgLogger().Info("delete system table failed", zap.String("table", tableName), zap.Error(err))
+			return
+		}
+		// to remove
+		logutil.BgLogger().Info("gcRunawayRecords", zap.String("next sql", sql))
+		if sql == "" {
+			return
+		}
+
+		rows, sqlErr := do.execRestrictedSQL(sql, nil)
+		if sqlErr != nil {
+			logutil.BgLogger().Info("delete system table failed", zap.String("table", tableName), zap.Error(err))
+			return
+		}
+		leftRows = make([][]types.Datum, len(rows))
+		for i, row := range rows {
+			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
+		}
+		if len(rows) == 0 {
+			return
+		}
+
+		for len(leftRows) > 0 {
+			maxBatch := 100
+			var delBatch [][]types.Datum
+			if len(leftRows) < maxBatch {
+				delBatch = leftRows
+				leftRows = nil
+			} else {
+				delBatch = leftRows[0:maxBatch]
+				leftRows = leftRows[maxBatch:]
+			}
+
+			sql, err := sqlbuilder.BuildDeleteSQL(tb, delBatch, expiredTime)
+			if err != nil {
+				logutil.BgLogger().Warn(
+					"build delete SQL failed when deleting system table",
+					zap.Error(err),
+					zap.String("table", tb.Schema.O+"."+tb.Name.O),
+				)
+				return
+			}
+
+			_, err = do.execRestrictedSQL(sql, nil)
+			if err != nil {
+				logutil.BgLogger().Warn(
+					"delete SQL failed when deleting system table", zap.Error(err), zap.String("SQL", sql),
+				)
+			}
+		}
+	}
+}
+
 func (do *Domain) runawayRecordFlushLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayRecordFlushLoop", nil, false)
+
+	quarantineRecordGCInterval := time.Second * 30
+	runawayRecordGCInterval := time.Hour * 24
+	runawayRecordExpiredDuration := time.Hour * 24 * 7
+
 	// this times is used to batch flushing rocords, with 1s duration,
 	// we can guarantee a watch record can be seen by the user within 1s.
 	runawayRecordFluashTimer := time.NewTimer(time.Second)
-	runawayRecordGCTimer := time.NewTimer(time.Hour * 12)
-	quarantineRecordGCTimer := time.NewTimer(time.Minute * 30)
+	runawayRecordGCTicker := time.NewTicker(runawayRecordGCInterval)
+	quarantineRecordGCTicker := time.NewTicker(quarantineRecordGCInterval)
 
 	fired := false
 	recordCh := do.RunawayManager().RunawayRecordChan()
@@ -1268,7 +1354,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 			return
 		}
 		sql, params := genRunawayQueriesStmt(records)
-		if err := do.execFlushSQL(sql, params); err != nil {
+		if _, err := do.execRestrictedSQL(sql, params); err != nil {
 			logutil.BgLogger().Info("flush runaway records failed", zap.Error(err), zap.Int("count", len(records)))
 		}
 		records = records[:0]
@@ -1278,26 +1364,12 @@ func (do *Domain) runawayRecordFlushLoop() {
 			return
 		}
 		sql, params := genQuarantineQueriesStmt(quarantineRecords)
-		if err := do.execFlushSQL(sql, params); err != nil {
+		if _, err := do.execRestrictedSQL(sql, params); err != nil {
 			logutil.BgLogger().Info("flush quarantine records failed", zap.Error(err), zap.Int("count", len(quarantineRecords)))
 		}
 		quarantineRecords = quarantineRecords[:0]
 	}
-	gcQuarantineRecords := func() {
-		sql := "DELETE FROM mysql.tidb_runaway_quarantined_watch WHERE end_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)"
-		params := getFormatCurrentTimeParam()
-		if err := do.execFlushSQL(sql, params); err != nil {
-			logutil.BgLogger().Info("delete quarantine records failed", zap.Error(err))
-		}
-	}
-	gcRunawayRecords := func() {
-		sql := "DELETE FROM mysql.tidb_runaway_queries WHERE time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)"
-		params := getFormatCurrentTimeParam()
-		if err := do.execFlushSQL(sql, params); err != nil {
-			logutil.BgLogger().Info("delete runaway records failed", zap.Error(err))
-		}
-	}
-
+	owner := do.DDL().OwnerManager()
 	for {
 		select {
 		case <-do.exit:
@@ -1311,7 +1383,10 @@ func (do *Domain) runawayRecordFlushLoop() {
 			// flush as soon as possible.
 			if len(quarantineRecordCh) == 0 || len(quarantineRecords) >= flushThrehold {
 				flushQuarantineRecords()
-				gcQuarantineRecords()
+				if owner.IsOwner() {
+					do.gcSystemTable("tidb_runaway_quarantined_watch", time.Duration(0))
+					quarantineRecordGCTicker.Reset(quarantineRecordGCInterval)
+				}
 			}
 		case r := <-recordCh:
 			records = append(records, r)
@@ -1322,28 +1397,32 @@ func (do *Domain) runawayRecordFlushLoop() {
 				// meet a new record, reset the timer.
 				runawayRecordFluashTimer.Reset(time.Second)
 			}
-		case <-runawayRecordGCTimer.C:
-			gcRunawayRecords()
-		case <-quarantineRecordGCTimer.C:
-			gcQuarantineRecords()
+		case <-runawayRecordGCTicker.C:
+			if owner.IsOwner() {
+				do.gcSystemTable("tidb_runaway_queries", runawayRecordExpiredDuration)
+			}
+		case <-quarantineRecordGCTicker.C:
+			if owner.IsOwner() {
+				do.gcSystemTable("tidb_runaway_quarantined_watch", time.Duration(0))
+			}
 		}
 	}
 }
 
-func (do *Domain) execFlushSQL(sql string, params []interface{}) error {
+func (do *Domain) execRestrictedSQL(sql string, params []interface{}) ([]chunk.Row, error) {
 	se, err := do.sysSessionPool.Get()
 	defer func() {
 		do.sysSessionPool.Put(se)
 	}()
 	if err != nil {
-		return errors.Annotate(err, "get session failed")
+		return nil, errors.Annotate(err, "get session failed")
 	}
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+	r, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
 		sql, params...,
 	)
-	return err
+	return r, err
 }
 
 func getFormatCurrentTimeParam() []interface{} {
