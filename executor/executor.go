@@ -2480,14 +2480,12 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask) {
 		md5HandleAndIndexCol.WriteString(", ")
 	}
 	for offset, col := range idxInfo.Columns {
-		md5HandleAndIndexCol.WriteString("ifnull(")
 		tblCol := w.table.Meta().Columns[col.Offset]
 		if tblCol.IsGenerated() && !tblCol.GeneratedStored {
 			md5HandleAndIndexCol.WriteString(tblCol.GeneratedExprString)
 		} else {
 			md5HandleAndIndexCol.WriteString(ColumnName(col.Name.O))
 		}
-		md5HandleAndIndexCol.WriteString(", 0x1)")
 		if offset != len(idxInfo.Columns)-1 {
 			md5HandleAndIndexCol.WriteString(", ")
 		}
