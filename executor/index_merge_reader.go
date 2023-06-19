@@ -601,7 +601,7 @@ type partialTableWorker struct {
 // If the schema from planner part contains ExtraPhysTblID,
 // we need create a partitionHandle, otherwise create a normal handle.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
-func (w *partialTableWorker) needPartitionHandle() bool {
+func (w *partialTableWorker) needPartitionHandle() (bool, error) {
 	cols := w.tableReader.(*TableReaderExecutor).plans[0].Schema().Columns
 	outputOffsets := w.tableReader.(*TableReaderExecutor).dagPB.OutputOffsets
 	col := cols[outputOffsets[len(outputOffsets)-1]]
@@ -609,11 +609,11 @@ func (w *partialTableWorker) needPartitionHandle() bool {
 	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
 	// no ExtraPidColID here, because a primary key couln't be a global index.
 	ret := col.ID == model.ExtraPhysTblID
-	// shouldn't happen
+
 	if needPartitionHandle != ret {
-		panic(fmt.Sprintf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret))
+		return ret, errors.Errorf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret)
 	}
-	return ret
+	return ret, nil
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask,
@@ -690,7 +690,11 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				}
 			}
 			var handle kv.Handle
-			if w.needPartitionHandle() {
+			ok, err1 := w.needPartitionHandle()
+			if err1 != nil {
+				return nil, nil, err1
+			}
+			if ok {
 				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
 			} else {
 				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
@@ -1456,18 +1460,18 @@ func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexM
 // If the schema from planner part contains ExtraPidColID or ExtraPhysTblID,
 // we need create a partitionHandle, otherwise create a normal handle.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
-func (w *partialIndexWorker) needPartitionHandle() bool {
+func (w *partialIndexWorker) needPartitionHandle() (bool, error) {
 	cols := w.plan[0].Schema().Columns
 	outputOffsets := w.dagPB.OutputOffsets
 	col := cols[outputOffsets[len(outputOffsets)-1]]
 
 	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
 	ret := col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
-	// shouldn't happen
+
 	if needPartitionHandle != ret {
-		panic(fmt.Sprintf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret))
+		return ret, errors.Errorf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret)
 	}
-	return ret
+	return ret, nil
 }
 
 func (w *partialIndexWorker) fetchHandles(
@@ -1517,7 +1521,7 @@ func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannercore.Handle
 		}
 	}
 	tps = append(tps, handleCols.GetFieldsTypes()...)
-	if w.needPartitionHandle() {
+	if ok, _ := w.needPartitionHandle(); ok {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 	return tps
@@ -1563,7 +1567,11 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 				}
 			}
 			var handle kv.Handle
-			if w.needPartitionHandle() {
+			ok, err1 := w.needPartitionHandle()
+			if err1 != nil {
+				return nil, nil, err1
+			}
+			if ok {
 				handle, err = handleCols.BuildPartitionHandleFromIndexRow(chk.GetRow(i))
 			} else {
 				handle, err = handleCols.BuildHandleFromIndexRow(chk.GetRow(i))

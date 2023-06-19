@@ -623,7 +623,7 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	return nil
 }
 
-func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) bool {
+func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {
 	var col *expression.Column
 	var needPartitionHandle, ret bool
 	if tp == getHandleFromIndex {
@@ -642,12 +642,11 @@ func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) bool {
 		ret = col.ID == model.ExtraPhysTblID
 	}
 
-	// shouldn't happen
 	// TODO: fix global index related bugs later
 	if needPartitionHandle != ret && !e.index.Global {
-		panic(fmt.Sprintf("Internal error, needPartitionHandle(%t) != ret(%t), tp(%d)", needPartitionHandle, ret, tp))
+		return ret, errors.Errorf("Internal error, needPartitionHandle(%t) != ret(%t), tp(%d)", needPartitionHandle, ret, tp)
 	}
-	return ret
+	return ret, nil
 }
 
 func (e *IndexLookUpExecutor) isCommonHandle() bool {
@@ -671,7 +670,7 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	} else {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
-	if e.needPartitionHandle(getHandleFromIndex) {
+	if ok, _ := e.needPartitionHandle(getHandleFromIndex); ok {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 	return tps
@@ -1053,7 +1052,11 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	numColsWithoutPid := chk.NumCols()
-	if w.idxLookup.needPartitionHandle(getHandleFromIndex) {
+	ok, err := w.idxLookup.needPartitionHandle(getHandleFromIndex)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ok {
 		numColsWithoutPid = numColsWithoutPid - 1
 	}
 	handleOffset := make([]int, 0, len(w.idxLookup.handleCols))
@@ -1244,7 +1247,11 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			handle = kv.IntHandle(row.GetInt64(handleIdx[0]))
 		}
 	}
-	if e.needPartitionHandle(tp) {
+	ok, err := e.needPartitionHandle(tp)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		pid := row.GetInt64(row.Len() - 1)
 		handle = kv.NewPartitionHandle(pid, handle)
 	}
