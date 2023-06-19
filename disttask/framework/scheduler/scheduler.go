@@ -256,10 +256,10 @@ func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, m
 			logutil.Logger(s.logCtx).Info("ywq test err")
 			s.onError(context.Canceled)
 		}
-	}
+	})
 	if err = executor.Run(minimalTaskCtx); err != nil {
 		s.onError(err)
-	})
+	}
 }
 
 // Rollback rollbacks the scheduler task.
