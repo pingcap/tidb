@@ -1567,6 +1567,7 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 	jobWg.Wait()
 	workerCancel()
 	firstErr.Set(workGroup.Wait())
+	firstErr.Set(ctx.Err())
 	return firstErr.Get()
 }
 
