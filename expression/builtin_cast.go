@@ -296,7 +296,11 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		if args[0].GetType().GetType() == mysql.TypeBit {
 			bf.tp.SetFlen((args[0].GetType().GetFlen() + 7) / 8)
 		} else if bf.tp.GetFlen() == types.UnspecifiedLength {
-			bf.tp.SetFlen(mysql.MaxIntWidth)
+			if args[0].GetType().GetType() == mysql.TypeLong {
+				bf.tp.SetFlen(mysql.MaxIntWidth)
+			} else {
+				bf.tp.SetFlen(args[0].GetType().GetFlen())
+			}
 		}
 		sig = &builtinCastIntAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsString)
