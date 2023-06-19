@@ -107,6 +107,8 @@ var (
 	ErrTempTableFull = dbterror.ClassTable.NewStd(mysql.ErrRecordFileFull)
 	// ErrOptOnCacheTable returns when exec unsupported opt at cache mode
 	ErrOptOnCacheTable = dbterror.ClassDDL.NewStd(mysql.ErrOptOnCacheTable)
+	// ErrCheckConstraintViolated return when check constraint is violated.
+	ErrCheckConstraintViolated = dbterror.ClassTable.NewStd(mysql.ErrCheckConstraintViolated)
 )
 
 // RecordIterFunc is used for low-level record iteration.

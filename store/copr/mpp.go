@@ -312,19 +312,17 @@ func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, 
 		}
 	})
 
-	if err == nil {
-		for _, s := range stores {
-			if !tikv.LabelFilterNoTiFlashWriteNode(s.GetLabels()) {
-				continue
-			}
-			cnt += 1
-		}
-	} else {
+	if err != nil {
 		// always to update cache next time
 		atomic.StoreInt32(&c.initFlag, 0)
 		return 0, err
 	}
-
+	for _, s := range stores {
+		if !tikv.LabelFilterNoTiFlashWriteNode(s.GetLabels()) {
+			continue
+		}
+		cnt += 1
+	}
 	failpoint.Inject("mppStoreCountSetMPPCnt", func(value failpoint.Value) {
 		cnt = value.(int)
 	})

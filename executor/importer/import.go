@@ -26,6 +26,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -37,6 +38,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	pformat "github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -54,8 +56,8 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
-	"k8s.io/utils/strings/slices"
 )
 
 const (
@@ -68,45 +70,47 @@ const (
 	// DataFormatParquet represents the data source file of IMPORT INTO is parquet.
 	DataFormatParquet = "parquet"
 
+	// DefaultDiskQuota is the default disk quota for IMPORT INTO
+	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
+
 	// 0 means no limit
 	unlimitedWriteSpeed = config.ByteSize(0)
-	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
 
-	characterSetOption        = "character_set"
-	fieldsTerminatedByOption  = "fields_terminated_by"
-	fieldsEnclosedByOption    = "fields_enclosed_by"
-	fieldsEscapedByOption     = "fields_escaped_by"
-	fieldsDefinedNullByOption = "fields_defined_null_by"
-	linesTerminatedByOption   = "lines_terminated_by"
-	skipRowsOption            = "skip_rows"
-	splitFileOption           = "split_file"
-	diskQuotaOption           = "disk_quota"
-	threadOption              = "thread"
-	maxWriteSpeedOption       = "max_write_speed"
-	checksumTableOption       = "checksum_table"
-	analyzeTableOption        = "analyze_table"
-	recordErrorsOption        = "record_errors"
-	detachedOption            = plannercore.DetachedOption
+	characterSetOption          = "character_set"
+	fieldsTerminatedByOption    = "fields_terminated_by"
+	fieldsEnclosedByOption      = "fields_enclosed_by"
+	fieldsEscapedByOption       = "fields_escaped_by"
+	fieldsDefinedNullByOption   = "fields_defined_null_by"
+	linesTerminatedByOption     = "lines_terminated_by"
+	skipRowsOption              = "skip_rows"
+	splitFileOption             = "split_file"
+	diskQuotaOption             = "disk_quota"
+	threadOption                = "thread"
+	maxWriteSpeedOption         = "max_write_speed"
+	checksumTableOption         = "checksum_table"
+	recordErrorsOption          = "record_errors"
+	detachedOption              = "detached"
+	disableTiKVImportModeOption = "disable_tikv_import_mode"
 )
 
 var (
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
-		characterSetOption:        true,
-		fieldsTerminatedByOption:  true,
-		fieldsEnclosedByOption:    true,
-		fieldsEscapedByOption:     true,
-		fieldsDefinedNullByOption: true,
-		linesTerminatedByOption:   true,
-		skipRowsOption:            true,
-		splitFileOption:           false,
-		diskQuotaOption:           true,
-		threadOption:              true,
-		maxWriteSpeedOption:       true,
-		checksumTableOption:       true,
-		analyzeTableOption:        true,
-		recordErrorsOption:        true,
-		detachedOption:            false,
+		characterSetOption:          true,
+		fieldsTerminatedByOption:    true,
+		fieldsEnclosedByOption:      true,
+		fieldsEscapedByOption:       true,
+		fieldsDefinedNullByOption:   true,
+		linesTerminatedByOption:     true,
+		skipRowsOption:              true,
+		splitFileOption:             false,
+		diskQuotaOption:             true,
+		threadOption:                true,
+		maxWriteSpeedOption:         true,
+		checksumTableOption:         true,
+		recordErrorsOption:          true,
+		detachedOption:              false,
+		disableTiKVImportModeOption: false,
 	}
 
 	csvOnlyOptions = map[string]struct{}{
@@ -171,20 +175,25 @@ type Plan struct {
 	plannercore.LineFieldsInfo
 	IgnoreLines uint64
 
-	DiskQuota         config.ByteSize
-	Checksum          config.PostOpLevel
-	Analyze           config.PostOpLevel
-	ThreadCnt         int64
-	MaxWriteSpeed     config.ByteSize
-	SplitFile         bool
-	MaxRecordedErrors int64
-	Detached          bool
+	DiskQuota             config.ByteSize
+	Checksum              config.PostOpLevel
+	ThreadCnt             int64
+	MaxWriteSpeed         config.ByteSize
+	SplitFile             bool
+	MaxRecordedErrors     int64
+	Detached              bool
+	DisableTiKVImportMode bool
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
 
 	// todo: remove it when load data code is reverted.
 	InImportInto bool
+	// only initialized for IMPORT INTO, used when creating job.
+	Parameters *ImportParameters `json:"-"`
+	// the user who executes the statement, in the form of user@host
+	// only initialized for IMPORT INTO
+	User string `json:"-"`
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -345,8 +354,12 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 		InImportInto:           true,
+		User:                   userSctx.GetSessionVars().User.String(),
 	}
 	if err := p.initOptions(userSctx, plan.Options); err != nil {
+		return nil, err
+	}
+	if err := p.initParameters(plan); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -447,19 +460,19 @@ func (e *LoadDataController) checkFieldParams() error {
 }
 
 func (p *Plan) initDefaultOptions() {
-	threadCnt := runtime.NumCPU()
-	if p.Format == DataFormatParquet {
-		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
-	}
+	threadCnt := runtime.GOMAXPROCS(0)
+	failpoint.Inject("mockNumCpu", func(val failpoint.Value) {
+		threadCnt = val.(int)
+	})
+	threadCnt = int(math.Max(1, float64(threadCnt)*0.5))
 
-	_ = p.DiskQuota.UnmarshalText([]byte("50GiB")) // todo confirm with pm
 	p.Checksum = config.OpLevelRequired
-	p.Analyze = config.OpLevelOptional
 	p.ThreadCnt = int64(threadCnt)
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
 	p.Detached = false
+	p.DisableTiKVImportMode = false
 
 	v := "utf8mb4"
 	p.Charset = &v
@@ -603,15 +616,6 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
-	if opt, ok := specifiedOptions[analyzeTableOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = p.Analyze.FromStringValue(v); err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
 		vInt, err := optAsInt64(opt)
 		if err != nil || vInt < -1 {
@@ -623,21 +627,65 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 	if _, ok := specifiedOptions[detachedOption]; ok {
 		p.Detached = true
 	}
+	if _, ok := specifiedOptions[disableTiKVImportModeOption]; ok {
+		p.DisableTiKVImportMode = true
+	}
 
 	p.adjustOptions()
 	return nil
 }
 
 func (p *Plan) adjustOptions() {
-	if p.DiskQuota < minDiskQuota {
-		p.DiskQuota = minDiskQuota
-	}
 	// max value is cpu-count
-	numCPU := int64(runtime.NumCPU())
+	numCPU := int64(runtime.GOMAXPROCS(0))
 	if p.ThreadCnt > numCPU {
 		log.L().Info("IMPORT INTO thread count is larger than cpu-count, set to cpu-count")
 		p.ThreadCnt = numCPU
 	}
+}
+
+func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
+	redactURL := ast.RedactURL(p.Path)
+	var columnsAndVars, setClause string
+	var sb strings.Builder
+	formatCtx := pformat.NewRestoreCtx(pformat.DefaultRestoreFlags, &sb)
+	if len(plan.ColumnsAndUserVars) > 0 {
+		sb.WriteString("(")
+		for i, col := range plan.ColumnsAndUserVars {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			_ = col.Restore(formatCtx)
+		}
+		sb.WriteString(")")
+		columnsAndVars = sb.String()
+	}
+	if len(plan.ColumnAssignments) > 0 {
+		sb.Reset()
+		for i, assign := range plan.ColumnAssignments {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			_ = assign.Restore(formatCtx)
+		}
+		setClause = sb.String()
+	}
+	optionMap := make(map[string]interface{}, len(plan.Options))
+	for _, opt := range plan.Options {
+		if opt.Value != nil {
+			optionMap[opt.Name] = opt.Value.String()
+		} else {
+			optionMap[opt.Name] = nil
+		}
+	}
+	p.Parameters = &ImportParameters{
+		ColumnsAndVars: columnsAndVars,
+		SetClause:      setClause,
+		FileLocation:   redactURL,
+		Format:         p.Format,
+		Options:        optionMap,
+	}
+	return nil
 }
 
 // initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable
@@ -1062,6 +1110,7 @@ type JobImportResult struct {
 	LastInsertID uint64
 	Affected     uint64
 	Warnings     []stmtctx.SQLWarn
+	ColSizeMap   map[int64]int64
 }
 
 // JobImporter is the interface for importing a job.

@@ -14,6 +14,9 @@
 package ast
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
@@ -2160,11 +2163,14 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
 		case ResourceBurstableOpiton:
-			ctx.WriteKeyWord("BURSTABLE")
+			ctx.WriteKeyWord("BURSTABLE ")
+			ctx.WritePlain("= ")
+			ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", n.BoolValue)))
 		case ResourceGroupRunaway:
+			ctx.WritePlain("QUERY_LIMIT ")
+			ctx.WritePlain("= ")
 			if len(n.ResourceGroupRunawayOptionList) > 0 {
-				ctx.WriteKeyWord("QUERY_LIMIT")
-				ctx.WritePlain(" = (")
+				ctx.WritePlain("(")
 				for i, option := range n.ResourceGroupRunawayOptionList {
 					if i > 0 {
 						ctx.WritePlain(" ")
@@ -2174,6 +2180,8 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 					}
 				}
 				ctx.WritePlain(")")
+			} else {
+				ctx.WritePlain("NULL")
 			}
 		default:
 			return errors.Errorf("invalid ResourceGroupOption: %d", n.Tp)
@@ -2203,13 +2211,13 @@ func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 	fn := func() error {
 		switch n.Tp {
 		case RunawayRule:
-			ctx.WriteKeyWord("EXEC_ELAPSED_IN_SEC ")
+			ctx.WriteKeyWord("EXEC_ELAPSED ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
 		case RunawayAction:
 			ctx.WriteKeyWord("ACTION ")
 			ctx.WritePlain("= ")
-			ctx.WriteKeyWord(model.RunawayActionValueToName(n.IntValue))
+			ctx.WriteKeyWord(model.RunawayActionType(n.IntValue).String())
 		case RunawayWatch:
 			ctx.WriteKeyWord("WATCH ")
 			ctx.WritePlain("= ")
@@ -2969,6 +2977,7 @@ type AlterTableSpec struct {
 type TiFlashReplicaSpec struct {
 	Count  uint64
 	Labels []string
+	Hypo   bool // hypothetical replica is used by index advisor
 }
 
 // AlterOrderItem represents an item in order by at alter table stmt.
@@ -4518,6 +4527,24 @@ func (n *AlterPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*AlterPlacementPolicyStmt)
 	return v.Leave(n)
+}
+
+func CheckAppend(ops []*ResourceGroupOption, newOp *ResourceGroupOption) bool {
+	for _, op := range ops {
+		if op.Tp == newOp.Tp {
+			return false
+		}
+	}
+	return true
+}
+
+func CheckRunawayAppend(ops []*ResourceGroupRunawayOption, newOp *ResourceGroupRunawayOption) bool {
+	for _, op := range ops {
+		if op.Tp == newOp.Tp {
+			return false
+		}
+	}
+	return true
 }
 
 // AlterResourceGroupStmt is a statement to alter placement policy option.

@@ -351,7 +351,7 @@ var tokenMap = map[string]int{
 	"EVENTS":                   events,
 	"EVOLVE":                   evolve,
 	"EXACT":                    exact,
-	"EXEC_ELAPSED_IN_SEC":      execElapsedInSec,
+	"EXEC_ELAPSED":             execElapsed,
 	"EXCEPT":                   except,
 	"EXCHANGE":                 exchange,
 	"EXCLUSIVE":                exclusive,

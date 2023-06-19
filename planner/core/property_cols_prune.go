@@ -123,11 +123,11 @@ func (lt *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, _ ...[][]
 func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {
 	cols := make([]*expression.Column, 0, len(items))
 	for _, item := range items {
-		if col, ok := item.Expr.(*expression.Column); ok {
-			cols = append(cols, col)
-		} else {
+		col, ok := item.Expr.(*expression.Column)
+		if !ok {
 			break
 		}
+		cols = append(cols, col)
 	}
 	return cols
 }
@@ -154,11 +154,10 @@ func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, chil
 		newChildProperty := make([]*expression.Column, 0, len(childProperty))
 		for _, col := range childProperty {
 			pos := tmpSchema.ColumnIndex(col)
-			if pos >= 0 {
-				newChildProperty = append(newChildProperty, newCols[pos])
-			} else {
+			if pos < 0 {
 				break
 			}
+			newChildProperty = append(newChildProperty, newCols[pos])
 		}
 		if len(newChildProperty) != 0 {
 			newProperties = append(newProperties, newChildProperty)

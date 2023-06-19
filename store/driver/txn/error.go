@@ -46,7 +46,8 @@ func genKeyExistsError(name string, value string, err error) error {
 	return kv.ErrKeyExists.FastGenByArgs(value, name)
 }
 
-func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.TableInfo) error {
+// ExtractKeyExistsErrFromHandle returns a ErrKeyExists error from a handle key.
+func ExtractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.TableInfo) error {
 	name := tblInfo.Name.String() + ".PRIMARY"
 	_, handle, err := tablecodec.DecodeRecordKey(key)
 	if err != nil {
@@ -109,7 +110,8 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
 }
 
-func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.TableInfo, indexID int64) error {
+// ExtractKeyExistsErrFromIndex returns a ErrKeyExists error from a index key.
+func ExtractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.TableInfo, indexID int64) error {
 	var idxInfo *model.IndexInfo
 	for _, index := range tblInfo.Indices {
 		if index.ID == indexID {

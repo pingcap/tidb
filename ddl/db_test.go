@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
@@ -348,19 +347,6 @@ func TestIssue23473(t *testing.T) {
 	require.True(t, mysql.HasNoDefaultValueFlag(tbl.Cols()[0].GetFlag()))
 }
 
-func TestDropCheck(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists drop_check")
-	tk.MustExec("create table drop_check (pk int primary key)")
-	defer tk.MustExec("drop table if exists drop_check")
-	tk.MustExec("alter table drop_check drop check crcn")
-	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8231|DROP CHECK is not supported"))
-}
-
 func TestAlterOrderBy(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
@@ -501,34 +487,6 @@ func TestSelectInViewFromAnotherDB(t *testing.T) {
 	tk.MustExec("create sql security invoker view v as select * from test.t")
 	tk.MustExec("use test")
 	tk.MustExec("select test_db2.v.a from test_db2.v")
-}
-
-func TestAddConstraintCheck(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists add_constraint_check")
-	tk.MustExec("create table add_constraint_check (pk int primary key, a int)")
-	defer tk.MustExec("drop table if exists add_constraint_check")
-	tk.MustExec("alter table add_constraint_check add constraint crn check (a > 1)")
-	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8231|ADD CONSTRAINT CHECK is not supported"))
-}
-
-func TestCreateTableIgnoreCheckConstraint(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists table_constraint_check")
-	tk.MustExec("CREATE TABLE admin_user (enable bool, CHECK (enable IN (0, 1)));")
-	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8231|CONSTRAINT CHECK is not supported"))
-	tk.MustQuery("show create table admin_user").Check(testkit.RowsWithSep("|", ""+
-		"admin_user CREATE TABLE `admin_user` (\n"+
-		"  `enable` tinyint(1) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestAutoConvertBlobTypeByLength(t *testing.T) {
@@ -1554,11 +1512,10 @@ func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
 		if job.SchemaState != model.StateDeleteOnly {
 			return
 		}
-		if !one {
-			one = true
-		} else {
+		if one {
 			return
 		}
+		one = true
 		wg.Add(1)
 		go func() {
 			tk2 := testkit.NewTestKit(t, store)
@@ -1593,11 +1550,10 @@ func TestMDLTruncateTable(t *testing.T) {
 
 	one := false
 	f := func(job *model.Job) {
-		if !one {
-			one = true
-		} else {
+		if one {
 			return
 		}
+		one = true
 		go func() {
 			tk3.MustExec("truncate table test.t")
 			timetk3 = time.Now()
