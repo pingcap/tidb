@@ -293,6 +293,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 		if partCnt == 3 {
 			tc.SetOwner(1)
 			// TODO(tangenta): mock multiple backends in a better way.
+			//nolint: forcetypeassert
 			ingest.LitBackCtxMgr.(*ingest.MockBackendCtxMgr).ResetSessCtx()
 			bc, _ := ingest.LitBackCtxMgr.Load(job.ID)
 			bc.GetCheckpointManager().Close()
@@ -304,6 +305,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 		partCnt++
 		if partCnt == 6 {
 			tc.SetOwner(2)
+			//nolint: forcetypeassert
 			ingest.LitBackCtxMgr.(*ingest.MockBackendCtxMgr).ResetSessCtx()
 			bc, _ := ingest.LitBackCtxMgr.Load(job.ID)
 			bc.GetCheckpointManager().Close()
