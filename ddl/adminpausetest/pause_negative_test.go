@@ -17,6 +17,7 @@ package adminpausetest
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,9 +49,12 @@ func TestPauseOnWriteConflict(t *testing.T) {
 	originalHook := d.GetHook()
 	defer d.SetHook(originalHook)
 
+	var adminMutex sync.RWMutex
+
 	jobID := atomic.NewInt64(0)
 	// Test when pause cannot be retried and adding index succeeds.
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		adminMutex.Lock()
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
 			job.SchemaState == model.StateWriteReorganization {
 			require.NoError(t, failpoint.Enable(
@@ -64,6 +68,7 @@ func TestPauseOnWriteConflict(t *testing.T) {
 			stmt := fmt.Sprintf("admin pause ddl jobs %d", jobID.Load())
 			pauseRS, pauseErr = tk2.Session().Execute(context.Background(), stmt)
 		}
+		adminMutex.Unlock()
 	}
 	d.SetHook(hook.Clone())
 	tk1.MustExec("alter table t add index (id)")
@@ -72,6 +77,7 @@ func TestPauseOnWriteConflict(t *testing.T) {
 	var cancelRS []sqlexec.RecordSet
 	var cancelErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		adminMutex.Lock()
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
 			job.SchemaState == model.StateWriteReorganization {
 			jobID.Store(job.ID)
@@ -82,6 +88,7 @@ func TestPauseOnWriteConflict(t *testing.T) {
 			stmt = fmt.Sprintf("admin cancel ddl jobs %d", jobID.Load())
 			cancelRS, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
+		adminMutex.Unlock()
 	}
 	d.SetHook(hook.Clone())
 
@@ -108,12 +115,14 @@ func TestPauseFailedOnCommit(t *testing.T) {
 	jobID := atomic.NewInt64(0)
 	var pauseErr error
 	var jobErrs []error
+	var adminMutex sync.RWMutex
 
 	hook := &callback.TestDDLCallback{Do: dom}
 	originalHook := d.GetHook()
 	defer d.SetHook(originalHook)
 	// Test when pause cannot be retried and adding index succeeds.
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		adminMutex.Lock()
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
 			job.SchemaState == model.StateWriteReorganization {
 			require.NoError(t, failpoint.Enable(
@@ -124,6 +133,7 @@ func TestPauseFailedOnCommit(t *testing.T) {
 			jobID.Store(job.ID)
 			jobErrs, pauseErr = ddl.PauseJobs(tk2.Session(), []int64{jobID.Load()})
 		}
+		adminMutex.Unlock()
 	}
 	d.SetHook(hook.Clone())
 
