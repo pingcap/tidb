@@ -55,10 +55,10 @@ go_rules_dependencies()
 go_download_sdk(
     name = "go_sdk",
     sdks = {
-        "darwin_amd64": ("go1.19.10.darwin-amd64.tar.gz", "4524fac6858f8170941bb023d218c4a322a38c6b565d7b83f8a80f525c507079"),
-        "darwin_arm64": ("go1.19.10.darwin-arm64.tar.gz", "9bb1564c241e97d9c254a61136601da8a241e11aaa4ff70e5ad2505c5d1e27d1"),
-        "linux_amd64": ("go1.19.10.linux-amd64.tar.gz", "22ddd3f4fa13b55dbccce1b8d6e86907aaae624f71caaf6524da1f382c055a03"),
-        "linux_arm64": ("go1.19.10.linux-arm64.tar.gz", "b0372223fa83123df4166bcfb7c03a30bea20fa226b8c2a8c53aeb61060800d6"),
+        "darwin_amd64": ("go1.20.5.darwin-amd64.tar.gz", "4524fac6858f8170941bb023d218c4a322a38c6b565d7b83f8a80f525c507079"),
+        "darwin_arm64": ("go1.20.5.darwin-arm64.tar.gz", "9bb1564c241e97d9c254a61136601da8a241e11aaa4ff70e5ad2505c5d1e27d1"),
+        "linux_amd64": ("go1.20.5.linux-amd64.tar.gz", "22ddd3f4fa13b55dbccce1b8d6e86907aaae624f71caaf6524da1f382c055a03"),
+        "linux_arm64": ("go1.20.5.linux-arm64.tar.gz", "b0372223fa83123df4166bcfb7c03a30bea20fa226b8c2a8c53aeb61060800d6"),
     },
     urls = ["https://storage.googleapis.com/pingcapmirror/patchgo/20230619/{}"],
     version = "1.20.5",
