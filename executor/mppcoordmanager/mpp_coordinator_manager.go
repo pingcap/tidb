@@ -17,12 +17,12 @@ package mppcoordmanager
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/executor/metrics"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/util/logutil"
@@ -48,7 +48,7 @@ type MPPCoordinatorManager struct {
 	serverOn       bool
 	serverAddr     string // empty if server is off
 	coordinatorMap map[CoordinatorUniqueID]kv.MppCoordinator
-	wg             *sync.WaitGroup
+	wg             sync.WaitGroup
 	ctx            context.Context
 	cancel         context.CancelFunc
 	maxLifeTime    uint64 // in Nano
