@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/executor/internal/builder"
 	"github.com/pingcap/tidb/executor/internal/util"
+	"github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -542,6 +543,7 @@ func (c *localMppCoordinator) handleAllReports() {
 			}
 			distsql.FillDummySummariesForMppTasks(c.sessionCtx.GetSessionVars().StmtCtx, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
 		case <-time.After(receiveReportTimeout):
+			metrics.MppCoordinatorCounterReportNotReceived.Inc()
 			logutil.BgLogger().Warn(fmt.Sprintf("Not received all reports within %d seconds", int(receiveReportTimeout.Seconds())),
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Uint64("gatherID", c.gatherID),

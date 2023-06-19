@@ -17,6 +17,7 @@ package mppcoordmanager
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/executor/metrics"
 	"sync"
 	"time"
 
@@ -121,6 +122,7 @@ func (m *MPPCoordinatorManager) Register(coordID CoordinatorUniqueID, mppCoord k
 		return errors.Errorf("Already added mpp coordinator: %d %d %d %d", coordID.MPPQueryID.QueryTs, coordID.MPPQueryID.LocalQueryID, coordID.MPPQueryID.ServerID, coordID.GatherID)
 	}
 	m.coordinatorMap[coordID] = mppCoord
+	metrics.MppCoordinatorCounterTotalCounter.Inc()
 	return nil
 }
 
@@ -128,7 +130,11 @@ func (m *MPPCoordinatorManager) Register(coordID CoordinatorUniqueID, mppCoord k
 func (m *MPPCoordinatorManager) Unregister(coordID CoordinatorUniqueID) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	_, exists := m.coordinatorMap[coordID]
 	delete(m.coordinatorMap, coordID)
+	if exists {
+		metrics.MppCoordinatorCounterTotalCounter.Desc()
+	}
 }
 
 // ReportStatus reports mpp task execution status to specific coordinator

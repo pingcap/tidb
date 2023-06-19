@@ -33,6 +33,9 @@ var (
 
 	// OngoingTxnDurationHistogram records the duration of ongoing transactions.
 	OngoingTxnDurationHistogram *prometheus.HistogramVec
+
+	// MppCoordinatorCounter records the number of mpp coordinator related events
+	MppCoordinatorCounter *prometheus.CounterVec
 )
 
 // InitExecutorMetrics initializes excutor metrics.
@@ -77,5 +80,13 @@ func InitExecutorMetrics() {
 			Name:      "ongoing_txn_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of ongoing transactions.",
 			Buckets:   prometheus.ExponentialBuckets(60, 2, 15), // 60s ~ 273hours
+		}, []string{LblType})
+
+	MppCoordinatorCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "mpp_coordinator_total",
+			Help:      "Counter of MppCoordinator related events.",
 		}, []string{LblType})
 }
