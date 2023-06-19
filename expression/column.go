@@ -229,7 +229,9 @@ func (col *CorrelatedColumn) HashCode(sc *stmtctx.StatementContext) []byte {
 	}
 
 	col.Column.HashCode(sc)
-	col.hashcode = codec.HashCode(col.hashcode, *col.Data)
+	if col.Data != nil {
+		col.hashcode = codec.HashCode(col.hashcode, *col.Data)
+	}
 	return col.hashcode
 }
 
