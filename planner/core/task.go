@@ -1146,13 +1146,13 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			if plan, ok := finalScan.(*PhysicalTableScan); ok {
 				plan.ByItems = p.ByItems
 				if plan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-					plan.AddExtraPhysTblIDColumn()
+					plan.Columns, plan.schema, _ = AddExtraPhysTblIDColumn(plan.ctx, plan.Columns, plan.Schema())
 				}
 			}
 			if plan, ok := finalScan.(*PhysicalIndexScan); ok {
 				plan.ByItems = p.ByItems
 				if plan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() && !plan.Index.Global {
-					plan.AddExtraPhysTblIDColumn()
+					plan.Columns, plan.schema, _ = AddExtraPhysTblIDColumn(plan.ctx, plan.Columns, plan.Schema())
 				}
 			}
 			partialScans = append(partialScans, finalScan)
@@ -1206,7 +1206,8 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		}
 		// global index for tableScan with keepOrder also need PhysicalTblID
 		if clonedTblScan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			succ := clonedTblScan.AddExtraPhysTblIDColumn()
+			var succ bool
+			clonedTblScan.Columns, clonedTblScan.schema, succ = AddExtraPhysTblIDColumn(clonedTblScan.ctx, clonedTblScan.Columns, clonedTblScan.Schema())
 			copTsk.needExtraProj = copTsk.needExtraProj || succ
 		}
 		clonedTblScan.HandleCols, err = clonedTblScan.HandleCols.ResolveIndices(clonedTblScan.Schema())

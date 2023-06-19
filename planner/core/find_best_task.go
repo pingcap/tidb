@@ -1652,11 +1652,12 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 			cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
 			if cop.tablePlan != nil && ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				if !is.Index.Global {
-					is.AddExtraPhysTblIDColumn()
+					is.Columns, is.schema, _ = AddExtraPhysTblIDColumn(is.ctx, is.Columns, is.Schema())
 				}
+				var succ bool
 				// global index for tableScan with keepOrder also need PhysicalTblID
 				ts := cop.tablePlan.(*PhysicalTableScan)
-				succ := ts.AddExtraPhysTblIDColumn()
+				ts.Columns, ts.schema, succ = AddExtraPhysTblIDColumn(ts.ctx, ts.Columns, ts.Schema())
 				cop.needExtraProj = cop.needExtraProj || succ
 			}
 		}

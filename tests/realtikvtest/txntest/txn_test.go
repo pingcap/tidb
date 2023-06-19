@@ -17,7 +17,6 @@ package txntest
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -266,21 +265,28 @@ func TestSelectLockForPartitionTable(t *testing.T) {
 	tk1.MustExec("begin")
 	tk1.HasPlan("select * from t use index(idx) where a = 1 and b = 1 for update", "IndexLookUp_9")
 	tk1.MustExec("select * from t use index(idx) where a = 1 and b = 1 for update")
-	var finish atomic.Bool
+	ch := make(chan bool, 1)
 	go func() {
-		finish.Store(false)
 		tk2.MustExec("use test")
 		tk2.MustExec("begin")
+		ch <- false
 		// block here, until tk1 finish
 		tk2.MustExec("select * from t use index(idx) where a = 1 and b = 1 for update")
-		finish.Store(true)
+		ch <- true
 	}()
-	time.Sleep(10 * time.Millisecond)
-	require.False(t, finish.Load())
-	tk1.MustExec("commit")
 
-	// wait until tk2 not block
-	for !finish.Load() {
-		time.Sleep(time.Millisecond)
+	res := <-ch
+	// Sleep here to make sure SelectLock stmt is executed
+	time.Sleep(10 * time.Millisecond)
+
+	select {
+	case res = <-ch:
+	default:
 	}
+	require.False(t, res)
+
+	tk1.MustExec("commit")
+	// wait until tk2 finished
+	res = <-ch
+	require.True(t, res)
 }
