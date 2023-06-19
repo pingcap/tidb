@@ -114,13 +114,17 @@ type DomainReloader interface {
 	Reload() error
 }
 
+// ReorgCallback is the callback for DDL reorganization.
 type ReorgCallback interface {
+	// OnUpdateReorgInfo is called after updating reorg info for partitions.
 	OnUpdateReorgInfo(job *model.Job, pid int64)
 }
 
+// BaseReorgCallBack implements ReorgCallback.
 type BaseReorgCallBack struct {
 }
 
+// OnUpdateReorgInfo implements ReorgCallback interface.
 func (*BaseReorgCallBack) OnUpdateReorgInfo(_ *model.Job, _ int64) {
 }
 
