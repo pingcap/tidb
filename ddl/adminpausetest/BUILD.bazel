@@ -27,6 +27,7 @@ go_test(
     ],
     embed = [":adminpausetest"],
     flaky = True,
+    race = "on",
     shard_count = 5,
     deps = [
         "//config",
