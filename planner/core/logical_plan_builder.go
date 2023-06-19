@@ -4585,18 +4585,21 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 
 	availableStatsColIDs := make(map[int64]struct{})
 	availableStatsIdxIDs := make(map[int64]struct{})
-	analyzeCount := mathutil.Max(statsTbl.GetAnalyzeRowCount(), 0)
-	if !ctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
-		statsTbl = statsTbl.Copy()
-		if !statsTbl.Pseudo && statsTbl.RealtimeCount > 0 && analyzeCount == 0 {
-			for id := range statsTbl.Columns {
-				availableStatsColIDs[id] = struct{}{}
+	if !statsTbl.Pseudo && !ctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
+		analyzeCount := mathutil.Max(int64(statsTbl.GetAnalyzeRowCount()), 0)
+		if statsTbl.RealtimeCount != analyzeCount || statsTbl.ModifyCount != 0 {
+			if statsTbl.RealtimeCount > 0 && analyzeCount == 0 {
+				for id := range statsTbl.Columns {
+					availableStatsColIDs[id] = struct{}{}
+				}
+				for id := range statsTbl.Indices {
+					availableStatsIdxIDs[id] = struct{}{}
+				}
 			}
-			for id := range statsTbl.Indices {
-				availableStatsIdxIDs[id] = struct{}{}
-			}
+			statsTbl = statsTbl.ShallowCopy()
+			statsTbl.RealtimeCount = analyzeCount
+			statsTbl.ModifyCount = 0
 		}
-		statsTbl.RealtimeCount = int64(analyzeCount)
 	}
 
 	// 2. table row count from statistics is zero.

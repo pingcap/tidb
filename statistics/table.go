@@ -344,6 +344,27 @@ func (t *Table) Copy() *Table {
 	return nt
 }
 
+// ShallowCopy copies the current table.
+func (t *Table) ShallowCopy() *Table {
+	newHistColl := HistColl{
+		PhysicalID:     t.PhysicalID,
+		HavePhysicalID: t.HavePhysicalID,
+		RealtimeCount:  t.RealtimeCount,
+		Columns:        t.Columns,
+		Indices:        t.Indices,
+		Pseudo:         t.Pseudo,
+		ModifyCount:    t.ModifyCount,
+	}
+	nt := &Table{
+		HistColl:        newHistColl,
+		Version:         t.Version,
+		Name:            t.Name,
+		TblInfoUpdateTS: t.TblInfoUpdateTS,
+		ExtendedStats:   t.ExtendedStats,
+	}
+	return nt
+}
+
 // String implements Stringer interface.
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
