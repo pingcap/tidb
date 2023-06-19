@@ -5349,6 +5349,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		}
 		// Build seed part.
 		corCols := plannercore.ExtractCorrelatedCols4PhysicalPlan(v.SeedPlan)
+		corCols = removeCTEDefCorCol(corCols, v.SeedPlan)
 		seedExec := b.build(v.SeedPlan)
 		if b.err != nil {
 			return nil
@@ -5375,7 +5376,8 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 			if b.err != nil {
 				return nil
 			}
-			corCols = append(corCols, plannercore.ExtractCorrelatedCols4PhysicalPlan(v.RecurPlan)...)
+			recursiveCorCols := plannercore.ExtractCorrelatedCols4PhysicalPlan(v.RecurPlan)
+			corCols = append(corCols, removeCTEDefCorCol(recursiveCorCols, v.RecurPlan)...)
 		}
 
 		var sel []int
@@ -5412,6 +5414,43 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		producer:     producer,
 	}
+}
+
+func removeCTEDefCorCol(corCols []*expression.CorrelatedColumn, v plannercore.PhysicalPlan) []*expression.CorrelatedColumn {
+	newCorCols := make([]*expression.CorrelatedColumn, 0, len(corCols))
+	if len(corCols) == 0 {
+		return newCorCols
+	}
+	switch p := v.(type) {
+	case *plannercore.PhysicalApply:
+		var (
+			innerPlan plannercore.PhysicalPlan
+			outerPlan plannercore.PhysicalPlan
+		)
+		if p.InnerChildIdx == 0 {
+			innerPlan = p.Children()[0]
+			outerPlan = p.Children()[1]
+		} else {
+			outerPlan = p.Children()[0]
+			innerPlan = p.Children()[1]
+		}
+		for _, corCol := range corCols {
+			idx := outerPlan.Schema().ColumnIndex(&corCol.Column)
+			if idx == -1 {
+				newCorCols = append(newCorCols, corCol)
+			}
+		}
+		newCorCols = append(newCorCols, removeCTEDefCorCol(newCorCols, outerPlan)...)
+		newCorCols = append(newCorCols, removeCTEDefCorCol(newCorCols, innerPlan)...)
+	case *plannercore.PhysicalCTE:
+		newCorCols = append(newCorCols, removeCTEDefCorCol(corCols, p.SeedPlan)...)
+		newCorCols = append(newCorCols, removeCTEDefCorCol(corCols, p.RecurPlan)...)
+	default:
+		for _, child := range p.Children() {
+			newCorCols = append(newCorCols, removeCTEDefCorCol(corCols, child)...)
+		}
+	}
+	return newCorCols
 }
 
 func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) Executor {
