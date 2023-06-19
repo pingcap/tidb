@@ -354,10 +354,11 @@ func TestCTEWithLimit(t *testing.T) {
 }
 
 func TestSpillToDisk(t *testing.T) {
-	defer config.RestoreFunc()()
+	oriGlobalConfig := config.GetGlobalConfig()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
 	})
+	defer config.StoreGlobalConfig(oriGlobalConfig)
 
 	store, close := testkit.CreateMockStore(t)
 	defer close()
@@ -484,6 +485,13 @@ func TestCTEPanic(t *testing.T) {
 }
 
 func TestCTEDelSpillFile(t *testing.T) {
+	oriGlobalConfig := config.GetGlobalConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+		conf.OOMAction = config.OOMActionLog
+	})
+	defer config.StoreGlobalConfig(oriGlobalConfig)
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
