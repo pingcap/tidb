@@ -17,10 +17,9 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -167,7 +167,7 @@ type cteProducer struct {
 	diskTracker *disk.Tracker
 
 	// Correlated Column.
-	corCols []*expression.CorrelatedColumn
+	corCols         []*expression.CorrelatedColumn
 	corColHashCodes [][]byte
 }
 

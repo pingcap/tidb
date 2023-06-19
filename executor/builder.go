@@ -5392,17 +5392,17 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		}
 
 		producer = &cteProducer{
-			ctx:           b.ctx,
-			seedExec:      seedExec,
-			recursiveExec: recursiveExec,
-			resTbl:        resTbl,
-			iterInTbl:     iterInTbl,
-			isDistinct:    v.CTE.IsDistinct,
-			sel:           sel,
-			hasLimit:      v.CTE.HasLimit,
-			limitBeg:      v.CTE.LimitBeg,
-			limitEnd:      v.CTE.LimitEnd,
-			corCols:       corCols,
+			ctx:             b.ctx,
+			seedExec:        seedExec,
+			recursiveExec:   recursiveExec,
+			resTbl:          resTbl,
+			iterInTbl:       iterInTbl,
+			isDistinct:      v.CTE.IsDistinct,
+			sel:             sel,
+			hasLimit:        v.CTE.HasLimit,
+			limitBeg:        v.CTE.LimitBeg,
+			limitEnd:        v.CTE.LimitEnd,
+			corCols:         corCols,
 			corColHashCodes: corColHashCodes,
 		}
 		storageMap[v.CTE.IDForStorage].Producer = producer
