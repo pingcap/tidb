@@ -114,6 +114,8 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 		return s.getError()
 	}
 	defer func() {
+		logutil.Logger(s.logCtx).Info("ywq test cleanup")
+
 		err := scheduler.CleanupSubtaskExecEnv(runCtx)
 		if err != nil {
 			logutil.Logger(s.logCtx).Error("cleanup subtask exec env failed", zap.Error(err))
@@ -136,8 +138,9 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 	}
 	for {
 		// check if any error occurs
+		logutil.Logger(s.logCtx).Info("ywq test check err", zap.Bool("concurrentSubtask", concurrentSubtask))
 		if err := s.getError(); err != nil {
-			return err
+			break
 		}
 
 		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending)
@@ -190,16 +193,18 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 	for _, minimalTask := range minimalTasks {
 		j := minimalTask
 		minimalTaskCh <- func() {
-			s.runMinimalTask(ctx, j, subtask.Type, step)
+			defer func() {
+				mu.Lock()
+				defer mu.Unlock()
+				cnt++
+				// last minimal task should mark subtask as finished
+				if cnt == len(minimalTasks) {
+					s.onSubtaskFinished(ctx, scheduler, subtask)
+					s.subtaskWg.Done()
+				}
+			}()
 
-			mu.Lock()
-			defer mu.Unlock()
-			cnt++
-			// last minimal task should mark subtask as finished
-			if cnt == len(minimalTasks) {
-				s.onSubtaskFinished(ctx, scheduler, subtask)
-				s.subtaskWg.Done()
-			}
+			s.runMinimalTask(ctx, j, subtask.Type, step)
 		}
 	}
 }
@@ -245,10 +250,16 @@ func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, m
 		s.onError(err)
 		return
 	}
-
+	logutil.Logger(s.logCtx).Info("ywq test run minimal task ")
+	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.Logger(s.logCtx).Info("ywq test err")
+			s.onError(context.Canceled)
+		}
+	}
 	if err = executor.Run(minimalTaskCtx); err != nil {
 		s.onError(err)
-	}
+	})
 }
 
 // Rollback rollbacks the scheduler task.

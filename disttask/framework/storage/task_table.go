@@ -356,6 +356,17 @@ func (stm *TaskManager) HasSubtasksInStates(tidbID string, taskID int64, states 
 	return len(rs) > 0, nil
 }
 
+func (stm *TaskManager) HasSubtasksInStates1(taskID int64, states ...interface{}) (bool, error) {
+	args := []interface{}{taskID}
+	args = append(args, states...)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select 1 from mysql.tidb_background_subtask where task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
+	if err != nil {
+		return false, err
+	}
+
+	return len(rs) > 0, nil
+}
+
 // UpdateSubtaskStateAndError updates the subtask state.
 func (stm *TaskManager) UpdateSubtaskStateAndError(id int64, state string, subTaskErr string) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_background_subtask set state = %?, error = %? where id = %?", state, subTaskErr, id)

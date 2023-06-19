@@ -21,13 +21,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 type testFlowHandle struct{}
@@ -82,7 +85,9 @@ type testScheduler struct{}
 
 func (*testScheduler) InitSubtaskExecEnv(_ context.Context) error { return nil }
 
-func (t *testScheduler) CleanupSubtaskExecEnv(_ context.Context) error { return nil }
+func (t *testScheduler) CleanupSubtaskExecEnv(_ context.Context) error {
+	return nil
+}
 
 func (t *testScheduler) Rollback(_ context.Context) error { return nil }
 
@@ -103,6 +108,7 @@ type testSubtaskExecutor struct {
 }
 
 func (e *testSubtaskExecutor) Run(_ context.Context) error {
+	time.Sleep(1 * time.Second)
 	e.v.Add(1)
 	return nil
 }
@@ -114,7 +120,7 @@ func RegisterTaskMeta(v *atomic.Int64) {
 	scheduler.RegisterTaskType(proto.TaskTypeExample)
 	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
 		return &testScheduler{}, nil
-	})
+	}, scheduler.WithConcurrentSubtask())
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &testSubtaskExecutor{v: v}, nil
 	})
@@ -171,6 +177,38 @@ func DispatchAndCancelTask(taskKey string, t *testing.T, v *atomic.Int64) {
 
 	require.Equal(t, proto.TaskStateReverted, task.State)
 	require.Equal(t, int64(0), v.Load())
+	v.Store(0)
+}
+
+func DispatchAndFailTask(taskKey string, t *testing.T, v *atomic.Int64) {
+	mgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	taskID, err := mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil)
+	require.NoError(t, err)
+	start := time.Now()
+	var task *proto.Task
+	for {
+		if time.Since(start) > 2*time.Minute {
+			require.FailNow(t, "timeout")
+		}
+
+		time.Sleep(time.Second)
+		task, err = mgr.GetGlobalTaskByID(taskID)
+		require.NoError(t, err)
+		require.NotNil(t, task)
+		logutil.BgLogger().Info("task state", zap.String("state", task.State))
+		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
+			break
+		}
+
+		has, _ := mgr.HasSubtasksInStates1(taskID, proto.TaskStateRunning, proto.TaskStatePending)
+		logutil.BgLogger().Info("has running subtask ", zap.Bool("has", has))
+	}
+	has, _ := mgr.HasSubtasksInStates1(taskID, proto.TaskStateRunning, proto.TaskStatePending)
+	require.Equal(t, has, false)
+
+	require.Equal(t, proto.TaskStateReverted, task.State)
+	// require.Equal(t, int64(2), v.Load())
 	v.Store(0)
 }
 
@@ -263,5 +301,19 @@ func TestFrameworkCancelGTask(t *testing.T) {
 	RegisterTaskMeta(&v)
 	testContext := testkit.NewDistExecutionTestContext(t, 2)
 	DispatchAndCancelTask("key1", t, &v)
+	testContext.Close()
+}
+
+func TestFrameworkSubTaskFailed(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
+	}()
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+	testContext := testkit.NewDistExecutionTestContext(t, 2)
+	DispatchAndFailTask("key1", t, &v)
 	testContext.Close()
 }
