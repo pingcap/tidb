@@ -189,6 +189,10 @@ func DispatchAndCancelTask(taskKey string, t *testing.T, v *atomic.Int64) {
 }
 
 func DispatchAndFailTask(taskKey string, t *testing.T, v *atomic.Int64) {
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
+	}()
 	task := DispatchTask(taskKey, t)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 	v.Store(0)
@@ -199,14 +203,14 @@ func TestFrameworkBasic(t *testing.T) {
 	defer scheduler.ClearSchedulers()
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
-	testContext := testkit.NewDistExecutionTestContext(t, 2)
+	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &v)
 	DispatchTaskAndCheckSuccess("key2", t, &v)
-	testContext.SetOwner(0)
+	distContext.SetOwner(0)
 	time.Sleep(2 * time.Second) // make sure owner changed
 	DispatchTaskAndCheckSuccess("key3", t, &v)
 	DispatchTaskAndCheckSuccess("key4", t, &v)
-	testContext.Close()
+	distContext.Close()
 }
 
 func TestFramework3Server(t *testing.T) {
@@ -214,44 +218,44 @@ func TestFramework3Server(t *testing.T) {
 	defer scheduler.ClearSchedulers()
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
-	testContext := testkit.NewDistExecutionTestContext(t, 3)
+	distContext := testkit.NewDistExecutionContext(t, 3)
 	DispatchTaskAndCheckSuccess("key1", t, &v)
 	DispatchTaskAndCheckSuccess("key2", t, &v)
-	testContext.SetOwner(0)
+	distContext.SetOwner(0)
 	time.Sleep(2 * time.Second) // make sure owner changed
 	DispatchTaskAndCheckSuccess("key3", t, &v)
 	DispatchTaskAndCheckSuccess("key4", t, &v)
-	testContext.Close()
+	distContext.Close()
 }
 
-func TestFrameworkAddServer(t *testing.T) {
+func TestFrameworkAddDomain(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
-	testContext := testkit.NewDistExecutionTestContext(t, 2)
+	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &v)
-	testContext.AddServer()
+	distContext.AddDomain()
 	DispatchTaskAndCheckSuccess("key2", t, &v)
-	testContext.SetOwner(1)
+	distContext.SetOwner(1)
 	time.Sleep(2 * time.Second) // make sure owner changed
 	DispatchTaskAndCheckSuccess("key3", t, &v)
-	testContext.Close()
-	testContext.AddServer()
+	distContext.Close()
+	distContext.AddDomain()
 	DispatchTaskAndCheckSuccess("key4", t, &v)
 }
 
-func TestFrameworkDeleteServer(t *testing.T) {
+func TestFrameworkDeleteDomain(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
-	testContext := testkit.NewDistExecutionTestContext(t, 2)
+	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &v)
-	testContext.DeleteServer(1)
+	distContext.DeleteDomain(1)
 	time.Sleep(2 * time.Second) // make sure the owner changed
 	DispatchTaskAndCheckSuccess("key2", t, &v)
-	testContext.Close()
+	distContext.Close()
 }
 
 func TestFrameworkWithQuery(t *testing.T) {
@@ -259,10 +263,10 @@ func TestFrameworkWithQuery(t *testing.T) {
 	defer scheduler.ClearSchedulers()
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
-	testContext := testkit.NewDistExecutionTestContext(t, 2)
+	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &v)
 
-	tk := testkit.NewTestKit(t, testContext.Store)
+	tk := testkit.NewTestKit(t, distContext.Store)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -273,7 +277,7 @@ func TestFrameworkWithQuery(t *testing.T) {
 	require.Greater(t, len(fields), 0)
 	require.Equal(t, "ifnull(a,b)", rs.Fields()[0].Column.Name.L)
 	require.NoError(t, rs.Close())
-	testContext.Close()
+	distContext.Close()
 }
 
 func TestFrameworkCancelGTask(t *testing.T) {
@@ -281,21 +285,18 @@ func TestFrameworkCancelGTask(t *testing.T) {
 	defer scheduler.ClearSchedulers()
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
-	testContext := testkit.NewDistExecutionTestContext(t, 2)
+	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchAndCancelTask("key1", t, &v)
-	testContext.Close()
+	distContext.Close()
 }
 
 func TestFrameworkSubTaskFailed(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)")
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
-	}()
+
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
-	testContext := testkit.NewDistExecutionTestContext(t, 1)
+	distContext := testkit.NewDistExecutionContext(t, 1)
 	DispatchAndFailTask("key1", t, &v)
-	testContext.Close()
+	distContext.Close()
 }

@@ -356,7 +356,6 @@ func (stm *TaskManager) HasSubtasksInStates(tidbID string, taskID int64, states 
 	return len(rs) > 0, nil
 }
 
-
 // UpdateSubtaskStateAndError updates the subtask state.
 func (stm *TaskManager) UpdateSubtaskStateAndError(id int64, state string, subTaskErr string) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_background_subtask set state = %?, error = %? where id = %?", state, subTaskErr, id)
