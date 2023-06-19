@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -203,6 +204,14 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 			s.runMinimalTask(ctx, j, subtask.Type, step)
 		}
 	}
+	failpoint.Inject("waitUntilError", func() {
+		for i := 0; i < 10; i++ {
+			if s.getError() != nil {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	})
 }
 
 func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask) {
