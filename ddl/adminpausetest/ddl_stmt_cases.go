@@ -31,7 +31,7 @@ func (a *autoIncrsedID) globalID() int {
 	defer a.Unlock()
 
 	id := a.idx
-	a.idx += 1
+	a.idx++
 	return id
 }
 
@@ -237,6 +237,6 @@ func (stmtCase *AdminPauseResumeStmtCase) simpleRunStmt(stmtKit *testkit.TestKit
 
 	Logger.Info("TestPauseCancelAndRerun: statement simple rollback ...")
 	for _, rollbackStmt := range stmtCase.rollbackStmts {
-		stmtKit.Exec(rollbackStmt)
+		_, _ = stmtKit.Exec(rollbackStmt)
 	}
 }

@@ -135,7 +135,7 @@ func generateTblUser(tk *testkit.TestKit, rowCount int) error {
 		_ = tu.generateAttributes(idx)
 		tk.MustExec(tu.insertStmt(adminPauseTestTable))
 
-		idx += 1
+		idx++
 	}
 
 	return nil
@@ -149,7 +149,7 @@ func generateTblUserParition(tk *testkit.TestKit, rowCount int) error {
 		_ = tu.generateAttributes(idx)
 		tk.MustExec(tu.insertStmt(adminPauseTestPartitionTable))
 
-		idx += 1
+		idx++
 	}
 
 	return nil

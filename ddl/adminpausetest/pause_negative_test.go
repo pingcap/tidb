@@ -65,6 +65,7 @@ func TestPauseOnWriteConflict(t *testing.T) {
 			pauseRS, pauseErr = tk2.Session().Execute(context.Background(), stmt)
 		}
 	}
+	d.SetHook(hook.Clone())
 	tk1.MustExec("alter table t add index (id)")
 	require.EqualError(t, pauseErr, "mock failed admin command on ddl jobs")
 
