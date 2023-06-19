@@ -711,7 +711,7 @@ and n_name = 'MOZAMBIQUE'
 order by
 value desc;
 id	estRows	task	access object	operator info
-Projection	1304801.67	root		tpch.partsupp.ps_partkey->tpch.partsupp.ps_partkey, Column#35->Column#58
+Projection	1304801.67	root		tpch.partsupp.ps_partkey, Column#35->Column#58
 └─Sort	1304801.67	root		Column#35:desc
   └─Selection	1304801.67	root		gt(Column#35, NULL)
     └─HashAgg	1631002.09	root		group by:Column#61, funcs:sum(Column#59)->Column#35, funcs:firstrow(Column#60)->tpch.partsupp.ps_partkey

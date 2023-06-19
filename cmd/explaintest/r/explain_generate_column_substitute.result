@@ -268,7 +268,7 @@ a	b	c	e
 0	0	1	0
 desc select * from t order by a+1;
 id	estRows	task	access object	operator info
-Projection_5	10000.00	root		test.t.a->test.t.a, test.t.b->test.t.b, test.t.c->test.t.c, test.t.e->test.t.e
+Projection_5	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e
 └─Projection_13	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e, plus(test.t.a, 1), plus(test.t.b, cast(test.t.a, double BINARY))
   └─IndexLookUp_12	10000.00	root		
     ├─IndexFullScan_10(Build)	10000.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	keep order:true, stats:pseudo

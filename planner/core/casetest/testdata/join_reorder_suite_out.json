@@ -6347,7 +6347,7 @@
       {
         "SQL": "select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a->test.t1.a, Column#11->Column#13",
+          "Projection 1.00 root  test.t1.a, Column#11->Column#13",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#7, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexReader 10000.00 root  index:IndexFullScan",
@@ -6363,7 +6363,7 @@
       {
         "SQL": "select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a->test.t1.a, Column#14->Column#16",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -6982,7 +6982,7 @@
       {
         "SQL": "select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a->test.t1.a, Column#14->Column#16",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -7002,7 +7002,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a->test.t1.a, Column#14->Column#16",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -7024,7 +7024,7 @@
       {
         "SQL": "select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a->test.t1.a, Column#14->Column#16",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -7046,7 +7046,7 @@
       {
         "SQL": "select /*+ leading(t1, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a->test.t1.a, Column#14->Column#16",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -7069,7 +7069,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2, t2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a->test.t1.a, Column#14->Column#16",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -7091,7 +7091,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2, t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a->test.t1.a, Column#14->Column#16",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -9128,7 +9128,7 @@
       {
         "SQL": "select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a->test.t1.a, Column#14->Column#16",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
@@ -9147,7 +9147,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a->test.t1.a, Column#14->Column#16",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
@@ -9168,7 +9168,7 @@
       {
         "SQL": "select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a->test.t1.a, Column#14->Column#16",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",

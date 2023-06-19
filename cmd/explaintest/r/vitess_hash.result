@@ -11,14 +11,14 @@ primary key (customer_id, id)
 create index t_vitess_shard on t((vitess_hash(customer_id) >> 56));
 explain format = 'brief' select customer_id from t where (vitess_hash(customer_id) >> 56) = x'd6' ORDER BY id;
 id	estRows	task	access object	operator info
-Projection	10.00	root		test.t.customer_id->test.t.customer_id
+Projection	10.00	root		test.t.customer_id
 └─Sort	10.00	root		test.t.id
   └─IndexLookUp	10.00	root		
     ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:t_vitess_shard(vitess_hash(`customer_id`) >> 56)	range:[214,214], keep order:false, stats:pseudo
     └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select id from t where (vitess_hash(customer_id) >> 56) IN (x'e0', x'e1') AND id BETWEEN 2 AND 5 ORDER BY id;
 id	estRows	task	access object	operator info
-Projection	0.50	root		test.t.id->test.t.id
+Projection	0.50	root		test.t.id
 └─Sort	0.50	root		test.t.id
   └─Projection	0.50	root		test.t.id, rightshift(vitess_hash(test.t.customer_id), 56)
     └─IndexLookUp	0.50	root		

@@ -26,7 +26,7 @@ IndexReader	1104.45	root		index:Selection
   └─IndexRangeScan	3323.33	cop[tikv]	table:access_path_selection, index:IDX_ab(a, b)	range:[-inf,3), keep order:false, stats:pseudo
 explain format = 'brief' select a, b from access_path_selection where a > 10 order by _tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	3333.33	root		test.access_path_selection.a->test.access_path_selection.a, test.access_path_selection.b->test.access_path_selection.b
+Projection	3333.33	root		test.access_path_selection.a, test.access_path_selection.b
 └─TableReader	3333.33	root		data:Selection
   └─Selection	3333.33	cop[tikv]		gt(test.access_path_selection.a, 10)
     └─TableFullScan	10000.00	cop[tikv]	table:access_path_selection	keep order:true, stats:pseudo

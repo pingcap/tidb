@@ -417,7 +417,7 @@
       {
         "SQL": "desc format = 'brief' select t1.a from t t1 order by (t1.b = 1 and exists (select 1 from t t2 where t1.b = t2.b)) limit 1",
         "Plan": [
-          "Projection 1.00 root  test.t.a->test.t.a",
+          "Projection 1.00 root  test.t.a",
           "└─Projection 1.00 root  test.t.a, test.t.b, Column#11",
           "  └─TopN 1.00 root  Column#13, offset:0, count:1",
           "    └─Projection 10000.00 root  test.t.a, test.t.b, Column#11, and(eq(test.t.b, 1), Column#11)->Column#13",
@@ -9153,7 +9153,7 @@
         "Plan": [
           "TableReader 6400.00 root  MppVersion: 1, data:ExchangeSender",
           "└─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 6400.00 mpp[tiflash]  test.t.id->test.t.id",
+          "  └─Projection 6400.00 mpp[tiflash]  test.t.id",
           "    └─Selection 6400.00 mpp[tiflash]  gt(Column#4, 0)",
           "      └─Projection 8000.00 mpp[tiflash]  div(Column#4, cast(case(eq(Column#18, 0), 1, Column#18), decimal(20,0) BINARY))->Column#4, test.t.id",
           "        └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:sum(Column#19)->Column#18, funcs:sum(Column#20)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
