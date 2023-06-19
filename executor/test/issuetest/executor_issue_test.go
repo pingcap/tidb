@@ -604,7 +604,7 @@ func TestIssue30382(t *testing.T) {
 		"└─HashJoin 6400.00 root  CARTESIAN inner join, other cond:or(gt(Column#8, 1), or(ne(test.t1.c_str, Column#7), if(ne(Column#9, 0), NULL, 0)))",
 		"  ├─Selection(Build) 0.80 root  ne(Column#10, 0)",
 		"  │ └─HashAgg 1.00 root  funcs:max(Column#17)->Column#7, funcs:count(distinct Column#18)->Column#8, funcs:sum(Column#19)->Column#9, funcs:count(1)->Column#10",
-		"  │   └─Projection 3323.33 root  test.t2.c_str, test.t2.c_str, cast(isnull(test.t2.c_str), decimal(20,0) BINARY)->Column#19",
+		"  │   └─Projection 3323.33 root  test.t2.c_str->Column#17, test.t2.c_str->Column#18, cast(isnull(test.t2.c_str), decimal(20,0) BINARY)->Column#19",
 		"  │     └─TableReader 3323.33 root partition:all data:Selection",
 		"  │       └─Selection 3323.33 cop[tikv]  lt(test.t2.c_decimal, 5)",
 		"  │         └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",

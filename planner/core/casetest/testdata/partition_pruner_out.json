@@ -895,7 +895,7 @@
           "11"
         ],
         "Plan": [
-          "Projection 1.00 root  Column#5",
+          "Projection 1.00 root  Column#5->Column#6",
           "└─Sort 1.00 root  test_partition.t1.id, test_partition.t1.a",
           "  └─HashAgg 1.00 root  funcs:count(Column#7)->Column#5, funcs:firstrow(Column#8)->test_partition.t1.id, funcs:firstrow(Column#9)->test_partition.t1.a",
           "    └─TableReader 1.00 root partition:all data:HashAgg",
@@ -903,7 +903,7 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "Projection 1.00 root  Column#5",
+          "Projection 1.00 root  Column#5->Column#6",
           "└─Sort 1.00 root  test_partition_1.t1.id, test_partition_1.t1.a",
           "  └─HashAgg 1.00 root  funcs:count(Column#8)->Column#5, funcs:firstrow(Column#9)->test_partition_1.t1.id, funcs:firstrow(Column#10)->test_partition_1.t1.a",
           "    └─IndexReader 1.00 root partition:all index:HashAgg",

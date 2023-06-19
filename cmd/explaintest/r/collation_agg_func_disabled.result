@@ -90,7 +90,7 @@ count(distinct value, value1)
 desc format='brief' select count(distinct value collate utf8mb4_bin, value1) from t;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(distinct Column#6, Column#7)->Column#5
-└─Projection	10000.00	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, collation_agg_func.t.value1
+└─Projection	10000.00	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, collation_agg_func.t.value1->Column#7
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(distinct value collate utf8mb4_bin, value1) from t;
@@ -124,7 +124,7 @@ approx_count_distinct(value, value1)
 desc format='brief' select approx_count_distinct(value collate utf8mb4_bin, value1) from t;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:approx_count_distinct(Column#6, Column#7)->Column#5
-└─Projection	10000.00	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, collation_agg_func.t.value1
+└─Projection	10000.00	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, collation_agg_func.t.value1->Column#7
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select approx_count_distinct(value collate utf8mb4_bin, value1) from t;

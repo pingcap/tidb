@@ -142,7 +142,7 @@
       {
         "Plan": [
           "Insert_1 N/A root  N/A",
-          "└─Projection_7 10000.00 root  test.t.a, test.t.b, cast(test.t.c, decimal(32,0) BINARY)->Column#9",
+          "└─Projection_7 10000.00 root  test.t.a->Column#7, test.t.b->Column#8, cast(test.t.c, decimal(32,0) BINARY)->Column#9",
           "  └─TableReader_9 10000.00 root  data:TableFullScan_8",
           "    └─TableFullScan_8 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
@@ -400,7 +400,7 @@
       },
       {
         "Plan": [
-          "Projection_8 10000.00 root  Column#6",
+          "Projection_8 10000.00 root  Column#6->Column#7",
           "└─Sort_9 10000.00 root  test.t1.b, test.t1.a, Column#6",
           "  └─Window_11 10000.00 root  sum(cast(test.t1.b, decimal(10,0) BINARY))->Column#6 over(partition by test.t1.a)",
           "    └─TableReader_13 10000.00 root  data:TableFullScan_12",
