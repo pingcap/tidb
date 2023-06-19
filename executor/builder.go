@@ -5416,6 +5416,32 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	}
 }
 
+// removeCTEDefCorCol is to remove all cor cols whose corresponding Apply is inside CTE definition.
+// For Plan-1, cor_col_1 will be kept in cteProducer.corCols, so CTEProducer of CTE-1 will reopen for each row of outerSide of Apply_1.
+//
+// Plan-1:
+//
+//	Apply_1
+//	 |_ outerSide
+//	 |_CTEExec(CTE-1)
+//
+//	CTE-1
+//	 |_Selection(cor_col_1)
+//
+// For Plan-2, cor_col_2 and cor_col_3 will not be kept in cteProducer.corCols, because:
+// 1. cor_col_2 is not inside definition of CTE-2.
+// 2. Apply_3 is inside definition of CTE. So no need to reopen cteProducer.
+//
+// Plan-2:
+//
+//	Apply_2
+//	 |_ outerSide
+//	 |_ Selection(cor_col_2)
+//	     |_CTEExec(CTE-2)
+//	CTE-2
+//	 |_ Apply_3
+//	     |_ outerSide
+//	     |_ innerSide(cor_col_3)
 func removeCTEDefCorCol(corCols []*expression.CorrelatedColumn, v plannercore.PhysicalPlan) []*expression.CorrelatedColumn {
 	if len(corCols) == 0 {
 		return corCols
