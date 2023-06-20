@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/pingcap/errors"
@@ -666,22 +667,10 @@ func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
 	for i, corCol := range p.corCols {
 		corCol.CleanHashCode()
 		newHashCode := corCol.HashCode(p.ctx.GetSessionVars().StmtCtx)
-		if !sameHashCode(newHashCode, p.corColHashCodes[i]) {
+		if !bytes.Equal(newHashCode, p.corColHashCodes[i]) {
 			changed = true
 			p.corColHashCodes[i] = newHashCode
 		}
 	}
 	return changed
-}
-
-func sameHashCode(c1 []byte, c2 []byte) bool {
-	if len(c1) != len(c2) {
-		return false
-	}
-	for i := 0; i < len(c1); i++ {
-		if c1[i] != c2[i] {
-			return false
-		}
-	}
-	return true
 }
