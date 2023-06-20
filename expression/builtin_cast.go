@@ -292,8 +292,10 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
-		// check https://github.com/pingcap/tidb/issues/44786
 		if bf.tp.GetFlen() == types.UnspecifiedLength {
+			// check https://github.com/pingcap/tidb/issues/44786
+			// set flen from integers may truncate integers, e.g. char(1) can not display -1[int(1)]
+			// set it to 11 as mysql
 			if args[0].GetType().GetType() == mysql.TypeLong {
 				bf.tp.SetFlen(11)
 			} else {
