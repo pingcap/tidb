@@ -301,6 +301,7 @@ func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, states .
 	return row2SubTask(rs[0]), nil
 }
 
+// PrintSubtaskInfo log the subtask info by taskKey.
 func (stm *TaskManager) PrintSubtaskInfo(taskKey int) {
 	rs, _ := stm.executeSQLWithNewSession(stm.ctx,
 		"select * from mysql.tidb_background_subtask where task_key = %?", taskKey)
