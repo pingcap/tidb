@@ -1336,7 +1336,7 @@ func (do *Domain) gcSystemTable(tableName, colName string, expiredDuration time.
 
 			_, err = do.execRestrictedSQL(sql, nil)
 			if err != nil {
-				logutil.BgLogger().Warn(
+				logutil.BgLogger().Error(
 					"delete SQL failed when deleting system table", zap.Error(err), zap.String("SQL", sql),
 				)
 			}
