@@ -685,6 +685,9 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 // getMaxParamLimit returns the maximum number of parameters for a query that can be cached in the Plan Cache.
 func getMaxParamLimit(sctx sessionctx.Context) int {
 	v := 200
+	if sctx == nil || sctx.GetSessionVars() == nil || sctx.GetSessionVars().OptimizerFixControl == nil {
+		return v
+	}
 	if sctx.GetSessionVars().OptimizerFixControl[variable.TiDBOptFixControl44823] != "" {
 		n, err := strconv.Atoi(sctx.GetSessionVars().OptimizerFixControl[variable.TiDBOptFixControl44823])
 		if err != nil {
