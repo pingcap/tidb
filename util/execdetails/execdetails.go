@@ -489,13 +489,11 @@ func (p *Percentile[valueType]) MergePercentile(p2 *Percentile[valueType]) {
 	p.sumVal += p2.sumVal
 	p.size += p2.size
 	if p.dt == nil {
-		p.dt = p2.dt
-		p2.dt = nil
+		p.dt = tdigest.New()
 		for _, v := range p.values {
 			p.dt.Add(v.GetFloat64(), 1)
 		}
 		p.values = nil
-		return
 	}
 	p.dt.AddCentroidList(p2.dt.Centroids())
 }
