@@ -112,12 +112,23 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
 	// +---------+------------+---------------------+-----------+-------------+
 
-	cs := RemoteChecksum{}
-	exec := common.SQLWithRetry{DB: e.db, Logger: task.Logger}
-	if err := exec.Exec(ctx, "increase tidb_backoff_weight", fmt.Sprintf("SET SESSION tidb_backoff_weight = '%d';", 3*tikvstore.DefBackOffWeight)); err != nil {
-		return nil, errors.Trace(err)
+	defaultWeight := 3 * tikvstore.DefBackOffWeight
+	backoffWeight, err := common.GetBackoffWeightFromDB(ctx, e.db)
+	if err == nil && backoffWeight < defaultWeight {
+		// increase backoff weight
+		if err := common.SetBackoffWeightForDB(ctx, e.db, defaultWeight); err != nil {
+			task.Warn("set tidb_backoff_weight failed", zap.Error(err))
+		} else {
+			defer func() {
+				if err := common.SetBackoffWeightForDB(ctx, e.db, backoffWeight); err != nil {
+					task.Warn("recover tidb_backoff_weight failed", zap.Error(err))
+				}
+			}()
+		}
 	}
-	err = exec.QueryRow(ctx, "compute remote checksum",
+
+	cs := RemoteChecksum{}
+	err = common.SQLWithRetry{DB: e.db, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
 		"ADMIN CHECKSUM TABLE "+tableName, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,
 	)
 	dur := task.End(zap.ErrorLevel, err)
@@ -245,16 +256,22 @@ type TiKVChecksumManager struct {
 	client                 kv.Client
 	manager                gcTTLManager
 	distSQLScanConcurrency uint
+	backoffWeight          int
 }
 
 var _ ChecksumManager = &TiKVChecksumManager{}
 
 // NewTiKVChecksumManager return a new tikv checksum manager
-func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint) *TiKVChecksumManager {
+func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint, backoffWeight int) *TiKVChecksumManager {
+	defaultWeight := 3 * tikvstore.DefBackOffWeight
+	if backoffWeight < defaultWeight {
+		backoffWeight = defaultWeight
+	}
 	return &TiKVChecksumManager{
 		client:                 client,
 		manager:                newGCTTLManager(pdClient),
 		distSQLScanConcurrency: distSQLScanConcurrency,
+		backoffWeight:          backoffWeight,
 	}
 }
 
