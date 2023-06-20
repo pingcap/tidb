@@ -356,7 +356,9 @@ func (exec *Executor) Execute(
 		)
 		err = utils.WithRetry(ctx, func() error {
 			vars := kv.NewVariables(&killed)
-			vars.BackOffWeight = exec.backoffWeight
+			if exec.backoffWeight > 0 {
+				vars.BackOffWeight = exec.backoffWeight
+			}
 			resp, err = sendChecksumRequest(ctx, client, req, vars)
 			failpoint.Inject("checksumRetryErr", func(val failpoint.Value) {
 				// first time reach here. return error
