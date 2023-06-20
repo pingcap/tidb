@@ -575,7 +575,15 @@ func BuildBackupRangeAndSchema(
 			case tableInfo.IsView() || !utils.NeedAutoID(tableInfo):
 				// no auto ID for views or table without either rowID nor auto_increment ID.
 			default:
+<<<<<<< HEAD
 				globalAutoID, err = idAlloc.NextGlobalAutoID()
+=======
+				if tableInfo.SepAutoInc() {
+					globalAutoID, err = autoIDAccess.IncrementID(tableInfo.Version).Get()
+				} else {
+					globalAutoID, err = autoIDAccess.RowID().Get()
+				}
+>>>>>>> e0f62ef19e6 (*: fix 'duplicate entry' error when using br to restore AUTO_ID_CACHE=1 tables (#44743))
 			}
 			if err != nil {
 				return nil, nil, nil, errors.Trace(err)
