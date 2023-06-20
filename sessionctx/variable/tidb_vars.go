@@ -879,6 +879,9 @@ const (
 
 	// TiDBFastCheckTable enables fast check table.
 	TiDBFastCheckTable = "tidb_enable_fast_table_check"
+
+	// TiDBAnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	TiDBAnalyzeSkipColumnTypes = "tidb_analyze_skip_column_types"
 )
 
 // TiDB vars that have only global scope

@@ -6347,13 +6347,13 @@
       {
         "SQL": "select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#11",
+          "Projection 1.00 root  test.t1.a, Column#11->Column#13",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#7, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexReader 10000.00 root  index:IndexFullScan",
           "  │   └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#7",
+          "    └─Projection 2.00 root  Column#7->Column#11",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -6363,7 +6363,7 @@
       {
         "SQL": "select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -6373,7 +6373,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -6982,7 +6982,7 @@
       {
         "SQL": "select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -6992,7 +6992,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -7002,7 +7002,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -7012,7 +7012,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -7024,7 +7024,7 @@
       {
         "SQL": "select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -7034,7 +7034,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -7046,7 +7046,7 @@
       {
         "SQL": "select /*+ leading(t1, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -7056,7 +7056,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -7069,7 +7069,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2, t2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -7079,7 +7079,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -7091,7 +7091,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2, t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -7101,7 +7101,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -9128,7 +9128,7 @@
       {
         "SQL": "select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
@@ -9137,7 +9137,7 @@
           "  │   └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
           "  │     └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -9147,7 +9147,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
@@ -9156,7 +9156,7 @@
           "  │   └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
           "  │     └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -9168,7 +9168,7 @@
       {
         "SQL": "select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
@@ -9177,7 +9177,7 @@
           "  │   └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
           "  │     └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
