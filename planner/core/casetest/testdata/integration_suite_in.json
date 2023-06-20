@@ -470,7 +470,7 @@
       "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
       "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a",
       "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
-      "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t",
+      "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t; -- we do generate the agg pushed-down plan of mpp, but cost-cmp failed",
       "explain format = 'verbose' select /*+ merge_join(t1), read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a"
     ]
 
@@ -991,7 +991,7 @@
     "cases": [
       "desc format = 'brief' select i * 2 from t",
       "desc format = 'brief' select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t",
-      "desc format = 'brief' select md5(s) from t",
+      "desc format = 'brief' select md5(s) from t; -- we do generate mpp plan, while the cost-cmp failed",
       "desc format = 'brief' select c from t where a+1=3",
       "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
       "desc format = 'brief' select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A",

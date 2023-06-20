@@ -63,6 +63,7 @@ func TestStoreErr(t *testing.T) {
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
@@ -98,6 +99,7 @@ func TestStoreSwitchPeer(t *testing.T) {
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)

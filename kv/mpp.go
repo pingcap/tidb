@@ -100,8 +100,8 @@ type MPPTask struct {
 	TableID    int64      // physical table id
 	MppVersion MppVersion // mpp version
 
-	PartitionTableIDs                 []int64
-	IsDisaggregatedTiFlashStaticPrune bool
+	PartitionTableIDs  []int64
+	TiFlashStaticPrune bool
 }
 
 // ToPB generates the pb structure.

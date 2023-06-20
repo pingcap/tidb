@@ -2191,19 +2191,18 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
-	isDisaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash
-	isDisaggregatedTiFlashPath := isDisaggregatedTiFlash && ts.StoreType == kv.TiFlash
-	canMppConvertToRootForDisaggregatedTiFlash := isDisaggregatedTiFlashPath && prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed()
-	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash {
+	isTiFlashPath := ts.StoreType == kv.TiFlash
+	canMppConvertToRoot := prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed() && isTiFlashPath
+	canMppConvertToRootForDisaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
+	canMppConvertToRootForWhenTiFlashCopIsBanned := ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
+	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
 		if ts.KeepOrder {
 			return invalidTask, nil
 		}
-		if prop.MPPPartitionTp != property.AnyType || (ts.isPartition && !isDisaggregatedTiFlash) {
-			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
-			// But in disaggregated tiflash mode, we enable using mpp for static pruning partition table, because cop and batchCop is deprecated.
-			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
+		if prop.MPPPartitionTp != property.AnyType {
 			return invalidTask, nil
 		}
+		// ********************************** future deprecated start **************************/
 		var hasVirtualColumn bool
 		for _, col := range ts.schema.Columns {
 			if col.VirtualExpr != nil {
@@ -2212,9 +2211,19 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				break
 			}
 		}
-		if hasVirtualColumn && !canMppConvertToRootForDisaggregatedTiFlash {
+		// in general, since MPP has supported the Gather operator to fill the virtual column, we should full lift restrictions here.
+		// we left them here, because cases like:
+		// parent-----+
+		//            V  (when parent require a root task type here, we need convert mpp task to root task)
+		//    projection [mpp task] [a]
+		//      table-scan [mpp task] [a(virtual col as: b+1), b]
+		// in the process of converting mpp task to root task, the encapsulated table reader will use its first children schema [a]
+		// as its schema, so when we resolve indices later, the virtual column 'a' itself couldn't resolve itself anymore.
+		//
+		if hasVirtualColumn && !canMppConvertToRootForDisaggregatedTiFlash && !canMppConvertToRootForWhenTiFlashCopIsBanned {
 			return invalidTask, nil
 		}
+		// ********************************** future deprecated end **************************/
 		mppTask := &mppTask{
 			p:           ts,
 			partTp:      property.AnyType,
@@ -2234,7 +2243,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
 				task = invalidTask
 			} else if prop.TaskTp == property.RootTaskType {
-				// When got here, canMppConvertToRootForDisaggregatedTiFlash is true.
+				// When got here, canMppConvertToRootX is true.
 				// This is for situations like cannot generate mppTask for some operators.
 				// Such as when the build side of HashJoin is Projection,
 				// which cannot pushdown to tiflash(because TiFlash doesn't support some expr in Proj)
@@ -2245,7 +2254,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		}
 		return task, nil
 	}
-	if isDisaggregatedTiFlashPath {
+	if isTiFlashPath && config.GetGlobalConfig().DisaggregatedTiFlash || isTiFlashPath && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() {
 		// prop.TaskTp is cop related, just return invalidTask.
 		return invalidTask, nil
 	}

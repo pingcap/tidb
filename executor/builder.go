@@ -1375,6 +1375,10 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	}
 
 	switch x := reader.(type) {
+	// todo: when we full banned cop tiflash, we should think about combination of MPPGather and UnionScan
+	case *MPPGather:
+		b.err = errors.New("union scan integrated with MPPGather is not supported now")
+		return nil
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)

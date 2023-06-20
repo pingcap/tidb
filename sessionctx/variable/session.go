@@ -839,6 +839,11 @@ type SessionVars struct {
 	// Value set to `false` means never use mpp.
 	allowMPPExecution bool
 
+	// allowTiFlashCop means if we must use mpp way to execute query.
+	// Default value is `false`, means to be determined by the optimizer.
+	// Value set to `true` means we may fall back to TiFlash cop if possible.
+	allowTiFlashCop bool
+
 	// HashExchangeWithNewCollation means if we support hash exchange when new collation is enabled.
 	// Default value is `true`, means support hash exchange when new collation is enabled.
 	// Value set to `false` means not use hash exchange when new collation is enabled.
@@ -1650,6 +1655,11 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 // IsMPPAllowed returns whether mpp execution is allowed.
 func (s *SessionVars) IsMPPAllowed() bool {
 	return s.allowMPPExecution
+}
+
+// IsTiFlashCopBanned returns whether cop execution is allowed.
+func (s *SessionVars) IsTiFlashCopBanned() bool {
+	return !s.allowTiFlashCop
 }
 
 // IsMPPEnforced returns whether mpp execution is enforced.
