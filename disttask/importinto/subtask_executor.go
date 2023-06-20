@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -140,57 +139,68 @@ func verifyChecksum(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostPr
 
 func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMeta *TaskMeta, logger *zap.Logger) (*local.RemoteChecksum, error) {
 	var (
-		tableName              = common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
-		sql                    = "ADMIN CHECKSUM TABLE " + tableName
-		remoteChecksum         *local.RemoteChecksum
-		maxErrorRetryCount     = 3
-		distSQLScanConcurrency int
-		rs                     []chunk.Row
-		execErr                error
+		tableName                    = common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
+		sql                          = "ADMIN CHECKSUM TABLE " + tableName
+		maxErrorRetryCount           = 3
+		distSQLScanConcurrencyFactor = 1
+		remoteChecksum               *local.RemoteChecksum
+		txnErr                       error
 	)
 
-	err := executor.WithNewSession(func(se sessionctx.Context) error {
-		if err := se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(3*tikvstore.DefBackOffWeight)); err != nil {
-			return err
-		}
-		distSQLScanConcurrency = se.GetSessionVars().DistSQLScanConcurrency()
-
-		for i := 0; i < maxErrorRetryCount; i++ {
-			rs, execErr = storage.ExecSQL(ctx, se, sql)
-			if execErr == nil {
-				if len(rs) < 1 {
-					return errors.New("empty checksum result")
-				}
-				// ADMIN CHECKSUM TABLE <schema>.<table>  example.
-				// 	mysql> admin checksum table test.t;
-				// +---------+------------+---------------------+-----------+-------------+
-				// | Db_name | Table_name | Checksum_crc64_xor  | Total_kvs | Total_bytes |
-				// +---------+------------+---------------------+-----------+-------------+
-				// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
-				// +---------+------------+-------------
-				remoteChecksum = &local.RemoteChecksum{
-					Schema:     rs[0].GetString(0),
-					Table:      rs[0].GetString(1),
-					Checksum:   rs[0].GetUint64(2),
-					TotalKVs:   rs[0].GetUint64(3),
-					TotalBytes: rs[0].GetUint64(4),
-				}
-				return nil
+	for i := 0; i < maxErrorRetryCount; i++ {
+		txnErr = executor.WithNewTxn(func(se sessionctx.Context) error {
+			// increase backoff weight
+			backoffWeightBackup, ok := se.GetSessionVars().GetSystemVar(variable.TiDBBackOffWeight)
+			if !ok {
+				return errors.New("tidb_backoff_weight not set")
 			}
-			if !common.IsRetryableError(execErr) {
-				return execErr
+			backoffWeight := mathutil.Max(backoffWeightBackup, strconv.Itoa(3*tikvstore.DefBackOffWeight))
+			if err := se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, backoffWeight); err != nil {
+				return err
 			}
+			defer func() {
+				if err := se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, backoffWeightBackup); err != nil {
+					logger.Warn("failed to set back tidb_backoff_weight", zap.Error(err))
+				}
+			}()
 
-			logger.Warn("remote checksum failed", zap.String("sql", sql), zap.Error(execErr),
-				zap.Int("concurrency", distSQLScanConcurrency), zap.Int("retry", i))
-			if distSQLScanConcurrency > local.MinDistSQLScanConcurrency {
-				distSQLScanConcurrency = mathutil.Max(distSQLScanConcurrency/2, local.MinDistSQLScanConcurrency)
+			// reduce distsql scan concurrency
+			distSQLScanConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
+			se.GetSessionVars().SetDistSQLScanConcurrency(mathutil.Max(distSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency))
+			defer func() {
 				se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrency)
+			}()
+
+			rs, err := storage.ExecSQL(ctx, se, sql)
+			if err != nil {
+				return err
 			}
+			if len(rs) < 1 {
+				return errors.New("empty checksum result")
+			}
+			// ADMIN CHECKSUM TABLE <schema>.<table>  example.
+			// 	mysql> admin checksum table test.t;
+			// +---------+------------+---------------------+-----------+-------------+
+			// | Db_name | Table_name | Checksum_crc64_xor  | Total_kvs | Total_bytes |
+			// +---------+------------+---------------------+-----------+-------------+
+			// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
+			// +---------+------------+-------------
+			remoteChecksum = &local.RemoteChecksum{
+				Schema:     rs[0].GetString(0),
+				Table:      rs[0].GetString(1),
+				Checksum:   rs[0].GetUint64(2),
+				TotalKVs:   rs[0].GetUint64(3),
+				TotalBytes: rs[0].GetUint64(4),
+			}
+			return nil
+		})
+		if !common.IsRetryableError(txnErr) {
+			break
 		}
-		return execErr
-	})
-	return remoteChecksum, err
+		distSQLScanConcurrencyFactor *= 2
+		logger.Warn("retry checksum table", zap.Int("retry count", i+1), zap.Error(txnErr))
+	}
+	return remoteChecksum, txnErr
 }
 
 func init() {

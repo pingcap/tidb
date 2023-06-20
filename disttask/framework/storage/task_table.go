@@ -39,6 +39,8 @@ import (
 type SessionExecutor interface {
 	// WithNewSession executes the function with a new session.
 	WithNewSession(fn func(se sessionctx.Context) error) error
+	// WithNewTxn executes the fn in a new transaction.
+	WithNewTxn(fn func(se sessionctx.Context) error) error
 }
 
 // TaskManager is the manager of global/sub task.

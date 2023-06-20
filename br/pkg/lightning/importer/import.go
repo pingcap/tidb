@@ -1534,9 +1534,9 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		var manager local.ChecksumManager
-		if rc.cfg.TikvImporter.Backend == config.BackendLocal && rc.cfg.PostRestore.Checksum != config.OpLevelOff {
-			manager = local.NewTiDBChecksumExecutor(rc.db)
+		manager, err := NewChecksumManager(ctx, rc, kvStore)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 
