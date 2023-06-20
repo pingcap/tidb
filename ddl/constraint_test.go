@@ -1123,3 +1123,16 @@ func TestAlterEnforcedConstraintStateChange(t *testing.T) {
 	tk.MustExec("alter table t alter constraint c1 enforced")
 	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
 }
+
+func TestIssue44689(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS t0")
+	tk.MustExec("CREATE TABLE t0(c1 NUMERIC CHECK(true))")
+
+	tk.MustExec("CREATE TABLE t1(c1 NUMERIC, CHECK(true))")
+
+	tk.MustExec("CREATE TABLE t2(c1 NUMERIC)")
+	tk.MustExec("ALTER TABLE t2 ADD CONSTRAINT CHECK (true)")
+}
