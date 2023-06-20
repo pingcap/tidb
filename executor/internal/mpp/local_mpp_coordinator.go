@@ -141,6 +141,9 @@ type localMppCoordinator struct {
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
 func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string, memTracker *memory.Tracker) *localMppCoordinator {
+	if sctx.GetSessionVars().ChooseMppVersion() < kv.MppVersionV2 {
+		coordinatorAddr = ""
+	}
 	coord := &localMppCoordinator{
 		sessionCtx:      sctx,
 		is:              is,
@@ -532,9 +535,7 @@ func (c *localMppCoordinator) handleAllReports() {
 		startTime := time.Now()
 		select {
 		case <-c.reportStatusCh:
-			duration := time.Now().Sub(startTime).Milliseconds()
-			metrics.MppCoordinatorLatencyRcvReport.Observe(float64(duration))
-			logutil.BgLogger().Info("Tem", zap.Float64("Seconds", float64(duration)))
+			metrics.MppCoordinatorLatencyRcvReport.Observe(float64(time.Now().Sub(startTime).Milliseconds()))
 			var recordedPlanIDs = make(map[int]int)
 			for _, report := range c.reqMap {
 				for _, detail := range report.executionSummaries {

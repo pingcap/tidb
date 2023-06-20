@@ -113,7 +113,6 @@ func (m *MPPCoordinatorManager) GetServerAddr() (serverOn bool, serverAddr strin
 }
 
 // Register is to register mpp coordinator
-// TODO: add metric to track coordinator counter
 func (m *MPPCoordinatorManager) Register(coordID CoordinatorUniqueID, mppCoord kv.MppCoordinator) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
