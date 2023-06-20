@@ -227,7 +227,10 @@ func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error
 func (col *CorrelatedColumn) HashCode(sc *stmtctx.StatementContext) []byte {
 	// Doesn't check len(hashcode) because col.Data can be changed anytime,
 	// So always use newest Datum to calc hash code.
-	col.Column.HashCode(sc)
+	col.hashcode = make([]byte, 0, 9)
+	col.hashcode = append(col.hashcode, columnFlag)
+	col.hashcode = codec.EncodeInt(col.hashcode, col.UniqueID)
+
 	if col.Data != nil {
 		col.hashcode = codec.HashCode(col.hashcode, *col.Data)
 	}
