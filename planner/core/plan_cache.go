@@ -849,13 +849,23 @@ func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, s
 	return ok, err
 }
 
-func isSafePointGetPath4PlanCache(path *util.AccessPath) bool {
+func isSafePointGetPath4PlanCache(sctx sessionctx.Context, path *util.AccessPath) bool {
 	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
 	// these assumptions may be broken after parameters change.
 
-	return isSafePointGetPath4PlanCacheScenario1(path) ||
-		isSafePointGetPath4PlanCacheScenario2(path) ||
-		isSafePointGetPath4PlanCacheScenario3(path)
+	if isSafePointGetPath4PlanCacheScenario1(path) {
+		return true
+	}
+
+	// TODO: enable this fix control switch by default after more test cases are added.
+	if sctx != nil && sctx.GetSessionVars() != nil && sctx.GetSessionVars().OptimizerFixControl != nil {
+		v, ok := sctx.GetSessionVars().OptimizerFixControl[variable.TiDBOptFixControl44830]
+		if ok && variable.TiDBOptOn(v) && (isSafePointGetPath4PlanCacheScenario2(path) || isSafePointGetPath4PlanCacheScenario3(path)) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func isSafePointGetPath4PlanCacheScenario1(path *util.AccessPath) bool {
