@@ -72,8 +72,8 @@
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection 8000.00 mpp[tiflash]  Column#5, test.t.a",
-          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#10, Column#9, funcs:sum(Column#6)->Column#5, funcs:firstrow(Column#9)->test.t.a",
-          "        └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#6, test.t.a->Column#9, test.t.a->Column#10, test.t.c->Column#11",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#8, Column#9, funcs:sum(Column#6)->Column#5, funcs:firstrow(Column#7)->test.t.a",
+          "        └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#6, test.t.a->Column#7, test.t.a->Column#8, test.t.c->Column#9",
           "          └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
           "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -90,8 +90,8 @@
           "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column#8)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
           "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
           "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
-          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#13, Column#14, funcs:sum(Column#12)->Column#10",
-          "              └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#12, test.t.a->Column#13, test.t.c->Column#14",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#11, Column#12, funcs:sum(Column#10)->Column#8",
+          "              └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#10, test.t.a->Column#11, test.t.c->Column#12",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -329,8 +329,8 @@
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection 8000.00 mpp[tiflash]  Column#5, test.t.a",
-          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#10, Column#11, funcs:sum(Column#8)->Column#5, funcs:firstrow(Column#9)->test.t.a",
-          "        └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#8, test.t.a->Column#9, test.t.a->Column#10, test.t.c->Column#11",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#8, Column#9, funcs:sum(Column#6)->Column#5, funcs:firstrow(Column#7)->test.t.a",
+          "        └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#6, test.t.a->Column#7, test.t.a->Column#8, test.t.c->Column#9",
           "          └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
           "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -375,8 +375,8 @@
           "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 2666.67 mpp[tiflash]  test.t.a, Column#5",
           "    └─Projection 2666.67 mpp[tiflash]  Column#5, test.t.a",
-          "      └─HashAgg 2666.67 mpp[tiflash]  group by:Column#10, Column#11, funcs:sum(Column#8)->Column#5, funcs:firstrow(Column#9)->test.t.a",
-          "        └─Projection 3333.33 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#8, test.t.a->Column#9, test.t.a->Column#10, test.t.c->Column#11",
+          "      └─HashAgg 2666.67 mpp[tiflash]  group by:Column#8, Column#9, funcs:sum(Column#6)->Column#5, funcs:firstrow(Column#7)->test.t.a",
+          "        └─Projection 3333.33 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#6, test.t.a->Column#7, test.t.a->Column#8, test.t.c->Column#9",
           "          └─ExchangeReceiver 3333.33 mpp[tiflash]  ",
           "            └─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "              └─Selection 3333.33 mpp[tiflash]  gt(test.t.a, 1)",
@@ -409,8 +409,8 @@
           "      └─HashAgg 4439.11 mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column#14)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
           "        └─ExchangeReceiver 4439.11 mpp[tiflash]  ",
           "          └─ExchangeSender 4439.11 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
-          "            └─HashAgg 4439.11 mpp[tiflash]  group by:Column#19, Column#20, funcs:sum(Column#18)->Column#16",
-          "              └─Projection 5548.89 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#18, test.t.a->Column#19, test.t.c->Column#20",
+          "            └─HashAgg 4439.11 mpp[tiflash]  group by:Column#17, Column#18, funcs:sum(Column#16)->Column#14",
+          "              └─Projection 5548.89 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#16, test.t.a->Column#17, test.t.c->Column#18",
           "                └─Selection 5548.89 mpp[tiflash]  or(lt(test.t.b, 2), gt(test.t.a, 2))",
           "                  └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
         ],
@@ -1181,12 +1181,12 @@
           "TableReader_31 8000.00 root  MppVersion: 1, data:ExchangeSender_30",
           "└─ExchangeSender_30 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_5 8000.00 mpp[tiflash]  test.t.a, Column#5",
-          "    └─Projection_28 8000.00 mpp[tiflash]  Column#5, test.t.a",
-          "      └─HashAgg_26 8000.00 mpp[tiflash]  group by:Column#10, Column#11, funcs:sum(Column#8)->Column#5, funcs:firstrow(Column#9)->test.t.a",
-          "        └─Projection_31 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#8, test.t.a->Column#9, test.t.a->Column#10, test.t.c->Column#11",
-          "          └─ExchangeReceiver_22 10000.00 mpp[tiflash]  ",
-          "            └─ExchangeSender_21 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
-          "              └─TableFullScan_20 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─Projection_29 8000.00 mpp[tiflash]  Column#5, test.t.a",
+          "      └─HashAgg_27 8000.00 mpp[tiflash]  group by:Column#10, Column#11, funcs:sum(Column#8)->Column#5, funcs:firstrow(Column#9)->test.t.a",
+          "        └─Projection_32 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#8, test.t.a->Column#9, test.t.a->Column#10, test.t.c->Column#11",
+          "          └─ExchangeReceiver_23 10000.00 mpp[tiflash]  ",
+          "            └─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
+          "              └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1196,13 +1196,13 @@
           "TableReader_35 8000.00 root  MppVersion: 1, data:ExchangeSender_34",
           "└─ExchangeSender_34 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_5 8000.00 mpp[tiflash]  test.t.a, Column#5",
-          "    └─Projection_29 8000.00 mpp[tiflash]  Column#5, test.t.a",
-          "      └─HashAgg_30 8000.00 mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column#10)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
-          "        └─ExchangeReceiver_32 8000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_31 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
-          "            └─HashAgg_28 8000.00 mpp[tiflash]  group by:Column#13, Column#14, funcs:sum(Column#12)->Column#10",
-          "              └─Projection_35 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#12, test.t.a->Column#13, test.t.c->Column#14",
-          "                └─TableFullScan_20 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─Projection_30 8000.00 mpp[tiflash]  Column#5, test.t.a",
+          "      └─HashAgg_31 8000.00 mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column#10)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
+          "        └─ExchangeReceiver_33 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender_32 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
+          "            └─HashAgg_29 8000.00 mpp[tiflash]  group by:Column#13, Column#14, funcs:sum(Column#12)->Column#10",
+          "              └─Projection_36 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#12, test.t.a->Column#13, test.t.c->Column#14",
+          "                └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1354,9 +1354,8 @@
           "Projection_4 8000.00 root  test.t.a, Column#5",
           "└─HashAgg_10 8000.00 root  group by:test.t.a, test.t.c, funcs:sum(Column#6)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
           "  └─TableReader_11 8000.00 root  data:HashAgg_5",
-          "    └─HashAgg_5 8000.00 batchCop[tiflash]  group by:Column#10, Column#9, funcs:sum(Column#8)->Column#6",
-          "      └─Projection_16 10000.00 batchCop[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#8, test.t.a->Column#9, test.t.c->Column#10",
-          "        └─TableFullScan_9 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─HashAgg_5 8000.00 cop[tikv]  group by:test.t.a, test.t.c, funcs:sum(test.t.b)->Column#6",
+          "      └─TableFullScan_8 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"
@@ -1368,9 +1367,8 @@
           "Projection_4 8000.00 root  test.t.a, Column#5",
           "└─HashAgg_10 8000.00 root  group by:test.t.a, test.t.c, funcs:sum(Column#6)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
           "  └─TableReader_11 8000.00 root  data:HashAgg_5",
-          "    └─HashAgg_5 8000.00 batchCop[tiflash]  group by:Column#10, Column#9, funcs:sum(Column#8)->Column#6",
-          "      └─Projection_16 10000.00 batchCop[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#8, test.t.a->Column#9, test.t.c->Column#10",
-          "        └─TableFullScan_9 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─HashAgg_5 8000.00 cop[tikv]  group by:test.t.a, test.t.c, funcs:sum(test.t.b)->Column#6",
+          "      └─TableFullScan_8 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"
