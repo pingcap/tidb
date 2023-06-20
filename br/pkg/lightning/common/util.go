@@ -608,6 +608,7 @@ func IsDupKeyError(err error) bool {
 	return false
 }
 
+// GetBackoffWeightFromSctx gets the backoff weight from session context.
 func GetBackoffWeightFromSctx(se sessionctx.Context) (int, error) {
 	backoffWeightBackup, ok := se.GetSessionVars().GetSystemVar(variable.TiDBBackOffWeight)
 	if !ok {
@@ -616,6 +617,7 @@ func GetBackoffWeightFromSctx(se sessionctx.Context) (int, error) {
 	return strconv.Atoi(backoffWeightBackup)
 }
 
+// GetBackoffWeightFromDB gets the backoff weight from database.
 func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
 	val, err := getSessionVariable(ctx, db, variable.TiDBBackOffWeight)
 	if err != nil {
@@ -624,10 +626,12 @@ func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
 	return strconv.Atoi(val)
 }
 
+// SetBackoffWeightForSctx sets the backoff weight for session context.
 func SetBackoffWeightForSctx(se sessionctx.Context, backoffWeight int) error {
 	return se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
 }
 
+// SetBackoffWeightForDB sets the backoff weight for database.
 func SetBackoffWeightForDB(ctx context.Context, db *sql.DB, backoffWeight int) error {
 	_, err := db.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, backoffWeight))
 	return err

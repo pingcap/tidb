@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
-	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
 )
 
@@ -143,15 +142,14 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 		distSQLScanConcurrencyFactor = 1
 		remoteChecksum               *local.RemoteChecksum
 		txnErr                       error
-		defaultBackoffWeight         = 3 * tikvstore.DefBackOffWeight
 	)
 
 	for i := 0; i < maxErrorRetryCount; i++ {
 		txnErr = executor.WithNewTxn(func(se sessionctx.Context) error {
 			backoffWeight, err := common.GetBackoffWeightFromSctx(se)
-			if err == nil && backoffWeight < defaultBackoffWeight {
+			if err == nil && backoffWeight < local.DefaultBackoffWeight {
 				// increase backoff weight
-				if err := common.SetBackoffWeightForSctx(se, defaultBackoffWeight); err != nil {
+				if err := common.SetBackoffWeightForSctx(se, local.DefaultBackoffWeight); err != nil {
 					logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
 				} else {
 					defer func() {

@@ -52,6 +52,9 @@ var (
 
 	// MinDistSQLScanConcurrency is the minimum value of tidb_distsql_scan_concurrency.
 	MinDistSQLScanConcurrency = 4
+
+	// DefaultBackoffWeight is the default value of tidb_backoff_weight for checksum.
+	DefaultBackoffWeight = 3 * tikvstore.DefBackOffWeight
 )
 
 // RemoteChecksum represents a checksum result got from tidb.
@@ -112,11 +115,10 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
 	// +---------+------------+---------------------+-----------+-------------+
 
-	defaultBackoffWeight := 3 * tikvstore.DefBackOffWeight
 	backoffWeight, err := common.GetBackoffWeightFromDB(ctx, e.db)
-	if err == nil && backoffWeight < defaultBackoffWeight {
+	if err == nil && backoffWeight < DefaultBackoffWeight {
 		// increase backoff weight
-		if err := common.SetBackoffWeightForDB(ctx, e.db, defaultBackoffWeight); err != nil {
+		if err := common.SetBackoffWeightForDB(ctx, e.db, DefaultBackoffWeight); err != nil {
 			task.Warn("set tidb_backoff_weight failed", zap.Error(err))
 		} else {
 			defer func() {
@@ -263,10 +265,6 @@ var _ ChecksumManager = &TiKVChecksumManager{}
 
 // NewTiKVChecksumManager return a new tikv checksum manager
 func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint, backoffWeight int) *TiKVChecksumManager {
-	defaultBackoffWeight := 3 * tikvstore.DefBackOffWeight
-	if backoffWeight < defaultBackoffWeight {
-		backoffWeight = defaultBackoffWeight
-	}
 	return &TiKVChecksumManager{
 		client:                 client,
 		manager:                newGCTTLManager(pdClient),
