@@ -1379,11 +1379,9 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 		return err
 	}
 	control.Start(ctx)
-	serverInfo, err := infosync.GetServerInfo()
-	if err != nil {
-		return err
-	}
-	serverAddr := net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
+	// don't use infosync.GetServerInfo here, because infosync is still not inited.
+	cfg := config.GetGlobalConfig()
+	serverAddr := net.JoinHostPort(cfg.AdvertiseAddress, strconv.Itoa(int(cfg.Port)))
 	do.runawayManager = resourcegroup.NewRunawayManager(control, serverAddr)
 	do.resourceGroupsController = control
 	tikv.SetResourceControlInterceptor(control)
