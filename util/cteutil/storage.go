@@ -93,16 +93,14 @@ type Storage interface {
 
 // StorageRC implements Storage interface using RowContainer.
 type StorageRC struct {
-	mu      sync.Mutex
-	refCnt  int
+	err     error
+	rc      *chunk.RowContainer
 	tp      []*types.FieldType
+	refCnt  int
 	chkSize int
-
-	done bool
-	iter int
-	err  error
-
-	rc *chunk.RowContainer
+	iter    int
+	mu      sync.Mutex
+	done    bool
 }
 
 // NewStorageRowContainer create a new StorageRC.
@@ -117,7 +115,7 @@ func (s *StorageRC) OpenAndRef() (err error) {
 		s.refCnt = 1
 		s.iter = 0
 	} else {
-		s.refCnt += 1
+		s.refCnt++
 	}
 	return nil
 }
@@ -127,17 +125,18 @@ func (s *StorageRC) DerefAndClose() (err error) {
 	if !s.valid() {
 		return errors.New("Storage not opend yet")
 	}
-	s.refCnt -= 1
+	s.refCnt--
 	if s.refCnt < 0 {
 		return errors.New("Storage ref count is less than zero")
 	} else if s.refCnt == 0 {
-		// TODO: unreg memtracker
+		s.refCnt = -1
+		s.done = false
+		s.err = nil
+		s.iter = 0
 		if err = s.rc.Close(); err != nil {
 			return err
 		}
-		if err = s.resetAll(); err != nil {
-			return err
-		}
+		s.rc = nil
 	}
 	return nil
 }
@@ -157,7 +156,7 @@ func (s *StorageRC) SwapData(other Storage) (err error) {
 
 // Reopen impls Storage Reopen interface.
 func (s *StorageRC) Reopen() (err error) {
-	if err = s.rc.Reset(); err != nil {
+	if err = s.rc.Close(); err != nil {
 		return err
 	}
 	s.iter = 0
@@ -265,18 +264,6 @@ func (s *StorageRC) ActionSpill() *chunk.SpillDiskAction {
 // ActionSpillForTest is for test.
 func (s *StorageRC) ActionSpillForTest() *chunk.SpillDiskAction {
 	return s.rc.ActionSpillForTest()
-}
-
-func (s *StorageRC) resetAll() error {
-	s.refCnt = -1
-	s.done = false
-	s.err = nil
-	s.iter = 0
-	if err := s.rc.Reset(); err != nil {
-		return err
-	}
-	s.rc = nil
-	return nil
 }
 
 func (s *StorageRC) valid() bool {
