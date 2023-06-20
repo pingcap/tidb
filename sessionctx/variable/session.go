@@ -1487,6 +1487,9 @@ type SessionVars struct {
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
 
+	// FastCheckTable is used to control whether fast check table is enabled.
+	FastCheckTable bool
+
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
 	// HypoTiFlashReplicas are for the Index Advisor.

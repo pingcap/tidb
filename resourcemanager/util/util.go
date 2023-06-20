@@ -55,4 +55,6 @@ const (
 	DDL
 	// DistTask is for disttask component.
 	DistTask
+	// CheckTable is for admin check table component.
+	CheckTable
 )
