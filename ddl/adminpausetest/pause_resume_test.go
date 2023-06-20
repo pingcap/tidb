@@ -177,15 +177,13 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 	if stmtCase.isJobPausable {
 		if doCancel {
 			hook.OnGetJobBeforeExported = localPRCCancelFunc(adminCommandKit, stmtCase)
-		}
-		dom.DDL().SetHook(hook.Clone())
-
-		if doCancel {
+			dom.DDL().SetHook(hook.Clone())
 			stmtKit.MustGetErrCode(stmtCase.stmt, errno.ErrCancelledDDLJob)
 			Logger.Info("pauseResumeAndCancel: statement execution should be cancelled.")
 
 			localPRCVerifyCancelResult(t, adminCommandKit)
 		} else {
+			dom.DDL().SetHook(hook.Clone())
 			stmtKit.MustExec(stmtCase.stmt)
 			Logger.Info("pauseResumeAndCancel: statement execution should finish successfully.")
 
@@ -198,6 +196,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 		localPRCVerifyPauseResult(t, adminCommandKit)
 		localPRCVerifyResumeResult(t, adminCommandKit)
 	} else {
+		dom.DDL().SetHook(hook.Clone())
 		stmtKit.MustExec(stmtCase.stmt)
 
 		require.False(t, localPRCIsPaused)
