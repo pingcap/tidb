@@ -880,6 +880,9 @@ const (
 
 	// TiFlashReplicaRead is used to set the policy of TiFlash replica read when the query needs the TiFlash engine.
 	TiFlashReplicaRead = "tiflash_replica_read"
+
+	// TiDBAnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	TiDBAnalyzeSkipColumnTypes = "tidb_analyze_skip_column_types"
 )
 
 // TiDB vars that have only global scope

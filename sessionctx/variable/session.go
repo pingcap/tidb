@@ -1503,6 +1503,9 @@ type SessionVars struct {
 	runtimeFilterTypes []RuntimeFilterType
 	// Runtime filter mode: only support OFF, LOCAL now
 	runtimeFilterMode RuntimeFilterMode
+
+	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	AnalyzeSkipColumnTypes map[string]struct{}
 }
 
 var (
@@ -2589,6 +2592,8 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
 	sessionStates.ResourceGroupName = s.ResourceGroupName
+	sessionStates.HypoIndexes = s.HypoIndexes
+	sessionStates.HypoTiFlashReplicas = s.HypoTiFlashReplicas
 
 	// Encode StatementContext. We encode it here to avoid circle dependency.
 	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
@@ -2623,6 +2628,8 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
 	s.ResourceGroupName = sessionStates.ResourceGroupName
+	s.HypoIndexes = sessionStates.HypoIndexes
+	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
 	// Decode StatementContext.
 	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))

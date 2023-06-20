@@ -441,6 +441,13 @@ bazel_prepare:
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
 
+bazel_ci_prepare_rbe:
+	bazel run //:gazelle
+	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable
+	bazel run --//build:with_rbe_flag=true \
+		--run_under="cd $(CURDIR) && " \
+		 //tools/tazel:tazel
+
 check-bazel-prepare:
 	@echo "make bazel_prepare"
 	./tools/check/check-bazel-prepare.sh
@@ -513,8 +520,9 @@ bazel_addindextest: failpoint-enable bazel_ci_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/addindextest/...
 
+# on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 bazel_importintotest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/importintotest/...
 
 bazel_lint: bazel_prepare

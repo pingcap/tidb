@@ -19,6 +19,7 @@ go_library(
         "//config",
         "//ddl/placement",
         "//domain/infosync",
+        "//domain/resourcegroup",
         "//errno",
         "//kv",
         "//metrics",

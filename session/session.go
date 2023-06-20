@@ -644,7 +644,6 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
-	s.txn.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
@@ -1925,8 +1924,9 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 		return nil, nil, err
 	}
 
-	for _, dbName := range GetDBNames(se.GetSessionVars()) {
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
+	vars := se.GetSessionVars()
+	for _, dbName := range GetDBNames(vars) {
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.ResourceGroupName).Observe(time.Since(startTime).Seconds())
 	}
 	return rows, rs.Fields(), err
 }
@@ -2100,8 +2100,9 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 			return nil, nil, err
 		}
 
-		for _, dbName := range GetDBNames(se.GetSessionVars()) {
-			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
+		vars := se.GetSessionVars()
+		for _, dbName := range GetDBNames(vars) {
+			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.ResourceGroupName).Observe(time.Since(startTime).Seconds())
 		}
 		return rows, rs.Fields(), err
 	})
@@ -2199,10 +2200,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	stmt, err := compiler.Compile(ctx, stmtNode)
 	// session resource-group might be changed by query hint, ensure restore it back when
 	// the execution finished.
-	if s.GetSessionVars().ResourceGroupName != originalResourceGroup {
+	if sessVars.ResourceGroupName != originalResourceGroup {
 		defer func() {
 			// Restore the resource group for the session
-			s.GetSessionVars().ResourceGroupName = originalResourceGroup
+			sessVars.ResourceGroupName = originalResourceGroup
 		}()
 	}
 	if err != nil {
