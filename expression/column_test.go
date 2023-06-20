@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
@@ -262,4 +263,31 @@ func TestGcColumnExprIsTidbShard(t *testing.T) {
 	// tidb_shard(a) = 1
 	shardExpr := NewFunctionInternal(ctx, ast.TiDBShard, ft, col)
 	require.True(t, GcColumnExprIsTidbShard(shardExpr))
+}
+
+func TestCorColHashCode(t *testing.T) {
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
+	col := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+
+	corCol := CorrelatedColumn{
+		Column: *col,
+	}
+
+	oriCorColHashCode := corCol.HashCode(sc)
+	oriColHashCode := col.HashCode(sc)
+	// hash code is same when Data is not set.
+	require.True(t, bytes.Equal(oriColHashCode, oriCorColHashCode))
+
+	// corCol.hashcode changes after datum changed.
+	d1 := types.NewDatum(1)
+	corCol.Data = &d1
+	require.False(t, bytes.Equal(col.HashCode(sc), corCol.HashCode(sc)))
+	d1HashCode := corCol.HashCode(sc)
+	d2 := types.NewFloat64Datum(1.1)
+	corCol.Data = &d2
+	require.False(t, bytes.Equal(d1HashCode, corCol.HashCode(sc)))
+
+	// col.hashcode doesn't change.
+	require.True(t, bytes.Equal(oriColHashCode, col.HashCode(sc)))
 }
