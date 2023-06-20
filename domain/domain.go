@@ -1116,6 +1116,17 @@ func (do *Domain) Init(
 		}
 	}
 
+	pdCli := do.GetPDClient()
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	do.cancel = cancelFunc
+	// Init resource controller first before any session is working
+	// to avoid data race.(though the data race is not a problem,
+	// but just to make to compiler happy.)
+	err := do.initResourceGroupsController(ctx, pdCli)
+	if err != nil {
+		return err
+	}
+
 	// TODO: Here we create new sessions with sysFac in DDL,
 	// which will use `do` as Domain instead of call `domap.Get`.
 	// That's because `domap.Get` requires a lock, but before
@@ -1127,8 +1138,6 @@ func (do *Domain) Init(
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
 	do.resourcePool = sysCtxPool
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	do.cancel = cancelFunc
 	var callback ddl.Callback
 	newCallbackFunc, err := ddl.GetCustomizedHook("default_hook")
 	if err != nil {
@@ -1179,15 +1188,10 @@ func (do *Domain) Init(
 	}
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
-	pdCli := do.GetPDClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, do.Store().GetCodec(),
 		skipRegisterToDashboard)
-	if err != nil {
-		return err
-	}
-	err = do.initResourceGroupsController(ctx, pdCli)
 	if err != nil {
 		return err
 	}
