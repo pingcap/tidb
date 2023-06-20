@@ -148,6 +148,7 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 		txnErr = executor.WithNewTxn(func(se sessionctx.Context) error {
 			backoffWeight, err := common.GetBackoffWeightFromSctx(se)
 			if err == nil && backoffWeight < local.DefaultBackoffWeight {
+				logger.Info("increase tidb_backoff_weight", zap.Int("original", backoffWeight), zap.Int("new", local.DefaultBackoffWeight))
 				// increase backoff weight
 				if err := common.SetBackoffWeightForSctx(se, local.DefaultBackoffWeight); err != nil {
 					logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
