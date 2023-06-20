@@ -38,6 +38,7 @@ type CorrelatedColumn struct {
 	Column
 
 	Data *types.Datum
+	columnHashCode []byte
 }
 
 // Clone implements Expression interface.
@@ -225,11 +226,15 @@ func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error
 
 // HashCode implements Expression interface.
 func (col *CorrelatedColumn) HashCode(sc *stmtctx.StatementContext) []byte {
-	// Doesn't check len(hashcode) because col.Data can be changed anytime,
-	// So always use newest Datum to calc hash code.
-	col.hashcode = make([]byte, 0, 9)
-	col.hashcode = append(col.hashcode, columnFlag)
-	col.hashcode = codec.EncodeInt(col.hashcode, col.UniqueID)
+	if len(col.columnHashCode) == 0 {
+		col.columnHashCode = make([]byte, 0, 9)
+		col.columnHashCode = append(col.columnHashCode, columnFlag)
+		col.columnHashCode = codec.EncodeInt(col.columnHashCode, col.UniqueID)
+	}
+
+	// Because col.Data can be changed anytime, so always use newest Datum to calc hash code.
+	col.hashcode = col.hashcode[:len(col.columnHashCode)]
+	copy(col.hashcode, col.columnHashCode)
 
 	if col.Data != nil {
 		col.hashcode = codec.HashCode(col.hashcode, *col.Data)
