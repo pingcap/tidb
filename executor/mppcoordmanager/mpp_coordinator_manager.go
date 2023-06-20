@@ -68,17 +68,17 @@ func (m *MPPCoordinatorManager) Run() {
 			case <-m.ctx.Done():
 				return
 			case <-ticker.C:
-				m.detectAndDelete()
+				m.detectAndDelete(uint64(time.Now().UnixNano()))
 			}
 		}
 	}()
 }
 
-func (m *MPPCoordinatorManager) detectAndDelete() {
+func (m *MPPCoordinatorManager) detectAndDelete(nowTs uint64) {
 	var outOfTimeIDs []CoordinatorUniqueID
 	m.mu.Lock()
 	for id := range m.coordinatorMap {
-		if uint64(time.Now().UnixNano()) >= id.MPPQueryID.QueryTs+m.maxLifeTime {
+		if nowTs > id.MPPQueryID.QueryTs+m.maxLifeTime {
 			outOfTimeIDs = append(outOfTimeIDs, id)
 			delete(m.coordinatorMap, id)
 		}

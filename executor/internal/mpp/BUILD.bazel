@@ -10,6 +10,7 @@ go_library(
         "//distsql",
         "//executor/internal/builder",
         "//executor/internal/util",
+        "//executor/metrics",
         "//infoschema",
         "//kv",
         "//planner/core",
