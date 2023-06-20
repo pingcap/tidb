@@ -2127,18 +2127,18 @@ func TestSetMppExchangeCompressionModeVariable(t *testing.T) {
 	}
 }
 
-func TestSetTiDBOptEnableMPPReportStatus(t *testing.T) {
+func TestSetTiDBOptDisableMPPReportStatus(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// check the default mode
-	tk.MustQuery("select @@session.tidb_opt_enable_mpp_report_status").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@global.tidb_opt_enable_mpp_report_status").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.tidb_opt_disable_mpp_report_status").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_opt_disable_mpp_report_status").Check(testkit.Rows("0"))
 
-	tk.MustExec("set @@tidb_opt_enable_mpp_report_status=OFF;")
-	tk.MustQuery("select @@session.tidb_opt_enable_mpp_report_status").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_opt_disable_mpp_report_status=ON;")
+	tk.MustQuery("select @@session.tidb_opt_disable_mpp_report_status").Check(testkit.Rows("1"))
 
-	tk.MustExec("set GLOBAL tidb_opt_enable_mpp_report_status=OFF;")
-	tk.MustQuery("select @@global.tidb_opt_enable_mpp_report_status").Check(testkit.Rows("0"))
+	tk.MustExec("set GLOBAL tidb_opt_disable_mpp_report_status=ON;")
+	tk.MustQuery("select @@global.tidb_opt_disable_mpp_report_status").Check(testkit.Rows("1"))
 }
