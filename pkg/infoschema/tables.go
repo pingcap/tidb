@@ -2009,6 +2009,7 @@ func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 	return cnt, nil
 }
 
+// GetTiProxyServerInfo gets server info of TiProxy from PD.
 func GetTiProxyServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	tiproxyNodes, err := infosync.GetTiProxyServerInfo(context.Background())
 	if err != nil {
