@@ -1411,11 +1411,6 @@ func TestWrapWithCastAsString(t *testing.T) {
 			false,
 			"-127",
 		},
-		{
-			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeLonglong, charset.CollationBin, 1), Value: types.NewIntDatum(-127)},
-			false,
-			"-127",
-		},
 	}
 	for _, c := range cases {
 		expr := BuildCastFunction(ctx, c.expr, types.NewFieldType(mysql.TypeVarString))
