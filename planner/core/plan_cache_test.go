@@ -76,6 +76,7 @@ func TestIssue44830(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_opt_fix_control = "44830:ON"`)
 	tk.MustExec(`create table t (a int, primary key(a))`)
 	tk.MustExec(`create table t1 (a int, b int, primary key(a, b))`) // multiple-column primary key
 	tk.MustExec(`insert into t values (1), (2), (3)`)
