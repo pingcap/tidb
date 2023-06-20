@@ -30,10 +30,12 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -147,6 +149,7 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 		txnErr                       error
 	)
 
+	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	for i := 0; i < maxErrorRetryCount; i++ {
 		txnErr = executor.WithNewTxn(func(se sessionctx.Context) error {
 			if err := ddlutil.LoadGlobalVars(ctx, se, []string{variable.TiDBBackOffWeight}); err != nil {
@@ -204,6 +207,10 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 		logger.Warn("retry checksum table", zap.Int("retry count", i+1), zap.Error(txnErr))
 	}
 	return remoteChecksum, txnErr
+}
+
+func TestChecksumTable(ctx context.Context, executor storage.SessionExecutor, taskMeta *TaskMeta, logger *zap.Logger) (*local.RemoteChecksum, error) {
+	return checksumTable(ctx, executor, taskMeta, logger)
 }
 
 func init() {
