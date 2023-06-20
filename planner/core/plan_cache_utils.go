@@ -501,8 +501,7 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 			if err != nil { // CTE in this case
 				continue
 			}
-			tStats := getStatsTable(sctx, t.Meta(), t.Meta().ID)
-			statsVerHash += tableStatsVersionForPlanCache(tStats) // use '+' as the hash function for simplicity
+			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
 		}
 
 		for _, node := range stmt.QueryFeatures.limits {
