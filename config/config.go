@@ -305,6 +305,11 @@ type Config struct {
 	TiDBMaxReuseColumn uint32 `toml:"tidb-max-reuse-column" json:"tidb-max-reuse-column"`
 	// TiDBEnableExitCheck indicates whether exit-checking in domain for background process
 	TiDBEnableExitCheck bool `toml:"tidb-enable-exit-check" json:"tidb-enable-exit-check"`
+
+	// InMemSlowQueryTopNNum indicates the number of TopN slow queries stored in memory.
+	InMemSlowQueryTopNNum int `toml:"in-mem-slow-query-topn-num" json:"in-mem-slow-query-topn-num"`
+	// InMemSlowQueryRecentNum indicates the number of recent slow queries stored in memory.
+	InMemSlowQueryRecentNum int `toml:"in-mem-slow-query-recent-num" json:"in-mem-slow-query-recent-num"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -1057,6 +1062,8 @@ var defaultConf = Config{
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 	TiDBEnableExitCheck:                  false,
+	InMemSlowQueryTopNNum:                30,
+	InMemSlowQueryRecentNum:              500,
 }
 
 var (

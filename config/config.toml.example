@@ -132,6 +132,12 @@ autoscaler-cluster-id = ""
 # use-autoscaler indicates whether use AutoScaler or PD for tiflash_compute nodes, only meaningful when disaggregated-tiflash is true.
 use-autoscaler = false
 
+# in-mem-slow-query-topn-num indicates the number of TopN slow queries stored in memory.
+in-mem-slow-query-topn-num = 30
+
+# in-mem-slow-query-recent-num indicates the number of recent slow queries stored in memory.
+in-mem-slow-query-recent-num = 500
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
