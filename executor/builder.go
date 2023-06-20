@@ -5324,6 +5324,22 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		resTbl = storages.ResTbl
 		iterInTbl = storages.IterInTbl
 	} else {
+<<<<<<< HEAD
+=======
+		if v.SeedPlan == nil {
+			b.err = errors.New("cte.seedPlan cannot be nil")
+			return nil
+		}
+		// Build seed part.
+		corCols := plannercore.ExtractOuterApplyCorrelatedCols(v.SeedPlan)
+		seedExec := b.build(v.SeedPlan)
+		if b.err != nil {
+			return nil
+		}
+
+		// Setup storages.
+		tps := seedExec.base().retFieldTypes
+>>>>>>> cea26f8ac1c (*: fix cte nil pointer error when got multiple apply (#44782))
 		resTbl = cteutil.NewStorageRowContainer(tps, chkSize)
 		if err := resTbl.OpenAndRef(); err != nil {
 			b.err = err
@@ -5337,6 +5353,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl}
 	}
 
+<<<<<<< HEAD
 	// 3. Build recursive part.
 	if v.RecurPlan != nil && b.Ti != nil {
 		b.Ti.UseRecursive = true
@@ -5351,6 +5368,44 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		sel = make([]int, chkSize)
 		for i := 0; i < chkSize; i++ {
 			sel[i] = i
+=======
+		// Build recursive part.
+		var recursiveExec Executor
+		if v.RecurPlan != nil {
+			recursiveExec = b.build(v.RecurPlan)
+			if b.err != nil {
+				return nil
+			}
+			corCols = append(corCols, plannercore.ExtractOuterApplyCorrelatedCols(v.RecurPlan)...)
+		}
+
+		var sel []int
+		if v.CTE.IsDistinct {
+			sel = make([]int, chkSize)
+			for i := 0; i < chkSize; i++ {
+				sel[i] = i
+			}
+		}
+
+		var corColHashCodes [][]byte
+		for _, corCol := range corCols {
+			corColHashCodes = append(corColHashCodes, corCol.HashCode(b.ctx.GetSessionVars().StmtCtx))
+		}
+
+		producer = &cteProducer{
+			ctx:             b.ctx,
+			seedExec:        seedExec,
+			recursiveExec:   recursiveExec,
+			resTbl:          resTbl,
+			iterInTbl:       iterInTbl,
+			isDistinct:      v.CTE.IsDistinct,
+			sel:             sel,
+			hasLimit:        v.CTE.HasLimit,
+			limitBeg:        v.CTE.LimitBeg,
+			limitEnd:        v.CTE.LimitEnd,
+			corCols:         corCols,
+			corColHashCodes: corColHashCodes,
+>>>>>>> cea26f8ac1c (*: fix cte nil pointer error when got multiple apply (#44782))
 		}
 	}
 
