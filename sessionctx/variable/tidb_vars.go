@@ -876,6 +876,9 @@ const (
 	TiDBOptEnableMPPSharedCTEExecution = "tidb_opt_enable_mpp_shared_cte_execution"
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
+
+	// TiDBFastCheckTable enables fast check table.
+	TiDBFastCheckTable = "tidb_enable_fast_table_check"
 )
 
 // TiDB vars that have only global scope
@@ -1346,6 +1349,7 @@ const (
 	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
 	DefAuthenticationLDAPSimpleInitPoolSize           = 10
 	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
+	DefTiDBEnableFastCheckTable                       = true
 	DefRuntimeFilterType                              = "IN"
 	DefRuntimeFilterMode                              = "OFF"
 )
