@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/disttask/framework/storage"
@@ -146,6 +147,9 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 
 	for i := 0; i < maxErrorRetryCount; i++ {
 		txnErr = executor.WithNewTxn(func(se sessionctx.Context) error {
+			if err := ddlutil.LoadDDLReorgVars(ctx, se); err != nil {
+				logger.Warn("load ddl reorg vars failed", zap.Error(err))
+			}
 			backoffWeight, err := common.GetBackoffWeightFromSctx(se)
 			if err == nil && backoffWeight < local.DefaultBackoffWeight {
 				logger.Info("increase tidb_backoff_weight", zap.Int("original", backoffWeight), zap.Int("new", local.DefaultBackoffWeight))
