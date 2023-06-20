@@ -880,6 +880,12 @@ const (
 	// TiDBLockUnchangedKeys indicates whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
 	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
 	TiDBLockUnchangedKeys = "tidb_lock_unchanged_keys"
+
+	// TiDBFastCheckTable enables fast check table.
+	TiDBFastCheckTable = "tidb_enable_fast_table_check"
+
+	// TiDBAnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	TiDBAnalyzeSkipColumnTypes = "tidb_analyze_skip_column_types"
 )
 
 // TiDB vars that have only global scope
@@ -1350,6 +1356,7 @@ const (
 	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
 	DefAuthenticationLDAPSimpleInitPoolSize           = 10
 	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
+	DefTiDBEnableFastCheckTable                       = true
 	DefRuntimeFilterType                              = "IN"
 	DefRuntimeFilterMode                              = "OFF"
 	DefTiDBLockUnchangedKeys                          = true

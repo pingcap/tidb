@@ -843,7 +843,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
 		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt,
-		*ast.LoadDataActionStmt, *ast.CalibrateResourceStmt:
+		*ast.LoadDataActionStmt, *ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -2467,6 +2467,37 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		if colsInfo, ok := colsInfoMap[physicalID]; ok {
 			execColsInfo = colsInfo
 		}
+		filterSkipColumnTypes := func(origin []*model.ColumnInfo) (result []*model.ColumnInfo) {
+			skipTypes := b.ctx.GetSessionVars().AnalyzeSkipColumnTypes
+			if b.ctx.GetSessionVars().InRestrictedSQL {
+				// For auto analyze, we need to use @@global.tidb_analyze_skip_column_types.
+				val, err1 := b.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+				if err1 != nil {
+					logutil.BgLogger().Error("loading tidb_analyze_skip_column_types failed", zap.Error(err1))
+					result = origin
+					return
+				}
+				skipTypes = variable.ParseAnalyzeSkipColumnTypes(val)
+			}
+			mustAnalyze, err1 := b.getMustAnalyzedColumns(tbl, &mustAnalyzedCols)
+			if err1 != nil {
+				logutil.BgLogger().Error("getting must-analyzed columns failed", zap.Error(err1))
+				result = origin
+				return
+			}
+			for _, colInfo := range origin {
+				_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]
+				// Currently, if the column exists in some index(except MV Index), we need to bring the column's sample values
+				// into TiDB to build the index statistics.
+				_, keep := mustAnalyze[colInfo.ID]
+				if skip && !keep {
+					continue
+				}
+				result = append(result, colInfo)
+			}
+			return
+		}
+		execColsInfo = filterSkipColumnTypes(execColsInfo)
 		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
 		indexes := getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
@@ -3333,7 +3364,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			GlobalScope:           show.GlobalScope,
 			Extended:              show.Extended,
 			Limit:                 show.Limit,
-			LoadDataJobID:         show.LoadDataJobID,
+			ImportJobID:           show.ImportJobID,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -4317,15 +4348,20 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	return p, err
 }
 
-// DetachedOption is a special option in load data statement that need to be handled separately.
-const DetachedOption = "detached"
+var (
+	importIntoSchemaNames = []string{"Job_ID", "Data_Source", "Target_Table", "Table_ID",
+		"Phase", "Status", "Source_File_Size", "Imported_Rows",
+		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
+	importIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
+)
 
 func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (Plan, error) {
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	var (
 		err              error
 		options          = make([]*LoadDataOpt, 0, len(ld.Options))
-		detached         = false
 		importFromServer bool
 	)
 
@@ -4345,9 +4381,6 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			if err != nil {
 				return nil, err
 			}
-		}
-		if strings.ToLower(opt.Name) == DetachedOption && opt.Value == nil {
-			detached = true
 		}
 		options = append(options, &loadDataOpt)
 	}
@@ -4397,11 +4430,8 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		return nil, err
 	}
 
-	if detached {
-		p.setSchemaAndNames(expression.NewSchema(&expression.Column{
-			RetType: types.NewFieldType(mysql.TypeLonglong),
-		}), types.NameSlice{{ColName: model.NewCIStr("Task_ID")}})
-	}
+	outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes)
+	p.setSchemaAndNames(outputSchema, outputFields)
 	return p, nil
 }
 
@@ -5381,17 +5411,14 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowSessionStates:
 		names = []string{"Session_states", "Session_token"}
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
-	case ast.ShowLoadDataJobs:
-		names = []string{"Job_ID", "Create_Time", "Start_Time", "End_Time",
-			"Data_Source", "Target_Table", "Import_Mode", "Created_By",
-			"Job_State", "Job_Status", "Source_File_Size", "Imported_Rows",
-			"Result_Code", "Result_Message"}
-		ftypes = []byte{mysql.TypeLonglong, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
-			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
-			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
-			mysql.TypeLonglong, mysql.TypeString}
+	case ast.ShowImportJobs:
+		names = importIntoSchemaNames
+		ftypes = importIntoSchemaFTypes
 	}
+	return convert2OutputSchemasAndNames(names, ftypes)
+}
 
+func convert2OutputSchemasAndNames(names []string, ftypes []byte) (schema *expression.Schema, outputNames []*types.FieldName) {
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	outputNames = make([]*types.FieldName, 0, len(names))
 	for i := range names {

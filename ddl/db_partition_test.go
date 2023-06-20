@@ -2129,6 +2129,222 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("2 11 11", "12 12 12"))
 }
 
+func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`)
+	tt := external.GetTableByName(t, tk, "test", "test_global")
+	pid := tt.Meta().Partition.Definitions[1].ID
+
+	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b);")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c);")
+	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4), (15, 15, 15)`)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`use test`)
+	tk2.MustExec(`begin`)
+	tk2.MustExec(`insert into test_global values (5,5,5)`)
+	syncChan := make(chan bool)
+	go func() {
+		tk.MustExec("alter table test_global truncate partition p2;")
+		syncChan <- true
+	}()
+	waitFor := func(i int, s string) {
+		for {
+			tk4 := testkit.NewTestKit(t, store)
+			tk4.MustExec(`use test`)
+			res := tk4.MustQuery(`admin show ddl jobs where db_name = 'test' and table_name = 'test_global' and job_type = 'truncate partition'`).Rows()
+			if len(res) == 1 && res[0][i] == s {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	waitFor(4, "delete only")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec(`begin`)
+	tk3.MustExec(`use test`)
+	tk3.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
+	tk3.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+	// Here it will fail with
+	// the partition is not in public.
+	err := tk3.ExecToErr(`insert into test_global values (15,15,15)`)
+	assert.NotNil(t, err)
+	tk2.MustExec(`commit`)
+	tk3.MustExec(`commit`)
+	<-syncChan
+	result := tk.MustQuery("select * from test_global;")
+	result.Sort().Check(testkit.Rows(`1 1 1`, `2 2 2`, `5 5 5`))
+
+	tt = external.GetTableByName(t, tk, "test", "test_global")
+	idxInfo := tt.Meta().FindIndexByName("idx_b")
+	require.NotNil(t, idxInfo)
+	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
+	require.Equal(t, 3, cnt)
+
+	idxInfo = tt.Meta().FindIndexByName("idx_c")
+	require.NotNil(t, idxInfo)
+	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
+	require.Equal(t, 3, cnt)
+}
+
+func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+	tk.MustExec("analyze table test_global")
+
+	originalHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originalHook)
+
+	var err error
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			err = tk1.ExecToErr("update test_global set a = 2 where a = 11")
+			assert.NotNil(t, err)
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk.MustExec("alter table test_global truncate partition p1")
+}
+
+func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by hash(a) partitions 4;`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+	tk.MustExec("analyze table test_global")
+
+	originalHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originalHook)
+
+	var err error
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			err = tk1.ExecToErr("update test_global set a = 1 where a = 12")
+			assert.NotNil(t, err)
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk.MustExec("alter table test_global truncate partition p1")
+}
+
+func TestGlobalIndexReaderInTruncatePartition(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+	tk.MustExec("analyze table test_global")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+
+			tk1.MustQuery("select b from test_global use index(idx_b)").Sort().Check(testkit.Rows("11", "12"))
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk.MustExec("alter table test_global truncate partition p1")
+}
+
+func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+	tk.MustExec("analyze table test_global")
+
+	var err error
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			err = tk1.ExecToErr("insert into test_global values(2, 2, 2)")
+			assert.NotNil(t, err)
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk.MustExec("alter table test_global truncate partition p1")
+}
+
 func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {

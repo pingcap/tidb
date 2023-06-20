@@ -435,6 +435,66 @@ func TestSessionCtx(t *testing.T) {
 				tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
 			},
 		},
+		{
+			// check HypoTiFlashReplicas
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec(`alter table test.t1 set hypo tiflash replica 1`)
+				require.NotNil(t, tk.Session().GetSessionVars().HypoTiFlashReplicas["test"]["t1"])
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
+					`TableReader_11 10000.00 root  MppVersion: 1, data:ExchangeSender_10`,
+					`└─ExchangeSender_10 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
+					`  └─TableFullScan_9 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo`))
+			},
+		},
+		{
+			// check empty HypoTiFlashReplicas
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec(`alter table test.t1 set hypo tiflash replica 1`)
+				tk.MustExec(`alter table test.t1 set hypo tiflash replica 0`)
+				require.Empty(t, tk.Session().GetSessionVars().HypoTiFlashReplicas["test"])
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
+					`TableReader_5 10000.00 root  data:TableFullScan_4`,
+					`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+			},
+		},
+		{
+			// check HypoIndexes
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec(`create index hypo_id type hypo on test.t1(id)`)
+				require.NotNil(t, tk.Session().GetSessionVars().HypoIndexes["test"]["t1"])
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery(`show create table test.t1`).Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+					"  `id` int(11) DEFAULT NULL,\n" +
+					"  KEY `hypo_id` (`id`) /* HYPO INDEX */\n" +
+					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`IndexReader_7 10000.00 root  index:IndexFullScan_6`,
+					`└─IndexFullScan_6 10000.00 cop[tikv] table:t1, index:hypo_id(id) keep order:false, stats:pseudo`))
+			},
+		},
+		{
+			// check empty HypoIndexes
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec(`create index hypo_id type hypo on test.t1(id)`)
+				tk.MustExec(`drop index hypo_id on test.t1`)
+				require.Empty(t, tk.Session().GetSessionVars().HypoIndexes["test"]["t1"])
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery(`show create table test.t1`).Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+					"  `id` int(11) DEFAULT NULL\n" +
+					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`TableReader_5 10000.00 root  data:TableFullScan_4`,
+					`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+			},
+		},
 	}
 
 	for _, tt := range tests {

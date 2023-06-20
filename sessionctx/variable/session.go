@@ -32,6 +32,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
@@ -1486,6 +1487,9 @@ type SessionVars struct {
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
 
+	// FastCheckTable is used to control whether fast check table is enabled.
+	FastCheckTable bool
+
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
 	// HypoTiFlashReplicas are for the Index Advisor.
@@ -1501,6 +1505,9 @@ type SessionVars struct {
 	// Whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
 	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
 	LockUnchangedKeys bool
+
+	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	AnalyzeSkipColumnTypes map[string]struct{}
 }
 
 var (
@@ -1970,6 +1977,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		mppVersion:                    kv.MppVersionUnspecified,
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
+		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -2586,6 +2594,8 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
 	sessionStates.ResourceGroupName = s.ResourceGroupName
+	sessionStates.HypoIndexes = s.HypoIndexes
+	sessionStates.HypoTiFlashReplicas = s.HypoTiFlashReplicas
 
 	// Encode StatementContext. We encode it here to avoid circle dependency.
 	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
@@ -2620,6 +2630,8 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
 	s.ResourceGroupName = sessionStates.ResourceGroupName
+	s.HypoIndexes = sessionStates.HypoIndexes
+	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
 	// Decode StatementContext.
 	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))

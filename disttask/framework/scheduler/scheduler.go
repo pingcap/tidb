@@ -18,12 +18,17 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
+
+// TestSyncChan is used to sync the test.
+var TestSyncChan = make(chan struct{})
 
 // InternalSchedulerImpl is the implementation of InternalScheduler.
 type InternalSchedulerImpl struct {
@@ -126,13 +131,14 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 	}
 
 	concurrentSubtask := false
-	if opts, ok := schedulerOptions[task.Type]; ok && opts.ConcurrentSubtask {
+	key := getKey(task.Type, task.Step)
+	if opts, ok := schedulerOptions[key]; ok && opts.ConcurrentSubtask {
 		concurrentSubtask = true
 	}
 	for {
 		// check if any error occurs
 		if err := s.getError(); err != nil {
-			return err
+			break
 		}
 
 		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending)
@@ -169,7 +175,7 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 		s.subtaskWg.Done()
 		return
 	}
-	logutil.Logger(s.logCtx).Info("split subTask", zap.Int("cnt", len(minimalTasks)), zap.Int64("subtask_id", subtask.ID))
+	logutil.Logger(s.logCtx).Info("split subTask", zap.Int("cnt", len(minimalTasks)), zap.Int64("subtask-id", subtask.ID))
 
 	// fast path for ADD INDEX.
 	// ADD INDEX is a special case now, no minimal tasks will be generated.
@@ -185,18 +191,27 @@ func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Schedu
 	for _, minimalTask := range minimalTasks {
 		j := minimalTask
 		minimalTaskCh <- func() {
+			defer func() {
+				mu.Lock()
+				defer mu.Unlock()
+				cnt++
+				// last minimal task should mark subtask as finished
+				if cnt == len(minimalTasks) {
+					s.onSubtaskFinished(ctx, scheduler, subtask)
+					s.subtaskWg.Done()
+				}
+			}()
 			s.runMinimalTask(ctx, j, subtask.Type, step)
-
-			mu.Lock()
-			defer mu.Unlock()
-			cnt++
-			// last minimal task should mark subtask as finished
-			if cnt == len(minimalTasks) {
-				s.onSubtaskFinished(ctx, scheduler, subtask)
-				s.subtaskWg.Done()
-			}
 		}
 	}
+	failpoint.Inject("waitUntilError", func() {
+		for i := 0; i < 10; i++ {
+			if s.getError() != nil {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	})
 }
 
 func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask) {
@@ -217,10 +232,14 @@ func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler
 	if err := s.taskTable.FinishSubtask(subtask.ID, subtaskMeta); err != nil {
 		s.onError(err)
 	}
+	failpoint.Inject("syncAfterSubtaskFinish", func() {
+		TestSyncChan <- struct{}{}
+		<-TestSyncChan
+	})
 }
 
 func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, minimalTask proto.MinimalTask, tp string, step int64) {
-	logutil.Logger(s.logCtx).Info("scheduler run a minimalTask", zap.Any("step", step), zap.Any("minimal_task", minimalTask))
+	logutil.Logger(s.logCtx).Info("scheduler run a minimalTask", zap.Any("step", step), zap.Stringer("minimal-task", minimalTask))
 	select {
 	case <-minimalTaskCtx.Done():
 		s.onError(minimalTaskCtx.Err())
@@ -299,17 +318,19 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 }
 
 func createScheduler(task *proto.Task) (Scheduler, error) {
-	constructor, ok := schedulerConstructors[task.Type]
+	key := getKey(task.Type, task.Step)
+	constructor, ok := schedulerConstructors[key]
 	if !ok {
-		return nil, errors.Errorf("constructor of scheduler for type %s not found", task.Type)
+		return nil, errors.Errorf("constructor of scheduler for key %s not found", key)
 	}
 	return constructor(task.ID, task.Meta, task.Step)
 }
 
 func createSubtaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (SubtaskExecutor, error) {
-	constructor, ok := subtaskExecutorConstructors[tp]
+	key := getKey(tp, step)
+	constructor, ok := subtaskExecutorConstructors[key]
 	if !ok {
-		return nil, errors.Errorf("constructor of subtask executor for type %s not found", tp)
+		return nil, errors.Errorf("constructor of subtask executor for key %s not found", key)
 	}
 	return constructor(minimalTask, step)
 }

@@ -526,6 +526,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.observeStmtBeginForTopSQL(ctx)
+	if variable.EnableResourceControl.Load() && domain.GetDomain(sctx).RunawayManager() != nil {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		_, planDigest := GetPlanDigest(stmtCtx)
+		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().ResourceGroupName, stmtCtx.OriginalSQL, planDigest.String())
+		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
+			return nil, err
+		}
+	}
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
 	if err = a.openExecutor(ctx, e); err != nil {
@@ -538,13 +546,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	var pi processinfoSetter
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
-		sql := a.OriginText()
-		if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
-			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
-				// Use SecureText to avoid leak password information.
-				sql = ss.SecureText()
-			}
-		}
+		sql := a.getSQLForProcessInfo()
 		maxExecutionTime := getMaxExecutionTime(sctx)
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
@@ -583,6 +585,20 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) getSQLForProcessInfo() string {
+	sql := a.OriginText()
+	if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
+		if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
+			// Use SecureText to avoid leak password information.
+			sql = ss.SecureText()
+		}
+	} else if sn, ok2 := a.StmtNode.(ast.SensitiveStmtNode); ok2 {
+		// such as import into statement
+		sql = sn.SecureText()
+	}
+	return sql
 }
 
 func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e Executor) error {
@@ -1521,7 +1537,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
-	_, planDigest := getPlanDigest(stmtCtx)
+	_, planDigest := GetPlanDigest(stmtCtx)
 
 	binaryPlan := ""
 	if variable.GenerateBinaryPlan.Load() {
@@ -1719,8 +1735,8 @@ func getPlanTree(stmtCtx *stmtctx.StatementContext) string {
 	return variable.SlowLogPlanPrefix + planTree + variable.SlowLogPlanSuffix
 }
 
-// getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
-func getPlanDigest(stmtCtx *stmtctx.StatementContext) (string, *parser.Digest) {
+// GetPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
+func GetPlanDigest(stmtCtx *stmtctx.StatementContext) (string, *parser.Digest) {
 	normalized, planDigest := stmtCtx.GetPlanDigest()
 	if len(normalized) > 0 && planDigest != nil {
 		return normalized, planDigest
@@ -1756,8 +1772,8 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 			// so we have to iterate all hints from the customer and keep some other necessary hints.
 			switch tableHint.HintName.L {
 			case "memory_quota", "use_toja", "no_index_merge", "max_execution_time",
-				plannercore.HintAggToCop, plannercore.HintIgnoreIndex,
-				plannercore.HintReadFromStorage, plannercore.HintLimitToCop:
+				plannercore.HintIgnoreIndex, plannercore.HintReadFromStorage, plannercore.HintMerge,
+				plannercore.HintSemiJoinRewrite, plannercore.HintNoDecorrelate:
 				hints = append(hints, tableHint)
 			}
 		}
@@ -1823,11 +1839,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	var planDigestGen func() string
 	if a.Plan.TP() == plancodec.TypePointGet {
 		planDigestGen = func() string {
-			_, planDigest := getPlanDigest(stmtCtx)
+			_, planDigest := GetPlanDigest(stmtCtx)
 			return planDigest.String()
 		}
 	} else {
-		_, tmp := getPlanDigest(stmtCtx)
+		_, tmp := GetPlanDigest(stmtCtx)
 		planDigest = tmp.String()
 	}
 
@@ -1930,7 +1946,7 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	vars := a.Ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	normalizedSQL, sqlDigest := sc.SQLDigest()
-	normalizedPlan, planDigest := getPlanDigest(sc)
+	normalizedPlan, planDigest := GetPlanDigest(sc)
 	var sqlDigestByte, planDigestByte []byte
 	if sqlDigest != nil {
 		sqlDigestByte = sqlDigest.Bytes()
@@ -2072,7 +2088,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		SessionBindings:     handle.GetAllBindRecord(),
 		SessionVars:         sctx.GetSessionVars(),
 		ExecStmts:           []ast.StmtNode{stmtNode},
-		DebugTrace:          stmtCtx.OptimizerDebugTrace,
+		DebugTrace:          []interface{}{stmtCtx.OptimizerDebugTrace},
 		Analyze:             false,
 		IsCapture:           true,
 		IsContinuesCapture:  isContinuesCapture,

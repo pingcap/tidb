@@ -202,3 +202,8 @@ type MockMinimalTask struct{}
 
 // IsMinimalTask implements MinimalTask.IsMinimalTask.
 func (MockMinimalTask) IsMinimalTask() {}
+
+// String is used to implement the fmt.Stringer interface.
+func (MockMinimalTask) String() string {
+	return "mock minimal task"
+}

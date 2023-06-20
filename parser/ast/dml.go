@@ -14,6 +14,8 @@
 package ast
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
@@ -2076,6 +2078,8 @@ type ImportIntoStmt struct {
 	Options            []*LoadDataOpt
 }
 
+var _ SensitiveStmtNode = &ImportIntoStmt{}
+
 // Restore implements Node interface.
 func (n *ImportIntoStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("IMPORT INTO ")
@@ -2159,6 +2163,14 @@ func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
 		n.ColumnAssignments[i] = node.(*Assignment)
 	}
 	return v.Leave(n)
+}
+
+func (n *ImportIntoStmt) SecureText() string {
+	redactedStmt := *n
+	redactedStmt.Path = RedactURL(n.Path)
+	var sb strings.Builder
+	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	return sb.String()
 }
 
 // CallStmt represents a call procedure query node.
@@ -2963,7 +2975,7 @@ const (
 	ShowPlacementLabels
 	ShowSessionStates
 	ShowCreateResourceGroup
-	ShowLoadDataJobs
+	ShowImportJobs
 	ShowCreateProcedure
 )
 
@@ -3013,7 +3025,7 @@ type ShowStmt struct {
 	ShowProfileArgs  *int64 // Used for `SHOW PROFILE` syntax
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
 
-	LoadDataJobID *int64 // Used for `SHOW LOAD DATA JOB <ID>` syntax
+	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
 }
 
 // Restore implements Node interface.
@@ -3222,12 +3234,12 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord(" PARTITION ")
 		ctx.WriteName(n.Partition.String())
-	case ShowLoadDataJobs:
-		if n.LoadDataJobID != nil {
-			ctx.WriteKeyWord("LOAD DATA JOB ")
-			ctx.WritePlainf("%d", *n.LoadDataJobID)
+	case ShowImportJobs:
+		if n.ImportJobID != nil {
+			ctx.WriteKeyWord("IMPORT JOB ")
+			ctx.WritePlainf("%d", *n.ImportJobID)
 		} else {
-			ctx.WriteKeyWord("LOAD DATA JOBS")
+			ctx.WriteKeyWord("IMPORT JOBS")
 			restoreShowLikeOrWhereOpt()
 		}
 	// ShowTargetFilterable
