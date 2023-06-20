@@ -152,6 +152,7 @@ func (ts *TiDBStatement) Reset() error {
 		ts.boundParams[i] = nil
 	}
 	ts.hasActiveCursor = false
+	ts.rs = nil
 
 	if ts.rowContainer != nil {
 		ts.rowContainer.GetMemTracker().Detach()
@@ -161,9 +162,9 @@ func (ts *TiDBStatement) Reset() error {
 		if err != nil {
 			return err
 		}
-	}
 
-	ts.rs = nil
+		ts.rowContainer = nil
+	}
 
 	return nil
 }
