@@ -20,6 +20,7 @@ go_test(
     name = "mppcoordmanager_test",
     srcs = ["mpp_coordinator_manager_test.go"],
     embed = [":mppcoordmanager"],
+    race = "on",
     deps = [
         "//kv",
         "//store/copr",
