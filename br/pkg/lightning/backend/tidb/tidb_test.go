@@ -450,8 +450,8 @@ func TestFetchRemoteTableModelsDropTableHalfway(t *testing.T) {
 		WillReturnError(mysql.NewErr(mysql.ErrNoSuchTable, "test", "tbl02"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
-	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
+	infoGetter := tidb.NewTargetInfoGetter(s.dbHandle)
+	tableInfos, err := infoGetter.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
 	ft := types.FieldType{}
 	ft.SetFlag(mysql.AutoIncrementFlag)
