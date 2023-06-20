@@ -631,7 +631,11 @@ func BuildBackupSchemas(
 			case tableInfo.IsView() || !utils.NeedAutoID(tableInfo):
 				// no auto ID for views or table without either rowID nor auto_increment ID.
 			default:
-				globalAutoID, err = autoIDAccess.RowID().Get()
+				if tableInfo.SepAutoInc() {
+					globalAutoID, err = autoIDAccess.IncrementID(tableInfo.Version).Get()
+				} else {
+					globalAutoID, err = autoIDAccess.RowID().Get()
+				}
 			}
 			if err != nil {
 				return errors.Trace(err)
