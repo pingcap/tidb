@@ -112,11 +112,11 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
 	// +---------+------------+---------------------+-----------+-------------+
 
-	defaultWeight := 3 * tikvstore.DefBackOffWeight
+	defaultBackoffWeight := 3 * tikvstore.DefBackOffWeight
 	backoffWeight, err := common.GetBackoffWeightFromDB(ctx, e.db)
-	if err == nil && backoffWeight < defaultWeight {
+	if err == nil && backoffWeight < defaultBackoffWeight {
 		// increase backoff weight
-		if err := common.SetBackoffWeightForDB(ctx, e.db, defaultWeight); err != nil {
+		if err := common.SetBackoffWeightForDB(ctx, e.db, defaultBackoffWeight); err != nil {
 			task.Warn("set tidb_backoff_weight failed", zap.Error(err))
 		} else {
 			defer func() {
@@ -263,9 +263,9 @@ var _ ChecksumManager = &TiKVChecksumManager{}
 
 // NewTiKVChecksumManager return a new tikv checksum manager
 func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint, backoffWeight int) *TiKVChecksumManager {
-	defaultWeight := 3 * tikvstore.DefBackOffWeight
-	if backoffWeight < defaultWeight {
-		backoffWeight = defaultWeight
+	defaultBackoffWeight := 3 * tikvstore.DefBackOffWeight
+	if backoffWeight < defaultBackoffWeight {
+		backoffWeight = defaultBackoffWeight
 	}
 	return &TiKVChecksumManager{
 		client:                 client,
@@ -278,6 +278,7 @@ func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanCon
 func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, ts uint64) (*RemoteChecksum, error) {
 	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, ts).
 		SetConcurrency(e.distSQLScanConcurrency).
+		SetBackoffWeight(e.backoffWeight).
 		Build()
 	if err != nil {
 		return nil, errors.Trace(err)
