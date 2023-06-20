@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
@@ -147,7 +148,7 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 
 	for i := 0; i < maxErrorRetryCount; i++ {
 		txnErr = executor.WithNewTxn(func(se sessionctx.Context) error {
-			if err := ddlutil.LoadDDLReorgVars(ctx, se); err != nil {
+			if err := ddlutil.LoadGlobalVars(ctx, se, []string{variable.TiDBBackOffWeight}); err != nil {
 				logger.Warn("load ddl reorg vars failed", zap.Error(err))
 			}
 			backoffWeight, err := common.GetBackoffWeightFromSctx(se)
