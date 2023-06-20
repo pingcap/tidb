@@ -626,17 +626,6 @@ func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
 	return strconv.Atoi(val)
 }
 
-// SetBackoffWeightForSctx sets the backoff weight for session context.
-func SetBackoffWeightForSctx(se sessionctx.Context, backoffWeight int) error {
-	return se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
-}
-
-// SetBackoffWeightForDB sets the backoff weight for database.
-func SetBackoffWeightForDB(ctx context.Context, db *sql.DB, backoffWeight int) error {
-	_, err := db.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, backoffWeight))
-	return err
-}
-
 // copy from dbutil to avoid import cycle
 func getSessionVariable(ctx context.Context, db *sql.DB, variable string) (value string, err error) {
 	query := fmt.Sprintf("SHOW VARIABLES LIKE '%s'", variable)

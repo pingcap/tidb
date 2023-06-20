@@ -16,6 +16,7 @@ package importinto
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -155,11 +156,11 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 			if err == nil && backoffWeight < local.DefaultBackoffWeight {
 				logger.Info("increase tidb_backoff_weight", zap.Int("original", backoffWeight), zap.Int("new", local.DefaultBackoffWeight))
 				// increase backoff weight
-				if err := common.SetBackoffWeightForSctx(se, local.DefaultBackoffWeight); err != nil {
+				if err := se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight)); err != nil {
 					logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
 				} else {
 					defer func() {
-						if err := common.SetBackoffWeightForSctx(se, backoffWeight); err != nil {
+						if err := se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight)); err != nil {
 							logger.Warn("recover tidb_backoff_weight failed", zap.Error(err))
 						}
 					}()

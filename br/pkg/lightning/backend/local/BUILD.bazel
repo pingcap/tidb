@@ -48,6 +48,7 @@ go_library(
         "//kv",
         "//parser/model",
         "//parser/mysql",
+        "//sessionctx/variable",
         "//store/pdtypes",
         "//table",
         "//tablecodec",
