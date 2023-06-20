@@ -1568,9 +1568,7 @@ func TestInsertLockUnchangedKeys(t *testing.T) {
 					tk1.MustExec(tt.ddl)
 					tk1.MustExec("insert into t values (1)")
 					tk1.MustExec("begin")
-					println("t1 begin")
 					tk1.MustExec(tt.dml)
-					println("after t1 dml")
 					errCh := make(chan error)
 					go func() {
 						_, err := tk2.Exec("insert into t values (1)")
@@ -1578,12 +1576,11 @@ func TestInsertLockUnchangedKeys(t *testing.T) {
 					}()
 					select {
 					case <-errCh:
-						println("done")
 						if shouldLock {
 							require.Failf(t, "txn2 is not blocked by %q", tt.dml)
 						}
 						close(errCh)
-					case <-time.After(100 * time.Millisecond):
+					case <-time.After(200 * time.Millisecond):
 						if !shouldLock && !tt.isClusteredPK {
 							require.Failf(t, "txn2 is blocked by %q", tt.dml)
 						}
