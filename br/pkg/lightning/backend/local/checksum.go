@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -119,11 +120,11 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	if err == nil && backoffWeight < DefaultBackoffWeight {
 		task.Info("increase tidb_backoff_weight", zap.Int("original", backoffWeight), zap.Int("new", DefaultBackoffWeight))
 		// increase backoff weight
-		if err := common.SetBackoffWeightForDB(ctx, e.db, DefaultBackoffWeight); err != nil {
+		if _, err := e.db.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, backoffWeight)); err != nil {
 			task.Warn("set tidb_backoff_weight failed", zap.Error(err))
 		} else {
 			defer func() {
-				if err := common.SetBackoffWeightForDB(ctx, e.db, backoffWeight); err != nil {
+				if _, err := e.db.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, backoffWeight)); err != nil {
 					task.Warn("recover tidb_backoff_weight failed", zap.Error(err))
 				}
 			}()
