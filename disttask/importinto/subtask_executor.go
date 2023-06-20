@@ -16,7 +16,6 @@ package importinto
 
 import (
 	"context"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -145,24 +143,24 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 		distSQLScanConcurrencyFactor = 1
 		remoteChecksum               *local.RemoteChecksum
 		txnErr                       error
+		defaultBackoffWeight         = 3 * tikvstore.DefBackOffWeight
 	)
 
 	for i := 0; i < maxErrorRetryCount; i++ {
 		txnErr = executor.WithNewTxn(func(se sessionctx.Context) error {
-			// increase backoff weight
-			backoffWeightBackup, ok := se.GetSessionVars().GetSystemVar(variable.TiDBBackOffWeight)
-			if !ok {
-				return errors.New("tidb_backoff_weight not set")
-			}
-			backoffWeight := mathutil.Max(backoffWeightBackup, strconv.Itoa(3*tikvstore.DefBackOffWeight))
-			if err := se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, backoffWeight); err != nil {
-				return err
-			}
-			defer func() {
-				if err := se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, backoffWeightBackup); err != nil {
-					logger.Warn("failed to set back tidb_backoff_weight", zap.Error(err))
+			backoffWeight, err := common.GetBackoffWeightFromSctx(se)
+			if err == nil && backoffWeight < defaultBackoffWeight {
+				// increase backoff weight
+				if err := common.SetBackoffWeightForSctx(se, defaultBackoffWeight); err != nil {
+					logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
+				} else {
+					defer func() {
+						if err := common.SetBackoffWeightForSctx(se, backoffWeight); err != nil {
+							logger.Warn("recover tidb_backoff_weight failed", zap.Error(err))
+						}
+					}()
 				}
-			}()
+			}
 
 			// reduce distsql scan concurrency
 			distSQLScanConcurrency := se.GetSessionVars().DistSQLScanConcurrency()

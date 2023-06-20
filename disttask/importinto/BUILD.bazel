@@ -34,7 +34,6 @@ go_library(
         "//parser/ast",
         "//parser/mysql",
         "//sessionctx",
-        "//sessionctx/variable",
         "//table/tables",
         "//util/dbterror/exeerrors",
         "//util/etcd",
