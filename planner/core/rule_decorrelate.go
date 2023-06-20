@@ -105,7 +105,7 @@ func ExtractCorrelatedCols4PhysicalPlan(p PhysicalPlan) []*expression.Correlated
 	return corCols
 }
 
-// Extract only the correlated columns whose corresponding Apply operator is outside the plan.
+// ExtractOuterApplyCorrelatedCols only extract the correlated columns whose corresponding Apply operator is outside the plan.
 // For Plan-1, ExtractOuterApplyCorrelatedCols(CTE-1) will return cor_col_1.
 // Plan-1:
 //
