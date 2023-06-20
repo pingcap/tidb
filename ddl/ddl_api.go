@@ -1999,8 +1999,7 @@ func BuildTableInfo(
 				// Check the column-type constraint dependency.
 				if len(dependedColsMap) > 1 {
 					return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
-				}
-				if len(dependedColsMap) == 0 {
+				} else if len(dependedColsMap) == 0 {
 					// If dependedCols is empty, the expression must be true/false.
 					valExpr, ok := constr.Expr.(*driver.ValueExpr)
 					if !ok || !mysql.HasIsBooleanFlag(valExpr.GetType().GetFlag()) {
