@@ -342,12 +342,14 @@ func (exec *Executor) Execute(
 		//
 		// It is useful in TiDB, however, it's a place holder in BR.
 		killed := uint32(0)
+		vars := kv.NewVariables(&killed)
+		vars.BackOffWeight *= 3
 		var (
 			resp *tipb.ChecksumResponse
 			err  error
 		)
 		err = utils.WithRetry(ctx, func() error {
-			resp, err = sendChecksumRequest(ctx, client, req, kv.NewVariables(&killed))
+			resp, err = sendChecksumRequest(ctx, client, req, vars)
 			failpoint.Inject("checksumRetryErr", func(val failpoint.Value) {
 				// first time reach here. return error
 				if val.(bool) {
