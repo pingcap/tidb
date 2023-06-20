@@ -232,10 +232,16 @@ func (col *CorrelatedColumn) HashCode(sc *stmtctx.StatementContext) []byte {
 		col.columnHashCode = codec.EncodeInt(col.columnHashCode, col.UniqueID)
 	}
 
-	// Because col.Data can be changed anytime, so always use newest Datum to calc hash code.
-	col.hashcode = col.hashcode[:len(col.columnHashCode)]
-	copy(col.hashcode, col.columnHashCode)
+	if len(col.hashcode) < len(col.columnHashCode) {
+		if len(col.hashcode) == 0 {
+			col.hashcode = make([]byte, 0, len(col.columnHashCode))
+		} else {
+			col.hashcode = col.hashcode[:0]
+		}
+		col.hashcode = append(col.hashcode, col.columnHashCode...)
+	}
 
+	// Because col.Data can be changed anytime, so always use newest Datum to calc hash code.
 	if col.Data != nil {
 		col.hashcode = codec.HashCode(col.hashcode, *col.Data)
 	}

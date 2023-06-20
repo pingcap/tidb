@@ -269,21 +269,21 @@ func TestCorColHashCode(t *testing.T) {
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 	col := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	oriColHashCode := col.HashCode(sc)
 
 	corCol := CorrelatedColumn{
 		Column: *col,
 	}
 
+	oriCorColHashCode := corCol.HashCode(sc)
+	oriColHashCode := col.HashCode(sc)
 	// hash code is same when Data is not set.
-	require.True(t, bytes.Equal(col.HashCode(sc), corCol.HashCode(sc)))
+	require.True(t, bytes.Equal(oriColHashCode, oriCorColHashCode))
 
 	// corCol.hashcode changes after datum changed.
 	d1 := types.NewDatum(1)
 	corCol.Data = &d1
 	require.False(t, bytes.Equal(col.HashCode(sc), corCol.HashCode(sc)))
 	d1HashCode := corCol.HashCode(sc)
-
 	d2 := types.NewFloat64Datum(1.1)
 	corCol.Data = &d2
 	require.False(t, bytes.Equal(d1HashCode, corCol.HashCode(sc)))
