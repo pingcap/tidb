@@ -499,4 +499,9 @@ func TestCTEShareCorColumn(t *testing.T) {
 		tk.MustQuery("with cte1 as (select t1.c1, (select t2.c2 from t2 where t2.c2 = str_to_date(t1.c2, '%Y-%m-%d')) from t1 inner join t2 on t1.c1 = t2.c1) select /*+ hash_join_build(alias1) */ * from cte1 alias1 inner join cte1 alias2 on alias1.c1 =   alias2.c1;").Check(testkit.Rows("1 2020-10-10 1 2020-10-10"))
 		tk.MustQuery("with cte1 as (select t1.c1, (select t2.c2 from t2 where t2.c2 = str_to_date(t1.c2, '%Y-%m-%d')) from t1 inner join t2 on t1.c1 = t2.c1) select /*+ hash_join_build(alias2) */ * from cte1 alias1 inner join cte1 alias2 on alias1.c1 =   alias2.c1;").Check(testkit.Rows("1 2020-10-10 1 2020-10-10"))
 	}
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int);")
+	tk.MustExec("insert into t1 values(1), (2);")
+	tk.MustQuery("SELECT * FROM t1 dt WHERE EXISTS( WITH RECURSIVE qn AS (SELECT a AS b UNION ALL SELECT b+1 FROM qn WHERE b=0 or b = 1) SELECT * FROM qn dtqn1 where exists (select /*+ NO_DECORRELATE() */ b from qn where dtqn1.b+1));").Check(testkit.Rows("1", "2"))
 }
