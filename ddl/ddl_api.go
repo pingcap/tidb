@@ -3794,21 +3794,16 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
+	err = d.callHookOnChanged(err)
 	if err != nil {
 		return errors.Trace(err)
 	}
-<<<<<<< HEAD
-	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
-=======
 	if _, tb, err := d.getSchemaAndTableByIdent(ctx, ident); err == nil {
 		if p, err := getTruncatedParts(tb.Meta().GetPartitionInfo()); err == nil {
 			d.preSplitAndScatter(ctx, tb.Meta(), p)
 		}
 	}
 	return nil
->>>>>>> 3e4538da5d0 (partition: fix split and scatter region for truncate partition (#43271))
 }
 
 func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
