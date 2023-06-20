@@ -58,7 +58,7 @@ func (builder *ExecutorBuilder) SetConcurrency(conc uint) *ExecutorBuilder {
 }
 
 // SetBackoffWeight set the backoffWeight of the checksum executing.
-func (builder *ExecutorBuilder) BackoffWeight(backoffWeight int) *ExecutorBuilder {
+func (builder *ExecutorBuilder) SetBackoffWeight(backoffWeight int) *ExecutorBuilder {
 	builder.backoffWeight = backoffWeight
 	return builder
 }
