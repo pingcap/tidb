@@ -1538,9 +1538,6 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if rc.cfg.TikvImporter.Backend == config.BackendLocal && rc.cfg.PostRestore.Checksum != config.OpLevelOff {
 			manager = local.NewTiDBChecksumExecutor(rc.db)
 		}
-		if err != nil {
-			return errors.Trace(err)
-		}
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 
 		undo, err := rc.registerTaskToPD(ctx)
