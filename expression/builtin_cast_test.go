@@ -1404,7 +1404,22 @@ func TestWrapWithCastAsString(t *testing.T) {
 			"-127",
 		},
 		{
+			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeTiny, charset.CollationBin, 1), Value: types.NewIntDatum(-127)},
+			false,
+			"-127",
+		},
+		{
 			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeShort, charset.CollationBin, 1), Value: types.NewIntDatum(-127)},
+			false,
+			"-127",
+		},
+		{
+			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeInt24, charset.CollationBin, 1), Value: types.NewIntDatum(-127)},
+			false,
+			"-127",
+		},
+		{
+			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeLonglong, charset.CollationBin, 1), Value: types.NewIntDatum(-127)},
 			false,
 			"-127",
 		},
