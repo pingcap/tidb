@@ -289,10 +289,10 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
-		// check WrapWithCastAsString()
+		// check https://github.com/pingcap/tidb/issues/44786
 		if bf.tp.GetFlen() == types.UnspecifiedLength {
 			if args[0].GetType().GetType() == mysql.TypeLong {
-				bf.tp.SetFlen(mysql.MaxIntWidth)
+				bf.tp.SetFlen(11)
 			} else {
 				bf.tp.SetFlen(args[0].GetType().GetFlen())
 			}
