@@ -638,24 +638,25 @@ func TestPreparedPlanCacheLongInList(t *testing.T) {
 		return "(" + strings.Join(elements, ",") + ")"
 	}
 
-	tk.MustExec(fmt.Sprintf(`prepare st_99 from 'select * from t where a in %v'`, genInList(99)))
-	tk.MustExec(`execute st_99`)
-	tk.MustExec(`execute st_99`)
+	// the limitation is 200
+	tk.MustExec(fmt.Sprintf(`prepare st_199 from 'select * from t where a in %v'`, genInList(199)))
+	tk.MustExec(`execute st_199`)
+	tk.MustExec(`execute st_199`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
-	tk.MustExec(fmt.Sprintf(`prepare st_101 from 'select * from t where a in %v'`, genInList(101)))
-	tk.MustExec(`execute st_101`)
-	tk.MustExec(`execute st_101`)
+	tk.MustExec(fmt.Sprintf(`prepare st_201 from 'select * from t where a in %v'`, genInList(201)))
+	tk.MustExec(`execute st_201`)
+	tk.MustExec(`execute st_201`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
-	tk.MustExec(fmt.Sprintf(`prepare st_49_50 from 'select * from t where a in %v and b in %v'`, genInList(49), genInList(50)))
-	tk.MustExec(`execute st_49_50`)
-	tk.MustExec(`execute st_49_50`)
+	tk.MustExec(fmt.Sprintf(`prepare st_99_100 from 'select * from t where a in %v and b in %v'`, genInList(99), genInList(100)))
+	tk.MustExec(`execute st_99_100`)
+	tk.MustExec(`execute st_99_100`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
-	tk.MustExec(fmt.Sprintf(`prepare st_49_52 from 'select * from t where a in %v and b in %v'`, genInList(49), genInList(52)))
-	tk.MustExec(`execute st_49_52`)
-	tk.MustExec(`execute st_49_52`)
+	tk.MustExec(fmt.Sprintf(`prepare st_100_101 from 'select * from t where a in %v and b in %v'`, genInList(100), genInList(101)))
+	tk.MustExec(`execute st_100_101`)
+	tk.MustExec(`execute st_100_101`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
