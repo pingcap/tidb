@@ -373,6 +373,11 @@ const (
 	// Value set to `false` means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
 
+	// TiDBAllowTiFlashCop means we only use MPP mode to query data.
+	// Default value is `true`, means to be determined by the optimizer.
+	// Value set to `false` means we may fall back to TiFlash cop plan if possible.
+	TiDBAllowTiFlashCop = "tidb_allow_tiflash_cop"
+
 	// TiDBHashExchangeWithNewCollation means if hash exchange is supported when new collation is on.
 	// Default value is `true`, means support hash exchange when new collation is on.
 	// Value set to `false` means not support hash exchange when new collation is on.
@@ -1137,6 +1142,7 @@ const (
 	DefTiDBEnableNAAJ                              = true
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
+	DefTiDBAllowTiFlashCop                         = false
 	DefTiDBHashExchangeWithNewCollation            = true
 	DefTiDBEnforceMPPExecution                     = false
 	DefTiFlashMaxThreads                           = -1

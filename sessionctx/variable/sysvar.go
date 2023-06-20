@@ -1534,6 +1534,10 @@ var defaultSysVars = []*SysVar{
 		s.allowMPPExecution = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowTiFlashCop, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowTiFlashCop), SetSession: func(s *SessionVars, val string) error {
+		s.allowTiFlashCop = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashFastScan, Type: TypeBool, Value: BoolToOnOff(DefTiFlashFastScan), SetSession: func(s *SessionVars, val string) error {
 		s.TiFlashFastScan = TiDBOptOn(val)
 		return nil
