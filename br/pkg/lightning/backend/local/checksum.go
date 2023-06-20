@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
@@ -113,7 +114,7 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 
 	cs := RemoteChecksum{}
 	exec := common.SQLWithRetry{DB: e.db, Logger: task.Logger}
-	if err := exec.Exec(ctx, "increase tidb_backoff_weight", "SET SESSION tidb_backoff_weight = '6';"); err != nil {
+	if err := exec.Exec(ctx, "increase tidb_backoff_weight", fmt.Sprintf("SET SESSION tidb_backoff_weight = '%d';", 3*tikvstore.DefBackOffWeight)); err != nil {
 		return nil, errors.Trace(err)
 	}
 	err = exec.QueryRow(ctx, "compute remote checksum",

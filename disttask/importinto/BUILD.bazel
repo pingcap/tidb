@@ -36,7 +36,6 @@ go_library(
         "//sessionctx",
         "//sessionctx/variable",
         "//table/tables",
-        "//util/chunk",
         "//util/dbterror/exeerrors",
         "//util/etcd",
         "//util/logutil",
