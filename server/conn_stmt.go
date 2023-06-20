@@ -234,6 +234,9 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) (bool, error) {
 	vars := (&cc.ctx).GetSessionVars()
 	rs, err := stmt.Execute(ctx, args)
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
@@ -284,17 +287,9 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 			cl.OnFetchReturned()
 		}
 
-		// as the `Next` of `ResultSet` will never be called, all rows have been cached inside it. We could close this
-		// `ResultSet`.
-		err = rs.Close()
-		if err != nil {
-			return false, err
-		}
-
 		// explicitly flush columnInfo to client.
 		return false, cc.flush(ctx)
 	}
-	defer terror.Call(rs.Close)
 	retryable, err := cc.writeResultset(ctx, rs, true, 0, 0)
 	if err != nil {
 		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
