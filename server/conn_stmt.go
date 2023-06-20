@@ -233,42 +233,13 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) (bool, error) {
 	vars := (&cc.ctx).GetSessionVars()
-<<<<<<< HEAD
 	rs, err := stmt.Execute(ctx, args)
-=======
-	prepStmt, err := vars.GetPreparedStmtByID(uint32(stmt.ID()))
-	if err != nil {
-		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
-	}
-	execStmt := &ast.ExecuteStmt{
-		BinaryArgs: args,
-		PrepStmt:   prepStmt,
-	}
-
-	// For the combination of `ComPrepare` and `ComExecute`, the statement name is stored in the client side, and the
-	// TiDB only has the ID, so don't try to construct an `EXECUTE SOMETHING`. Use the original prepared statement here
-	// instead.
-	sql := ""
-	planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt)
-	if ok {
-		sql = planCacheStmt.StmtText
-	}
-	execStmt.SetText(charset.EncodingUTF8Impl, sql)
-	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
->>>>>>> d41793e9691 (server: fix memtracker leak with cursor (#44257))
 	if err != nil {
-		// If error is returned during the planner phase or the executor.Open
-		// phase, the rs will be nil, and StmtCtx.MemTracker StmtCtx.DiskTracker
-		// will not be detached. We need to detach them manually.
-		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
-			sv.StmtCtx.DetachMemDiskTracker()
-		}
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
-
 	if rs == nil {
 		if useCursor {
 			vars.SetStatusFlag(mysql.ServerStatusCursorExists, false)
@@ -316,26 +287,10 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 			cl.OnFetchReturned()
 		}
 
-<<<<<<< HEAD
-		// as the `Next` of `ResultSet` will never be called, all rows have been cached inside it. We could close this
-		// `ResultSet`.
-		err = rs.Close()
-		if err != nil {
-			return false, err
-		}
-=======
-		stmt.SetCursorActive(true)
->>>>>>> d41793e9691 (server: fix memtracker leak with cursor (#44257))
-
 		// explicitly flush columnInfo to client.
 		return false, cc.flush(ctx)
 	}
-<<<<<<< HEAD
-	defer terror.Call(rs.Close)
 	retryable, err := cc.writeResultset(ctx, rs, true, 0, 0)
-=======
-	retryable, err := cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), 0)
->>>>>>> d41793e9691 (server: fix memtracker leak with cursor (#44257))
 	if err != nil {
 		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
