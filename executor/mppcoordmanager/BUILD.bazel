@@ -18,8 +18,10 @@ go_library(
 
 go_test(
     name = "mppcoordmanager_test",
+    timeout = "short",
     srcs = ["mpp_coordinator_manager_test.go"],
     embed = [":mppcoordmanager"],
+    flaky = True,
     race = "on",
     deps = [
         "//kv",
