@@ -141,7 +141,7 @@ type localMppCoordinator struct {
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
 func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string, memTracker *memory.Tracker) *localMppCoordinator {
-	if sctx.GetSessionVars().ChooseMppVersion() < kv.MppVersionV2 {
+	if !sctx.GetSessionVars().EnableMPPReportStatus || sctx.GetSessionVars().ChooseMppVersion() < kv.MppVersionV2 {
 		coordinatorAddr = ""
 	}
 	coord := &localMppCoordinator{

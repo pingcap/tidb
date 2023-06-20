@@ -2126,3 +2126,19 @@ func TestSetMppExchangeCompressionModeVariable(t *testing.T) {
 		require.Equal(t, warnings[0].Err.Error(), "mpp exchange compression won't work under current mpp version 0")
 	}
 }
+
+func TestSetTiDBOptEnableMPPReportStatus(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// check the default mode
+	tk.MustQuery("select @@session.tidb_opt_enable_mpp_report_status").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_opt_enable_mpp_report_status").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_opt_enable_mpp_report_status=OFF;")
+	tk.MustQuery("select @@session.tidb_opt_enable_mpp_report_status").Check(testkit.Rows("0"))
+
+	tk.MustExec("set GLOBAL tidb_opt_enable_mpp_report_status=OFF;")
+	tk.MustQuery("select @@global.tidb_opt_enable_mpp_report_status").Check(testkit.Rows("0"))
+}
