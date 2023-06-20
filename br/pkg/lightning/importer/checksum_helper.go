@@ -53,7 +53,7 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 		}
 
 		backoffWeight, err := common.GetBackoffWeightFromDB(ctx, rc.db)
-		if err != nil || backoffWeight < local.DefaultBackoffWeight {
+		if err == nil && backoffWeight < local.DefaultBackoffWeight {
 			log.L().Info("increase tidb_backoff_weight", zap.Int("original", backoffWeight), zap.Int("new", local.DefaultBackoffWeight))
 			backoffWeight = local.DefaultBackoffWeight
 		}
