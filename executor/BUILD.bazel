@@ -151,6 +151,7 @@ go_library(
         "//privilege/privileges",
         "//session/txninfo",
         "//sessionctx",
+        "//sessionctx/binloginfo",
         "//sessionctx/sessionstates",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
