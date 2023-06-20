@@ -37,7 +37,7 @@ import (
 type CorrelatedColumn struct {
 	Column
 
-	Data *types.Datum
+	Data           *types.Datum
 	columnHashCode []byte
 }
 
