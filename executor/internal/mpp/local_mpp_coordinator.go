@@ -529,8 +529,12 @@ func (c *localMppCoordinator) ReportStatus(info kv.ReportStatusRequest) error {
 
 func (c *localMppCoordinator) handleAllReports() {
 	if len(c.coordinatorAddr) > 0 && atomic.LoadUint32(&c.dispatchFailed) == 0 {
+		startTime := time.Now()
 		select {
 		case <-c.reportStatusCh:
+			duration := time.Now().Sub(startTime).Milliseconds()
+			metrics.MppCoordinatorLatencyRcvReport.Observe(float64(duration))
+			logutil.BgLogger().Info("Tem", zap.Float64("Seconds", float64(duration)))
 			var recordedPlanIDs = make(map[int]int)
 			for _, report := range c.reqMap {
 				for _, detail := range report.executionSummaries {
@@ -543,7 +547,7 @@ func (c *localMppCoordinator) handleAllReports() {
 			}
 			distsql.FillDummySummariesForMppTasks(c.sessionCtx.GetSessionVars().StmtCtx, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
 		case <-time.After(receiveReportTimeout):
-			metrics.MppCoordinatorCounterReportNotReceived.Inc()
+			metrics.MppCoordinatorStatsReportNotReceived.Inc()
 			logutil.BgLogger().Warn(fmt.Sprintf("Not received all reports within %d seconds", int(receiveReportTimeout.Seconds())),
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Uint64("gatherID", c.gatherID),

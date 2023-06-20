@@ -86,7 +86,7 @@ func (m *MPPCoordinatorManager) detectAndDelete() {
 	m.mu.Unlock()
 
 	for _, deletedID := range outOfTimeIDs {
-		metrics.MppCoordinatorCounterOverTimeCounter.Inc()
+		metrics.MppCoordinatorStatsOverTimeNumber.Inc()
 		logutil.BgLogger().Error("Delete MppCoordinator due to OutOfTime",
 			zap.Uint64("QueryID", deletedID.MPPQueryID.LocalQueryID),
 			zap.Uint64("QueryTs", deletedID.MPPQueryID.QueryTs))
@@ -122,7 +122,8 @@ func (m *MPPCoordinatorManager) Register(coordID CoordinatorUniqueID, mppCoord k
 		return errors.Errorf("Already added mpp coordinator: %d %d %d %d", coordID.MPPQueryID.QueryTs, coordID.MPPQueryID.LocalQueryID, coordID.MPPQueryID.ServerID, coordID.GatherID)
 	}
 	m.coordinatorMap[coordID] = mppCoord
-	metrics.MppCoordinatorCounterTotalCounter.Inc()
+	metrics.MppCoordinatorStatsTotalRegisteredNumber.Inc()
+	metrics.MppCoordinatorStatsActiveNumber.Inc()
 	return nil
 }
 
@@ -133,7 +134,7 @@ func (m *MPPCoordinatorManager) Unregister(coordID CoordinatorUniqueID) {
 	_, exists := m.coordinatorMap[coordID]
 	delete(m.coordinatorMap, coordID)
 	if exists {
-		metrics.MppCoordinatorCounterTotalCounter.Desc()
+		metrics.MppCoordinatorStatsActiveNumber.Dec()
 	}
 }
 
