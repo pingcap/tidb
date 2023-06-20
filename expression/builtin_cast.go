@@ -292,10 +292,18 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		if bf.tp.GetFlen() == types.UnspecifiedLength {
 			// check https://github.com/pingcap/tidb/issues/44786
 			// set flen from integers may truncate integers, e.g. char(1) can not display -1[int(1)]
-			// set it to 11 as mysql
 			switch args[0].GetType().GetType() {
-			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			case mysql.TypeTiny:
+				bf.tp.SetFlen(4)
+			case mysql.TypeShort:
+				bf.tp.SetFlen(6)
+			case mysql.TypeInt24:
+				bf.tp.SetFlen(9)
+			case mysql.TypeLong:
+				// set it to 11 as mysql
 				bf.tp.SetFlen(11)
+			case mysql.TypeLonglong:
+				bf.tp.SetFlen(20)
 			default:
 				bf.tp.SetFlen(args[0].GetType().GetFlen())
 			}
