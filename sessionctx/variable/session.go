@@ -1479,6 +1479,26 @@ type SessionVars struct {
 	OptimizerFixControl map[uint64]string
 }
 
+var (
+	// variables below are for the optimizer fix control.
+
+	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
+	TiDBOptFixControl44262 uint64 = 44262
+	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
+	TiDBOptFixControl44389 uint64 = 44389
+	// TiDBOptFixControl44823 controls the maximum number of parameters for a query that can be cached in the Plan Cache.
+	TiDBOptFixControl44823 uint64 = 44823
+)
+
+// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
+	if s.OptimizerFixControl == nil {
+		return "", false
+	}
+	value, exist = s.OptimizerFixControl[key]
+	return
+}
+
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
 // in order to control the used memory
 const planReplayerSessionFinishedTaskKeyLen = 128

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -442,7 +443,7 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if !isSafeRange(x.AccessConditions, ranges, false, nil) {
+				if len(ranges.Ranges) != 1 || !isSafeRange(x.AccessConditions, ranges, false, nil) {
 					return errors.New("rebuild to get an unsafe range")
 				}
 				for i := range x.IndexValues {
@@ -464,7 +465,7 @@ func rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
-					if !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
+					if len(ranges) != 1 || !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
 						Ranges:        ranges,
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
@@ -533,7 +534,7 @@ func rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
-					if len(ranges) != len(x.Handles) && !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
+					if len(ranges) != len(x.Handles) || !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
 						Ranges:        ranges,
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
@@ -846,4 +847,81 @@ func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, s
 		ok = false
 	}
 	return ok, err
+}
+
+func isSafePointGetPath4PlanCache(path *util.AccessPath) bool {
+	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
+	// these assumptions may be broken after parameters change.
+
+	return isSafePointGetPath4PlanCacheScenario1(path) ||
+		isSafePointGetPath4PlanCacheScenario2(path) ||
+		isSafePointGetPath4PlanCacheScenario3(path)
+}
+
+func isSafePointGetPath4PlanCacheScenario1(path *util.AccessPath) bool {
+	// safe scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
+	if len(path.Ranges) <= 0 || path.Ranges[0].Width() != len(path.AccessConds) {
+		return false
+	}
+	for _, accessCond := range path.AccessConds {
+		f, ok := accessCond.(*expression.ScalarFunction)
+		if !ok || f.FuncName.L != ast.EQ { // column = constant
+			return false
+		}
+	}
+	return true
+}
+
+func isSafePointGetPath4PlanCacheScenario2(path *util.AccessPath) bool {
+	// safe scenario 2: this Batch or PointGet is simply from a single IN predicate, `key in (...)`
+	if len(path.Ranges) <= 0 || len(path.AccessConds) != 1 {
+		return false
+	}
+	f, ok := path.AccessConds[0].(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.In {
+		return false
+	}
+	return len(path.Ranges) == len(f.GetArgs())-1 // no duplicated values in this in-list for safety.
+}
+
+func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
+	// safe scenario 3: this Batch or PointGet is simply from a simple DNF like `key=? or key=? or key=?`
+	if len(path.Ranges) <= 0 || len(path.AccessConds) != 1 {
+		return false
+	}
+	f, ok := path.AccessConds[0].(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.LogicOr {
+		return false
+	}
+
+	dnfExprs := expression.FlattenDNFConditions(f)
+	if len(path.Ranges) != len(dnfExprs) {
+		// no duplicated values in this in-list for safety.
+		// e.g. `k=1 or k=2 or k=1` --> [[1, 1], [2, 2]]
+		return false
+	}
+
+	for _, expr := range dnfExprs {
+		f, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		switch f.FuncName.L {
+		case ast.EQ: // (k=1 or k=2) --> [k=1, k=2]
+		case ast.LogicAnd: // ((k1=1 and k2=1) or (k1=2 and k2=2)) --> [k1=1 and k2=1, k2=2 and k2=2]
+			cnfExprs := expression.FlattenCNFConditions(f)
+			if path.Ranges[0].Width() != len(cnfExprs) { // not all key columns are specified
+				return false
+			}
+			for _, expr := range cnfExprs { // k1=1 and k2=1
+				f, ok := expr.(*expression.ScalarFunction)
+				if !ok || f.FuncName.L != ast.EQ {
+					return false
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
