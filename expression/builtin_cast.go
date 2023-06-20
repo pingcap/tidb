@@ -305,8 +305,6 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 			case mysql.TypeLong:
 				// set it to 11 as mysql
 				bf.tp.SetFlen(11)
-			case mysql.TypeLonglong:
-				bf.tp.SetFlen(20)
 			default:
 				bf.tp.SetFlen(args[0].GetType().GetFlen())
 			}
