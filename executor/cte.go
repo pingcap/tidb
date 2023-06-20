@@ -15,11 +15,16 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/config"
+=======
+	"github.com/pingcap/tidb/expression"
+>>>>>>> cea26f8ac1c (*: fix cte nil pointer error when got multiple apply (#44782))
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -60,6 +65,83 @@ var _ Executor = &CTEExec{}
 type CTEExec struct {
 	baseExecutor
 
+<<<<<<< HEAD
+=======
+	chkIdx   int
+	producer *cteProducer
+
+	// limit in recursive CTE.
+	cursor         uint64
+	meetFirstBatch bool
+}
+
+// Open implements the Executor interface.
+func (e *CTEExec) Open(ctx context.Context) (err error) {
+	e.reset()
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+
+	e.producer.resTbl.Lock()
+	defer e.producer.resTbl.Unlock()
+
+	if e.producer.checkAndUpdateCorColHashCode() {
+		e.producer.reset()
+		if err = e.producer.reopenTbls(); err != nil {
+			return err
+		}
+	}
+	if !e.producer.opened {
+		if err = e.producer.openProducer(ctx, e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Next implements the Executor interface.
+func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	e.producer.resTbl.Lock()
+	defer e.producer.resTbl.Unlock()
+	if !e.producer.resTbl.Done() {
+		if err = e.producer.produce(ctx, e); err != nil {
+			return err
+		}
+	}
+	return e.producer.getChunk(ctx, e, req)
+}
+
+// Close implements the Executor interface.
+func (e *CTEExec) Close() (err error) {
+	e.producer.resTbl.Lock()
+	if !e.producer.closed {
+		// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
+		// It means you can still read resTbl after call closeProducer().
+		// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
+		// Separating these three function calls is only to follow the abstraction of the volcano model.
+		err = e.producer.closeProducer()
+	}
+	e.producer.resTbl.Unlock()
+	if err != nil {
+		return err
+	}
+	return e.baseExecutor.Close()
+}
+
+func (e *CTEExec) reset() {
+	e.chkIdx = 0
+	e.cursor = 0
+	e.meetFirstBatch = false
+}
+
+type cteProducer struct {
+	opened   bool
+	produced bool
+	closed   bool
+
+	ctx sessionctx.Context
+
+>>>>>>> cea26f8ac1c (*: fix cte nil pointer error when got multiple apply (#44782))
 	seedExec      Executor
 	recursiveExec Executor
 
@@ -90,10 +172,9 @@ type CTEExec struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
-	// isInApply indicates whether CTE is in inner side of Apply
-	// and should resTbl/iterInTbl be reset for each outer row of Apply.
-	// Because we reset them when SQL is finished instead of when CTEExec.Close() is called.
-	isInApply bool
+	// Correlated Column.
+	corCols         []*expression.CorrelatedColumn
+	corColHashCodes [][]byte
 }
 
 // Open implements the Executor interface.
@@ -135,11 +216,40 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 			allTypes: e.base().retFieldTypes,
 		}
 		// We use all columns to compute hash.
+<<<<<<< HEAD
 		e.hCtx.keyColIdx = make([]int, len(e.hCtx.allTypes))
 		for i := range e.hCtx.keyColIdx {
 			e.hCtx.keyColIdx[i] = i
 		}
 	}
+=======
+		p.hCtx.keyColIdx = make([]int, len(p.hCtx.allTypes))
+		for i := range p.hCtx.keyColIdx {
+			p.hCtx.keyColIdx[i] = i
+		}
+	}
+	p.opened = true
+	return nil
+}
+
+func (p *cteProducer) closeProducer() (err error) {
+	if err = p.seedExec.Close(); err != nil {
+		return err
+	}
+	if p.recursiveExec != nil {
+		if err = p.recursiveExec.Close(); err != nil {
+			return err
+		}
+		// `iterInTbl` and `resTbl` are shared by multiple operators,
+		// so will be closed when the SQL finishes.
+		if p.iterOutTbl != nil {
+			if err = p.iterOutTbl.DerefAndClose(); err != nil {
+				return err
+			}
+		}
+	}
+	p.closed = true
+>>>>>>> cea26f8ac1c (*: fix cte nil pointer error when got multiple apply (#44782))
 	return nil
 }
 
@@ -599,4 +709,18 @@ func (e *CTEExec) checkHasDup(probeKey uint64,
 		}
 	}
 	return false, nil
+}
+
+// Return true if cor col has changed.
+func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
+	var changed bool
+	for i, corCol := range p.corCols {
+		corCol.CleanHashCode()
+		newHashCode := corCol.HashCode(p.ctx.GetSessionVars().StmtCtx)
+		if !bytes.Equal(newHashCode, p.corColHashCodes[i]) {
+			changed = true
+			p.corColHashCodes[i] = newHashCode
+		}
+	}
+	return changed
 }

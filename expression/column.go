@@ -35,7 +35,8 @@ import (
 type CorrelatedColumn struct {
 	Column
 
-	Data *types.Datum
+	Data           *types.Datum
+	columnHashCode []byte
 }
 
 // Clone implements Expression interface.
@@ -191,6 +192,58 @@ func (col *CorrelatedColumn) resolveIndicesByVirtualExpr(_ *Schema) bool {
 	return true
 }
 
+<<<<<<< HEAD
+=======
+// MemoryUsage return the memory usage of CorrelatedColumn
+func (col *CorrelatedColumn) MemoryUsage() (sum int64) {
+	if col == nil {
+		return
+	}
+
+	sum = col.Column.MemoryUsage() + size.SizeOfPointer
+	if col.Data != nil {
+		sum += col.Data.MemUsage()
+	}
+	return sum
+}
+
+// RemapColumn remaps columns with provided mapping and returns new expression
+func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error) {
+	mapped := m[(&col.Column).UniqueID]
+	if mapped == nil {
+		return nil, errors.Errorf("Can't remap column for %s", col)
+	}
+	return &CorrelatedColumn{
+		Column: *mapped,
+		Data:   col.Data,
+	}, nil
+}
+
+// HashCode implements Expression interface.
+func (col *CorrelatedColumn) HashCode(sc *stmtctx.StatementContext) []byte {
+	if len(col.columnHashCode) == 0 {
+		col.columnHashCode = make([]byte, 0, 9)
+		col.columnHashCode = append(col.columnHashCode, columnFlag)
+		col.columnHashCode = codec.EncodeInt(col.columnHashCode, col.UniqueID)
+	}
+
+	if len(col.hashcode) < len(col.columnHashCode) {
+		if len(col.hashcode) == 0 {
+			col.hashcode = make([]byte, 0, len(col.columnHashCode))
+		} else {
+			col.hashcode = col.hashcode[:0]
+		}
+		col.hashcode = append(col.hashcode, col.columnHashCode...)
+	}
+
+	// Because col.Data can be changed anytime, so always use newest Datum to calc hash code.
+	if col.Data != nil {
+		col.hashcode = codec.HashCode(col.hashcode, *col.Data)
+	}
+	return col.hashcode
+}
+
+>>>>>>> cea26f8ac1c (*: fix cte nil pointer error when got multiple apply (#44782))
 // Column represents a column.
 type Column struct {
 	RetType *types.FieldType

@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
@@ -228,3 +229,67 @@ func TestColHybird(t *testing.T) {
 		require.Equal(t, result.GetString(i), v)
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestInColumnArray(t *testing.T) {
+	// normal case, col is in column array
+	col0, col1 := &Column{ID: 0, UniqueID: 0}, &Column{ID: 1, UniqueID: 1}
+	cols := []*Column{col0, col1}
+	require.True(t, col0.InColumnArray(cols))
+
+	// abnormal case, col is not in column array
+	require.False(t, col0.InColumnArray([]*Column{col1}))
+
+	// abnormal case, input is nil
+	require.False(t, col0.InColumnArray(nil))
+}
+
+func TestGcColumnExprIsTidbShard(t *testing.T) {
+	ctx := mock.NewContext()
+
+	// abnormal case
+	// nil, not tidb_shard
+	require.False(t, GcColumnExprIsTidbShard(nil))
+
+	// `a = 1`, not tidb_shard
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	col := &Column{RetType: ft, Index: 0}
+	d1 := types.NewDatum(1)
+	con := &Constant{Value: d1, RetType: ft}
+	expr := NewFunctionInternal(ctx, ast.EQ, ft, col, con)
+	require.False(t, GcColumnExprIsTidbShard(expr))
+
+	// normal case
+	// tidb_shard(a) = 1
+	shardExpr := NewFunctionInternal(ctx, ast.TiDBShard, ft, col)
+	require.True(t, GcColumnExprIsTidbShard(shardExpr))
+}
+
+func TestCorColHashCode(t *testing.T) {
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
+	col := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+
+	corCol := CorrelatedColumn{
+		Column: *col,
+	}
+
+	oriCorColHashCode := corCol.HashCode(sc)
+	oriColHashCode := col.HashCode(sc)
+	// hash code is same when Data is not set.
+	require.True(t, bytes.Equal(oriColHashCode, oriCorColHashCode))
+
+	// corCol.hashcode changes after datum changed.
+	d1 := types.NewDatum(1)
+	corCol.Data = &d1
+	require.False(t, bytes.Equal(col.HashCode(sc), corCol.HashCode(sc)))
+	d1HashCode := corCol.HashCode(sc)
+	d2 := types.NewFloat64Datum(1.1)
+	corCol.Data = &d2
+	require.False(t, bytes.Equal(d1HashCode, corCol.HashCode(sc)))
+
+	// col.hashcode doesn't change.
+	require.True(t, bytes.Equal(oriColHashCode, col.HashCode(sc)))
+}
+>>>>>>> cea26f8ac1c (*: fix cte nil pointer error when got multiple apply (#44782))
