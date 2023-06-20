@@ -1211,7 +1211,7 @@ func TestLongInsertStmt(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
 	tk.MustExec(`prepare inert201 from 'insert into t values (1)` + strings.Repeat(", (1)", 200) + "'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: too many values (more than 200) in the insert statement"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: too many values in the insert statement"))
 	tk.MustExec(`execute inert201`)
 	tk.MustExec(`execute inert201`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
