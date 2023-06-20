@@ -117,6 +117,7 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 
 	backoffWeight, err := common.GetBackoffWeightFromDB(ctx, e.db)
 	if err == nil && backoffWeight < DefaultBackoffWeight {
+		task.Info("increase tidb_backoff_weight", zap.Int("original", backoffWeight), zap.Int("new", DefaultBackoffWeight))
 		// increase backoff weight
 		if err := common.SetBackoffWeightForDB(ctx, e.db, DefaultBackoffWeight); err != nil {
 			task.Warn("set tidb_backoff_weight failed", zap.Error(err))
