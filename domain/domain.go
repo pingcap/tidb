@@ -1263,7 +1263,7 @@ const (
 
 var systemSchemaCIStr = model.NewCIStr("mysql")
 
-func (do *Domain) gcSystemTable(tableName, colName string, expiredDuration time.Duration) {
+func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration time.Duration) {
 	if !do.DDL().OwnerManager().IsOwner() {
 		return
 	}
@@ -1301,7 +1301,7 @@ func (do *Domain) gcSystemTable(tableName, colName string, expiredDuration time.
 			return
 		}
 		// to remove
-		if sql == "" {
+		if len(sql) == 0 {
 			return
 		}
 
@@ -1415,9 +1415,9 @@ func (do *Domain) runawayRecordFlushLoop() {
 				runawayRecordFluashTimer.Reset(runawayRecordFluashInterval)
 			}
 		case <-runawayRecordGCTicker.C:
-			go do.gcSystemTable("tidb_runaway_queries", "time", runawayRecordExpiredDuration)
+			go do.deleteExpiredRows("tidb_runaway_queries", "time", runawayRecordExpiredDuration)
 		case <-quarantineRecordGCTicker.C:
-			go do.gcSystemTable("tidb_runaway_quarantined_watch", "end_time", time.Duration(0))
+			go do.deleteExpiredRows("tidb_runaway_quarantined_watch", "end_time", time.Duration(0))
 		}
 	}
 }
