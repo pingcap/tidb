@@ -243,6 +243,7 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 	value := fmt.Sprintf(`{"x":"%s"}`, strings.Repeat("x", mysql.MaxFieldVarCharLength))
 	tk.MustExec(fmt.Sprintf("insert into t values ('%s')", value))
 
+	tk.MustExec("set @@session.tidb_analyze_skip_column_types = ''")
 	tk.MustExec("analyze table t")
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -2360,6 +2361,9 @@ func TestAnalyzeJob(t *testing.T) {
 		}
 		checkTime(rows[0][5])
 		require.Equal(t, statistics.AnalyzeRunning, rows[0][7])
+		require.Equal(t, "9m0s", rows[0][11]) // REMAINING_SECONDS
+		require.Equal(t, "0.1", rows[0][12])  // PROGRESS
+		require.Equal(t, "0", rows[0][13])    // ESTIMATED_TOTAL_ROWS
 
 		// UpdateAnalyzeJob requires the interval between two updates to mysql.analyze_jobs is more than 5 second.
 		// Hence we fake last dump time as 10 second ago in order to make update to mysql.analyze_jobs happen.
@@ -3235,4 +3239,37 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	require.False(t, stats.Columns[tblInfo.Columns[2].ID].IsStatsInitialized())
 	require.True(t, stats.Indices[tblInfo.Indices[0].ID].IsStatsInitialized())
 	require.False(t, stats.Indices[tblInfo.Indices[1].ID].IsStatsInitialized())
+}
+
+func TestManualAnalyzeSkipColumnTypes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
+	tk.MustExec("set @@session.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%analyze table%'").Check(testkit.Rows("analyze table columns a, b, d with 256 buckets, 500 topn, 1 samplerate"))
+	tk.MustExec("delete from mysql.analyze_jobs")
+	tk.MustExec("analyze table t columns a, e")
+	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%analyze table%'").Check(testkit.Rows("analyze table columns a, d with 256 buckets, 500 topn, 1 samplerate"))
+}
+
+func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
+	tk.MustExec("insert into t values (1, 2, null, 'xxx', 'yyy', null, null)")
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
+
+	originalVal := handle.AutoAnalyzeMinCnt
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = originalVal
+	}()
+	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table columns a, b, d with 256 buckets, 500 topn, 1 samplerate"))
 }
