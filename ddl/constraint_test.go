@@ -1128,11 +1128,13 @@ func TestIssue44689(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS t0")
-	tk.MustExec("CREATE TABLE t0(c1 NUMERIC CHECK(true))")
+	for _, expr := range []string{"true", "false"} {
+		tk.MustExec("DROP TABLE IF EXISTS t0, t1, t2")
+		tk.MustExec(fmt.Sprintf("CREATE TABLE t0(c1 NUMERIC CHECK(%s))", expr))
 
-	tk.MustExec("CREATE TABLE t1(c1 NUMERIC, CHECK(true))")
+		tk.MustExec(fmt.Sprintf("CREATE TABLE t1(c1 NUMERIC, CHECK(%s))", expr))
 
-	tk.MustExec("CREATE TABLE t2(c1 NUMERIC)")
-	tk.MustExec("ALTER TABLE t2 ADD CONSTRAINT CHECK (true)")
+		tk.MustExec("CREATE TABLE t2(c1 NUMERIC)")
+		tk.MustExec(fmt.Sprintf("ALTER TABLE t2 ADD CONSTRAINT CHECK(%s)", expr))
+	}
 }
