@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/planner/util"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
