@@ -5348,8 +5348,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 			return nil
 		}
 		// Build seed part.
-		corCols := plannercore.ExtractCorrelatedCols4PhysicalPlan(v.SeedPlan)
-		corCols = removeCTEDefCorCol(corCols, v.SeedPlan)
+		corCols := plannercore.ExtractOuterApplyCorrelatedCols(v.SeedPlan)
 		seedExec := b.build(v.SeedPlan)
 		if b.err != nil {
 			return nil
@@ -5376,8 +5375,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 			if b.err != nil {
 				return nil
 			}
-			recursiveCorCols := plannercore.ExtractCorrelatedCols4PhysicalPlan(v.RecurPlan)
-			corCols = append(corCols, removeCTEDefCorCol(recursiveCorCols, v.RecurPlan)...)
+			corCols = append(corCols, plannercore.ExtractOuterApplyCorrelatedCols(v.RecurPlan)...)
 		}
 
 		var sel []int
@@ -5414,70 +5412,6 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		producer:     producer,
 	}
-}
-
-// removeCTEDefCorCol is to remove all cor cols whose corresponding Apply is inside CTE definition.
-// For Plan-1, cor_col_1 will be kept in cteProducer.corCols, so CTEProducer of CTE-1 will reopen for each row of outerSide of Apply_1.
-//
-// Plan-1:
-//
-//	Apply_1
-//	 |_ outerSide
-//	 |_CTEExec(CTE-1)
-//
-//	CTE-1
-//	 |_Selection(cor_col_1)
-//
-// For Plan-2, cor_col_2 and cor_col_3 will not be kept in cteProducer.corCols, because:
-// 1. cor_col_2 is not inside definition of CTE-2.
-// 2. Apply_3 is inside definition of CTE. So no need to reopen cteProducer.
-//
-// Plan-2:
-//
-//	Apply_2
-//	 |_ outerSide
-//	 |_ Selection(cor_col_2)
-//	     |_CTEExec(CTE-2)
-//	CTE-2
-//	 |_ Apply_3
-//	     |_ outerSide
-//	     |_ innerSide(cor_col_3)
-func removeCTEDefCorCol(corCols []*expression.CorrelatedColumn, v plannercore.PhysicalPlan) []*expression.CorrelatedColumn {
-	if len(corCols) == 0 {
-		return corCols
-	}
-	switch p := v.(type) {
-	case *plannercore.PhysicalApply:
-		newCorCols := make([]*expression.CorrelatedColumn, 0, len(corCols))
-		var (
-			innerPlan plannercore.PhysicalPlan
-			outerPlan plannercore.PhysicalPlan
-		)
-		if p.InnerChildIdx == 0 {
-			innerPlan = p.Children()[0]
-			outerPlan = p.Children()[1]
-		} else {
-			outerPlan = p.Children()[0]
-			innerPlan = p.Children()[1]
-		}
-		for _, corCol := range corCols {
-			idx := outerPlan.Schema().ColumnIndex(&corCol.Column)
-			if idx == -1 {
-				newCorCols = append(newCorCols, corCol)
-			}
-		}
-		corCols = newCorCols
-		corCols = removeCTEDefCorCol(corCols, outerPlan)
-		corCols = removeCTEDefCorCol(corCols, innerPlan)
-	case *plannercore.PhysicalCTE:
-		corCols = removeCTEDefCorCol(corCols, p.SeedPlan)
-		corCols = removeCTEDefCorCol(corCols, p.RecurPlan)
-	default:
-		for _, child := range p.Children() {
-			corCols = removeCTEDefCorCol(corCols, child)
-		}
-	}
-	return corCols
 }
 
 func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) Executor {
