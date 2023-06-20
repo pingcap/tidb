@@ -535,7 +535,7 @@ func (c *localMppCoordinator) handleAllReports() {
 		startTime := time.Now()
 		select {
 		case <-c.reportStatusCh:
-			metrics.MppCoordinatorLatencyRcvReport.Observe(float64(time.Now().Sub(startTime).Milliseconds()))
+			metrics.MppCoordinatorLatencyRcvReport.Observe(float64(time.Since(startTime).Milliseconds()))
 			var recordedPlanIDs = make(map[int]int)
 			for _, report := range c.reqMap {
 				for _, detail := range report.executionSummaries {
