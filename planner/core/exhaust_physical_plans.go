@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1152,13 +1153,76 @@ func (*LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physica
 	return physicalUnionScan
 }
 
+func getColsNDVLowerBoundFromHistColl(cols []*expression.Column, histColl *statistics.HistColl) int64 {
+	if len(cols) == 0 || histColl == nil {
+		return -1
+	}
+	colUIDs := make([]int64, len(cols))
+	for i, col := range cols {
+		colUIDs[i] = col.UniqueID
+	}
+
+	// Note that we don't need to specially handle prefix index in this function, because the NDV of a prefix index is
+	// equal or less than the corresponding normal index, and that's safe here since we want a lower bound.
+
+	// 1. Try to get NDV from column stats if it's a single column.
+	if len(colUIDs) == 1 && histColl.Columns != nil {
+		uid := colUIDs[0]
+		if colStats, ok := histColl.Columns[uid]; ok && colStats != nil {
+			return colStats.NDV
+		}
+	}
+
+	slices.Sort(colUIDs)
+	if histColl.Indices == nil || histColl.Idx2ColumnIDs == nil {
+		return -1
+	}
+
+	// 2. Try to get NDV from index stats.
+	for idxID, idxCols := range histColl.Idx2ColumnIDs {
+		if len(idxCols) != len(colUIDs) {
+			continue
+		}
+		orderedIdxCols := make([]int64, len(idxCols))
+		copy(orderedIdxCols, idxCols)
+		slices.Sort(orderedIdxCols)
+		if !slices.Equal(orderedIdxCols, colUIDs) {
+			continue
+		}
+		if idxStats, ok := histColl.Indices[idxID]; ok && idxStats != nil {
+			return idxStats.NDV
+		}
+	}
+
+	// TODO: if there's an index that contains the expected columns, we can also make use of its NDV.
+	// For example, NDV(a,b,c) / NDV(c) is a safe lower bound of NDV(a,b).
+
+	// 3. If we still haven't got an NDV, we use the minimal NDV in the column stats as a lower bound.
+	// This would happen when len(cols) > 1 and no proper index stats are available.
+	minNDV := int64(-1)
+	for _, colStats := range histColl.Columns {
+		if colStats == nil || colStats.Info == nil {
+			continue
+		}
+		col := colStats.Info
+		if col.IsGenerated() && !col.GeneratedStored {
+			continue
+		}
+		if (colStats.NDV > 0 && minNDV <= 0) ||
+			colStats.NDV < minNDV {
+			minNDV = colStats.NDV
+		}
+	}
+	return minNDV
+}
+
 // constructInnerIndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
 func (p *LogicalJoin) constructInnerIndexScanTask(
 	wrapper *indexJoinInnerChildWrapper,
 	path *util.AccessPath,
 	ranges ranger.Ranges,
 	filterConds []expression.Expression,
-	_ []*expression.Column,
+	innerJoinKeys []*expression.Column,
 	rangeInfo string,
 	keepOrder bool,
 	desc bool,
@@ -1256,12 +1320,13 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	// the estimated row count of the IndexScan should be no larger than (total row count / NDV of join key columns).
 	// We use it as an upper bound here.
 	rowCountUpperBound := -1.0
-	//if ds.tableStats != nil {
-	//	joinKeyNDV := getColsNDVLowerBoundFromHistColl(innerJoinKeys, ds.tableStats.HistColl)
-	//	if joinKeyNDV > 0 {
-	//		rowCountUpperBound = ds.tableStats.RowCount / float64(joinKeyNDV)
-	//	}
-	//}
+	fixValue, ok := ds.ctx.GetSessionVars().GetOptimizerFixControlValue(variable.TiDBOptFixControl44855)
+	if ok && variable.TiDBOptOn(fixValue) && ds.tableStats != nil {
+		joinKeyNDV := getColsNDVLowerBoundFromHistColl(innerJoinKeys, ds.tableStats.HistColl)
+		if joinKeyNDV > 0 {
+			rowCountUpperBound = ds.tableStats.RowCount / float64(joinKeyNDV)
+		}
+	}
 
 	if rowCountUpperBound > 0 {
 		rowCount = math.Min(rowCount, rowCountUpperBound)
