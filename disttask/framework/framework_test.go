@@ -158,13 +158,12 @@ func DispatchTaskAndCheckSuccess(taskKey string, t *testing.T, v *atomic.Int64) 
 	v.Store(0)
 }
 
-func DispatchAndCancelTask(taskKey string, t *testing.T, v *atomic.Int64) {
+func DispatchAndCancelTask(taskKey string, t *testing.T) *proto.Task {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	taskID, err := mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil)
 	require.NoError(t, err)
 	start := time.Now()
-	mgr.CancelGlobalTask(1)
 	var task *proto.Task
 	for {
 		if time.Since(start) > 2*time.Minute {
@@ -180,9 +179,58 @@ func DispatchAndCancelTask(taskKey string, t *testing.T, v *atomic.Int64) {
 		}
 	}
 
+	return task
+}
+
+func DispatchAndCancelTaskBeforeUpdateTask(t *testing.T, v *atomic.Int64) {
+	// fail point 1
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelBeforeUpdateTaskFromRunningToSucceed", `1*return(true)`))
+	task := DispatchTask("key1", t)
 	require.Equal(t, proto.TaskStateReverted, task.State)
-	require.Equal(t, int64(0), v.Load())
 	v.Store(0)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelBeforeUpdateTaskFromRunningToSucceed"))
+
+	// fail point 2
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelBeforeUpdateTaskFromRunningToRunning", `1*return(true)`))
+	task = DispatchTask("key2", t)
+	require.Equal(t, proto.TaskStateReverted, task.State)
+	v.Store(0)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelBeforeUpdateTaskFromRunningToRunning"))
+
+	// fail point 3
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelAfterProcessNormalFlow", `1*return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelBeforeUpdateTaskFromRevertingToReverted", `1*return(true)`))
+	task = DispatchTask("key3", t)
+	require.Equal(t, proto.TaskStateReverted, task.State)
+	v.Store(0)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelBeforeUpdateTaskFromRevertingToReverted"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelAfterProcessNormalFlow"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelAfterProcessNormalFlow", `1*return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelBeforeUpdateTaskFromRevertingToReverted", `2*return(true)`))
+	task = DispatchTask("key4", t)
+	require.Equal(t, proto.TaskStateReverted, task.State)
+	v.Store(0)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelBeforeUpdateTaskFromRevertingToReverted"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelAfterProcessNormalFlow"))
+
+	// fail point 4
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelAfterProcessNormalFlow", `1*return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelBeforeUpdateTaskFromRunningToReverting", `1*return(true)`))
+	task = DispatchAndCancelTask("key5", t)
+	require.Equal(t, proto.TaskStateReverted, task.State)
+	v.Store(0)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelBeforeUpdateTaskFromRunningToReverting"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelAfterProcessNormalFlow"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelAfterProcessNormalFlow", `1*return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelBeforeUpdateTaskFromRunningToReverting", `2*return(true)`))
+	task = DispatchAndCancelTask("key6", t)
+	require.Equal(t, proto.TaskStateReverted, task.State)
+	v.Store(0)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelBeforeUpdateTaskFromRunningToReverting"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockCancelAfterProcessNormalFlow"))
+
 }
 
 func DispatchAndFailTask(taskKey string, t *testing.T, v *atomic.Int64) {
@@ -283,7 +331,10 @@ func TestFrameworkCancelGTask(t *testing.T) {
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchAndCancelTask("key1", t, &v)
+	task := DispatchAndCancelTask("key1", t)
+	require.Equal(t, proto.TaskStateReverted, task.State)
+	require.Equal(t, int64(0), v.Load())
+	v.Store(0)
 	distContext.Close()
 }
 
@@ -296,4 +347,14 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	distContext := testkit.NewDistExecutionContext(t, 1)
 	DispatchAndFailTask("key1", t, &v)
 	distContext.Close()
+}
+
+func TestFrameworkIssue44443(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+	testContext := testkit.NewDistExecutionContext(t, 2)
+	DispatchAndCancelTaskBeforeUpdateTask(t, &v)
+	testContext.Close()
 }

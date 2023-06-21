@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -55,7 +56,7 @@ type Dispatch interface {
 	// Start enables dispatching and monitoring mechanisms.
 	Start()
 	// GetAllSchedulerIDs gets handles the task's all available instances.
-	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
+	GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, gTask *proto.Task) ([]string, error)
 	// Stop stops the dispatcher.
 	Stop()
 }
@@ -63,7 +64,7 @@ type Dispatch interface {
 // TaskHandle provides the interface for operations needed by task flow handles.
 type TaskHandle interface {
 	// GetAllSchedulerIDs gets handles the task's all scheduler instances.
-	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
+	GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, gTask *proto.Task) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error)
 	storage.SessionExecutor
@@ -184,6 +185,12 @@ func (d *dispatcher) DispatchTaskLoop() {
 				}
 
 				err = d.processNormalFlow(gTask)
+				failpoint.Inject("MockCancelAfterProcessNormalFlow", func(val failpoint.Value) {
+					if val.(bool) {
+						logutil.BgLogger().Info("cancel after normal flow", zap.String("state", gTask.State))
+						d.taskMgr.CancelGlobalTask(gTask.ID)
+					}
+				})
 				logutil.BgLogger().Info("dispatch task loop", zap.Int64("task ID", gTask.ID),
 					zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Error(err))
 				if err != nil || gTask.IsFinished() {
@@ -308,6 +315,12 @@ func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) error {
 	if gTask.State == proto.TaskStateReverting {
 		// Finish the rollback step.
 		logutil.BgLogger().Info("process flow, update the task to reverted", zap.Int64("task-id", gTask.ID))
+		failpoint.Inject("MockCancelBeforeUpdateTaskFromRevertingToReverted", func(val failpoint.Value) {
+			if val.(bool) {
+				logutil.BgLogger().Info("cancel before update gtask state from from reverting to reverted", zap.String("state", gTask.State))
+				d.taskMgr.CancelGlobalTask(gTask.ID)
+			}
+		})
 		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	// Finish the normal step.
@@ -341,18 +354,18 @@ func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTask
 func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
-	meta, err := GetTaskFlowHandle(gTask.Type).ProcessErrFlow(d.ctx, d, gTask, receiveErr)
+	handle := GetTaskFlowHandle((gTask.Type))
+	meta, err := handle.ProcessErrFlow(d.ctx, d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
 		return err
 	}
-
 	// 2. dispatch revert dist-plan to EligibleInstances.
-	return d.dispatchSubTask4Revert(gTask, meta)
+	return d.dispatchSubTask4Revert(gTask, handle, meta)
 }
 
-func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, meta []byte) error {
-	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, gTask.ID)
+func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, handle TaskFlowHandle, meta []byte) error {
+	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, handle, gTask)
 	if err != nil {
 		logutil.BgLogger().Warn("get global task's all instances failed", zap.Error(err))
 		return err
@@ -366,6 +379,13 @@ func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, meta []byte) erro
 	for _, id := range instanceIDs {
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, id, meta))
 	}
+
+	failpoint.Inject("MockCancelBeforeUpdateTaskFromRunningToReverting", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.BgLogger().Info("ancel before update gtask state from running to reverting", zap.String("state", gTask.State))
+			d.taskMgr.CancelGlobalTask(gTask.ID)
+		}
+	})
 	return d.updateTask(gTask, proto.TaskStateReverting, subTasks, retrySQLTimes)
 }
 
@@ -413,6 +433,12 @@ func (d *dispatcher) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, m
 	}
 
 	if len(metas) == 0 {
+		failpoint.Inject("MockCancelBeforeUpdateTaskFromRunningToSucceed", func(val failpoint.Value) {
+			if val.(bool) {
+				logutil.BgLogger().Info("cancel before update gtask state from running to succeed", zap.String("state", gTask.State))
+				d.taskMgr.CancelGlobalTask(gTask.ID)
+			}
+		})
 		gTask.StateUpdateTime = time.Now().UTC()
 		// Write the global task meta into the storage.
 		err := d.updateTask(gTask, proto.TaskStateSucceed, nil, retryTimes)
@@ -441,7 +467,12 @@ func (d *dispatcher) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, m
 			zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
-
+	failpoint.Inject("MockCancelBeforeUpdateTaskFromRunningToRunning", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.BgLogger().Info("cancel before update gtask state from running/pending to running", zap.String("state", gTask.State))
+			d.taskMgr.CancelGlobalTask(gTask.ID)
+		}
+	})
 	return d.updateTask(gTask, gTask.State, subTasks, retrySQLTimes)
 }
 
@@ -463,16 +494,15 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 }
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
-func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error) {
-	serverInfos, err := infosync.GetAllServerInfo(ctx)
+func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, gTask *proto.Task) ([]string, error) {
+	serverInfos, err := handle.GetEligibleInstances(ctx, gTask)
 	if err != nil {
 		return nil, err
 	}
 	if len(serverInfos) == 0 {
 		return nil, nil
 	}
-
-	schedulerIDs, err := d.taskMgr.GetSchedulerIDsByTaskID(gTaskID)
+	schedulerIDs, err := d.taskMgr.GetSchedulerIDsByTaskID(gTask.ID)
 	if err != nil {
 		return nil, err
 	}
