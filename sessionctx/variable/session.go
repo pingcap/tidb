@@ -1518,6 +1518,8 @@ var (
 	TiDBOptFixControl44262 uint64 = 44262
 	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
 	TiDBOptFixControl44389 uint64 = 44389
+	// TiDBOptFixControl44823 controls the maximum number of parameters for a query that can be cached in the Plan Cache.
+	TiDBOptFixControl44823 uint64 = 44823
 	// TiDBOptFixControl44855 controls whether to use a more accurate upper bound when estimating row count of index
 	// range scan under inner side of index join.
 	TiDBOptFixControl44855 uint64 = 44855

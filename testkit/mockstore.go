@@ -33,8 +33,10 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gctuner"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
+	"go.uber.org/zap"
 )
 
 // WithTiKV flag is only used for debugging locally with real tikv cluster.
@@ -173,10 +175,17 @@ func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext 
 	domains := make([]*domain.Domain, 0, serverNum)
 	sm := MockSessionManager{}
 
+	var domInfo []string
 	for i := 0; i < serverNum; i++ {
-		domains = append(domains, bootstrap4DistExecution(t, store, 500*time.Millisecond))
+		dom := bootstrap4DistExecution(t, store, 500*time.Millisecond)
+		if i != serverNum-1 {
+			dom.SetOnClose(func() { /* don't delete the store in domain map */ })
+		}
+		domains = append(domains, dom)
 		domains[i].InfoSyncer().SetSessionManager(&sm)
+		domInfo = append(domInfo, dom.DDL().GetID())
 	}
+	logutil.BgLogger().Info("domain DDL IDs", zap.Strings("IDs", domInfo))
 
 	res := DistExecutionContext{
 		schematracker.UnwrapStorage(store), domains, []*domain.Domain{}, t, sync.Mutex{}}
