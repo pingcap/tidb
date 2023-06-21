@@ -94,7 +94,7 @@ func (r *syncedRanges) reset() {
 type Engine struct {
 	engineMeta
 	closed       atomic.Bool
-	db           *pebble.DB
+	db           atomic.Pointer[pebble.DB]
 	UUID         uuid.UUID
 	localWriters sync.Map
 
@@ -143,13 +143,25 @@ func (e *Engine) setError(err error) {
 	}
 }
 
+<<<<<<< HEAD
 func (e *Engine) Close() error {
 	log.L().Debug("closing local engine", zap.Stringer("engine", e.UUID), zap.Stack("stack"))
 	if e.db == nil {
+=======
+func (e *Engine) getDB() *pebble.DB {
+	return e.db.Load()
+}
+
+// Close closes the engine and release all resources.
+func (e *Engine) Close() error {
+	e.logger.Debug("closing local engine", zap.Stringer("engine", e.UUID), zap.Stack("stack"))
+	db := e.getDB()
+	if db == nil {
+>>>>>>> 244d9c33880 (lightning: fix check disk quota routine block when some engine is importing (#44877))
 		return nil
 	}
-	err := errors.Trace(e.db.Close())
-	e.db = nil
+	err := errors.Trace(db.Close())
+	e.db.Store(nil)
 	return err
 }
 
@@ -426,9 +438,7 @@ func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) 
 }
 
 func (e *Engine) getEngineFileSize() backend.EngineFileSize {
-	e.mutex.RLock()
-	db := e.db
-	e.mutex.RUnlock()
+	db := e.getDB()
 
 	var total pebble.LevelMetrics
 	if db != nil {
@@ -834,7 +844,7 @@ func (e *Engine) flushEngineWithoutLock(ctx context.Context) error {
 		return err
 	}
 
-	flushFinishedCh, err := e.db.AsyncFlush()
+	flushFinishedCh, err := e.getDB().AsyncFlush()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -862,11 +872,11 @@ func saveEngineMetaToDB(meta *engineMeta, db *pebble.DB) error {
 func (e *Engine) saveEngineMeta() error {
 	log.L().Debug("save engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
 		zap.Int64("size", e.TotalSize.Load()))
-	return errors.Trace(saveEngineMetaToDB(&e.engineMeta, e.db))
+	return errors.Trace(saveEngineMetaToDB(&e.engineMeta, e.getDB()))
 }
 
 func (e *Engine) loadEngineMeta() error {
-	jsonBytes, closer, err := e.db.Get(engineMetaKey)
+	jsonBytes, closer, err := e.getDB().Get(engineMetaKey)
 	if err != nil {
 		if err == pebble.ErrNotFound {
 			log.L().Debug("local db missing engine meta", zap.Stringer("uuid", e.UUID), log.ShortError(err))
@@ -958,13 +968,50 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 		opts = &newOpts
 	}
 	if !e.duplicateDetection {
-		return pebbleIter{Iterator: e.db.NewIter(opts)}
+		return pebbleIter{Iterator: e.getDB().NewIter(opts)}
 	}
 	logger := log.With(
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
+<<<<<<< HEAD
 	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger)
+=======
+	return newDupDetectIter(e.getDB(), e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
+}
+
+// getFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
+// in the engine. Empty upperBound means unbounded.
+func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+	if len(upperBound) == 0 {
+		// we use empty slice for unbounded upper bound, but it means max value in pebble
+		// so reset to nil
+		upperBound = nil
+	}
+	opt := &pebble.IterOptions{
+		LowerBound: lowerBound,
+		UpperBound: upperBound,
+	}
+
+	iter := e.newKVIter(context.Background(), opt)
+	//nolint: errcheck
+	defer iter.Close()
+	// Needs seek to first because NewIter returns an iterator that is unpositioned
+	hasKey := iter.First()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotate(iter.Error(), "failed to read the first key")
+	}
+	if !hasKey {
+		return nil, nil, nil
+	}
+	firstKey := append([]byte{}, iter.Key()...)
+	iter.Last()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
+	}
+	lastKey := append([]byte{}, iter.Key()...)
+	return firstKey, lastKey, nil
+>>>>>>> 244d9c33880 (lightning: fix check disk quota routine block when some engine is importing (#44877))
 }
 
 type sstMeta struct {
@@ -1478,8 +1525,9 @@ func (i dbSSTIngester) ingest(metas []*sstMeta) error {
 	for _, m := range metas {
 		paths = append(paths, m.path)
 	}
-	if i.e.db == nil {
+	db := i.e.getDB()
+	if db == nil {
 		return errorEngineClosed
 	}
-	return i.e.db.Ingest(paths)
+	return db.Ingest(paths)
 }
