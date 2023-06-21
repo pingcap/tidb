@@ -33,6 +33,61 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func Test6299(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE t (
+  a varchar(10) NOT NULL,
+  b varchar(10) NOT NULL,
+  c varchar(6) NOT NULL,
+  d varchar(2) NOT NULL,
+  e varchar(1) NOT NULL,
+  f decimal(15,2) DEFAULT NULL,
+  PRIMARY KEY (a, b, c, d, e) /*T![clustered_index] CLUSTERED */
+)`)
+	tk.MustExec(`set @@tidb_opt_fix_control = "44830:ON,44823:0"`)
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache_for_dml=1`)
+	tk.MustExec(`set @@tidb_plan_cache_max_plan_size=0`)
+
+	genQuery := func(batchSize int) string {
+		q := `select * from t where 1=1 and (a, b, c, d, e) in (`
+		for i := 0; i < batchSize; i++ {
+			if i > 0 {
+				q += ","
+			}
+			q += fmt.Sprintf(`('000%v', '0%v', '000001', '00', '0')`, 140+i, 420+i)
+		}
+		return q + ")"
+	}
+	tk.MustQuery(genQuery(100)).Check(testkit.Rows())
+	tk.MustQuery(genQuery(100)).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(genQuery(1000)).Check(testkit.Rows())
+	tk.MustQuery(genQuery(1000)).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	cnt := 0
+	genReplace := func(batchSize int) string {
+		q := `replace into t (a, b, c, d, e, f) values `
+		for i := 0; i < batchSize; i++ {
+			if i > 0 {
+				q += ","
+			}
+			q += fmt.Sprintf(`('000%v', '0%v', '000001', '00', '0', 0)`, 140+cnt, 420+cnt)
+			cnt++
+		}
+		return q
+	}
+	tk.MustExec(genReplace(100))
+	tk.MustExec(genReplace(100))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(genReplace(1000))
+	tk.MustExec(genReplace(1000))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func TestFixControl44823(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
