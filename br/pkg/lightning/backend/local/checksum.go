@@ -120,7 +120,7 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	if err == nil && backoffWeight < DefaultBackoffWeight {
 		task.Info("increase tidb_backoff_weight", zap.Int("original", backoffWeight), zap.Int("new", DefaultBackoffWeight))
 		// increase backoff weight
-		if _, err := e.db.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, backoffWeight)); err != nil {
+		if _, err := e.db.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, DefaultBackoffWeight)); err != nil {
 			task.Warn("set tidb_backoff_weight failed", zap.Error(err))
 		} else {
 			defer func() {
