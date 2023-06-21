@@ -248,7 +248,6 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			fmt.Println("Next() get snapshot row ==", row.ToString(retTypes(us.children[0])))
 			var snapshotHandle kv.Handle
 			snapshotHandle, err = us.belowHandleCols.BuildHandle(row)
 			if err != nil {
