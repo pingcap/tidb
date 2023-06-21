@@ -328,7 +328,6 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
 	f := &Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -337,6 +336,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		keyAdapter:   noopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
 	f.wg.Add(1)
 	go f.ingestSSTLoop()
@@ -480,7 +480,6 @@ func TestLocalIngestLoop(t *testing.T) {
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
 	f := Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -493,6 +492,7 @@ func TestLocalIngestLoop(t *testing.T) {
 		},
 		logger: log.L(),
 	}
+	f.db.Store(db)
 	f.sstIngester = testIngester{}
 	f.wg.Add(1)
 	go f.ingestSSTLoop()
@@ -570,7 +570,6 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 	engineCtx, cancel := context.WithCancel(context.Background())
 
 	f := &Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -583,6 +582,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 		},
 		logger: log.L(),
 	}
+	f.db.Store(db)
 
 	createSSTWriter := func() (*sstWriter, error) {
 		path := filepath.Join(f.sstDir, uuid.New().String()+".sst")
@@ -1152,7 +1152,6 @@ func TestCheckPeersBusy(t *testing.T) {
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel2 := context.WithCancel(context.Background())
 	f := &Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -1161,9 +1160,10 @@ func TestCheckPeersBusy(t *testing.T) {
 		keyAdapter:   noopKeyAdapter{},
 		logger:       log.L(),
 	}
-	err := f.db.Set([]byte("a"), []byte("a"), nil)
+	f.db.Store(db)
+	err := db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
-	err = f.db.Set([]byte("b"), []byte("b"), nil)
+	err = db.Set([]byte("b"), []byte("b"), nil)
 	require.NoError(t, err)
 
 	jobCh := make(chan *regionJob, 10)
@@ -1288,7 +1288,6 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel2 := context.WithCancel(context.Background())
 	f := &Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -1297,7 +1296,8 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 		keyAdapter:   noopKeyAdapter{},
 		logger:       log.L(),
 	}
-	err := f.db.Set([]byte("a"), []byte("a"), nil)
+	f.db.Store(db)
+	err := db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
 
 	jobCh := make(chan *regionJob, 10)
@@ -1395,7 +1395,6 @@ func TestPartialWriteIngestErrorWillPanic(t *testing.T) {
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel2 := context.WithCancel(context.Background())
 	f := &Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -1404,9 +1403,10 @@ func TestPartialWriteIngestErrorWillPanic(t *testing.T) {
 		keyAdapter:   noopKeyAdapter{},
 		logger:       log.L(),
 	}
-	err := f.db.Set([]byte("a"), []byte("a"), nil)
+	f.db.Store(db)
+	err := db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
-	err = f.db.Set([]byte("a2"), []byte("a2"), nil)
+	err = db.Set([]byte("a2"), []byte("a2"), nil)
 	require.NoError(t, err)
 
 	jobCh := make(chan *regionJob, 10)
@@ -1502,7 +1502,6 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel2 := context.WithCancel(context.Background())
 	f := &Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -1511,9 +1510,10 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 		keyAdapter:   noopKeyAdapter{},
 		logger:       log.L(),
 	}
-	err := f.db.Set([]byte("a"), []byte("a"), nil)
+	f.db.Store(db)
+	err := db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
-	err = f.db.Set([]byte("a2"), []byte("a2"), nil)
+	err = db.Set([]byte("a2"), []byte("a2"), nil)
 	require.NoError(t, err)
 
 	jobCh := make(chan *regionJob, 10)
@@ -1641,7 +1641,6 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	ctx := context.Background()
 	engineCtx, cancel := context.WithCancel(context.Background())
 	f := &Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -1650,11 +1649,12 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		keyAdapter:   noopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.db.Store(db)
 	// keys starts with 0 is meta keys, so we start with 1.
 	for i := byte(1); i <= 10; i++ {
-		err := f.db.Set([]byte{i}, []byte{i}, nil)
+		err := db.Set([]byte{i}, []byte{i}, nil)
 		require.NoError(t, err)
-		err = f.db.Set([]byte{i, 1}, []byte{i, 1}, nil)
+		err = db.Set([]byte{i, 1}, []byte{i, 1}, nil)
 		require.NoError(t, err)
 	}
 

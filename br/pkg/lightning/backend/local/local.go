@@ -895,7 +895,7 @@ func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig,
 	engine := e.(*Engine)
 	engine.lock(importMutexStateOpen)
 	defer engine.unlock()
-	engine.db = db
+	engine.db.Store(db)
 	engine.sstIngester = dbSSTIngester{e: engine}
 	if err = engine.loadEngineMeta(); err != nil {
 		return errors.Trace(err)
@@ -934,7 +934,6 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 		}
 		engine := &Engine{
 			UUID:               engineUUID,
-			db:                 db,
 			sstMetasChan:       make(chan metaOrFlush),
 			tableInfo:          cfg.TableInfo,
 			keyAdapter:         local.keyAdapter,
@@ -943,6 +942,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 			duplicateDB:        local.duplicateDB,
 			logger:             log.FromContext(ctx),
 		}
+		engine.db.Store(db)
 		engine.sstIngester = dbSSTIngester{e: engine}
 		if err = engine.loadEngineMeta(); err != nil {
 			return err
@@ -1038,7 +1038,7 @@ func (local *Backend) readAndSplitIntoRange(
 	}
 
 	logger := log.FromContext(ctx).With(zap.Stringer("engine", engine.UUID))
-	sizeProps, err := getSizePropertiesFn(logger, engine.db, local.keyAdapter)
+	sizeProps, err := getSizePropertiesFn(logger, engine.getDB(), local.keyAdapter)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1127,7 +1127,7 @@ func (local *Backend) generateAndSendJob(
 	// when use dynamic region feature, the region may be very big, we need
 	// to split to smaller ranges to increase the concurrency.
 	if regionSplitSize > 2*int64(config.SplitRegionSize) {
-		sizeProps, err := getSizePropertiesFn(logger, engine.db, local.keyAdapter)
+		sizeProps, err := getSizePropertiesFn(logger, engine.getDB(), local.keyAdapter)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1603,7 +1603,7 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 	}
 	db, err := local.openEngineDB(engineUUID, false)
 	if err == nil {
-		localEngine.db = db
+		localEngine.db.Store(db)
 		localEngine.engineMeta = engineMeta{}
 		if !common.IsDirExists(localEngine.sstDir) {
 			if err := os.Mkdir(localEngine.sstDir, 0o750); err != nil {

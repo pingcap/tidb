@@ -21,6 +21,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
@@ -41,6 +42,44 @@ func makePebbleDB(t *testing.T, opt *pebble.Options) (*pebble.DB, string) {
 	return db, tmpPath
 }
 
+func TestGetEngineSizeWhenImport(t *testing.T) {
+	opt := &pebble.Options{
+		MemTableSize:             1024 * 1024,
+		MaxConcurrentCompactions: 16,
+		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
+		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
+		DisableWAL:               true,
+		ReadOnly:                 false,
+	}
+	db, tmpPath := makePebbleDB(t, opt)
+
+	_, engineUUID := backend.MakeUUID("ww", 0)
+	engineCtx, cancel := context.WithCancel(context.Background())
+	f := &Engine{
+		UUID:         engineUUID,
+		sstDir:       tmpPath,
+		ctx:          engineCtx,
+		cancel:       cancel,
+		sstMetasChan: make(chan metaOrFlush, 64),
+		keyAdapter:   noopKeyAdapter{},
+		logger:       log.L(),
+	}
+	f.db.Store(db)
+	// simulate import
+	f.lock(importMutexStateImport)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		engineFileSize := f.getEngineFileSize()
+		require.Equal(t, f.UUID, engineFileSize.UUID)
+		require.True(t, engineFileSize.IsImporting)
+	}()
+	wg.Wait()
+	f.unlock()
+	require.NoError(t, f.Close())
+}
+
 func TestIngestSSTWithClosedEngine(t *testing.T) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
@@ -55,7 +94,6 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
 	f := &Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -64,6 +102,7 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 		keyAdapter:   noopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
 	sstPath := path.Join(tmpPath, uuid.New().String()+".sst")
 	file, err := os.Create(sstPath)
@@ -93,9 +132,9 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 func TestGetFirstAndLastKey(t *testing.T) {
 	db, tmpPath := makePebbleDB(t, nil)
 	f := &Engine{
-		db:     db,
 		sstDir: tmpPath,
 	}
+	f.db.Store(db)
 	err := db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
 	err = db.Set([]byte("c"), []byte("c"), nil)
