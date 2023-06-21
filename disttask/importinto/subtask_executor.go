@@ -207,7 +207,7 @@ func setBackoffWeight(se sessionctx.Context, taskMeta *TaskMeta, logger *zap.Log
 			backoffWeight = weight
 		}
 	}
-	logutil.BgLogger().Info("set backoff weight", zap.Int("weight", backoffWeight))
+	logger.Info("set backoff weight", zap.Int("weight", backoffWeight))
 	return se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
 }
 
