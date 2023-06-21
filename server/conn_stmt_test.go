@@ -111,9 +111,10 @@ func TestCursorWithParams(t *testing.T) {
 		0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0,
 	)))
 	rows := c.Context().stmts[stmt1.ID()].GetResultSet().GetRowIterator()
-	require.Len(t, rows, 1)
 	require.Equal(t, int64(1), rows.Current().GetInt64(0))
 	require.Equal(t, int64(2), rows.Current().GetInt64(1))
+	rows.Next()
+	require.Equal(t, rows.End(), rows.Current())
 
 	// `execute stmt2 using 1` with cursor
 	require.NoError(t, c.Dispatch(ctx, append(
@@ -123,11 +124,12 @@ func TestCursorWithParams(t *testing.T) {
 		0x1, 0x0, 0x0, 0x0,
 	)))
 	rows = c.Context().stmts[stmt2.ID()].GetResultSet().GetRowIterator()
-	require.Len(t, rows, 2)
 	require.Equal(t, int64(1), rows.Current().GetInt64(0))
 	require.Equal(t, int64(1), rows.Current().GetInt64(1))
 	require.Equal(t, int64(1), rows.Next().GetInt64(0))
 	require.Equal(t, int64(2), rows.Current().GetInt64(1))
+	rows.Next()
+	require.Equal(t, rows.End(), rows.Current())
 
 	// fetch stmt2 with fetch size 256
 	require.NoError(t, c.Dispatch(ctx, append(
