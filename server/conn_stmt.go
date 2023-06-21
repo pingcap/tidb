@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -267,6 +268,23 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		PrepStmt:   prepStmt,
 	}
 
+	// first, try to clear the left cursor if there is one
+	if useCursor && stmt.GetCursorActive() {
+		if stmt.GetRowContainer() != nil {
+			stmt.GetRowContainer().GetMemTracker().Detach()
+			stmt.GetRowContainer().GetDiskTracker().Detach()
+			err := stmt.GetRowContainer().Close()
+			if err != nil {
+				logutil.Logger(ctx).Error(
+					"Fail to close rowContainer before executing statement. May cause resource leak",
+					zap.Error(err))
+			}
+			stmt.StoreRowContainer(nil)
+		}
+		stmt.StoreResultSet(nil)
+		stmt.SetCursorActive(false)
+	}
+
 	// For the combination of `ComPrepare` and `ComExecute`, the statement name is stored in the client side, and the
 	// TiDB only has the ID, so don't try to construct an `EXECUTE SOMETHING`. Use the original prepared statement here
 	// instead.
@@ -308,22 +326,6 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
 	// Tell the client cursor exists in server by setting proper serverStatus.
 	if useCursor {
-		// first, try to clear the left state
-		if stmt.GetCursorActive() {
-			if stmt.GetRowContainer() != nil {
-				stmt.GetRowContainer().GetMemTracker().Detach()
-				stmt.GetRowContainer().GetDiskTracker().Detach()
-				err := stmt.GetRowContainer().Close()
-				if err != nil {
-					logutil.Logger(ctx).Error(
-						"Fail to close rowContainer before executing statement. May cause resource leak",
-						zap.Error(err))
-				}
-				stmt.StoreRowContainer(nil)
-			}
-			stmt.SetCursorActive(false)
-		}
-
 		crs := wrapWithCursor(rs)
 
 		cc.initResultEncoder(ctx)
@@ -341,6 +343,12 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		rowContainer.GetDiskTracker().AttachTo(vars.DiskTracker)
 		rowContainer.GetDiskTracker().SetLabel(memory.LabelForCursorFetch)
 		if variable.EnableTmpStorageOnOOM.Load() {
+			failpoint.Inject("testCursorFetchSpill", func(val failpoint.Value) {
+				if val.(bool) {
+					actionSpill := rowContainer.ActionSpillForTest()
+					defer actionSpill.WaitForTest()
+				}
+			})
 			vars.MemTracker.FallbackOldAndSetNewAction(rowContainer.ActionSpill())
 		}
 		defer func() {
