@@ -206,7 +206,11 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		}
 
 		err = parse.ExecArgs(cc.ctx.GetSessionVars().StmtCtx, args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
-		stmt.Reset()
+		// This `.Reset` resets the arguments, so it's fine to just ignore the error (and the it'll be reset again in the following routine)
+		errReset := stmt.Reset()
+		if errReset != nil {
+			logutil.Logger(ctx).Warn("fail to reset statement in EXECUTE command", zap.Error(errReset))
+		}
 		if err != nil {
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
@@ -344,7 +348,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		rowContainer.GetDiskTracker().SetLabel(memory.LabelForCursorFetch)
 		if variable.EnableTmpStorageOnOOM.Load() {
 			failpoint.Inject("testCursorFetchSpill", func(val failpoint.Value) {
-				if val.(bool) {
+				if val, ok := val.(bool); val && ok {
 					actionSpill := rowContainer.ActionSpillForTest()
 					defer actionSpill.WaitForTest()
 				}
@@ -374,7 +378,10 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 				break
 			}
 
-			rowContainer.Add(chk)
+			err = rowContainer.Add(chk)
+			if err != nil {
+				return false, err
+			}
 		}
 
 		iter := chunk.NewIterator4RowContainer(rowContainer)
