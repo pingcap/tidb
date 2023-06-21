@@ -3782,13 +3782,10 @@ func TestShardIndexOnTiFlash(t *testing.T) {
 	}
 	tk.MustExec("set @@session.tidb_enforce_mpp = 0")
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
-	rows = tk.MustQuery("explain select max(b) from t").Rows()
-	for _, row := range rows {
-		line := fmt.Sprintf("%v", row)
-		if strings.Contains(line, "TableFullScan") {
-			require.NotContains(t, line, "mpp[tiflash]")
-		}
-	}
+	// when we isolated the read engine as 'tiflash' and banned TiDB opening allow-mpp, no suitable plan is generated.
+	_, err := tk.Exec("explain select max(b) from t")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1815]Internal : Can't find a proper physical plan for this query")
 }
 
 func TestExprPushdownBlacklist(t *testing.T) {
@@ -3799,6 +3796,7 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int , b date)")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())

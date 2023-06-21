@@ -839,6 +839,11 @@ type SessionVars struct {
 	// Value set to `false` means never use mpp.
 	allowMPPExecution bool
 
+	// allowTiFlashCop means if we must use mpp way to execute query.
+	// Default value is `false`, means to be determined by the optimizer.
+	// Value set to `true` means we may fall back to TiFlash cop if possible.
+	allowTiFlashCop bool
+
 	// HashExchangeWithNewCollation means if we support hash exchange when new collation is enabled.
 	// Default value is `true`, means support hash exchange when new collation is enabled.
 	// Value set to `false` means not use hash exchange when new collation is enabled.
@@ -1487,6 +1492,9 @@ type SessionVars struct {
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
 
+	// FastCheckTable is used to control whether fast check table is enabled.
+	FastCheckTable bool
+
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
 	// HypoTiFlashReplicas are for the Index Advisor.
@@ -1498,6 +1506,9 @@ type SessionVars struct {
 	runtimeFilterTypes []RuntimeFilterType
 	// Runtime filter mode: only support OFF, LOCAL now
 	runtimeFilterMode RuntimeFilterMode
+
+	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	AnalyzeSkipColumnTypes map[string]struct{}
 }
 
 var (
@@ -1644,6 +1655,11 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 // IsMPPAllowed returns whether mpp execution is allowed.
 func (s *SessionVars) IsMPPAllowed() bool {
 	return s.allowMPPExecution
+}
+
+// IsTiFlashCopBanned returns whether cop execution is allowed.
+func (s *SessionVars) IsTiFlashCopBanned() bool {
+	return !s.allowTiFlashCop
 }
 
 // IsMPPEnforced returns whether mpp execution is enforced.

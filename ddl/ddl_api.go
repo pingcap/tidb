@@ -1997,13 +1997,20 @@ func BuildTableInfo(
 				}
 			} else {
 				// Check the column-type constraint dependency.
-				if len(dependedColsMap) != 1 {
+				if len(dependedColsMap) > 1 {
 					return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
+				} else if len(dependedColsMap) == 0 {
+					// If dependedCols is empty, the expression must be true/false.
+					valExpr, ok := constr.Expr.(*driver.ValueExpr)
+					if !ok || !mysql.HasIsBooleanFlag(valExpr.GetType().GetFlag()) {
+						return nil, errors.Trace(errors.New("unsupported expression in check constraint"))
+					}
+				} else {
+					if _, ok := dependedColsMap[constr.InColumnName]; !ok {
+						return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
+					}
+					dependedCols = []model.CIStr{model.NewCIStr(constr.InColumnName)}
 				}
-				if _, ok := dependedColsMap[constr.InColumnName]; !ok {
-					return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
-				}
-				dependedCols = []model.CIStr{model.NewCIStr(constr.InColumnName)}
 			}
 			// check auto-increment column
 			if table.ContainsAutoIncrementCol(dependedCols, tbInfo) {
@@ -4395,14 +4402,20 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		pids = append(pids, pi.Definitions[i].ID)
 	}
 
+	genIDs, err := d.genGlobalIDs(len(pids))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionTruncateTablePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{pids},
+		SchemaID:    schema.ID,
+		TableID:     meta.ID,
+		SchemaName:  schema.Name.L,
+		SchemaState: model.StatePublic,
+		TableName:   t.Meta().Name.L,
+		Type:        model.ActionTruncateTablePartition,
+		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{pids, genIDs},
 	}
 
 	err = d.DoDDLJob(ctx, job)

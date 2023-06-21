@@ -69,9 +69,9 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 	return store
 }
 
-// DistExecutionTestContext is the context
+// DistExecutionContext is the context
 // that used in Distributed execution test for Dist task framework and DDL.
-type DistExecutionTestContext struct {
+type DistExecutionContext struct {
 	Store          kv.Storage
 	domains        []*domain.Domain
 	deletedDomains []*domain.Domain
@@ -80,7 +80,7 @@ type DistExecutionTestContext struct {
 }
 
 // InitOwner select the last domain as DDL owner.
-func (d *DistExecutionTestContext) InitOwner() {
+func (d *DistExecutionContext) InitOwner() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, dom := range d.domains {
@@ -91,7 +91,7 @@ func (d *DistExecutionTestContext) InitOwner() {
 }
 
 // SetOwner set one mock domain to DDL Owner by idx.
-func (d *DistExecutionTestContext) SetOwner(idx int) {
+func (d *DistExecutionContext) SetOwner(idx int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if idx >= len(d.domains) || idx < 0 {
@@ -105,8 +105,8 @@ func (d *DistExecutionTestContext) SetOwner(idx int) {
 	require.NoError(d.t, err)
 }
 
-// AddServer add 1 server which is not ddl owner.
-func (d *DistExecutionTestContext) AddServer() {
+// AddDomain add 1 domain which is not ddl owner.
+func (d *DistExecutionContext) AddDomain() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	dom := bootstrap4DistExecution(d.t, d.Store, 500*time.Millisecond)
@@ -115,8 +115,8 @@ func (d *DistExecutionTestContext) AddServer() {
 	d.domains = append(d.domains, dom)
 }
 
-// DeleteServer delete 1 server by idx, set server0 as ddl owner if the deleted owner is ddl owner.
-func (d *DistExecutionTestContext) DeleteServer(idx int) {
+// DeleteDomain delete 1 domain by idx, set server0 as ddl owner if the deleted owner is ddl owner.
+func (d *DistExecutionContext) DeleteDomain(idx int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if idx >= len(d.domains) || idx < 0 {
@@ -141,7 +141,7 @@ func (d *DistExecutionTestContext) DeleteServer(idx int) {
 }
 
 // Close cleanup running goroutines, release resources used.
-func (d *DistExecutionTestContext) Close() {
+func (d *DistExecutionContext) Close() {
 	d.t.Cleanup(func() {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -163,12 +163,12 @@ func (d *DistExecutionTestContext) Close() {
 }
 
 // GetDomain get domain by index.
-func (d *DistExecutionTestContext) GetDomain(idx int) *domain.Domain {
+func (d *DistExecutionContext) GetDomain(idx int) *domain.Domain {
 	return d.domains[idx]
 }
 
-// NewDistExecutionTestContext create DistExecutionTestContext for testing.
-func NewDistExecutionTestContext(t testing.TB, serverNum int) *DistExecutionTestContext {
+// NewDistExecutionContext create DistExecutionContext for testing.
+func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	gctuner.GlobalMemoryLimitTuner.Stop()
@@ -187,7 +187,7 @@ func NewDistExecutionTestContext(t testing.TB, serverNum int) *DistExecutionTest
 	}
 	logutil.BgLogger().Info("domain DDL IDs", zap.Strings("IDs", domInfo))
 
-	res := DistExecutionTestContext{
+	res := DistExecutionContext{
 		schematracker.UnwrapStorage(store), domains, []*domain.Domain{}, t, sync.Mutex{}}
 	res.InitOwner()
 	return &res
