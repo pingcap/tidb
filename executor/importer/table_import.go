@@ -28,7 +28,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -38,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -46,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/syncutil"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -270,66 +267,6 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEnc
 		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
 	return newTableKVEncoder(cfg, ti)
-}
-
-// VerifyChecksum verify the checksum of the table.
-func (e *LoadDataController) VerifyChecksum(ctx context.Context, localChecksum verify.KVChecksum) (err error) {
-	task := log.BeginTask(e.logger, "verify checksum")
-	defer func() {
-		task.End(zap.ErrorLevel, err)
-	}()
-	tidbCfg := tidb.GetGlobalConfig()
-	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
-	tls, err2 := common.NewTLS(
-		tidbCfg.Security.ClusterSSLCA,
-		tidbCfg.Security.ClusterSSLCert,
-		tidbCfg.Security.ClusterSSLKey,
-		hostPort,
-		nil, nil, nil,
-	)
-	if err2 != nil {
-		return errors.Trace(err2)
-	}
-
-	// no need to close kvStore, since it's a cached store.
-	kvStore, err2 := getCachedKVStoreFrom(tidbCfg.Path, tls)
-	if err2 != nil {
-		return errors.Trace(err2)
-	}
-	// if context cancelled before this line, it returns "[pd] failed to get cluster id", not context.Canceled.
-	pdCli, err2 := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tls.ToPDSecurityOption())
-	if err2 != nil {
-		return errors.Trace(err2)
-	}
-	defer pdCli.Close()
-
-	failpoint.Inject("waitCtxDone", func() {
-		<-ctx.Done()
-	})
-	tableInfo := &checkpoints.TidbTableInfo{
-		ID:   e.Table.Meta().ID,
-		Name: e.Table.Meta().Name.O,
-		Core: e.Table.Meta(),
-	}
-	manager := local.NewTiKVChecksumManager(kvStore.GetClient(), pdCli, uint(e.DistSQLScanConcurrency))
-	remoteChecksum, err2 := manager.Checksum(ctx, tableInfo)
-	if err2 != nil {
-		return err2
-	}
-	if !remoteChecksum.IsEqual(&localChecksum) {
-		err3 := common.ErrChecksumMismatch.GenWithStackByArgs(
-			remoteChecksum.Checksum, localChecksum.Sum(),
-			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
-			remoteChecksum.TotalBytes, localChecksum.SumSize(),
-		)
-		if e.Checksum == config.OpLevelOptional {
-			e.logger.Warn("verify checksum failed, but checksum is optional, will skip it", log.ShortError(err3))
-			err3 = nil
-		}
-		return err3
-	}
-	e.logger.Info("checksum pass", zap.Object("local", &localChecksum))
-	return nil
 }
 
 // PopulateChunks populates chunks from table regions.

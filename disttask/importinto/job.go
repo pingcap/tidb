@@ -155,7 +155,7 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 
 	var jobID, taskID int64
 	plan := ti.plan
-	if err = globalTaskManager.WithNewTxn(func(se sessionctx.Context) error {
+	if err = globalTaskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		var err2 error
 		exec := se.(sqlexec.SQLExecutor)
 		// If 2 client try to execute IMPORT INTO concurrently, there's chance that both of them will pass the check.

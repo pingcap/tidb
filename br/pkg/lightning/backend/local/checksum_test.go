@@ -49,6 +49,7 @@ func TestDoChecksum(t *testing.T) {
 		WithArgs("10m").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
+	mock.ExpectClose()
 
 	manager := NewTiDBChecksumExecutor(db)
 	checksum, err := manager.Checksum(context.Background(), &TidbTableInfo{DB: "test", Name: "t"})
@@ -227,6 +228,7 @@ func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
 	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
 		WithArgs("300h").
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectClose()
 	mock.ExpectClose()
 
 	manager := NewTiDBChecksumExecutor(db)
