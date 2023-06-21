@@ -228,6 +228,7 @@ func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
 		WithArgs("300h").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectClose()
+	mock.ExpectClose()
 
 	manager := NewTiDBChecksumExecutor(db)
 	_, err = manager.Checksum(context.Background(), &TidbTableInfo{DB: "test", Name: "t"})
