@@ -297,9 +297,34 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 // Checksum implements the ChecksumManager interface.
 func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
 	tbl := common.UniqueTable(tableInfo.DB, tableInfo.Name)
+<<<<<<< HEAD
 	physicalTS, logicalTS, err := e.manager.pdClient.GetTS(ctx)
 	if err != nil {
 		return nil, errors.Annotate(err, "fetch tso from pd failed")
+=======
+	var (
+		physicalTS, logicalTS int64
+		err                   error
+		retryTime             int
+	)
+	physicalTS, logicalTS, err = e.manager.pdClient.GetTS(ctx)
+	for err != nil {
+		if !pd.IsLeaderChange(errors.Cause(err)) {
+			return nil, errors.Annotate(err, "fetch tso from pd failed")
+		}
+		retryTime++
+		if retryTime%60 == 0 {
+			log.FromContext(ctx).Warn("fetch tso from pd failed and retrying",
+				zap.Int("retryTime", retryTime),
+				zap.Error(err))
+		}
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+		case <-time.After(retryGetTSInterval):
+			physicalTS, logicalTS, err = e.manager.pdClient.GetTS(ctx)
+		}
+>>>>>>> c6b4e9935a3 (lightning: unwrap the error before call PD function (#44856))
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
 	if err := e.manager.addOneJob(ctx, tbl, ts); err != nil {
