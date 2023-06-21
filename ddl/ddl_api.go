@@ -4328,7 +4328,6 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 	if pi == nil {
 		return dbterror.ErrPartitionMgmtOnNonpartitioned
 	}
-	newSpec := spec
 	// TODO: Optimize for remove partitioning with a single partition
 	// TODO: Add the support for this in onReorganizePartition
 	// skip if only one partition
@@ -4337,7 +4336,7 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 	// and keep the statistics for the partition id (which should be similar to the global statistics)
 	// and it let the GC clean up the old table metadata including possible global index.
 
-	newSpec = &ast.AlterTableSpec{}
+	newSpec := &ast.AlterTableSpec{}
 	newSpec.Tp = spec.Tp
 	defs := make([]*ast.PartitionDefinition, 1)
 	defs[0] = &ast.PartitionDefinition{}
