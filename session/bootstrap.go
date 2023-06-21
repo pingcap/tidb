@@ -22,7 +22,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"io/ioutil"
+	"os"
 	osuser "os/user"
 	"strconv"
 	"strings"
@@ -613,7 +613,7 @@ const (
 		original_sql TEXT NOT NULL,
 		plan_digest TEXT NOT NULL,
 		tidb_server varchar(64),
-		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when add global binding query",
+		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when select runaway query",
 		INDEX time_index(time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
@@ -625,7 +625,7 @@ const (
 		watch varchar(12) NOT NULL,
 		watch_text TEXT NOT NULL,
 		tidb_server varchar(64),
-		INDEX sql_index(watch_text(700)) COMMENT "accelerate the speed when add global binding query",
+		INDEX sql_index(watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
 		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
@@ -2862,7 +2862,7 @@ func doBootstrapSQLFile(s Session) error {
 		return nil
 	}
 	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
-	b, err := ioutil.ReadFile(sqlFile) //nolint:gosec
+	b, err := os.ReadFile(sqlFile) //nolint:gosec
 	if err != nil {
 		if intest.InTest {
 			return err

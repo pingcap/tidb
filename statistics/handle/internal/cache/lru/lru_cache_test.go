@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle
+package lru
 
 import (
 	"testing"
@@ -96,7 +96,7 @@ func mockTableRemoveIndex(t *statistics.Table) {
 
 func TestLRUPutGetDel(t *testing.T) {
 	capacity := int64(100)
-	lru := newStatsLruCache(capacity)
+	lru := NewStatsLruCache(capacity)
 	require.Equal(t, capacity, lru.capacity())
 	mockTable := newMockStatisticsTable(1, 1, true, false, false)
 	mockTableID := int64(1)
@@ -122,7 +122,7 @@ func TestLRUPutGetDel(t *testing.T) {
 
 func TestLRUEvict(t *testing.T) {
 	capacity := int64(24)
-	lru := newStatsLruCache(capacity)
+	lru := NewStatsLruCache(capacity)
 	t1 := newMockStatisticsTable(2, 0, true, false, false)
 	require.Equal(t, t1.MemoryUsage().TotalIdxTrackingMemUsage(), int64(0))
 	require.Equal(t, t1.MemoryUsage().TotalColTrackingMemUsage(), 2*mockCMSMemoryUsage)
@@ -160,7 +160,7 @@ func TestLRUEvict(t *testing.T) {
 }
 
 func TestLRUCopy(t *testing.T) {
-	lru := newStatsLruCache(1000)
+	lru := NewStatsLruCache(1000)
 	tables := make([]*statistics.Table, 0)
 	for i := 0; i < 5; i++ {
 		tables = append(tables, newMockStatisticsTable(1, 1, true, false, false))
@@ -198,7 +198,7 @@ func TestLRUCopy(t *testing.T) {
 }
 
 func TestLRUFreshMemUsage(t *testing.T) {
-	lru := newStatsLruCache(1000)
+	lru := NewStatsLruCache(1000)
 	t1 := newMockStatisticsTable(1, 1, true, false, false)
 	t2 := newMockStatisticsTable(2, 2, true, false, false)
 	t3 := newMockStatisticsTable(3, 3, true, false, false)
@@ -223,7 +223,7 @@ func TestLRUFreshMemUsage(t *testing.T) {
 }
 
 func TestLRUPutTooBig(t *testing.T) {
-	lru := newStatsLruCache(1)
+	lru := NewStatsLruCache(1)
 	mockTable := newMockStatisticsTable(1, 1, true, false, false)
 	// put mockTable, the index should be evicted
 	lru.Put(int64(1), mockTable)
@@ -235,7 +235,7 @@ func TestLRUPutTooBig(t *testing.T) {
 
 func TestCacheLen(t *testing.T) {
 	capacity := int64(12)
-	stats := newStatsLruCache(capacity)
+	stats := NewStatsLruCache(capacity)
 	t1 := newMockStatisticsTable(2, 1, true, false, false)
 	stats.Put(int64(1), t1)
 	t2 := newMockStatisticsTable(1, 1, true, false, false)
@@ -256,7 +256,7 @@ func TestCacheLen(t *testing.T) {
 
 func TestLRUMove(t *testing.T) {
 	capacity := int64(100)
-	s := newStatsLruCache(capacity)
+	s := NewStatsLruCache(capacity)
 	t1 := newMockStatisticsTable(1, 1, true, false, false)
 	t1ID := int64(1)
 	t2 := newMockStatisticsTable(1, 1, true, false, false)
@@ -274,7 +274,7 @@ func TestLRUMove(t *testing.T) {
 
 func TestLRUEvictPolicy(t *testing.T) {
 	capacity := int64(999)
-	s := newStatsLruCache(capacity)
+	s := NewStatsLruCache(capacity)
 	t1 := newMockStatisticsTable(1, 0, true, true, true)
 	s.Put(1, t1)
 	require.Equal(t, s.TotalCost(), mockCMSMemoryUsage+mockTopNMemoryUsage+mockHistMemoryUsage)
@@ -307,7 +307,7 @@ func TestLRUEvictPolicy(t *testing.T) {
 	require.True(t, t1.Columns[1].IsTopNEvicted())
 	require.True(t, t1.Columns[1].IsAllEvicted())
 
-	s = newStatsLruCache(capacity)
+	s = NewStatsLruCache(capacity)
 	t2 := newMockStatisticsTable(0, 1, true, true, true)
 	s.Put(2, t2)
 	require.Equal(t, s.TotalCost(), mockCMSMemoryUsage+mockTopNMemoryUsage+mockHistMemoryUsage)

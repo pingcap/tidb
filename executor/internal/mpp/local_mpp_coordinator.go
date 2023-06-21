@@ -152,7 +152,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 	for _, mppTask := range pf.ExchangeSender.Tasks {
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
-		} else if !mppTask.IsDisaggregatedTiFlashStaticPrune {
+		} else if !mppTask.TiFlashStaticPrune {
 			// If isDisaggregatedTiFlashStaticPrune is true, it means this TableScan is under PartitionUnoin,
 			// tableID in TableScan is already the physical table id of this partition, no need to update again.
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, []int64{mppTask.TableID})
