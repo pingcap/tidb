@@ -40,7 +40,7 @@ type SessionExecutor interface {
 	// WithNewSession executes the function with a new session.
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	// WithNewTxn executes the fn in a new transaction.
-	WithNewTxn(fn func(se sessionctx.Context) error) error
+	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error
 }
 
 // TaskManager is the manager of global/sub task.
@@ -125,9 +125,9 @@ func (stm *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) err
 }
 
 // WithNewTxn executes the fn in a new transaction.
-func (stm *TaskManager) WithNewTxn(fn func(se sessionctx.Context) error) error {
+func (stm *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	return stm.WithNewSession(func(se sessionctx.Context) (err error) {
-		_, err = ExecSQL(stm.ctx, se, "begin")
+		_, err = ExecSQL(ctx, se, "begin")
 		if err != nil {
 			return err
 		}
@@ -138,7 +138,7 @@ func (stm *TaskManager) WithNewTxn(fn func(se sessionctx.Context) error) error {
 			if success {
 				sql = "commit"
 			}
-			_, commitErr := ExecSQL(stm.ctx, se, sql)
+			_, commitErr := ExecSQL(ctx, se, sql)
 			if err == nil && commitErr != nil {
 				err = commitErr
 			}
@@ -407,7 +407,7 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, isSubtaskRevert bool) error {
-	return stm.WithNewTxn(func(se sessionctx.Context) error {
+	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
 		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %? where id = %?",
 			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, gTask.Error, gTask.ID)
 		if err != nil {

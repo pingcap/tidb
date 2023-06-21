@@ -502,8 +502,8 @@ func (d *dispatcher) WithNewSession(fn func(se sessionctx.Context) error) error 
 	return d.taskMgr.WithNewSession(fn)
 }
 
-func (d *dispatcher) WithNewTxn(fn func(se sessionctx.Context) error) error {
-	return d.taskMgr.WithNewTxn(fn)
+func (d *dispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
+	return d.taskMgr.WithNewTxn(ctx, fn)
 }
 
 func (*dispatcher) checkConcurrencyOverflow(cnt int) bool {

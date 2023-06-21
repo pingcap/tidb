@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/disttask/framework/storage"
@@ -151,23 +150,10 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	for i := 0; i < maxErrorRetryCount; i++ {
-		txnErr = executor.WithNewTxn(func(se sessionctx.Context) error {
-			if err := ddlutil.LoadGlobalVars(ctx, se, []string{variable.TiDBBackOffWeight}); err != nil {
-				logger.Warn("load ddl reorg vars failed", zap.Error(err))
-			}
-			backoffWeight, err := common.GetBackoffWeightFromSctx(se)
-			if err == nil && backoffWeight < local.DefaultBackoffWeight {
-				logger.Info("increase tidb_backoff_weight", zap.Int("original", backoffWeight), zap.Int("new", local.DefaultBackoffWeight))
-				// increase backoff weight
-				if err := se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight)); err != nil {
-					logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
-				} else {
-					defer func() {
-						if err := se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight)); err != nil {
-							logger.Warn("recover tidb_backoff_weight failed", zap.Error(err))
-						}
-					}()
-				}
+		txnErr = executor.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			// increase backoff weight
+			if err := setBackoffWeight(se, taskMeta, logger); err != nil {
+				logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
 			}
 
 			// reduce distsql scan concurrency
@@ -209,8 +195,20 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 	return remoteChecksum, txnErr
 }
 
+// TestChecksumTable is used to test checksum table in unit test.
 func TestChecksumTable(ctx context.Context, executor storage.SessionExecutor, taskMeta *TaskMeta, logger *zap.Logger) (*local.RemoteChecksum, error) {
 	return checksumTable(ctx, executor, taskMeta, logger)
+}
+
+func setBackoffWeight(se sessionctx.Context, taskMeta *TaskMeta, logger *zap.Logger) error {
+	backoffWeight := local.DefaultBackoffWeight
+	if val, ok := taskMeta.Plan.ImportantSysVars[variable.TiDBBackOffWeight]; ok {
+		if weight, err := strconv.Atoi(val); err == nil && weight > backoffWeight {
+			backoffWeight = weight
+		}
+	}
+	logutil.BgLogger().Info("set backoff weight", zap.Int("weight", backoffWeight))
+	return se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
 }
 
 func init() {
