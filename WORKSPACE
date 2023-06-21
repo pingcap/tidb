@@ -37,6 +37,7 @@ http_archive(
 http_archive(
     name = "rules_cc",
     urls = [
+        "http://bazel-cache.pingcap.net:8080/bazelbuild/bazel-gazelle/rules_cc/releases/download/0.0.6/rules_cc-0.0.6.tar.gz",
         "https://github.com/bazelbuild/rules_cc/releases/download/0.0.6/rules_cc-0.0.6.tar.gz",
         "http://ats.apps.svc/bazelbuild/rules_cc/releases/download/0.0.6/rules_cc-0.0.6.tar.gz",
     ],
