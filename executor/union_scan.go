@@ -206,9 +206,9 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	if addedRow == nil {
 		row = snapshotRow
 		isSnapshotRow = true
-		fmt.Println("getOneRow ... snapshot row=", snapshotRow, "added row=nil", addedRow, "chose snapshot")
+		// fmt.Println("getOneRow ... snapshot row=", snapshotRow, "added row=nil", addedRow, "chose snapshot")
 	} else if snapshotRow == nil {
-		fmt.Println("getOneRow ... snapshot row=nil", snapshotRow, "added row=", addedRow, "chose added")
+		// fmt.Println("getOneRow ... snapshot row=nil", snapshotRow, "added row=", addedRow, "chose added")
 		row = addedRow
 	} else {
 		isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
@@ -216,10 +216,10 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 			return nil, err
 		}
 		if isSnapshotRow {
-			fmt.Println("getOneRow ... snapshot row=", snapshotRow, "added row=", addedRow, "chose snapshto")
+			// fmt.Println("getOneRow ... snapshot row=", snapshotRow, "added row=", addedRow, "chose snapshto")
 			row = snapshotRow
 		} else {
-			fmt.Println("getOneRow ... snapshot row=", snapshotRow, "added row=", addedRow, "chose added")
+			// fmt.Println("getOneRow ... snapshot row=", snapshotRow, "added row=", addedRow, "chose added")
 			row = addedRow
 		}
 	}

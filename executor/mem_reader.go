@@ -237,7 +237,79 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *Tabl
 	}
 }
 
+type txnMemBufferIter struct {
+	*memTableReader
+	txn kv.Transaction
+	idx int
+	curr kv.Iterator
+}
+
+func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
+	for iter.idx < len(iter.kvRanges) {
+		if iter.curr == nil {
+			rg := iter.kvRanges[iter.idx]
+			iter.idx++
+			tmp := iter.txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
+			snapCacheIter, err := getSnapIter(iter.ctx, iter.cacheTable, rg)
+			if err != nil {
+				return nil, err
+			}
+			if snapCacheIter != nil {
+				tmp, err = transaction.NewUnionIter(tmp, snapCacheIter, false)
+				if err != nil {
+					return nil, err
+				}
+			}
+			iter.curr = tmp
+		}
+
+		var err error
+		curr := iter.curr
+		for ; curr.Valid(); err = curr.Next() {
+			if err != nil {
+				return nil, err
+			}
+			// check whether the key was been deleted.
+			if len(curr.Value()) == 0 {
+				continue
+			}
+
+			mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
+			resultRows := make([]types.Datum, len(iter.columns))
+			resultRows, err = iter.decodeRecordKeyValue(curr.Key(), curr.Value(), &resultRows)
+			if err != nil {
+				return nil, err
+			}
+			
+			mutableRow.SetDatums(resultRows...)
+			matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, mutableRow.ToRow())
+			if err != nil || !matched {
+				return nil, err
+			}
+			return resultRows, nil
+		}
+		iter.curr = nil
+	}
+	return nil, nil
+}
+
 func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
+	if !m.desc {
+		m.offsets = make([]int, len(m.columns))
+		for i, col := range m.columns {
+			m.offsets[i] = m.colIDs[col.ID]
+		}
+		txn, err := m.ctx.Txn(true)
+		if err != nil {
+			return nil, err
+		}
+
+		return &txnMemBufferIter {
+			memTableReader: m,
+			txn: txn,
+		}, nil
+	}
+
 	data, err := m.getMemRows(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -430,47 +502,6 @@ func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges 
 	}
 	return nil
 }
-
-// type txnMemBufferIter struct {
-// 	kvRanges []kv.KeyRange
-// 	idx int
-// 	curr kv.Iterator
-// }
-
-// func (iter *txnMemBufferIter) Next() (key, value []byte, err error) {
-// 	for iter.idx < len(iter.kvRanges) {
-// 		if iter.curr == nil {
-// 			rg := iter.kvRanges[iter.idx]
-// 			iter.idx++
-// 			tmp := txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
-// 			snapCacheIter, err := getSnapIter(ctx, cacheTable, rg)
-// 			if err != nil {
-// 				return nil, nil, err
-// 			}
-// 			if snapCacheIter != nil {
-// 				tmp, err = transaction.NewUnionIter(tmp, snapCacheIter, false)
-// 				if err != nil {
-// 					return nil, nil, err
-// 				}
-// 			}
-// 			iter.curr = tmp
-// 		}
-
-// 		curr := iter.curr
-// 		for ; curr.Valid(); err = curr.Next() {
-// 			if err != nil {
-// 				return nil, nil, err
-// 			}
-// 			// check whether the key was been deleted.
-// 			if len(curr.Value()) == 0 {
-// 				continue
-// 			}
-// 			return curr.Key(), curr.Value(), nil
-// 		}
-// 		iter.curr = nil
-// 	}
-// 	return nil, nil, nil
-// }
 
 func getSnapIter(ctx sessionctx.Context, cacheTable kv.MemBuffer, rg kv.KeyRange) (kv.Iterator, error) {
 	var snapCacheIter kv.Iterator
