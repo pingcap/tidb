@@ -320,39 +320,25 @@ func getTaskPlanCost(t task) (float64, error) {
 	case *copTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
 		cop := t.(*copTask)
 		if cop.indexPlan != nil && cop.tablePlan != nil { // handle IndexLookup specially
-			taskType = property.CopMultiReadTaskType
+			taskType = property.CopDoubleReadTaskType
 			// keep compatible with the old cost interface, for CopMultiReadTask, the cost is idxCost + tblCost.
 			if !cop.indexPlanFinished { // only consider index cost in this case
-				idxCost, err := getPlanCost(cop.indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
-				return idxCost, false, err
+				idxCost, err := cop.indexPlan.GetPlanCost(taskType, 0)
+				return idxCost, err
 			}
 			// consider both sides
-			idxCost, err := getPlanCost(cop.indexPlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+			idxCost, err := cop.indexPlan.GetPlanCost(taskType, 0)
 			if err != nil {
-				return 0, false, err
+				return 0, err
 			}
-			tblCost, err := getPlanCost(cop.tablePlan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+			tblCost, err := cop.tablePlan.GetPlanCost(taskType, 0)
 			if err != nil {
-				return 0, false, err
+				return 0, err
 			}
-			return idxCost + tblCost, false, nil
+			return idxCost + tblCost, nil
 		}
 
 		taskType = property.CopSingleReadTaskType
-<<<<<<< HEAD
-=======
-
-		// TiFlash can run cop task as well, check whether this cop task will run on TiKV or TiFlash.
-		if cop.tablePlan != nil {
-			leafNode := cop.tablePlan
-			for len(leafNode.Children()) > 0 {
-				leafNode = leafNode.Children()[0]
-			}
-			if tblScan, isScan := leafNode.(*PhysicalTableScan); isScan && tblScan.StoreType == kv.TiFlash {
-				taskType = property.MppTaskType
-			}
-		}
->>>>>>> fc99198e056 (planner: fix incorrect cost when the plan has `IndexLookup->Limit/Agg/TopN` (#44041))
 	case *mppTask:
 		taskType = property.MppTaskType
 	default:
