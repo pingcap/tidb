@@ -112,7 +112,11 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			task.Warn("close connection failed", zap.Error(err))
+		}
+	}()
 	// ADMIN CHECKSUM TABLE <table>,<table>  example.
 	// 	mysql> admin checksum table test.t;
 	// +---------+------------+---------------------+-----------+-------------+
