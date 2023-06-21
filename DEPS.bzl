@@ -3440,14 +3440,6 @@ def go_deps():
         version = "v0.0.0-20200212061837-5e12011dc712",
     )
     go_repository(
-        name = "com_github_pingcap_errcode",
-        build_file_proto_mode = "disable",
-        importpath = "github.com/pingcap/errcode",
-        sum = "h1:IF6LC/4+b1KNwrMlr2rBTUrojFPMexXBcDWZSpNwxjg=",
-        version = "v0.3.0",
-    )
-
-    go_repository(
         name = "com_github_pingcap_errors",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/errors",
