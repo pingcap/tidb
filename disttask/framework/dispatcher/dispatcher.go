@@ -188,7 +188,10 @@ func (d *dispatcher) DispatchTaskLoop() {
 				failpoint.Inject("MockCancelAfterProcessNormalFlow", func(val failpoint.Value) {
 					if val.(bool) {
 						logutil.BgLogger().Info("cancel after normal flow", zap.String("state", gTask.State))
-						d.taskMgr.CancelGlobalTask(gTask.ID)
+						err := d.taskMgr.CancelGlobalTask(gTask.ID)
+						if err != nil {
+							logutil.BgLogger().Warn("cancel gTask failed", zap.Error(err))
+						}
 					}
 				})
 				logutil.BgLogger().Info("dispatch task loop", zap.Int64("task ID", gTask.ID),
@@ -318,7 +321,10 @@ func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) error {
 		failpoint.Inject("MockCancelBeforeUpdateTaskFromRevertingToReverted", func(val failpoint.Value) {
 			if val.(bool) {
 				logutil.BgLogger().Info("cancel before update gtask state from from reverting to reverted", zap.String("state", gTask.State))
-				d.taskMgr.CancelGlobalTask(gTask.ID)
+				err := d.taskMgr.CancelGlobalTask(gTask.ID)
+				if err != nil {
+					logutil.BgLogger().Warn("cancel gTask failed", zap.Error(err))
+				}
 			}
 		})
 		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
@@ -383,7 +389,10 @@ func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, handle TaskFlowHa
 	failpoint.Inject("MockCancelBeforeUpdateTaskFromRunningToReverting", func(val failpoint.Value) {
 		if val.(bool) {
 			logutil.BgLogger().Info("ancel before update gtask state from running to reverting", zap.String("state", gTask.State))
-			d.taskMgr.CancelGlobalTask(gTask.ID)
+			err := d.taskMgr.CancelGlobalTask(gTask.ID)
+			if err != nil {
+				logutil.BgLogger().Warn("cancel gTask failed", zap.Error(err))
+			}
 		}
 	})
 	return d.updateTask(gTask, proto.TaskStateReverting, subTasks, retrySQLTimes)
@@ -436,7 +445,10 @@ func (d *dispatcher) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, m
 		failpoint.Inject("MockCancelBeforeUpdateTaskFromRunningToSucceed", func(val failpoint.Value) {
 			if val.(bool) {
 				logutil.BgLogger().Info("cancel before update gtask state from running to succeed", zap.String("state", gTask.State))
-				d.taskMgr.CancelGlobalTask(gTask.ID)
+				err := d.taskMgr.CancelGlobalTask(gTask.ID)
+				if err != nil {
+					logutil.BgLogger().Warn("cancel gTask failed", zap.Error(err))
+				}
 			}
 		})
 		gTask.StateUpdateTime = time.Now().UTC()
@@ -470,7 +482,10 @@ func (d *dispatcher) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, m
 	failpoint.Inject("MockCancelBeforeUpdateTaskFromRunningToRunning", func(val failpoint.Value) {
 		if val.(bool) {
 			logutil.BgLogger().Info("cancel before update gtask state from running/pending to running", zap.String("state", gTask.State))
-			d.taskMgr.CancelGlobalTask(gTask.ID)
+			err := d.taskMgr.CancelGlobalTask(gTask.ID)
+			if err != nil {
+				logutil.BgLogger().Warn("cancel gTask failed", zap.Error(err))
+			}
 		}
 	})
 	return d.updateTask(gTask, gTask.State, subTasks, retrySQLTimes)
