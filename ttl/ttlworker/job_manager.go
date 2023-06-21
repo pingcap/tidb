@@ -68,8 +68,8 @@ func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []
 	return insertNewTableIntoStatusTemplate, []interface{}{tableID, parentTableID}
 }
 
-func setTableStatusOwnerSQL(uuid string, tableID int64, now time.Time, currentJobTTLExpire time.Time, id string) (string, []interface{}) {
-	return setTableStatusOwnerTemplate, []interface{}{uuid, id, now.Format(timeFormat), now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID}
+func setTableStatusOwnerSQL(uuid string, tableID int64, jobStart time.Time, now time.Time, currentJobTTLExpire time.Time, id string) (string, []interface{}) {
+	return setTableStatusOwnerTemplate, []interface{}{uuid, id, jobStart, now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID}
 }
 
 func updateHeartBeatSQL(tableID int64, now time.Time, id string) (string, []interface{}) {
@@ -629,11 +629,13 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 		}
 
 		jobID = newJobID
+		jobStart := now
 		jobExist := false
 		if newJobID == "" {
 			if jobID = m.getTakeOverJobID(tableStatus, time.Now()); jobID == "" {
 				return errors.New("cannot take over job")
 			}
+			jobStart = tableStatus.CurrentJobStartTime
 			jobExist = true
 		}
 
@@ -642,7 +644,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return err
 		}
 
-		sql, args = setTableStatusOwnerSQL(jobID, table.ID, now, expireTime, m.id)
+		sql, args = setTableStatusOwnerSQL(jobID, table.ID, jobStart, now, expireTime, m.id)
 		_, err = se.ExecuteSQL(ctx, sql, args...)
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)

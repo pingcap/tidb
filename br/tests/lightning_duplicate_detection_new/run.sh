@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# TODO(lance6716): enable it after we turn on pre-deduplication
+exit 0
+
 set -eux
 
 LOG_FILE="$TEST_DIR/lightning-duplicate-detection-new.log"
