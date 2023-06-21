@@ -295,7 +295,7 @@ func (c *testPDClient) currentSafePoint() uint64 {
 func (c *testPDClient) GetTS(ctx context.Context) (int64, int64, error) {
 	physicalTS := time.Now().UnixMilli()
 	if c.leaderChanging && physicalTS%2 == 0 {
-		return 0, 0, errs.ErrClientTSOStreamClosed
+		return 0, 0, errors.WithStack(errs.ErrClientTSOStreamClosed)
 	}
 	logicalTS := oracle.ExtractLogical(c.logicalTSCounter.Inc())
 	return physicalTS, logicalTS, nil

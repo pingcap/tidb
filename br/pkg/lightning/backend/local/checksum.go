@@ -306,7 +306,7 @@ func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoin
 	)
 	physicalTS, logicalTS, err = e.manager.pdClient.GetTS(ctx)
 	for err != nil {
-		if !pd.IsLeaderChange(err) {
+		if !pd.IsLeaderChange(errors.Cause(err)) {
 			return nil, errors.Annotate(err, "fetch tso from pd failed")
 		}
 		retryTime++
