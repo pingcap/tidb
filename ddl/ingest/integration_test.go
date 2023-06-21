@@ -279,7 +279,7 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 
 func TestAddIndexIngestRecoverPartition(t *testing.T) {
 	port := config.GetGlobalConfig().Port
-	tc := testkit.NewDistExecutionTestContext(t, 3)
+	tc := testkit.NewDistExecutionContext(t, 3)
 	defer tc.Close()
 	defer injectMockBackendMgr(t, tc.Store)()
 	tk := testkit.NewTestKit(t, tc.Store)
