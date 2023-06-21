@@ -36,6 +36,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+<<<<<<< HEAD
+=======
+	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
+>>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 	"github.com/pingcap/tidb/table/tables"
 	"go.uber.org/zap"
 )
@@ -408,3 +413,161 @@ func GetAutoRandomColumn(tblInfo *model.TableInfo) *model.ColumnInfo {
 	}
 	return nil
 }
+<<<<<<< HEAD
+=======
+
+// GetDropIndexInfos returns the index infos that need to be dropped and the remain indexes.
+func GetDropIndexInfos(
+	tblInfo *model.TableInfo,
+) (remainIndexes []*model.IndexInfo, dropIndexes []*model.IndexInfo) {
+	cols := tblInfo.Columns
+loop:
+	for _, idxInfo := range tblInfo.Indices {
+		if idxInfo.State != model.StatePublic {
+			remainIndexes = append(remainIndexes, idxInfo)
+			continue
+		}
+		// Primary key is a cluster index.
+		if idxInfo.Primary && tblInfo.HasClusteredIndex() {
+			remainIndexes = append(remainIndexes, idxInfo)
+			continue
+		}
+		// Skip index that contains auto-increment column.
+		// Because auto colum must be defined as a key.
+		for _, idxCol := range idxInfo.Columns {
+			flag := cols[idxCol.Offset].GetFlag()
+			if tmysql.HasAutoIncrementFlag(flag) {
+				remainIndexes = append(remainIndexes, idxInfo)
+				continue loop
+			}
+		}
+		dropIndexes = append(dropIndexes, idxInfo)
+	}
+	return remainIndexes, dropIndexes
+}
+
+// BuildDropIndexSQL builds the SQL statement to drop index.
+func BuildDropIndexSQL(tableName string, idxInfo *model.IndexInfo) string {
+	if idxInfo.Primary {
+		return fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tableName)
+	}
+	return fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tableName, EscapeIdentifier(idxInfo.Name.O))
+}
+
+// BuildAddIndexSQL builds the SQL statement to create missing indexes.
+// It returns both a single SQL statement that creates all indexes at once,
+// and a list of SQL statements that creates each index individually.
+func BuildAddIndexSQL(
+	tableName string,
+	curTblInfo,
+	desiredTblInfo *model.TableInfo,
+) (singleSQL string, multiSQLs []string) {
+	addIndexSpecs := make([]string, 0, len(desiredTblInfo.Indices))
+loop:
+	for _, desiredIdxInfo := range desiredTblInfo.Indices {
+		for _, curIdxInfo := range curTblInfo.Indices {
+			if curIdxInfo.Name.L == desiredIdxInfo.Name.L {
+				continue loop
+			}
+		}
+
+		var buf bytes.Buffer
+		if desiredIdxInfo.Primary {
+			buf.WriteString("ADD PRIMARY KEY ")
+		} else if desiredIdxInfo.Unique {
+			buf.WriteString("ADD UNIQUE KEY ")
+		} else {
+			buf.WriteString("ADD KEY ")
+		}
+		// "primary" is a special name for primary key, we should not use it as index name.
+		if desiredIdxInfo.Name.L != "primary" {
+			buf.WriteString(EscapeIdentifier(desiredIdxInfo.Name.O))
+		}
+
+		colStrs := make([]string, 0, len(desiredIdxInfo.Columns))
+		for _, col := range desiredIdxInfo.Columns {
+			var colStr string
+			if desiredTblInfo.Columns[col.Offset].Hidden {
+				colStr = fmt.Sprintf("(%s)", desiredTblInfo.Columns[col.Offset].GeneratedExprString)
+			} else {
+				colStr = EscapeIdentifier(col.Name.O)
+				if col.Length != types.UnspecifiedLength {
+					colStr = fmt.Sprintf("%s(%s)", colStr, strconv.Itoa(col.Length))
+				}
+			}
+			colStrs = append(colStrs, colStr)
+		}
+		fmt.Fprintf(&buf, "(%s)", strings.Join(colStrs, ","))
+
+		if desiredIdxInfo.Invisible {
+			fmt.Fprint(&buf, " INVISIBLE")
+		}
+		if desiredIdxInfo.Comment != "" {
+			fmt.Fprintf(&buf, ` COMMENT '%s'`, format.OutputFormat(desiredIdxInfo.Comment))
+		}
+		addIndexSpecs = append(addIndexSpecs, buf.String())
+	}
+	if len(addIndexSpecs) == 0 {
+		return "", nil
+	}
+
+	singleSQL = fmt.Sprintf("ALTER TABLE %s %s", tableName, strings.Join(addIndexSpecs, ", "))
+	for _, spec := range addIndexSpecs {
+		multiSQLs = append(multiSQLs, fmt.Sprintf("ALTER TABLE %s %s", tableName, spec))
+	}
+	return singleSQL, multiSQLs
+}
+
+// IsDupKeyError checks if err is a duplicate index error.
+func IsDupKeyError(err error) bool {
+	if merr, ok := errors.Cause(err).(*mysql.MySQLError); ok {
+		switch merr.Number {
+		case errno.ErrDupKeyName, errno.ErrMultiplePriKey, errno.ErrDupUnique:
+			return true
+		}
+	}
+	return false
+}
+
+// GetBackoffWeightFromDB gets the backoff weight from database.
+func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
+	val, err := getSessionVariable(ctx, db, variable.TiDBBackOffWeight)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(val)
+}
+
+// copy from dbutil to avoid import cycle
+func getSessionVariable(ctx context.Context, db *sql.DB, variable string) (value string, err error) {
+	query := fmt.Sprintf("SHOW VARIABLES LIKE '%s'", variable)
+	rows, err := db.QueryContext(ctx, query)
+
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	defer rows.Close()
+
+	// Show an example.
+	/*
+		mysql> SHOW VARIABLES LIKE "binlog_format";
+		+---------------+-------+
+		| Variable_name | Value |
+		+---------------+-------+
+		| binlog_format | ROW   |
+		+---------------+-------+
+	*/
+
+	for rows.Next() {
+		if err = rows.Scan(&variable, &value); err != nil {
+			return "", errors.Trace(err)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return "", errors.Trace(err)
+	}
+
+	return value, nil
+}
+>>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
