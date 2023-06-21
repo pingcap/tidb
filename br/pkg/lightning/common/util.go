@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -606,15 +605,6 @@ func IsDupKeyError(err error) bool {
 		}
 	}
 	return false
-}
-
-// GetBackoffWeightFromSctx gets the backoff weight from session context.
-func GetBackoffWeightFromSctx(se sessionctx.Context) (int, error) {
-	backoffWeightBackup, ok := se.GetSessionVars().GetSystemVar(variable.TiDBBackOffWeight)
-	if !ok {
-		return 0, errors.New("can not get tidb_backoff_weight variable")
-	}
-	return strconv.Atoi(backoffWeightBackup)
 }
 
 // GetBackoffWeightFromDB gets the backoff weight from database.
