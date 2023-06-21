@@ -21,6 +21,8 @@ import (
 	"math"
 	"time"
 
+	"github.com/pingcap/tidb/infoschema"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -105,6 +107,43 @@ type PhysicalTable struct {
 	KeyColumnTypes []*types.FieldType
 	// TimeColum is the time column used for TTL
 	TimeColumn *model.ColumnInfo
+}
+
+func NewPhysicalTableByID(tblID, partitionID int64, is infoschema.InfoSchema) (*PhysicalTable, error) {
+	tbl, ok := is.TableByID(tblID)
+	if !ok {
+		return nil, errors.Errorf("table with id '%d' not found", tblID)
+	}
+
+	tblInfo := tbl.Meta()
+	var partition model.CIStr
+	if tblInfo.Partition != nil {
+		if partitionID == 0 {
+			return nil, errors.Errorf("table '%s', id '%d' should be a partition table", tblInfo.Name, tblID)
+		}
+
+		defs := tblInfo.Partition.Definitions
+		for i := range defs {
+			if defs[i].ID == partitionID {
+				partition = defs[i].Name
+			}
+		}
+
+		if partition.L == "" {
+			return nil, errors.Errorf("partition with id '%d' in table %s, id '%d' not found", partition, tblInfo.Name, tblID)
+		}
+	} else {
+		if partitionID != 0 {
+			return nil, errors.Errorf("table '%s', id '%d' should not be a partition table", tblInfo.Name, tblID)
+		}
+	}
+
+	schema, ok := is.SchemaByTable(tblInfo)
+	if !ok {
+		return nil, errors.Errorf("cannot find the database for table '%s', id '%d'", tblInfo.Name, tblID)
+	}
+
+	return NewPhysicalTable(schema.Name, tblInfo, partition)
 }
 
 // NewPhysicalTable create a new PhysicalTable

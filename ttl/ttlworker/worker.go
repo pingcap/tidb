@@ -19,9 +19,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+
+	"github.com/pingcap/tidb/util"
 )
 
 type workerStatus int
