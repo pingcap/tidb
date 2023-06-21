@@ -1488,6 +1488,9 @@ var (
 	TiDBOptFixControl44389 uint64 = 44389
 	// TiDBOptFixControl44823 controls the maximum number of parameters for a query that can be cached in the Plan Cache.
 	TiDBOptFixControl44823 uint64 = 44823
+	// TiDBOptFixControl44830 controls whether to allow to cache Batch/PointGet from some complex scenarios.
+	// See #44830 for more details.
+	TiDBOptFixControl44830 uint64 = 44830
 )
 
 // GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
