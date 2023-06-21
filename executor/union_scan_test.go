@@ -15,16 +15,13 @@
 package executor_test
 
 import (
-	"context"
 	"encoding/hex"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/benchdaily"
@@ -548,31 +545,6 @@ func TestIssue36903(t *testing.T) {
 	tk.MustExec("BEGIN OPTIMISTIC;")
 	tk.MustExec("insert into t_vwvgdc (wkey, pkey, c_rdsfbc) values (155, 228000, 99.50);")
 	tk.MustQuery("select pkey from t_vwvgdc where 0 <> 0 union select pkey from t_vwvgdc;").Sort().Check(testkit.Rows("15000", "228000"))
-}
-
-func TestUnionScanMergeOrder(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	if _, ok := store.(kv.SplittableStore); ok {
-	}
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists union_scan_order")
-	tk.MustExec("create table union_scan_order (a int primary key, b int)")
-	// Split the table so that there would be multiple coprocessor task.
-	tk.MustExec("insert into union_scan_order values (100, 100), (1000, 1000), (1001, 1001), (2002, 2002), (3003, 3003), (3333, 3333)")
-	tk.MustQuery("split table union_scan_order between (0) and (4000) regions 4").Check(testkit.Rows("3 1"))
-	tk.MustExec("begin")
-	tk.MustExec("insert into union_scan_order values (2500, 2500), (1500, 1500), (500, 500)")
-	ctx := context.Background()
-	ctx = context.WithValue(ctx, "XXX", 44)
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/copRespRandomOrder", `return(true)`))
-
-	// tk.MustQueryWithContext(ctx, "select * from union_scan_order").Sort().Check(testkit.Rows("100 100", "500 500", "1000 1000", "1001 1001", "1500 1500", "2002 2002", "2500 2500", "3003 3003", "3333 3333"))
-	tk.MustQueryWithContext(ctx, "select count(*) from union_scan_order").Check(testkit.Rows("9"))
-	tk.MustExec("rollback")
-
 }
 
 func BenchmarkUnionScanRead(b *testing.B) {

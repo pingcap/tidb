@@ -185,7 +185,6 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (us *UnionScanExec) Close() error {
 	us.cursor4AddRows = nil
 	us.cursor4SnapshotRows = 0
-	// us.addedRows = us.addedRows[:0]
 	us.snapshotRows = us.snapshotRows[:0]
 	return us.children[0].Close()
 }
@@ -206,9 +205,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	if addedRow == nil {
 		row = snapshotRow
 		isSnapshotRow = true
-		// fmt.Println("getOneRow ... snapshot row=", snapshotRow, "added row=nil", addedRow, "chose snapshot")
 	} else if snapshotRow == nil {
-		// fmt.Println("getOneRow ... snapshot row=nil", snapshotRow, "added row=", addedRow, "chose added")
 		row = addedRow
 	} else {
 		isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
@@ -216,10 +213,8 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 			return nil, err
 		}
 		if isSnapshotRow {
-			// fmt.Println("getOneRow ... snapshot row=", snapshotRow, "added row=", addedRow, "chose snapshto")
 			row = snapshotRow
 		} else {
-			// fmt.Println("getOneRow ... snapshot row=", snapshotRow, "added row=", addedRow, "chose added")
 			row = addedRow
 		}
 	}

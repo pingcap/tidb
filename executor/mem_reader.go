@@ -239,8 +239,8 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *Tabl
 
 type txnMemBufferIter struct {
 	*memTableReader
-	txn kv.Transaction
-	idx int
+	txn  kv.Transaction
+	idx  int
 	curr kv.Iterator
 }
 
@@ -280,7 +280,7 @@ func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
 			if err != nil {
 				return nil, err
 			}
-			
+
 			mutableRow.SetDatums(resultRows...)
 			matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, mutableRow.ToRow())
 			if err != nil || !matched {
@@ -304,9 +304,9 @@ func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 			return nil, err
 		}
 
-		return &txnMemBufferIter {
+		return &txnMemBufferIter{
 			memTableReader: m,
-			txn: txn,
+			txn:            txn,
 		}, nil
 	}
 
@@ -744,7 +744,7 @@ type memRowsIter interface {
 }
 
 type defaultRowsIter struct {
-	data [][]types.Datum
+	data   [][]types.Datum
 	cursor int
 }
 
