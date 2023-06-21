@@ -127,6 +127,7 @@ func (stm *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) err
 
 // WithNewTxn executes the fn in a new transaction.
 func (stm *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return stm.WithNewSession(func(se sessionctx.Context) (err error) {
 		_, err = ExecSQL(ctx, se, "begin")
 		if err != nil {
