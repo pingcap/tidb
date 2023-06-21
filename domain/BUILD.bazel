@@ -54,6 +54,8 @@ go_library(
         "//statistics/handle",
         "//store/helper",
         "//telemetry",
+        "//ttl/cache",
+        "//ttl/sqlbuilder",
         "//ttl/ttlworker",
         "//types",
         "//util",
