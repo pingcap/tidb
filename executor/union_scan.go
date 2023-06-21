@@ -49,8 +49,8 @@ type UnionScanExec struct {
 	// belowHandleCols is the handle's position of the below scan plan.
 	belowHandleCols plannercore.HandleCols
 
-	addedRows           [][]types.Datum
-	cursor4AddRows      int
+	addedRowsIter       memRowsIter
+	cursor4AddRows      []types.Datum
 	snapshotRows        [][]types.Datum
 	cursor4SnapshotRows int
 	snapshotChunkBuffer *chunk.Chunk
@@ -114,13 +114,13 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	// 2. build virtual columns and select with virtual columns
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
-		us.addedRows, err = buildMemTableReader(ctx, us, x).getMemRows(ctx)
+		us.addedRowsIter, err = buildMemTableReader(ctx, us, x).getMemRowsIter(ctx)
 	case *IndexReaderExecutor:
-		us.addedRows, err = buildMemIndexReader(ctx, us, x).getMemRows(ctx)
+		us.addedRowsIter, err = buildMemIndexReader(ctx, us, x).getMemRowsIter(ctx)
 	case *IndexLookUpExecutor:
-		us.addedRows, err = buildMemIndexLookUpReader(ctx, us, x).getMemRows(ctx)
+		us.addedRowsIter, err = buildMemIndexLookUpReader(ctx, us, x).getMemRowsIter(ctx)
 	case *IndexMergeReaderExecutor:
-		us.addedRows, err = buildMemIndexMergeReader(ctx, us, x).getMemRows(ctx)
+		us.addedRowsIter, err = buildMemIndexMergeReader(ctx, us, x).getMemRowsIter(ctx)
 	default:
 		err = fmt.Errorf("unexpected union scan children:%T", reader)
 	}
@@ -183,9 +183,9 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (us *UnionScanExec) Close() error {
-	us.cursor4AddRows = 0
+	us.cursor4AddRows = nil
 	us.cursor4SnapshotRows = 0
-	us.addedRows = us.addedRows[:0]
+	// us.addedRows = us.addedRows[:0]
 	us.snapshotRows = us.snapshotRows[:0]
 	return us.children[0].Close()
 }
@@ -196,14 +196,19 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	if err != nil {
 		return nil, err
 	}
-	addedRow := us.getAddedRow()
+	addedRow, err := us.getAddedRow()
+	if err != nil {
+		return nil, err
+	}
 
 	var row []types.Datum
 	var isSnapshotRow bool
 	if addedRow == nil {
 		row = snapshotRow
 		isSnapshotRow = true
+		fmt.Println("getOneRow ... snapshot row=", snapshotRow, "added row=nil", addedRow, "chose snapshot")
 	} else if snapshotRow == nil {
+		fmt.Println("getOneRow ... snapshot row=nil", snapshotRow, "added row=", addedRow, "chose added")
 		row = addedRow
 	} else {
 		isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
@@ -211,8 +216,10 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 			return nil, err
 		}
 		if isSnapshotRow {
+			fmt.Println("getOneRow ... snapshot row=", snapshotRow, "added row=", addedRow, "chose snapshto")
 			row = snapshotRow
 		} else {
+			fmt.Println("getOneRow ... snapshot row=", snapshotRow, "added row=", addedRow, "chose added")
 			row = addedRow
 		}
 	}
@@ -223,7 +230,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	if isSnapshotRow {
 		us.cursor4SnapshotRows++
 	} else {
-		us.cursor4AddRows++
+		us.cursor4AddRows = nil
 	}
 	return row, nil
 }
@@ -246,6 +253,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			fmt.Println("Next() get snapshot row ==", row.ToString(retTypes(us.children[0])))
 			var snapshotHandle kv.Handle
 			snapshotHandle, err = us.belowHandleCols.BuildHandle(row)
 			if err != nil {
@@ -269,12 +277,15 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	return us.snapshotRows[0], nil
 }
 
-func (us *UnionScanExec) getAddedRow() []types.Datum {
-	var addedRow []types.Datum
-	if us.cursor4AddRows < len(us.addedRows) {
-		addedRow = us.addedRows[us.cursor4AddRows]
+func (us *UnionScanExec) getAddedRow() ([]types.Datum, error) {
+	if us.cursor4AddRows == nil {
+		var err error
+		us.cursor4AddRows, err = us.addedRowsIter.Next()
+		if err != nil {
+			return nil, err
+		}
 	}
-	return addedRow
+	return us.cursor4AddRows, nil
 }
 
 // shouldPickFirstRow picks the suitable row in order.

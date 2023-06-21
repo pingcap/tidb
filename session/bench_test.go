@@ -1752,6 +1752,29 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 	b.StopTimer()
 }
 
+func BenchmarkUnionScan(b *testing.B) {
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, `create global temporary table src (id int, dt varchar(512)) on commit delete rows`)
+	mustExecute(se, "begin")
+	for i := 0; i < 100; i++ {
+		for lines := 0; lines < 100; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 512)), (66, repeat('x', 512))")
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mustExecute(se, "select * from src where id < 100 limit 1")
+	}
+	mustExecute(se, "rollback")
+	b.StopTimer()
+}
+
 func BenchmarkInsertIntoSelect(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {

@@ -15,6 +15,7 @@
 package copr
 
 import (
+	"math/rand"
 	"context"
 	"fmt"
 	"math"
@@ -174,6 +175,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if err != nil {
 		return nil, copErrorResponse{err}
 	}
+
 	it := &copIterator{
 		store:            c.store,
 		req:              req,
@@ -189,6 +191,9 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
+	}
+	if x := ctx.Value("XXX"); x != nil {
+		fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXXX", len(tasks), it.concurrency)
 	}
 	if tryRowHint {
 		var smallTasks int
@@ -986,6 +991,11 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		worker.memTracker.Consume(consumed)
 	}
+
+	failpoint.Inject("copRespRandomOrder", func(_ failpoint.Value) {
+		time.Sleep(time.Duration(rand.Intn(3)) * 100 * time.Millisecond)
+	})
+
 	select {
 	case respCh <- resp:
 	case <-worker.finishCh:
