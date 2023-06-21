@@ -266,12 +266,8 @@ func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
 			iter.curr = tmp
 		}
 
-		var err error
 		curr := iter.curr
 		for curr.Valid() {
-			if err != nil {
-				return nil, err
-			}
 			// check whether the key was been deleted.
 			if len(curr.Value()) == 0 {
 				curr.Next()
@@ -280,6 +276,7 @@ func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
 
 			mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
 			resultRows := make([]types.Datum, len(iter.columns))
+			var err error
 			resultRows, err = iter.decodeRecordKeyValue(curr.Key(), curr.Value(), &resultRows)
 			if err != nil {
 				return nil, err
@@ -294,7 +291,6 @@ func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
 		}
 		iter.curr = nil
 	}
-	return nil, nil
 }
 
 func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
