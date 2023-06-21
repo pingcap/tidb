@@ -156,7 +156,6 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 				logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
 			}
 
-			// reduce distsql scan concurrency
 			distSQLScanConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
 			se.GetSessionVars().SetDistSQLScanConcurrency(mathutil.Max(distSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency))
 			defer func() {

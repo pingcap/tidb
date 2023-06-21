@@ -108,6 +108,11 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 
 	task := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "remote checksum")
 
+	conn, err := e.db.Conn(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer conn.Close()
 	// ADMIN CHECKSUM TABLE <table>,<table>  example.
 	// 	mysql> admin checksum table test.t;
 	// +---------+------------+---------------------+-----------+-------------+
@@ -115,16 +120,15 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	// +---------+------------+---------------------+-----------+-------------+
 	// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
 	// +---------+------------+---------------------+-----------+-------------+
-
 	backoffWeight, err := common.GetBackoffWeightFromDB(ctx, e.db)
 	if err == nil && backoffWeight < DefaultBackoffWeight {
 		task.Info("increase tidb_backoff_weight", zap.Int("original", backoffWeight), zap.Int("new", DefaultBackoffWeight))
 		// increase backoff weight
-		if _, err := e.db.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, DefaultBackoffWeight)); err != nil {
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, DefaultBackoffWeight)); err != nil {
 			task.Warn("set tidb_backoff_weight failed", zap.Error(err))
 		} else {
 			defer func() {
-				if _, err := e.db.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, backoffWeight)); err != nil {
+				if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, backoffWeight)); err != nil {
 					task.Warn("recover tidb_backoff_weight failed", zap.Error(err))
 				}
 			}()
@@ -132,7 +136,7 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	}
 
 	cs := RemoteChecksum{}
-	err = common.SQLWithRetry{DB: e.db, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
+	err = common.SQLWithRetry{DB: conn, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
 		"ADMIN CHECKSUM TABLE "+tableName, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,
 	)
 	dur := task.End(zap.ErrorLevel, err)
