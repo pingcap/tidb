@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/failpoint"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/disttask/importinto"
@@ -58,6 +59,14 @@ func TestChecksumTable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, remoteChecksum.IsEqual(&localChecksum))
 	// again
+	remoteChecksum, err = importinto.TestChecksumTable(ctx, mgr, taskMeta, logutil.BgLogger())
+	require.NoError(t, err)
+	require.True(t, remoteChecksum.IsEqual(&localChecksum))
+
+	_ = failpoint.Enable("github.com/pingcap/tidb/disttask/importinto/errWhenChecksum", `return(true)`)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/disttask/importinto/errWhenChecksum")
+	}()
 	remoteChecksum, err = importinto.TestChecksumTable(ctx, mgr, taskMeta, logutil.BgLogger())
 	require.NoError(t, err)
 	require.True(t, remoteChecksum.IsEqual(&localChecksum))
