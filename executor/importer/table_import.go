@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -36,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -44,6 +42,10 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/util/syncutil"
+>>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -278,6 +280,7 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEnc
 	return newTableKVEncoder(cfg, ti.ColumnAssignments, ti.ColumnsAndUserVars, ti.FieldMappings, ti.InsertColumns)
 }
 
+<<<<<<< HEAD
 func (ti *TableImporter) importTable(ctx context.Context) error {
 	// todo: pause GC if we need duplicate detection
 	// todo: register task to pd?
@@ -331,6 +334,8 @@ func (ti *TableImporter) checksumTable(ctx context.Context) error {
 	return nil
 }
 
+=======
+>>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 // PopulateChunks populates chunks from table regions.
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
