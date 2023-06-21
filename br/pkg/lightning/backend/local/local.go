@@ -1145,14 +1145,16 @@ func (local *Backend) generateAndSendJob(
 	for _, jobRange := range jobRanges {
 		r := jobRange
 		eg.Go(func() error {
-			select {
-			case <-egCtx.Done():
+			if egCtx.Err() != nil {
 				return nil
-			default:
 			}
 
+			failpoint.Inject("beforeGenerateJob", nil)
 			jobs, err := local.generateJobForRange(egCtx, engine, r, regionSplitSize, regionSplitKeys)
 			if err != nil {
+				if common.IsContextCanceledError(err) {
+					return nil
+				}
 				return err
 			}
 			for _, job := range jobs {
@@ -1189,6 +1191,9 @@ func (local *Backend) generateJobForRange(
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
 	failpoint.Inject("fakeRegionJobs", func() {
+		if ctx.Err() != nil {
+			failpoint.Return(nil, ctx.Err())
+		}
 		key := [2]string{string(keyRange.start), string(keyRange.end)}
 		injected := fakeRegionJobs[key]
 		// overwrite the stage to regionScanned, because some time same keyRange
@@ -1565,6 +1570,7 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 	jobWg.Wait()
 	workerCancel()
 	firstErr.Set(workGroup.Wait())
+	firstErr.Set(ctx.Err())
 	return firstErr.Get()
 }
 
