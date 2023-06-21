@@ -19,9 +19,9 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
