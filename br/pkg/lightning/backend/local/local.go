@@ -892,13 +892,7 @@ func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig,
 		logger:             log.FromContext(ctx),
 	})
 	engine := e.(*Engine)
-<<<<<<< HEAD
-	engine.db = db
-=======
-	engine.lock(importMutexStateOpen)
-	defer engine.unlock()
 	engine.db.Store(db)
->>>>>>> 244d9c33880 (lightning: fix check disk quota routine block when some engine is importing (#44877))
 	engine.sstIngester = dbSSTIngester{e: engine}
 	if err = engine.loadEngineMeta(); err != nil {
 		return errors.Trace(err)
