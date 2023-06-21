@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -1719,76 +1720,21 @@ func TestWriteWithChecksums(t *testing.T) {
 			defer dom.DDL().SetHook(origHook)
 
 			var seq int64
-			dom.DDL().SetHook(&ddlCallback{
-				onJobUpdated: func(job *model.Job) {
-					if job.State != model.JobStateRunning {
-						return
-					}
-					doDML(t, atomic.AddInt64(&seq, 1), job)
-				},
-			})
+			fn := func(job *model.Job) {
+				if job.State != model.JobStateRunning {
+					return
+				}
+				doDML(t, atomic.AddInt64(&seq, 1), job)
+			}
+			cb := &callback.TestDDLCallback{}
+			cb.OnJobUpdatedExported.Store(&fn)
+
+			dom.DDL().SetHook(cb)
 
 			doDML(t, -1, nil)
 			tkDDL.MustExec(tt.ddl)
 			doDML(t, -2, nil)
 		})
 		tkDDL.MustExec("admin check table t")
-	}
-}
-
-type ddlCallback struct {
-	onChanged            func(err error) error
-	onSchemaStateChanged func(schemaVer int64)
-	onJobRunBefore       func(job *model.Job)
-	onJobRunAfter        func(job *model.Job)
-	onJobUpdated         func(job *model.Job)
-	onWatched            func(ctx context.Context)
-	onGetJobBefore       func(jobType string)
-	onGetJobAfter        func(jobType string, job *model.Job)
-}
-
-func (cb *ddlCallback) OnChanged(err error) error {
-	if cb.onChanged != nil {
-		return cb.onChanged(err)
-	}
-	return err
-}
-
-func (cb *ddlCallback) OnSchemaStateChanged(schemaVer int64) {
-	if cb.onSchemaStateChanged != nil {
-		cb.onSchemaStateChanged(schemaVer)
-	}
-}
-
-func (cb *ddlCallback) OnJobRunBefore(job *model.Job) {
-	if cb.onJobRunBefore != nil {
-		cb.onJobRunBefore(job)
-	}
-}
-
-func (cb *ddlCallback) OnJobRunAfter(job *model.Job) {
-	if cb.onJobRunAfter != nil {
-		cb.onJobRunAfter(job)
-	}
-}
-func (cb *ddlCallback) OnJobUpdated(job *model.Job) {
-	if cb.onJobUpdated != nil {
-		cb.onJobUpdated(job)
-	}
-}
-func (cb *ddlCallback) OnWatched(ctx context.Context) {
-	if cb.onWatched != nil {
-		cb.onWatched(ctx)
-	}
-}
-func (cb *ddlCallback) OnGetJobBefore(jobType string) {
-	if cb.onGetJobBefore != nil {
-		cb.onGetJobBefore(jobType)
-	}
-}
-
-func (cb *ddlCallback) OnGetJobAfter(jobType string, job *model.Job) {
-	if cb.onGetJobAfter != nil {
-		cb.onGetJobAfter(jobType, job)
 	}
 }

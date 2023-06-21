@@ -83,6 +83,13 @@ func (m *MockBackendCtxMgr) Load(jobID int64) (BackendCtx, bool) {
 	return nil, false
 }
 
+// ResetSessCtx is only used for mocking test.
+func (m *MockBackendCtxMgr) ResetSessCtx() {
+	for _, mockCtx := range m.runningJobs {
+		mockCtx.sessCtx = m.sessCtxProvider()
+	}
+}
+
 // MockBackendCtx is a mock backend context.
 type MockBackendCtx struct {
 	sessCtx       sessionctx.Context

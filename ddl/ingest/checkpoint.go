@@ -301,13 +301,13 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 		if cp := reorgMeta.Checkpoint; cp != nil {
 			s.minKeySyncGlobal = cp.GlobalSyncKey
 			s.globalCnt = cp.GlobalKeyCount
+			s.pidGlobal = cp.PhysicalID
+			s.startGlobal = cp.StartKey
+			s.endGlobal = cp.EndKey
 			if s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */ {
 				s.localDataIsValid = true
 				s.minKeySyncLocal = cp.LocalSyncKey
 				s.localCnt = cp.LocalKeyCount
-				s.pidGlobal = cp.PhysicalID
-				s.startGlobal = cp.StartKey
-				s.endGlobal = cp.EndKey
 			}
 			logutil.BgLogger().Info("[ddl-ingest] resume checkpoint",
 				zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
