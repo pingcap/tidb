@@ -1535,6 +1535,10 @@ var defaultSysVars = []*SysVar{
 		s.allowMPPExecution = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowTiFlashCop, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowTiFlashCop), SetSession: func(s *SessionVars, val string) error {
+		s.allowTiFlashCop = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashFastScan, Type: TypeBool, Value: BoolToOnOff(DefTiFlashFastScan), SetSession: func(s *SessionVars, val string) error {
 		s.TiFlashFastScan = TiDBOptOn(val)
 		return nil
@@ -2550,6 +2554,10 @@ var defaultSysVars = []*SysVar{
 			return tiflash.GetTiFlashReplicaRead(s.TiFlashReplicaRead), nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBFastCheckTable, Value: BoolToOnOff(DefTiDBEnableFastCheckTable), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.FastCheckTable = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLAuthMethodName, Value: DefAuthenticationLDAPSASLAuthMethodName, Type: TypeEnum, PossibleValues: []string{ldap.SASLAuthMethodSCRAMSHA1, ldap.SASLAuthMethodSCRAMSHA256, ldap.SASLAuthMethodGSSAPI}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		ldap.LDAPSASLAuthImpl.SetSASLAuthMethod(s)
 		return nil

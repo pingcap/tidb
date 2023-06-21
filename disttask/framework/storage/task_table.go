@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -297,8 +298,17 @@ func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, states .
 	if len(rs) == 0 {
 		return nil, nil
 	}
-
 	return row2SubTask(rs[0]), nil
+}
+
+// PrintSubtaskInfo log the subtask info by taskKey.
+func (stm *TaskManager) PrintSubtaskInfo(taskKey int) {
+	rs, _ := stm.executeSQLWithNewSession(stm.ctx,
+		"select * from mysql.tidb_background_subtask where task_key = %?", taskKey)
+
+	for _, r := range rs {
+		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", row2SubTask(r)))
+	}
 }
 
 // GetSucceedSubtasksByStep gets the subtask in the success state.

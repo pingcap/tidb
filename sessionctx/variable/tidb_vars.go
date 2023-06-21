@@ -374,6 +374,11 @@ const (
 	// Value set to `false` means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
 
+	// TiDBAllowTiFlashCop means we only use MPP mode to query data.
+	// Default value is `true`, means to be determined by the optimizer.
+	// Value set to `false` means we may fall back to TiFlash cop plan if possible.
+	TiDBAllowTiFlashCop = "tidb_allow_tiflash_cop"
+
 	// TiDBHashExchangeWithNewCollation means if hash exchange is supported when new collation is on.
 	// Default value is `true`, means support hash exchange when new collation is on.
 	// Value set to `false` means not support hash exchange when new collation is on.
@@ -881,6 +886,9 @@ const (
 	// TiFlashReplicaRead is used to set the policy of TiFlash replica read when the query needs the TiFlash engine.
 	TiFlashReplicaRead = "tiflash_replica_read"
 
+	// TiDBFastCheckTable enables fast check table.
+	TiDBFastCheckTable = "tidb_enable_fast_table_check"
+
 	// TiDBAnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
 	TiDBAnalyzeSkipColumnTypes = "tidb_analyze_skip_column_types"
 )
@@ -1138,6 +1146,7 @@ const (
 	DefTiDBEnableNAAJ                              = true
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
+	DefTiDBAllowTiFlashCop                         = false
 	DefTiDBHashExchangeWithNewCollation            = true
 	DefTiDBEnforceMPPExecution                     = false
 	DefTiFlashMaxThreads                           = -1
@@ -1353,7 +1362,11 @@ const (
 	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
 	DefAuthenticationLDAPSimpleInitPoolSize           = 10
 	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
+<<<<<<< HEAD
 	DefTiFlashReplicaRead                             = tiflash.AllReplicaStr
+=======
+	DefTiDBEnableFastCheckTable                       = true
+>>>>>>> c6b4e9935a3852f080e0323d1b9850834c8b5581
 	DefRuntimeFilterType                              = "IN"
 	DefRuntimeFilterMode                              = "OFF"
 )

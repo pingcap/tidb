@@ -219,6 +219,10 @@ func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name stri
 }
 
 func TestResourceGroupRunaway(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/FastRunawayGC", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/FastRunawayGC"))
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
@@ -229,8 +233,8 @@ func TestResourceGroupRunaway(t *testing.T) {
 
 	tk.MustExec("set global tidb_enable_resource_control='on'")
 	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
-	tk.MustExec("create resource group rg2 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT duration '1m')")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg2'").Check(testkit.Rows("rg2 2000 MEDIUM YES EXEC_ELAPSED=50ms, ACTION=KILL, WATCH=EXACT[1m0s]"))
+	tk.MustExec("create resource group rg2 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT duration '1s')")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg2'").Check(testkit.Rows("rg2 2000 MEDIUM YES EXEC_ELAPSED=50ms, ACTION=KILL, WATCH=EXACT[1s]"))
 	tk.MustQuery("select /*+ resource_group(rg1) */ * from t").Check(testkit.Rows("1"))
 	tk.MustQuery("select /*+ resource_group(rg2) */ * from t").Check(testkit.Rows("1"))
 
@@ -241,6 +245,15 @@ func TestResourceGroupRunaway(t *testing.T) {
 	err := tk.QueryToErr("select /*+ resource_group(rg1) */ * from t")
 	require.ErrorContains(t, err, "[executor:8253]Query execution was interrupted, identified as runaway query")
 
+	// consifer the low speed of write in test, all check will exec after sleeping 1s.
+	delayDuration := time.Millisecond * 750
+	time.Sleep(time.Millisecond*10 + delayDuration)
+	tk.MustQuery("select SQL_NO_CACHE resource_group_name, original_sql, match_type from mysql.tidb_runaway_queries").
+		Check(testkit.Rows("rg1 select /*+ resource_group(rg1) */ * from t identify"))
+	// wait for GC, because of FROM_UNIXTIME is second level, so wait for 1s.
+	time.Sleep(time.Millisecond*1000 + delayDuration)
+	require.Len(t, tk.MustQuery("select SQL_NO_CACHE resource_group_name, original_sql, time from mysql.tidb_runaway_queries").Rows(), 0)
+
 	tk.MustExec("alter resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='100ms' ACTION=COOLDOWN)")
 	tk.MustQuery("select /*+ resource_group(rg1) */ * from t")
 
@@ -250,6 +263,21 @@ func TestResourceGroupRunaway(t *testing.T) {
 	err = tk.QueryToErr("select /*+ resource_group(rg2) */ * from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
 	tk.MustGetErrCode("select /*+ resource_group(rg2) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
+	time.Sleep(time.Millisecond*10 + delayDuration)
+	tk.MustQuery("select SQL_NO_CACHE resource_group_name, original_sql, match_type from mysql.tidb_runaway_queries").
+		Check(testkit.Rows(
+			"rg2 select /*+ resource_group(rg2) */ * from t identify",
+			"rg2 select /*+ resource_group(rg2) */ * from t watch",
+		))
+	tk.MustQuery("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_quarantined_watch").
+		Check(testkit.Rows("rg2 select /*+ resource_group(rg2) */ * from t"))
+
+	time.Sleep(time.Millisecond*1000 + delayDuration)
+	require.Len(t, tk.MustQuery("select SQL_NO_CACHE resource_group_name, original_sql, match_type from mysql.tidb_runaway_queries").Rows(), 0)
+	// watch duration is 1s
+	time.Sleep(time.Millisecond*1000 + delayDuration)
+	require.Len(t, tk.MustQuery("select SQL_NO_CACHE resource_group_name, watch_text, end_time from mysql.tidb_runaway_quarantined_watch").Rows(), 0)
+
 	tk.MustExec("alter resource group rg2 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=COOLDOWN)")
 	tk.MustQuery("select /*+ resource_group(rg2) */ * from t").Check(testkit.Rows("1"))
 	tk.MustExec("alter resource group rg2 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=DRYRUN)")
