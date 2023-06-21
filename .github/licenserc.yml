@@ -15,6 +15,7 @@ header:
     - "LICENSES/"
     - "**/BUILD.bazel"
     - "WORKSPACE"
+    - "WORKSPACE.patchgo"
     - ".bazelrc"
     - "**/*.key"
     - "**/*.md"
