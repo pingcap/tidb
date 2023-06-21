@@ -876,14 +876,12 @@ const (
 	TiDBOptEnableMPPSharedCTEExecution = "tidb_opt_enable_mpp_shared_cte_execution"
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
-<<<<<<< HEAD
 
 	// TiDBFastCheckTable enables fast check table.
 	TiDBFastCheckTable = "tidb_enable_fast_table_check"
-=======
+
 	// TiDBAnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
 	TiDBAnalyzeSkipColumnTypes = "tidb_analyze_skip_column_types"
->>>>>>> 397062f2e71 (planner, sessionctx: skip wide type columns such as JSON when collecting statistics (#44653))
 )
 
 // TiDB vars that have only global scope
