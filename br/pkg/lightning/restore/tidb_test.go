@@ -460,6 +460,7 @@ func TestObtainRowFormatVersionSucceed(t *testing.T) {
 
 	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
 	require.Equal(t, map[string]string{
+		"tidb_backoff_weight":     "6",
 		"tidb_row_format_version": "2",
 		"max_allowed_packet":      "1073741824",
 		"div_precision_increment": "10",
@@ -487,6 +488,7 @@ func TestObtainRowFormatVersionFailure(t *testing.T) {
 
 	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
 	require.Equal(t, map[string]string{
+		"tidb_backoff_weight":     "6",
 		"tidb_row_format_version": "1",
 		"max_allowed_packet":      "67108864",
 		"div_precision_increment": "4",
