@@ -170,6 +170,13 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 			if len(rs) < 1 {
 				return errors.New("empty checksum result")
 			}
+
+			failpoint.Inject("errWhenChecksum", func() {
+				if i == 0 {
+					failpoint.Return(errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline"))
+				}
+			})
+
 			// ADMIN CHECKSUM TABLE <schema>.<table>  example.
 			// 	mysql> admin checksum table test.t;
 			// +---------+------------+---------------------+-----------+-------------+
