@@ -61,7 +61,12 @@ go_test(
     ],
     embed = [":ingest"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 11,
+=======
+    race = "on",
+    shard_count = 14,
+>>>>>>> 4ea0bc76baa (ddl/ingest: fix checkpoint resume when owner changes several times (#44760))
     deps = [
         "//config",
         "//ddl/internal/session",
