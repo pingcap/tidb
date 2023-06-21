@@ -248,7 +248,14 @@ func (c *testPDClient) currentSafePoint() uint64 {
 }
 
 func (c *testPDClient) GetTS(ctx context.Context) (int64, int64, error) {
+<<<<<<< HEAD:br/pkg/lightning/restore/checksum_test.go
 	physicalTS := time.Now().UnixNano() / 1e6
+=======
+	physicalTS := time.Now().UnixMilli()
+	if c.leaderChanging && physicalTS%2 == 0 {
+		return 0, 0, errors.WithStack(errs.ErrClientTSOStreamClosed)
+	}
+>>>>>>> c6b4e9935a3 (lightning: unwrap the error before call PD function (#44856)):br/pkg/lightning/backend/local/checksum_test.go
 	logicalTS := oracle.ExtractLogical(c.logicalTSCounter.Inc())
 	return physicalTS, logicalTS, nil
 }
