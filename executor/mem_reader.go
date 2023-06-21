@@ -245,8 +245,11 @@ type txnMemBufferIter struct {
 }
 
 func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
-	for iter.idx < len(iter.kvRanges) {
+	for {
 		if iter.curr == nil {
+			if iter.idx >= len(iter.kvRanges) {
+				return nil, nil
+			}
 			rg := iter.kvRanges[iter.idx]
 			iter.idx++
 			tmp := iter.txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
@@ -265,12 +268,13 @@ func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
 
 		var err error
 		curr := iter.curr
-		for ; curr.Valid(); err = curr.Next() {
+		for curr.Valid() {
 			if err != nil {
 				return nil, err
 			}
 			// check whether the key was been deleted.
 			if len(curr.Value()) == 0 {
+				curr.Next()
 				continue
 			}
 
@@ -286,7 +290,7 @@ func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
 			if err != nil || !matched {
 				return nil, err
 			}
-			return resultRows, nil
+			return resultRows, curr.Next()
 		}
 		iter.curr = nil
 	}
