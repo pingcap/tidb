@@ -120,6 +120,16 @@ func TestBitColErrorMessage(t *testing.T) {
 	tk.MustGetErrCode("create table bit_col_t (a bit(65))", mysql.ErrTooBigDisplaywidth)
 }
 
+func TestIssue44025(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int, b int, c int, d int, index ia(a), index ibc(b,c))`)
+	tk.MustExec(`set @@tidb_cost_model_version=1`)
+	tk.MustUseIndex(`select * from t where a between 1 and 5 and b != 200 and c = 20 limit 100000`, `ia(a)`)
+}
+
 func TestAggPushDownLeftJoin(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
