@@ -48,8 +48,8 @@ mkdir -p /tmp/go$GOVERS
 tar -C /tmp/go$GOVERS -xzf golang.tar.gz
 rm golang.tar.gz
 cd /tmp/go$GOVERS/go
-# NB: we apply a patch to the Go runtime to keep track of running time on a
-# per-goroutine basis. See #82356 and #82625.
+# we apply a patch to the Go runtime to keep track of running time on a
+# per-goroutine basis. See #41574
 git apply /bootstrap/diff.patch
 cd ..
 
