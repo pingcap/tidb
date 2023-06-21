@@ -49,6 +49,7 @@ func TestDoChecksum(t *testing.T) {
 		WithArgs("10m").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
+	mock.ExpectClose()
 
 	manager := NewTiDBChecksumExecutor(db)
 	checksum, err := manager.Checksum(context.Background(), &TidbTableInfo{DB: "test", Name: "t"})
