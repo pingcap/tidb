@@ -17,10 +17,6 @@ package mydump
 import (
 	"bytes"
 	"context"
-	"io"
-	"regexp"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -30,6 +26,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
 	"golang.org/x/exp/slices"
+	"io"
+	"regexp"
+	"strings"
 )
 
 var (
@@ -669,6 +668,12 @@ func (parser *CSVParser) ReadRow() error {
 		}
 		if isNull {
 			row.Row[i].SetNull()
+		} else if parser.cfg.Base64Encoded {
+			decoded, err := base64.StdEncoding.WithPadding(base64.StdPadding).DecodeString(strings.TrimSpace(unescaped))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			row.Row[i].SetString(string(decoded), "utf8mb4_bin")
 		} else {
 			row.Row[i].SetString(unescaped, "utf8mb4_bin")
 		}

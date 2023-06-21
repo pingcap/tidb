@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/coreos/go-semver/semver"
-	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -2125,10 +2124,11 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 	if err := rc.checkTableEmpty(ctx); err != nil {
 		return common.ErrCheckTableEmpty.Wrap(err).GenWithStackByArgs()
 	}
-	if err := rc.checkCSVHeader(ctx); err != nil {
-		return common.ErrCheckCSVHeader.Wrap(err).GenWithStackByArgs()
+	if rc.cfg.Mydumper.CSV.Base64Encoded == false {
+		if err := rc.checkCSVHeader(ctx); err != nil {
+			return common.ErrCheckCSVHeader.Wrap(err).GenWithStackByArgs()
+		}
 	}
-
 	return nil
 }
 
