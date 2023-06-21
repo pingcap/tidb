@@ -814,7 +814,13 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		logger:             log.FromContext(ctx),
 	})
 	engine := e.(*Engine)
+<<<<<<< HEAD
 	engine.db = db
+=======
+	engine.lock(importMutexStateOpen)
+	defer engine.unlock()
+	engine.db.Store(db)
+>>>>>>> 244d9c33880 (lightning: fix check disk quota routine block when some engine is importing (#44877))
 	engine.sstIngester = dbSSTIngester{e: engine}
 	if err = engine.loadEngineMeta(); err != nil {
 		return errors.Trace(err)
@@ -853,7 +859,6 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 		}
 		engine := &Engine{
 			UUID:               engineUUID,
-			db:                 db,
 			sstMetasChan:       make(chan metaOrFlush),
 			tableInfo:          cfg.TableInfo,
 			keyAdapter:         local.keyAdapter,
@@ -863,6 +868,7 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			errorMgr:           local.errorMgr,
 			logger:             log.FromContext(ctx),
 		}
+		engine.db.Store(db)
 		engine.sstIngester = dbSSTIngester{e: engine}
 		if err = engine.loadEngineMeta(); err != nil {
 			return err
@@ -1278,7 +1284,11 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	}
 
 	logger := log.FromContext(ctx).With(zap.Stringer("engine", engine.UUID))
+<<<<<<< HEAD
 	sizeProps, err := getSizeProperties(logger, engine.db, local.keyAdapter)
+=======
+	sizeProps, err := getSizePropertiesFn(logger, engine.getDB(), local.keyAdapter)
+>>>>>>> 244d9c33880 (lightning: fix check disk quota routine block when some engine is importing (#44877))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1386,11 +1396,21 @@ WriteAndIngest:
 
 type retryType int
 
+<<<<<<< HEAD
 const (
 	retryNone retryType = iota
 	retryWrite
 	retryIngest
 )
+=======
+	// when use dynamic region feature, the region may be very big, we need
+	// to split to smaller ranges to increase the concurrency.
+	if regionSplitSize > 2*int64(config.SplitRegionSize) {
+		sizeProps, err := getSizePropertiesFn(logger, engine.getDB(), local.keyAdapter)
+		if err != nil {
+			return errors.Trace(err)
+		}
+>>>>>>> 244d9c33880 (lightning: fix check disk quota routine block when some engine is importing (#44877))
 
 func (local *local) isRetryableImportTiKVError(err error) bool {
 	err = errors.Cause(err)
@@ -1868,7 +1888,7 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 	}
 	db, err := local.openEngineDB(engineUUID, false)
 	if err == nil {
-		localEngine.db = db
+		localEngine.db.Store(db)
 		localEngine.engineMeta = engineMeta{}
 		if !common.IsDirExists(localEngine.sstDir) {
 			if err := os.Mkdir(localEngine.sstDir, 0o750); err != nil {
