@@ -30,8 +30,8 @@ import (
 
 type mockAgentServer struct {
 	hang struct {
-		beginTime *atomic.Pointer[time.Time] // time.Time
-		endTime   *atomic.Pointer[time.Time] // time.Time
+		beginTime atomic.Pointer[time.Time] 
+		endTime   atomic.Pointer[time.Time]
 	}
 	grpcServer *grpc.Server
 	sqlMetas   map[string]tipb.SQLMeta
