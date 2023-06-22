@@ -365,43 +365,6 @@ func preProcess(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, t
 	return updateMeta(gTask, taskMeta)
 }
 
-// postProcess does the post-processing for the task.
-func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
-	failpoint.Inject("syncBeforePostProcess", func() {
-		TestSyncChan <- struct{}{}
-		<-TestSyncChan
-	})
-	// TODO: create table indexes depends on the option.
-	// globalTaskManager, err := storage.GetTaskManager()
-	// if err != nil {
-	// 	return err
-	// }
-	// create table indexes even if the post process is failed.
-	// defer func() {
-	// 	err2 := createTableIndexes(ctx, globalTaskManager, taskMeta, logger)
-	// 	err = multierr.Append(err, err2)
-	// }()
-
-	controller, err := buildController(taskMeta)
-	if err != nil {
-		return err
-	}
-	// no need and should not call controller.InitDataFiles, files might not exist on this instance.
-
-	logger.Info("post process")
-
-	return verifyChecksum(ctx, controller, subtaskMeta.Checksum, logger)
-}
-
-func verifyChecksum(ctx context.Context, controller *importer.LoadDataController, checksum Checksum, logger *zap.Logger) error {
-	if controller.Checksum == config.OpLevelOff {
-		return nil
-	}
-	localChecksum := verify.MakeKVChecksum(checksum.Size, checksum.KVs, checksum.Sum)
-	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
-	return controller.VerifyChecksum(ctx, localChecksum)
-}
-
 // nolint:deadcode
 func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tblInfo := taskMeta.Plan.TableInfo

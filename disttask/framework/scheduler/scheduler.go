@@ -255,7 +255,11 @@ func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, m
 		s.onError(err)
 		return
 	}
-
+	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
+		if val.(bool) {
+			s.onError(errors.New("MockExecutorRunErr"))
+		}
+	})
 	if err = executor.Run(minimalTaskCtx); err != nil {
 		s.onError(err)
 	}

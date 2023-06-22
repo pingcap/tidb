@@ -1997,13 +1997,20 @@ func BuildTableInfo(
 				}
 			} else {
 				// Check the column-type constraint dependency.
-				if len(dependedColsMap) != 1 {
+				if len(dependedColsMap) > 1 {
 					return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
+				} else if len(dependedColsMap) == 0 {
+					// If dependedCols is empty, the expression must be true/false.
+					valExpr, ok := constr.Expr.(*driver.ValueExpr)
+					if !ok || !mysql.HasIsBooleanFlag(valExpr.GetType().GetFlag()) {
+						return nil, errors.Trace(errors.New("unsupported expression in check constraint"))
+					}
+				} else {
+					if _, ok := dependedColsMap[constr.InColumnName]; !ok {
+						return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
+					}
+					dependedCols = []model.CIStr{model.NewCIStr(constr.InColumnName)}
 				}
-				if _, ok := dependedColsMap[constr.InColumnName]; !ok {
-					return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
-				}
-				dependedCols = []model.CIStr{model.NewCIStr(constr.InColumnName)}
 			}
 			// check auto-increment column
 			if table.ContainsAutoIncrementCol(dependedCols, tbInfo) {

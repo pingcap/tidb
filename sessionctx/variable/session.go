@@ -839,6 +839,11 @@ type SessionVars struct {
 	// Value set to `false` means never use mpp.
 	allowMPPExecution bool
 
+	// allowTiFlashCop means if we must use mpp way to execute query.
+	// Default value is `false`, means to be determined by the optimizer.
+	// Value set to `true` means we may fall back to TiFlash cop if possible.
+	allowTiFlashCop bool
+
 	// HashExchangeWithNewCollation means if we support hash exchange when new collation is enabled.
 	// Default value is `true`, means support hash exchange when new collation is enabled.
 	// Value set to `false` means not use hash exchange when new collation is enabled.
@@ -1495,6 +1500,9 @@ type SessionVars struct {
 	// change the partitioning type/schema
 	EnableAlterPartitionBy bool
 
+	// FastCheckTable is used to control whether fast check table is enabled.
+	FastCheckTable bool
+
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
 
@@ -1507,6 +1515,9 @@ type SessionVars struct {
 	runtimeFilterTypes []RuntimeFilterType
 	// Runtime filter mode: only support OFF, LOCAL now
 	runtimeFilterMode RuntimeFilterMode
+
+	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	AnalyzeSkipColumnTypes map[string]struct{}
 }
 
 var (
@@ -1516,6 +1527,8 @@ var (
 	TiDBOptFixControl44262 uint64 = 44262
 	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
 	TiDBOptFixControl44389 uint64 = 44389
+	// TiDBOptFixControl44823 controls the maximum number of parameters for a query that can be cached in the Plan Cache.
+	TiDBOptFixControl44823 uint64 = 44823
 )
 
 // GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
@@ -1653,6 +1666,11 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 // IsMPPAllowed returns whether mpp execution is allowed.
 func (s *SessionVars) IsMPPAllowed() bool {
 	return s.allowMPPExecution
+}
+
+// IsTiFlashCopBanned returns whether cop execution is allowed.
+func (s *SessionVars) IsTiFlashCopBanned() bool {
+	return !s.allowTiFlashCop
 }
 
 // IsMPPEnforced returns whether mpp execution is enforced.

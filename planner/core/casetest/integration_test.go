@@ -164,6 +164,8 @@ func TestSelPushDownTiFlash(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
+	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -263,6 +265,8 @@ func TestPushDownToTiFlashWithKeepOrder(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
+	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -305,6 +309,8 @@ func TestPushDownToTiFlashWithKeepOrderInFastMode(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
 	tk.MustExec("set @@session.tiflash_fastscan=ON")
+	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -901,6 +907,8 @@ func TestReadFromStorageHint(t *testing.T) {
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t, tt, ttt")
 	tk.MustExec("set session tidb_allow_mpp=OFF")
+	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 	tk.MustExec("create table t(a int, b int, index ia(a))")
 	tk.MustExec("create table tt(a int, b int, primary key(a))")
 	tk.MustExec("create table ttt(a int, primary key (a desc))")
@@ -1954,11 +1962,14 @@ func TestPushDownProjectionForTiFlash(t *testing.T) {
 	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 	tk.MustExec("analyze table t")
 	tk.MustExec("set session tidb_allow_mpp=OFF")
+	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
+
 	require.True(t, exists)
 	for _, tblInfo := range db.Tables {
 		if tblInfo.Name.L == "t" {
@@ -3158,6 +3169,8 @@ func TestIssue31240(t *testing.T) {
 	tk.MustExec("create table t31240(a int, b int);")
 	tk.MustExec("set @@tidb_allow_mpp = 0")
 	tk.MustExec("set tidb_cost_model_version=2")
+	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t31240", L: "t31240"})
 	require.NoError(t, err)

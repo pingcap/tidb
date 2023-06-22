@@ -35,6 +35,7 @@ go_library(
         "//util/chunk",
         "//util/gctuner",
         "//util/intest",
+        "//util/logutil",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -45,5 +46,6 @@ go_library(
         "@io_opencensus_go//stats/view",
         "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
     ],
 )
