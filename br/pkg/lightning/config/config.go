@@ -31,7 +31,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
-        "github.com/docker/go-units"
+	"github.com/docker/go-units"
 	gomysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
