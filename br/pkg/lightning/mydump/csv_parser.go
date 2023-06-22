@@ -18,6 +18,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"io"
+	"regexp"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -27,9 +31,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
 	"golang.org/x/exp/slices"
-	"io"
-	"regexp"
-	"strings"
 )
 
 var (
