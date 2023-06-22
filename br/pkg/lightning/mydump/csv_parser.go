@@ -17,6 +17,7 @@ package mydump
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
