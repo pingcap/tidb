@@ -2125,7 +2125,7 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 	if err := rc.checkTableEmpty(ctx); err != nil {
 		return common.ErrCheckTableEmpty.Wrap(err).GenWithStackByArgs()
 	}
-	if rc.cfg.Mydumper.CSV.Base64Encoded == false {
+	if !rc.cfg.Mydumper.CSV.Base64Encoded {
 		if err := rc.checkCSVHeader(ctx); err != nil {
 			return common.ErrCheckCSVHeader.Wrap(err).GenWithStackByArgs()
 		}
