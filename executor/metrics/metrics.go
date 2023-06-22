@@ -138,7 +138,7 @@ func InitMetricsVars() {
 	TotalQueryProcHistogramGeneral = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblGeneral)
 	TotalCopProcHistogramGeneral = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblGeneral)
 	TotalCopWaitHistogramGeneral = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblGeneral)
-	CopRatioHistogramGeneral = metrics.CopRatioHistogram.WithLabelValues(metrics.LblGeneral)
+	CopMVCCRatioHistogramGeneral = metrics.CopMVCCRatioHistogram.WithLabelValues(metrics.LblGeneral)
 	TotalQueryProcHistogramInternal = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblInternal)
 	TotalCopProcHistogramInternal = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblInternal)
 	TotalCopWaitHistogramInternal = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal)
