@@ -62,7 +62,7 @@ type paramMarkerExtractor struct {
 	markers []ast.ParamMarkerExpr
 }
 
-func (e *paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
+func (*paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 

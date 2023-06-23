@@ -178,7 +178,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	return
 }
 
-func (b *PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
+func (*PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
 	if rewriter.p != nil {
 		curColLen := rewriter.p.Schema().Len()
 		defer func() {
@@ -1347,7 +1347,7 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 	return
 }
 
-func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
+func (*expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
 	if ft.EvalType() == types.ETDuration && ft.GetDecimal() > types.MaxFsp {
 		return errTooBigPrecision.GenWithStackByArgs(ft.GetDecimal(), "CAST", types.MaxFsp)
 	}
