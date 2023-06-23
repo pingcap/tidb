@@ -27,7 +27,58 @@ var (
 
 // Metrics
 var (
+<<<<<<< HEAD
 	PacketIOCounter = prometheus.NewCounterVec(
+=======
+	PacketIOCounter        *prometheus.CounterVec
+	QueryDurationHistogram *prometheus.HistogramVec
+	QueryTotalCounter      *prometheus.CounterVec
+	AffectedRowsCounter    *prometheus.CounterVec
+	ConnGauge              prometheus.Gauge
+	DisconnectionCounter   *prometheus.CounterVec
+	PreparedStmtGauge      prometheus.Gauge
+	ExecuteErrorCounter    *prometheus.CounterVec
+	CriticalErrorCounter   prometheus.Counter
+
+	EventStart        = "start"
+	EventGracefulDown = "graceful_shutdown"
+	// Eventkill occurs when the server.Kill() function is called.
+	EventKill  = "kill"
+	EventClose = "close"
+
+	ServerEventCounter              *prometheus.CounterVec
+	TimeJumpBackCounter             prometheus.Counter
+	PlanCacheCounter                *prometheus.CounterVec
+	PlanCacheMissCounter            *prometheus.CounterVec
+	PlanCacheInstanceMemoryUsage    *prometheus.GaugeVec
+	PlanCacheInstancePlanNumCounter *prometheus.GaugeVec
+	ReadFromTableCacheCounter       prometheus.Counter
+	HandShakeErrorCounter           prometheus.Counter
+	GetTokenDurationHistogram       prometheus.Histogram
+	NumOfMultiQueryHistogram        prometheus.Histogram
+	TotalQueryProcHistogram         *prometheus.HistogramVec
+	TotalCopProcHistogram           *prometheus.HistogramVec
+	TotalCopWaitHistogram           *prometheus.HistogramVec
+	CopMVCCRatioHistogram           *prometheus.HistogramVec
+	MaxProcs                        prometheus.Gauge
+	GOGC                            prometheus.Gauge
+	ConnIdleDurationHistogram       *prometheus.HistogramVec
+	ServerInfo                      *prometheus.GaugeVec
+	TokenGauge                      prometheus.Gauge
+	ConfigStatus                    *prometheus.GaugeVec
+	TiFlashQueryTotalCounter        *prometheus.CounterVec
+	TiFlashFailedMPPStoreState      *prometheus.GaugeVec
+	PDAPIExecutionHistogram         *prometheus.HistogramVec
+	PDAPIRequestCounter             *prometheus.CounterVec
+	CPUProfileCounter               prometheus.Counter
+	LoadTableCacheDurationHistogram prometheus.Histogram
+	RCCheckTSWriteConfilictCounter  *prometheus.CounterVec
+)
+
+// InitServerMetrics initializes server metrics.
+func InitServerMetrics() {
+	PacketIOCounter = NewCounterVec(
+>>>>>>> d6143a20539 (*: add  MVCC version ratio to slow log metrics (#44897))
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -221,7 +272,20 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblSQLType})
 
+<<<<<<< HEAD
 	MaxProcs = prometheus.NewGauge(
+=======
+	CopMVCCRatioHistogram = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "slow_query_cop_mvcc_ratio",
+			Help:      "Bucketed histogram of all cop total keys / processed keys in slow queries.",
+			Buckets:   prometheus.ExponentialBuckets(0.5, 2, 21), // 0.5 ~ 262144
+		}, []string{LblSQLType})
+
+	MaxProcs = NewGauge(
+>>>>>>> d6143a20539 (*: add  MVCC version ratio to slow log metrics (#44897))
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
