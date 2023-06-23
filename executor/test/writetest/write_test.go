@@ -3423,9 +3423,8 @@ func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
 		tk.MustExec("update t set a='bbb' where a = 'aaa'")
 		tk.MustExec("admin check table t")
 		tk.MustQuery("select a from t order by a").Check(testkit.Rows("abc", "acd", "bbb"))
-		// TODO: fix below test.
-		//tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("abc", "acd"))
-		//tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb"))
+		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("abc", "acd"))
+		tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb"))
 		tk.MustQuery("select * from t where a = 'bbb' order by a").Check(testkit.Rows("bbb b"))
 		// Test insert meet duplicate error.
 		err := tk.ExecToErr("insert into t (a) values  ('abc')")
@@ -3434,9 +3433,8 @@ func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
 		tk.MustExec("insert into t (a) values ('abc') on duplicate key update a='bbc'")
 		tk.MustQuery("select a from t order by a").Check(testkit.Rows("acd", "bbb", "bbc"))
 		tk.MustQuery("select * from t where a = 'bbc'").Check(testkit.Rows("bbc b"))
-		// TODO: fix below test.
-		//tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("acd"))
-		//tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb", "bbc"))
+		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("acd"))
+		tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb", "bbc"))
 	}
 }
 

@@ -339,6 +339,15 @@ func (ds *DataSource) buildIndexMergeOrPath(
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current+1:]...)
+	// If global index exists, index merge is not allowed.
+	// Global index is not compatible with IndexMergeReaderExecutor.
+	for i := range partialPaths {
+		if partialPaths[i].Index != nil && partialPaths[i].Index.Global {
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("global index is not compatible with index merge, so ignore it"))
+			return nil
+		}
+	}
+
 	for _, path := range partialPaths {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(path.TableFilters) > 0 {
