@@ -110,8 +110,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) bool {
 		return i.(*driver.ParamMarkerExpr).Offset < j.(*driver.ParamMarkerExpr).Offset
 	})
-	ParamCount := len(extractor.markers)
-	for i := 0; i < ParamCount; i++ {
+	paramCount := len(extractor.markers)
+	for i := 0; i < paramCount; i++ {
 		extractor.markers[i].SetOrder(i)
 	}
 
@@ -188,7 +188,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
 	}
-	return preparedObj, p, ParamCount, nil
+	return preparedObj, p, paramCount, nil
 }
 
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
