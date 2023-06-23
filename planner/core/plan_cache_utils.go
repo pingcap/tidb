@@ -419,7 +419,7 @@ func (f *PlanCacheQueryFeatures) Enter(in ast.Node) (out ast.Node, skipChildren 
 }
 
 // Leave implements Visitor interface.
-func (f *PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
