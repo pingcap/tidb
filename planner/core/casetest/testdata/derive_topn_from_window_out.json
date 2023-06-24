@@ -79,7 +79,7 @@
       {
         "SQL": "select row_number() over (partition by a) from t -- pattern missing filter on row number",
         "Plan": [
-          "Projection 10000.00 root  Column#5",
+          "Projection 10000.00 root  Column#5->Column#6",
           "└─Shuffle 10000.00 root  execution info: concurrency:5, data sources:[TableReader]",
           "  └─Window 10000.00 root  row_number()->Column#5 over(partition by test.t.a rows between current row and current row)",
           "    └─Sort 10000.00 root  test.t.a",

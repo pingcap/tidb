@@ -520,14 +520,13 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	// 0. Is disaggregated tiflash. because in non-disaggregated tiflash, we dont use mpp for static pruning.
 	// 1. Is partition table.
 	// 2. Dynamic prune is not used.
-	var isDisaggregatedTiFlashStaticPrune bool
+	var tiFlashStaticPrune bool
 	if ts.Table.GetPartitionInfo() != nil {
-		isDisaggregatedTiFlashStaticPrune = config.GetGlobalConfig().DisaggregatedTiFlash &&
-			!e.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune()
+		tiFlashStaticPrune = !e.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune()
 
 		tmp, _ := e.is.TableByID(ts.Table.ID)
 		tbl := tmp.(table.PartitionedTable)
-		if !isDisaggregatedTiFlashStaticPrune {
+		if !tiFlashStaticPrune {
 			var partitions []table.PhysicalTable
 			partitions, err = partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
 			if err != nil {
@@ -563,14 +562,14 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
 		task := &kv.MPPTask{
-			Meta:                              meta,
-			ID:                                AllocMPPTaskID(e.ctx),
-			MppVersion:                        e.ctx.GetSessionVars().ChooseMppVersion(),
-			StartTs:                           e.startTS,
-			MppQueryID:                        e.mppQueryID,
-			TableID:                           ts.Table.ID,
-			PartitionTableIDs:                 allPartitionsIDs,
-			IsDisaggregatedTiFlashStaticPrune: isDisaggregatedTiFlashStaticPrune,
+			Meta:               meta,
+			ID:                 AllocMPPTaskID(e.ctx),
+			MppVersion:         e.ctx.GetSessionVars().ChooseMppVersion(),
+			StartTs:            e.startTS,
+			MppQueryID:         e.mppQueryID,
+			TableID:            ts.Table.ID,
+			PartitionTableIDs:  allPartitionsIDs,
+			TiFlashStaticPrune: tiFlashStaticPrune,
 		}
 		tasks = append(tasks, task)
 	}

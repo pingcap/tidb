@@ -4342,6 +4342,36 @@ func TestGlobalIndexForIssue40149(t *testing.T) {
 	}
 }
 
+func TestGlobalIndexMerge(t *testing.T) {
+	restoreConfig := config.RestoreFunc()
+	defer restoreConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("SET session tidb_enable_index_merge = ON;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (
+  		a int(11) NOT NULL,
+  		b int(11) DEFAULT NULL,
+  		c int(11) DEFAULT NULL,
+		d int(11) NOT NULL AUTO_INCREMENT,
+		KEY idx_bd (b, c),
+		UNIQUE KEY uidx_ac(a)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY RANGE (c) (
+ 	PARTITION p0 VALUES LESS THAN (10),
+ 	PARTITION p1 VALUES LESS THAN (MAXVALUE));`)
+	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5),(6,6,6,6),(7,7,7,7),(8,8,8,8);")
+	tk.MustExec("analyze table t")
+	// when index_merge has global index as its partial path, ignore it.
+	require.False(t, tk.MustUseIndex("select /*+ use_index_merge(t, uidx_ac, idx_bc) */ * from t where a=1 or b=2", "uidx_ac"))
+	tk.MustQuery("select /*+ use_index_merge(t, uidx_ac, idx_bc) */ * from t where a=1 or b=2").Sort().Check(
+		testkit.Rows("1 1 1 1", "2 2 2 2"))
+}
+
 func TestIssue39999(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
