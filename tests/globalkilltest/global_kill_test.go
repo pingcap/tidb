@@ -179,22 +179,32 @@ func (s *GlobalKillSuite) startCluster() (err error) {
 }
 
 func (s *GlobalKillSuite) stopPD() (err error) {
+	if s.pdProc == nil {
+		log.Info("PD already killed")
+		return nil
+	}
 	if err = s.pdProc.Process.Kill(); err != nil {
 		return errors.Trace(err)
 	}
 	if err = s.pdProc.Wait(); err != nil && err.Error() != "signal: killed" {
 		return errors.Trace(err)
 	}
+	s.pdProc = nil
 	return nil
 }
 
 func (s *GlobalKillSuite) stopTiKV() (err error) {
+	if s.tikvProc == nil {
+		log.Info("TiKV already killed")
+		return nil
+	}
 	if err = s.tikvProc.Process.Kill(); err != nil {
 		return errors.Trace(err)
 	}
 	if err = s.tikvProc.Wait(); err != nil && err.Error() != "signal: killed" {
 		return errors.Trace(err)
 	}
+	s.tikvProc = nil
 	return nil
 }
 
@@ -252,6 +262,12 @@ func (s *GlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath strin
 	}
 	time.Sleep(500 * time.Millisecond)
 	return cmd, nil
+}
+
+func (s *GlobalKillSuite) mustStartTiDBWithPD(t *testing.T, port int, statusPort int, pdPath string) *exec.Cmd {
+	cmd, err := s.startTiDBWithPD(port, statusPort, pdPath)
+	require.Nil(t, err)
+	return cmd
 }
 
 func (s *GlobalKillSuite) stopService(name string, cmd *exec.Cmd, graceful bool) (err error) {
@@ -334,6 +350,12 @@ func (s *GlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 
 	log.Info("connect to server ok", zap.String("addr", addr))
 	return db, nil
+}
+
+func (s *GlobalKillSuite) mustConnectTiDB(t *testing.T, port int) *sql.DB {
+	db, err := s.connectTiDB(port)
+	require.Nil(t, err)
+	return db
 }
 
 type sleepResult struct {
@@ -676,4 +698,67 @@ func doTestLostConnection(t *testing.T, enable32Bits bool) {
 	}
 }
 
-// TODO: test for upgrade 32 -> 64 & downgrade 64 -> 32
+func TestUpgradeAndDowngrade(t *testing.T) {
+	s := createGlobalKillSuite(t, true)
+	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
+
+	ctx := context.TODO()
+	getConnection := func(idx int) (*sql.DB, *sql.Conn, uint64) {
+		db := s.mustConnectTiDB(t, *tidbStartPort+idx)
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+
+		connID := mustGetConnectionID(t, ctx, conn)
+		return db, conn, connID
+	}
+
+	// MAX_TIDB_32_COUNT is determined by `github.com/pingcap/tidb/util/globalconn.ldflagServerIDBits32`
+	// Also see `Domain.proposeServerID`.
+	const MAX_TIDB_32_COUNT = 2 // (2^2 -1) x 0.9
+
+	// Setup TIDB_32_COUNT number of TiDBs.
+	tidbs := make([]*exec.Cmd, MAX_TIDB_32_COUNT)
+	{
+		for i := range tidbs {
+			tidbs[i] = s.mustStartTiDBWithPD(t, *tidbStartPort+i, *tidbStatusPort+i, *pdClientPath)
+		}
+		defer func() {
+			for i := range tidbs {
+				if tidbs[i] != nil {
+					s.stopService(fmt.Sprintf("tidb%v", i), tidbs[i], true)
+				}
+			}
+		}()
+
+		for i := range tidbs {
+			db, conn, connID := getConnection(i)
+			defer db.Close()
+			defer conn.Close()
+			require.Lessf(t, connID, uint64(1<<32), "connID %x", connID)
+		}
+	}
+
+	// Upgrade to 64 bits due to ServerID used up.
+	{
+		tidb64s := make([]*exec.Cmd, 2)
+		for i := range tidb64s {
+			dbIdx := i + MAX_TIDB_32_COUNT
+			tidb64 := s.mustStartTiDBWithPD(t, *tidbStartPort+dbIdx, *tidbStatusPort+dbIdx, *pdClientPath)
+			defer s.stopService(fmt.Sprintf("tidb%v", dbIdx), tidb64, true)
+		}
+		for i := range tidb64s {
+			dbIdx := i + MAX_TIDB_32_COUNT
+			db, conn, connID := getConnection(dbIdx)
+			defer db.Close()
+			defer conn.Close()
+			require.Greaterf(t, connID, uint64(1<<32), "connID %x", connID)
+		}
+	}
+}
+
+func mustGetConnectionID(t *testing.T, ctx context.Context, conn *sql.Conn) uint64 {
+	var connID uint64
+	err := conn.QueryRowContext(ctx, "SELECT CONNECTION_ID()").Scan(&connID)
+	require.NoError(t, err)
+	return connID
+}
