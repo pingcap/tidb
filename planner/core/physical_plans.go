@@ -2720,6 +2720,7 @@ func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOpti
 		PlanTrace: &tracing.PlanTrace{
 			ID:          pp.ID(),
 			TP:          pp.TP(),
+			Cost:        pp.Cost(),
 			ExplainInfo: pp.ExplainInfo(),
 			// TODO: trace the cost
 		},
