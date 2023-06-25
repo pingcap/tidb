@@ -45,6 +45,11 @@ const (
 	TaskStateReverted      = "reverted"
 )
 
+const (
+	TaskSubStateDispatching = "dispatching"
+	TaskSubStateNormal      = "normal"
+)
+
 // TaskStep is the step of task.
 const (
 	StepInit int64 = -1
@@ -58,6 +63,7 @@ type Task struct {
 	Key   string
 	Type  string
 	State string
+	Flag  string // used to indicate whether all subtasks in one step are dispatched
 	Step  int64
 	// DispatcherID is not used now.
 	DispatcherID    string

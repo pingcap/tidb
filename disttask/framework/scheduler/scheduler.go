@@ -136,7 +136,7 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 		concurrentSubtask = true
 	}
 	for {
-		// check if any error occurs
+		// check if any error occurs.
 		if err := s.getError(); err != nil {
 			break
 		}
@@ -147,6 +147,9 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 			break
 		}
 		if subtask == nil {
+			if task.Flag == proto.TaskSubStateDispatching {
+				continue
+			}
 			break
 		}
 		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateRunning, "")

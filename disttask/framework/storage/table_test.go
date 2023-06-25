@@ -84,6 +84,23 @@ func TestGlobalTaskTable(t *testing.T) {
 	err = gm.UpdateGlobalTaskAndAddSubTasks(task, nil, false)
 	require.NoError(t, err)
 
+	task.Flag = proto.TaskSubStateDispatching
+	err = gm.UpdateGlobalTask(task)
+	require.NoError(t, err)
+
+	task, err = gm.GetGlobalTaskByID(1)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskSubStateDispatching, task.Flag)
+
+	task.Flag = proto.TaskSubStateNormal
+	err = gm.UpdateGlobalTask(task)
+	require.NoError(t, err)
+
+	task, err = gm.GetGlobalTaskByID(1)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateRunning, task.State)
+	require.Equal(t, proto.TaskSubStateNormal, task.Flag)
+
 	task5, err := gm.GetGlobalTasksInStates(proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Len(t, task5, 1)
@@ -254,9 +271,25 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, false)
 	require.NoError(t, err)
 
+	task.Flag = proto.TaskSubStateDispatching
+
+	err = sm.UpdateGlobalTask(task)
+	require.NoError(t, err)
+
 	task, err = sm.GetGlobalTaskByID(1)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateRunning, task.State)
+	require.Equal(t, proto.TaskSubStateDispatching, task.Flag)
+
+	task.Flag = proto.TaskSubStateNormal
+
+	err = sm.UpdateGlobalTask(task)
+	require.NoError(t, err)
+
+	task, err = sm.GetGlobalTaskByID(1)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateRunning, task.State)
+	require.Equal(t, proto.TaskSubStateNormal, task.Flag)
 
 	subtask1, err := sm.GetSubtaskInStates("instance1", 1, proto.TaskStatePending)
 	require.NoError(t, err)

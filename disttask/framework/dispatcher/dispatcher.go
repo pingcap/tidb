@@ -233,7 +233,13 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		if cnt > 0 {
 			return false, nil
 		}
-		return true, nil
+
+		// ywq todo test it.
+		if gTask.Flag != proto.TaskSubStateDispatching {
+			return true, nil
+		} else {
+			return false, nil
+		}
 	}
 
 	// if gTask.State == TaskStateReverting, if will not convert to TaskStateCancelling again.
@@ -245,7 +251,13 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 	if cnt > 0 {
 		return false, nil
 	}
-	return true, nil
+
+	// ywq todo test it.
+	if gTask.Flag != proto.TaskSubStateDispatching {
+		return true, nil
+	} else {
+		return false, nil
+	}
 }
 
 // DetectTaskLoop monitors the status of the subtasks and processes them.
@@ -308,18 +320,80 @@ func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) error {
 	if gTask.State == proto.TaskStateReverting {
 		// Finish the rollback step.
 		logutil.BgLogger().Info("process flow, update the task to reverted", zap.Int64("task-id", gTask.ID))
-		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
+		return d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 	// Finish the normal step.
 	logutil.BgLogger().Info("process flow, process normal", zap.Int64("task-id", gTask.ID))
 	return d.processNormalFlow(gTask)
 }
 
-func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
+func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, gTaskState string, subTasks [][]*proto.Subtask, retryTimes int) (err error) {
+	prevState := gTask.State
+	gTask.Flag = proto.TaskSubStateDispatching
+	gTask.State = gTaskState
+	// 1. update gtask to dispatching substate.
+	for i := 0; i < retryTimes; i++ {
+		err = d.taskMgr.UpdateGlobalTask(gTask)
+		if err == nil {
+			break
+		}
+		if i%10 == 0 {
+			logutil.BgLogger().Warn("updateTask to dispatching failed", zap.Int64("task-id", gTask.ID),
+				zap.String("previous state", prevState), zap.String("curr state", gTask.State),
+				zap.Int("retry times", retryTimes), zap.Error(err))
+		}
+		time.Sleep(retrySQLInterval)
+	}
+	// handle err..
+
+	// 2. dispatch subtasks.
+	// TODO: 可以开 goroutine 吗？
+	isRevert := gTaskState == proto.TaskStateReverting
+	for _, subtask := range subTasks {
+		for i := 0; i < retryTimes; i++ {
+			err = d.taskMgr.AddSubTasks(gTask, subtask, isRevert)
+			if err == nil {
+				break
+			}
+			if i%10 == 0 {
+				logutil.BgLogger().Warn("batch add subtasks failed", zap.Int64("task-id", gTask.ID),
+					zap.String("previous state", prevState), zap.String("curr state", gTask.State),
+					zap.Int("retry times", retryTimes), zap.Error(err))
+			}
+			time.Sleep(retrySQLInterval)
+		}
+	}
+	// handle err...
+
+	// 3.update gtask to normal substate.
+	gTask.Flag = proto.TaskSubStateNormal
+	for i := 0; i < retryTimes; i++ {
+		err = d.taskMgr.UpdateGlobalTask(gTask)
+		if err == nil {
+			break
+		}
+		if i%10 == 0 {
+			logutil.BgLogger().Warn("updateTask to normal failed", zap.Int64("task-id", gTask.ID),
+				zap.String("previous state", prevState), zap.String("curr state", gTask.State),
+				zap.Int("retry times", retryTimes), zap.Error(err))
+		}
+		time.Sleep(retrySQLInterval)
+	}
+
+	// handle err...
+	if err != nil && retryTimes != nonRetrySQLTime {
+		logutil.BgLogger().Warn("updateTask failed and delete running task info", zap.Int64("task-id", gTask.ID),
+			zap.String("previous state", prevState), zap.String("curr state", gTask.State), zap.Int("retry times", retryTimes), zap.Error(err))
+		d.delRunningGTask(gTask.ID)
+	}
+	return err
+}
+
+func (d *dispatcher) updateGlobalTaskState(gTask *proto.Task, gTaskState string, retryTimes int) (err error) {
 	prevState := gTask.State
 	gTask.State = gTaskState
 	for i := 0; i < retryTimes; i++ {
-		err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(gTask, newSubTasks, gTaskState == proto.TaskStateReverting)
+		err = d.taskMgr.UpdateGlobalTask(gTask)
 		if err == nil {
 			break
 		}
@@ -359,14 +433,15 @@ func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, meta []byte) erro
 	}
 
 	if len(instanceIDs) == 0 {
-		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
+		return d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 
-	subTasks := make([]*proto.Subtask, 0, len(instanceIDs))
+	// TODO: abstract new api
+	subTasks := make([][]*proto.Subtask, 1, len(instanceIDs))
 	for _, id := range instanceIDs {
-		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, id, meta))
+		subTasks[0] = append(subTasks[0], proto.NewSubtask(gTask.ID, gTask.Type, id, meta))
 	}
-	return d.updateTask(gTask, proto.TaskStateReverting, subTasks, retrySQLTimes)
+	return d.dispatchSubTasks(gTask, proto.TaskStateReverting, subTasks, retrySQLTimes)
 }
 
 func (d *dispatcher) processNormalFlow(gTask *proto.Task) error {
@@ -374,7 +449,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) error {
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
 		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
-		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
+		return d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 	metas, err := handle.ProcessNormalFlow(d.ctx, d, gTask)
 	if err != nil {
@@ -383,7 +458,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) error {
 			return err
 		}
 		gTask.Error = []byte(err.Error())
-		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
+		return d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),
 		zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Int("subtasks", len(metas)))
@@ -405,17 +480,14 @@ func (d *dispatcher) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, m
 	// Special handling for the new tasks.
 	if gTask.State == proto.TaskStatePending {
 		// TODO: Consider using TS.
-		nowTime := time.Now().UTC()
-		gTask.StartTime = nowTime
+		gTask.StartTime = time.Now().UTC()
 		gTask.State = proto.TaskStateRunning
-		gTask.StateUpdateTime = nowTime
 		retryTimes = nonRetrySQLTime
 	}
 
 	if len(metas) == 0 {
-		gTask.StateUpdateTime = time.Now().UTC()
 		// Write the global task meta into the storage.
-		err := d.updateTask(gTask, proto.TaskStateSucceed, nil, retryTimes)
+		err := d.updateGlobalTaskState(gTask, proto.TaskStateSucceed, retryTimes)
 		if err != nil {
 			logutil.BgLogger().Warn("update global task failed", zap.Error(err))
 			return err
@@ -432,17 +504,19 @@ func (d *dispatcher) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, m
 	if len(serverNodes) == 0 {
 		return errors.New("no available TiDB node")
 	}
-	subTasks := make([]*proto.Subtask, 0, len(metas))
+
+	// TODO: abstract new api.
+	subTasks := make([][]*proto.Subtask, len(serverNodes))
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		pos := i % len(serverNodes)
 		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
 		logutil.BgLogger().Debug("create subtasks",
 			zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
-		subTasks = append(subTasks, proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
+		// hack...
+		subTasks[pos] = append(subTasks[pos], proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
-
-	return d.updateTask(gTask, gTask.State, subTasks, retrySQLTimes)
+	return d.dispatchSubTasks(gTask, gTask.State, subTasks, retrySQLTimes)
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.

@@ -580,6 +580,7 @@ const (
 		concurrency INT(11),
 		step INT(11),
 		error BLOB,
+		flag VARCHAR(256),
 		key(state),
       	UNIQUE KEY task_key(task_key)
 	);`
