@@ -3472,6 +3472,8 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		virtualColumnRetFieldTypes: []*types.FieldType{},
 	}
 
+	gather.memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
+
 	var hasVirtualCol bool
 	for _, col := range v.Schema().Columns {
 		if col.VirtualExpr != nil {
@@ -3479,10 +3481,9 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 			break
 		}
 	}
-
 	// If isSingleDataSource is true, it means only one TableScan exists in MPP fragment,
 	// a.k.a. operators like Join with two TableScans will not push down tiflash.
-	// Otherwise we dont which table info to use for virtual column or UnionScan.
+	// Otherwise we dont know which table info to use for virtual column or UnionScan.
 	// This assumption is guaranteed by the logic of generating the plan:
 	// 1. hasVirtualCol: when got virtual column in TableScan, will generate plan like the following,
 	//                   and there will be no other operators in the MPP fragment
@@ -3506,7 +3507,6 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 	if hasVirtualCol {
 		gather.virtualColumnIndex, gather.virtualColumnRetFieldTypes = buildVirtualColumnInfo(gather.Schema(), gather.columns)
 	}
-	gather.memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	tbl, _ := b.is.TableByID(ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()

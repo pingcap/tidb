@@ -64,7 +64,10 @@ type MPPGather struct {
 
 	memTracker *memory.Tracker
 
-	table                      table.Table
+	// For virtual column and UnionScan.
+	table table.Table
+
+	// For virtual column.
 	columns                    []*model.ColumnInfo
 	virtualColumnIndex         []int
 	virtualColumnRetFieldTypes []*types.FieldType
