@@ -2865,3 +2865,15 @@ func TestForeignKeyAndSessionVariable(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
 	tk.MustQuery("select * from t2").Check(testkit.Rows())
 }
+
+func TestForeignKeyIssue44848(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table b (  id int(11) NOT NULL AUTO_INCREMENT,  f int(11) NOT NULL,  PRIMARY KEY (id));")
+	tk.MustExec("create table a (  id int(11) NOT NULL AUTO_INCREMENT,  b_id int(11) NOT NULL,  PRIMARY KEY (id),  CONSTRAINT fk_b_id FOREIGN KEY (b_id) REFERENCES b (id) ON DELETE CASCADE);")
+	tk.MustExec("insert b(id,f) values(1,1);")
+	tk.MustExec("insert a(id,b_id) values(1,1);")
+	tk.MustExec("update b set id=1,f=2 where id=1;")
+}
