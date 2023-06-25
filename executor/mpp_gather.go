@@ -90,7 +90,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if e.dummy {
 		sender, ok := e.originalPlan.(*plannercore.PhysicalExchangeSender)
 		if !ok {
-			return errors.Errorf("unexpected plan type", zap.Any("expect", "PhysicalExchangeSender"), zap.Any("got", e.originalPlan.TP()))
+			return errors.Errorf("unexpected plan type, expect: PhysicalExchangeSender, got: %s", e.originalPlan.TP())
 		}
 		_, e.kvRanges, err = plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, e.mppQueryID, sender, e.is)
 		return err
