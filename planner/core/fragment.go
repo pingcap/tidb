@@ -100,18 +100,28 @@ type mppTaskGenerator struct {
 	cache      map[int]tasksAndFrags
 
 	CTEGroups map[int]*cteGroupInFragment
+
+	KVRanges []kv.KeyRange
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, []kv.KeyRange, error) {
 	g := &mppTaskGenerator{
 		ctx:        ctx,
 		startTS:    startTs,
 		mppQueryID: mppQueryID,
 		is:         is,
 		cache:      make(map[int]tasksAndFrags),
+		KVRanges:   make([]kv.KeyRange, 0),
 	}
-	return g.generateMPPTasks(sender)
+	frags, err := g.generateMPPTasks(sender)
+	if err != nil {
+		return frags, nil, err
+	}
+	if len(g.KVRanges) == 0 {
+		err = errors.New("kvRanges for MPPTask should not be empty")
+	}
+	return frags, g.KVRanges, err
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id when the query finished.
@@ -573,6 +583,10 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		}
 		tasks = append(tasks, task)
 	}
+	for _, partitionKVRanges := range req.PartitionIDAndRanges {
+		e.KVRanges = append(e.KVRanges, partitionKVRanges.KeyRanges...)
+	}
+	e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 	return tasks, nil
 }
 

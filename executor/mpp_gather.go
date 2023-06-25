@@ -64,9 +64,13 @@ type MPPGather struct {
 
 	memTracker *memory.Tracker
 
+	table                      table.Table
 	columns                    []*model.ColumnInfo
 	virtualColumnIndex         []int
 	virtualColumnRetFieldTypes []*types.FieldType
+
+	// For UnionScan.
+	kvRanges []kv.KeyRange
 }
 
 func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
@@ -81,7 +85,8 @@ func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 // If any task fails, it would cancel the rest tasks.
 func (e *MPPGather) Open(ctx context.Context) (err error) {
 	coord := e.buildCoordinator()
-	resp, err := coord.Execute(ctx)
+	var resp kv.Response
+	resp, e.kvRanges, err = coord.Execute(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

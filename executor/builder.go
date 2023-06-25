@@ -1377,8 +1377,13 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	switch x := reader.(type) {
 	// todo: when we full banned cop tiflash, we should think about combination of MPPGather and UnionScan
 	case *MPPGather:
-		b.err = errors.New("union scan integrated with MPPGather is not supported now")
-		return nil
+		us.desc = false
+		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
+		us.columns = x.columns
+		us.table = x.table
+		us.virtualColumnIndex = x.virtualColumnIndex
+		// gjt todo: check, add case
+		// us.handleCachedTable(b, x, sessionVars, startTS)
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
@@ -3462,6 +3467,13 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		virtualColumnRetFieldTypes: []*types.FieldType{},
 	}
 
+	ts, err := v.GetTableScan()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	gather.columns = ts.Columns
+
 	var hasVirtualCol bool
 	for _, col := range v.Schema().Columns {
 		if col.VirtualExpr != nil {
@@ -3470,17 +3482,17 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		}
 	}
 	if hasVirtualCol {
-		// If hasVirtualCol, Join should not pushdown to tiflash,
-		// so there is only one TableScan.
-		ts, err := v.GetTableScan()
-		if err != nil {
-			b.err = err
-			return nil
-		}
-		gather.columns = ts.Columns
 		gather.virtualColumnIndex, gather.virtualColumnRetFieldTypes = buildVirtualColumnInfo(gather.Schema(), gather.columns)
 	}
 	gather.memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
+
+	tbl, _ := b.is.TableByID(ts.Table.ID)
+	isPartition, physicalTableID := ts.IsPartition()
+	if isPartition {
+		pt := tbl.(table.PartitionedTable)
+		tbl = pt.GetPartition(physicalTableID)
+	}
+	gather.table = tbl
 	return gather
 }
 
