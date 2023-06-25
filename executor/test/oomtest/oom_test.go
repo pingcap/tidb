@@ -105,8 +105,8 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
-	oom.SetTracker("")
 	oom.ClearMessageFilter()
+	oom.SetTracker("")
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
 	require.Equal(t, "", oom.GetTracker())
@@ -116,8 +116,8 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
-	oom.SetTracker("")
 	oom.ClearMessageFilter()
+	oom.SetTracker("")
 
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
 	require.Equal(t, "", oom.GetTracker())
@@ -130,8 +130,8 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	tk.Session().GetSessionVars().DMLBatchSize = 1
 	tk.Session().GetSessionVars().BatchInsert = true
 
-	oom.SetTracker("")
 	oom.ClearMessageFilter()
+	oom.SetTracker("")
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "", oom.GetTracker())
@@ -141,8 +141,9 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
-	oom.SetTracker("")
 	oom.ClearMessageFilter()
+	oom.SetTracker("")
+
 	oom.AddMessageFilter("expensive_query during bootstrap phase")
 
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
