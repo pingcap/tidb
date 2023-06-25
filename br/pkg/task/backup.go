@@ -224,12 +224,10 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if flags.Lookup(flagFullBackupType) != nil {
+	f := flags.Lookup(flagFullBackupType)
+	if f != nil && f.Value.String() == string(FullBackupTypeEBS) {
 		// for backup full
-		fullBackupType, err := flags.GetString(flagFullBackupType)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		fullBackupType := FullBackupTypeEBS
 		if !FullBackupType(fullBackupType).Valid() {
 			return errors.New("invalid full backup type")
 		}
