@@ -165,16 +165,15 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 		workers.ApplyOnErrorGroup(eg, func() error {
 			cli, err := mgr.GetBackupClient(ctx, storeId)
 			if err != nil {
-				log.Error("failed to create backup client for store", zap.Any("store", store))
+				log.Error("failed to create backup client for store", zap.Uint64("store id", storeId))
 				return err
 			}
 			resp, err := cli.Prepare(ectx, &prepareReq)
 			if err != nil {
-				log.Error("failed to prepare for store", zap.Any("store", store))
+				log.Error("failed to prepare for store", zap.Uint64("store id", storeId))
 				return err
 			}
-			// TODO handle unique id in resp.
-			log.Info("prepare for store", zap.Any("store", store), zap.String("unique_id", resp.UniqueId))
+			log.Info("prepare for store", zap.Uint64("store id", storeId), zap.String("unique id", resp.UniqueId))
 			uniqueIdStore.Store(storeId, resp.UniqueId)
 			return nil
 		})
@@ -296,6 +295,44 @@ func RunFileCopyBackup(c context.Context, g glue.Glue, cfg *BackupConfig) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// Step.4 cleanup backup temporary files in all stores.
+	// TODO: we may need cleanup these file automatically.
+	cleanupWorkers := utils.NewWorkerPool(uint(len(allStores)), "cleanup")
+	for _, store := range allStores {
+		storeId := store.Id
+		cleanupWorkers.ApplyOnErrorGroup(eg, func() error {
+			cli, err := mgr.GetBackupClient(ctx, storeId)
+			if err != nil {
+				log.Error("failed to create backup client for store", zap.Uint64("store id", storeId))
+				return err
+			}
+			UniqueId, ok := uniqueIdStore.Load(storeId)
+			if !ok {
+				return errors.Errorf("cannot find unique id for store", zap.Uint64("store id", storeId))
+			}
+			cleanupReq := backuppb.CleanupRequest{
+				UniqueId: UniqueId.(string),
+			}
+			resp, err := cli.Cleanup(ectx, &cleanupReq)
+			if err != nil {
+				log.Error("failed to prepare for store", zap.Any("store", store))
+				return err
+			}
+			if resp.Success {
+				log.Info("cleanup for store", zap.Any("store", store), zap.Any("resp", resp))
+				return nil
+			}
+			if resp.GetError() != nil {
+				return errors.Errorf("unable to cleanup", zap.Any("error", resp.GetError()))
+			}
+			return errors.New("cleanup neither success or not have an error")
+		})
+	}
+	if err = eg.Wait(); err != nil {
+		return err
+	}
+
 	finished = true
 	return nil
 }
