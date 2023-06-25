@@ -1129,7 +1129,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 
 				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
 				// For safety, prevent these plans from the plan cache here.
-				if !pointGetTask.invalid() && expression.MaybeOverOptimized4PlanCache(ds.ctx, candidate.path.AccessConds) && !ds.isSafePointGetPlan4PlanCache(candidate.path) {
+				if !pointGetTask.invalid() && expression.MaybeOverOptimized4PlanCache(ds.ctx, candidate.path.AccessConds) && !isSafePointGetPath4PlanCache(ds.ctx, candidate.path) {
 					ds.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("Batch/PointGet plans may be over-optimized"))
 				}
 
@@ -1210,26 +1210,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	}
 
 	return
-}
-
-func (*DataSource) isSafePointGetPlan4PlanCache(path *util.AccessPath) bool {
-	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
-	// these assumptions may be broken after parameters change.
-
-	// safe scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
-	if len(path.Ranges) > 0 && path.Ranges[0].Width() == len(path.AccessConds) {
-		for _, accessCond := range path.AccessConds {
-			f, ok := accessCond.(*expression.ScalarFunction)
-			if !ok {
-				return false
-			}
-			if f.FuncName.L != ast.EQ {
-				return false
-			}
-		}
-		return true
-	}
-	return false
 }
 
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
@@ -1652,22 +1632,13 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 			cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
 			if cop.tablePlan != nil && ds.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				if !is.Index.Global {
-					is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
-					is.schema.Append(&expression.Column{
-						RetType:  types.NewFieldType(mysql.TypeLonglong),
-						UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-						ID:       model.ExtraPhysTblID,
-					})
+					is.Columns, is.schema, _ = AddExtraPhysTblIDColumn(is.ctx, is.Columns, is.Schema())
 				}
+				var succ bool
 				// global index for tableScan with keepOrder also need PhysicalTblID
 				ts := cop.tablePlan.(*PhysicalTableScan)
-				ts.Columns = append(ts.Columns, model.NewExtraPhysTblIDColInfo())
-				ts.schema.Append(&expression.Column{
-					RetType:  types.NewFieldType(mysql.TypeLonglong),
-					UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-					ID:       model.ExtraPhysTblID,
-				})
-				cop.needExtraProj = true
+				ts.Columns, ts.schema, succ = AddExtraPhysTblIDColumn(ts.ctx, ts.Columns, ts.Schema())
+				cop.needExtraProj = cop.needExtraProj || succ
 			}
 		}
 	}
@@ -2191,19 +2162,18 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
-	isDisaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash
-	isDisaggregatedTiFlashPath := isDisaggregatedTiFlash && ts.StoreType == kv.TiFlash
-	canMppConvertToRootForDisaggregatedTiFlash := isDisaggregatedTiFlashPath && prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed()
-	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash {
+	isTiFlashPath := ts.StoreType == kv.TiFlash
+	canMppConvertToRoot := prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed() && isTiFlashPath
+	canMppConvertToRootForDisaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
+	canMppConvertToRootForWhenTiFlashCopIsBanned := ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
+	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
 		if ts.KeepOrder {
 			return invalidTask, nil
 		}
-		if prop.MPPPartitionTp != property.AnyType || (ts.isPartition && !isDisaggregatedTiFlash) {
-			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
-			// But in disaggregated tiflash mode, we enable using mpp for static pruning partition table, because cop and batchCop is deprecated.
-			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
+		if prop.MPPPartitionTp != property.AnyType {
 			return invalidTask, nil
 		}
+		// ********************************** future deprecated start **************************/
 		var hasVirtualColumn bool
 		for _, col := range ts.schema.Columns {
 			if col.VirtualExpr != nil {
@@ -2212,9 +2182,19 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				break
 			}
 		}
-		if hasVirtualColumn && !canMppConvertToRootForDisaggregatedTiFlash {
+		// in general, since MPP has supported the Gather operator to fill the virtual column, we should full lift restrictions here.
+		// we left them here, because cases like:
+		// parent-----+
+		//            V  (when parent require a root task type here, we need convert mpp task to root task)
+		//    projection [mpp task] [a]
+		//      table-scan [mpp task] [a(virtual col as: b+1), b]
+		// in the process of converting mpp task to root task, the encapsulated table reader will use its first children schema [a]
+		// as its schema, so when we resolve indices later, the virtual column 'a' itself couldn't resolve itself anymore.
+		//
+		if hasVirtualColumn && !canMppConvertToRootForDisaggregatedTiFlash && !canMppConvertToRootForWhenTiFlashCopIsBanned {
 			return invalidTask, nil
 		}
+		// ********************************** future deprecated end **************************/
 		mppTask := &mppTask{
 			p:           ts,
 			partTp:      property.AnyType,
@@ -2234,7 +2214,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
 				task = invalidTask
 			} else if prop.TaskTp == property.RootTaskType {
-				// When got here, canMppConvertToRootForDisaggregatedTiFlash is true.
+				// When got here, canMppConvertToRootX is true.
 				// This is for situations like cannot generate mppTask for some operators.
 				// Such as when the build side of HashJoin is Projection,
 				// which cannot pushdown to tiflash(because TiFlash doesn't support some expr in Proj)
@@ -2245,7 +2225,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		}
 		return task, nil
 	}
-	if isDisaggregatedTiFlashPath {
+	if isTiFlashPath && config.GetGlobalConfig().DisaggregatedTiFlash || isTiFlashPath && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() {
 		// prop.TaskTp is cop related, just return invalidTask.
 		return invalidTask, nil
 	}

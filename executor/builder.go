@@ -476,6 +476,34 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 }
 
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
+	noMVIndexOrPrefixIndex := true
+	for _, idx := range v.IndexInfos {
+		if idx.MVIndex {
+			noMVIndexOrPrefixIndex = false
+			break
+		}
+		for _, col := range idx.Columns {
+			if col.Length != types.UnspecifiedLength {
+				noMVIndexOrPrefixIndex = false
+				break
+			}
+		}
+		if !noMVIndexOrPrefixIndex {
+			break
+		}
+	}
+	if b.ctx.GetSessionVars().FastCheckTable && noMVIndexOrPrefixIndex {
+		e := &FastCheckTableExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			dbName:       v.DBName,
+			table:        v.Table,
+			indexInfos:   v.IndexInfos,
+			is:           b.is,
+			err:          &atomic.Pointer[error]{},
+		}
+		return e
+	}
+
 	readerExecs := make([]*IndexLookUpExecutor, 0, len(v.IndexLookUpReaders))
 	for _, readerPlan := range v.IndexLookUpReaders {
 		readerExec, err := buildNoRangeIndexLookUpReader(b, readerPlan)
@@ -1347,6 +1375,10 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	}
 
 	switch x := reader.(type) {
+	// todo: when we full banned cop tiflash, we should think about combination of MPPGather and UnionScan
+	case *MPPGather:
+		b.err = errors.New("union scan integrated with MPPGather is not supported now")
+		return nil
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
@@ -5343,7 +5375,12 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		iterInTbl = storages.IterInTbl
 		producer = storages.Producer
 	} else {
+		if v.SeedPlan == nil {
+			b.err = errors.New("cte.seedPlan cannot be nil")
+			return nil
+		}
 		// Build seed part.
+		corCols := plannercore.ExtractOuterApplyCorrelatedCols(v.SeedPlan)
 		seedExec := b.build(v.SeedPlan)
 		if b.err != nil {
 			return nil
@@ -5364,10 +5401,15 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl}
 
 		// Build recursive part.
-		recursiveExec := b.build(v.RecurPlan)
-		if b.err != nil {
-			return nil
+		var recursiveExec Executor
+		if v.RecurPlan != nil {
+			recursiveExec = b.build(v.RecurPlan)
+			if b.err != nil {
+				return nil
+			}
+			corCols = append(corCols, plannercore.ExtractOuterApplyCorrelatedCols(v.RecurPlan)...)
 		}
+
 		var sel []int
 		if v.CTE.IsDistinct {
 			sel = make([]int, chkSize)
@@ -5376,18 +5418,24 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 			}
 		}
 
+		var corColHashCodes [][]byte
+		for _, corCol := range corCols {
+			corColHashCodes = append(corColHashCodes, corCol.HashCode(b.ctx.GetSessionVars().StmtCtx))
+		}
+
 		producer = &cteProducer{
-			ctx:           b.ctx,
-			seedExec:      seedExec,
-			recursiveExec: recursiveExec,
-			resTbl:        resTbl,
-			iterInTbl:     iterInTbl,
-			isDistinct:    v.CTE.IsDistinct,
-			sel:           sel,
-			hasLimit:      v.CTE.HasLimit,
-			limitBeg:      v.CTE.LimitBeg,
-			limitEnd:      v.CTE.LimitEnd,
-			isInApply:     v.CTE.IsInApply,
+			ctx:             b.ctx,
+			seedExec:        seedExec,
+			recursiveExec:   recursiveExec,
+			resTbl:          resTbl,
+			iterInTbl:       iterInTbl,
+			isDistinct:      v.CTE.IsDistinct,
+			sel:             sel,
+			hasLimit:        v.CTE.HasLimit,
+			limitBeg:        v.CTE.LimitBeg,
+			limitEnd:        v.CTE.LimitEnd,
+			corCols:         corCols,
+			corColHashCodes: corColHashCodes,
 		}
 		storageMap[v.CTE.IDForStorage].Producer = producer
 	}
