@@ -1154,6 +1154,7 @@ func (*LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physica
 	return physicalUnionScan
 }
 
+// getColsNDVLowerBoundFromHistColl tries to get a lower bound of the NDV of columns (whose uniqueIDs are colUIDs).
 func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.HistColl) int64 {
 	if len(colUIDs) == 0 || histColl == nil {
 		return -1
@@ -1191,7 +1192,6 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 	// For example, NDV(a,b,c) / NDV(c) is a safe lower bound of NDV(a,b).
 
 	// 3. If we still haven't got an NDV, we use the maximum NDV in the column stats as a lower bound.
-	// This would happen when len(cols) > 1 and no proper index stats are available.
 	maxNDV := int64(-1)
 	for _, uid := range colUIDs {
 		colStats := histColl.Columns[uid]
