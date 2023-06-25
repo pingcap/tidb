@@ -220,7 +220,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	if isSucc {
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, "")
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, nil)
 			require.NoError(t, err)
 		}
 		checkGetGTaskState(proto.TaskStateSucceed)
@@ -242,7 +242,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		}()
 		// Mock a subtask fails.
 		for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, "")
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, nil)
 			require.NoError(t, err)
 		}
 	}
@@ -252,7 +252,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	// Mock all subtask reverted.
 	start := subtaskCnt * taskCnt
 	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateReverted, "")
+		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateReverted, nil)
 		require.NoError(t, err)
 	}
 	checkGetGTaskState(proto.TaskStateReverted)
