@@ -71,6 +71,8 @@ type MPPGather struct {
 
 	// For UnionScan.
 	kvRanges []kv.KeyRange
+
+	dummy bool
 }
 
 func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
@@ -121,3 +123,13 @@ func (e *MPPGather) Close() error {
 	}
 	return nil
 }
+
+// Table implements the dataSourceExecutor interface.
+func (e *MPPGather) Table() table.Table {
+	return e.table
+}
+
+func (e *MPPGather) setDummy() {
+	e.dummy = true
+}
+
