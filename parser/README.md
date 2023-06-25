@@ -45,6 +45,7 @@ found you are one of the users but not listed here:
 - [sql-machine-learning/sqlflow](https://github.com/sql-machine-learning/sqlflow)
 - [nooncall/shazam](https://github.com/nooncall/shazam)
 - [bytebase/bytebase](https://github.com/bytebase/bytebase)
+- [kyleconroy/sqlc](https://github.com/kyleconroy/sqlc)
 
 ## Contributing
 
