@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -78,7 +77,6 @@ func (*rollbackScheduler) InitSubtaskExecEnv(_ context.Context) error { return n
 func (t *rollbackScheduler) CleanupSubtaskExecEnv(_ context.Context) error { return nil }
 
 func (t *rollbackScheduler) Rollback(_ context.Context) error {
-	logutil.BgLogger().Info("ywq test rollback")
 	t.v.Store(0)
 	rollbackCnt.Add(1)
 	return nil

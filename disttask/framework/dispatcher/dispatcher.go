@@ -276,7 +276,10 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 		case <-ticker.C:
 			failpoint.Inject("cancelTaskBeforeProbe", func(val failpoint.Value) {
 				if val.(bool) {
-					d.taskMgr.CancelGlobalTask(gTask.ID)
+					err := d.taskMgr.CancelGlobalTask(gTask.ID)
+					if err != nil {
+						logutil.BgLogger().Error("cancel global task failed", zap.Error(err))
+					}
 				}
 			})
 			// TODO: Consider actively obtaining information about task completion.
