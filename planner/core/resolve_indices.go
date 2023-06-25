@@ -765,7 +765,7 @@ func (p *physicalSchemaProducer) ResolveIndices() (err error) {
 	return err
 }
 
-func (p *baseSchemaProducer) ResolveIndices() (err error) {
+func (*baseSchemaProducer) ResolveIndices() (err error) {
 	return
 }
 

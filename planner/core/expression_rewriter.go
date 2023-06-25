@@ -178,7 +178,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	return
 }
 
-func (b *PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
+func (*PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
 	if rewriter.p != nil {
 		curColLen := rewriter.p.Schema().Len()
 		defer func() {
@@ -867,10 +867,10 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		er.ctxStackAppend(er.p.Schema().Columns[er.p.Schema().Len()-1], er.p.OutputNames()[er.p.Schema().Len()-1])
 	} else {
 		// We don't want nth_plan hint to affect separately executed subqueries here, so disable nth_plan temporarily.
-		NthPlanBackup := er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
+		nthPlanBackup := er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
 		er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
 		physicalPlan, _, err := DoOptimize(ctx, er.sctx, er.b.optFlag, np)
-		er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = NthPlanBackup
+		er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = nthPlanBackup
 		if err != nil {
 			er.err = err
 			return v, true
@@ -1078,10 +1078,10 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		return v, true
 	}
 	// We don't want nth_plan hint to affect separately executed subqueries here, so disable nth_plan temporarily.
-	NthPlanBackup := er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
+	nthPlanBackup := er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
 	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
 	physicalPlan, _, err := DoOptimize(ctx, er.sctx, er.b.optFlag, np)
-	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = NthPlanBackup
+	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = nthPlanBackup
 	if err != nil {
 		er.err = err
 		return v, true
@@ -1347,7 +1347,7 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 	return
 }
 
-func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
+func (*expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
 	if ft.EvalType() == types.ETDuration && ft.GetDecimal() > types.MaxFsp {
 		return errTooBigPrecision.GenWithStackByArgs(ft.GetDecimal(), "CAST", types.MaxFsp)
 	}

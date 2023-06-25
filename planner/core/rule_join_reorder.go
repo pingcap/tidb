@@ -642,7 +642,7 @@ func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *LogicalJoin
 }
 
 // calcJoinCumCost calculates the cumulative cost of the join node.
-func (s *baseSingleGroupJoinOrderSolver) calcJoinCumCost(join LogicalPlan, lNode, rNode *jrNode) float64 {
+func (*baseSingleGroupJoinOrderSolver) calcJoinCumCost(join LogicalPlan, lNode, rNode *jrNode) float64 {
 	return join.statsInfo().RowCount + lNode.cumCost + rNode.cumCost
 }
 
