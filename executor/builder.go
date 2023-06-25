@@ -100,6 +100,9 @@ type executorBuilder struct {
 	// can return a correct value even if the session context has already been destroyed
 	forDataReaderBuilder bool
 	dataReaderTS         uint64
+
+	// Used when building MPPGather.
+	encounterUnionScan bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -1329,6 +1332,10 @@ func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) Executor {
 }
 
 func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) Executor {
+	b.encounterUnionScan = true
+	defer func() {
+		b.encounterUnionScan = false
+	}()
 	reader := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -3465,13 +3472,6 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		virtualColumnRetFieldTypes: []*types.FieldType{},
 	}
 
-	ts, err := v.GetTableScan()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	gather.columns = ts.Columns
-
 	var hasVirtualCol bool
 	for _, col := range v.Schema().Columns {
 		if col.VirtualExpr != nil {
@@ -3479,6 +3479,30 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 			break
 		}
 	}
+
+	// If isSingleDataSource is true, it means only one TableScan exists in MPP fragment,
+	// a.k.a. operators like Join with two TableScans will not push down tiflash.
+	// Otherwise we dont which table info to use for virtual column or UnionScan.
+	// This assumption is guaranteed by the logic of generating the plan:
+	// 1. hasVirtualCol: when got virtual column in TableScan, will generate plan like the following,
+	//                   and there will be no other operators in the MPP fragment
+	//     MPPGather
+	//       ExchangeSender
+	//         PhysicalTableScan
+	// 2. UnionScan: there won't be any operators like Join between UnionScan and TableScan.
+	//               and UnionScan cannot push down to tiflash.
+	isSingleDataSource := hasVirtualCol || b.encounterUnionScan
+	if !isSingleDataSource {
+		return gather
+	}
+
+	ts, err := v.GetTableScan()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	gather.columns = ts.Columns
+
 	if hasVirtualCol {
 		gather.virtualColumnIndex, gather.virtualColumnRetFieldTypes = buildVirtualColumnInfo(gather.Schema(), gather.columns)
 	}

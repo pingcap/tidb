@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
@@ -86,6 +87,14 @@ func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 // Open builds coordinator and invoke coordinator's Execute function to execute physical plan
 // If any task fails, it would cancel the rest tasks.
 func (e *MPPGather) Open(ctx context.Context) (err error) {
+	if e.dummy {
+		sender, ok := e.originalPlan.(*plannercore.PhysicalExchangeSender)
+		if !ok {
+			return errors.Errorf("unexpected plan type", zap.Any("expect", "PhysicalExchangeSender"), zap.Any("got", e.originalPlan.TP()))
+		}
+		_, e.kvRanges, err = plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, e.mppQueryID, sender, e.is)
+		return err
+	}
 	coord := e.buildCoordinator()
 	var resp kv.Response
 	resp, e.kvRanges, err = coord.Execute(ctx)
@@ -105,6 +114,10 @@ func (e *MPPGather) buildCoordinator() kv.MppCoordinator {
 
 // Next fills data into the chunk passed by its caller.
 func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.dummy {
+		return nil
+	}
 	err := e.respIter.Next(ctx, chk)
 	if err != nil {
 		return err
@@ -118,6 +131,9 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // Close and release the used resources.
 func (e *MPPGather) Close() error {
+	if e.dummy {
+		return nil
+	}
 	if e.respIter != nil {
 		return e.respIter.Close()
 	}
