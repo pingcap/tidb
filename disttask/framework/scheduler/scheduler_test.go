@@ -123,6 +123,7 @@ func TestSchedulerRun(t *testing.T) {
 	mockScheduler.On("OnSubtaskFinished", mock.Anything, mock.Anything).Return([]byte(""), nil).Once()
 	mockSubtaskTable.On("FinishSubtask", int64(1), mock.Anything).Return(nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(nil, nil).Once()
+	mockSubtaskTable.On("GetGlobalTaskByID", taskID).Return(&proto.Task{Flag: proto.TaskSubStateNormal}, nil).Once()
 	mockScheduler.On("CleanupSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.NoError(t, err)
@@ -148,6 +149,7 @@ func TestSchedulerRun(t *testing.T) {
 	mockSubtaskTable.On("FinishSubtask", int64(2), mock.Anything).Return(nil).Once()
 
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(nil, nil).Once()
+	mockSubtaskTable.On("GetGlobalTaskByID", taskID).Return(&proto.Task{Flag: proto.TaskSubStateNormal}, nil).Once()
 	mockScheduler.On("CleanupSubtaskExecEnv", mock.Anything).Return(nil).Once()
 	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.NoError(t, err)
@@ -162,6 +164,7 @@ func TestSchedulerRun(t *testing.T) {
 	mockSubtaskExecutor.On("Run", mock.Anything).Return(context.Canceled).Once()
 	mockSubtaskTable.On("UpdateSubtaskStateAndError", taskID, proto.TaskStateCanceled).Return(nil).Once()
 	mockSubtaskTable.On("GetSubtaskInStates", "id", taskID, []interface{}{proto.TaskStatePending}).Return(nil, nil).Once()
+	mockSubtaskTable.On("GetGlobalTaskByID", taskID).Return(&proto.Task{Flag: proto.TaskSubStateNormal}, nil).Once()
 	mockScheduler.On("CleanupSubtaskExecEnv", mock.Anything).Return(nil).Once()
 
 	var wg sync.WaitGroup
@@ -224,6 +227,7 @@ func TestSchedulerRun(t *testing.T) {
 	mockPool.AssertExpectations(t)
 }
 
+// ywq todo
 func TestSchedulerRollback(t *testing.T) {
 	tp := "test_scheduler_rollback"
 	ctx, cancel := context.WithCancel(context.Background())

@@ -152,9 +152,14 @@ func DispatchTask(taskKey string, t *testing.T) *proto.Task {
 
 func DispatchTaskAndCheckSuccess(taskKey string, t *testing.T, v *atomic.Int64) {
 	task := DispatchTask(taskKey, t)
-
 	require.Equal(t, proto.TaskStateSucceed, task.State)
 	require.Equal(t, int64(9), v.Load())
+	v.Store(0)
+}
+
+func DispatchTaskAndCheckFail(taskKey string, t *testing.T, v *atomic.Int64) {
+	task := DispatchTask(taskKey, t)
+	require.Equal(t, proto.TaskStateReverted, task.State)
 	v.Store(0)
 }
 
@@ -164,7 +169,7 @@ func DispatchAndCancelTask(taskKey string, t *testing.T, v *atomic.Int64) {
 	taskID, err := mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil)
 	require.NoError(t, err)
 	start := time.Now()
-	mgr.CancelGlobalTask(1)
+	mgr.CancelGlobalTask(taskID)
 	var task *proto.Task
 	for {
 		if time.Since(start) > 2*time.Minute {
@@ -182,16 +187,6 @@ func DispatchAndCancelTask(taskKey string, t *testing.T, v *atomic.Int64) {
 
 	require.Equal(t, proto.TaskStateReverted, task.State)
 	require.Equal(t, int64(0), v.Load())
-	v.Store(0)
-}
-
-func DispatchAndFailTask(taskKey string, t *testing.T, v *atomic.Int64) {
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)")
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
-	}()
-	task := DispatchTask(taskKey, t)
-	require.Equal(t, proto.TaskStateReverted, task.State)
 	v.Store(0)
 }
 
@@ -294,6 +289,50 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 1)
-	DispatchAndFailTask("key1", t, &v)
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
+	}()
+
+	DispatchTaskAndCheckFail("key1", t, &v)
+
+	distContext.Close()
+}
+
+func TestFrameworkBatchAddSubTasks(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+	distContext := testkit.NewDistExecutionContext(t, 3)
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/insertSubtasksFail", "return(true)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/insertSubtasksFail"))
+	}()
+	DispatchTaskAndCheckSuccess("key1", t, &v)
+	distContext.Close()
+}
+
+func TestFrameworkBatchAddSubTasksFailed(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+	distContext := testkit.NewDistExecutionContext(t, 3)
+
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFail", "1*return(true)")
+	DispatchTaskAndCheckFail("key1", t, &v)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFail"))
+
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrNotRetryable", "1*return(true)")
+	DispatchTaskAndCheckFail("😌", t, &v)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrNotRetryable"))
+
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrRetryable", "1*return(true)")
+	DispatchTaskAndCheckSuccess("😊", t, &v)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrRetryable"))
+
 	distContext.Close()
 }
