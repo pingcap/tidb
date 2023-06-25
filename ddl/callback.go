@@ -45,7 +45,6 @@ func (*BaseInterceptor) OnGetInfoSchema(_ sessionctx.Context, is infoschema.Info
 
 // Callback is used for DDL.
 type Callback interface {
-	ReorgCallback
 	// OnChanged is called after a ddl statement is finished.
 	OnChanged(err error) error
 	// OnSchemaStateChanged is called after a schema state is changed.
@@ -108,19 +107,9 @@ func (c *BaseCallback) OnGetJobAfter(jobType string, job *model.Job) {
 	// Nothing to do.
 }
 
-// OnUpdateReorgInfo implements ReorgCallback interface.
-func (*BaseCallback) OnUpdateReorgInfo(_ *model.Job, _ int64) {
-}
-
 // DomainReloader is used to avoid import loop.
 type DomainReloader interface {
 	Reload() error
-}
-
-// ReorgCallback is the callback for DDL reorganization.
-type ReorgCallback interface {
-	// OnUpdateReorgInfo is called after updating reorg info for partitions.
-	OnUpdateReorgInfo(job *model.Job, pid int64)
 }
 
 // ****************************** Start of Customized DDL Callback Instance ****************************************
@@ -155,7 +144,7 @@ func (c *DefaultCallback) OnSchemaStateChanged(schemaVer int64) {
 }
 
 func newDefaultCallBack(do DomainReloader) Callback {
-	return &DefaultCallback{BaseCallback: &BaseCallback{}, do: do}
+	return &DefaultCallback{do: do}
 }
 
 // ****************************** End of Default DDL Callback Instance *********************************************

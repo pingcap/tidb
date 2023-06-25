@@ -58,8 +58,6 @@ type TestDDLCallback struct {
 	OnGetJobBeforeExported  func(string)
 	OnGetJobAfterExported   func(string, *model.Job)
 	OnJobSchemaStateChanged func(int64)
-
-	OnUpdateReorgInfoExported func(job *model.Job, pid int64)
 }
 
 // OnChanged mock the same behavior with the main DDL hook.
@@ -163,11 +161,4 @@ func (tc *TestDDLCallback) OnGetJobAfter(jobType string, job *model.Job) {
 // Clone copies the callback and take its reference
 func (tc *TestDDLCallback) Clone() *TestDDLCallback {
 	return &*tc
-}
-
-// OnUpdateReorgInfo mock the same behavior with the main DDL reorg hook.
-func (tc *TestDDLCallback) OnUpdateReorgInfo(job *model.Job, pid int64) {
-	if tc.OnUpdateReorgInfoExported != nil {
-		tc.OnUpdateReorgInfoExported(job, pid)
-	}
 }
