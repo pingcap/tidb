@@ -17,7 +17,7 @@ go_test(
     ],
     embedsrcs = ["test.parquet"],
     flaky = True,
-    race = "on",
+    race = "off",  # enable it after we fix https://github.com/pingcap/tidb/pull/44921
     deps = [
         "//br/pkg/lightning/backend/local",
         "//br/pkg/lightning/common",
