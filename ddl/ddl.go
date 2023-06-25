@@ -554,7 +554,8 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 		return
 	}
 	logutil.BgLogger().Info("[ddl] notify reorg worker the job's state",
-		zap.Int64("job ID", job.ID), zap.Int32("job State", int32(job.State)), zap.Int("job State", int(job.SchemaState)))
+		zap.Int64("Job ID", job.ID), zap.String("Job State", job.State.String()),
+		zap.String("Schema State", job.SchemaState.String()))
 	rc.notifyJobState(job.State)
 }
 
