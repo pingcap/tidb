@@ -510,9 +510,27 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						resetNotNullFlag(join.schema, 0, lChild.Schema().Len())
 					}
 					buildKeyInfo(join)
-					proj := a.tryToEliminateAggregation(agg, opt)
-					if proj != nil {
-						p = proj
+					// Combine the aggregation elimination logic below since new agg's child key info has changed.
+					// Notice that even if we eliminate new agg below if possible, the agg's schema is inherited by proj.
+					// Therefore, we don't need to set the join's schema again, just build the keyInfo again.
+					changed := false
+					if newAgg, ok1 := lChild.(*LogicalAggregation); ok1 {
+						proj := a.tryToEliminateAggregation(newAgg, opt)
+						if proj != nil {
+							lChild = proj
+							changed = true
+						}
+					}
+					if newAgg, ok2 := rChild.(*LogicalAggregation); ok2 {
+						proj := a.tryToEliminateAggregation(newAgg, opt)
+						if proj != nil {
+							rChild = proj
+							changed = true
+						}
+					}
+					if changed {
+						join.SetChildren(lChild, rChild)
+						buildKeyInfo(join)
 					}
 				}
 			} else if proj, ok1 := child.(*LogicalProjection); ok1 {
