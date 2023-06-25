@@ -147,7 +147,15 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 			break
 		}
 		if subtask == nil {
+			task, err = s.taskTable.GetGlobalTaskByID(task.ID)
+			if err != nil {
+				s.onError(err)
+				break
+			}
 			if task.Flag == proto.TaskSubStateDispatching {
+				// TODO: change check time?
+				time.Sleep(1 * time.Second)
+				logutil.BgLogger().Info("ywq test dispatching in scheduler")
 				continue
 			}
 			break

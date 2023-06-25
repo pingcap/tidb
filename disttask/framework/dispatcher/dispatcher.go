@@ -256,6 +256,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 	if gTask.Flag != proto.TaskSubStateDispatching {
 		return true, nil
 	} else {
+		logutil.BgLogger().Info("ywq test dispatching in dispatcher")
 		return false, nil
 	}
 }
@@ -349,13 +350,18 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, gTaskState string, subT
 	// 2. dispatch subtasks.
 	// TODO: 可以开 goroutine 吗？
 	isRevert := gTaskState == proto.TaskStateReverting
-	for _, subtask := range subTasks {
-		for i := 0; i < retryTimes; i++ {
-			err = d.taskMgr.AddSubTasks(gTask, subtask, isRevert)
+	for i, subtask := range subTasks {
+		for j := 0; j < retryTimes; j++ {
+			if i == 1 && j < 2 {
+				// ywq todo add failpoint.
+				err = errors.New("ywq test err")
+			} else {
+				err = d.taskMgr.AddSubTasks(gTask, subtask, isRevert)
+			}
 			if err == nil {
 				break
 			}
-			if i%10 == 0 {
+			if j%10 == 0 {
 				logutil.BgLogger().Warn("batch add subtasks failed", zap.Int64("task-id", gTask.ID),
 					zap.String("previous state", prevState), zap.String("curr state", gTask.State),
 					zap.Int("retry times", retryTimes), zap.Error(err))
