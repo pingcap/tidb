@@ -39,6 +39,7 @@ var DefaultImportantVariables = map[string]string{
 	"default_week_format":     "0",
 	"block_encryption_mode":   "aes-128-ecb",
 	"group_concat_max_len":    "1024",
+	"tidb_backoff_weight":     "6",
 }
 
 // DefaultImportVariablesTiDB is used in ObtainImportantVariables to retrieve the system

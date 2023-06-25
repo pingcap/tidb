@@ -16,14 +16,25 @@ package importinto
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -71,6 +82,139 @@ func (e *postProcessMinimalTaskExecutor) Run(ctx context.Context) error {
 		time.Sleep(5 * time.Second)
 	})
 	return postProcess(ctx, mTask.taskMeta, &mTask.meta, mTask.logger)
+}
+
+// postProcess does the post-processing for the task.
+func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
+	failpoint.Inject("syncBeforePostProcess", func() {
+		TestSyncChan <- struct{}{}
+		<-TestSyncChan
+	})
+
+	logger.Info("post process")
+
+	// TODO: create table indexes depends on the option.
+	// create table indexes even if the post process is failed.
+	// defer func() {
+	// 	err2 := createTableIndexes(ctx, globalTaskManager, taskMeta, logger)
+	// 	err = multierr.Append(err, err2)
+	// }()
+
+	return verifyChecksum(ctx, taskMeta, subtaskMeta, logger)
+}
+
+func verifyChecksum(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) error {
+	if taskMeta.Plan.Checksum == config.OpLevelOff {
+		return nil
+	}
+	localChecksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
+	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+
+	failpoint.Inject("waitCtxDone", func() {
+		<-ctx.Done()
+	})
+
+	globalTaskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	remoteChecksum, err := checksumTable(ctx, globalTaskManager, taskMeta, logger)
+	if err != nil {
+		return err
+	}
+	if !remoteChecksum.IsEqual(&localChecksum) {
+		err2 := common.ErrChecksumMismatch.GenWithStackByArgs(
+			remoteChecksum.Checksum, localChecksum.Sum(),
+			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
+			remoteChecksum.TotalBytes, localChecksum.SumSize(),
+		)
+		if taskMeta.Plan.Checksum == config.OpLevelOptional {
+			logger.Warn("verify checksum failed, but checksum is optional, will skip it", zap.Error(err2))
+			err2 = nil
+		}
+		return err2
+	}
+	logger.Info("checksum pass", zap.Object("local", &localChecksum))
+	return nil
+}
+
+func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMeta *TaskMeta, logger *zap.Logger) (*local.RemoteChecksum, error) {
+	var (
+		tableName                    = common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
+		sql                          = "ADMIN CHECKSUM TABLE " + tableName
+		maxErrorRetryCount           = 3
+		distSQLScanConcurrencyFactor = 1
+		remoteChecksum               *local.RemoteChecksum
+		txnErr                       error
+	)
+
+	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
+	for i := 0; i < maxErrorRetryCount; i++ {
+		txnErr = executor.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			// increase backoff weight
+			if err := setBackoffWeight(se, taskMeta, logger); err != nil {
+				logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
+			}
+
+			distSQLScanConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
+			se.GetSessionVars().SetDistSQLScanConcurrency(mathutil.Max(distSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency))
+			defer func() {
+				se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrency)
+			}()
+
+			rs, err := storage.ExecSQL(ctx, se, sql)
+			if err != nil {
+				return err
+			}
+			if len(rs) < 1 {
+				return errors.New("empty checksum result")
+			}
+
+			failpoint.Inject("errWhenChecksum", func() {
+				if i == 0 {
+					failpoint.Return(errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline"))
+				}
+			})
+
+			// ADMIN CHECKSUM TABLE <schema>.<table>  example.
+			// 	mysql> admin checksum table test.t;
+			// +---------+------------+---------------------+-----------+-------------+
+			// | Db_name | Table_name | Checksum_crc64_xor  | Total_kvs | Total_bytes |
+			// +---------+------------+---------------------+-----------+-------------+
+			// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
+			// +---------+------------+-------------
+			remoteChecksum = &local.RemoteChecksum{
+				Schema:     rs[0].GetString(0),
+				Table:      rs[0].GetString(1),
+				Checksum:   rs[0].GetUint64(2),
+				TotalKVs:   rs[0].GetUint64(3),
+				TotalBytes: rs[0].GetUint64(4),
+			}
+			return nil
+		})
+		if !common.IsRetryableError(txnErr) {
+			break
+		}
+		distSQLScanConcurrencyFactor *= 2
+		logger.Warn("retry checksum table", zap.Int("retry count", i+1), zap.Error(txnErr))
+	}
+	return remoteChecksum, txnErr
+}
+
+// TestChecksumTable is used to test checksum table in unit test.
+func TestChecksumTable(ctx context.Context, executor storage.SessionExecutor, taskMeta *TaskMeta, logger *zap.Logger) (*local.RemoteChecksum, error) {
+	return checksumTable(ctx, executor, taskMeta, logger)
+}
+
+func setBackoffWeight(se sessionctx.Context, taskMeta *TaskMeta, logger *zap.Logger) error {
+	backoffWeight := local.DefaultBackoffWeight
+	if val, ok := taskMeta.Plan.ImportantSysVars[variable.TiDBBackOffWeight]; ok {
+		if weight, err := strconv.Atoi(val); err == nil && weight > backoffWeight {
+			backoffWeight = weight
+		}
+	}
+	logger.Info("set backoff weight", zap.Int("weight", backoffWeight))
+	return se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
 }
 
 func init() {
