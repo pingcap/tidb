@@ -3075,14 +3075,14 @@ func (do *Domain) serverIDKeeper() {
 
 // StartTTLJobManager creates and starts the ttl job manager
 func (do *Domain) StartTTLJobManager() {
+	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
+	do.ttlJobManager.Store(ttlJobManager)
+	ttlJobManager.Start()
+
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("ttlJobManager exited.")
 		}()
-
-		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
-		do.ttlJobManager.Store(ttlJobManager)
-		ttlJobManager.Start()
 
 		<-do.exit
 	}, "ttlJobManager")

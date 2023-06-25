@@ -109,6 +109,7 @@ type JobManager struct {
 
 	timerRT         *timerRuntime
 	triggerOneJobCh chan *triggerOneJobRequest
+	managerV2       *JobManagerV2
 	ownerFunc       func() bool
 }
 
@@ -138,6 +139,8 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *c
 	manager.timerRT = newTimerRuntime(sessPool, etcdCli, &managerJobAdapter{m: manager})
 	manager.triggerOneJobCh = make(chan *triggerOneJobRequest)
 	manager.ownerFunc = isOwner
+	manager.managerV2 = NewJobManagerV2(sessPool, store, etcdCli, isOwner)
+	manager.managerV2.RegisterDistTask()
 	return
 }
 
@@ -153,13 +156,13 @@ func (m *JobManager) timerLoop(ctx context.Context, wg *sync.WaitGroup) {
 			m.timerRT.Close()
 			return
 		case <-ticker.C:
-			if m.isOwner() {
+			if m.isOwner() && !variable.EnableDistTask.Load() {
 				m.timerRT.Resume(ctx)
 			} else {
 				m.timerRT.Pause()
 			}
 		case <-syncTicker.C:
-			if !m.timerRT.Paused() {
+			if !m.timerRT.Paused() && !variable.EnableDistTask.Load() {
 				m.timerRT.SyncTimers(ctx)
 			}
 		}
@@ -180,6 +183,10 @@ func (m *JobManager) jobLoop() error {
 		err = multierr.Combine(err, multierr.Combine(m.taskManager.resizeScanWorkers(0), m.taskManager.resizeDelWorkers(0)))
 		se.Close()
 		logutil.Logger(m.ctx).Info("ttlJobManager loop exited.")
+	}()
+
+	defer func() {
+		m.managerV2.Stop()
 	}()
 
 	timerCtx, timerCancel := context.WithCancel(m.ctx)
@@ -244,7 +251,7 @@ func (m *JobManager) jobLoop() error {
 			m.checkFinishedJob(se)
 			m.checkNotOwnJob()
 		case req := <-m.triggerOneJobCh:
-			job, err := m.lockNewJob(req.ctx, se, req.tbl, time.Now(), req.jobID)
+			job, err := m.lockNewJob(req.ctx, se, req.tbl, req.watermark, req.jobID)
 			var resp triggerOneJobResponse
 			if err != nil {
 				resp.err = err
@@ -964,17 +971,18 @@ type triggerOneJobResponse struct {
 }
 
 type triggerOneJobRequest struct {
-	ctx   context.Context
-	jobID string
-	tbl   *cache.PhysicalTable
-	resp  chan<- *triggerOneJobResponse
+	ctx       context.Context
+	jobID     string
+	watermark time.Time
+	tbl       *cache.PhysicalTable
+	resp      chan<- *triggerOneJobResponse
 }
 
 type managerJobAdapter struct {
 	m *JobManager
 }
 
-func (a *managerJobAdapter) SubmitJob(ctx context.Context, id string, tableID int64, physicalID int64) (*ttlJobBrief, error) {
+func (a *managerJobAdapter) SubmitJob(ctx context.Context, id string, tableID int64, physicalID int64, watermark time.Time) (*ttlJobBrief, error) {
 	se, err := getSession(a.m.sessPool)
 	if err != nil {
 		return nil, err
@@ -992,10 +1000,11 @@ func (a *managerJobAdapter) SubmitJob(ctx context.Context, id string, tableID in
 
 	respCh := make(chan *triggerOneJobResponse, 1)
 	req := &triggerOneJobRequest{
-		ctx:   ctx,
-		jobID: id,
-		tbl:   tbl,
-		resp:  respCh,
+		ctx:       ctx,
+		jobID:     id,
+		tbl:       tbl,
+		watermark: watermark,
+		resp:      respCh,
 	}
 
 	select {
@@ -1012,14 +1021,14 @@ func (a *managerJobAdapter) SubmitJob(ctx context.Context, id string, tableID in
 	}
 }
 
-func (a *managerJobAdapter) GetJob(ctx context.Context, id string) (*ttlJobBrief, error) {
+func (a *managerJobAdapter) GetJob(ctx context.Context, id string, _ int64, _ int64) (*ttlJobBrief, error) {
 	se, err := getSession(a.m.sessPool)
 	if err != nil {
 		return nil, err
 	}
 	defer se.Close()
 
-	rows, err := se.ExecuteSQL(ctx, "SELECT status FROM mysql.tidb_ttl_job_history WHERE job_id=%?", id)
+	rows, err := se.ExecuteSQL(ctx, "SELECT status, summary_text FROM mysql.tidb_ttl_job_history WHERE job_id=%?", id)
 	if err != nil {
 		return nil, err
 	}
@@ -1034,8 +1043,15 @@ func (a *managerJobAdapter) GetJob(ctx context.Context, id string) (*ttlJobBrief
 		finished = true
 	}
 
+	summaryText := rows[1].GetBytes(0)
+	var summary TTLSummary
+	if err = json.Unmarshal(summaryText, &summary); err != nil {
+		return nil, err
+	}
+
 	return &ttlJobBrief{
 		ID:       id,
 		Finished: finished,
+		Summary:  &summary,
 	}, nil
 }

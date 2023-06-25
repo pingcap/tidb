@@ -113,6 +113,8 @@ const (
 	TaskTypeExample = "Example"
 	// ImportInto is TaskType of ImportInto.
 	ImportInto = "ImportInto"
+	// TaskTTL is TaskType of TTL
+	TaskTTL = "TTL"
 )
 
 // Type2Int converts task type to int.
@@ -122,6 +124,8 @@ func Type2Int(t string) int {
 		return 1
 	case ImportInto:
 		return 2
+	case TaskTTL:
+		return 3
 	default:
 		return 0
 	}
@@ -134,6 +138,8 @@ func Int2Type(i int) string {
 		return TaskTypeExample
 	case 2:
 		return ImportInto
+	case 3:
+		return TaskTTL
 	default:
 		return ""
 	}

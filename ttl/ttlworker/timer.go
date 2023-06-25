@@ -54,6 +54,11 @@ type timerRuntime struct {
 	rt      *runtime.TimerGroupRuntime
 }
 
+type timerSummary struct {
+	LastJobID      string      `json:"last_job_id"`
+	LastJobSummary *TTLSummary `json:"last_job_summary"`
+}
+
 func newTimerRuntime(pool sessionPool, etcd *clientv3.Client, adapter ttlJobAdapter) *timerRuntime {
 	store := timertable.NewTableTimerStore(0, pool, "mysql", "tidb_timers", etcd)
 	return &timerRuntime{
@@ -249,11 +254,12 @@ func (r *timerRuntime) Close() {
 type ttlJobBrief struct {
 	ID       string
 	Finished bool
+	Summary  *TTLSummary
 }
 
 type ttlJobAdapter interface {
-	SubmitJob(ctx context.Context, id string, tableID int64, physicalID int64) (*ttlJobBrief, error)
-	GetJob(ctx context.Context, id string) (*ttlJobBrief, error)
+	SubmitJob(ctx context.Context, id string, tableID int64, physicalID int64, watermark time.Time) (*ttlJobBrief, error)
+	GetJob(ctx context.Context, id string, tableID int64, physicalID int64) (*ttlJobBrief, error)
 }
 
 type ttlTableHook struct {
@@ -313,7 +319,7 @@ func (h *ttlTableHook) OnSchedEvent(ctx context.Context, event timerapi.TimerShe
 		zap.Strings("tags", timer.Tags),
 	)
 
-	job, err := h.adapter.GetJob(ctx, eventID)
+	job, err := h.adapter.GetJob(ctx, eventID, meta.TableID, meta.PhysicalID)
 	if err != nil {
 		return err
 	}
@@ -323,17 +329,17 @@ func (h *ttlTableHook) OnSchedEvent(ctx context.Context, event timerapi.TimerShe
 	}
 
 	if job == nil {
-		if _, err = h.adapter.SubmitJob(ctx, eventID, meta.TableID, meta.PhysicalID); err != nil {
+		if _, err = h.adapter.SubmitJob(ctx, eventID, meta.TableID, meta.PhysicalID, timer.EventStart); err != nil {
 			return err
 		}
 	}
 
 	h.wg.Add(1)
-	h.waitJobFinished(logger, timer.ID, eventID, timer.EventStart)
+	h.waitJobFinished(logger, &meta, timer.ID, eventID, timer.EventStart)
 	return nil
 }
 
-func (h *ttlTableHook) waitJobFinished(logger *zap.Logger, timerID string, eventID string, nextWatermark time.Time) {
+func (h *ttlTableHook) waitJobFinished(logger *zap.Logger, meta *timerMeta, timerID string, eventID string, nextWatermark time.Time) {
 	defer h.wg.Done()
 
 	ticker := time.NewTicker(5 * time.Second)
@@ -362,7 +368,7 @@ func (h *ttlTableHook) waitJobFinished(logger *zap.Logger, timerID string, event
 			return
 		}
 
-		job, err := h.adapter.GetJob(h.ctx, eventID)
+		job, err := h.adapter.GetJob(h.ctx, eventID, meta.TableID, meta.PhysicalID)
 		if err != nil {
 			logger.Error("GetJob error", zap.Error(err))
 			continue
@@ -374,9 +380,21 @@ func (h *ttlTableHook) waitJobFinished(logger *zap.Logger, timerID string, event
 
 		if job == nil {
 			logger.Error("job not exist")
+			continue
 		}
 
-		if err = h.cli.CloseTimerEvent(h.ctx, timerID, eventID, timerapi.WithSetWatermark(nextWatermark)); err != nil {
+		summary := timerSummary{
+			LastJobID:      job.ID,
+			LastJobSummary: job.Summary,
+		}
+
+		bs, err := json.Marshal(summary)
+		if err != nil {
+			logger.Error("marshal summary error", zap.Error(err))
+			continue
+		}
+
+		if err = h.cli.CloseTimerEvent(h.ctx, timerID, eventID, timerapi.WithSetWatermark(nextWatermark), timerapi.WithSetSummaryData(bs)); err != nil {
 			logger.Error("CloseTimerEvent error", zap.Error(err))
 			continue
 		}

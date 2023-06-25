@@ -78,6 +78,8 @@ type ttlScanTask struct {
 
 	tbl        *cache.PhysicalTable
 	statistics *ttlStatistics
+
+	respChan chan *ttlScanTaskExecResult
 }
 
 type ttlScanTaskExecResult struct {
