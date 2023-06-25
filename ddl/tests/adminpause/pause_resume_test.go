@@ -40,7 +40,7 @@ var localPRCPauseResult []sqlexec.RecordSet
 var localPRCPauseErr error
 var localPRCIsPaused = false
 
-func localPRCPauseFunc(adminCommandKit *testkit.TestKit, stmtCase *AdminPauseResumeStmtCase) func(*model.Job) {
+func localPRCPauseFunc(adminCommandKit *testkit.TestKit, stmtCase *StmtCase) func(*model.Job) {
 	return func(job *model.Job) {
 		Logger.Debug("pauseResumeAndCancel: OnJobRunBeforeExported, ",
 			zap.String("Job Type", job.Type.String()),
@@ -83,7 +83,7 @@ var localPRCIsResumed = false
 var localPRCResumeResult []sqlexec.RecordSet
 var localPRCResumeErr error
 
-func localPRCResumeFunc(adminCommandKit *testkit.TestKit, stmtCase *AdminPauseResumeStmtCase) func(*model.Job) {
+func localPRCResumeFunc(adminCommandKit *testkit.TestKit, stmtCase *StmtCase) func(*model.Job) {
 	return func(job *model.Job) {
 		Logger.Debug("pauseResumeAndCancel: OnJobUpdatedExported, ",
 			zap.String("Job Type", job.Type.String()),
@@ -122,7 +122,7 @@ var localPRCCancelResult []sqlexec.RecordSet
 var localPRCCancelErr error
 var localPRCIsCancelled = false
 
-func localPRCCancelFunc(adminCommandKit *testkit.TestKit, stmtCase *AdminPauseResumeStmtCase) func(string) {
+func localPRCCancelFunc(adminCommandKit *testkit.TestKit, stmtCase *StmtCase) func(string) {
 	return func(jobType string) {
 		localPRCAdminCommandMutex.Lock()
 		defer localPRCAdminCommandMutex.Unlock()
@@ -152,7 +152,7 @@ func localPRCVerifyCancelResult(t *testing.T, adminCommandKit *testkit.TestKit) 
 	localPRCIsCancelled = false
 }
 
-func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit *testkit.TestKit, dom *domain.Domain, stmtCase *AdminPauseResumeStmtCase, doCancel bool) {
+func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit *testkit.TestKit, dom *domain.Domain, stmtCase *StmtCase, doCancel bool) {
 	Logger.Info("pauseResumeAndCancel: case start,",
 		zap.Int("GlobalID", stmtCase.globalID),
 		zap.String("statement", stmtCase.stmt),
@@ -178,12 +178,14 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 		if doCancel {
 			hook.OnGetJobBeforeExported = localPRCCancelFunc(adminCommandKit, stmtCase)
 			dom.DDL().SetHook(hook.Clone())
+
 			stmtKit.MustGetErrCode(stmtCase.stmt, errno.ErrCancelledDDLJob)
 			Logger.Info("pauseResumeAndCancel: statement execution should be cancelled.")
 
 			localPRCVerifyCancelResult(t, adminCommandKit)
 		} else {
 			dom.DDL().SetHook(hook.Clone())
+
 			stmtKit.MustExec(stmtCase.stmt)
 			Logger.Info("pauseResumeAndCancel: statement execution should finish successfully.")
 
@@ -219,7 +221,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 // TestPauseAndResumePositive
 // - positive cases
 // - pause the job, and resume it, then it should finish successfully
-// - iterate all the `AdminPauseResumeStmtCase` statements
+// - iterate all the `StmtCase` statements
 func TestPauseAndResume(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	stmtKit := testkit.NewTestKit(t, store)
@@ -265,7 +267,7 @@ func TestPauseAndResume(t *testing.T) {
 // - positive cases
 // - pause the job, and resume it, and then cancel it. The statement should be cancelled
 // - run the `stmt` again
-// - iterate all the `AdminPauseResumeStmtCase` statements
+// - iterate all the `StmtCase` statements
 func TestPauseResumeCancelAndRerun(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 

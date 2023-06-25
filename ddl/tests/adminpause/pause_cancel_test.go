@@ -39,7 +39,7 @@ var localPCRPauseErrChn = make(chan error, 1)
 var localPCRPauseResultChn = make(chan []sqlexec.RecordSet, 1)
 var localPCRIsPaused = &atomic.Bool{}
 
-func localPCRPauseFunc(adminCommandKit *testkit.TestKit, stmtCase *AdminPauseResumeStmtCase) func(*model.Job) {
+func localPCRPauseFunc(adminCommandKit *testkit.TestKit, stmtCase *StmtCase) func(*model.Job) {
 	return func(job *model.Job) {
 		Logger.Debug("TestPauseCancelAndRerun: OnJobRunBeforeExported, ",
 			zap.String("Job Type", job.Type.String()),
@@ -83,7 +83,7 @@ var localPCRCancelErrChn = make(chan error, 1)
 var localPCRCancelResultChn = make(chan []sqlexec.RecordSet, 1)
 var localPCRIsCancelled = &atomic.Bool{}
 
-func localPCRCancelFunc(adminCommandKit *testkit.TestKit, stmtCase *AdminPauseResumeStmtCase) func(string) {
+func localPCRCancelFunc(adminCommandKit *testkit.TestKit, stmtCase *StmtCase) func(string) {
 	return func(jobType string) {
 		Logger.Debug("TestPauseCancelAndRerun: OnGetJobBeforeExported, ",
 			zap.String("Expected Schema State", stmtCase.schemaState.String()))
@@ -117,7 +117,7 @@ func localPCRVerifyCancelResult(t *testing.T, adminCommandKit *testkit.TestKit) 
 	localPCRIsCancelled.CompareAndSwap(true, false)
 }
 
-func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit *testkit.TestKit, dom *domain.Domain, stmtCase *AdminPauseResumeStmtCase) {
+func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit *testkit.TestKit, dom *domain.Domain, stmtCase *StmtCase) {
 	Logger.Info("TestPauseCancelAndRerun: case start,",
 		zap.Int("GlobalID", stmtCase.globalID),
 		zap.String("statement", stmtCase.stmt),

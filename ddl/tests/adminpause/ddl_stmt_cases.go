@@ -37,7 +37,7 @@ func (a *autoIncrsedID) globalID() int {
 
 var ai autoIncrsedID
 
-// AdminPauseResumeStmtCase is a description of all kinds of DDL statements
+// StmtCase is a description of all kinds of DDL statements
 //
 // DDL case may be referenced for more than one test cases, before which `AdminPauseTestTable` should have been created.
 //
@@ -45,11 +45,11 @@ var ai autoIncrsedID
 //   - `globalID` indicates the sequence number among all cases, even in different case array
 //   - `stmt` is normally the case you care
 //   - `jobState`, refer to model.SchemaState, the target state of the DDL which we want to pause
-//   - `isJobPausable` indicates that the `admin pause` should return true within certain `AdminPauseResumeStmtCase` object
+//   - `isJobPausable` indicates that the `admin pause` should return true within certain `StmtCase` object
 //   - `preConditionStmts` should always be run before all kinds cases, to satify the requirement of `stmt`
 //   - `rollbackStmts` should be run if necessary to clean the object created by the 'preConditionStmts' or `stmt`, no
 //     matter what is the result of `stmt`
-type AdminPauseResumeStmtCase struct {
+type StmtCase struct {
 	globalID          int
 	stmt              string
 	schemaState       model.SchemaState
@@ -62,7 +62,7 @@ const testSchema string = "test_create_db"
 const createSchemaStmt string = "create database " + testSchema + ";"
 const dropSchemaStmt string = "drop database " + testSchema + ";"
 
-var schemaDDLStmtCase = [...]AdminPauseResumeStmtCase{
+var schemaDDLStmtCase = [...]StmtCase{
 	// Create schema.
 	{ai.globalID(), createSchemaStmt, model.StateNone, true, nil, []string{dropSchemaStmt}},
 	{ai.globalID(), createSchemaStmt, model.StatePublic, false, nil, []string{dropSchemaStmt}},
@@ -88,7 +88,7 @@ const createTableStmt = `create table ` + tableName + ` (	id int(11) NOT NULL AU
 
 const dropTableStmt = "drop table " + tableName + ";"
 
-var tableDDLStmt = [...]AdminPauseResumeStmtCase{
+var tableDDLStmt = [...]StmtCase{
 	// Create table.
 	{ai.globalID(), createTableStmt, model.StateNone, true, nil, []string{dropTableStmt}},
 	{ai.globalID(), createTableStmt, model.StatePublic, false, nil, []string{dropTableStmt}},
@@ -114,7 +114,7 @@ const dropUniqueIndexStmt string = alterTableDropPrefix + "index if exists idx_p
 const addIndexStmt string = alterTableAddPrefix + "index if not exists idx_name (name);"
 const dropIndexStmt string = alterTableDropPrefix + "index if exists idx_name;"
 
-var indexDDLStmtCase = [...]AdminPauseResumeStmtCase{
+var indexDDLStmtCase = [...]StmtCase{
 	// Add primary key
 	/*
 		{ai.globalID(), addPrimaryIndexStmt, model.StateNone, true, nil, []string{dropPrimaryIndexStmt}},
@@ -157,7 +157,7 @@ const dropColumnStmt string = alterTableDropPrefix + "column if exists t_col;"
 const addColumnIdxStmt string = alterTableAddPrefix + "index idx_t_col(t_col);"
 const alterColumnPrefix string = alterTableModifyPrefix + "column t_col "
 
-var columnDDLStmtCase = [...]AdminPauseResumeStmtCase{
+var columnDDLStmtCase = [...]StmtCase{
 	// Add column.
 	{ai.globalID(), addColumnStmt, model.StateNone, true, nil, []string{dropColumnStmt}},
 	{ai.globalID(), addColumnStmt, model.StateDeleteOnly, true, nil, []string{dropColumnStmt}},
@@ -199,7 +199,7 @@ const alterTablePartitionExchangePrefix string = alterTablePartitionPrefix + " e
 const alterTablePartitionAddPartition = alterTablePartitionAddPrefix + "(partition p7 values less than (200));"
 const alterTablePartitionDropPartition = alterTablePartitionDropPrefix + "p7;"
 
-var tablePartitionDDLStmtCase = [...]AdminPauseResumeStmtCase{
+var tablePartitionDDLStmtCase = [...]StmtCase{
 	// Exchange partition.
 	{ai.globalID(), alterTablePartitionExchangePrefix + "p6 with table " + adminPauseTestTable + ";", model.StateNone, true, []string{"set @@tidb_enable_exchange_partition=1;"}, nil},
 	{ai.globalID(), alterTablePartitionExchangePrefix + "p6 with table " + adminPauseTestTable + ";", model.StatePublic, false, []string{"set @@tidb_enable_exchange_partition=1;"}, nil},
@@ -222,12 +222,12 @@ const createPlacementPolicy = "create placement policy " + placementPolicy + " P
 const dropPlacementPolicy = "drop placement policy " + placementPolicy
 const alterSchemaPolicy = "alter database " + testSchema + " placement policy = '" + placementPolicy + "';"
 
-var placeRulDDLStmtCase = [...]AdminPauseResumeStmtCase{
+var placeRulDDLStmtCase = [...]StmtCase{
 	{ai.globalID(), alterSchemaPolicy, model.StateNone, true, []string{createPlacementPolicy, createSchemaStmt}, []string{dropSchemaStmt, dropPlacementPolicy}},
 	{ai.globalID(), alterSchemaPolicy, model.StatePublic, false, []string{createPlacementPolicy, createSchemaStmt}, []string{dropSchemaStmt, dropPlacementPolicy}},
 }
 
-func (stmtCase *AdminPauseResumeStmtCase) simpleRunStmt(stmtKit *testkit.TestKit) {
+func (stmtCase *StmtCase) simpleRunStmt(stmtKit *testkit.TestKit) {
 	for _, prepareStmt := range stmtCase.preConditionStmts {
 		stmtKit.MustExec(prepareStmt)
 	}
