@@ -555,7 +555,7 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	}
 	failpoint.Inject("checkTotalMPPTasks", func(val failpoint.Value) {
 		if val.(int) != len(c.mppReqs) {
-			failpoint.Return(nil, errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(c.mppReqs)))
+			failpoint.Return(nil, nil, errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(c.mppReqs)))
 		}
 	})
 

@@ -132,4 +132,3 @@ func (e *MPPGather) Table() table.Table {
 func (e *MPPGather) setDummy() {
 	e.dummy = true
 }
-
