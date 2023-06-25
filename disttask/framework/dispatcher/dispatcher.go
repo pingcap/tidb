@@ -374,6 +374,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) error {
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
 		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
+		gTask.Error = errors.New("unsupported task type")
 		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	metas, err := handle.ProcessNormalFlow(d.ctx, d, gTask)
