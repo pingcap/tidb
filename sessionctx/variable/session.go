@@ -1055,6 +1055,26 @@ type SessionVars struct {
 	// When it is false, ANALYZE reads the latest data.
 	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
 	EnableAnalyzeSnapshot bool
+
+	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
+	OptimizerFixControl map[uint64]string
+}
+
+var (
+	// variables below are for the optimizer fix control.
+
+	// TiDBOptFixControl44855 controls whether to use a more accurate upper bound when estimating row count of index
+	// range scan under inner side of index join.
+	TiDBOptFixControl44855 uint64 = 44855
+)
+
+// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
+	if s.OptimizerFixControl == nil {
+		return "", false
+	}
+	value, exist = s.OptimizerFixControl[key]
+	return
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
