@@ -882,6 +882,9 @@ const (
 
 	// TiDBAnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
 	TiDBAnalyzeSkipColumnTypes = "tidb_analyze_skip_column_types"
+
+	// TiDBEnableCheckConstraint indicates whether to enable check constraint feature.
+	TiDBEnableCheckConstraint = "tidb_enable_check_constraint"
 )
 
 // TiDB vars that have only global scope
@@ -1355,6 +1358,11 @@ const (
 	DefTiDBEnableFastCheckTable                       = true
 	DefRuntimeFilterType                              = "IN"
 	DefRuntimeFilterMode                              = "OFF"
+<<<<<<< HEAD
+=======
+	DefTiDBLockUnchangedKeys                          = true
+	DefTiDBEnableCheckConstraint                      = false
+>>>>>>> 90c05ae4c64 (sql: add switch for check constraint (#44954))
 )
 
 // Process global variables.
@@ -1438,6 +1446,7 @@ var (
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
 	EnableResourceControl = atomic.NewBool(false)
+	EnableCheckConstraint = atomic.NewBool(DefTiDBEnableCheckConstraint)
 )
 
 var (
