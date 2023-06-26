@@ -6121,6 +6121,9 @@ func TestProcessInfoOfSubQuery(t *testing.T) {
 		wg.Done()
 	}()
 	time.Sleep(time.Second)
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk2.MustQuery("select 1 from information_schema.processlist where TxnStart != '' and info like 'select%sleep% from t%'").Check(testkit.Rows("1"))
 	wg.Wait()
 }
