@@ -154,12 +154,12 @@ func localPRCVerifyCancelResult(t *testing.T, adminCommandKit *testkit.TestKit) 
 
 func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit *testkit.TestKit, dom *domain.Domain, stmtCase *StmtCase, doCancel bool) {
 	Logger.Info("pauseResumeAndCancel: case start,",
-		zap.Int("GlobalID", stmtCase.globalID),
-		zap.String("statement", stmtCase.stmt),
-		zap.String("schema state", stmtCase.schemaState.String()),
-		zap.Strings("pre-condition", stmtCase.preConditionStmts),
-		zap.Strings("rollback statement", stmtCase.rollbackStmts),
-		zap.Bool("isJobPausable", stmtCase.isJobPausable))
+		zap.Int("Global ID", stmtCase.globalID),
+		zap.String("Statement", stmtCase.stmt),
+		zap.String("Schema state", stmtCase.schemaState.String()),
+		zap.Strings("Pre-condition", stmtCase.preConditionStmts),
+		zap.Strings("Rollback statement", stmtCase.rollbackStmts),
+		zap.Bool("Job pausable", stmtCase.isJobPausable))
 
 	for _, prepareStmt := range stmtCase.preConditionStmts {
 		Logger.Debug("pauseResumeAndCancel: ", zap.String("Prepare schema before test", prepareStmt))
@@ -331,5 +331,5 @@ func TestPauseResumeCancelAndRerun(t *testing.T) {
 		stmtCase.simpleRunStmt(stmtKit)
 	}
 
-	Logger.Info("TestPauseResumeAndCancelPositive: all cases finished.")
+	Logger.Info("TestPauseResumeCancelAndRerun: all cases finished.")
 }
