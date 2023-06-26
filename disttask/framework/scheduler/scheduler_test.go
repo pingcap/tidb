@@ -227,7 +227,6 @@ func TestSchedulerRun(t *testing.T) {
 	mockPool.AssertExpectations(t)
 }
 
-// ywq todo
 func TestSchedulerRollback(t *testing.T) {
 	tp := "test_scheduler_rollback"
 	ctx, cancel := context.WithCancel(context.Background())

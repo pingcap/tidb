@@ -289,7 +289,7 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 1)
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
 	}()
@@ -306,7 +306,7 @@ func TestFrameworkBatchAddSubTasks(t *testing.T) {
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 3)
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/insertSubtasksFail", "return(true)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/insertSubtasksFail", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/insertSubtasksFail"))
 	}()
@@ -322,15 +322,7 @@ func TestFrameworkBatchAddSubTasksFailed(t *testing.T) {
 	RegisterTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 3)
 
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFail", "1*return(true)")
-	DispatchTaskAndCheckFail("key1", t, &v)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFail"))
-
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrNotRetryable", "1*return(true)")
-	DispatchTaskAndCheckFail("😌", t, &v)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrNotRetryable"))
-
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrRetryable", "1*return(true)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrRetryable", "1*return(true)"))
 	DispatchTaskAndCheckSuccess("😊", t, &v)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrRetryable"))
 

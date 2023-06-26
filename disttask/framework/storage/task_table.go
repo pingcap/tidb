@@ -419,8 +419,8 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 
 func (stm *TaskManager) UpdateGlobalTask(gTask *proto.Task) error {
 	gTask.StateUpdateTime = time.Now().UTC()
-	return stm.WithNewTxn(func(se sessionctx.Context) error {
-		_, err := execSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %?, flag = %? where id = %?",
+	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
+		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %?, flag = %? where id = %?",
 			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, gTask.Error, gTask.Flag, gTask.ID)
 		if err != nil {
 			return err
@@ -431,14 +431,14 @@ func (stm *TaskManager) UpdateGlobalTask(gTask *proto.Task) error {
 
 // AddSubTasks add new subtasks.
 func (stm *TaskManager) AddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, isSubtaskRevert bool) (err error) {
-	return stm.WithNewTxn(func(se sessionctx.Context) error {
+	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
 		subtaskState := proto.TaskStatePending
 		if isSubtaskRevert {
 			subtaskState = proto.TaskStateRevertPending
 		}
 
 		for _, subtask := range subtasks {
-			_, err = execSQL(stm.ctx, se, "insert into mysql.tidb_background_subtask(step, task_key, exec_id, meta, state, type, checkpoint) values (%?, %?, %?, %?, %?, %?, %?)",
+			_, err = ExecSQL(stm.ctx, se, "insert into mysql.tidb_background_subtask(step, task_key, exec_id, meta, state, type, checkpoint) values (%?, %?, %?, %?, %?, %?, %?)",
 				gTask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{})
 			if err != nil {
 				return err

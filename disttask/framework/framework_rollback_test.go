@@ -123,13 +123,34 @@ func TestFrameworkRollback(t *testing.T) {
 	var v atomic.Int64
 	RegisterRollbackTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe", "1*return(true)")
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe"))
-	}()
-
-	DispatchTaskAndCheckFail("key2", t, &v)
+	// 1. cancel global task.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe", "1*return(true)"))
+	DispatchTaskAndCheckFail("key1", t, &v)
 	require.Equal(t, int32(2), rollbackCnt.Load())
 	rollbackCnt.Store(0)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe"))
+
+	// 2. processNormalFlowErr and not retryable.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrNotRetryable", "1*return(true)"))
+	DispatchTaskAndCheckFail("key2", t, &v)
+	require.Equal(t, int32(0), rollbackCnt.Load())
+	rollbackCnt.Store(0)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrNotRetryable"))
+
+	// 3. dispatch normal subtasks fail.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFail", "1*return(true)"))
+	DispatchTaskAndCheckFail("key3", t, &v)
+	require.Equal(t, int32(0), rollbackCnt.Load())
+	rollbackCnt.Store(0)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFail"))
+
+	// 4. insert revert subtasks fail.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe", "1*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/insertSubtasksFail", "return(true)"))
+	DispatchTaskAndCheckFail("key4", t, &v)
+	require.Equal(t, int32(2), rollbackCnt.Load())
+	rollbackCnt.Store(0)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/insertSubtasksFail"))
 	distContext.Close()
 }

@@ -16,7 +16,6 @@ package dispatcher
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -337,7 +336,6 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, gTaskState string, subT
 	prevState := gTask.State
 	gTask.Flag = proto.TaskSubStateDispatching
 	gTask.State = gTaskState
-	logutil.BgLogger().Info(fmt.Sprintf("ywq test gtask %v", gTask))
 	// 1. update gtask to dispatching substate.
 	for i := 0; i < retryTimes; i++ {
 		err = d.taskMgr.UpdateGlobalTask(gTask)
@@ -354,7 +352,6 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, gTaskState string, subT
 
 	failpoint.Inject("dispatchSubTasksFail", func(val failpoint.Value) {
 		if val.(bool) {
-			logutil.BgLogger().Info("ywq test inject dispatchsubtasks")
 			failpoint.Return(errors.New("injected error in dispatchSubTasks"))
 		}
 	})
@@ -366,19 +363,14 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, gTaskState string, subT
 		for j := 0; j < retryTimes; j++ {
 			failpoint.Inject("insertSubtasksFail", func() {
 				if j < 10 {
-					logutil.BgLogger().Warn("ywq test err insert")
-					err = errors.New("insertSubtasks fail")
+					time.Sleep(retrySQLInterval)
+					failpoint.Continue()
 				}
 			})
-			if err == nil {
-				err = d.taskMgr.AddSubTasks(gTask, subtask, isRevert)
-			}
+			err = d.taskMgr.AddSubTasks(gTask, subtask, isRevert)
 			if err == nil {
 				break
 			}
-			// ywq todo
-
-			err = nil
 			if j%10 == 0 {
 				logutil.BgLogger().Warn("batch add subtasks failed", zap.Int64("task-id", gTask.ID),
 					zap.String("previous state", prevState), zap.String("curr state", gTask.State),
