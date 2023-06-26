@@ -456,7 +456,8 @@ func TestRenewLease(t *testing.T) {
 }
 
 func TestCacheTableAddColumns(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table cache_add_column (f1 int, index k(f1))")
