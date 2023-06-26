@@ -39,7 +39,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	util2 "github.com/pingcap/tidb/server/internal/util"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -54,6 +53,8 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/server/internal/dump"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
@@ -76,11 +77,11 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	// status ok
 	data = append(data, 0)
 	// stmt id
-	data = util2.DumpUint32(data, uint32(stmt.ID()))
+	data = dump.DumpUint32(data, uint32(stmt.ID()))
 	// number columns
-	data = util2.DumpUint16(data, uint16(len(columns)))
+	data = dump.DumpUint16(data, uint16(len(columns)))
 	// number params
-	data = util2.DumpUint16(data, uint16(len(params)))
+	data = dump.DumpUint16(data, uint16(len(params)))
 	// filter [00]
 	data = append(data, 0)
 	// warning count

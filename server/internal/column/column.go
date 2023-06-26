@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package column
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/server/internal/util"
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/internal/dump"
 )
 
 const maxColumnNameSize = 256
@@ -40,18 +40,18 @@ type ColumnInfo struct {
 }
 
 // Dump dumps ColumnInfo to bytes.
-func (column *ColumnInfo) Dump(buffer []byte, d *util.ResultEncoder) []byte {
+func (column *ColumnInfo) Dump(buffer []byte, d *ResultEncoder) []byte {
 	return column.dump(buffer, d, false)
 }
 
 // DumpWithDefault dumps ColumnInfo to bytes, including column defaults. This is used for ComFieldList responses.
-func (column *ColumnInfo) DumpWithDefault(buffer []byte, d *util.ResultEncoder) []byte {
+func (column *ColumnInfo) DumpWithDefault(buffer []byte, d *ResultEncoder) []byte {
 	return column.dump(buffer, d, true)
 }
 
-func (column *ColumnInfo) dump(buffer []byte, d *util.ResultEncoder, withDefault bool) []byte {
+func (column *ColumnInfo) dump(buffer []byte, d *ResultEncoder, withDefault bool) []byte {
 	if d == nil {
-		d = util.NewResultEncoder(charset.CharsetUTF8MB4)
+		d = NewResultEncoder(charset.CharsetUTF8MB4)
 	}
 	nameDump, orgnameDump := []byte(column.Name), []byte(column.OrgName)
 	if len(nameDump) > maxColumnNameSize {
@@ -60,18 +60,18 @@ func (column *ColumnInfo) dump(buffer []byte, d *util.ResultEncoder, withDefault
 	if len(orgnameDump) > maxColumnNameSize {
 		orgnameDump = orgnameDump[0:maxColumnNameSize]
 	}
-	buffer = util.DumpLengthEncodedString(buffer, []byte("def"))
-	buffer = util.DumpLengthEncodedString(buffer, d.EncodeMeta([]byte(column.Schema)))
-	buffer = util.DumpLengthEncodedString(buffer, d.EncodeMeta([]byte(column.Table)))
-	buffer = util.DumpLengthEncodedString(buffer, d.EncodeMeta([]byte(column.OrgTable)))
-	buffer = util.DumpLengthEncodedString(buffer, d.EncodeMeta(nameDump))
-	buffer = util.DumpLengthEncodedString(buffer, d.EncodeMeta(orgnameDump))
+	buffer = dump.DumpLengthEncodedString(buffer, []byte("def"))
+	buffer = dump.DumpLengthEncodedString(buffer, d.EncodeMeta([]byte(column.Schema)))
+	buffer = dump.DumpLengthEncodedString(buffer, d.EncodeMeta([]byte(column.Table)))
+	buffer = dump.DumpLengthEncodedString(buffer, d.EncodeMeta([]byte(column.OrgTable)))
+	buffer = dump.DumpLengthEncodedString(buffer, d.EncodeMeta(nameDump))
+	buffer = dump.DumpLengthEncodedString(buffer, d.EncodeMeta(orgnameDump))
 
 	buffer = append(buffer, 0x0c)
-	buffer = util.DumpUint16(buffer, d.ColumnTypeInfoCharsetID(column))
-	buffer = util.DumpUint32(buffer, column.ColumnLength)
+	buffer = dump.DumpUint16(buffer, d.ColumnTypeInfoCharsetID(column))
+	buffer = dump.DumpUint32(buffer, column.ColumnLength)
 	buffer = append(buffer, dumpType(column.Type))
-	buffer = util.DumpUint16(buffer, dumpFlag(column.Type, column.Flag))
+	buffer = dump.DumpUint16(buffer, dumpFlag(column.Type, column.Flag))
 	buffer = append(buffer, column.Decimal)
 	buffer = append(buffer, 0, 0)
 
@@ -81,7 +81,7 @@ func (column *ColumnInfo) dump(buffer []byte, d *util.ResultEncoder, withDefault
 			buffer = append(buffer, 251) // NULL
 		default:
 			defaultValStr := fmt.Sprintf("%v", column.DefaultValue)
-			buffer = util.DumpLengthEncodedString(buffer, []byte(defaultValStr))
+			buffer = dump.DumpLengthEncodedString(buffer, []byte(defaultValStr))
 		}
 	}
 

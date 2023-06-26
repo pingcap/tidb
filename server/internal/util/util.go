@@ -37,20 +37,13 @@ package util
 
 import (
 	"bytes"
-	"encoding/binary"
-	"github.com/pingcap/tidb/server"
 	"io"
 	"math"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 func ParseNullTermString(b []byte) (str []byte, remain []byte) {
@@ -99,25 +92,6 @@ func ParseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
 	return
 }
 
-func DumpLengthEncodedInt(buffer []byte, n uint64) []byte {
-	switch {
-	case n <= 250:
-		return append(buffer, byte(n))
-
-	case n <= 0xffff:
-		return append(buffer, 0xfc, byte(n), byte(n>>8))
-
-	case n <= 0xffffff:
-		return append(buffer, 0xfd, byte(n), byte(n>>8), byte(n>>16))
-
-	case n <= 0xffffffffffffffff:
-		return append(buffer, 0xfe, byte(n), byte(n>>8), byte(n>>16), byte(n>>24),
-			byte(n>>32), byte(n>>40), byte(n>>48), byte(n>>56))
-	}
-
-	return buffer
-}
-
 func ParseLengthEncodedBytes(b []byte) ([]byte, bool, int, error) {
 	// Get length
 	num, isNull, n := ParseLengthEncodedInt(b)
@@ -133,114 +107,6 @@ func ParseLengthEncodedBytes(b []byte) ([]byte, bool, int, error) {
 	}
 
 	return nil, false, n, io.EOF
-}
-
-func DumpLengthEncodedString(buffer []byte, bytes []byte) []byte {
-	buffer = DumpLengthEncodedInt(buffer, uint64(len(bytes)))
-	buffer = append(buffer, bytes...)
-	return buffer
-}
-
-func DumpUint16(buffer []byte, n uint16) []byte {
-	buffer = append(buffer, byte(n))
-	buffer = append(buffer, byte(n>>8))
-	return buffer
-}
-
-func DumpUint32(buffer []byte, n uint32) []byte {
-	buffer = append(buffer, byte(n))
-	buffer = append(buffer, byte(n>>8))
-	buffer = append(buffer, byte(n>>16))
-	buffer = append(buffer, byte(n>>24))
-	return buffer
-}
-
-func DumpUint64(buffer []byte, n uint64) []byte {
-	buffer = append(buffer, byte(n))
-	buffer = append(buffer, byte(n>>8))
-	buffer = append(buffer, byte(n>>16))
-	buffer = append(buffer, byte(n>>24))
-	buffer = append(buffer, byte(n>>32))
-	buffer = append(buffer, byte(n>>40))
-	buffer = append(buffer, byte(n>>48))
-	buffer = append(buffer, byte(n>>56))
-	return buffer
-}
-
-func DumpBinaryTime(dur time.Duration) (data []byte) {
-	if dur == 0 {
-		return []byte{0}
-	}
-	data = make([]byte, 13)
-	data[0] = 12
-	if dur < 0 {
-		data[1] = 1
-		dur = -dur
-	}
-	days := dur / (24 * time.Hour)
-	dur -= days * 24 * time.Hour //nolint:durationcheck
-	data[2] = byte(days)
-	hours := dur / time.Hour
-	dur -= hours * time.Hour //nolint:durationcheck
-	data[6] = byte(hours)
-	minutes := dur / time.Minute
-	dur -= minutes * time.Minute //nolint:durationcheck
-	data[7] = byte(minutes)
-	seconds := dur / time.Second
-	dur -= seconds * time.Second //nolint:durationcheck
-	data[8] = byte(seconds)
-	if dur == 0 {
-		data[0] = 8
-		return data[:9]
-	}
-	binary.LittleEndian.PutUint32(data[9:13], uint32(dur/time.Microsecond))
-	return
-}
-
-func IsStringColumnType(tp byte) bool {
-	switch tp {
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
-		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
-		mysql.TypeEnum, mysql.TypeSet, mysql.TypeJSON:
-		return true
-	}
-	return false
-}
-
-func DumpBinaryDateTime(data []byte, t types.Time) []byte {
-	year, mon, day := t.Year(), t.Month(), t.Day()
-	switch t.Type() {
-	case mysql.TypeTimestamp, mysql.TypeDatetime:
-		if t.IsZero() {
-			// All zero.
-			data = append(data, 0)
-		} else if t.Microsecond() != 0 {
-			// Has micro seconds.
-			data = append(data, 11)
-			data = DumpUint16(data, uint16(year))
-			data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
-			data = DumpUint32(data, uint32(t.Microsecond()))
-		} else if t.Hour() != 0 || t.Minute() != 0 || t.Second() != 0 {
-			// Has HH:MM:SS
-			data = append(data, 7)
-			data = DumpUint16(data, uint16(year))
-			data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
-		} else {
-			// Only YY:MM:DD
-			data = append(data, 4)
-			data = DumpUint16(data, uint16(year))
-			data = append(data, byte(mon), byte(day))
-		}
-	case mysql.TypeDate:
-		if t.IsZero() {
-			data = append(data, 0)
-		} else {
-			data = append(data, 4)
-			data = DumpUint16(data, uint16(year)) // year
-			data = append(data, byte(mon), byte(day))
-		}
-	}
-	return data
 }
 
 type InputDecoder struct {
@@ -259,88 +125,6 @@ func (i *InputDecoder) DecodeInput(src []byte) []byte {
 		return src
 	}
 	return result
-}
-
-type ResultEncoder struct {
-	// chsName and encoding are unchanged after the initialization from
-	// session variable @@character_set_results.
-	chsName  string
-	encoding charset.Encoding
-
-	// dataEncoding can be updated to match the column data charset.
-	dataEncoding charset.Encoding
-
-	buffer *bytes.Buffer
-
-	isBinary     bool
-	isNull       bool
-	dataIsBinary bool
-}
-
-// NewResultEncoder creates a new ResultEncoder.
-func NewResultEncoder(chs string) *ResultEncoder {
-	return &ResultEncoder{
-		chsName:  chs,
-		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
-		buffer:   &bytes.Buffer{},
-		isBinary: chs == charset.CharsetBin,
-		isNull:   len(chs) == 0,
-	}
-}
-
-// Clean prevent the ResultEncoder from holding too much memory.
-func (d *ResultEncoder) Clean() {
-	d.buffer = nil
-}
-
-func (d *ResultEncoder) UpdateDataEncoding(chsID uint16) {
-	chs, _, err := charset.GetCharsetInfoByID(int(chsID))
-	if err != nil {
-		logutil.BgLogger().Warn("unknown charset ID", zap.Error(err))
-	}
-	d.dataEncoding = charset.FindEncodingTakeUTF8AsNoop(chs)
-	d.dataIsBinary = chsID == mysql.BinaryDefaultCollationID
-}
-
-func (d *ResultEncoder) ColumnTypeInfoCharsetID(info *server.ColumnInfo) uint16 {
-	// Only replace the charset when @@character_set_results is valid and
-	// the target column is a non-binary string.
-	if d.isNull || len(d.chsName) == 0 || !IsStringColumnType(info.Type) {
-		return info.Charset
-	}
-	if info.Charset == mysql.BinaryDefaultCollationID {
-		return mysql.BinaryDefaultCollationID
-	}
-	return uint16(mysql.CharsetNameToID(d.chsName))
-}
-
-// EncodeMeta encodes bytes for meta info like column names.
-// Note that the result should be consumed immediately.
-func (d *ResultEncoder) EncodeMeta(src []byte) []byte {
-	return d.EncodeWith(src, d.encoding)
-}
-
-// encodeData encodes bytes for row data.
-// Note that the result should be consumed immediately.
-func (d *ResultEncoder) EncodeData(src []byte) []byte {
-	// For the following cases, TiDB encodes the results with column charset
-	// instead of @@character_set_results:
-	//   - @@character_set_result = null.
-	//   - @@character_set_result = binary.
-	//   - The column is binary type like blob, binary char/varchar.
-	if d.isNull || d.isBinary || d.dataIsBinary {
-		// Use the column charset to encode.
-		return d.EncodeWith(src, d.dataEncoding)
-	}
-	return d.EncodeWith(src, d.encoding)
-}
-
-func (d *ResultEncoder) EncodeWith(src []byte, enc charset.Encoding) []byte {
-	data, err := enc.Transform(d.buffer, src, charset.OpEncode)
-	if err != nil {
-		logutil.BgLogger().Debug("encode error", zap.Error(err))
-	}
-	return data
 }
 
 func LengthEncodedIntSize(n uint64) int {
@@ -411,6 +195,10 @@ func AppendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 type CorsHandler struct {
 	handler http.Handler
 	cfg     *config.Config
+}
+
+func NewCorsHandler(handler http.Handler, cfg *config.Config) http.Handler {
+	return CorsHandler{handler: handler, cfg: cfg}
 }
 
 func (h CorsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {

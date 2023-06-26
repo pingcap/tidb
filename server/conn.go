@@ -42,7 +42,6 @@ import (
 	"encoding/binary"
 	goerr "errors"
 	"fmt"
-	util2 "github.com/pingcap/tidb/server/internal/util"
 	"io"
 	"net"
 	"os/user"
@@ -76,6 +75,9 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/conn"
 	"github.com/pingcap/tidb/privilege/privileges/ldap"
+	"github.com/pingcap/tidb/server/internal/column"
+	"github.com/pingcap/tidb/server/internal/dump"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	server_metrics "github.com/pingcap/tidb/server/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -144,19 +146,19 @@ type clientConn struct {
 		sync.RWMutex
 		*TiDBContext // an interface to execute sql statements.
 	}
-	attrs         map[string]string    // attributes parsed from client handshake response.
-	serverHost    string               // server host
-	peerHost      string               // peer host
-	peerPort      string               // peer port
-	status        int32                // dispatching/reading/shutdown/waitshutdown
-	lastCode      uint16               // last error code
-	collation     uint8                // collation used by client, may be different from the collation used by database.
-	lastActive    time.Time            // last active time
-	authPlugin    string               // default authentication plugin
-	isUnixSocket  bool                 // connection is Unix Socket file
-	rsEncoder     *util2.ResultEncoder // rsEncoder is used to encode the string result to different charsets.
-	inputDecoder  *util2.InputDecoder  // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
-	socketCredUID uint32               // UID from the other end of the Unix Socket
+	attrs         map[string]string     // attributes parsed from client handshake response.
+	serverHost    string                // server host
+	peerHost      string                // peer host
+	peerPort      string                // peer port
+	status        int32                 // dispatching/reading/shutdown/waitshutdown
+	lastCode      uint16                // last error code
+	collation     uint8                 // collation used by client, may be different from the collation used by database.
+	lastActive    time.Time             // last active time
+	authPlugin    string                // default authentication plugin
+	isUnixSocket  bool                  // connection is Unix Socket file
+	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets.
+	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
+	socketCredUID uint32                // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
@@ -292,7 +294,7 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = util2.DumpUint16(data, mysql.ServerStatusAutocommit)
+		data = dump.DumpUint16(data, mysql.ServerStatusAutocommit)
 		data = append(data, 0, 0)
 	}
 
@@ -377,7 +379,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	}
 	data = append(data, cc.collation)
 	// status
-	data = util2.DumpUint16(data, mysql.ServerStatusAutocommit)
+	data = dump.DumpUint16(data, mysql.ServerStatusAutocommit)
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
 	data = append(data, byte(cc.server.capability>>16), byte(cc.server.capability>>24))
@@ -1025,7 +1027,7 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
 	}
-	cc.rsEncoder = util2.NewResultEncoder(chs)
+	cc.rsEncoder = column.NewResultEncoder(chs)
 }
 
 func (cc *clientConn) initInputEncoder(ctx context.Context) {
@@ -1529,16 +1531,16 @@ func (cc *clientConn) writeOkWith(ctx context.Context, header byte, flush bool, 
 
 	data := cc.alloc.AllocWithLen(4, 32+enclen)
 	data = append(data, header)
-	data = util2.DumpLengthEncodedInt(data, affectedRows)
-	data = util2.DumpLengthEncodedInt(data, lastInsertID)
+	data = dump.DumpLengthEncodedInt(data, affectedRows)
+	data = dump.DumpLengthEncodedInt(data, lastInsertID)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = util2.DumpUint16(data, status)
-		data = util2.DumpUint16(data, warnCnt)
+		data = dump.DumpUint16(data, status)
+		data = dump.DumpUint16(data, warnCnt)
 	}
 	if enclen > 0 {
 		// although MySQL manual says the info message is string<EOF>(https://dev.mysql.com/doc/internals/en/packet-OK_Packet.html),
 		// it is actually string<lenenc>
-		data = util2.DumpLengthEncodedString(data, []byte(msg))
+		data = dump.DumpLengthEncodedString(data, []byte(msg))
 	}
 
 	err := cc.writePacket(data)
@@ -1606,8 +1608,8 @@ func (cc *clientConn) writeEOF(ctx context.Context, serverStatus uint16) error {
 
 	data = append(data, mysql.EOFHeader)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = util2.DumpUint16(data, cc.ctx.WarningCount())
-		data = util2.DumpUint16(data, serverStatus)
+		data = dump.DumpUint16(data, cc.ctx.WarningCount())
+		data = dump.DumpUint16(data, serverStatus)
 	}
 
 	err := cc.writePacket(data)
@@ -2280,9 +2282,9 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs ResultSet, binary b
 	return false, cc.flush(ctx)
 }
 
-func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
+func (cc *clientConn) writeColumnInfo(columns []*column.ColumnInfo) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
-	data = util2.DumpLengthEncodedInt(data, uint64(len(columns)))
+	data = dump.DumpLengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
 		return err
 	}
