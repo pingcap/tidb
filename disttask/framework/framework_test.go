@@ -168,11 +168,7 @@ func DispatchAndCancelTask(taskKey string, t *testing.T, v *atomic.Int64) {
 	v.Store(0)
 }
 
-func DispatchAndFailTask(taskKey string, t *testing.T, v *atomic.Int64) {
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)")
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
-	}()
+func DispatchTaskAndCheckFail(taskKey string, t *testing.T, v *atomic.Int64) {
 	task := DispatchTask(taskKey, t)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 	v.Store(0)
@@ -277,6 +273,10 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 1)
-	DispatchAndFailTask("key1", t, &v)
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
+	}()
+	DispatchTaskAndCheckFail("key1", t, &v)
 	distContext.Close()
 }
