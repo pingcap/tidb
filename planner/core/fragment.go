@@ -101,6 +101,7 @@ type mppTaskGenerator struct {
 
 	CTEGroups map[int]*cteGroupInFragment
 
+	// For MPPGather under UnionScan, need keyRange to scan MemBuffer.
 	KVRanges []kv.KeyRange
 }
 
@@ -527,7 +528,6 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	var err error
 	splitedRanges, _ := distsql.SplitRangesAcrossInt64Boundary(ts.Ranges, false, false, ts.Table.IsCommonHandle)
 	// True when:
-	// 0. Is disaggregated tiflash. because in non-disaggregated tiflash, we dont use mpp for static pruning.
 	// 1. Is partition table.
 	// 2. Dynamic prune is not used.
 	var tiFlashStaticPrune bool
@@ -543,12 +543,17 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 				return nil, errors.Trace(err)
 			}
 			req, allPartitionsIDs, err = e.constructMPPBuildTaskReqForPartitionedTable(ts, splitedRanges, partitions)
+			for _, partitionKVRanges := range req.PartitionIDAndRanges {
+				e.KVRanges = append(e.KVRanges, partitionKVRanges.KeyRanges...)
+			}
 		} else {
 			singlePartTbl := tbl.GetPartition(ts.physicalTableID)
 			req, err = e.constructMPPBuildTaskForNonPartitionTable(singlePartTbl.GetPhysicalID(), ts.Table.IsCommonHandle, splitedRanges)
+			e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 		}
 	} else {
 		req, err = e.constructMPPBuildTaskForNonPartitionTable(ts.Table.ID, ts.Table.IsCommonHandle, splitedRanges)
+		e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -583,10 +588,6 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		}
 		tasks = append(tasks, task)
 	}
-	for _, partitionKVRanges := range req.PartitionIDAndRanges {
-		e.KVRanges = append(e.KVRanges, partitionKVRanges.KeyRanges...)
-	}
-	e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 	return tasks, nil
 }
 
