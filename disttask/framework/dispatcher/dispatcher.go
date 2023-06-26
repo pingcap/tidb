@@ -251,7 +251,6 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		return false, nil
 	}
 	return true, nil
-
 }
 
 // DetectTaskLoop monitors the status of the subtasks and processes them.
