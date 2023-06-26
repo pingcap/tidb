@@ -44,6 +44,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// ResultEncoder encodes a column value to a byte slice.
 type ResultEncoder struct {
 	// chsName and encoding are unchanged after the initialization from
 	// session variable @@character_set_results.
@@ -76,6 +77,7 @@ func (d *ResultEncoder) Clean() {
 	d.buffer = nil
 }
 
+// UpdateDataEncoding updates the data encoding.
 func (d *ResultEncoder) UpdateDataEncoding(chsID uint16) {
 	chs, _, err := charset.GetCharsetInfoByID(int(chsID))
 	if err != nil {
@@ -85,6 +87,7 @@ func (d *ResultEncoder) UpdateDataEncoding(chsID uint16) {
 	d.dataIsBinary = chsID == mysql.BinaryDefaultCollationID
 }
 
+// ColumnTypeInfoCharsetID returns the charset ID for the column type info.
 func (d *ResultEncoder) ColumnTypeInfoCharsetID(info *ColumnInfo) uint16 {
 	// Only replace the charset when @@character_set_results is valid and
 	// the target column is a non-binary string.
@@ -103,7 +106,7 @@ func (d *ResultEncoder) EncodeMeta(src []byte) []byte {
 	return d.EncodeWith(src, d.encoding)
 }
 
-// encodeData encodes bytes for row data.
+// EncodeData encodes bytes for row data.
 // Note that the result should be consumed immediately.
 func (d *ResultEncoder) EncodeData(src []byte) []byte {
 	// For the following cases, TiDB encodes the results with column charset
@@ -118,6 +121,7 @@ func (d *ResultEncoder) EncodeData(src []byte) []byte {
 	return d.EncodeWith(src, d.encoding)
 }
 
+// EncodeWith encodes bytes with the given encoding.
 func (d *ResultEncoder) EncodeWith(src []byte, enc charset.Encoding) []byte {
 	data, err := enc.Transform(d.buffer, src, charset.OpEncode)
 	if err != nil {

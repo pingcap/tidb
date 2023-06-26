@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 )
 
+// ParseNullTermString parses a null terminated string.
 func ParseNullTermString(b []byte) (str []byte, remain []byte) {
 	off := bytes.IndexByte(b, 0)
 	if off == -1 {
@@ -54,6 +55,7 @@ func ParseNullTermString(b []byte) (str []byte, remain []byte) {
 	return b[:off], b[off+1:]
 }
 
+// ParseLengthEncodedInt parses a length encoded integer.
 func ParseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
 	switch b[0] {
 	// 251: NULL
@@ -92,6 +94,7 @@ func ParseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
 	return
 }
 
+// ParseLengthEncodedBytes parses a length encoded byte slice.
 func ParseLengthEncodedBytes(b []byte) ([]byte, bool, int, error) {
 	// Get length
 	num, isNull, n := ParseLengthEncodedInt(b)
@@ -109,16 +112,19 @@ func ParseLengthEncodedBytes(b []byte) ([]byte, bool, int, error) {
 	return nil, false, n, io.EOF
 }
 
+// InputDecoder is used to decode input.
 type InputDecoder struct {
 	encoding charset.Encoding
 }
 
+// NewInputDecoder creates a new InputDecoder.
 func NewInputDecoder(chs string) *InputDecoder {
 	return &InputDecoder{
 		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
 	}
 }
 
+// DecodeInput decodes input.
 func (i *InputDecoder) DecodeInput(src []byte) []byte {
 	result, err := i.encoding.Transform(nil, src, charset.OpDecode)
 	if err != nil {
@@ -127,6 +133,7 @@ func (i *InputDecoder) DecodeInput(src []byte) []byte {
 	return result
 }
 
+// LengthEncodedIntSize returns the size of length encoded integer.
 func LengthEncodedIntSize(n uint64) int {
 	switch {
 	case n <= 250:
@@ -148,6 +155,7 @@ const (
 	defaultMySQLPrec = 5
 )
 
+// AppendFormatFloat appends a float64 to dst in MySQL format.
 func AppendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	absVal := math.Abs(fVal)
 	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {
@@ -197,10 +205,12 @@ type CorsHandler struct {
 	cfg     *config.Config
 }
 
+// NewCorsHandler creates a new CorsHandler.
 func NewCorsHandler(handler http.Handler, cfg *config.Config) http.Handler {
 	return CorsHandler{handler: handler, cfg: cfg}
 }
 
+// ServeHTTP implements http.Handler interface.
 func (h CorsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if h.cfg.Cors != "" {
 		w.Header().Set("Access-Control-Allow-Origin", h.cfg.Cors)
@@ -209,6 +219,7 @@ func (h CorsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	h.handler.ServeHTTP(w, req)
 }
 
+// NewTestConfig creates a new config for test.
 func NewTestConfig() *config.Config {
 	cfg := config.NewConfig()
 	cfg.Host = "127.0.0.1"

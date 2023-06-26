@@ -43,12 +43,14 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// DumpLengthEncodedString dumps a string as length encoded byte slice.
 func DumpLengthEncodedString(buffer []byte, bytes []byte) []byte {
 	buffer = DumpLengthEncodedInt(buffer, uint64(len(bytes)))
 	buffer = append(buffer, bytes...)
 	return buffer
 }
 
+// DumpLengthEncodedInt dumps an integer as length encoded byte slice.
 func DumpLengthEncodedInt(buffer []byte, n uint64) []byte {
 	switch {
 	case n <= 250:
@@ -68,12 +70,14 @@ func DumpLengthEncodedInt(buffer []byte, n uint64) []byte {
 	return buffer
 }
 
+// DumpUint16 dumps an uint16 as byte slice.
 func DumpUint16(buffer []byte, n uint16) []byte {
 	buffer = append(buffer, byte(n))
 	buffer = append(buffer, byte(n>>8))
 	return buffer
 }
 
+// DumpUint32 dumps an uint32 as byte slice.
 func DumpUint32(buffer []byte, n uint32) []byte {
 	buffer = append(buffer, byte(n))
 	buffer = append(buffer, byte(n>>8))
@@ -82,6 +86,7 @@ func DumpUint32(buffer []byte, n uint32) []byte {
 	return buffer
 }
 
+// DumpUint64 dumps an uint64 as byte slice.
 func DumpUint64(buffer []byte, n uint64) []byte {
 	buffer = append(buffer, byte(n))
 	buffer = append(buffer, byte(n>>8))
@@ -94,6 +99,7 @@ func DumpUint64(buffer []byte, n uint64) []byte {
 	return buffer
 }
 
+// DumpBinaryTime dumps a time as binary byte slice.
 func DumpBinaryTime(dur time.Duration) (data []byte) {
 	if dur == 0 {
 		return []byte{0}
@@ -124,6 +130,7 @@ func DumpBinaryTime(dur time.Duration) (data []byte) {
 	return
 }
 
+// DumpBinaryDateTime dumps a datetime as binary byte slice.
 func DumpBinaryDateTime(data []byte, t types.Time) []byte {
 	year, mon, day := t.Year(), t.Month(), t.Day()
 	switch t.Type() {
