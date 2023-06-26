@@ -1332,9 +1332,10 @@ func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) Executor {
 }
 
 func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) Executor {
+	oriEncounterUnionScan := b.encounterUnionScan
 	b.encounterUnionScan = true
 	defer func() {
-		b.encounterUnionScan = false
+		b.encounterUnionScan = oriEncounterUnionScan
 	}()
 	reader := b.build(v.Children()[0])
 	if b.err != nil {
@@ -3481,33 +3482,35 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 			break
 		}
 	}
-	// If isSingleDataSource is true, it means only one TableScan exists in MPP fragment,
-	// a.k.a. operators like Join with two TableScans will not push down tiflash.
-	// Otherwise we dont know which table info to use for virtual column or UnionScan.
-	// This assumption is guaranteed by the logic of generating the plan:
+
+	var isSingleDataSource bool
+	tableScans := v.GetTableScans()
+	if len(tableScans) == 1 {
+		isSingleDataSource = true
+	}
+
 	// 1. hasVirtualCol: when got virtual column in TableScan, will generate plan like the following,
-	//                   and there will be no other operators in the MPP fragment
+	//                   and there will be no other operators in the MPP fragment.
 	//     MPPGather
 	//       ExchangeSender
 	//         PhysicalTableScan
 	// 2. UnionScan: there won't be any operators like Join between UnionScan and TableScan.
 	//               and UnionScan cannot push down to tiflash.
-	isSingleDataSource := hasVirtualCol || b.encounterUnionScan
 	if !isSingleDataSource {
+		if hasVirtualCol || b.encounterUnionScan {
+			b.err = errors.Errorf("should only have one TableScan in MPP fragment(hasVirtualCol: %v, encounterUnionScan: %v)", hasVirtualCol, b.encounterUnionScan)
+			return nil
+		}
 		return gather
 	}
 
-	ts, err := v.GetTableScan()
-	if err != nil {
-		b.err = err
-		return nil
-	}
+	// Setup MPPGather.table if isSingleDataSource.
+	// Virtual Column or UnionScan need to use it.
+	ts := tableScans[0]
 	gather.columns = ts.Columns
-
 	if hasVirtualCol {
 		gather.virtualColumnIndex, gather.virtualColumnRetFieldTypes = buildVirtualColumnInfo(gather.Schema(), gather.columns)
 	}
-
 	tbl, _ := b.is.TableByID(ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
 	if isPartition {
