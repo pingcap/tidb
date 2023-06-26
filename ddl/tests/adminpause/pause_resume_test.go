@@ -34,7 +34,7 @@ import (
 )
 
 var localPRCJobID int64 = 0
-var localPRCAdminCommandMutex sync.RWMutex
+var localPRCAdminCommandMutex sync.Mutex
 
 var localPRCPauseResult []sqlexec.RecordSet
 var localPRCPauseErr error
@@ -67,8 +67,8 @@ func localPRCPauseFunc(adminCommandKit *testkit.TestKit, stmtCase *StmtCase) fun
 	}
 }
 func localPRCVerifyPauseResult(t *testing.T, adminCommandKit *testkit.TestKit) {
-	localPRCAdminCommandMutex.RLock()
-	defer localPRCAdminCommandMutex.RUnlock()
+	localPRCAdminCommandMutex.Lock()
+	defer localPRCAdminCommandMutex.Unlock()
 
 	require.True(t, localPRCIsPaused)
 	require.NoError(t, localPRCPauseErr)
@@ -106,8 +106,8 @@ func localPRCResumeFunc(adminCommandKit *testkit.TestKit, stmtCase *StmtCase) fu
 	}
 }
 func localPRCVerifyResumeResult(t *testing.T, adminCommandKit *testkit.TestKit) {
-	localPRCAdminCommandMutex.RLock()
-	defer localPRCAdminCommandMutex.RUnlock()
+	localPRCAdminCommandMutex.Lock()
+	defer localPRCAdminCommandMutex.Unlock()
 
 	require.True(t, localPRCIsResumed)
 	require.NoError(t, localPRCResumeErr)
@@ -138,10 +138,9 @@ func localPRCCancelFunc(adminCommandKit *testkit.TestKit, stmtCase *StmtCase) fu
 		}
 	}
 }
-
 func localPRCVerifyCancelResult(t *testing.T, adminCommandKit *testkit.TestKit) {
-	localPRCAdminCommandMutex.RLock()
-	defer localPRCAdminCommandMutex.RUnlock()
+	localPRCAdminCommandMutex.Lock()
+	defer localPRCAdminCommandMutex.Unlock()
 
 	require.True(t, localPRCIsCancelled)
 	require.NoError(t, localPRCCancelErr)
@@ -212,7 +211,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 	// Statement in `stmtCase` will be finished successfully all the way, need to roll it back.
 	for _, rollbackStmt := range stmtCase.rollbackStmts {
 		Logger.Info("pauseResumeAndCancel: ", zap.String("rollback statement", rollbackStmt))
-		stmtKit.Exec(rollbackStmt)
+		_, _ = stmtKit.Exec(rollbackStmt)
 	}
 
 	Logger.Info("pauseResumeAndCancel: statement case finished, ", zap.String("Statement", stmtCase.stmt))
