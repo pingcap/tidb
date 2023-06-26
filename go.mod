@@ -75,7 +75,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20230530111525-e4919c190b46
+	github.com/pingcap/kvproto v0.0.0-20230626053132-6a9e4e4e0ea6
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -299,7 +299,6 @@ replace (
 	// fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
-	github.com/pingcap/kvproto => github.com/3pointer/kvproto v0.0.0-20230612102605-fa0ca2a2afb9
 	github.com/pingcap/tidb/parser => ./parser
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
