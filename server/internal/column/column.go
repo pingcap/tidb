@@ -71,7 +71,7 @@ func (column *ColumnInfo) dump(buffer []byte, d *ResultEncoder, withDefault bool
 	buffer = dump.DumpUint16(buffer, d.ColumnTypeInfoCharsetID(column))
 	buffer = dump.DumpUint32(buffer, column.ColumnLength)
 	buffer = append(buffer, dumpType(column.Type))
-	buffer = dump.DumpUint16(buffer, dumpFlag(column.Type, column.Flag))
+	buffer = dump.DumpUint16(buffer, DumpFlag(column.Type, column.Flag))
 	buffer = append(buffer, column.Decimal)
 	buffer = append(buffer, 0, 0)
 
@@ -88,7 +88,8 @@ func (column *ColumnInfo) dump(buffer []byte, d *ResultEncoder, withDefault bool
 	return buffer
 }
 
-func dumpFlag(tp byte, flag uint16) uint16 {
+// DumpFlag dumps flag of a column.
+func DumpFlag(tp byte, flag uint16) uint16 {
 	switch tp {
 	case mysql.TypeSet:
 		return flag | uint16(mysql.SetFlag)

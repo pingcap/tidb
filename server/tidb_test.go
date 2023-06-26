@@ -1142,7 +1142,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, column.dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 
@@ -1153,7 +1153,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, column.dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 
@@ -1168,7 +1168,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, column.dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 
@@ -1178,7 +1178,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, column.dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 	{
@@ -1187,7 +1187,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, column.dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 	{
@@ -1196,7 +1196,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, column.dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 }
@@ -1221,7 +1221,7 @@ func TestNO_DEFAULT_VALUEFlag(t *testing.T) {
 	cols := rs.Columns()
 	require.Len(t, cols, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
-	require.Equal(t, expectFlag, column.dumpFlag(cols[0].Type, cols[0].Flag))
+	require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 }
 
 func TestGracefulShutdown(t *testing.T) {
