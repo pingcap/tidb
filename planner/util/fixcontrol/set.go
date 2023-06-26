@@ -23,7 +23,7 @@ import (
 )
 
 // ParseToMap parses the user input to an optimizer fix control map.
-func ParseToMap(s string) (result map[uint64]string, warnMsg []string, err error) {
+func ParseToMap(s string) (result map[uint64]string, warnMsgs []string, err error) {
 	m := make(map[uint64]string)
 	for ; len(s) > 0; s = strings.TrimSpace(s) {
 		// find the colon
@@ -70,13 +70,16 @@ func ParseToMap(s string) (result map[uint64]string, warnMsg []string, err error
 		// 3. key and value are found, now handling repeated key and set into map
 		originalValue, ok := m[key]
 		if ok && originalValue != value {
-			warnMsg = append(warnMsg,
-				fmt.Sprintf("repeated assignment for fix control: %d. existing value: %q. new value: %q.", key, originalValue, value))
+			warnMsg := fmt.Sprintf("repeated assignment for fix control: %d. existing value: %q. new value: %q.",
+				key,
+				originalValue,
+				value)
+			warnMsgs = append(warnMsgs, warnMsg)
 		}
 		m[key] = value
 
 		// 4. prepare to parse remaining content
 		s = s[nextStartIdx:]
 	}
-	return m, warnMsg, nil
+	return m, warnMsgs, nil
 }

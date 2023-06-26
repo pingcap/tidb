@@ -2507,6 +2507,16 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptFixControl, Value: "", Type: TypeStr, IsHintUpdatable: true,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			_, warnings, err := fixcontrol.ParseToMap(val)
+			if err != nil {
+				return err
+			}
+			for _, warning := range warnings {
+				vars.StmtCtx.AppendWarning(errors.New(warning))
+			}
+			return nil
+		},
 		SetSession: func(s *SessionVars, val string) error {
 			newMap, warnings, err := fixcontrol.ParseToMap(val)
 			if err != nil {
