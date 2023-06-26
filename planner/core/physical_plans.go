@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -778,6 +779,24 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 		sum += int64(unsafe.Sizeof(iid)) + expr.MemoryUsage()
 	}
 	return
+}
+
+// AddExtraPhysTblIDColumn for partition table.
+// For keepOrder with partition table,
+// we need use partitionHandle to distinct two handles,
+// the `_tidb_rowid` in different partitions can have the same value.
+func AddExtraPhysTblIDColumn(sctx sessionctx.Context, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
+	// Not adding the ExtraPhysTblID if already exists
+	if FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
+		return columns, schema, false
+	}
+	columns = append(columns, model.NewExtraPhysTblIDColInfo())
+	schema.Append(&expression.Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraPhysTblID,
+	})
+	return columns, schema, true
 }
 
 // PhysicalMemTable reads memory table.
