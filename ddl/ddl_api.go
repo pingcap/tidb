@@ -1156,17 +1156,21 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.GenWithStackByArgs())
 			case ast.ColumnOptionCheck:
-				// Check the column CHECK constraint dependency lazily, after fill all the name.
-				// Extract column constraint from column option.
-				constraint := &ast.Constraint{
-					Tp:           ast.ConstraintCheck,
-					Expr:         v.Expr,
-					Enforced:     v.Enforced,
-					Name:         v.ConstraintName,
-					InColumn:     true,
-					InColumnName: colDef.Name.Name.O,
+				if !variable.EnableCheckConstraint.Load() {
+					ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+				} else {
+					// Check the column CHECK constraint dependency lazily, after fill all the name.
+					// Extract column constraint from column option.
+					constraint := &ast.Constraint{
+						Tp:           ast.ConstraintCheck,
+						Expr:         v.Expr,
+						Enforced:     v.Enforced,
+						Name:         v.ConstraintName,
+						InColumn:     true,
+						InColumnName: colDef.Name.Name.O,
+					}
+					constraints = append(constraints, constraint)
 				}
-				constraints = append(constraints, constraint)
 			}
 		}
 	}
@@ -1977,6 +1981,10 @@ func BuildTableInfo(
 
 		// check constraint
 		if constr.Tp == ast.ConstraintCheck {
+			if !variable.EnableCheckConstraint.Load() {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+				continue
+			}
 			// Since column check constraint dependency has been done in columnDefToCol.
 			// Here do the table check constraint dependency check, table constraint
 			// can only refer the columns in defined columns of the table.
@@ -3573,7 +3581,11 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			case ast.ConstraintFulltext:
 				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
-				err = d.CreateCheckConstraint(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint)
+				if !variable.EnableCheckConstraint.Load() {
+					sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+				} else {
+					err = d.CreateCheckConstraint(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint)
+				}
 			default:
 				// Nothing to do now.
 			}
@@ -3670,9 +3682,17 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableIndexInvisible:
 			err = d.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility)
 		case ast.AlterTableAlterCheck:
-			err = d.AlterCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
+			if !variable.EnableCheckConstraint.Load() {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+			} else {
+				err = d.AlterCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
+			}
 		case ast.AlterTableDropCheck:
-			err = d.DropCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name))
+			if !variable.EnableCheckConstraint.Load() {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+			} else {
+				err = d.DropCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name))
+			}
 		case ast.AlterTableWithValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithValidation)
 		case ast.AlterTableWithoutValidation:
