@@ -34,7 +34,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"net/http"         //nolint:goimports
 	_ "net/http/pprof" // #nosec G108 for pprof
@@ -327,9 +326,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		}
 	}
 
-	// Init rand seed for randomBuf()
-	rand.Seed(time.Now().UTC().UnixNano())
-
 	variable.RegisterStatistics(s)
 
 	return s, nil
@@ -548,8 +544,6 @@ func (s *Server) closeListener() {
 	s.wg.Wait()
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
-
-var gracefulCloseConnectionsTimeout = 15 * time.Second
 
 // Close closes the server.
 func (s *Server) Close() {
@@ -917,6 +911,9 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	go func() {
 		defer close(allDone)
 		for _, conn := range conns {
+			if !conn.getCtx().GetSessionVars().InTxn() {
+				continue
+			}
 			select {
 			case <-conn.quit:
 			case <-quitWaitingForConns:
