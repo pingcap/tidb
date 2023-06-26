@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -258,6 +259,19 @@ func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, m
 	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
 		if val.(bool) {
 			s.onError(errors.New("MockExecutorRunErr"))
+		}
+	})
+	failpoint.Inject("MockExecutorRunCancel", func(val failpoint.Value) {
+		if taskID, ok := val.(int); ok {
+			mgr, err := storage.GetTaskManager()
+			if err != nil {
+				logutil.BgLogger().Error("get task manager failed", zap.Error(err))
+			} else {
+				err = mgr.CancelGlobalTask(int64(taskID))
+				if err != nil {
+					logutil.BgLogger().Error("cancel global task failed", zap.Error(err))
+				}
+			}
 		}
 	})
 	if err = executor.Run(minimalTaskCtx); err != nil {
