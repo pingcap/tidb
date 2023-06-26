@@ -34,7 +34,7 @@ func TestDumpTextValue(t *testing.T) {
 		Decimal: mysql.NotFixedDec,
 	}}
 
-	dp := util.NewResultEncoder(charset.CharsetUTF8MB4)
+	dp := column.NewResultEncoder(charset.CharsetUTF8MB4)
 	null := types.NewIntDatum(0)
 	null.SetNull()
 	bs, err := dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{null}).ToRow(), dp)
@@ -90,7 +90,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "bar", mustDecodeStr(t, bs))
 
-	dp = util.NewResultEncoder("gbk")
+	dp = column.NewResultEncoder("gbk")
 	columns[0].Type = mysql.TypeVarchar
 	dt := []types.Datum{types.NewStringDatum("一")}
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums(dt).ToRow(), dp)
@@ -98,7 +98,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.Equal(t, []byte{0xd2, 0xbb}, []byte(mustDecodeStr(t, bs)))
 
 	columns[0].Charset = uint16(mysql.CharsetNameToID("gbk"))
-	dp = util.NewResultEncoder("binary")
+	dp = column.NewResultEncoder("binary")
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums(dt).ToRow(), dp)
 	require.NoError(t, err)
 	require.Equal(t, []byte{0xd2, 0xbb}, []byte(mustDecodeStr(t, bs)))
