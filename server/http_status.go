@@ -34,8 +34,6 @@ import (
 	"sync"
 	"time"
 
-	util2 "github.com/pingcap/tidb/server/internal/util"
-
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -46,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
