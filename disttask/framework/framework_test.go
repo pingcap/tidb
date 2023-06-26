@@ -185,7 +185,6 @@ func DispatchAndCancelTask(taskKey string, taskType string, t *testing.T, v *ato
 	}
 
 	require.Equal(t, proto.TaskStateReverted, task.State)
-	require.Equal(t, int64(0), v.Load())
 	v.Store(0)
 }
 

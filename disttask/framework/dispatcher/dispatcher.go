@@ -501,10 +501,10 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (bool, error) {
 		zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Int("subtasks", len(metas)))
 
 	// 2. dispatch dist-plan to EligibleInstances.
-	return false, d.dispatchDistPlan(gTask, handle, metas)
+	return d.dispatchDistPlan(gTask, handle, metas)
 }
 
-func (d *dispatcher) dispatchDistPlan(gTask *proto.Task, handle TaskFlowHandle, metas [][]byte) error {
+func (d *dispatcher) dispatchDistPlan(gTask *proto.Task, handle TaskFlowHandle, metas [][]byte) (bool, error) {
 	// Adjust the global task's concurrency.
 	if gTask.Concurrency == 0 {
 		gTask.Concurrency = DefaultSubtaskConcurrency
@@ -527,19 +527,19 @@ func (d *dispatcher) dispatchDistPlan(gTask *proto.Task, handle TaskFlowHandle, 
 		err := d.updateGlobalTaskState(gTask, proto.TaskStateSucceed, retryTimes)
 		if err != nil {
 			logutil.BgLogger().Warn("update global task failed", zap.Error(err))
-			return err
+			return true, err
 		}
-		return nil
+		return true, nil
 	}
 	// 1. select all available TiDB nodes for this global tasks.
-	serverNodes, err1 := handle.GetEligibleInstances(d.ctx, gTask)
+	serverNodes, err := handle.GetEligibleInstances(d.ctx, gTask)
 	logutil.BgLogger().Debug("eligible instances", zap.Int("num", len(serverNodes)))
 
-	if err1 != nil {
-		return err1
+	if err != nil {
+		return handle.IsRetryableErr(err), err
 	}
 	if len(serverNodes) == 0 {
-		return errors.New("no available TiDB node")
+		return true, errors.New("no available TiDB node")
 	}
 	// 2. generate subtasks.
 	// TODO: abstract new api.
@@ -554,7 +554,7 @@ func (d *dispatcher) dispatchDistPlan(gTask *proto.Task, handle TaskFlowHandle, 
 		subTasks[pos] = append(subTasks[pos], proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
 	// 3. dispatch subTasks in multiple batches.
-	return d.dispatchSubTasks(gTask, gTask.State, subTasks, retrySQLTimes)
+	return false, d.dispatchSubTasks(gTask, gTask.State, subTasks, retrySQLTimes)
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.
