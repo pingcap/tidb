@@ -39,9 +39,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/server/internal/column"
-	util2 "github.com/pingcap/tidb/server/internal/util"
-
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -54,6 +51,8 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/internal/column"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
