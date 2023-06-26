@@ -350,7 +350,7 @@ func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTask
 func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
-	handle := GetTaskFlowHandle((gTask.Type))
+	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
 		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
 		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)

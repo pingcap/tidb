@@ -129,7 +129,7 @@ func TestFrameworkRollback(t *testing.T) {
 	}()
 
 	DispatchTaskAndCheckFail("key2", t, &v)
-	require.Equal(t, 2, rollbackCnt.Load())
+	require.Equal(t, int32(2), rollbackCnt.Load())
 	rollbackCnt.Store(0)
 	distContext.Close()
 }
