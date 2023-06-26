@@ -64,7 +64,7 @@ func (t *MockTaskTable) GetSubtaskInStates(instanceID string, taskID int64, stat
 }
 
 // UpdateSubtaskStateAndError implements SubtaskTable.UpdateSubtaskState.
-func (t *MockTaskTable) UpdateSubtaskStateAndError(id int64, state string, _ string) error {
+func (t *MockTaskTable) UpdateSubtaskStateAndError(id int64, state string, _ error) error {
 	args := t.Called(id, state)
 	return args.Error(0)
 }
@@ -202,3 +202,8 @@ type MockMinimalTask struct{}
 
 // IsMinimalTask implements MinimalTask.IsMinimalTask.
 func (MockMinimalTask) IsMinimalTask() {}
+
+// String is used to implement the fmt.Stringer interface.
+func (MockMinimalTask) String() string {
+	return "mock minimal task"
+}

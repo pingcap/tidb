@@ -97,7 +97,13 @@
       "select /*+ leading(t3) */ * from ((select /*+ leading(t5) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
       "select /*+ leading(t3, t1) */ * from ((select /*+ leading(t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
       "select /*+ leading(t3, t1, t2) */ * from ((select /*+ leading(t6, t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
-      "select /*+ leading(t3, t4) */ * from ((select /*+ leading(t5, t7, t8) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;"
+      "select /*+ leading(t3, t4) */ * from ((select /*+ leading(t5, t7, t8) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+
+      // block name
+      "select /*+ leading(tx, t1, t3) */ * from t1, (select * from t2) tx, t3 where t1.a=tx.a and tx.a=t3.a;",
+      "select /*+ leading(txx, tx, t1) */ * from t1, (select * from t2) tx, (select * from t3) txx where t1.a=tx.a and tx.a=txx.a;",
+      "select /*+ leading(txx, tx, t) */ * from (select * from t1) t, (select * from t2) tx, (select * from t3) txx where t.a=tx.a and tx.a=txx.a;",
+      "select /*+ leading(tx, t1, t3) */ * from t1, (select t2.* from t2, t4 where t2.a=t4.a) tx, t3 where t1.a=tx.a and tx.a=t3.a;"
     ]
   },
   {

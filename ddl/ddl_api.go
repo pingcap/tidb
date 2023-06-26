@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
+	rg "github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -89,8 +90,6 @@ const (
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
 	tiflashCheckPendingTablesRetry = 7
-	// DefaultResourceGroupName is the default resource group name.
-	DefaultResourceGroupName = "default"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
@@ -1998,13 +1997,20 @@ func BuildTableInfo(
 				}
 			} else {
 				// Check the column-type constraint dependency.
-				if len(dependedColsMap) != 1 {
+				if len(dependedColsMap) > 1 {
 					return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
+				} else if len(dependedColsMap) == 0 {
+					// If dependedCols is empty, the expression must be true/false.
+					valExpr, ok := constr.Expr.(*driver.ValueExpr)
+					if !ok || !mysql.HasIsBooleanFlag(valExpr.GetType().GetFlag()) {
+						return nil, errors.Trace(errors.New("unsupported expression in check constraint"))
+					}
+				} else {
+					if _, ok := dependedColsMap[constr.InColumnName]; !ok {
+						return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
+					}
+					dependedCols = []model.CIStr{model.NewCIStr(constr.InColumnName)}
 				}
-				if _, ok := dependedColsMap[constr.InColumnName]; !ok {
-					return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
-				}
-				dependedCols = []model.CIStr{model.NewCIStr(constr.InColumnName)}
 			}
 			// check auto-increment column
 			if table.ContainsAutoIncrementCol(dependedCols, tbInfo) {
@@ -3151,8 +3157,8 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 	return nil
 }
 
-// SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
-func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupOption) error {
+// SetDirectResourceGroupSettings tries to set the ResourceGroupSettings.
+func SetDirectResourceGroupSettings(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupOption) error {
 	switch opt.Tp {
 	case ast.ResourceRURate:
 		resourceGroupSettings.RURate = opt.UintValue
@@ -3175,6 +3181,9 @@ func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettin
 		}
 		resourceGroupSettings.BurstLimit = limit
 	case ast.ResourceGroupRunaway:
+		if len(opt.ResourceGroupRunawayOptionList) == 0 {
+			resourceGroupSettings.Runaway = nil
+		}
 		for _, opt := range opt.ResourceGroupRunawayOptionList {
 			err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue)
 			if err != nil {
@@ -4393,14 +4402,20 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		pids = append(pids, pi.Definitions[i].ID)
 	}
 
+	genIDs, err := d.genGlobalIDs(len(pids))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionTruncateTablePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{pids},
+		SchemaID:    schema.ID,
+		TableID:     meta.ID,
+		SchemaName:  schema.Name.L,
+		SchemaState: model.StatePublic,
+		TableName:   t.Meta().Name.L,
+		Type:        model.ActionTruncateTablePartition,
+		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{pids, genIDs},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8196,7 +8211,7 @@ func (*ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) err
 // DropResourceGroup implements the DDL interface.
 func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
-	if groupName.L == DefaultResourceGroupName {
+	if groupName.L == rg.DefaultResourceGroupName {
 		return resourcegroup.ErrDroppingInternalResourceGroup
 	}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
@@ -8236,8 +8251,11 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 
 func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
 	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
+	if oldGroup.ResourceGroupSettings != nil {
+		*groupInfo.ResourceGroupSettings = *oldGroup.ResourceGroupSettings
+	}
 	for _, opt := range options {
-		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt)
+		err := SetDirectResourceGroupSettings(groupInfo.ResourceGroupSettings, opt)
 		if err != nil {
 			return nil, err
 		}

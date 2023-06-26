@@ -489,13 +489,11 @@ func (p *Percentile[valueType]) MergePercentile(p2 *Percentile[valueType]) {
 	p.sumVal += p2.sumVal
 	p.size += p2.size
 	if p.dt == nil {
-		p.dt = p2.dt
-		p2.dt = nil
+		p.dt = tdigest.New()
 		for _, v := range p.values {
 			p.dt.Add(v.GetFloat64(), 1)
 		}
 		p.values = nil
-		return
 	}
 	p.dt.AddCentroidList(p2.dt.Centroids())
 }
@@ -845,7 +843,7 @@ func (e *RootRuntimeStats) String() string {
 	for _, group := range groups {
 		str := group.String()
 		if len(str) > 0 {
-			strs = append(strs, group.String())
+			strs = append(strs, str)
 		}
 	}
 	return strings.Join(strs, ", ")
