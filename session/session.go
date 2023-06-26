@@ -3881,11 +3881,26 @@ func GetStartTSFromSession(se interface{}) (startTS, processInfoID uint64) {
 // if variable.ProcessGeneralLog is set.
 func logStmt(execStmt *executor.ExecStmt, s *session) {
 	vars := s.GetSessionVars()
+	isCrucial := false
 	switch stmt := execStmt.StmtNode.(type) {
+	case *ast.DropIndexStmt:
+		isCrucial = true
+		if stmt.IsHypo {
+			isCrucial = false
+		}
+	case *ast.CreateIndexStmt:
+		isCrucial = true
+		if stmt.IndexOption != nil && stmt.IndexOption.Tp == model.IndexTypeHypo {
+			isCrucial = false
+		}
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
-		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
-		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
+		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateTableStmt,
+		*ast.DropDatabaseStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
 		*ast.RenameUserStmt:
+		isCrucial = true
+	}
+
+	if isCrucial {
 		user := vars.User
 		schemaVersion := s.GetInfoSchema().SchemaMetaVersion()
 		if ss, ok := execStmt.StmtNode.(ast.SensitiveStmtNode); ok {
@@ -3899,10 +3914,10 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("cur_db", vars.CurrentDB),
-				zap.String("sql", stmt.Text()),
+				zap.String("sql", execStmt.StmtNode.Text()),
 				zap.Stringer("user", user))
 		}
-	default:
+	} else {
 		logGeneralQuery(execStmt, s, false)
 	}
 }
