@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/server/internal/util"
 	"io"
 	"os"
 	"testing"
@@ -37,7 +38,7 @@ func TestDumpStatsAPI(t *testing.T) {
 
 	driver := NewTiDBDriver(store)
 	client := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true

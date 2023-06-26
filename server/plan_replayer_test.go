@@ -18,6 +18,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"database/sql"
+	"github.com/pingcap/tidb/server/internal/util"
 	"io"
 	"os"
 	"path/filepath"
@@ -74,7 +75,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	// 1. setup and prepare plan replayer files by manual command and capture
 	driver := NewTiDBDriver(store)
 	client := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true

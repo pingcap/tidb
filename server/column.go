@@ -16,6 +16,7 @@ package server
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/server/internal/util"
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -39,18 +40,18 @@ type ColumnInfo struct {
 }
 
 // Dump dumps ColumnInfo to bytes.
-func (column *ColumnInfo) Dump(buffer []byte, d *resultEncoder) []byte {
+func (column *ColumnInfo) Dump(buffer []byte, d *util.ResultEncoder) []byte {
 	return column.dump(buffer, d, false)
 }
 
 // DumpWithDefault dumps ColumnInfo to bytes, including column defaults. This is used for ComFieldList responses.
-func (column *ColumnInfo) DumpWithDefault(buffer []byte, d *resultEncoder) []byte {
+func (column *ColumnInfo) DumpWithDefault(buffer []byte, d *util.ResultEncoder) []byte {
 	return column.dump(buffer, d, true)
 }
 
-func (column *ColumnInfo) dump(buffer []byte, d *resultEncoder, withDefault bool) []byte {
+func (column *ColumnInfo) dump(buffer []byte, d *util.ResultEncoder, withDefault bool) []byte {
 	if d == nil {
-		d = newResultEncoder(charset.CharsetUTF8MB4)
+		d = util.NewResultEncoder(charset.CharsetUTF8MB4)
 	}
 	nameDump, orgnameDump := []byte(column.Name), []byte(column.OrgName)
 	if len(nameDump) > maxColumnNameSize {
@@ -59,18 +60,18 @@ func (column *ColumnInfo) dump(buffer []byte, d *resultEncoder, withDefault bool
 	if len(orgnameDump) > maxColumnNameSize {
 		orgnameDump = orgnameDump[0:maxColumnNameSize]
 	}
-	buffer = dumpLengthEncodedString(buffer, []byte("def"))
-	buffer = dumpLengthEncodedString(buffer, d.encodeMeta([]byte(column.Schema)))
-	buffer = dumpLengthEncodedString(buffer, d.encodeMeta([]byte(column.Table)))
-	buffer = dumpLengthEncodedString(buffer, d.encodeMeta([]byte(column.OrgTable)))
-	buffer = dumpLengthEncodedString(buffer, d.encodeMeta(nameDump))
-	buffer = dumpLengthEncodedString(buffer, d.encodeMeta(orgnameDump))
+	buffer = util.DumpLengthEncodedString(buffer, []byte("def"))
+	buffer = util.DumpLengthEncodedString(buffer, d.EncodeMeta([]byte(column.Schema)))
+	buffer = util.DumpLengthEncodedString(buffer, d.EncodeMeta([]byte(column.Table)))
+	buffer = util.DumpLengthEncodedString(buffer, d.EncodeMeta([]byte(column.OrgTable)))
+	buffer = util.DumpLengthEncodedString(buffer, d.EncodeMeta(nameDump))
+	buffer = util.DumpLengthEncodedString(buffer, d.EncodeMeta(orgnameDump))
 
 	buffer = append(buffer, 0x0c)
-	buffer = dumpUint16(buffer, d.columnTypeInfoCharsetID(column))
-	buffer = dumpUint32(buffer, column.ColumnLength)
+	buffer = util.DumpUint16(buffer, d.ColumnTypeInfoCharsetID(column))
+	buffer = util.DumpUint32(buffer, column.ColumnLength)
 	buffer = append(buffer, dumpType(column.Type))
-	buffer = dumpUint16(buffer, dumpFlag(column.Type, column.Flag))
+	buffer = util.DumpUint16(buffer, dumpFlag(column.Type, column.Flag))
 	buffer = append(buffer, column.Decimal)
 	buffer = append(buffer, 0, 0)
 
@@ -80,21 +81,11 @@ func (column *ColumnInfo) dump(buffer []byte, d *resultEncoder, withDefault bool
 			buffer = append(buffer, 251) // NULL
 		default:
 			defaultValStr := fmt.Sprintf("%v", column.DefaultValue)
-			buffer = dumpLengthEncodedString(buffer, []byte(defaultValStr))
+			buffer = util.DumpLengthEncodedString(buffer, []byte(defaultValStr))
 		}
 	}
 
 	return buffer
-}
-
-func isStringColumnType(tp byte) bool {
-	switch tp {
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
-		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
-		mysql.TypeEnum, mysql.TypeSet, mysql.TypeJSON:
-		return true
-	}
-	return false
 }
 
 func dumpFlag(tp byte, flag uint16) uint16 {

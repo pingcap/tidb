@@ -27,6 +27,7 @@ import (
 	"encoding/binary"
 	"encoding/pem"
 	"fmt"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	"io"
 	"math/big"
 	"net"
@@ -82,7 +83,7 @@ type tidbTestSuite struct {
 }
 
 func createTidbTestSuite(t *testing.T) *tidbTestSuite {
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 0
@@ -240,7 +241,7 @@ func TestStatusAPI(t *testing.T) {
 func TestStatusPort(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -267,7 +268,7 @@ func TestStatusAPIWithTLS(t *testing.T) {
 
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = fileName("ca-cert-2.pem")
@@ -323,7 +324,7 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = caPath
@@ -389,7 +390,7 @@ func TestSocketForwarding(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = cli.port
 	os.Remove(cfg.Socket)
@@ -419,7 +420,7 @@ func TestSocket(t *testing.T) {
 	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = 0
 	os.Remove(cfg.Socket)
@@ -456,7 +457,7 @@ func TestSocketAndIp(t *testing.T) {
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
@@ -621,7 +622,7 @@ func TestOnlySocket(t *testing.T) {
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Host = "" // No network interface listening for mysql traffic
 	cfg.Status.ReportStatus = false
@@ -877,7 +878,7 @@ func TestSystemTimeZone(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	tk := testkit.NewTestKit(t, ts.store)
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -1225,7 +1226,7 @@ func TestGracefulShutdown(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.GracefulWaitBeforeShutdown = 2 // wait before shutdown
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
@@ -2502,7 +2503,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
@@ -3117,7 +3118,7 @@ func (p *mockProxyProtocolProxy) generateProxyProtocolHeaderV2(network, srcAddr,
 }
 
 func TestProxyProtocolWithIpFallbackable(t *testing.T) {
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 4999
 	cfg.Status.ReportStatus = false
 	// Setup proxy protocol config
@@ -3182,7 +3183,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 }
 
 func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 4000
 	cfg.Status.ReportStatus = false
 	// Setup proxy protocol config

@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	"io"
 	"net"
 	"net/http"
@@ -461,7 +462,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	httpL := m.Match(cmux.HTTP1Fast())
 	grpcL := m.Match(cmux.Any())
 
-	statusServer := &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.CorsHandler{handler: serverMux, cfg: s.cfg}}
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
 	if s.cfg.Store == "tikv" {

@@ -17,6 +17,7 @@ package server
 import (
 	"database/sql"
 	"fmt"
+	"github.com/pingcap/tidb/server/internal/util"
 	"net/http"
 	"net/url"
 	"os"
@@ -41,7 +42,7 @@ func TestExtractHandler(t *testing.T) {
 
 	driver := NewTiDBDriver(store)
 	client := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true

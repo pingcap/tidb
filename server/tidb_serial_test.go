@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -102,7 +103,7 @@ func TestExplainFor(t *testing.T) {
 }
 
 func TestStmtCount(t *testing.T) {
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 0
@@ -131,7 +132,7 @@ func TestLoadDataListPartition(t *testing.T) {
 func TestInvalidTLS(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	cfg.Security = config.Security{
@@ -151,7 +152,7 @@ func TestTLSAuto(t *testing.T) {
 		config.TLSConfig = "skip-verify"
 	}
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
@@ -197,7 +198,7 @@ func TestTLSBasic(t *testing.T) {
 		config.TLSConfig = "skip-verify"
 	}
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -259,7 +260,7 @@ func TestTLSVerify(t *testing.T) {
 
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Socket = dir + "/tidbtest.sock"
 	cfg.Status.ReportStatus = false
@@ -355,7 +356,7 @@ func TestErrorNoRollback(t *testing.T) {
 	}()
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
@@ -510,7 +511,7 @@ func TestReloadTLS(t *testing.T) {
 
 	// try old cert used in startup configuration.
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{

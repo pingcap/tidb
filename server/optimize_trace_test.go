@@ -20,6 +20,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/pingcap/tidb/server/internal/util"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -41,7 +42,7 @@ func TestDumpOptimizeTraceAPI(t *testing.T) {
 
 	driver := NewTiDBDriver(store)
 	client := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true
@@ -111,7 +112,7 @@ func TestOptimizerDebugTrace(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)

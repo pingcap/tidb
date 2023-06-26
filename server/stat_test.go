@@ -16,6 +16,7 @@ package server
 
 import (
 	"context"
+	"github.com/pingcap/tidb/server/internal/util"
 	"testing"
 	"time"
 
@@ -51,7 +52,7 @@ func TestUptime(t *testing.T) {
 	require.NoError(t, err)
 
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0

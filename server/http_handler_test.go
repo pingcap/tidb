@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/server/internal/util"
 	"io"
 	"net"
 	"net/http"
@@ -448,7 +449,7 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	require.NoError(t, err)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Store = "tikv"
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
