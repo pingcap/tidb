@@ -417,6 +417,7 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 	return instanceIDs, nil
 }
 
+// UpdateGlobalTask update the global task to storage.
 func (stm *TaskManager) UpdateGlobalTask(gTask *proto.Task) error {
 	gTask.StateUpdateTime = time.Now().UTC()
 	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {

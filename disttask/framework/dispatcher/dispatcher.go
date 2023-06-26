@@ -184,7 +184,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 					break
 				}
 
-				err, retryable := d.processNormalFlow(gTask)
+				retryable, err := d.processNormalFlow(gTask)
 				logutil.BgLogger().Info("dispatch task loop", zap.Int64("task ID", gTask.ID),
 					zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Error(err))
 				// if processNormalFlow failed, just cancel the global task.
@@ -297,7 +297,7 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 				break
 			}
 
-			err, retryable := d.processFlow(gTask, errStr)
+			retryable, err := d.processFlow(gTask, errStr)
 			if err != nil && !retryable {
 				_ = d.taskMgr.CancelGlobalTask(gTask.ID)
 			}
@@ -315,7 +315,7 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 	}
 }
 
-func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) (error, bool) {
+func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) (bool, error) {
 	if len(errStr) > 0 {
 		// Found an error when task is running.
 		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("task-id", gTask.ID), zap.ByteStrings("err msg", errStr))
@@ -325,7 +325,7 @@ func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) (error, boo
 	if gTask.State == proto.TaskStateReverting {
 		// Finish the rollback step.
 		logutil.BgLogger().Info("process flow, update the task to reverted", zap.Int64("task-id", gTask.ID))
-		return d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes), false
+		return false, d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 	// Finish the normal step.
 	logutil.BgLogger().Info("process flow, process normal", zap.Int64("task-id", gTask.ID))
@@ -427,63 +427,63 @@ func (d *dispatcher) updateGlobalTaskState(gTask *proto.Task, gTaskState string,
 	return err
 }
 
-func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) (error, bool) {
+func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) (bool, error) {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
 		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
-		return d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes), false
+		return false, d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 	meta, err := handle.ProcessErrFlow(d.ctx, d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("gen err dist-plan failed", zap.Error(err))
 		if handle.IsRetryableErr(err) {
-			return err, true
+			return true, err
 		}
 		gTask.Error = []byte(err.Error())
-		return d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes), false
+		return false, d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 
 	// 2. dispatch revert dist-plan to EligibleInstances.
 	return d.dispatchSubTask4Revert(gTask, handle, meta)
 }
 
-func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, handle TaskFlowHandle, meta []byte) (error, bool) {
+func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, handle TaskFlowHandle, meta []byte) (bool, error) {
 	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, handle, gTask)
 	if err != nil {
 		logutil.BgLogger().Warn("get global task's all instances failed", zap.Error(err))
-		return err, true
+		return true, err
 	}
 
 	if len(instanceIDs) == 0 {
-		return d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes), true
+		return true, d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 
 	subTasks := make([][]*proto.Subtask, len(instanceIDs))
 	for i, id := range instanceIDs {
 		subTasks[i] = append(subTasks[i], proto.NewSubtask(gTask.ID, gTask.Type, id, meta))
 	}
-	return d.dispatchSubTasks(gTask, proto.TaskStateReverting, subTasks, retrySQLTimes), false
+	return false, d.dispatchSubTasks(gTask, proto.TaskStateReverting, subTasks, retrySQLTimes)
 }
 
-func (d *dispatcher) processNormalFlow(gTask *proto.Task) (error, bool) {
+func (d *dispatcher) processNormalFlow(gTask *proto.Task) (bool, error) {
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
 		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
-		return d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes), false
+		return false, d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 
 	failpoint.Inject("processNormalFlowErrRetryable", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(errors.New("processNormalFlowErr"), true)
+			failpoint.Return(true, errors.New("processNormalFlowErr"))
 		}
 	})
 
 	failpoint.Inject("processNormalFlowErrNotRetryable", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(errors.New("processNormalFlowErr"), false)
+			failpoint.Return(false, errors.New("processNormalFlowErr"))
 		}
 	})
 
@@ -491,16 +491,16 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (error, bool) {
 	if err != nil {
 		logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
 		if handle.IsRetryableErr(err) {
-			return err, true
+			return true, err
 		}
 		gTask.Error = []byte(err.Error())
-		return d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes), false
+		return false, d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),
 		zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Int("subtasks", len(metas)))
 
 	// 2. dispatch dist-plan to EligibleInstances.
-	return d.dispatchDistPlan(gTask, handle, metas), false
+	return false, d.dispatchDistPlan(gTask, handle, metas)
 }
 
 func (d *dispatcher) dispatchDistPlan(gTask *proto.Task, handle TaskFlowHandle, metas [][]byte) error {
