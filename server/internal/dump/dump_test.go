@@ -27,54 +27,54 @@ func TestDumpBinaryTime(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	parsedTime, err := types.ParseTimestamp(sc, "0000-00-00 00:00:00.000000")
 	require.NoError(t, err)
-	d := DumpBinaryDateTime(nil, parsedTime)
+	d := BinaryDateTime(nil, parsedTime)
 	require.Equal(t, []byte{0}, d)
 
 	parsedTime, err = types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.Local}, "1991-05-01 01:01:01.100001")
 	require.NoError(t, err)
-	d = DumpBinaryDateTime(nil, parsedTime)
+	d = BinaryDateTime(nil, parsedTime)
 	// 199 & 7 composed to uint16 1991 (litter-endian)
 	// 160 & 134 & 1 & 0 composed to uint32 1000001 (litter-endian)
 	require.Equal(t, []byte{11, 199, 7, 5, 1, 1, 1, 1, 161, 134, 1, 0}, d)
 
 	parsedTime, err = types.ParseDatetime(sc, "0000-00-00 00:00:00.000000")
 	require.NoError(t, err)
-	d = DumpBinaryDateTime(nil, parsedTime)
+	d = BinaryDateTime(nil, parsedTime)
 	require.Equal(t, []byte{0}, d)
 
 	parsedTime, err = types.ParseDatetime(sc, "1993-07-13 01:01:01.000000")
 	require.NoError(t, err)
-	d = DumpBinaryDateTime(nil, parsedTime)
+	d = BinaryDateTime(nil, parsedTime)
 	// 201 & 7 composed to uint16 1993 (litter-endian)
 	require.Equal(t, []byte{7, 201, 7, 7, 13, 1, 1, 1}, d)
 
 	parsedTime, err = types.ParseDate(sc, "0000-00-00")
 	require.NoError(t, err)
-	d = DumpBinaryDateTime(nil, parsedTime)
+	d = BinaryDateTime(nil, parsedTime)
 	require.Equal(t, []byte{0}, d)
 	parsedTime, err = types.ParseDate(sc, "1992-06-01")
 	require.NoError(t, err)
-	d = DumpBinaryDateTime(nil, parsedTime)
+	d = BinaryDateTime(nil, parsedTime)
 	// 200 & 7 composed to uint16 1992 (litter-endian)
 	require.Equal(t, []byte{4, 200, 7, 6, 1}, d)
 
 	parsedTime, err = types.ParseDate(sc, "0000-00-00")
 	require.NoError(t, err)
-	d = DumpBinaryDateTime(nil, parsedTime)
+	d = BinaryDateTime(nil, parsedTime)
 	require.Equal(t, []byte{0}, d)
 
 	myDuration, _, err := types.ParseDuration(sc, "0000-00-00 00:00:00.000000", 6)
 	require.NoError(t, err)
-	d = DumpBinaryTime(myDuration.Duration)
+	d = BinaryTime(myDuration.Duration)
 	require.Equal(t, []byte{0}, d)
 
-	d = DumpBinaryTime(0)
+	d = BinaryTime(0)
 	require.Equal(t, []byte{0}, d)
 
-	d = DumpBinaryTime(-1)
+	d = BinaryTime(-1)
 	require.Equal(t, []byte{12, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, d)
 
-	d = DumpBinaryTime(time.Nanosecond + 86400*1000*time.Microsecond)
+	d = BinaryTime(time.Nanosecond + 86400*1000*time.Microsecond)
 	require.Equal(t, []byte{12, 0, 0, 0, 0, 0, 0, 1, 26, 128, 26, 6, 0}, d)
 }
 
@@ -101,7 +101,7 @@ func TestDumpLengthEncodedInt(t *testing.T) {
 		},
 	}
 	for _, tc := range testCases {
-		b := DumpLengthEncodedInt(nil, tc.num)
+		b := LengthEncodedInt(nil, tc.num)
 		require.Equal(t, tc.buffer, b)
 	}
 }
@@ -118,7 +118,7 @@ func TestDumpUint(t *testing.T) {
 			uint64(b[6])<<48 | uint64(b[7])<<56
 	}
 	for _, tc := range testCases {
-		b := DumpUint64(nil, tc)
+		b := Uint64(nil, tc)
 		require.Len(t, b, 8)
 		require.Equal(t, tc, parseUint64(b))
 	}

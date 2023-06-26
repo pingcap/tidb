@@ -294,7 +294,7 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = dump.DumpUint16(data, mysql.ServerStatusAutocommit)
+		data = dump.Uint16(data, mysql.ServerStatusAutocommit)
 		data = append(data, 0, 0)
 	}
 
@@ -379,7 +379,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	}
 	data = append(data, cc.collation)
 	// status
-	data = dump.DumpUint16(data, mysql.ServerStatusAutocommit)
+	data = dump.Uint16(data, mysql.ServerStatusAutocommit)
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
 	data = append(data, byte(cc.server.capability>>16), byte(cc.server.capability>>24))
@@ -1531,16 +1531,16 @@ func (cc *clientConn) writeOkWith(ctx context.Context, header byte, flush bool, 
 
 	data := cc.alloc.AllocWithLen(4, 32+enclen)
 	data = append(data, header)
-	data = dump.DumpLengthEncodedInt(data, affectedRows)
-	data = dump.DumpLengthEncodedInt(data, lastInsertID)
+	data = dump.LengthEncodedInt(data, affectedRows)
+	data = dump.LengthEncodedInt(data, lastInsertID)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = dump.DumpUint16(data, status)
-		data = dump.DumpUint16(data, warnCnt)
+		data = dump.Uint16(data, status)
+		data = dump.Uint16(data, warnCnt)
 	}
 	if enclen > 0 {
 		// although MySQL manual says the info message is string<EOF>(https://dev.mysql.com/doc/internals/en/packet-OK_Packet.html),
 		// it is actually string<lenenc>
-		data = dump.DumpLengthEncodedString(data, []byte(msg))
+		data = dump.LengthEncodedString(data, []byte(msg))
 	}
 
 	err := cc.writePacket(data)
@@ -1608,8 +1608,8 @@ func (cc *clientConn) writeEOF(ctx context.Context, serverStatus uint16) error {
 
 	data = append(data, mysql.EOFHeader)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = dump.DumpUint16(data, cc.ctx.WarningCount())
-		data = dump.DumpUint16(data, serverStatus)
+		data = dump.Uint16(data, cc.ctx.WarningCount())
+		data = dump.Uint16(data, serverStatus)
 	}
 
 	err := cc.writePacket(data)
@@ -2284,7 +2284,7 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs ResultSet, binary b
 
 func (cc *clientConn) writeColumnInfo(columns []*column.ColumnInfo) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
-	data = dump.DumpLengthEncodedInt(data, uint64(len(columns)))
+	data = dump.LengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
 		return err
 	}

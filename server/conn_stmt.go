@@ -77,11 +77,11 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	// status ok
 	data = append(data, 0)
 	// stmt id
-	data = dump.DumpUint32(data, uint32(stmt.ID()))
+	data = dump.Uint32(data, uint32(stmt.ID()))
 	// number columns
-	data = dump.DumpUint16(data, uint16(len(columns)))
+	data = dump.Uint16(data, uint16(len(columns)))
 	// number params
-	data = dump.DumpUint16(data, uint16(len(params)))
+	data = dump.Uint16(data, uint16(len(params)))
 	// filter [00]
 	data = append(data, 0)
 	// warning count

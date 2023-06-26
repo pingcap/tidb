@@ -43,15 +43,15 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-// DumpLengthEncodedString dumps a string as length encoded byte slice.
-func DumpLengthEncodedString(buffer []byte, bytes []byte) []byte {
-	buffer = DumpLengthEncodedInt(buffer, uint64(len(bytes)))
+// LengthEncodedString dumps a string as length encoded byte slice.
+func LengthEncodedString(buffer []byte, bytes []byte) []byte {
+	buffer = LengthEncodedInt(buffer, uint64(len(bytes)))
 	buffer = append(buffer, bytes...)
 	return buffer
 }
 
-// DumpLengthEncodedInt dumps an integer as length encoded byte slice.
-func DumpLengthEncodedInt(buffer []byte, n uint64) []byte {
+// LengthEncodedInt dumps an integer as length encoded byte slice.
+func LengthEncodedInt(buffer []byte, n uint64) []byte {
 	switch {
 	case n <= 250:
 		return append(buffer, byte(n))
@@ -70,15 +70,15 @@ func DumpLengthEncodedInt(buffer []byte, n uint64) []byte {
 	return buffer
 }
 
-// DumpUint16 dumps an uint16 as byte slice.
-func DumpUint16(buffer []byte, n uint16) []byte {
+// Uint16 dumps an uint16 as byte slice.
+func Uint16(buffer []byte, n uint16) []byte {
 	buffer = append(buffer, byte(n))
 	buffer = append(buffer, byte(n>>8))
 	return buffer
 }
 
-// DumpUint32 dumps an uint32 as byte slice.
-func DumpUint32(buffer []byte, n uint32) []byte {
+// Uint32 dumps an uint32 as byte slice.
+func Uint32(buffer []byte, n uint32) []byte {
 	buffer = append(buffer, byte(n))
 	buffer = append(buffer, byte(n>>8))
 	buffer = append(buffer, byte(n>>16))
@@ -86,8 +86,8 @@ func DumpUint32(buffer []byte, n uint32) []byte {
 	return buffer
 }
 
-// DumpUint64 dumps an uint64 as byte slice.
-func DumpUint64(buffer []byte, n uint64) []byte {
+// Uint64 dumps an uint64 as byte slice.
+func Uint64(buffer []byte, n uint64) []byte {
 	buffer = append(buffer, byte(n))
 	buffer = append(buffer, byte(n>>8))
 	buffer = append(buffer, byte(n>>16))
@@ -99,8 +99,8 @@ func DumpUint64(buffer []byte, n uint64) []byte {
 	return buffer
 }
 
-// DumpBinaryTime dumps a time as binary byte slice.
-func DumpBinaryTime(dur time.Duration) (data []byte) {
+// BinaryTime dumps a time as binary byte slice.
+func BinaryTime(dur time.Duration) (data []byte) {
 	if dur == 0 {
 		return []byte{0}
 	}
@@ -130,8 +130,8 @@ func DumpBinaryTime(dur time.Duration) (data []byte) {
 	return
 }
 
-// DumpBinaryDateTime dumps a datetime as binary byte slice.
-func DumpBinaryDateTime(data []byte, t types.Time) []byte {
+// BinaryDateTime dumps a datetime as binary byte slice.
+func BinaryDateTime(data []byte, t types.Time) []byte {
 	year, mon, day := t.Year(), t.Month(), t.Day()
 	switch t.Type() {
 	case mysql.TypeTimestamp, mysql.TypeDatetime:
@@ -141,18 +141,18 @@ func DumpBinaryDateTime(data []byte, t types.Time) []byte {
 		} else if t.Microsecond() != 0 {
 			// Has micro seconds.
 			data = append(data, 11)
-			data = DumpUint16(data, uint16(year))
+			data = Uint16(data, uint16(year))
 			data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
-			data = DumpUint32(data, uint32(t.Microsecond()))
+			data = Uint32(data, uint32(t.Microsecond()))
 		} else if t.Hour() != 0 || t.Minute() != 0 || t.Second() != 0 {
 			// Has HH:MM:SS
 			data = append(data, 7)
-			data = DumpUint16(data, uint16(year))
+			data = Uint16(data, uint16(year))
 			data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
 		} else {
 			// Only YY:MM:DD
 			data = append(data, 4)
-			data = DumpUint16(data, uint16(year))
+			data = Uint16(data, uint16(year))
 			data = append(data, byte(mon), byte(day))
 		}
 	case mysql.TypeDate:
@@ -160,7 +160,7 @@ func DumpBinaryDateTime(data []byte, t types.Time) []byte {
 			data = append(data, 0)
 		} else {
 			data = append(data, 4)
-			data = DumpUint16(data, uint16(year)) // year
+			data = Uint16(data, uint16(year)) // year
 			data = append(data, byte(mon), byte(day))
 		}
 	}

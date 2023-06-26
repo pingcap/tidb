@@ -60,18 +60,18 @@ func (column *ColumnInfo) dump(buffer []byte, d *ResultEncoder, withDefault bool
 	if len(orgnameDump) > maxColumnNameSize {
 		orgnameDump = orgnameDump[0:maxColumnNameSize]
 	}
-	buffer = dump.DumpLengthEncodedString(buffer, []byte("def"))
-	buffer = dump.DumpLengthEncodedString(buffer, d.EncodeMeta([]byte(column.Schema)))
-	buffer = dump.DumpLengthEncodedString(buffer, d.EncodeMeta([]byte(column.Table)))
-	buffer = dump.DumpLengthEncodedString(buffer, d.EncodeMeta([]byte(column.OrgTable)))
-	buffer = dump.DumpLengthEncodedString(buffer, d.EncodeMeta(nameDump))
-	buffer = dump.DumpLengthEncodedString(buffer, d.EncodeMeta(orgnameDump))
+	buffer = dump.LengthEncodedString(buffer, []byte("def"))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Schema)))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Table)))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.OrgTable)))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(nameDump))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(orgnameDump))
 
 	buffer = append(buffer, 0x0c)
-	buffer = dump.DumpUint16(buffer, d.ColumnTypeInfoCharsetID(column))
-	buffer = dump.DumpUint32(buffer, column.ColumnLength)
+	buffer = dump.Uint16(buffer, d.ColumnTypeInfoCharsetID(column))
+	buffer = dump.Uint32(buffer, column.ColumnLength)
 	buffer = append(buffer, dumpType(column.Type))
-	buffer = dump.DumpUint16(buffer, DumpFlag(column.Type, column.Flag))
+	buffer = dump.Uint16(buffer, DumpFlag(column.Type, column.Flag))
 	buffer = append(buffer, column.Decimal)
 	buffer = append(buffer, 0, 0)
 
@@ -81,7 +81,7 @@ func (column *ColumnInfo) dump(buffer []byte, d *ResultEncoder, withDefault bool
 			buffer = append(buffer, 251) // NULL
 		default:
 			defaultValStr := fmt.Sprintf("%v", column.DefaultValue)
-			buffer = dump.DumpLengthEncodedString(buffer, []byte(defaultValStr))
+			buffer = dump.LengthEncodedString(buffer, []byte(defaultValStr))
 		}
 	}
 
