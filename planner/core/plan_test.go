@@ -977,8 +977,8 @@ func TestHypoIndexDDL(t *testing.T) {
 		"  KEY `hypo_bc` (`b`,`c`) /* HYPO INDEX */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	tk.MustExec(`drop index hypo_a on t`)
-	tk.MustExec(`drop index hypo_bc on t`)
+	tk.MustExec(`drop hypo index hypo_a on t`)
+	tk.MustExec(`drop hypo index hypo_bc on t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
@@ -1005,7 +1005,7 @@ func TestHypoIndexPlan(t *testing.T) {
 		`IndexReader_6 10.00 root  index:IndexRangeScan_5`,
 		`└─IndexRangeScan_5 10.00 cop[tikv] table:t, index:hypo_a(a) range:[1,1], keep order:false, stats:pseudo`))
 
-	tk.MustExec(`drop index hypo_a on t`)
+	tk.MustExec(`drop hypo index hypo_a on t`)
 	tk.MustExec(`create unique index hypo_a type hypo on t (a)`)
 
 	tk.MustQuery(`explain select a from t where a = 1`).Check(testkit.Rows(
