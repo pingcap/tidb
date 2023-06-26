@@ -91,7 +91,6 @@ type BackupConfig struct {
 	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
 	CompressionConfig
 
-	// for ebs-based backup
 	FullBackupType          FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
 	VolumeFile              string         `json:"volume-file" toml:"volume-file"`
 	SkipAWS                 bool           `json:"skip-aws" toml:"skip-aws"`
@@ -225,32 +224,34 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	f := flags.Lookup(flagFullBackupType)
-	if f != nil && f.Value.String() == string(FullBackupTypeEBS) {
+	if f != nil {
 		// for backup full
-		fullBackupType := FullBackupTypeEBS
+		fullBackupType := f.Value.String()
 		if !FullBackupType(fullBackupType).Valid() {
 			return errors.New("invalid full backup type")
 		}
 		cfg.FullBackupType = FullBackupType(fullBackupType)
-		cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cfg.VolumeFile, err = flags.GetString(flagBackupVolumeFile)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cfg.SkipPauseGCAndScheduler, err = flags.GetBool(flagOperatorPausedGCAndSchedulers)
-		if err != nil {
-			return errors.Trace(err)
+		if fullBackupType == string(FullBackupTypeEBS) {
+			cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.CloudAPIConcurrency, err = flags.GetUint(flagCloudAPIConcurrency)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.VolumeFile, err = flags.GetString(flagBackupVolumeFile)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.ProgressFile, err = flags.GetString(flagProgressFile)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.SkipPauseGCAndScheduler, err = flags.GetBool(flagOperatorPausedGCAndSchedulers)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 
