@@ -116,14 +116,11 @@ const dropIndexStmt string = alterTableDropPrefix + "index if exists idx_name;"
 
 var indexDDLStmtCase = [...]StmtCase{
 	// Add primary key
-	/*
-		{ai.globalID(), addPrimaryIndexStmt, model.StateNone, true, nil, []string{dropPrimaryIndexStmt}},
-		{ai.globalID(), addPrimaryIndexStmt, model.StateDeleteOnly, true, nil, []string{dropPrimaryIndexStmt}},
-		{ai.globalID(), addPrimaryIndexStmt, model.StateWriteOnly, true, nil, []string{dropPrimaryIndexStmt}},
-		{ai.globalID(), addPrimaryIndexStmt, model.StateWriteReorganization, true, nil, []string{dropPrimaryIndexStmt}},
-		{ai.globalID(), addPrimaryIndexStmt, model.StatePublic, false, nil, []string{dropPrimaryIndexStmt}},
-	*/
-	// ["TestPauseAndResumePositive: case,"] [id=4] [GlobalID=16] [statement="alter table t_user add primary key idx_id (id);"] ["schema state"=public] [pre-condition="[]"] ["rollback statement"="[\"alter table t_user drop primary key;\"]"]
+	{ai.globalID(), addPrimaryIndexStmt, model.StateNone, true, nil, []string{dropPrimaryIndexStmt}},
+	{ai.globalID(), addPrimaryIndexStmt, model.StateDeleteOnly, true, nil, []string{dropPrimaryIndexStmt}},
+	{ai.globalID(), addPrimaryIndexStmt, model.StateWriteOnly, true, nil, []string{dropPrimaryIndexStmt}},
+	{ai.globalID(), addPrimaryIndexStmt, model.StateWriteReorganization, true, nil, []string{dropPrimaryIndexStmt}},
+	{ai.globalID(), addPrimaryIndexStmt, model.StatePublic, false, nil, []string{dropPrimaryIndexStmt}},
 
 	// Drop primary key
 	{ai.globalID(), dropPrimaryIndexStmt, model.StatePublic, true, []string{addPrimaryIndexStmt}, []string{dropPrimaryIndexStmt}},
