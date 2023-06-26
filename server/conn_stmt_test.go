@@ -68,12 +68,7 @@ func TestCursorExistsFlag(t *testing.T) {
 	require.NoError(t, c.Dispatch(ctx, append([]byte{mysql.ComQuery}, "select * from t"...)))
 	require.False(t, mysql.HasCursorExistsFlag(getLastStatus()))
 
-	// fetch last 3
-	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
-	require.True(t, mysql.HasCursorExistsFlag(getLastStatus()))
-
-	// final fetch with no row retured
-	// (tidb doesn't unset cursor-exists flag in the previous response like mysql, one more fetch is needed)
+	// fetch last 3, the `CursorExist` flag should have been unset and the `LastRowSend` flag should have been set
 	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
 	require.False(t, mysql.HasCursorExistsFlag(getLastStatus()))
 	require.True(t, getLastStatus()&mysql.ServerStatusLastRowSend > 0)
@@ -81,6 +76,24 @@ func TestCursorExistsFlag(t *testing.T) {
 	// COM_QUERY after fetch
 	require.NoError(t, c.Dispatch(ctx, append([]byte{mysql.ComQuery}, "select * from t"...)))
 	require.False(t, mysql.HasCursorExistsFlag(getLastStatus()))
+
+	// try another query without response
+	stmt, _, _, err = c.Context().Prepare("select * from t where a = 100")
+	require.NoError(t, err)
+
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+	require.True(t, mysql.HasCursorExistsFlag(getLastStatus()))
+
+	// fetch 5 rows, it will return no data with the `CursorExist` unset and `LastRowSend` set.
+	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
+	require.False(t, mysql.HasCursorExistsFlag(getLastStatus()))
+	require.True(t, getLastStatus()&mysql.ServerStatusLastRowSend > 0)
+
+	// the following FETCH should fail, as the cursor has been automatically closed
+	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
 }
 
 func TestCursorWithParams(t *testing.T) {
@@ -244,7 +257,6 @@ func TestCursorFetchShouldSpill(t *testing.T) {
 	tk.MustExec("set global tidb_enable_tmp_storage_on_oom = ON")
 	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
 	defer tk.MustExec("set global tidb_mem_oom_action= DEFAULT")
-	// TODO: find whether it's expected to have one child at the beginning
 	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
 
 	// execute a normal statement, it'll spill to disk
