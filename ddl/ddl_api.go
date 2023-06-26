@@ -1156,7 +1156,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.GenWithStackByArgs())
 			case ast.ColumnOptionCheck:
-				if !ctx.GetSessionVars().EnableCheckConstraint {
+				if !variable.EnableCheckConstraint.Load() {
 					ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
 				} else {
 					// Check the column CHECK constraint dependency lazily, after fill all the name.
@@ -1981,7 +1981,7 @@ func BuildTableInfo(
 
 		// check constraint
 		if constr.Tp == ast.ConstraintCheck {
-			if !ctx.GetSessionVars().EnableCheckConstraint {
+			if !variable.EnableCheckConstraint.Load() {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
 				continue
 			}
@@ -3581,7 +3581,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			case ast.ConstraintFulltext:
 				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
-				if !sctx.GetSessionVars().EnableCheckConstraint {
+				if !variable.EnableCheckConstraint.Load() {
 					sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
 				} else {
 					err = d.CreateCheckConstraint(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint)
@@ -3682,13 +3682,13 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableIndexInvisible:
 			err = d.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility)
 		case ast.AlterTableAlterCheck:
-			if !sctx.GetSessionVars().EnableCheckConstraint {
+			if !variable.EnableCheckConstraint.Load() {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
 			} else {
 				err = d.AlterCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
 			}
 		case ast.AlterTableDropCheck:
-			if !sctx.GetSessionVars().EnableCheckConstraint {
+			if !variable.EnableCheckConstraint.Load() {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
 			} else {
 				err = d.DropCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name))

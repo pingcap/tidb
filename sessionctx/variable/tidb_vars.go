@@ -1463,6 +1463,7 @@ var (
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
 	EnableResourceControl = atomic.NewBool(false)
+	EnableCheckConstraint = atomic.NewBool(DefTiDBEnableCheckConstraint)
 )
 
 var (
