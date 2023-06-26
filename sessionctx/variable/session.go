@@ -1513,6 +1513,9 @@ type SessionVars struct {
 
 	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
 	AnalyzeSkipColumnTypes map[string]struct{}
+
+	// EnableCheckConstraint indicate whether to enable check constraint
+	EnableCheckConstraint bool
 }
 
 var (
