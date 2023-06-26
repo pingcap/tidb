@@ -287,6 +287,9 @@ func TestS3Storage(t *testing.T) {
 		sendCredential bool
 	}
 
+	require.NoError(t, os.Setenv("AWS_ACCESS_KEY_ID", "ab"))
+	require.NoError(t, os.Setenv("AWS_SECRET_ACCESS_KEY", "cd"))
+	require.NoError(t, os.Setenv("AWS_SESSION_TOKEN", "ef"))
 	s := createGetBucketRegionServer("us-west-2", 200, true)
 	defer s.Close()
 
