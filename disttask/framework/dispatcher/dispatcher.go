@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -55,7 +56,7 @@ type Dispatch interface {
 	// Start enables dispatching and monitoring mechanisms.
 	Start()
 	// GetAllSchedulerIDs gets handles the task's all available instances.
-	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
+	GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, gTask *proto.Task) ([]string, error)
 	// Stop stops the dispatcher.
 	Stop()
 }
@@ -63,7 +64,7 @@ type Dispatch interface {
 // TaskHandle provides the interface for operations needed by task flow handles.
 type TaskHandle interface {
 	// GetAllSchedulerIDs gets handles the task's all scheduler instances.
-	GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error)
+	GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, gTask *proto.Task) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error)
 	storage.SessionExecutor
@@ -273,6 +274,14 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 			logutil.BgLogger().Info("detect task exits", zap.Int64("task ID", gTask.ID), zap.Error(d.ctx.Err()))
 			return
 		case <-ticker.C:
+			failpoint.Inject("cancelTaskBeforeProbe", func(val failpoint.Value) {
+				if val.(bool) {
+					err := d.taskMgr.CancelGlobalTask(gTask.ID)
+					if err != nil {
+						logutil.BgLogger().Error("cancel global task failed", zap.Error(err))
+					}
+				}
+			})
 			// TODO: Consider actively obtaining information about task completion.
 			stepIsFinished, errStr := d.probeTask(gTask)
 			// The global task isn't finished and not failed.
@@ -341,18 +350,23 @@ func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTask
 func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
-	meta, err := GetTaskFlowHandle(gTask.Type).ProcessErrFlow(d.ctx, d, gTask, receiveErr)
+	handle := GetTaskFlowHandle(gTask.Type)
+	if handle == nil {
+		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
+		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
+	}
+	meta, err := handle.ProcessErrFlow(d.ctx, d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
 		return err
 	}
 
 	// 2. dispatch revert dist-plan to EligibleInstances.
-	return d.dispatchSubTask4Revert(gTask, meta)
+	return d.dispatchSubTask4Revert(gTask, handle, meta)
 }
 
-func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, meta []byte) error {
-	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, gTask.ID)
+func (d *dispatcher) dispatchSubTask4Revert(gTask *proto.Task, handle TaskFlowHandle, meta []byte) error {
+	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, handle, gTask)
 	if err != nil {
 		logutil.BgLogger().Warn("get global task's all instances failed", zap.Error(err))
 		return err
@@ -463,8 +477,8 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 }
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
-func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]string, error) {
-	serverInfos, err := infosync.GetAllServerInfo(ctx)
+func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, gTask *proto.Task) ([]string, error) {
+	serverInfos, err := handle.GetEligibleInstances(ctx, gTask)
 	if err != nil {
 		return nil, err
 	}
@@ -472,7 +486,7 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 		return nil, nil
 	}
 
-	schedulerIDs, err := d.taskMgr.GetSchedulerIDsByTaskID(gTaskID)
+	schedulerIDs, err := d.taskMgr.GetSchedulerIDsByTaskID(gTask.ID)
 	if err != nil {
 		return nil, err
 	}
