@@ -1469,19 +1469,10 @@ func (e *InsertRuntimeStat) String() string {
 		buf.WriteString(", ")
 	}
 	if e.Prefetch > 0 {
-<<<<<<< HEAD
 		buf.WriteString(fmt.Sprintf("check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
 			execdetails.FormatDuration(e.CheckInsertTime),
 			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
 			execdetails.FormatDuration(e.Prefetch)))
-=======
-		fmt.Fprintf(
-			buf, "check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
-			execdetails.FormatDuration(e.CheckInsertTime),
-			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
-			execdetails.FormatDuration(e.Prefetch),
-		)
->>>>>>> 3c45737ce24 (txn: add a variable to control whether to lock unchanged unique keys (#44598))
 		if e.FKCheckTime > 0 {
 			buf.WriteString(fmt.Sprintf(", fk_check: %v", execdetails.FormatDuration(e.FKCheckTime)))
 		}
