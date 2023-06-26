@@ -510,6 +510,11 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						resetNotNullFlag(join.schema, 0, lChild.Schema().Len())
 					}
 					buildKeyInfo(join)
+					// todo: current old agg elimination should take the following into consideration:
+					// count(a) -> ifnull(col#x, 0, 1) in rewriteExpr of agg function, since col#x is already the final
+					// pushed-down aggregation's result, we don't need to take every row as count 1 when they don't have
+					// not-null flag in a.tryToEliminateAggregation(oldAgg, opt), which is not suitable here.
+					//
 					// Combine the aggregation elimination logic below since new agg's child key info has changed.
 					// Notice that even if we eliminate new agg below if possible, the agg's schema is inherited by proj.
 					// Therefore, we don't need to set the join's schema again, just build the keyInfo again.
