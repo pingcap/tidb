@@ -2751,6 +2751,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableCheckConstraint, Value: BoolToOnOff(DefTiDBEnableCheckConstraint), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EnableCheckConstraint.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableCheckConstraint.Load()), nil
+	}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

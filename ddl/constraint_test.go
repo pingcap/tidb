@@ -34,6 +34,7 @@ func TestCreateTableWithCheckConstraints(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 
 	// Test column-type check constraint.
 	tk.MustExec("create table t(a int not null check(a>0))")
@@ -136,6 +137,7 @@ func TestAlterTableAddCheckConstraints(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 
 	tk.MustExec("create table t(a int not null check(a>0))")
 	// Add constraint with name.
@@ -192,6 +194,7 @@ func TestAlterTableDropCheckConstraints(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 
 	tk.MustExec("create table t(a int not null check(a>0), b int, constraint haha check(a < b), check(a<b+1))")
 	constraintTable := external.GetTableByName(t, tk, "test", "t")
@@ -270,6 +273,7 @@ func TestAlterTableAlterCheckConstraints(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 
 	tk.MustExec("create table t(a int not null check(a>0) not enforced, b int, constraint haha check(a < b))")
 	constraintTable := external.GetTableByName(t, tk, "test", "t")
@@ -341,6 +345,7 @@ func TestDropColumnWithCheckConstraints(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t(a int check(a > 0), b int, c int, check(c > 0), check (b > c))")
 	tk.MustExec("alter table t drop column a")
 	constraintTable := external.GetTableByName(t, tk, "test", "t")
@@ -355,6 +360,7 @@ func TestCheckConstraintsNotEnforcedWorks(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t(a int check(a > 0), b int check(b < 10) not enforced, c int)")
 	tk.MustExec("alter table t alter constraint t_chk_1 not enforced")
 	tk.MustExec("insert into t values(-1, 1, 0)")
@@ -371,6 +377,7 @@ func TestUnsupportedCheckConstraintsExprWhenCreateTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	// functions
 	tk.MustGetErrMsg("CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + NOW() > '2011-11-21'));", "[ddl:3814]An expression of a check constraint 't1_chk_1' contains disallowed function: now.")
 	tk.MustGetErrMsg("CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + CURRENT_TIMESTAMP() > '2011-11-21 01:02:03'));", "[ddl:3814]An expression of a check constraint 't1_chk_1' contains disallowed function: current_timestamp.")
@@ -428,6 +435,7 @@ func TestUnsupportedCheckConstraintsExprWhenAlterTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t1(f1 TIMESTAMP, f2 DATETIME, f3 INT, f4 VARCHAR(32), f5 FLOAT, f6 CHAR(40), f7 INT PRIMARY KEY AUTO_INCREMENT)")
 	// functions
 	tk.MustGetErrMsg("ALTER TABLE t1 ADD CHECK (f1 + NOW() > '2011-11-21');", "[ddl:3814]An expression of a check constraint 't1_chk_1' contains disallowed function: now.")
@@ -486,6 +494,7 @@ func TestNameInCreateTableLike(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t(a int check(a > 10), b int constraint bbb check(b > 5), c int, check(c < 0))")
 	tk.MustExec("create table s like t")
 
@@ -514,6 +523,7 @@ func TestInsertUpdateIgnoreWarningMessage(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t(a int check(a > 10))")
 	tk.MustGetErrMsg("insert into t values(1),(11),(15)", "[table:3819]Check constraint 't_chk_1' is violated.")
 	tk.MustExec("insert ignore into t values(1),(11),(15)")
@@ -530,6 +540,7 @@ func TestCheckConstraintForeignKey(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t(a int, b int, index(a), index(a, b))")
 	tk.MustGetErrMsg("create table s(a int, check (a > 0), foreign key (a) references t(a) on update cascade)",
 		"[ddl:3823]Column 'a' cannot be used in a check constraint 's_chk_1': needed in a foreign key constraint referential action.")
@@ -549,6 +560,7 @@ func TestCheckConstrainNonBoolExpr(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustGetErrMsg("create table t(a int, check(a))", "[ddl:3812]An expression of non-boolean type specified to a check constraint 't_chk_1'.")
 	tk.MustGetErrMsg("create table t(a int, check(1))", "[ddl:3812]An expression of non-boolean type specified to a check constraint 't_chk_1'.")
 	tk.MustGetErrMsg("create table t(a int, check('1'))", "[ddl:3812]An expression of non-boolean type specified to a check constraint 't_chk_1'.")
@@ -585,6 +597,7 @@ func TestAlterAddCheckConstrainColumnBadErr(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t(a int)")
 	tk.MustGetErrMsg("alter table t add check(b > 0)", "[ddl:1054]Unknown column 'b' in 'check constraint t_chk_1 expression'")
 }
@@ -594,6 +607,7 @@ func TestCheckConstraintBoolExpr(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t(a json, b varchar(20))")
 	tk.MustExec("alter table t add check (JSON_VALID(a))")
 	tk.MustExec("alter table t add check (REGEXP_LIKE(b,'@'))")
@@ -604,6 +618,7 @@ func TestCheckConstraintNameMaxLength(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	var str64, str65 string
 	for i := 0; i < 64; i++ {
 		str64 += "a"
@@ -632,6 +647,7 @@ func TestCheckConstraintNameCaseAndAccentSensitivity(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("alter table t add constraint `cafe` check(a > 0)")
 	tk.MustGetErrMsg("alter table t add constraint `CAFE` check(a > 0)", "[schema:3822]Duplicate check constraint name 'cafe'.")
@@ -643,6 +659,7 @@ func TestCheckConstraintEvaluated(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t(a int check(a > 0))")
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("create table s(a int)")
@@ -683,6 +700,7 @@ func TestGenerateColumnCheckConstraint(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t( a int, b int as (a+1), CHECK (b > 0));")
 	tk.MustExec("insert into t(a) values(0)")
 	tk.MustGetErrMsg("insert into t(a) values(-2)", "[table:3819]Check constraint 't_chk_1' is violated.")
@@ -720,6 +738,7 @@ func TestTemporaryTableCheckConstraint(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t(a int, CHECK (a < -999));")
 	// local temporary table
 	tk.MustExec("drop temporary table if exists t;")
@@ -743,6 +762,7 @@ func TestCheckConstraintWithPrepareInsertCheckConstraint(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t(a int CHECK (a != 0));")
 	tk.MustExec("prepare stmt from 'insert into t values(?)'")
 	tk.MustExec("set @a = 1")
@@ -757,6 +777,7 @@ func TestCheckConstraintOnDuplicateKeyUpdate(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t(a int primary key, b int, check (b > 0))")
 	tk.MustExec("insert into t values(1, 1)")
 	tk.MustGetErrMsg("insert into t values(1, -10) on duplicate key update b = -1", "[table:3819]Check constraint 't_chk_1' is violated.")
@@ -775,6 +796,7 @@ func TestCheckConstraintOnInsert(t *testing.T) {
 	tk.MustExec("DROP DATABASE IF EXISTS test_insert_check_constraint;")
 	tk.MustExec("CREATE DATABASE test_insert_check_constraint;")
 	tk.MustExec("USE test_insert_check_constraint;")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0));")
 	tk.MustGetErrMsg("insert into t1 values (2, 2)", "[table:3819]Check constraint 't1_chk_1' is violated.")
 	tk.MustGetErrMsg("insert into t1 values (9, 2)", "[table:3819]Check constraint 't1_chk_2' is violated.")
@@ -800,6 +822,7 @@ func TestCheckConstraintOnUpdate(t *testing.T) {
 	tk.MustExec("DROP DATABASE IF EXISTS test_update_check_constraint;")
 	tk.MustExec("CREATE DATABASE test_update_check_constraint;")
 	tk.MustExec("USE test_update_check_constraint;")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 
 	tk.MustExec("CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0));")
 	tk.MustExec("insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);")
@@ -821,6 +844,7 @@ func TestCheckConstraintOnUpdateWithPartition(t *testing.T) {
 	tk.MustExec("DROP DATABASE IF EXISTS test_update_check_constraint_hash;")
 	tk.MustExec("CREATE DATABASE test_update_check_constraint_hash;")
 	tk.MustExec("USE test_update_check_constraint_hash;")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 
 	tk.MustExec("CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0)) partition by hash(c2) partitions 5;")
 	tk.MustExec("insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);")
@@ -842,6 +866,7 @@ func TestShowCheckConstraint(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	// Create table with check constraint
 	tk.MustExec("create table t(a int check (a>1), b int, constraint my_constr check(a<10))")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -875,6 +900,7 @@ func TestAlterConstraintAddDrop(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t (a int check(a>1), b int, constraint a_b check(a<b))")
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -914,6 +940,7 @@ func TestAlterAddConstraintStateChange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t (a int)")
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -963,6 +990,7 @@ func TestAlterAddConstraintStateChange1(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t (a int)")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -1006,6 +1034,7 @@ func TestAlterAddConstraintStateChange2(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t (a int)")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -1048,6 +1077,7 @@ func TestAlterAddConstraintStateChange3(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t (a int)")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -1089,6 +1119,7 @@ func TestAlterEnforcedConstraintStateChange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t (a int, constraint c1 check (a > 10) not enforced)")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -1128,6 +1159,7 @@ func TestIssue44689(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	for _, expr := range []string{"true", "false"} {
 		tk.MustExec("DROP TABLE IF EXISTS t0, t1, t2")
 		tk.MustExec(fmt.Sprintf("CREATE TABLE t0(c1 NUMERIC CHECK(%s))", expr))
@@ -1137,4 +1169,32 @@ func TestIssue44689(t *testing.T) {
 		tk.MustExec("CREATE TABLE t2(c1 NUMERIC)")
 		tk.MustExec(fmt.Sprintf("ALTER TABLE t2 ADD CONSTRAINT CHECK(%s)", expr))
 	}
+}
+
+func TestCheckConstraintSwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int check(a > 0))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 the switch of check constraint is off"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
+	tk.MustExec("create table t(a int check(a > 0))")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `t_chk_1` CHECK ((`a` > 0))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("alter table t add constraint chk check(true)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("alter table t alter constraint chk not enforced")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("alter table t drop constraint chk")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 0")
+	tk.MustExec("alter table t drop constraint t_chk_1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 the switch of check constraint is off"))
+	tk.MustExec("alter table t alter constraint t_chk_1 not enforced")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 the switch of check constraint is off"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `t_chk_1` CHECK ((`a` > 0))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
