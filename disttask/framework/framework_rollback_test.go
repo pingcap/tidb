@@ -25,7 +25,11 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
+	"github.com/pingcap/tidb/util/logutil"
+
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 type rollbackFlowHandle struct{}
@@ -54,6 +58,23 @@ func (*rollbackFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHa
 
 func (*rollbackFlowHandle) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return generateSchedulerNodes4Test()
+}
+
+func generateSubtasks4Test(ctx context.Context, gTask *proto.Task, serverNodes []*infosync.ServerInfo, subtaskMetas [][]byte) ([][]*proto.Subtask, error) {
+	subTasks := make([][]*proto.Subtask, len(serverNodes))
+	for i, meta := range subtaskMetas {
+		// we assign the subtask to the instance in a round-robin way.
+		pos := i % len(serverNodes)
+		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
+		logutil.BgLogger().Debug("create subtasks",
+			zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
+		subTasks[pos] = append(subTasks[pos], proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
+	}
+	return subTasks, nil
+}
+
+func (*rollbackFlowHandle) GenerateSubtasks(ctx context.Context, gTask *proto.Task, serverNodes []*infosync.ServerInfo, subtaskMetas [][]byte) ([][]*proto.Subtask, error) {
+	return generateSubtasks4Test(ctx, gTask, serverNodes, subtaskMetas)
 }
 
 func (*rollbackFlowHandle) IsRetryableErr(error) bool {

@@ -428,7 +428,6 @@ func (d *dispatcher) updateGlobalTaskState(gTask *proto.Task, gTaskState string,
 }
 
 func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr []error) (bool, error) {
-	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
@@ -541,20 +540,34 @@ func (d *dispatcher) dispatchDistPlan(gTask *proto.Task, handle TaskFlowHandle, 
 	if len(serverNodes) == 0 {
 		return true, errors.New("no available TiDB node")
 	}
-	// 2. generate subtasks.
-	// TODO: abstract new api.
-	subTasks := make([][]*proto.Subtask, len(serverNodes))
+	// 2. generate and split subtasks.
+	subTasks, err := d.generateSubtasks(d.ctx, handle, gTask, serverNodes, metas)
+	if err != nil {
+		return true, err
+	}
+	// 3. dispatch subTasks in multiple batches.
+	return false, d.dispatchSubTasks(gTask, gTask.State, subTasks, retrySQLTimes)
+}
+
+// retryable
+func (d *dispatcher) generateSubtasks(ctx context.Context, handle TaskFlowHandle,
+	gTask *proto.Task, serverNodes []*infosync.ServerInfo, metas [][]byte) ([][]*proto.Subtask, error) {
+	return handle.GenerateSubtasks(ctx, gTask, serverNodes, metas)
+}
+
+// GenerateOneBatchSubtasks generate only one batch of subtasks.
+func GenerateOneBatchSubtasks(ctx context.Context,
+	gTask *proto.Task, serverNodes []*infosync.ServerInfo, metas [][]byte) ([][]*proto.Subtask, error) {
+	subTasks := make([][]*proto.Subtask, 1)
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		pos := i % len(serverNodes)
 		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
 		logutil.BgLogger().Debug("create subtasks",
 			zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
-		// todo hack...
-		subTasks[pos] = append(subTasks[pos], proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
+		subTasks[0] = append(subTasks[0], proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
 	}
-	// 3. dispatch subTasks in multiple batches.
-	return false, d.dispatchSubTasks(gTask, gTask.State, subTasks, retrySQLTimes)
+	return subTasks, nil
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.

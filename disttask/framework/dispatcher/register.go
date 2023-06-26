@@ -43,6 +43,9 @@ type TaskFlowHandle interface {
 	// GetEligibleInstances is used to get the eligible instances for the global task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
 	GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error)
+	// GenerateSubtasks is used to generate and split subtasks
+	GenerateSubtasks(ctx context.Context, gTask *proto.Task, serverNodes []*infosync.ServerInfo, subtaskMetas [][]byte) ([][]*proto.Subtask, error)
+
 	IsRetryableErr(err error) bool
 }
 

@@ -71,6 +71,10 @@ func (*testFlowHandle) GetEligibleInstances(_ context.Context, _ *proto.Task) ([
 	return generateSchedulerNodes4Test()
 }
 
+func (*testFlowHandle) GenerateSubtasks(ctx context.Context, gTask *proto.Task, serverNodes []*infosync.ServerInfo, subtaskMetas [][]byte) ([][]*proto.Subtask, error) {
+	return dispatcher.GenerateOneBatchSubtasks(ctx, gTask, serverNodes, subtaskMetas)
+}
+
 func (*testFlowHandle) IsRetryableErr(error) bool {
 	return true
 }

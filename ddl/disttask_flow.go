@@ -183,6 +183,10 @@ func (*litBackfillFlowHandle) GetEligibleInstances(ctx context.Context, _ *proto
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 
+func (*litBackfillFlowHandle) GenerateSubtasks(ctx context.Context, gTask *proto.Task, serverNodes []*infosync.ServerInfo, subtaskMetas [][]byte) ([][]*proto.Subtask, error) {
+	return dispatcher.GenerateOneBatchSubtasks(ctx, gTask, serverNodes, subtaskMetas)
+}
+
 // IsRetryableErr implements TaskFlowHandle.IsRetryableErr interface.
 func (*litBackfillFlowHandle) IsRetryableErr(error) bool {
 	return true

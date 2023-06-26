@@ -321,6 +321,10 @@ func (*flowHandle) GetEligibleInstances(ctx context.Context, gTask *proto.Task) 
 	return dispatcher.GenerateSchedulerNodes(ctx)
 }
 
+func (*flowHandle) GenerateSubtasks(ctx context.Context, gTask *proto.Task, serverNodes []*infosync.ServerInfo, subtaskMetas [][]byte) ([][]*proto.Subtask, error) {
+	return dispatcher.GenerateOneBatchSubtasks(ctx, gTask, serverNodes, subtaskMetas)
+}
+
 func (*flowHandle) IsRetryableErr(error) bool {
 	// TODO: check whether the error is retryable.
 	return false

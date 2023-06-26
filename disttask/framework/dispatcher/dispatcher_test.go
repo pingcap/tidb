@@ -53,6 +53,10 @@ func (*testFlowHandle) GetEligibleInstances(_ context.Context, _ *proto.Task) ([
 	return mockedAllServerInfos, nil
 }
 
+func (*testFlowHandle) GenerateSubtasks(ctx context.Context, gTask *proto.Task, serverNodes []*infosync.ServerInfo, subtaskMetas [][]byte) ([][]*proto.Subtask, error) {
+	return dispatcher.GenerateOneBatchSubtasks(ctx, gTask, serverNodes, subtaskMetas)
+}
+
 func (*testFlowHandle) IsRetryableErr(error) bool {
 	return true
 }
@@ -332,6 +336,10 @@ func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Task
 
 func (NumberExampleHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return dispatcher.GenerateSchedulerNodes(ctx)
+}
+
+func (NumberExampleHandle) GenerateSubtasks(ctx context.Context, gTask *proto.Task, serverNodes []*infosync.ServerInfo, subtaskMetas [][]byte) ([][]*proto.Subtask, error) {
+	return dispatcher.GenerateOneBatchSubtasks(ctx, gTask, serverNodes, subtaskMetas)
 }
 
 func (NumberExampleHandle) IsRetryableErr(error) bool {
