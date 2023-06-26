@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -367,90 +366,10 @@ func TestCreateTables(t *testing.T) {
 	testGetTable(t, domain, genIDs[1])
 	testGetTable(t, domain, genIDs[2])
 }
-<<<<<<< HEAD
-=======
-
-func TestAlterTTL(t *testing.T) {
-	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-
-	d := domain.DDL()
-
-	dbInfo, err := testSchemaInfo(store, "test_table")
-	require.NoError(t, err)
-	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
-
-	ctx := testkit.NewTestKit(t, store).Session()
-
-	// initialize a table with ttlInfo
-	tableName := "t"
-	tblInfo, err := testTableInfo(store, tableName, 2)
-	require.NoError(t, err)
-	tblInfo.Columns[0].FieldType = *types.NewFieldType(mysql.TypeDatetime)
-	tblInfo.Columns[1].FieldType = *types.NewFieldType(mysql.TypeDatetime)
-	tblInfo.TTLInfo = &model.TTLInfo{
-		ColumnName:       tblInfo.Columns[0].Name,
-		IntervalExprStr:  "5",
-		IntervalTimeUnit: int(ast.TimeUnitDay),
-	}
-
-	// create table
-	job := testCreateTable(t, ctx, d, dbInfo, tblInfo)
-	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
-	testCheckJobDone(t, store, job.ID, true)
-
-	// submit ddl job to modify ttlInfo
-	tableInfoAfterAlterTTLInfo := tblInfo.Clone()
-	require.NoError(t, err)
-	tableInfoAfterAlterTTLInfo.TTLInfo = &model.TTLInfo{
-		ColumnName:       tblInfo.Columns[1].Name,
-		IntervalExprStr:  "1",
-		IntervalTimeUnit: int(ast.TimeUnitYear),
-	}
-
-	job = &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAlterTTLInfo,
-		BinlogInfo: &model.HistoryInfo{},
-		Args: []interface{}{&model.TTLInfo{
-			ColumnName:       tblInfo.Columns[1].Name,
-			IntervalExprStr:  "1",
-			IntervalTimeUnit: int(ast.TimeUnitYear),
-		}},
-	}
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJob(ctx, job))
-
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
-
-	// assert the ddlInfo as expected
-	historyJob, err := ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
-	require.NoError(t, err)
-	require.Equal(t, tableInfoAfterAlterTTLInfo.TTLInfo, historyJob.BinlogInfo.TableInfo.TTLInfo)
-
-	// submit a ddl job to modify ttlEnabled
-	job = &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAlterTTLRemove,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{true},
-	}
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJob(ctx, job))
-
-	v = getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
-
-	// assert the ddlInfo as expected
-	historyJob, err = ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
-	require.NoError(t, err)
-	require.Empty(t, historyJob.BinlogInfo.TableInfo.TTLInfo)
-}
 
 func TestRenameTableIntermediateState(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	originHook := dom.DDL().GetHook()
@@ -471,7 +390,7 @@ func TestRenameTableIntermediateState(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		hook := &callback.TestDDLCallback{Do: dom}
+		hook := &ddl.TestDDLCallback{Do: dom}
 		runInsert := false
 		fn := func(job *model.Job) {
 			if job.SchemaState == model.StatePublic && !runInsert && !t.Failed() {
@@ -484,7 +403,7 @@ func TestRenameTableIntermediateState(t *testing.T) {
 				runInsert = true
 			}
 		}
-		hook.OnJobUpdatedExported.Store(&fn)
+		hook.OnJobUpdatedExported = fn
 		dom.DDL().SetHook(hook)
 		tk.MustExec(tc.renameSQL)
 		result := tk.MustQuery(fmt.Sprintf("select * from %s;", tc.finalDB))
@@ -497,4 +416,3 @@ func TestRenameTableIntermediateState(t *testing.T) {
 	}
 	dom.DDL().SetHook(originHook)
 }
->>>>>>> 2e951bc25c2 (ddl: wait schema change before rename table job is done (#43341))

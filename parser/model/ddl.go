@@ -546,13 +546,8 @@ func (job *Job) IsRollbackable() bool {
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
 		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
-<<<<<<< HEAD
 	case ActionDropColumns, ActionRebaseAutoID, ActionShardRowID,
-		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable,
-=======
-	case ActionRebaseAutoID, ActionShardRowID,
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
->>>>>>> 2e951bc25c2 (ddl: wait schema change before rename table job is done (#43341))
 		ActionModifyTableCharsetAndCollate, ActionTruncateTablePartition,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
 		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement:
