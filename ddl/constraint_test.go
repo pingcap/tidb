@@ -1138,3 +1138,68 @@ func TestIssue44689(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("ALTER TABLE t2 ADD CONSTRAINT CHECK(%s)", expr))
 	}
 }
+
+func TestIssue44737(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	var checkErr error
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &callback.TestDDLCallback{}
+
+	//show create table at the intermediate state when add index
+	func1 := func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		originalCallback.OnChanged(nil)
+		if job.SchemaState == model.StateNone || job.SchemaState == model.StateDeleteOnly ||
+			job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
+			tk1.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		} else if job.SchemaState == model.StatePublic {
+			tk1.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\n  KEY `a` (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&func1)
+	d.SetHook(callback)
+	tk.MustExec("alter table t add index(a)")
+	tk.MustExec("alter table t drop index a")
+
+	//show create table at the intermediate state when add check constraint
+	func2 := func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		originalCallback.OnChanged(nil)
+		if job.SchemaState == model.StateNone || job.SchemaState == model.StateWriteOnly ||
+			job.SchemaState == model.StateWriteReorganization {
+			tk1.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		} else if job.SchemaState == model.StatePublic {
+			tk1.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `chk_a` CHECK ((true)) /*!80016 NOT ENFORCED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&func2)
+	d.SetHook(callback)
+	tk.MustExec("alter table t add constraint chk_a check(true) not enforced")
+
+	//show create table at the intermediate state when alter check constraint
+	func3 := func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		originalCallback.OnChanged(nil)
+		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
+			tk1.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		} else if job.SchemaState == model.StatePublic {
+			tk1.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `chk_a` CHECK ((true))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&func3)
+	d.SetHook(callback)
+	tk.MustExec("alter table t alter constraint chk_a enforced")
+}
