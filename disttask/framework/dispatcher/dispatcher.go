@@ -201,7 +201,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 	}
 }
 
-func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [][]byte) {
+func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr []error) {
 	// TODO: Consider putting the following operations into a transaction.
 	// TODO: Consider collect some information about the tasks.
 	if gTask.State != proto.TaskStateReverting {
@@ -213,7 +213,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		}
 
 		if cancelling {
-			return false, [][]byte{[]byte("cancel")}
+			return false, []error{errors.New("cancel")}
 		}
 		// check subtasks failed.
 		cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateFailed)
@@ -278,28 +278,29 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 			logutil.BgLogger().Info("detect task exits", zap.Int64("task ID", gTask.ID), zap.Error(d.ctx.Err()))
 			return
 		case <-ticker.C:
-			failpoint.Inject("cancelTaskBeforeProbe", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("cancelTaskBeforeProbe")); _err_ == nil {
 				if val.(bool) {
 					err := d.taskMgr.CancelGlobalTask(gTask.ID)
 					if err != nil {
 						logutil.BgLogger().Error("cancel global task failed", zap.Error(err))
 					}
 				}
-			})
+			}
 			// TODO: Consider actively obtaining information about task completion.
-			stepIsFinished, errStr := d.probeTask(gTask)
+			stepIsFinished, errs := d.probeTask(gTask)
 			// The global task isn't finished and not failed.
-			if !stepIsFinished && len(errStr) == 0 {
+			if !stepIsFinished && len(errs) == 0 {
 				GetTaskFlowHandle(gTask.Type).OnTicker(d.ctx, gTask)
 				logutil.BgLogger().Debug("detect task, this task keeps current state",
 					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State))
 				break
 			}
 
-			retryable, err := d.processFlow(gTask, errStr)
+			retryable, err := d.processFlow(gTask, errs)
 			if err != nil && !retryable {
 				_ = d.taskMgr.CancelGlobalTask(gTask.ID)
 			}
+
 			if err == nil && gTask.IsFinished() {
 				logutil.BgLogger().Info("detect task, task is finished",
 					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State))
@@ -314,11 +315,11 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 	}
 }
 
-func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) (bool, error) {
-	if len(errStr) > 0 {
+func (d *dispatcher) processFlow(gTask *proto.Task, errs []error) (bool, error) {
+	if len(errs) > 0 {
 		// Found an error when task is running.
-		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("task-id", gTask.ID), zap.ByteStrings("err msg", errStr))
-		return d.processErrFlow(gTask, errStr)
+		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("task-id", gTask.ID), zap.Errors("err msg", errs))
+		return d.processErrFlow(gTask, errs)
 	}
 	// previous step is finished.
 	if gTask.State == proto.TaskStateReverting {
@@ -349,23 +350,23 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, gTaskState string, subT
 		time.Sleep(retrySQLInterval)
 	}
 
-	failpoint.Inject("dispatchSubTasksFail", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("dispatchSubTasksFail")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(errors.New("injected error in dispatchSubTasks"))
+			return errors.New("injected error in dispatchSubTasks")
 		}
-	})
+	}
 
 	// 2. dispatch subtasks.
 	isRevert := gTaskState == proto.TaskStateReverting
 	logutil.BgLogger().Info("subtask size", zap.Int("size", len(subTasks)))
 	for _, subtask := range subTasks {
 		for j := 0; j < retryTimes; j++ {
-			failpoint.Inject("insertSubtasksFail", func() {
+			if _, _err_ := failpoint.Eval(_curpkg_("insertSubtasksFail")); _err_ == nil {
 				if j < 10 {
 					time.Sleep(retrySQLInterval)
-					failpoint.Continue()
+					continue
 				}
-			})
+			}
 			err = d.taskMgr.AddSubTasks(gTask, subtask, isRevert)
 			if err == nil {
 				break
@@ -426,7 +427,7 @@ func (d *dispatcher) updateGlobalTaskState(gTask *proto.Task, gTaskState string,
 	return err
 }
 
-func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) (bool, error) {
+func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr []error) (bool, error) {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	handle := GetTaskFlowHandle(gTask.Type)
@@ -440,7 +441,7 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) (boo
 		if handle.IsRetryableErr(err) {
 			return true, err
 		}
-		gTask.Error = []byte(err.Error())
+		gTask.Error = err
 		return false, d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 
@@ -471,20 +472,21 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (bool, error) {
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
 		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
+		gTask.Error = errors.New("unsupported task type")
 		return false, d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 
-	failpoint.Inject("processNormalFlowErrRetryable", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("processNormalFlowErrRetryable")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(true, errors.New("processNormalFlowErr"))
+			return true, errors.New("processNormalFlowErr")
 		}
-	})
+	}
 
-	failpoint.Inject("processNormalFlowErrNotRetryable", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("processNormalFlowErrNotRetryable")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(false, errors.New("processNormalFlowErr"))
+			return false, errors.New("processNormalFlowErr")
 		}
-	})
+	}
 
 	metas, err := handle.ProcessNormalFlow(d.ctx, d, gTask)
 	if err != nil {
@@ -492,7 +494,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (bool, error) {
 		if handle.IsRetryableErr(err) {
 			return true, err
 		}
-		gTask.Error = []byte(err.Error())
+		gTask.Error = err
 		return false, d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),

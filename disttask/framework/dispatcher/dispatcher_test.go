@@ -43,7 +43,7 @@ func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHan
 	return nil, nil
 }
 
-func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
+func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return nil, nil
 }
 
@@ -232,7 +232,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	if isSucc {
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, "")
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, nil)
 			require.NoError(t, err)
 		}
 		checkGetGTaskState(proto.TaskStateSucceed)
@@ -254,7 +254,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		}()
 		// Mock a subtask fails.
 		for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, "")
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, nil)
 			require.NoError(t, err)
 		}
 	}
@@ -264,7 +264,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	// Mock all subtask reverted.
 	start := subtaskCnt * taskCnt
 	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateReverted, "")
+		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateReverted, nil)
 		require.NoError(t, err)
 	}
 	checkGetGTaskState(proto.TaskStateReverted)
@@ -325,7 +325,7 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 	return metas, nil
 }
 
-func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
+func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
 }

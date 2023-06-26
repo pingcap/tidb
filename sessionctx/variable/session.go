@@ -1507,6 +1507,10 @@ type SessionVars struct {
 	// Runtime filter mode: only support OFF, LOCAL now
 	runtimeFilterMode RuntimeFilterMode
 
+	// Whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
+	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
+	LockUnchangedKeys bool
+
 	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
 	AnalyzeSkipColumnTypes map[string]struct{}
 }
