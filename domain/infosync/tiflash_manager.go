@@ -306,7 +306,9 @@ func (m *TiFlashReplicaManagerCtx) GetRegionCountFromPD(ctx context.Context, tab
 	p := fmt.Sprintf("/pd/api/v1/stats/region?start_key=%s&end_key=%s&count",
 		url.QueryEscape(string(startKey)),
 		url.QueryEscape(string(endKey)))
+	logutil.BgLogger().Info("GetRegionCountFromPD debug: Before doRequest", zap.String("url", p))
 	res, err := doRequest(ctx, "GetPDRegionStats", m.etcdCli.Endpoints(), p, "GET", nil)
+	logutil.BgLogger().Info("GetRegionCountFromPD debug: After doRequest", zap.ByteString("res", res), zap.Error(err))
 	if err != nil {
 		return errors.Trace(err)
 	}

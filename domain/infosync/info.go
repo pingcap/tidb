@@ -394,6 +394,7 @@ func doRequest(ctx context.Context, apiName string, addrs []string, route, metho
 	for idx, addr := range addrs {
 		url := util2.ComposeURL(addr, route)
 		req, err = http.NewRequestWithContext(ctx, method, url, body)
+		logutil.BgLogger().Info("doRequest debug: Before doRequestWithFailpoint", zap.String("url", url))
 		if err != nil {
 			return nil, err
 		}
@@ -402,6 +403,7 @@ func doRequest(ctx context.Context, apiName string, addrs []string, route, metho
 		}
 		start := time.Now()
 		res, err = doRequestWithFailpoint(req)
+		logutil.BgLogger().Info("doRequest debug: After doRequestWithFailpoint", zap.Error(err))
 		if err == nil {
 			metrics.PDAPIExecutionHistogram.WithLabelValues(apiName).Observe(time.Since(start).Seconds())
 			metrics.PDAPIRequestCounter.WithLabelValues(apiName, res.Status).Inc()
