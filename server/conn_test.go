@@ -763,7 +763,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 }
 
 func TestShutDown(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	cc := &clientConn{}
 	se, err := session.CreateSession4Test(store)
@@ -775,10 +775,6 @@ func TestShutDown(t *testing.T) {
 	// assert ErrQueryInterrupted
 	err = cc.handleQuery(context.Background(), "select 1")
 	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
-}
-
-func TestShutDownWithTxn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	cfg := newTestConfig()
 	cfg.Port = 0
@@ -788,10 +784,7 @@ func TestShutDownWithTxn(t *testing.T) {
 	require.NoError(t, err)
 	srv.SetDomain(dom)
 
-	cc := &clientConn{server: srv}
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	tc := &TiDBContext{Session: se}
+	cc = &clientConn{server: srv}
 	cc.setCtx(tc)
 
 	// test in txn
