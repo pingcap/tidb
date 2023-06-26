@@ -15,6 +15,7 @@
 package ranger
 
 import (
+	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -398,11 +398,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 					return res, nil
 				}
 			} else {
-				considerCNFItemNonPointRanges := false
-				fixValue, ok := d.sctx.GetSessionVars().GetOptimizerFixControlValue(variable.TiDBOptFixControl44389)
-				if ok && variable.TiDBOptOn(fixValue) {
-					considerCNFItemNonPointRanges = true
-				}
+				considerCNFItemNonPointRanges := fixcontrol.GetBoolWithDefault(d.sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44389, false)
 				if considerCNFItemNonPointRanges && !bestCNFItemRes.sameLenPointRanges && eqOrInCount == 0 && bestCNFItemRes.minColNum > 0 && bestCNFItemRes.maxColNum > 1 {
 					// When eqOrInCount is 0, if we don't enter the IF branch, we would use detachColumnCNFConditions to build
 					// ranges on the first index column.

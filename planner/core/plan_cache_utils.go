@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"math"
 	"strconv"
 	"time"
@@ -581,8 +582,8 @@ func isSafePointGetPath4PlanCache(sctx sessionctx.Context, path *util.AccessPath
 
 	// TODO: enable this fix control switch by default after more test cases are added.
 	if sctx != nil && sctx.GetSessionVars() != nil && sctx.GetSessionVars().OptimizerFixControl != nil {
-		v, ok := sctx.GetSessionVars().OptimizerFixControl[variable.TiDBOptFixControl44830]
-		if ok && variable.TiDBOptOn(v) && (isSafePointGetPath4PlanCacheScenario2(path) || isSafePointGetPath4PlanCacheScenario3(path)) {
+		fixControlOK := fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44830, false)
+		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) || isSafePointGetPath4PlanCacheScenario3(path)) {
 			return true
 		}
 	}
