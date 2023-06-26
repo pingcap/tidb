@@ -1477,6 +1477,54 @@ type SessionVars struct {
 
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
+<<<<<<< HEAD
+=======
+
+	// FastCheckTable is used to control whether fast check table is enabled.
+	FastCheckTable bool
+
+	// HypoIndexes are for the Index Advisor.
+	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+	// HypoTiFlashReplicas are for the Index Advisor.
+	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
+
+	// Runtime Filter Group
+	// Runtime filter type: only support IN or MIN_MAX now.
+	// Runtime filter type can take multiple values at the same time.
+	runtimeFilterTypes []RuntimeFilterType
+	// Runtime filter mode: only support OFF, LOCAL now
+	runtimeFilterMode RuntimeFilterMode
+
+	// Whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
+	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
+	LockUnchangedKeys bool
+
+	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	AnalyzeSkipColumnTypes map[string]struct{}
+}
+
+var (
+	// variables below are for the optimizer fix control.
+
+	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
+	TiDBOptFixControl44262 uint64 = 44262
+	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
+	TiDBOptFixControl44389 uint64 = 44389
+	// TiDBOptFixControl44830 controls whether to allow to cache Batch/PointGet from some complex scenarios.
+	// See #44830 for more details.
+	TiDBOptFixControl44830 uint64 = 44830
+	// TiDBOptFixControl44823 controls the maximum number of parameters for a query that can be cached in the Plan Cache.
+	TiDBOptFixControl44823 uint64 = 44823
+)
+
+// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
+	if s.OptimizerFixControl == nil {
+		return "", false
+	}
+	value, exist = s.OptimizerFixControl[key]
+	return
+>>>>>>> 3c45737ce24 (txn: add a variable to control whether to lock unchanged unique keys (#44598))
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
