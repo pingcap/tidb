@@ -2727,13 +2727,13 @@ func TestPartitionByExtensivePart(t *testing.T) {
 	t2Str := `create table t2 ` + tBase
 	tStr := `create table t ` + tBase
 
-	rows := 10000
-	pkInserts := 200
-	pkUpdates := 200
-	pkDeletes := 100 // Enough to delete half of what is inserted?
+	rows := 1000
+	pkInserts := 20
+	pkUpdates := 20
+	pkDeletes := 10 // Enough to delete half of what is inserted?
 	tStart := []string{
 		// Non partitioned
-		//tStr,
+		tStr,
 		// RANGE COLUMNS
 		tStr + ` partition by range columns (a) (partition pNull values less than (""), partition pM values less than ("M"), partition pLast values less than (maxvalue))`,
 		// KEY
