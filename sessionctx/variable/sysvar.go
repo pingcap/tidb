@@ -2741,6 +2741,16 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{
+		Scope: ScopeGlobal | ScopeSession,
+		Name:  TiDBLockUnchangedKeys,
+		Value: BoolToOnOff(DefTiDBLockUnchangedKeys),
+		Type:  TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.LockUnchangedKeys = TiDBOptOn(s)
+			return nil
+		},
+	},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {
