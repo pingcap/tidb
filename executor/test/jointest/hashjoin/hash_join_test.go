@@ -17,6 +17,10 @@ package hashjoin
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"strings"
+	"testing"
+
 	"github.com/pingcap/failpoint"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -24,9 +28,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
-	"math/rand"
-	"strings"
-	"testing"
 )
 
 func TestIndexNestedLoopHashJoin(t *testing.T) {
