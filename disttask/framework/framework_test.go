@@ -161,33 +161,18 @@ func DispatchTaskAndCheckSuccess(taskKey string, taskType string, t *testing.T, 
 	v.Store(0)
 }
 
-func DispatchTaskAndCheckFail(taskKey string, taskType string, t *testing.T, v *atomic.Int64) {
+func DispatchAndCancelTask(taskKey string, taskType string, t *testing.T, v *atomic.Int64) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunCancel", "1*return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunCancel"))
+	}()
 	task := DispatchTask(taskKey, taskType, t)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 	v.Store(0)
 }
 
-func DispatchAndCancelTask(taskKey string, taskType string, t *testing.T, v *atomic.Int64) {
-	mgr, err := storage.GetTaskManager()
-	require.NoError(t, err)
-	taskID, err := mgr.AddNewGlobalTask(taskKey, taskType, 8, nil)
-	require.NoError(t, err)
-	start := time.Now()
-	var task *proto.Task
-	for {
-		if time.Since(start) > 2*time.Minute {
-			require.FailNow(t, "timeout")
-		}
-
-		time.Sleep(time.Second)
-		task, err = mgr.GetGlobalTaskByID(taskID)
-		require.NoError(t, err)
-		require.NotNil(t, task)
-		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
-			break
-		}
-	}
-
+func DispatchTaskAndCheckFail(taskKey string, taskType string, t *testing.T, v *atomic.Int64) {
+	task := DispatchTask(taskKey, taskType, t)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 	v.Store(0)
 }
