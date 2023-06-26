@@ -2461,7 +2461,6 @@ func (c *testCallback) OnJobRunBefore(job *model.Job) {
 // or see if there are ways to speed this up :)
 // Leaving the test here, for reference and completeness testing
 func TestPartitionByIntListExtensivePart(t *testing.T) {
-	t.Skip()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByIntListExtensive"
@@ -2469,6 +2468,8 @@ func TestPartitionByIntListExtensivePart(t *testing.T) {
 	tk.MustExec("use " + schemaName)
 	tk.MustExec(`set global tidb_enable_alter_partition_by = 1`)
 	tk.MustExec(`set session tidb_enable_alter_partition_by = 1`)
+	tk.MustExec(`set global tidb_enable_remove_partitioning = 1`)
+	tk.MustExec(`set session tidb_enable_remove_partitioning = 1`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + schemaName)
 
@@ -2476,10 +2477,10 @@ func TestPartitionByIntListExtensivePart(t *testing.T) {
 	t2Str := `create table t2 ` + tBase
 	tStr := `create table t ` + tBase
 
-	rows := 10000
-	pkInserts := 200
-	pkUpdates := 200
-	pkDeletes := 100 // Enough to delete half of what is inserted?
+	rows := 1000
+	pkInserts := 20
+	pkUpdates := 20
+	pkDeletes := 10 // Enough to delete half of what is inserted?
 	tStart := []string{
 		// Non partitioned
 		tStr,
@@ -2574,7 +2575,6 @@ func getInt7ValuesFunc() func(string, bool, *rand.Rand) string {
 // or see if there are ways to speed this up :)
 // Leaving the test here, for reference and completeness testing
 func TestPartitionByIntExtensivePart(t *testing.T) {
-	t.Skip()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByIntExtensive"
@@ -2584,15 +2584,17 @@ func TestPartitionByIntExtensivePart(t *testing.T) {
 	tk2.MustExec("use " + schemaName)
 	tk.MustExec(`set global tidb_enable_alter_partition_by = 1`)
 	tk.MustExec(`set session tidb_enable_alter_partition_by = 1`)
+	tk.MustExec(`set global tidb_enable_remove_partitioning = 1`)
+	tk.MustExec(`set session tidb_enable_remove_partitioning = 1`)
 
 	tBase := `(a int unsigned, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, primary key (a), key (b), key (c,b), key (d,c), key(e))`
 	t2Str := `create table t2 ` + tBase
 	tStr := `create table t ` + tBase
 
-	rows := 10000
-	pkInserts := 200
-	pkUpdates := 200
-	pkDeletes := 100 // Enough to delete half of what is inserted?
+	rows := 1000
+	pkInserts := 20
+	pkUpdates := 20
+	pkDeletes := 10 // Enough to delete half of what is inserted?
 	thirdUintRange := 1 << 32 / 2
 	thirdUintRangeStr := fmt.Sprintf("%d", thirdUintRange)
 	twoThirdUintRangeStr := fmt.Sprintf("%d", 2*thirdUintRange)
