@@ -456,40 +456,6 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	statusServer := &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
-<<<<<<< HEAD
-=======
-	if s.cfg.Store == "tikv" {
-		keyspaceName := config.GetGlobalKeyspaceName()
-		for {
-			var fullPath string
-			if keyspaceName == "" {
-				fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
-			} else {
-				fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
-			}
-			store, err := store.New(fullPath)
-			if err != nil {
-				logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
-				break
-			}
-			ebd, ok := store.(kv.EtcdBackend)
-			if !ok {
-				break
-			}
-			etcdAddr, err := ebd.EtcdAddrs()
-			if err != nil {
-				logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
-				break
-			}
-			selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
-			service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
-			logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
-			pb.RegisterAutoIDAllocServer(grpcServer, service)
-			s.autoIDService = service
-			break
-		}
-	}
->>>>>>> 96fa4692b09 (fix join address on ipv6 (#43259))
 
 	s.statusServer = statusServer
 	s.grpcServer = grpcServer
