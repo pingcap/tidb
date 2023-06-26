@@ -2288,6 +2288,43 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+<<<<<<< HEAD
+=======
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRuntimeFilterModeName, Value: DefRuntimeFilterMode, Type: TypeStr,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, ok := RuntimeFilterModeStringToMode(normalizedValue)
+			if ok {
+				return normalizedValue, nil
+			}
+			errMsg := fmt.Sprintf("incorrect value: %s. %s options: %s ",
+				originalValue, TiDBRuntimeFilterModeName, DefRuntimeFilterMode)
+			return normalizedValue, errors.New(errMsg)
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.runtimeFilterMode, _ = RuntimeFilterModeStringToMode(val)
+			return nil
+		},
+	},
+	{
+		Scope: ScopeGlobal | ScopeSession,
+		Name:  TiDBLockUnchangedKeys,
+		Value: BoolToOnOff(DefTiDBLockUnchangedKeys),
+		Type:  TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.LockUnchangedKeys = TiDBOptOn(s)
+			return nil
+		},
+	},
+}
+
+func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {
+	p, err := tiflashcompute.GetDispatchPolicyByStr(val)
+	if err != nil {
+		return err
+	}
+	s.TiFlashComputeDispatchPolicy = p
+	return nil
+>>>>>>> 3c45737ce24 (txn: add a variable to control whether to lock unchanged unique keys (#44598))
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

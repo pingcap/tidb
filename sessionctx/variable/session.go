@@ -1328,6 +1328,31 @@ type SessionVars struct {
 
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
+<<<<<<< HEAD
+=======
+
+	// FastCheckTable is used to control whether fast check table is enabled.
+	FastCheckTable bool
+
+	// HypoIndexes are for the Index Advisor.
+	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+	// HypoTiFlashReplicas are for the Index Advisor.
+	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
+
+	// Runtime Filter Group
+	// Runtime filter type: only support IN or MIN_MAX now.
+	// Runtime filter type can take multiple values at the same time.
+	runtimeFilterTypes []RuntimeFilterType
+	// Runtime filter mode: only support OFF, LOCAL now
+	runtimeFilterMode RuntimeFilterMode
+
+	// Whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
+	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
+	LockUnchangedKeys bool
+
+	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	AnalyzeSkipColumnTypes map[string]struct{}
+>>>>>>> 3c45737ce24 (txn: add a variable to control whether to lock unchanged unique keys (#44598))
 }
 
 var (

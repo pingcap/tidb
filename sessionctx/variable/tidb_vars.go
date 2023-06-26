@@ -798,6 +798,19 @@ const (
 
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
+<<<<<<< HEAD
+=======
+
+	// TiDBLockUnchangedKeys indicates whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
+	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
+	TiDBLockUnchangedKeys = "tidb_lock_unchanged_keys"
+
+	// TiDBFastCheckTable enables fast check table.
+	TiDBFastCheckTable = "tidb_enable_fast_table_check"
+
+	// TiDBAnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	TiDBAnalyzeSkipColumnTypes = "tidb_analyze_skip_column_types"
+>>>>>>> 3c45737ce24 (txn: add a variable to control whether to lock unchanged unique keys (#44598))
 )
 
 // TiDB vars that have only global scope
@@ -1139,6 +1152,7 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
+<<<<<<< HEAD
 	DefTiDBGOGCTunerThreshold                float64 = 0.6
 	DefTiDBOptPrefixIndexSingleScan                  = true
 	DefTiDBExternalTS                                = 0
@@ -1163,6 +1177,62 @@ const (
 	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                        = 4
 	DefTiDBTTLDeleteWorkerCount                      = 4
+=======
+	DefTiDBGOGCTunerThreshold                 float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan                   = true
+	DefTiDBExternalTS                                 = 0
+	DefTiDBEnableExternalTSRead                       = false
+	DefTiDBEnableReusechunk                           = true
+	DefTiDBUseAlloc                                   = false
+	DefTiDBEnablePlanReplayerCapture                  = false
+	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
+	DefTiDBTTLJobEnable                               = true
+	DefTiDBTTLScanBatchSize                           = 500
+	DefTiDBTTLScanBatchMaxSize                        = 10240
+	DefTiDBTTLScanBatchMinSize                        = 1
+	DefTiDBTTLDeleteBatchSize                         = 100
+	DefTiDBTTLDeleteBatchMaxSize                      = 10240
+	DefTiDBTTLDeleteBatchMinSize                      = 1
+	DefTiDBTTLDeleteRateLimit                         = 0
+	DefTiDBTTLRunningTasks                            = -1
+	DefPasswordReuseHistory                           = 0
+	DefPasswordReuseTime                              = 0
+	DefTiDBStoreBatchSize                             = 4
+	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture            = false
+	DefTiDBTTLJobScheduleWindowStartTime              = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime                = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                         = 4
+	DefTiDBTTLDeleteWorkerCount                       = 4
+	DefaultExchangeCompressionMode                    = kv.ExchangeCompressionModeUnspecified
+	DefTiDBEnableResourceControl                      = true
+	DefTiDBPessimisticTransactionFairLocking          = false
+	DefTiDBEnablePlanCacheForParamLimit               = true
+	DefTiFlashComputeDispatchPolicy                   = tiflashcompute.DispatchPolicyConsistentHashStr
+	DefTiDBEnablePlanCacheForSubquery                 = true
+	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
+	DefTiDBOptEnableLateMaterialization               = true
+	DefTiDBOptOrderingIdxSelThresh                    = 0.0
+	DefTiDBOptEnableMPPSharedCTEExecution             = false
+	DefTiDBPlanCacheInvalidationOnFreshStats          = true
+	DefTiDBEnableRowLevelChecksum                     = false
+	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"
+	DefAuthenticationLDAPSASLServerPort               = 389
+	DefAuthenticationLDAPSASLTLS                      = false
+	DefAuthenticationLDAPSASLUserSearchAttr           = "uid"
+	DefAuthenticationLDAPSASLInitPoolSize             = 10
+	DefAuthenticationLDAPSASLMaxPoolSize              = 1000
+	DefAuthenticationLDAPSimpleAuthMethodName         = "SIMPLE"
+	DefAuthenticationLDAPSimpleServerPort             = 389
+	DefAuthenticationLDAPSimpleTLS                    = false
+	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
+	DefAuthenticationLDAPSimpleInitPoolSize           = 10
+	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
+	DefTiDBEnableFastCheckTable                       = true
+	DefRuntimeFilterType                              = "IN"
+	DefRuntimeFilterMode                              = "OFF"
+	DefTiDBLockUnchangedKeys                          = true
+>>>>>>> 3c45737ce24 (txn: add a variable to control whether to lock unchanged unique keys (#44598))
 )
 
 // Process global variables.
@@ -1229,6 +1299,7 @@ var (
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
+<<<<<<< HEAD
 	TTLJobRunInterval                  = atomic.NewDuration(mustParseDuration(DefTiDBTTLJobRunInterval))
 	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
 	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
@@ -1238,6 +1309,32 @@ var (
 	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
 	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
+=======
+	TTLJobScheduleWindowStartTime      = atomic.NewTime(
+		mustParseTime(
+			FullDayTimeFormat,
+			DefTiDBTTLJobScheduleWindowStartTime,
+		),
+	)
+	TTLJobScheduleWindowEndTime = atomic.NewTime(
+		mustParseTime(
+			FullDayTimeFormat,
+			DefTiDBTTLJobScheduleWindowEndTime,
+		),
+	)
+	TTLScanWorkerCount              = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
+	TTLDeleteWorkerCount            = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
+	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
+	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
+	IsSandBoxModeEnabled            = atomic.NewBool(false)
+	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
+	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
+	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
+	TTLRunningTasks                 = atomic.NewInt32(DefTiDBTTLRunningTasks)
+	// always set the default value to false because the resource control in kv-client is not inited
+	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
+	EnableResourceControl = atomic.NewBool(false)
+>>>>>>> 3c45737ce24 (txn: add a variable to control whether to lock unchanged unique keys (#44598))
 )
 
 var (
