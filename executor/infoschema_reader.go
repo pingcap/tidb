@@ -2015,7 +2015,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 			procID = chunkRow.GetUint64(10)
 		}
 
-		var remainDurationStr, progressStr, estimatedRowCntStr interface{}
+		var remainDurationStr, progressDouble, estimatedRowCntStr interface{}
 		if state == statistics.AnalyzeRunning {
 			startTime, ok := startTime.(types.Time)
 			if !ok {
@@ -2030,7 +2030,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 			if RemainingDuration != nil {
 				remainDurationStr = execdetails.FormatDuration(*RemainingDuration)
 			}
-			progressStr = progress
+			progressDouble = progress
 			estimatedRowCntStr = int64(estimatedRowCnt)
 		}
 		row := types.MakeDatums(
@@ -2046,7 +2046,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 			instance,           // INSTANCE
 			procID,             // PROCESS_ID
 			remainDurationStr,  // REMAINING_SECONDS
-			progressStr,        // PROGRESS
+			progressDouble,     // PROGRESS
 			estimatedRowCntStr, // ESTIMATED_TOTAL_ROWS
 		)
 		rows = append(rows, row)
