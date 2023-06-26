@@ -25,16 +25,17 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
 type rollbackFlowHandle struct{}
 
 var _ dispatcher.TaskFlowHandle = (*rollbackFlowHandle)(nil)
+var rollbackCnt atomic.Int32
 
 func (*rollbackFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
+
 func (*rollbackFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepOne
@@ -76,8 +77,8 @@ func (*rollbackScheduler) InitSubtaskExecEnv(_ context.Context) error { return n
 func (t *rollbackScheduler) CleanupSubtaskExecEnv(_ context.Context) error { return nil }
 
 func (t *rollbackScheduler) Rollback(_ context.Context) error {
-	logutil.BgLogger().Info("ywq test rollback")
-	t.v.Add(-3)
+	t.v.Store(0)
+	rollbackCnt.Add(1)
 	return nil
 }
 
@@ -113,6 +114,7 @@ func RegisterRollbackTaskMeta(v *atomic.Int64) {
 	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &rollbackSubtaskExecutor{v: v}, nil
 	})
+	rollbackCnt.Store(0)
 }
 
 func TestFrameworkRollback(t *testing.T) {
@@ -127,5 +129,7 @@ func TestFrameworkRollback(t *testing.T) {
 	}()
 
 	DispatchTaskAndCheckFail("key2", t, &v)
+	require.Equal(t, int32(2), rollbackCnt.Load())
+	rollbackCnt.Store(0)
 	distContext.Close()
 }
