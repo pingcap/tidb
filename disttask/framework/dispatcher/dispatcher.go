@@ -278,14 +278,14 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 			logutil.BgLogger().Info("detect task exits", zap.Int64("task ID", gTask.ID), zap.Error(d.ctx.Err()))
 			return
 		case <-ticker.C:
-			if val, _err_ := failpoint.Eval(_curpkg_("cancelTaskBeforeProbe")); _err_ == nil {
+			failpoint.Inject("cancelTaskBeforeProbe", func(val failpoint.Value) {
 				if val.(bool) {
 					err := d.taskMgr.CancelGlobalTask(gTask.ID)
 					if err != nil {
 						logutil.BgLogger().Error("cancel global task failed", zap.Error(err))
 					}
 				}
-			}
+			})
 			// TODO: Consider actively obtaining information about task completion.
 			stepIsFinished, errs := d.probeTask(gTask)
 			// The global task isn't finished and not failed.
@@ -350,23 +350,23 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, gTaskState string, subT
 		time.Sleep(retrySQLInterval)
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("dispatchSubTasksFail")); _err_ == nil {
+	failpoint.Inject("dispatchSubTasksFail", func(val failpoint.Value) {
 		if val.(bool) {
-			return errors.New("injected error in dispatchSubTasks")
+			failpoint.Return(errors.New("injected error in dispatchSubTasks"))
 		}
-	}
+	})
 
 	// 2. dispatch subtasks.
 	isRevert := gTaskState == proto.TaskStateReverting
 	logutil.BgLogger().Info("subtask size", zap.Int("size", len(subTasks)))
 	for _, subtask := range subTasks {
 		for j := 0; j < retryTimes; j++ {
-			if _, _err_ := failpoint.Eval(_curpkg_("insertSubtasksFail")); _err_ == nil {
+			failpoint.Inject("insertSubtasksFail", func() {
 				if j < 10 {
 					time.Sleep(retrySQLInterval)
-					continue
+					failpoint.Continue()
 				}
-			}
+			})
 			err = d.taskMgr.AddSubTasks(gTask, subtask, isRevert)
 			if err == nil {
 				break
@@ -476,17 +476,17 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (bool, error) {
 		return false, d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("processNormalFlowErrRetryable")); _err_ == nil {
+	failpoint.Inject("processNormalFlowErrRetryable", func(val failpoint.Value) {
 		if val.(bool) {
-			return true, errors.New("processNormalFlowErr")
+			failpoint.Return(true, errors.New("processNormalFlowErr"))
 		}
-	}
+	})
 
-	if val, _err_ := failpoint.Eval(_curpkg_("processNormalFlowErrNotRetryable")); _err_ == nil {
+	failpoint.Inject("processNormalFlowErrNotRetryable", func(val failpoint.Value) {
 		if val.(bool) {
-			return false, errors.New("processNormalFlowErr")
+			failpoint.Return(false, errors.New("processNormalFlowErr"))
 		}
-	}
+	})
 
 	metas, err := handle.ProcessNormalFlow(d.ctx, d, gTask)
 	if err != nil {
