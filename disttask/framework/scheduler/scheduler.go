@@ -99,6 +99,11 @@ func (s *InternalSchedulerImpl) Stop() {
 
 // Run runs the scheduler task.
 func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error {
+	err := s.run(ctx, task)
+	return s.taskTable.UpdateErrorToSubtask(s.id, err)
+}
+
+func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error {
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 	s.registerCancelFunc(runCancel)
@@ -107,13 +112,14 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
 	scheduler, err := createScheduler(task)
 	if err != nil {
-		s.onError(err)
-		return s.getError()
+		return err
 	}
 
+	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
+		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
+	})
 	if err := scheduler.InitSubtaskExecEnv(runCtx); err != nil {
-		s.onError(err)
-		return s.getError()
+		return err
 	}
 	defer func() {
 		err := scheduler.CleanupSubtaskExecEnv(runCtx)
@@ -127,8 +133,7 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 
 	err = s.pool.RunWithConcurrency(minimalTaskCh, uint32(task.Concurrency))
 	if err != nil {
-		s.onError(err)
-		return s.getError()
+		return err
 	}
 
 	concurrentSubtask := false
@@ -161,7 +166,7 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 		}
 	}
 	s.subtaskWg.Wait()
-	return s.getError()
+	return nil
 }
 
 func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask, step int64, minimalTaskCh chan func()) {
