@@ -578,3 +578,23 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkUnionScanRead,
 	)
 }
+
+// func TestXXX(t *testing.T) {
+// 	store := testkit.CreateMockStore(t)
+// 	tk := testkit.NewTestKit(t, store)
+// 	tk.MustExec("use test")
+// 	tk.MustExec("create table t1 (id int, a int, b int,  primary key (a, b));",)
+// 	tk.MustExec("create table t2 (b int,  a int, name varchar(10), id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE CASCADE)")
+
+// 	tk.MustExec("begin")
+// 	tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4);")
+// 	tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b'), (3, 3, 3, 'c'), (4, 4, 4, 'd');")
+// 	tk.MustExec("update t1 set a=a+100, b=b+200 where id = 1 or a = 2")
+// 	fmt.Println("upppppppppppdaaaaaateeeeeeeeeeeeee")
+// 	tk.MustExec("update t1 set a=a+1000, b=b+2000 where a in (2,3,4) or b in (5,6,7) or id=2")
+// 	fmt.Println("===================")
+// 	tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows("1 101 201", "2 1102 2202", "3 1003 2003", "4 1004 2004"))
+// 	fmt.Println("66666666666666666666666")
+// 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 101 201 a", "2 1102 2202 b", "3 1003 2003 c", "4 1004 2004 d"))
+// 	tk.MustExec("commit")
+// }

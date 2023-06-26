@@ -15,6 +15,7 @@
 package executor
 
 import (
+	// "fmt"
 	"context"
 
 	"github.com/pingcap/errors"
@@ -245,13 +246,10 @@ type txnMemBufferIter struct {
 }
 
 func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
-	for {
+	var ret []types.Datum
+	for iter.idx < len(iter.kvRanges) {
 		if iter.curr == nil {
-			if iter.idx >= len(iter.kvRanges) {
-				return nil, nil
-			}
 			rg := iter.kvRanges[iter.idx]
-			iter.idx++
 			tmp := iter.txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
 			snapCacheIter, err := getSnapIter(iter.ctx, iter.cacheTable, rg)
 			if err != nil {
@@ -264,33 +262,53 @@ func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
 				}
 			}
 			iter.curr = tmp
-		}
-
-		curr := iter.curr
-		for curr.Valid() {
-			// check whether the key was been deleted.
-			if len(curr.Value()) == 0 {
-				curr.Next()
-				continue
-			}
-
-			mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
-			resultRows := make([]types.Datum, len(iter.columns))
+		} else {
 			var err error
-			resultRows, err = iter.decodeRecordKeyValue(curr.Key(), curr.Value(), &resultRows)
+			ret, err = iter.next()
 			if err != nil {
-				return nil, err
+				return nil, errors.Trace(err)
 			}
-
-			mutableRow.SetDatums(resultRows...)
-			matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, mutableRow.ToRow())
-			if err != nil || !matched {
-				return nil, err
+			if ret != nil {
+				// fmt.Println("Next() == get", ret)
+				break
 			}
-			return resultRows, curr.Next()
+			// fmt.Println("change to the next range...")
+			iter.idx++
+			iter.curr = nil
 		}
-		iter.curr = nil
 	}
+	return ret, nil
+}
+
+func (iter *txnMemBufferIter) next() ([]types.Datum, error) {
+	var err error
+	curr := iter.curr
+	for ; err == nil && curr.Valid(); err = curr.Next() {
+		// check whether the key was been deleted.
+		if len(curr.Value()) == 0 {
+			continue
+		}
+
+		mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
+		resultRows := make([]types.Datum, len(iter.columns))
+		// fmt.Println("curr key ===", curr.Key())
+		resultRows, err = iter.decodeRecordKeyValue(curr.Key(), curr.Value(), &resultRows)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		mutableRow.SetDatums(resultRows...)
+		matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, mutableRow.ToRow())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !matched {
+			// fmt.Println("not matched??", matched)
+			continue
+		}
+		return resultRows, curr.Next()
+	}
+	return nil, err
 }
 
 func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
