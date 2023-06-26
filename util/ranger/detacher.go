@@ -15,7 +15,6 @@
 package ranger
 
 import (
-	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
