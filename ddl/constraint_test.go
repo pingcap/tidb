@@ -1170,3 +1170,31 @@ func TestIssue44689(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("ALTER TABLE t2 ADD CONSTRAINT CHECK(%s)", expr))
 	}
 }
+
+func TestCheckConstraintSwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int check(a > 0))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 the switch of check constraint is off"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("set @@session.tidb_enable_check_constraint = 1")
+	tk.MustExec("create table t(a int check(a > 0))")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `t_chk_1` CHECK ((`a` > 0))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("alter table t add constraint chk check(true)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("alter table t alter constraint chk not enforced")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("alter table t drop constraint chk")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("set @@session.tidb_enable_check_constraint = 0")
+	tk.MustExec("alter table t drop constraint t_chk_1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 the switch of check constraint is off"))
+	tk.MustExec("alter table t alter constraint t_chk_1 not enforced")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 the switch of check constraint is off"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `t_chk_1` CHECK ((`a` > 0))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}

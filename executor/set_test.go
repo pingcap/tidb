@@ -2124,3 +2124,22 @@ func TestSetMppExchangeCompressionModeVariable(t *testing.T) {
 		require.Equal(t, warnings[0].Err.Error(), "mpp exchange compression won't work under current mpp version 0")
 	}
 }
+
+func TestSetEnableCheckConstraint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@session.tidb_enable_check_constraint").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@session.tidb_enable_check_constraint=ON;")
+	tk.MustQuery("select @@session.tidb_enable_check_constraint").Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.tidb_enable_check_constraint=off;")
+	tk.MustQuery("select @@session.tidb_enable_check_constraint").Check(testkit.Rows("0"))
+	tk.MustExec("set @@session.tidb_enable_check_constraint=1;")
+	tk.MustQuery("select @@session.tidb_enable_check_constraint").Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.tidb_enable_check_constraint=0;")
+	tk.MustQuery("select @@session.tidb_enable_check_constraint").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.tidb_enable_check_constraint=1;")
+	tk.MustQuery("select @@global.tidb_enable_check_constraint").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.tidb_enable_check_constraint").Check(testkit.Rows("0"))
+}
