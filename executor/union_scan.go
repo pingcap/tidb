@@ -199,26 +199,14 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	if err != nil {
 		return nil, err
 	}
-	// fmt.Print("get snapshot row=")
-	// for _, d := range snapshotRow {
-	// 	str, _ := d.ToString()
-	// 	fmt.Print(" ", str)
-	// }
-	// fmt.Print(" | added row=")
-	// for _, d := range addedRow {
-	// 	str, _ := d.ToString()
-	// 	fmt.Print(" ", str)
-	// }
 
 	var row []types.Datum
 	var isSnapshotRow bool
 	if addedRow == nil {
 		row = snapshotRow
 		isSnapshotRow = true
-		// fmt.Println("choose snapshot row, add is nil")
 	} else if snapshotRow == nil {
 		row = addedRow
-		// fmt.Println("choose added, snapshot is nil")
 	} else {
 		isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
 		if err != nil {
@@ -229,7 +217,6 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 		} else {
 			row = addedRow
 		}
-		// fmt.Println("pick == isSnapshot = ", isSnapshotRow)
 	}
 	if row == nil {
 		return nil, nil

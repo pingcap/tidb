@@ -15,7 +15,6 @@
 package executor
 
 import (
-	// "fmt"
 	"context"
 
 	"github.com/pingcap/errors"
@@ -269,10 +268,8 @@ func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
 				return nil, errors.Trace(err)
 			}
 			if ret != nil {
-				// fmt.Println("Next() == get", ret)
 				break
 			}
-			// fmt.Println("change to the next range...")
 			iter.idx++
 			iter.curr = nil
 		}
@@ -291,7 +288,6 @@ func (iter *txnMemBufferIter) next() ([]types.Datum, error) {
 
 		mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
 		resultRows := make([]types.Datum, len(iter.columns))
-		// fmt.Println("curr key ===", curr.Key())
 		resultRows, err = iter.decodeRecordKeyValue(curr.Key(), curr.Value(), &resultRows)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -303,7 +299,6 @@ func (iter *txnMemBufferIter) next() ([]types.Datum, error) {
 			return nil, errors.Trace(err)
 		}
 		if !matched {
-			// fmt.Println("not matched??", matched)
 			continue
 		}
 		return resultRows, curr.Next()
