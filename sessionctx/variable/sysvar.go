@@ -2508,6 +2508,8 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptFixControl, Value: "", Type: TypeStr, IsHintUpdatable: true,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			// validation logic for setting global
+			// we don't put this in Validation to avoid repeating the checking logic for setting session.
 			_, warnings, err := fixcontrol.ParseToMap(val)
 			if err != nil {
 				return err
