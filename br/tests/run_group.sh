@@ -4,10 +4,6 @@
 # all the integration tests are located in br/tests directory. only the directories
 # containing run.sh will be considered as integration tests. the script will print the total # # # number
 
-# usage: ./br-lightning_run_group.sh G0  to run the integration tests in group 0
-# current supported groups are G0, G1, G2, G3, G4, G5, G6, G7, G8, G9, 'G10', 'G11', 'G12', 'G13', 'G14', 'G15'
-
-
 set -eo pipefail
 
 # Step 1
