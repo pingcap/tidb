@@ -197,7 +197,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 	}
 }
 
-func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [][]byte) {
+func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr []error) {
 	// TODO: Consider putting the following operations into a transaction.
 	// TODO: Consider collect some information about the tasks.
 	if gTask.State != proto.TaskStateReverting {
@@ -209,7 +209,7 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		}
 
 		if cancelling {
-			return false, [][]byte{[]byte("cancel")}
+			return false, []error{errors.New("cancel")}
 		}
 		// check subtasks failed.
 		cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateFailed)
@@ -283,16 +283,16 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 				}
 			})
 			// TODO: Consider actively obtaining information about task completion.
-			stepIsFinished, errStr := d.probeTask(gTask)
+			stepIsFinished, errs := d.probeTask(gTask)
 			// The global task isn't finished and not failed.
-			if !stepIsFinished && len(errStr) == 0 {
+			if !stepIsFinished && len(errs) == 0 {
 				GetTaskFlowHandle(gTask.Type).OnTicker(d.ctx, gTask)
 				logutil.BgLogger().Debug("detect task, this task keeps current state",
 					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State))
 				break
 			}
 
-			err := d.processFlow(gTask, errStr)
+			err := d.processFlow(gTask, errs)
 			if err == nil && gTask.IsFinished() {
 				logutil.BgLogger().Info("detect task, task is finished",
 					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State))
@@ -307,11 +307,11 @@ func (d *dispatcher) detectTask(gTask *proto.Task) {
 	}
 }
 
-func (d *dispatcher) processFlow(gTask *proto.Task, errStr [][]byte) error {
-	if len(errStr) > 0 {
+func (d *dispatcher) processFlow(gTask *proto.Task, errs []error) error {
+	if len(errs) > 0 {
 		// Found an error when task is running.
-		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("task-id", gTask.ID), zap.ByteStrings("err msg", errStr))
-		return d.processErrFlow(gTask, errStr)
+		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("task-id", gTask.ID), zap.Errors("err msg", errs))
+		return d.processErrFlow(gTask, errs)
 	}
 	// previous step is finished.
 	if gTask.State == proto.TaskStateReverting {
@@ -347,7 +347,7 @@ func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTask
 	return err
 }
 
-func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr [][]byte) error {
+func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr []error) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	handle := GetTaskFlowHandle(gTask.Type)
@@ -388,6 +388,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) error {
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
 		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
+		gTask.Error = errors.New("unsupported task type")
 		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	metas, err := handle.ProcessNormalFlow(d.ctx, d, gTask)
@@ -396,7 +397,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) error {
 		if handle.IsRetryableErr(err) {
 			return err
 		}
-		gTask.Error = []byte(err.Error())
+		gTask.Error = err
 		return d.updateTask(gTask, proto.TaskStateReverted, nil, retrySQLTimes)
 	}
 	logutil.BgLogger().Info("process normal flow", zap.Int64("task ID", gTask.ID),

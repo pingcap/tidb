@@ -64,7 +64,7 @@ func (t *MockTaskTable) GetSubtaskInStates(instanceID string, taskID int64, stat
 }
 
 // UpdateSubtaskStateAndError implements SubtaskTable.UpdateSubtaskState.
-func (t *MockTaskTable) UpdateSubtaskStateAndError(id int64, state string, _ string) error {
+func (t *MockTaskTable) UpdateSubtaskStateAndError(id int64, state string, _ error) error {
 	args := t.Called(id, state)
 	return args.Error(0)
 }

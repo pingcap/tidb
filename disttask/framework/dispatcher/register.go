@@ -39,7 +39,7 @@ type TaskFlowHandle interface {
 	// ProcessErrFlow is called when:
 	// 	1. subtask is finished with error.
 	// 	2. task is cancelled after we have dispatched some subtasks.
-	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr [][]byte) (subtaskMeta []byte, err error)
+	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr []error) (subtaskMeta []byte, err error)
 	// GetEligibleInstances is used to get the eligible instances for the global task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
 	GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error)

@@ -48,7 +48,7 @@ func (*rollbackFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.Tas
 	return nil, nil
 }
 
-func (*rollbackFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
+func (*rollbackFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return []byte("rollbacktask1"), nil
 }
 

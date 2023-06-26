@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain"
@@ -64,11 +65,11 @@ func TestBackfillFlowHandle(t *testing.T) {
 	require.Equal(t, 0, len(metas))
 
 	// test partition table ProcessErrFlow
-	errMeta, err := handler.ProcessErrFlow(context.Background(), nil, gTask, [][]byte{[]byte("mockErr")})
+	errMeta, err := handler.ProcessErrFlow(context.Background(), nil, gTask, []error{errors.New("mockErr")})
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
-	errMeta, err = handler.ProcessErrFlow(context.Background(), nil, gTask, [][]byte{[]byte("mockErr")})
+	errMeta, err = handler.ProcessErrFlow(context.Background(), nil, gTask, []error{errors.New("mockErr")})
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
