@@ -550,13 +550,13 @@ func (d *dispatcher) dispatchDistPlan(gTask *proto.Task, handle TaskFlowHandle, 
 }
 
 // retryable
-func (d *dispatcher) generateSubtasks(ctx context.Context, handle TaskFlowHandle,
+func (*dispatcher) generateSubtasks(ctx context.Context, handle TaskFlowHandle,
 	gTask *proto.Task, serverNodes []*infosync.ServerInfo, metas [][]byte) ([][]*proto.Subtask, error) {
 	return handle.GenerateSubtasks(ctx, gTask, serverNodes, metas)
 }
 
 // GenerateOneBatchSubtasks generate only one batch of subtasks.
-func GenerateOneBatchSubtasks(ctx context.Context,
+func GenerateOneBatchSubtasks(_ context.Context,
 	gTask *proto.Task, serverNodes []*infosync.ServerInfo, metas [][]byte) ([][]*proto.Subtask, error) {
 	subTasks := make([][]*proto.Subtask, 1)
 	for i, meta := range metas {
