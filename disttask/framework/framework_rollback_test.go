@@ -105,13 +105,13 @@ func (e *rollbackSubtaskExecutor) Run(_ context.Context) error {
 
 func RegisterRollbackTaskMeta(v *atomic.Int64) {
 	dispatcher.ClearTaskFlowHandle()
-	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &rollbackFlowHandle{})
+	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeRollbackExample, &rollbackFlowHandle{})
 	scheduler.ClearSchedulers()
-	scheduler.RegisterTaskType(proto.TaskTypeExample)
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
+	scheduler.RegisterTaskType(proto.TaskTypeRollbackExample)
+	scheduler.RegisterSchedulerConstructor(proto.TaskTypeRollbackExample, proto.StepOne, func(_ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
 		return &rollbackScheduler{v: v}, nil
 	}, scheduler.WithConcurrentSubtask())
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
+	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeRollbackExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
 		return &rollbackSubtaskExecutor{v: v}, nil
 	})
 	rollbackCnt.Store(0)
@@ -125,21 +125,21 @@ func TestFrameworkRollback(t *testing.T) {
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	// 1. cancel global task.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe", "1*return(true)"))
-	DispatchTaskAndCheckFail("key1", t, &v)
+	DispatchTaskAndCheckFail("key1", proto.TaskTypeRollbackExample, t, &v)
 	require.Equal(t, int32(2), rollbackCnt.Load())
 	rollbackCnt.Store(0)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe"))
 
 	// 2. processNormalFlowErr and not retryable.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrNotRetryable", "1*return(true)"))
-	DispatchTaskAndCheckFail("key2", t, &v)
+	DispatchTaskAndCheckFail("key2", proto.TaskTypeRollbackExample, t, &v)
 	require.Equal(t, int32(0), rollbackCnt.Load())
 	rollbackCnt.Store(0)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrNotRetryable"))
 
 	// 3. dispatch normal subtasks fail.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFail", "1*return(true)"))
-	DispatchTaskAndCheckFail("key3", t, &v)
+	DispatchTaskAndCheckFail("key3", proto.TaskTypeRollbackExample, t, &v)
 	require.Equal(t, int32(0), rollbackCnt.Load())
 	rollbackCnt.Store(0)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFail"))
@@ -147,10 +147,10 @@ func TestFrameworkRollback(t *testing.T) {
 	// 4. insert revert subtasks fail.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe", "1*return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/insertSubtasksFail", "return(true)"))
-	DispatchTaskAndCheckFail("key4", t, &v)
+	DispatchTaskAndCheckFail("key4", proto.TaskTypeRollbackExample, t, &v)
 	require.Equal(t, int32(2), rollbackCnt.Load())
 	rollbackCnt.Store(0)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/insertSubtasksFail"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe"))
 	distContext.Close()
 }
