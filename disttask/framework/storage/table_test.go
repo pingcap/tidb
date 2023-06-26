@@ -168,7 +168,7 @@ func TestSubTaskTable(t *testing.T) {
 	err = sm.UpdateSubtaskHeartbeat("tidb1", 1, time.Now())
 	require.NoError(t, err)
 
-	err = sm.UpdateSubtaskStateAndError(1, proto.TaskStateRunning, "")
+	err = sm.UpdateSubtaskStateAndError(1, proto.TaskStateRunning, nil)
 	require.NoError(t, err)
 
 	task, err = sm.GetSubtaskInStates("tidb1", 1, proto.TaskStatePending)

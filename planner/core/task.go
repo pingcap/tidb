@@ -1146,23 +1146,13 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			if plan, ok := finalScan.(*PhysicalTableScan); ok {
 				plan.ByItems = p.ByItems
 				if plan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
-					plan.schema.Append(&expression.Column{
-						RetType:  types.NewFieldType(mysql.TypeLonglong),
-						UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-						ID:       model.ExtraPhysTblID,
-					})
+					plan.Columns, plan.schema, _ = AddExtraPhysTblIDColumn(plan.ctx, plan.Columns, plan.Schema())
 				}
 			}
 			if plan, ok := finalScan.(*PhysicalIndexScan); ok {
 				plan.ByItems = p.ByItems
 				if plan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() && !plan.Index.Global {
-					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
-					plan.schema.Append(&expression.Column{
-						RetType:  types.NewFieldType(mysql.TypeLonglong),
-						UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-						ID:       model.ExtraPhysTblID,
-					})
+					plan.Columns, plan.schema, _ = AddExtraPhysTblIDColumn(plan.ctx, plan.Columns, plan.Schema())
 				}
 			}
 			partialScans = append(partialScans, finalScan)
@@ -1216,13 +1206,9 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		}
 		// global index for tableScan with keepOrder also need PhysicalTblID
 		if clonedTblScan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			clonedTblScan.Columns = append(clonedTblScan.Columns, model.NewExtraPhysTblIDColInfo())
-			clonedTblScan.Schema().Append(&expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-				ID:       model.ExtraPhysTblID,
-			})
-			copTsk.needExtraProj = true
+			var succ bool
+			clonedTblScan.Columns, clonedTblScan.schema, succ = AddExtraPhysTblIDColumn(clonedTblScan.ctx, clonedTblScan.Columns, clonedTblScan.Schema())
+			copTsk.needExtraProj = copTsk.needExtraProj || succ
 		}
 		clonedTblScan.HandleCols, err = clonedTblScan.HandleCols.ResolveIndices(clonedTblScan.Schema())
 		if err != nil {
