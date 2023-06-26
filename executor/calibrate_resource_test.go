@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -79,13 +80,20 @@ func TestCalibrateResource(t *testing.T) {
 	// Mock for metric table data.
 	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
 	require.NoError(t, failpoint.Enable(fpName, "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockMetricsDataFilter", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockMetricsDataFilter"))
 	}()
 
 	datetime := func(s string) types.Time {
 		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
+		return time
+	}
+	now := time.Now()
+	datetimeBeforeNow := func(dur time.Duration) types.Time {
+		time := types.NewTime(types.FromGoTime(now.Add(-dur)), mysql.TypeDatetime, types.MaxFsp)
 		return time
 	}
 
@@ -125,8 +133,79 @@ func TestCalibrateResource(t *testing.T) {
 	}
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE").Check(testkit.Rows("38760"))
 
-	// construct data for dynamic calibrate
 	ru1 := [][]types.Datum{
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute), 2200.0),
+		types.MakeDatums(datetimeBeforeNow(10*time.Minute), 2200.0),
+		types.MakeDatums(datetimeBeforeNow(9*time.Minute), 2100.0),
+		types.MakeDatums(datetimeBeforeNow(8*time.Minute), 2250.0),
+		types.MakeDatums(datetimeBeforeNow(7*time.Minute), 2300.0),
+		types.MakeDatums(datetimeBeforeNow(6*time.Minute), 2230.0),
+		types.MakeDatums(datetimeBeforeNow(5*time.Minute), 2210.0),
+		types.MakeDatums(datetimeBeforeNow(4*time.Minute), 2250.0),
+		types.MakeDatums(datetimeBeforeNow(3*time.Minute), 2330.0),
+		types.MakeDatums(datetimeBeforeNow(2*time.Minute), 2330.0),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute), 2300.0),
+		types.MakeDatums(datetimeBeforeNow(2*time.Second), 2280.0),
+	}
+	mockData["resource_manager_resource_unit"] = ru1
+	cpu1 := [][]types.Datum{
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute), "tidb-0", "tidb", 1.212),
+		types.MakeDatums(datetimeBeforeNow(10*time.Minute), "tidb-0", "tidb", 1.212),
+		types.MakeDatums(datetimeBeforeNow(9*time.Minute), "tidb-0", "tidb", 1.233),
+		types.MakeDatums(datetimeBeforeNow(8*time.Minute), "tidb-0", "tidb", 1.234),
+		types.MakeDatums(datetimeBeforeNow(7*time.Minute), "tidb-0", "tidb", 1.213),
+		types.MakeDatums(datetimeBeforeNow(6*time.Minute), "tidb-0", "tidb", 1.209),
+		types.MakeDatums(datetimeBeforeNow(5*time.Minute), "tidb-0", "tidb", 1.213),
+		types.MakeDatums(datetimeBeforeNow(4*time.Minute), "tidb-0", "tidb", 1.236),
+		types.MakeDatums(datetimeBeforeNow(3*time.Minute), "tidb-0", "tidb", 1.228),
+		types.MakeDatums(datetimeBeforeNow(2*time.Minute), "tidb-0", "tidb", 1.219),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute), "tidb-0", "tidb", 1.220),
+		types.MakeDatums(datetimeBeforeNow(2*time.Second), "tidb-0", "tidb", 1.221),
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute), "tikv-1", "tikv", 2.212),
+		types.MakeDatums(datetimeBeforeNow(10*time.Minute), "tikv-1", "tikv", 2.212),
+		types.MakeDatums(datetimeBeforeNow(9*time.Minute), "tikv-1", "tikv", 2.233),
+		types.MakeDatums(datetimeBeforeNow(8*time.Minute), "tikv-1", "tikv", 2.234),
+		types.MakeDatums(datetimeBeforeNow(7*time.Minute), "tikv-1", "tikv", 2.213),
+		types.MakeDatums(datetimeBeforeNow(6*time.Minute), "tikv-1", "tikv", 2.209),
+		types.MakeDatums(datetimeBeforeNow(5*time.Minute), "tikv-1", "tikv", 2.213),
+		types.MakeDatums(datetimeBeforeNow(4*time.Minute), "tikv-1", "tikv", 2.236),
+		types.MakeDatums(datetimeBeforeNow(3*time.Minute), "tikv-1", "tikv", 2.228),
+		types.MakeDatums(datetimeBeforeNow(2*time.Minute), "tikv-1", "tikv", 2.219),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute), "tikv-1", "tikv", 2.220),
+		types.MakeDatums(datetimeBeforeNow(2*time.Second), "tikv-1", "tikv", 2.281),
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute), "tikv-0", "tikv", 2.282),
+		types.MakeDatums(datetimeBeforeNow(10*time.Minute), "tikv-0", "tikv", 2.282),
+		types.MakeDatums(datetimeBeforeNow(9*time.Minute), "tikv-0", "tikv", 2.283),
+		types.MakeDatums(datetimeBeforeNow(8*time.Minute), "tikv-0", "tikv", 2.284),
+		types.MakeDatums(datetimeBeforeNow(7*time.Minute), "tikv-0", "tikv", 2.283),
+		types.MakeDatums(datetimeBeforeNow(6*time.Minute), "tikv-0", "tikv", 2.289),
+		types.MakeDatums(datetimeBeforeNow(5*time.Minute), "tikv-0", "tikv", 2.283),
+		types.MakeDatums(datetimeBeforeNow(4*time.Minute), "tikv-0", "tikv", 2.286),
+		types.MakeDatums(datetimeBeforeNow(3*time.Minute), "tikv-0", "tikv", 2.288),
+		types.MakeDatums(datetimeBeforeNow(2*time.Minute), "tikv-0", "tikv", 2.289),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute), "tikv-0", "tikv", 2.280),
+		types.MakeDatums(datetimeBeforeNow(2*time.Second), "tikv-0", "tikv", 2.281),
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute), "tikv-2", "tikv", 2.112),
+		types.MakeDatums(datetimeBeforeNow(10*time.Minute), "tikv-2", "tikv", 2.112),
+		types.MakeDatums(datetimeBeforeNow(9*time.Minute), "tikv-2", "tikv", 2.133),
+		types.MakeDatums(datetimeBeforeNow(8*time.Minute), "tikv-2", "tikv", 2.134),
+		types.MakeDatums(datetimeBeforeNow(7*time.Minute), "tikv-2", "tikv", 2.113),
+		types.MakeDatums(datetimeBeforeNow(6*time.Minute), "tikv-2", "tikv", 2.109),
+		types.MakeDatums(datetimeBeforeNow(5*time.Minute), "tikv-2", "tikv", 2.113),
+		types.MakeDatums(datetimeBeforeNow(4*time.Minute), "tikv-2", "tikv", 2.136),
+		types.MakeDatums(datetimeBeforeNow(3*time.Minute), "tikv-2", "tikv", 2.128),
+		types.MakeDatums(datetimeBeforeNow(2*time.Minute), "tikv-2", "tikv", 2.119),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute), "tikv-2", "tikv", 2.120),
+		types.MakeDatums(datetimeBeforeNow(2*time.Second), "tikv-2", "tikv", 2.281),
+	}
+	mockData["process_cpu_usage"] = cpu1
+
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - '11m'").Check(testkit.Rows("8161"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - '11m' DURATION '11m'").Check(testkit.Rows("8161"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - '11m' END_TIME now()").Check(testkit.Rows("8161"))
+
+	// construct data for dynamic calibrate
+	ru1 = [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:35:00"), 2200.0),
 		types.MakeDatums(datetime("2020-02-12 10:36:00"), 2100.0),
 		types.MakeDatums(datetime("2020-02-12 10:37:00"), 2250.0),
@@ -141,7 +220,7 @@ func TestCalibrateResource(t *testing.T) {
 	}
 	mockData["resource_manager_resource_unit"] = ru1
 
-	cpu1 := [][]types.Datum{
+	cpu1 = [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "tidb", 1.212),
 		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "tidb", 1.233),
 		types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-0", "tidb", 1.234),
@@ -353,7 +432,7 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetime("2020-02-12 10:48:00"), "tikv-2", "tikv", 3.220),
 	}
 	mockData["process_cpu_usage"] = cpu2Mofidy
-	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'").Check(testkit.Rows("5616"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'").Check(testkit.Rows("5631"))
 
 	ruModify3 := [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:25:00"), 5.0),
@@ -382,7 +461,7 @@ func TestCalibrateResource(t *testing.T) {
 	}
 	mockData["resource_manager_resource_unit"] = ruModify3
 	// because there are 20s difference in two time points, the result is changed.
-	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'").Check(testkit.Rows("5613"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:25:00' DURATION '20m'").Check(testkit.Rows("5633"))
 
 	ru2 := [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:25:00"), 2200.0),
