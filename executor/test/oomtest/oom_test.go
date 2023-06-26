@@ -223,6 +223,8 @@ type oomCapture struct {
 }
 
 func (h *oomCapture) AddMessageFilter(vals ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	for _, val := range vals {
 		h.messageFilter.Insert(val)
 	}
