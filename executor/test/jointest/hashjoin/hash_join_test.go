@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
+	"math/rand"
 	"strings"
 	"testing"
 )
