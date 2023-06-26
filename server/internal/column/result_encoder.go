@@ -88,7 +88,7 @@ func (d *ResultEncoder) UpdateDataEncoding(chsID uint16) {
 }
 
 // ColumnTypeInfoCharsetID returns the charset ID for the column type info.
-func (d *ResultEncoder) ColumnTypeInfoCharsetID(info *ColumnInfo) uint16 {
+func (d *ResultEncoder) ColumnTypeInfoCharsetID(info *Info) uint16 {
 	// Only replace the charset when @@character_set_results is valid and
 	// the target column is a non-binary string.
 	if d.isNull || len(d.chsName) == 0 || !isStringColumnType(info.Type) {

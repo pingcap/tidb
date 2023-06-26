@@ -29,7 +29,7 @@ import (
 )
 
 func TestDumpTextValue(t *testing.T) {
-	columns := []*column.ColumnInfo{{
+	columns := []*column.Info{{
 		Type:    mysql.TypeLonglong,
 		Decimal: mysql.NotFixedDec,
 	}}

@@ -49,7 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-func dumpBinaryRow(buffer []byte, columns []*column.ColumnInfo, row chunk.Row, d *column.ResultEncoder) ([]byte, error) {
+func dumpBinaryRow(buffer []byte, columns []*column.Info, row chunk.Row, d *column.ResultEncoder) ([]byte, error) {
 	if d == nil {
 		d = column.NewResultEncoder(charset.CharsetUTF8MB4)
 	}
@@ -107,7 +107,7 @@ func dumpBinaryRow(buffer []byte, columns []*column.ColumnInfo, row chunk.Row, d
 	return buffer, nil
 }
 
-func dumpTextRow(buffer []byte, columns []*column.ColumnInfo, row chunk.Row, d *column.ResultEncoder) ([]byte, error) {
+func dumpTextRow(buffer []byte, columns []*column.Info, row chunk.Row, d *column.ResultEncoder) ([]byte, error) {
 	if d == nil {
 		d = column.NewResultEncoder(charset.CharsetUTF8MB4)
 	}

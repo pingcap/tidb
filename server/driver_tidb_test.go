@@ -26,8 +26,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createColumnByTypeAndLen(tp byte, cl uint32) *column.ColumnInfo {
-	return &column.ColumnInfo{
+func createColumnByTypeAndLen(tp byte, cl uint32) *column.Info {
+	return &column.Info{
 		Schema:       "test",
 		Table:        "dual",
 		OrgTable:     "",

@@ -24,8 +24,8 @@ import (
 
 const maxColumnNameSize = 256
 
-// ColumnInfo contains information of a column
-type ColumnInfo struct {
+// Info contains information of a column
+type Info struct {
 	Schema       string
 	Table        string
 	OrgTable     string
@@ -39,17 +39,17 @@ type ColumnInfo struct {
 	DefaultValue any
 }
 
-// Dump dumps ColumnInfo to bytes.
-func (column *ColumnInfo) Dump(buffer []byte, d *ResultEncoder) []byte {
+// Dump dumps Info to bytes.
+func (column *Info) Dump(buffer []byte, d *ResultEncoder) []byte {
 	return column.dump(buffer, d, false)
 }
 
-// DumpWithDefault dumps ColumnInfo to bytes, including column defaults. This is used for ComFieldList responses.
-func (column *ColumnInfo) DumpWithDefault(buffer []byte, d *ResultEncoder) []byte {
+// DumpWithDefault dumps Info to bytes, including column defaults. This is used for ComFieldList responses.
+func (column *Info) DumpWithDefault(buffer []byte, d *ResultEncoder) []byte {
 	return column.dump(buffer, d, true)
 }
 
-func (column *ColumnInfo) dump(buffer []byte, d *ResultEncoder, withDefault bool) []byte {
+func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []byte {
 	if d == nil {
 		d = NewResultEncoder(charset.CharsetUTF8MB4)
 	}

@@ -74,7 +74,7 @@ type PreparedStatement interface {
 
 // ResultSet is the result set of an query.
 type ResultSet interface {
-	Columns() []*column.ColumnInfo
+	Columns() []*column.Info
 	NewChunk(chunk.Allocator) *chunk.Chunk
 	Next(context.Context, *chunk.Chunk) error
 	StoreFetchedRows(rows []chunk.Row)

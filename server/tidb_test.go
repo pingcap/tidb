@@ -1022,7 +1022,7 @@ func TestShowTablesFlen(t *testing.T) {
 	require.Equal(t, 26*tmysql.MaxBytesOfCharacter, int(cols[0].ColumnLength))
 }
 
-func checkColNames(t *testing.T, columns []*column.ColumnInfo, names ...string) {
+func checkColNames(t *testing.T, columns []*column.Info, names ...string) {
 	for i, name := range names {
 		require.Equal(t, name, columns[i].Name)
 		require.Equal(t, name, columns[i].OrgName)

@@ -22,7 +22,7 @@ import (
 )
 
 func TestDumpColumn(t *testing.T) {
-	info := ColumnInfo{
+	info := Info{
 		Schema:       "testSchema",
 		Table:        "testTable",
 		OrgTable:     "testOrgTable",
@@ -49,7 +49,7 @@ func TestDumpColumn(t *testing.T) {
 }
 
 func TestDumpColumnWithDefault(t *testing.T) {
-	info := ColumnInfo{
+	info := Info{
 		Schema:       "testSchema",
 		Table:        "testTable",
 		OrgTable:     "testOrgTable",
@@ -80,7 +80,7 @@ func TestColumnNameLimit(t *testing.T) {
 	for i := 0; i < 300; i++ {
 		aLongName = append(aLongName, 'a')
 	}
-	info := ColumnInfo{
+	info := Info{
 		Schema:       "testSchema",
 		Table:        "testTable",
 		OrgTable:     "testOrgTable",

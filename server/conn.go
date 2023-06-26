@@ -2282,7 +2282,7 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs ResultSet, binary b
 	return false, cc.flush(ctx)
 }
 
-func (cc *clientConn) writeColumnInfo(columns []*column.ColumnInfo) error {
+func (cc *clientConn) writeColumnInfo(columns []*column.Info) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dump.LengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
