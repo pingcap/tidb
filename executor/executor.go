@@ -1303,8 +1303,12 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
+		if pi, ok := sctx.(processinfoSetter); ok {
+			// Before executing the sub-query, we need update the processinfo to make the progress bar more accurate.
+			// because the sub-query may take a long time.
+			pi.UpdateProcessInfo()
+		}
 		chk := newFirstChunk(exec)
-
 		err = Next(ctx, exec, chk)
 		if err != nil {
 			return nil, err
