@@ -1358,11 +1358,7 @@ const (
 	DefTiDBEnableFastCheckTable                       = true
 	DefRuntimeFilterType                              = "IN"
 	DefRuntimeFilterMode                              = "OFF"
-<<<<<<< HEAD
-=======
-	DefTiDBLockUnchangedKeys                          = true
 	DefTiDBEnableCheckConstraint                      = false
->>>>>>> 90c05ae4c64 (sql: add switch for check constraint (#44954))
 )
 
 // Process global variables.

@@ -2737,25 +2737,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-<<<<<<< HEAD
-=======
-	{
-		Scope: ScopeGlobal | ScopeSession,
-		Name:  TiDBLockUnchangedKeys,
-		Value: BoolToOnOff(DefTiDBLockUnchangedKeys),
-		Type:  TypeBool,
-		SetSession: func(vars *SessionVars, s string) error {
-			vars.LockUnchangedKeys = TiDBOptOn(s)
-			return nil
-		},
-	},
 	{Scope: ScopeGlobal, Name: TiDBEnableCheckConstraint, Value: BoolToOnOff(DefTiDBEnableCheckConstraint), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		EnableCheckConstraint.Store(TiDBOptOn(s))
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableCheckConstraint.Load()), nil
 	}},
->>>>>>> 90c05ae4c64 (sql: add switch for check constraint (#44954))
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {
