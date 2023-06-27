@@ -74,10 +74,8 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 		}
 	}
 	if coveredByUniqueKey {
-		if a.oldAggEliminationCheck {
-			if !CheckCanConvertAggToProj(agg) {
-				return nil
-			}
+		if a.oldAggEliminationCheck && !CheckCanConvertAggToProj(agg) {
+			return nil
 		}
 		// GroupByCols has unique key, so this aggregation can be removed.
 		if ok, proj := ConvertAggToProj(agg, agg.schema); ok {
