@@ -1327,7 +1327,7 @@ func TestMultipleTableUpdate(t *testing.T) {
 func TestDelete(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	fillData(tk, "delete_test")
+	internal.FillData(tk, "delete_test")
 
 	tk.MustExec(`update delete_test set name = "abc" where id = 2;`)
 	tk.CheckExecResult(1, 0)
@@ -3128,7 +3128,7 @@ func TestUpdate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	fillData(tk, "update_test")
+	internal.FillData(tk, "update_test")
 
 	updateStr := `UPDATE update_test SET name = "abc" where id > 0;`
 	tk.MustExec(updateStr)
