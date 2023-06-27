@@ -37,6 +37,7 @@ const (
 	maxFetchSize = 1024
 )
 
+// ExecArgs parse execute arguments to datum slice.
 func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boundParams [][]byte,
 	nullBitmap, paramTypes, paramValues []byte, enc *util2.InputDecoder) (err error) {
 	pos := 0
@@ -175,11 +176,11 @@ func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boun
 			case 0:
 				tmp = types.ZeroDatetimeStr
 			case 4:
-				pos, tmp = BinaryDate(pos, paramValues)
+				pos, tmp = binaryDate(pos, paramValues)
 			case 7:
-				pos, tmp = BinaryDateTime(pos, paramValues)
+				pos, tmp = binaryDateTime(pos, paramValues)
 			case 11:
-				pos, tmp = BinaryTimestamp(pos, paramValues)
+				pos, tmp = binaryTimestamp(pos, paramValues)
 			default:
 				err = mysql.ErrMalformPacket
 				return
@@ -206,7 +207,7 @@ func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boun
 					return
 				}
 				pos++
-				pos, tmp = BinaryDuration(pos, paramValues, isNegative)
+				pos, tmp = binaryDuration(pos, paramValues, isNegative)
 			case 12:
 				isNegative := paramValues[pos]
 				if isNegative > 1 {
@@ -214,7 +215,7 @@ func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boun
 					return
 				}
 				pos++
-				pos, tmp = BinaryDurationWithMS(pos, paramValues, isNegative)
+				pos, tmp = binaryDurationWithMS(pos, paramValues, isNegative)
 			default:
 				err = mysql.ErrMalformPacket
 				return
@@ -296,7 +297,7 @@ func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boun
 	return
 }
 
-func BinaryDate(pos int, paramValues []byte) (int, string) {
+func binaryDate(pos int, paramValues []byte) (int, string) {
 	year := binary.LittleEndian.Uint16(paramValues[pos : pos+2])
 	pos += 2
 	month := paramValues[pos]
@@ -306,8 +307,8 @@ func BinaryDate(pos int, paramValues []byte) (int, string) {
 	return pos, fmt.Sprintf("%04d-%02d-%02d", year, month, day)
 }
 
-func BinaryDateTime(pos int, paramValues []byte) (int, string) {
-	pos, date := BinaryDate(pos, paramValues)
+func binaryDateTime(pos int, paramValues []byte) (int, string) {
+	pos, date := binaryDate(pos, paramValues)
 	hour := paramValues[pos]
 	pos++
 	minute := paramValues[pos]
@@ -317,14 +318,14 @@ func BinaryDateTime(pos int, paramValues []byte) (int, string) {
 	return pos, fmt.Sprintf("%s %02d:%02d:%02d", date, hour, minute, second)
 }
 
-func BinaryTimestamp(pos int, paramValues []byte) (int, string) {
-	pos, dateTime := BinaryDateTime(pos, paramValues)
+func binaryTimestamp(pos int, paramValues []byte) (int, string) {
+	pos, dateTime := binaryDateTime(pos, paramValues)
 	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 	pos += 4
 	return pos, fmt.Sprintf("%s.%06d", dateTime, microSecond)
 }
 
-func BinaryDuration(pos int, paramValues []byte, isNegative uint8) (int, string) {
+func binaryDuration(pos int, paramValues []byte, isNegative uint8) (int, string) {
 	sign := ""
 	if isNegative == 1 {
 		sign = "-"
@@ -340,9 +341,9 @@ func BinaryDuration(pos int, paramValues []byte, isNegative uint8) (int, string)
 	return pos, fmt.Sprintf("%s%d %02d:%02d:%02d", sign, days, hours, minutes, seconds)
 }
 
-func BinaryDurationWithMS(pos int, paramValues []byte,
+func binaryDurationWithMS(pos int, paramValues []byte,
 	isNegative uint8) (int, string) {
-	pos, dur := BinaryDuration(pos, paramValues, isNegative)
+	pos, dur := binaryDuration(pos, paramValues, isNegative)
 	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 	pos += 4
 	return pos, fmt.Sprintf("%s.%06d", dur, microSecond)
