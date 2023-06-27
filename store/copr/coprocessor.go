@@ -1069,6 +1069,9 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	if resp.err != nil {
 		return nil, errors.Trace(resp.err)
 	}
+	if it.req.ConnID != 0 {
+		logutil.BgLogger().Debug("test")
+	}
 
 	err := it.store.CheckVisibility(it.req.StartTs)
 	if err != nil {

@@ -82,9 +82,8 @@ func (t *MockTaskTable) HasSubtasksInStates(instanceID string, taskID int64, sta
 }
 
 // UpdateErrorToSubtask implements SubtaskTable.UpdateErrorToSubtask.
-func (t *MockTaskTable) UpdateErrorToSubtask(tidbID string, err error) error {
-	args := t.Called(tidbID, err)
-	return args.Error(1)
+func (t *MockTaskTable) UpdateErrorToSubtask(instanceID string, err error) error {
+	return err
 }
 
 // MockPool is a mock of Pool.
