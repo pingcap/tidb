@@ -777,7 +777,7 @@ func TestShutDown(t *testing.T) {
 	err = cc.handleQuery(context.Background(), "select 1")
 	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
 
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
