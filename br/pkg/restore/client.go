@@ -46,11 +46,13 @@ import (
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -1603,77 +1605,83 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 	return nil
 }
 
+func concurrentHandleTablesCh(
+	ctx context.Context,
+	inCh <-chan *CreatedTable,
+	outCh chan<- *CreatedTable,
+	errCh chan<- error,
+	workers *utils.WorkerPool,
+	processFun func(context.Context, *CreatedTable) error,
+	deferFun func()) {
+	eg, ectx := errgroup.WithContext(ctx)
+	defer func() {
+		if err := eg.Wait(); err != nil {
+			errCh <- err
+		}
+		close(outCh)
+		deferFun()
+	}()
+
+	for {
+		select {
+		// if we use ectx here, maybe canceled will mask real error.
+		case <-ctx.Done():
+			errCh <- ctx.Err()
+		case tbl, ok := <-inCh:
+			if !ok {
+				return
+			}
+			cloneTable := tbl
+			worker := workers.ApplyWorker()
+			eg.Go(func() error {
+				defer workers.RecycleWorker(worker)
+				err := processFun(ectx, cloneTable)
+				if err != nil {
+					return err
+				}
+				outCh <- cloneTable
+				return nil
+			})
+		}
+	}
+}
+
 // GoValidateChecksum forks a goroutine to validate checksum after restore.
 // it returns a channel fires a struct{} when all things get done.
 func (rc *Client) GoValidateChecksum(
 	ctx context.Context,
-	tableStream <-chan CreatedTable,
+	inCh <-chan *CreatedTable,
 	kvClient kv.Client,
 	errCh chan<- error,
 	updateCh glue.Progress,
 	concurrency uint,
-) <-chan struct{} {
+) <-chan *CreatedTable {
 	log.Info("Start to validate checksum")
-	outCh := make(chan struct{}, 1)
-	wg := new(sync.WaitGroup)
-	wg.Add(2)
-	loadStatCh := make(chan *CreatedTable, 1024)
-	// run the stat loader
-	go func() {
-		defer wg.Done()
-		rc.updateMetaAndLoadStats(ctx, loadStatCh)
-	}()
+	outCh := DefaultOutputTableChan()
 	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
-	go func() {
-		eg, ectx := errgroup.WithContext(ctx)
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+		start := time.Now()
 		defer func() {
-			if err := eg.Wait(); err != nil {
-				errCh <- err
-			}
-			close(loadStatCh)
-			wg.Done()
+			elapsed := time.Since(start)
+			summary.CollectSuccessUnit("table checksum", 1, elapsed)
 		}()
-
-		for {
-			select {
-			// if we use ectx here, maybe canceled will mask real error.
-			case <-ctx.Done():
-				errCh <- ctx.Err()
-			case tbl, ok := <-tableStream:
-				if !ok {
-					return
-				}
-
-				workers.ApplyOnErrorGroup(eg, func() error {
-					start := time.Now()
-					defer func() {
-						elapsed := time.Since(start)
-						summary.CollectSuccessUnit("table checksum", 1, elapsed)
-					}()
-					err := rc.execChecksum(ectx, tbl, kvClient, concurrency, loadStatCh)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					updateCh.Inc()
-					return nil
-				})
-			}
+		err := rc.execChecksum(c, tbl, kvClient, concurrency)
+		if err != nil {
+			return errors.Trace(err)
 		}
-	}()
-	go func() {
-		wg.Wait()
+		updateCh.Inc()
+		return nil
+	}, func() {
 		log.Info("all checksum ended")
-		close(outCh)
-	}()
+	})
 	return outCh
 }
 
 func (rc *Client) execChecksum(
 	ctx context.Context,
-	tbl CreatedTable,
+	tbl *CreatedTable,
 	kvClient kv.Client,
 	concurrency uint,
-	loadStatCh chan<- *CreatedTable,
 ) error {
 	logger := log.L().With(
 		zap.String("db", tbl.OldTable.DB.Name.O),
@@ -1740,48 +1748,108 @@ func (rc *Client) execChecksum(
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
 	logger.Info("success in validate checksum")
-	loadStatCh <- &tbl
 	return nil
 }
 
-func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *CreatedTable) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case tbl, ok := <-input:
-			if !ok {
-				return
-			}
-
-			// Not need to return err when failed because of update analysis-meta
-			restoreTS, err := rc.GetTSWithRetry(ctx)
+func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) chan *CreatedTable {
+	log.Info("Start to update meta then load stats")
+	outCh := DefaultOutputTableChan()
+	workers := utils.NewWorkerPool(1, "UpdateStats")
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+		oldTable := tbl.OldTable
+		// Not need to return err when failed because of update analysis-meta
+		restoreTS, err := rc.GetTSWithRetry(ctx)
+		if err != nil {
+			log.Error("getTS failed", zap.Error(err))
+		} else {
+			log.Info("start update metas",
+				zap.Stringer("table", oldTable.Info.Name),
+				zap.Stringer("db", oldTable.DB.Name))
+			err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, oldTable.TotalKvs)
 			if err != nil {
-				log.Error("getTS failed", zap.Error(err))
-			} else {
-				err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, tbl.OldTable.TotalKvs)
-				if err != nil {
-					log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
-				}
+				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
 			}
+		}
 
-			table := tbl.OldTable
-			if table.Stats != nil {
-				log.Info("start loads analyze after validate checksum",
-					zap.Int64("old id", tbl.OldTable.Info.ID),
-					zap.Int64("new id", tbl.Table.ID),
-				)
-				start := time.Now()
-				if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), table.Stats); err != nil {
-					log.Error("analyze table failed", zap.Any("table", table.Stats), zap.Error(err))
-				}
-				log.Info("restore stat done",
-					zap.String("table", table.Info.Name.L),
-					zap.String("db", table.DB.Name.L),
-					zap.Duration("cost", time.Since(start)))
+		if oldTable.Stats != nil {
+			log.Info("start loads analyze after validate checksum",
+				zap.Int64("old id", oldTable.Info.ID),
+				zap.Int64("new id", tbl.Table.ID),
+			)
+			start := time.Now()
+			if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), oldTable.Stats); err != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(err))
+			}
+			log.Info("restore stat done",
+				zap.Stringer("table", oldTable.Info.Name),
+				zap.Stringer("db", oldTable.DB.Name),
+				zap.Duration("cost", time.Since(start)))
+		}
+		return nil
+	}, func() {
+		log.Info("all stats updated")
+	})
+	return outCh
+}
+
+func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTable, updateCh glue.Progress, errCh chan<- error) chan *CreatedTable {
+	log.Info("Start to wait tiflash replica sync")
+	outCh := DefaultOutputTableChan()
+	workers := utils.NewWorkerPool(4, "WaitForTiflashReady")
+	// TODO support tiflash store changes
+	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
+	if err != nil {
+		errCh <- err
+	}
+	tiFlashStores := make(map[int64]helper.StoreStat)
+	for _, store := range tikvStats.Stores {
+		for _, l := range store.Store.Labels {
+			if l.Key == "engine" && l.Value == "tiflash" {
+				tiFlashStores[store.Store.ID] = store
 			}
 		}
 	}
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+		if tbl.Table != nil && tbl.Table.TiFlashReplica == nil {
+			log.Info("table has no tiflash replica",
+				zap.Stringer("table", tbl.OldTable.Info.Name),
+				zap.Stringer("db", tbl.OldTable.DB.Name))
+			updateCh.Inc()
+			return nil
+		}
+		if rc.dom != nil {
+			log.Info("table has tiflash replica, start sync..",
+				zap.Stringer("table", tbl.OldTable.Info.Name),
+				zap.Stringer("db", tbl.OldTable.DB.Name))
+			for {
+				progress, err := infosync.CalculateTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, tiFlashStores)
+				if err != nil {
+					log.Warn("failed to get tiflash replica progress, wait for next retry", zap.Error(err))
+					time.Sleep(time.Second)
+					continue
+				}
+				// check until progress is 1
+				if progress == 1 {
+					log.Info("tiflash replica synced",
+						zap.Stringer("table", tbl.OldTable.Info.Name),
+						zap.Stringer("db", tbl.OldTable.DB.Name))
+					break
+				}
+				// just wait for next check
+				// tiflash check the progress every 2s
+				// we can wait 2.5x times
+				time.Sleep(5 * time.Second)
+			}
+		} else {
+			// unreachable, current we have initial domain in mgr.
+			log.Fatal("unreachable, domain is nil")
+		}
+		updateCh.Inc()
+		return nil
+	}, func() {
+		log.Info("all tiflash replica synced")
+	})
+	return outCh
 }
 
 // called by failpoint, only used for test
@@ -2119,6 +2187,9 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 	}
 	for _, table := range tables {
 		if table.Info.TiFlashReplica != nil {
+			// we should not set available to true. because we cannot guarantee the raft log lag of tiflash when restore finished.
+			// just let tiflash ticker set it by checking lag of all related regions.
+			table.Info.TiFlashReplica.Available = false
 			if recorder != nil {
 				recorder.AddTable(table.Info.ID, *table.Info.TiFlashReplica)
 				log.Info("record tiflash replica for table, to reset it by ddl later",
