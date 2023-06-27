@@ -26,6 +26,7 @@ const maxColumnNameSize = 256
 
 // Info contains information of a column
 type Info struct {
+	DefaultValue any
 	Schema       string
 	Table        string
 	OrgTable     string
@@ -36,7 +37,6 @@ type Info struct {
 	Flag         uint16
 	Decimal      uint8
 	Type         uint8
-	DefaultValue any
 }
 
 // Dump dumps Info to bytes.

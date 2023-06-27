@@ -46,15 +46,16 @@ import (
 
 // ResultEncoder encodes a column value to a byte slice.
 type ResultEncoder struct {
-	// chsName and encoding are unchanged after the initialization from
-	// session variable @@character_set_results.
-	chsName  string
 	encoding charset.Encoding
 
 	// dataEncoding can be updated to match the column data charset.
 	dataEncoding charset.Encoding
 
 	buffer *bytes.Buffer
+
+	// chsName and encoding are unchanged after the initialization from
+	// session variable @@character_set_results.
+	chsName string
 
 	isBinary     bool
 	isNull       bool
