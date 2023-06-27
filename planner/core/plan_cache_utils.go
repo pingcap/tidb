@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -62,7 +63,7 @@ type paramMarkerExtractor struct {
 	markers []ast.ParamMarkerExpr
 }
 
-func (e *paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
+func (*paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
@@ -110,8 +111,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) bool {
 		return i.(*driver.ParamMarkerExpr).Offset < j.(*driver.ParamMarkerExpr).Offset
 	})
-	ParamCount := len(extractor.markers)
-	for i := 0; i < ParamCount; i++ {
+	paramCount := len(extractor.markers)
+	for i := 0; i < paramCount; i++ {
 		extractor.markers[i].SetOrder(i)
 	}
 
@@ -188,7 +189,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
 	}
-	return preparedObj, p, ParamCount, nil
+	return preparedObj, p, paramCount, nil
 }
 
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
@@ -419,7 +420,7 @@ func (f *PlanCacheQueryFeatures) Enter(in ast.Node) (out ast.Node, skipChildren 
 }
 
 // Leave implements Visitor interface.
-func (f *PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
@@ -564,6 +565,93 @@ func checkTypesCompatibility4PC(tpsExpected, tpsActual []*types.FieldType) bool 
 		// We can only use the plan when both Flen and Decimal should less equal than the cached one.
 		// We assume here that there is no correctness problem when the precision of the parameters is less than the precision of the parameters in the cache.
 		if tpEqual && tpsExpected[i].GetType() == mysql.TypeNewDecimal && !(tpsExpected[i].GetFlen() >= tpsActual[i].GetFlen() && tpsExpected[i].GetDecimal() >= tpsActual[i].GetDecimal()) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSafePointGetPath4PlanCache(sctx sessionctx.Context, path *util.AccessPath) bool {
+	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
+	// these assumptions may be broken after parameters change.
+
+	if isSafePointGetPath4PlanCacheScenario1(path) {
+		return true
+	}
+
+	// TODO: enable this fix control switch by default after more test cases are added.
+	if sctx != nil && sctx.GetSessionVars() != nil && sctx.GetSessionVars().OptimizerFixControl != nil {
+		v, ok := sctx.GetSessionVars().OptimizerFixControl[variable.TiDBOptFixControl44830]
+		if ok && variable.TiDBOptOn(v) && (isSafePointGetPath4PlanCacheScenario2(path) || isSafePointGetPath4PlanCacheScenario3(path)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isSafePointGetPath4PlanCacheScenario1(path *util.AccessPath) bool {
+	// safe scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
+	if len(path.Ranges) <= 0 || path.Ranges[0].Width() != len(path.AccessConds) {
+		return false
+	}
+	for _, accessCond := range path.AccessConds {
+		f, ok := accessCond.(*expression.ScalarFunction)
+		if !ok || f.FuncName.L != ast.EQ { // column = constant
+			return false
+		}
+	}
+	return true
+}
+
+func isSafePointGetPath4PlanCacheScenario2(path *util.AccessPath) bool {
+	// safe scenario 2: this Batch or PointGet is simply from a single IN predicate, `key in (...)`
+	if len(path.Ranges) <= 0 || len(path.AccessConds) != 1 {
+		return false
+	}
+	f, ok := path.AccessConds[0].(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.In {
+		return false
+	}
+	return len(path.Ranges) == len(f.GetArgs())-1 // no duplicated values in this in-list for safety.
+}
+
+func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
+	// safe scenario 3: this Batch or PointGet is simply from a simple DNF like `key=? or key=? or key=?`
+	if len(path.Ranges) <= 0 || len(path.AccessConds) != 1 {
+		return false
+	}
+	f, ok := path.AccessConds[0].(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.LogicOr {
+		return false
+	}
+
+	dnfExprs := expression.FlattenDNFConditions(f)
+	if len(path.Ranges) != len(dnfExprs) {
+		// no duplicated values in this in-list for safety.
+		// e.g. `k=1 or k=2 or k=1` --> [[1, 1], [2, 2]]
+		return false
+	}
+
+	for _, expr := range dnfExprs {
+		f, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		switch f.FuncName.L {
+		case ast.EQ: // (k=1 or k=2) --> [k=1, k=2]
+		case ast.LogicAnd: // ((k1=1 and k2=1) or (k1=2 and k2=2)) --> [k1=1 and k2=1, k2=2 and k2=2]
+			cnfExprs := expression.FlattenCNFConditions(f)
+			if path.Ranges[0].Width() != len(cnfExprs) { // not all key columns are specified
+				return false
+			}
+			for _, expr := range cnfExprs { // k1=1 and k2=1
+				f, ok := expr.(*expression.ScalarFunction)
+				if !ok || f.FuncName.L != ast.EQ {
+					return false
+				}
+			}
+		default:
 			return false
 		}
 	}

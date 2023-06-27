@@ -1807,13 +1807,35 @@ func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
 		return err
 	}
 	infosync.StoreInternalSession(sess)
-	lock := &advisoryLock{session: sess, ctx: context.TODO()}
+	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.ShowProcess().ID}
 	err = lock.GetLock(lockName, timeout)
 	if err != nil {
 		return err
 	}
 	s.advisoryLocks[lockName] = lock
 	return nil
+}
+
+// IsUsedAdvisoryLock checks if a lockName is already in use
+func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
+	// Same session
+	if lock, ok := s.advisoryLocks[lockName]; ok {
+		return lock.owner
+	}
+
+	// Check for transaction on advisory_locks table
+	sess, err := createSession(s.store)
+	if err != nil {
+		return 0
+	}
+	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.ShowProcess().ID}
+	err = lock.IsUsedLock(lockName)
+	if err != nil {
+		// TODO: Return actual owner pid
+		// TODO: Check for mysql.ErrLockWaitTimeout and DeadLock
+		return 1
+	}
+	return 0
 }
 
 // ReleaseAdvisoryLock releases an advisory locks held by the session.
@@ -1924,8 +1946,9 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 		return nil, nil, err
 	}
 
-	for _, dbName := range GetDBNames(se.GetSessionVars()) {
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
+	vars := se.GetSessionVars()
+	for _, dbName := range GetDBNames(vars) {
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.ResourceGroupName).Observe(time.Since(startTime).Seconds())
 	}
 	return rows, rs.Fields(), err
 }
@@ -2099,8 +2122,9 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 			return nil, nil, err
 		}
 
-		for _, dbName := range GetDBNames(se.GetSessionVars()) {
-			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
+		vars := se.GetSessionVars()
+		for _, dbName := range GetDBNames(vars) {
+			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.ResourceGroupName).Observe(time.Since(startTime).Seconds())
 		}
 		return rows, rs.Fields(), err
 	})
@@ -2198,10 +2222,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	stmt, err := compiler.Compile(ctx, stmtNode)
 	// session resource-group might be changed by query hint, ensure restore it back when
 	// the execution finished.
-	if s.GetSessionVars().ResourceGroupName != originalResourceGroup {
+	if sessVars.ResourceGroupName != originalResourceGroup {
 		defer func() {
 			// Restore the resource group for the session
-			s.GetSessionVars().ResourceGroupName = originalResourceGroup
+			sessVars.ResourceGroupName = originalResourceGroup
 		}()
 	}
 	if err != nil {
@@ -3855,11 +3879,26 @@ func GetStartTSFromSession(se interface{}) (startTS, processInfoID uint64) {
 // if variable.ProcessGeneralLog is set.
 func logStmt(execStmt *executor.ExecStmt, s *session) {
 	vars := s.GetSessionVars()
+	isCrucial := false
 	switch stmt := execStmt.StmtNode.(type) {
+	case *ast.DropIndexStmt:
+		isCrucial = true
+		if stmt.IsHypo {
+			isCrucial = false
+		}
+	case *ast.CreateIndexStmt:
+		isCrucial = true
+		if stmt.IndexOption != nil && stmt.IndexOption.Tp == model.IndexTypeHypo {
+			isCrucial = false
+		}
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
-		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
-		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
+		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateTableStmt,
+		*ast.DropDatabaseStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
 		*ast.RenameUserStmt:
+		isCrucial = true
+	}
+
+	if isCrucial {
 		user := vars.User
 		schemaVersion := s.GetInfoSchema().SchemaMetaVersion()
 		if ss, ok := execStmt.StmtNode.(ast.SensitiveStmtNode); ok {
@@ -3873,10 +3912,10 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("cur_db", vars.CurrentDB),
-				zap.String("sql", stmt.Text()),
+				zap.String("sql", execStmt.StmtNode.Text()),
 				zap.Stringer("user", user))
 		}
-	default:
+	} else {
 		logGeneralQuery(execStmt, s, false)
 	}
 }

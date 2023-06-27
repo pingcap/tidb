@@ -38,6 +38,7 @@ type advisoryLock struct {
 	ctx            context.Context
 	session        *session
 	referenceCount int
+	owner          uint64
 }
 
 // IncrReferences increments the reference count for the advisory lock.
@@ -86,5 +87,24 @@ func (a *advisoryLock) GetLock(lockName string, timeout int64) error {
 		return err
 	}
 	a.referenceCount++
+	return nil
+}
+
+// IsUsedLock checks if a lockName is already in use
+func (a *advisoryLock) IsUsedLock(lockName string) error {
+	defer a.Close() // Rollback
+	a.ctx = kv.WithInternalSourceType(a.ctx, kv.InternalTxnOthers)
+	_, err := a.session.ExecuteInternal(a.ctx, "SET innodb_lock_wait_timeout = 1")
+	if err != nil {
+		return err
+	}
+	_, err = a.session.ExecuteInternal(a.ctx, "BEGIN PESSIMISTIC")
+	if err != nil {
+		return err
+	}
+	_, err = a.session.ExecuteInternal(a.ctx, "INSERT INTO mysql.advisory_locks (lock_name) VALUES (%?)", lockName)
+	if err != nil {
+		return err
+	}
 	return nil
 }

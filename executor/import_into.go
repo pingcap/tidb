@@ -95,7 +95,6 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		// need to return an empty req to indicate all results have been written
 		return nil
 	}
-	// todo: we don't need to do it here, remove it.
 	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 		return err2
 	}
@@ -293,7 +292,7 @@ func cancelImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID i
 	// todo: after CANCEL, user can see the job status is Canceled immediately, but the job might still running.
 	// and the state of framework task might became finished since framework don't force state change DAG when update task.
 	// todo: add a CANCELLING status?
-	return manager.WithNewTxn(func(se sessionctx.Context) error {
+	return manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		if err2 := importer.CancelJob(ctx, exec, jobID); err2 != nil {
 			return err2

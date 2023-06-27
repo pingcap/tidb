@@ -176,6 +176,8 @@ type Context interface {
 	ShowProcess() *util.ProcessInfo
 	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
 	GetAdvisoryLock(string, int64) error
+	// IsUsedAdvisoryLock checks for existing locks (aka IS_USED_LOCK()).
+	IsUsedAdvisoryLock(string) uint64
 	// ReleaseAdvisoryLock releases an advisory lock (aka RELEASE_LOCK()).
 	ReleaseAdvisoryLock(string) bool
 	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
