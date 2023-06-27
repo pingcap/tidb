@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync/atomic"
+	"testing"
 
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
@@ -27,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"sync/atomic"
-	"testing"
 )
 
 // pauseAndCancelStmt pauses and cancel the `stmtCase`

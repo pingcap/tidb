@@ -15,6 +15,7 @@
 package adminpause
 
 import (
+	"testing"
 	"time"
 
 	ddlctrl "github.com/pingcap/tidb/ddl"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
-	"testing"
 )
 
 const dbTestLease = 600 * time.Millisecond
