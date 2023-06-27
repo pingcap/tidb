@@ -251,6 +251,7 @@ func main() {
 		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()
 		resourcemanager.InstanceResourceManager.Stop()
+		executor.Stop()
 		close(exited)
 	})
 	topsql.SetupTopSQL()
@@ -762,6 +763,7 @@ func setGlobalVars() {
 	} else {
 		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(cfg.Performance.ServerMemoryQuota))
 	}
+	executor.Start()
 	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 
 	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)

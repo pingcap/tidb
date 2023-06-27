@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/executor/internal/pdhelper"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -169,6 +170,16 @@ func init() {
 
 	// CheckTableFastBucketSize is used to set the fast analyze bucket size for check table.
 	CheckTableFastBucketSize.Store(1024)
+}
+
+// Start the backend components
+func Start() {
+	pdhelper.GlobalPDHelper.Start()
+}
+
+// Stop the backend components
+func Stop() {
+	pdhelper.GlobalPDHelper.Stop()
 }
 
 // Action panics when storage usage exceeds storage quota.
