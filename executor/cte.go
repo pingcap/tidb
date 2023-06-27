@@ -15,13 +15,11 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -82,11 +80,8 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 	e.producer.resTbl.Lock()
 	defer e.producer.resTbl.Unlock()
 
-	if e.producer.checkAndUpdateCorColHashCode() {
+	if e.producer.isInApply {
 		e.producer.reset()
-		if err = e.producer.reopenTbls(); err != nil {
-			return err
-		}
 	}
 	if !e.producer.opened {
 		if err = e.producer.openProducer(ctx, e); err != nil {
@@ -112,10 +107,6 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 func (e *CTEExec) Close() (err error) {
 	e.producer.resTbl.Lock()
 	if !e.producer.closed {
-		// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
-		// It means you can still read resTbl after call closeProducer().
-		// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
-		// Separating these three function calls is only to follow the abstraction of the volcano model.
 		err = e.producer.closeProducer()
 	}
 	e.producer.resTbl.Unlock()
@@ -163,9 +154,10 @@ type cteProducer struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
-	// Correlated Column.
-	corCols         []*expression.CorrelatedColumn
-	corColHashCodes [][]byte
+	// isInApply indicates whether CTE is in inner side of Apply
+	// and should resTbl/iterInTbl be reset for each outer row of Apply.
+	// Because we reset them when SQL is finished instead of when CTEExec.Close() is called.
+	isInApply bool
 }
 
 func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err error) {
@@ -227,6 +219,11 @@ func (p *cteProducer) closeProducer() (err error) {
 		}
 	}
 	p.closed = true
+	if p.isInApply {
+		if err = p.reopenTbls(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -654,18 +651,4 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 		}
 	}
 	return false, nil
-}
-
-// Return true if cor col has changed.
-func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
-	var changed bool
-	for i, corCol := range p.corCols {
-		corCol.CleanHashCode()
-		newHashCode := corCol.HashCode(p.ctx.GetSessionVars().StmtCtx)
-		if !bytes.Equal(newHashCode, p.corColHashCodes[i]) {
-			changed = true
-			p.corColHashCodes[i] = newHashCode
-		}
-	}
-	return changed
 }
