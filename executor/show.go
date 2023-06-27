@@ -50,6 +50,11 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
+>>>>>>> ffb0654ae85 (binlog: fix show pump/drainer status (#44764))
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
@@ -1647,16 +1652,18 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 
 // fetchShowPumpOrDrainerStatus gets status of all pumps or drainers and fill them into e.rows.
 func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
-	registry, err := createRegistry(config.GetGlobalConfig().Path)
+	registry, needToClose, err := getOrCreateBinlogRegistry(config.GetGlobalConfig().Path)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
-	if err != nil {
-		return errors.Trace(err)
+	if needToClose {
+		defer func() {
+			_ = registry.Close()
+		}()
 	}
-	err = registry.Close()
+
+	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1671,18 +1678,27 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 	return nil
 }
 
+<<<<<<< HEAD
 // createRegistry returns an ectd registry
 func createRegistry(urls string) (*node.EtcdRegistry, error) {
 	ectdEndpoints, err := utils.ParseHostPortAddr(urls)
+=======
+// getOrCreateBinlogRegistry returns an etcd registry for binlog, need to close, and error
+func getOrCreateBinlogRegistry(urls string) (*node.EtcdRegistry, bool, error) {
+	if pumpClient := binloginfo.GetPumpsClient(); pumpClient != nil && pumpClient.EtcdRegistry != nil {
+		return pumpClient.EtcdRegistry, false, nil
+	}
+	ectdEndpoints, err := util.ParseHostPortAddr(urls)
+>>>>>>> ffb0654ae85 (binlog: fix show pump/drainer status (#44764))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 	cli, err := etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, node.DefaultRootPath, nil)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 
-	return node.NewEtcdRegistry(cli, etcdDialTimeout), nil
+	return node.NewEtcdRegistry(cli, etcdDialTimeout), true, nil
 }
 
 func (e *ShowExec) getTable() (table.Table, error) {
