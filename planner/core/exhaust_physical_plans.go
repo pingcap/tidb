@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"math"
 	"strings"
 	"unsafe"
@@ -1308,8 +1309,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	// the estimated row count of the IndexScan should be no larger than (total row count / NDV of join key columns).
 	// We can calculate the lower bound of the NDV therefore we can get an upper bound of the row count here.
 	rowCountUpperBound := -1.0
-	fixValue, ok := ds.ctx.GetSessionVars().GetOptimizerFixControlValue(variable.TiDBOptFixControl44855)
-	if ok && variable.TiDBOptOn(fixValue) && ds.tableStats != nil {
+	fixControlOK := fixcontrol.GetBoolWithDefault(ds.ctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44855, false)
+	if fixControlOK && ds.tableStats != nil {
 		usedColIDs := make([]int64, 0)
 		// We only consider columns in this index that (1) are used to probe as join key,
 		// and (2) are not prefix column in the index (for which we can't easily get a lower bound)

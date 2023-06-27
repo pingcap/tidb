@@ -29,6 +29,9 @@ const (
 	Fix44830 uint64 = 44830
 	// Fix44823 controls the maximum number of parameters for a query that can be cached in the Plan Cache.
 	Fix44823 uint64 = 44823
+	// Fix44855 controls whether to use a more accurate upper bound when estimating row count of index
+	// range scan under inner side of index join.
+	Fix44855 uint64 = 44855
 )
 
 // GetStr fetches the given key from the fix control map as a string type.
