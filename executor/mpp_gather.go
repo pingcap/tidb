@@ -64,18 +64,15 @@ type MPPGather struct {
 
 	memTracker *memory.Tracker
 
-	// For virtual column and UnionScan.
-	table table.Table
-
 	// For virtual column.
 	columns                    []*model.ColumnInfo
 	virtualColumnIndex         []int
 	virtualColumnRetFieldTypes []*types.FieldType
 
 	// For UnionScan.
+	table    table.Table
 	kvRanges []kv.KeyRange
-
-	dummy bool
+	dummy    bool
 }
 
 func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
