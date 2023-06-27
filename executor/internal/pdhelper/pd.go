@@ -16,6 +16,7 @@ package pdhelper
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -63,7 +64,7 @@ func (p *PDHelper) Stop() {
 }
 
 func approximateTableCountKey(tid int64, dbName, tableName, partitionName string) string {
-	return strings.Join([]string{string(tid), dbName, tableName, partitionName}, "_")
+	return strings.Join([]string{strconv.FormatInt(tid, 10), dbName, tableName, partitionName}, "_")
 }
 
 // GetApproximateTableCountFromStorage gets the approximate count of the table.
