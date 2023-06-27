@@ -808,7 +808,7 @@ func executePartTableCase(t *testing.T, tk *testkit.TestKit, testCases []partTab
 	for i, testCase := range testCases {
 		// create table ... partition by key ...
 		ddlSQL := createSQL + testCase.partitionbySQL
-		fmt.Println(i, ":", ddlSQL)
+		logutil.BgLogger().Info("Partition DDL test", zap.Int("i", i), zap.String("ddlSQL", ddlSQL))
 		executeSQLWrapper(t, tk, ddlSQL)
 		// insert data
 		for _, insertsql := range insertSQLs {
@@ -816,7 +816,7 @@ func executePartTableCase(t *testing.T, tk *testkit.TestKit, testCases []partTab
 		}
 		// execute testcases
 		for j, selInfo := range testCase.selectInfo {
-			fmt.Println(j, ":", selInfo.selectSQL)
+			logutil.BgLogger().Info("Select", zap.Int("j", j), zap.String("selectSQL", selInfo.selectSQL))
 			tk.MustQuery(selInfo.selectSQL).Check(testkit.Rows(strconv.Itoa(selInfo.rowCount)))
 			if selInfo.executeExplain {
 				result := tk.MustQuery("EXPLAIN " + selInfo.selectSQL)
@@ -1248,11 +1248,11 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 	}
 
 	for i, testCase := range testCases {
-		fmt.Println(i, ":", testCase.createSQL)
+		logutil.BgLogger().Info("Partition DDL test", zap.Int("i", i), zap.String("createSQL", testCase.createSQL))
 		executeSQLWrapper(t, tk, testCase.createSQL)
 		executeSQLWrapper(t, tk, testCase.insertSQL)
 		for j, selInfo := range testCase.selectInfo {
-			fmt.Println(j, ":", selInfo.selectSQL)
+			logutil.BgLogger().Info("Select", zap.Int("j", j), zap.String("selectSQL", selInfo.selectSQL))
 			tk.MustQuery(selInfo.selectSQL).Check(testkit.Rows(strconv.Itoa(selInfo.rowCount)))
 			if selInfo.executeExplain {
 				result := tk.MustQuery("EXPLAIN " + selInfo.selectSQL)
