@@ -610,6 +610,9 @@ const (
 	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
 	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
 
+	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
+	TiDBOptFixControl = "tidb_opt_fix_control"
+
 	// TiDBRegardNULLAsPoint indicates whether regard NULL as point when optimizing
 	TiDBRegardNULLAsPoint = "tidb_regard_null_as_point"
 
@@ -652,9 +655,6 @@ const (
 	// When set to false, ANALYZE reads the latest data.
 	// When set to true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
 	TiDBEnableAnalyzeSnapshot = "tidb_enable_analyze_snapshot"
-
-	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
-	TiDBOptFixControl = "tidb_opt_fix_control"
 )
 
 // TiDB vars that have only global scope

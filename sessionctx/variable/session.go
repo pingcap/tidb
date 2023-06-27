@@ -987,6 +987,9 @@ type SessionVars struct {
 	// EnablePseudoForOutdatedStats if using pseudo for outdated stats
 	EnablePseudoForOutdatedStats bool
 
+	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
+	OptimizerFixControl map[uint64]string
+
 	// RegardNULLAsPoint if regard NULL as Point
 	RegardNULLAsPoint bool
 
@@ -1055,9 +1058,6 @@ type SessionVars struct {
 	// When it is false, ANALYZE reads the latest data.
 	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
 	EnableAnalyzeSnapshot bool
-
-	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
-	OptimizerFixControl map[uint64]string
 }
 
 var (
