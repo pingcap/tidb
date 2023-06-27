@@ -2734,9 +2734,6 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 		}
 	}
 	sel.Fields.Fields = extractor.selectFields
-	if !b.ctx.GetSessionVars().InRestrictedSQL {
-		logutil.BgLogger().Warn("1")
-	}
 	// this part is used to fetch correlated column from sub-query item in order-by clause, and append the origin
 	// auxiliary select filed in select list, otherwise, sub-query itself won't get the name resolved in outer schema.
 	if sel.OrderBy != nil {
