@@ -840,6 +840,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	for _, db := range dbs {
+		summary.CollectUint("db-count", 1)
 		err = client.CreateDatabase(ctx, db.Info)
 		if err != nil {
 			return errors.Trace(err)
