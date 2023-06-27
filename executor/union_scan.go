@@ -114,13 +114,15 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	// 2. build virtual columns and select with virtual columns
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
-		us.addedRows, err = buildMemTableReader(ctx, us, x).getMemRows(ctx)
+		us.addedRows, err = buildMemTableReader(ctx, us, x.kvRanges).getMemRows(ctx)
 	case *IndexReaderExecutor:
 		us.addedRows, err = buildMemIndexReader(ctx, us, x).getMemRows(ctx)
 	case *IndexLookUpExecutor:
 		us.addedRows, err = buildMemIndexLookUpReader(ctx, us, x).getMemRows(ctx)
 	case *IndexMergeReaderExecutor:
 		us.addedRows, err = buildMemIndexMergeReader(ctx, us, x).getMemRows(ctx)
+	case *MPPGather:
+		us.addedRows, err = buildMemTableReader(ctx, us, x.kvRanges).getMemRows(ctx)
 	default:
 		err = fmt.Errorf("unexpected union scan children:%T", reader)
 	}

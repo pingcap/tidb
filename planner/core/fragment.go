@@ -100,18 +100,29 @@ type mppTaskGenerator struct {
 	cache      map[int]tasksAndFrags
 
 	CTEGroups map[int]*cteGroupInFragment
+
+	// For MPPGather under UnionScan, need keyRange to scan MemBuffer.
+	KVRanges []kv.KeyRange
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, []kv.KeyRange, error) {
 	g := &mppTaskGenerator{
 		ctx:        ctx,
 		startTS:    startTs,
 		mppQueryID: mppQueryID,
 		is:         is,
 		cache:      make(map[int]tasksAndFrags),
+		KVRanges:   make([]kv.KeyRange, 0),
 	}
-	return g.generateMPPTasks(sender)
+	frags, err := g.generateMPPTasks(sender)
+	if err != nil {
+		return frags, nil, err
+	}
+	if len(g.KVRanges) == 0 {
+		err = errors.New("kvRanges for MPPTask should not be empty")
+	}
+	return frags, g.KVRanges, err
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id when the query finished.
@@ -517,7 +528,6 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	var err error
 	splitedRanges, _ := distsql.SplitRangesAcrossInt64Boundary(ts.Ranges, false, false, ts.Table.IsCommonHandle)
 	// True when:
-	// 0. Is disaggregated tiflash. because in non-disaggregated tiflash, we dont use mpp for static pruning.
 	// 1. Is partition table.
 	// 2. Dynamic prune is not used.
 	var tiFlashStaticPrune bool
@@ -533,12 +543,17 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 				return nil, errors.Trace(err)
 			}
 			req, allPartitionsIDs, err = e.constructMPPBuildTaskReqForPartitionedTable(ts, splitedRanges, partitions)
+			for _, partitionKVRanges := range req.PartitionIDAndRanges {
+				e.KVRanges = append(e.KVRanges, partitionKVRanges.KeyRanges...)
+			}
 		} else {
 			singlePartTbl := tbl.GetPartition(ts.physicalTableID)
 			req, err = e.constructMPPBuildTaskForNonPartitionTable(singlePartTbl.GetPhysicalID(), ts.Table.IsCommonHandle, splitedRanges)
+			e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 		}
 	} else {
 		req, err = e.constructMPPBuildTaskForNonPartitionTable(ts.Table.ID, ts.Table.IsCommonHandle, splitedRanges)
+		e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
