@@ -1,6 +1,3 @@
 [tikv-importer]
 backend = 'local'
 add-index-by-sql = false
-
-[post-restore]
-checksum-via-sql = false
