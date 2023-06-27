@@ -1163,7 +1163,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		default:
 			retType.AddFlag(mysql.NotNullFlag)
 		}
-		v.Datum.SetValue(v.Datum.GetValue(), retType)
+		// v.Datum.SetValue(v.Datum.GetValue(), retType)
 		value := &expression.Constant{Value: v.Datum, RetType: retType}
 		initConstantRepertoire(value)
 		er.ctxStackAppend(value, types.EmptyName)
