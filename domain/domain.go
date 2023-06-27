@@ -186,7 +186,6 @@ type Domain struct {
 
 	mdlCheckCh      chan struct{}
 	stopAutoAnalyze atomicutil.Bool
-	resourcePool    *pools.ResourcePool
 }
 
 type mdlCheckTableInfo struct {
@@ -1129,7 +1128,6 @@ func (do *Domain) Init(
 		return sysExecutorFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
-	do.resourcePool = sysCtxPool
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback
@@ -1655,7 +1653,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		}
 	})
 
-	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
+	taskManager := storage.NewTaskManager(ctx, do.sysSessionPool)
 	var serverID string
 	if intest.InTest {
 		do.InitInfo4Test()

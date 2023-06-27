@@ -47,7 +47,12 @@ type SessionExecutor interface {
 // TaskManager is the manager of global/sub task.
 type TaskManager struct {
 	ctx    context.Context
-	sePool *pools.ResourcePool
+	sePool sessionPool
+}
+
+type sessionPool interface {
+	Get() (pools.Resource, error)
+	Put(resource pools.Resource)
 }
 
 var _ SessionExecutor = &TaskManager{}
@@ -60,7 +65,7 @@ var (
 )
 
 // NewTaskManager creates a new task manager.
-func NewTaskManager(ctx context.Context, sePool *pools.ResourcePool) *TaskManager {
+func NewTaskManager(ctx context.Context, sePool sessionPool) *TaskManager {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return &TaskManager{
 		ctx:    ctx,
