@@ -28,12 +28,14 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
+// GlobalPDHelper is the global variable for PDHelper.
 var GlobalPDHelper *PDHelper
 
 func init() {
 	GlobalPDHelper = newPDHelper()
 }
 
+// PDHelper is used to get some information from PD.
 type PDHelper struct {
 	wg                                       util.WaitGroupWrapper
 	cacheForApproximateTableCountFromStorage *ttlcache.Cache[string, float64]
@@ -49,10 +51,12 @@ func newPDHelper() *PDHelper {
 	}
 }
 
+// Start starts the PDHelper.
 func (p *PDHelper) Start() {
 	p.wg.Run(p.cacheForApproximateTableCountFromStorage.Start)
 }
 
+// Stop stops the PDHelper.
 func (p *PDHelper) Stop() {
 	p.cacheForApproximateTableCountFromStorage.Stop()
 	p.wg.Wait()
