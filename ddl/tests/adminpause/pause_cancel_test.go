@@ -185,7 +185,6 @@ func TestPauseCancelAndRerunSchemaStmt(t *testing.T) {
 			zap.String("DDL Statement", stmtCase.stmt))
 		stmtCase.simpleRunStmt(stmtKit)
 	}
-
 }
 
 func TestPauseCancelAndRerunIndexStmt(t *testing.T) {
