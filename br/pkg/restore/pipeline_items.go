@@ -153,6 +153,10 @@ type CreatedTable struct {
 	OldTable    *metautil.Table
 }
 
+func DefaultOutputTableChan() chan *CreatedTable {
+	return make(chan *CreatedTable, defaultChannelSize)
+}
+
 // TableWithRange is a CreatedTable that has been bind to some of key ranges.
 type TableWithRange struct {
 	CreatedTable
