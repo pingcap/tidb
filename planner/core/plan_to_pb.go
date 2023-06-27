@@ -36,7 +36,7 @@ func (p *basePhysicalPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Exe
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalExpand) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	if len(p.LevelExprs) > 0 {
-		return p.ToPBV2(ctx, storeType)
+		return p.toPBV2(ctx, storeType)
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
@@ -59,7 +59,7 @@ func (p *PhysicalExpand) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 	return &tipb.Executor{Tp: tipb.ExecType_TypeExpand, Expand: expand, ExecutorId: &executorID}, nil
 }
 
-func (p *PhysicalExpand) ToPBV2(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalExpand) toPBV2(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	projExprsPB := make([]*tipb.ExprSlice, 0, len(p.LevelExprs))
