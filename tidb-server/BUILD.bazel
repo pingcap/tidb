@@ -101,6 +101,7 @@ go_test(
     flaky = True,
     deps = [
         "//config",
+        "//executor",
         "//parser/mysql",
         "//sessionctx/variable",
         "//testkit/testsetup",
