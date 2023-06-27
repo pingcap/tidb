@@ -610,8 +610,8 @@ func (w *partialTableWorker) needPartitionHandle() (bool, error) {
 	// no ExtraPidColID here, because a clustered index couldn't be a global index.
 	ret := col.ID == model.ExtraPhysTblID
 
-	if needPartitionHandle != ret {
-		return ret, errors.Errorf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret)
+	if needPartitionHandle && !ret {
+		return ret, errors.Errorf("Internal error, needPartitionHandle != ret")
 	}
 	return ret, nil
 }
@@ -1468,8 +1468,8 @@ func (w *partialIndexWorker) needPartitionHandle() (bool, error) {
 	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
 	ret := col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
 
-	if needPartitionHandle != ret {
-		return ret, errors.Errorf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret)
+	if needPartitionHandle && !ret {
+		return ret, errors.Errorf("Internal error, needPartitionHandle != ret")
 	}
 	return ret, nil
 }

@@ -643,8 +643,8 @@ func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error
 	}
 
 	// TODO: fix global index related bugs later
-	if needPartitionHandle != ret && !e.index.Global {
-		return ret, errors.Errorf("Internal error, needPartitionHandle(%t) != ret(%t), tp(%d)", needPartitionHandle, ret, tp)
+	if needPartitionHandle && !ret && !e.index.Global {
+		return ret, errors.Errorf("Internal error, needPartitionHandle != ret, tp(%d)", tp)
 	}
 	return ret, nil
 }
