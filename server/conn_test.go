@@ -763,7 +763,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 }
 
 func TestShutDown(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	cc := &clientConn{}
 	se, err := session.CreateSession4Test(store)
@@ -775,6 +775,34 @@ func TestShutDown(t *testing.T) {
 	// assert ErrQueryInterrupted
 	err = cc.handleQuery(context.Background(), "select 1")
 	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	srv.SetDomain(dom)
+
+	cc = &clientConn{server: srv}
+	cc.setCtx(tc)
+
+	// test in txn
+	srv.clients[dom.NextConnID()] = cc
+	cc.getCtx().GetSessionVars().SetInTxn(true)
+
+	waitTime := 100 * time.Millisecond
+	begin := time.Now()
+	srv.DrainClients(waitTime, waitTime)
+	require.Greater(t, time.Since(begin), waitTime)
+
+	// test not in txn
+	srv.clients[dom.NextConnID()] = cc
+	cc.getCtx().GetSessionVars().SetInTxn(false)
+
+	begin = time.Now()
+	srv.DrainClients(waitTime, waitTime)
+	require.Less(t, time.Since(begin), waitTime)
 }
 
 type snapshotCache interface {
