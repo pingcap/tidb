@@ -74,7 +74,7 @@ start_services() {
 start_pd() {
     echo "Starting PD..."
     mkdir -p "$TEST_DIR/pd"
-    bin/pd-server \
+    pd-server \
         --client-urls "https://$PD_ADDR" \
         --peer-urls "https://$PD_PEER_ADDR" \
         --log-file "$TEST_DIR/pd.log" \
@@ -137,7 +137,7 @@ start_tikv() {
     i=$1
     echo "Starting TiKV($i)..."
     mkdir -p "$TEST_DIR/tikv${i}"
-    bin/tikv-server \
+    tikv-server \
         --pd "$PD_ADDR" \
         -A "$TIKV_ADDR$i" \
         --status-addr "$TIKV_STATUS_ADDR$i" \
@@ -163,7 +163,7 @@ ensure_tikv() {
 
 start_tidb() {
     echo "Starting TiDB..."
-    bin/tidb-server \
+    tidb-server \
         -P 4000 \
         --status 10080 \
         --advertise-address="127.0.0.1" \
@@ -243,7 +243,7 @@ start_services_impl() {
 start_tiflash() {
     echo "Starting TiFlash..."
     tests/_utils/make_tiflash_config
-    LD_LIBRARY_PATH=bin/ bin/tiflash server --config-file="$TEST_DIR/tiflash.toml" &
+    tiflash server --config-file="$TEST_DIR/tiflash.toml" &
 
     i=0
     while ! run_curl https://$TIFLASH_HTTP 1>/dev/null 2>&1; do

@@ -15,17 +15,17 @@
 # limitations under the License.
 
 set -eu
-export PATH="tests/_utils:bin:$PATH"
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+export PATH="$PATH:$CUR/../../bin:$CUR/../bin:$CUR/_utils"
 export TEST_DIR=/tmp/backup_restore_test
 
 # Reset TEST_DIR
 rm -rf $TEST_DIR && mkdir -p $TEST_DIR
 
 # Generate TLS certs
-tests/_utils/generate_certs &> /dev/null
+generate_certs &> /dev/null
 
 SELECTED_TEST_NAME="${TEST_NAME-$(find tests -mindepth 2 -maxdepth 2 -name run.sh | cut -d/ -f2 | sort)}"
-source tests/_utils/run_services
 
 trap stop_services EXIT
 start_services $@
