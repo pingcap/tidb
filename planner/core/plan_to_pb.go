@@ -15,6 +15,7 @@
 package core
 
 import (
+	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -412,6 +413,7 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	fmt.Println("all field type len = ", len(allFieldTypes))
 	ecExec := &tipb.ExchangeSender{
 		Tp:                  e.ExchangeType,
 		EncodedTaskMeta:     encodedTask,
