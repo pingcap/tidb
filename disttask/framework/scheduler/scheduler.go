@@ -345,6 +345,7 @@ func (s *InternalSchedulerImpl) onError(err error) {
 	if err == nil {
 		return
 	}
+	err = errors.Trace(err)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
