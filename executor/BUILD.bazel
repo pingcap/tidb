@@ -280,7 +280,6 @@ go_test(
     timeout = "moderate",
     srcs = [
         "adapter_test.go",
-        "aggregate_test.go",
         "analyze_test.go",
         "apply_cache_test.go",
         "batch_point_get_test.go",
