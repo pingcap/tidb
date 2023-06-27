@@ -28,8 +28,8 @@ type IdleCoordinator struct {
 }
 
 // Execute implements MppCoordinator interface function.
-func (*IdleCoordinator) Execute(context.Context) (kv.Response, error) {
-	return nil, nil
+func (*IdleCoordinator) Execute(context.Context) (kv.Response, []kv.KeyRange, error) {
+	return nil, nil, nil
 }
 
 // Next implements MppCoordinator interface function.
