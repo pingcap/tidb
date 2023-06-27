@@ -204,7 +204,7 @@ type ReportStatusRequest struct {
 // MppCoordinator describes the basic api for executing mpp physical plan.
 type MppCoordinator interface {
 	// Execute generates and executes mpp tasks for mpp physical plan.
-	Execute(ctx context.Context) (Response, error)
+	Execute(ctx context.Context) (Response, []KeyRange, error)
 	// Next returns next data
 	Next(ctx context.Context) (ResultSubset, error)
 	// ReportStatus report task execution info to coordinator

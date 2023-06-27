@@ -181,7 +181,7 @@ type allocBuf struct {
 	rd          *rowcodec.BytesDecoder
 }
 
-func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *TableReaderExecutor) *memTableReader {
+func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.KeyRange) *memTableReader {
 	defer tracing.StartRegion(ctx, "buildMemTableReader").End()
 	colIDs := make(map[int64]int, len(us.columns))
 	for i, col := range us.columns {
@@ -215,7 +215,7 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *Tabl
 		ctx:           us.ctx,
 		table:         us.table.Meta(),
 		columns:       us.columns,
-		kvRanges:      tblReader.kvRanges,
+		kvRanges:      kvRanges,
 		desc:          us.desc,
 		conditions:    us.conditions,
 		retFieldTypes: retTypes(us),

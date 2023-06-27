@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -77,7 +78,7 @@ func TestIssue33699(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -297,7 +298,7 @@ func TestInitialHandshake(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	var outBuffer bytes.Buffer
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
@@ -626,7 +627,7 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -763,7 +764,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 }
 
 func TestShutDown(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	cc := &clientConn{}
 	se, err := session.CreateSession4Test(store)
@@ -775,6 +776,34 @@ func TestShutDown(t *testing.T) {
 	// assert ErrQueryInterrupted
 	err = cc.handleQuery(context.Background(), "select 1")
 	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
+
+	cfg := util2.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	srv.SetDomain(dom)
+
+	cc = &clientConn{server: srv}
+	cc.setCtx(tc)
+
+	// test in txn
+	srv.clients[dom.NextConnID()] = cc
+	cc.getCtx().GetSessionVars().SetInTxn(true)
+
+	waitTime := 100 * time.Millisecond
+	begin := time.Now()
+	srv.DrainClients(waitTime, waitTime)
+	require.Greater(t, time.Since(begin), waitTime)
+
+	// test not in txn
+	srv.clients[dom.NextConnID()] = cc
+	cc.getCtx().GetSessionVars().SetInTxn(false)
+
+	begin = time.Now()
+	srv.DrainClients(waitTime, waitTime)
+	require.Less(t, time.Since(begin), waitTime)
 }
 
 type snapshotCache interface {
@@ -1121,7 +1150,7 @@ func TestShowErrors(t *testing.T) {
 func TestHandleAuthPlugin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
@@ -1502,7 +1531,7 @@ func TestChangeUserAuth(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user user1")
 
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 
@@ -1550,7 +1579,7 @@ func TestChangeUserAuth(t *testing.T) {
 func TestAuthPlugin2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 
@@ -1742,7 +1771,7 @@ func TestOkEof(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -1805,7 +1834,7 @@ func TestExtensionChangeUser(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -1916,7 +1945,7 @@ func TestAuthSha(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -1990,7 +2019,7 @@ func TestProcessInfoForExecuteCommand(t *testing.T) {
 
 func TestLDAPAuthSwitch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
