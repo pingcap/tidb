@@ -244,7 +244,7 @@ start_services_impl() {
 
 start_tiflash() {
     echo "Starting TiFlash..."
-    tests/_utils/make_tiflash_config
+    make_tiflash_config
     tiflash server --config-file="$TEST_DIR/tiflash.toml" &
 
     i=0
