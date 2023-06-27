@@ -134,75 +134,84 @@ func TestCalibrateResource(t *testing.T) {
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE").Check(testkit.Rows("38760"))
 
 	ru1 := [][]types.Datum{
-		types.MakeDatums(datetimeBeforeNow(20*time.Minute), 2200.0),
-		types.MakeDatums(datetimeBeforeNow(10*time.Minute), 2200.0),
-		types.MakeDatums(datetimeBeforeNow(9*time.Minute), 2100.0),
-		types.MakeDatums(datetimeBeforeNow(8*time.Minute), 2250.0),
-		types.MakeDatums(datetimeBeforeNow(7*time.Minute), 2300.0),
-		types.MakeDatums(datetimeBeforeNow(6*time.Minute), 2230.0),
-		types.MakeDatums(datetimeBeforeNow(5*time.Minute), 2210.0),
-		types.MakeDatums(datetimeBeforeNow(4*time.Minute), 2250.0),
-		types.MakeDatums(datetimeBeforeNow(3*time.Minute), 2330.0),
-		types.MakeDatums(datetimeBeforeNow(2*time.Minute), 2330.0),
-		types.MakeDatums(datetimeBeforeNow(1*time.Minute), 2300.0),
-		types.MakeDatums(datetimeBeforeNow(2*time.Second), 2280.0),
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute+40*time.Second), 2250.0),
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute+10*time.Second), 2200.0),
+		types.MakeDatums(datetimeBeforeNow(10*time.Minute+10*time.Second), 2200.0),
+		types.MakeDatums(datetimeBeforeNow(9*time.Minute+10*time.Second), 2100.0),
+		types.MakeDatums(datetimeBeforeNow(8*time.Minute+10*time.Second), 2250.0),
+		types.MakeDatums(datetimeBeforeNow(7*time.Minute+10*time.Second), 2300.0),
+		types.MakeDatums(datetimeBeforeNow(6*time.Minute+10*time.Second), 2230.0),
+		types.MakeDatums(datetimeBeforeNow(5*time.Minute+10*time.Second), 2210.0),
+		types.MakeDatums(datetimeBeforeNow(4*time.Minute+10*time.Second), 2250.0),
+		types.MakeDatums(datetimeBeforeNow(3*time.Minute+10*time.Second), 2330.0),
+		types.MakeDatums(datetimeBeforeNow(2*time.Minute+10*time.Second), 2330.0),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute+10*time.Second), 2300.0),
+		types.MakeDatums(datetimeBeforeNow(10*time.Second), 2280.0),
 	}
 	mockData["resource_manager_resource_unit"] = ru1
 	cpu1 := [][]types.Datum{
-		types.MakeDatums(datetimeBeforeNow(20*time.Minute), "tidb-0", "tidb", 1.212),
-		types.MakeDatums(datetimeBeforeNow(10*time.Minute), "tidb-0", "tidb", 1.212),
-		types.MakeDatums(datetimeBeforeNow(9*time.Minute), "tidb-0", "tidb", 1.233),
-		types.MakeDatums(datetimeBeforeNow(8*time.Minute), "tidb-0", "tidb", 1.234),
-		types.MakeDatums(datetimeBeforeNow(7*time.Minute), "tidb-0", "tidb", 1.213),
-		types.MakeDatums(datetimeBeforeNow(6*time.Minute), "tidb-0", "tidb", 1.209),
-		types.MakeDatums(datetimeBeforeNow(5*time.Minute), "tidb-0", "tidb", 1.213),
-		types.MakeDatums(datetimeBeforeNow(4*time.Minute), "tidb-0", "tidb", 1.236),
-		types.MakeDatums(datetimeBeforeNow(3*time.Minute), "tidb-0", "tidb", 1.228),
-		types.MakeDatums(datetimeBeforeNow(2*time.Minute), "tidb-0", "tidb", 1.219),
-		types.MakeDatums(datetimeBeforeNow(1*time.Minute), "tidb-0", "tidb", 1.220),
-		types.MakeDatums(datetimeBeforeNow(2*time.Second), "tidb-0", "tidb", 1.221),
-		types.MakeDatums(datetimeBeforeNow(20*time.Minute), "tikv-1", "tikv", 2.212),
-		types.MakeDatums(datetimeBeforeNow(10*time.Minute), "tikv-1", "tikv", 2.212),
-		types.MakeDatums(datetimeBeforeNow(9*time.Minute), "tikv-1", "tikv", 2.233),
-		types.MakeDatums(datetimeBeforeNow(8*time.Minute), "tikv-1", "tikv", 2.234),
-		types.MakeDatums(datetimeBeforeNow(7*time.Minute), "tikv-1", "tikv", 2.213),
-		types.MakeDatums(datetimeBeforeNow(6*time.Minute), "tikv-1", "tikv", 2.209),
-		types.MakeDatums(datetimeBeforeNow(5*time.Minute), "tikv-1", "tikv", 2.213),
-		types.MakeDatums(datetimeBeforeNow(4*time.Minute), "tikv-1", "tikv", 2.236),
-		types.MakeDatums(datetimeBeforeNow(3*time.Minute), "tikv-1", "tikv", 2.228),
-		types.MakeDatums(datetimeBeforeNow(2*time.Minute), "tikv-1", "tikv", 2.219),
-		types.MakeDatums(datetimeBeforeNow(1*time.Minute), "tikv-1", "tikv", 2.220),
-		types.MakeDatums(datetimeBeforeNow(2*time.Second), "tikv-1", "tikv", 2.281),
-		types.MakeDatums(datetimeBeforeNow(20*time.Minute), "tikv-0", "tikv", 2.282),
-		types.MakeDatums(datetimeBeforeNow(10*time.Minute), "tikv-0", "tikv", 2.282),
-		types.MakeDatums(datetimeBeforeNow(9*time.Minute), "tikv-0", "tikv", 2.283),
-		types.MakeDatums(datetimeBeforeNow(8*time.Minute), "tikv-0", "tikv", 2.284),
-		types.MakeDatums(datetimeBeforeNow(7*time.Minute), "tikv-0", "tikv", 2.283),
-		types.MakeDatums(datetimeBeforeNow(6*time.Minute), "tikv-0", "tikv", 2.289),
-		types.MakeDatums(datetimeBeforeNow(5*time.Minute), "tikv-0", "tikv", 2.283),
-		types.MakeDatums(datetimeBeforeNow(4*time.Minute), "tikv-0", "tikv", 2.286),
-		types.MakeDatums(datetimeBeforeNow(3*time.Minute), "tikv-0", "tikv", 2.288),
-		types.MakeDatums(datetimeBeforeNow(2*time.Minute), "tikv-0", "tikv", 2.289),
-		types.MakeDatums(datetimeBeforeNow(1*time.Minute), "tikv-0", "tikv", 2.280),
-		types.MakeDatums(datetimeBeforeNow(2*time.Second), "tikv-0", "tikv", 2.281),
-		types.MakeDatums(datetimeBeforeNow(20*time.Minute), "tikv-2", "tikv", 2.112),
-		types.MakeDatums(datetimeBeforeNow(10*time.Minute), "tikv-2", "tikv", 2.112),
-		types.MakeDatums(datetimeBeforeNow(9*time.Minute), "tikv-2", "tikv", 2.133),
-		types.MakeDatums(datetimeBeforeNow(8*time.Minute), "tikv-2", "tikv", 2.134),
-		types.MakeDatums(datetimeBeforeNow(7*time.Minute), "tikv-2", "tikv", 2.113),
-		types.MakeDatums(datetimeBeforeNow(6*time.Minute), "tikv-2", "tikv", 2.109),
-		types.MakeDatums(datetimeBeforeNow(5*time.Minute), "tikv-2", "tikv", 2.113),
-		types.MakeDatums(datetimeBeforeNow(4*time.Minute), "tikv-2", "tikv", 2.136),
-		types.MakeDatums(datetimeBeforeNow(3*time.Minute), "tikv-2", "tikv", 2.128),
-		types.MakeDatums(datetimeBeforeNow(2*time.Minute), "tikv-2", "tikv", 2.119),
-		types.MakeDatums(datetimeBeforeNow(1*time.Minute), "tikv-2", "tikv", 2.120),
-		types.MakeDatums(datetimeBeforeNow(2*time.Second), "tikv-2", "tikv", 2.281),
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute+40*time.Second), "tidb-0", "tidb", 1.234),
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute+10*time.Second), "tidb-0", "tidb", 1.212),
+		types.MakeDatums(datetimeBeforeNow(10*time.Minute+10*time.Second), "tidb-0", "tidb", 1.212),
+		types.MakeDatums(datetimeBeforeNow(9*time.Minute+10*time.Second), "tidb-0", "tidb", 1.233),
+		types.MakeDatums(datetimeBeforeNow(8*time.Minute+10*time.Second), "tidb-0", "tidb", 1.234),
+		types.MakeDatums(datetimeBeforeNow(7*time.Minute+10*time.Second), "tidb-0", "tidb", 1.213),
+		types.MakeDatums(datetimeBeforeNow(6*time.Minute+10*time.Second), "tidb-0", "tidb", 1.209),
+		types.MakeDatums(datetimeBeforeNow(5*time.Minute+10*time.Second), "tidb-0", "tidb", 1.213),
+		types.MakeDatums(datetimeBeforeNow(4*time.Minute+10*time.Second), "tidb-0", "tidb", 1.236),
+		types.MakeDatums(datetimeBeforeNow(3*time.Minute+10*time.Second), "tidb-0", "tidb", 1.228),
+		types.MakeDatums(datetimeBeforeNow(2*time.Minute+10*time.Second), "tidb-0", "tidb", 1.219),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute+10*time.Second), "tidb-0", "tidb", 1.220),
+		types.MakeDatums(datetimeBeforeNow(10*time.Second), "tidb-0", "tidb", 1.221),
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute+40*time.Second), "tikv-1", "tikv", 2.219),
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute+10*time.Second), "tikv-1", "tikv", 2.212),
+		types.MakeDatums(datetimeBeforeNow(10*time.Minute+10*time.Second), "tikv-1", "tikv", 2.212),
+		types.MakeDatums(datetimeBeforeNow(9*time.Minute+10*time.Second), "tikv-1", "tikv", 2.233),
+		types.MakeDatums(datetimeBeforeNow(8*time.Minute+10*time.Second), "tikv-1", "tikv", 2.234),
+		types.MakeDatums(datetimeBeforeNow(7*time.Minute+10*time.Second), "tikv-1", "tikv", 2.213),
+		types.MakeDatums(datetimeBeforeNow(6*time.Minute+10*time.Second), "tikv-1", "tikv", 2.209),
+		types.MakeDatums(datetimeBeforeNow(5*time.Minute+10*time.Second), "tikv-1", "tikv", 2.213),
+		types.MakeDatums(datetimeBeforeNow(4*time.Minute+10*time.Second), "tikv-1", "tikv", 2.236),
+		types.MakeDatums(datetimeBeforeNow(3*time.Minute+10*time.Second), "tikv-1", "tikv", 2.228),
+		types.MakeDatums(datetimeBeforeNow(2*time.Minute+10*time.Second), "tikv-1", "tikv", 2.219),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute+10*time.Second), "tikv-1", "tikv", 2.220),
+		types.MakeDatums(datetimeBeforeNow(10*time.Second), "tikv-1", "tikv", 2.281),
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute+40*time.Second), "tikv-0", "tikv", 2.280),
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute+10*time.Second), "tikv-0", "tikv", 2.282),
+		types.MakeDatums(datetimeBeforeNow(10*time.Minute+10*time.Second), "tikv-0", "tikv", 2.282),
+		types.MakeDatums(datetimeBeforeNow(9*time.Minute+10*time.Second), "tikv-0", "tikv", 2.283),
+		types.MakeDatums(datetimeBeforeNow(8*time.Minute+10*time.Second), "tikv-0", "tikv", 2.284),
+		types.MakeDatums(datetimeBeforeNow(7*time.Minute+10*time.Second), "tikv-0", "tikv", 2.283),
+		types.MakeDatums(datetimeBeforeNow(6*time.Minute+10*time.Second), "tikv-0", "tikv", 2.289),
+		types.MakeDatums(datetimeBeforeNow(5*time.Minute+10*time.Second), "tikv-0", "tikv", 2.283),
+		types.MakeDatums(datetimeBeforeNow(4*time.Minute+10*time.Second), "tikv-0", "tikv", 2.286),
+		types.MakeDatums(datetimeBeforeNow(3*time.Minute+10*time.Second), "tikv-0", "tikv", 2.288),
+		types.MakeDatums(datetimeBeforeNow(2*time.Minute+10*time.Second), "tikv-0", "tikv", 2.289),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute+10*time.Second), "tikv-0", "tikv", 2.280),
+		types.MakeDatums(datetimeBeforeNow(10*time.Second), "tikv-0", "tikv", 2.281),
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute+40*time.Second), "tikv-2", "tikv", 2.281),
+		types.MakeDatums(datetimeBeforeNow(20*time.Minute+10*time.Second), "tikv-2", "tikv", 2.112),
+		types.MakeDatums(datetimeBeforeNow(10*time.Minute+10*time.Second), "tikv-2", "tikv", 2.112),
+		types.MakeDatums(datetimeBeforeNow(9*time.Minute+10*time.Second), "tikv-2", "tikv", 2.133),
+		types.MakeDatums(datetimeBeforeNow(8*time.Minute+10*time.Second), "tikv-2", "tikv", 2.134),
+		types.MakeDatums(datetimeBeforeNow(7*time.Minute+10*time.Second), "tikv-2", "tikv", 2.113),
+		types.MakeDatums(datetimeBeforeNow(6*time.Minute+10*time.Second), "tikv-2", "tikv", 2.109),
+		types.MakeDatums(datetimeBeforeNow(5*time.Minute+10*time.Second), "tikv-2", "tikv", 2.113),
+		types.MakeDatums(datetimeBeforeNow(4*time.Minute+10*time.Second), "tikv-2", "tikv", 2.136),
+		types.MakeDatums(datetimeBeforeNow(3*time.Minute+10*time.Second), "tikv-2", "tikv", 2.128),
+		types.MakeDatums(datetimeBeforeNow(2*time.Minute+10*time.Second), "tikv-2", "tikv", 2.119),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute+10*time.Second), "tikv-2", "tikv", 2.120),
+		types.MakeDatums(datetimeBeforeNow(10*time.Second), "tikv-2", "tikv", 2.281),
 	}
 	mockData["process_cpu_usage"] = cpu1
 
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - '11m'").Check(testkit.Rows("8161"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - '11m' DURATION '11m'").Check(testkit.Rows("8161"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - '11m' END_TIME now()").Check(testkit.Rows("8161"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - '21m' END_TIME now() - '20m'").Check(testkit.Rows("7978"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - '4m'").Check(testkit.Rows("8297"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - '8m'").Check(testkit.Rows("8223"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - '8m' END_TIME now() - '4m'").Check(testkit.Rows("8147"))
 
 	// construct data for dynamic calibrate
 	ru1 = [][]types.Datum{
@@ -533,13 +542,9 @@ func TestCalibrateResource(t *testing.T) {
 	err = rs.Next(ctx, rs.NewChunk(nil))
 	require.ErrorContains(t, err, "the duration of calibration is too long")
 
-	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' DURATION '5m'")
-	require.NoError(t, err)
-	require.NotNil(t, rs)
-	err = rs.Next(ctx, rs.NewChunk(nil))
-	require.ErrorContains(t, err, "the duration of calibration is too short")
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' DURATION '1m'").Check(testkit.Rows("5337"))
 
-	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:43:00'")
+	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:35:40'")
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(ctx, rs.NewChunk(nil))
@@ -558,47 +563,47 @@ func TestCalibrateResource(t *testing.T) {
 	require.ErrorContains(t, err, "the duration of calibration is too long")
 
 	mockData["process_cpu_usage"] = [][]types.Datum{
-		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "tidb", 3.212),
-		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "tidb", 3.233),
-		types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-0", "tidb", 3.234),
+		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "tidb", 0.212),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "tidb", 0.233),
+		types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-0", "tidb", 0.234),
 		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tidb-0", "tidb", 3.213),
-		types.MakeDatums(datetime("2020-02-12 10:39:00"), "tidb-0", "tidb", 3.209),
-		types.MakeDatums(datetime("2020-02-12 10:40:00"), "tidb-0", "tidb", 3.213),
-		types.MakeDatums(datetime("2020-02-12 10:41:00"), "tidb-0", "tidb", 3.236),
-		types.MakeDatums(datetime("2020-02-12 10:42:00"), "tidb-0", "tidb", 3.228),
+		types.MakeDatums(datetime("2020-02-12 10:39:00"), "tidb-0", "tidb", 0.209),
+		types.MakeDatums(datetime("2020-02-12 10:40:00"), "tidb-0", "tidb", 0.213),
+		types.MakeDatums(datetime("2020-02-12 10:41:00"), "tidb-0", "tidb", 0.236),
+		types.MakeDatums(datetime("2020-02-12 10:42:00"), "tidb-0", "tidb", 0.228),
 		types.MakeDatums(datetime("2020-02-12 10:43:00"), "tidb-0", "tidb", 0.219),
 		types.MakeDatums(datetime("2020-02-12 10:44:00"), "tidb-0", "tidb", 0.220),
 		types.MakeDatums(datetime("2020-02-12 10:45:00"), "tidb-0", "tidb", 0.221),
 		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-1", "tikv", 2.212),
-		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", "tikv", 2.233),
-		types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "tikv", 2.234),
-		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-1", "tikv", 2.213),
-		types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-1", "tikv", 2.209),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", "tikv", 0.233),
+		types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "tikv", 0.234),
+		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-1", "tikv", 0.213),
+		types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-1", "tikv", 0.209),
 		types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "tikv", 2.213),
-		types.MakeDatums(datetime("2020-02-12 10:41:00"), "tikv-1", "tikv", 2.236),
-		types.MakeDatums(datetime("2020-02-12 10:42:00"), "tikv-1", "tikv", 2.228),
+		types.MakeDatums(datetime("2020-02-12 10:41:00"), "tikv-1", "tikv", 0.236),
+		types.MakeDatums(datetime("2020-02-12 10:42:00"), "tikv-1", "tikv", 0.228),
 		types.MakeDatums(datetime("2020-02-12 10:43:00"), "tikv-1", "tikv", 0.219),
 		types.MakeDatums(datetime("2020-02-12 10:44:00"), "tikv-1", "tikv", 0.220),
 		types.MakeDatums(datetime("2020-02-12 10:45:00"), "tikv-1", "tikv", 0.281),
-		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "tikv", 2.282),
-		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "tikv", 2.283),
-		types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-0", "tikv", 2.284),
+		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "tikv", 0.282),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "tikv", 0.283),
+		types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-0", "tikv", 0.284),
 		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-0", "tikv", 2.283),
-		types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-0", "tikv", 2.289),
-		types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-0", "tikv", 2.283),
-		types.MakeDatums(datetime("2020-02-12 10:41:00"), "tikv-0", "tikv", 2.286),
-		types.MakeDatums(datetime("2020-02-12 10:42:00"), "tikv-0", "tikv", 2.288),
+		types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-0", "tikv", 0.289),
+		types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-0", "tikv", 0.283),
+		types.MakeDatums(datetime("2020-02-12 10:41:00"), "tikv-0", "tikv", 0.286),
+		types.MakeDatums(datetime("2020-02-12 10:42:00"), "tikv-0", "tikv", 0.288),
 		types.MakeDatums(datetime("2020-02-12 10:43:00"), "tikv-0", "tikv", 0.289),
 		types.MakeDatums(datetime("2020-02-12 10:44:00"), "tikv-0", "tikv", 0.280),
 		types.MakeDatums(datetime("2020-02-12 10:45:00"), "tikv-0", "tikv", 0.281),
 		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-2", "tikv", 2.112),
-		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-2", "tikv", 2.133),
-		types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-2", "tikv", 2.134),
-		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-2", "tikv", 2.113),
-		types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-2", "tikv", 2.109),
-		types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-2", "tikv", 2.113),
-		types.MakeDatums(datetime("2020-02-12 10:41:00"), "tikv-2", "tikv", 2.136),
-		types.MakeDatums(datetime("2020-02-12 10:42:00"), "tikv-2", "tikv", 2.128),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-2", "tikv", 0.133),
+		types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-2", "tikv", 0.134),
+		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-2", "tikv", 0.113),
+		types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-2", "tikv", 0.109),
+		types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-2", "tikv", 0.113),
+		types.MakeDatums(datetime("2020-02-12 10:41:00"), "tikv-2", "tikv", 0.136),
+		types.MakeDatums(datetime("2020-02-12 10:42:00"), "tikv-2", "tikv", 0.128),
 		types.MakeDatums(datetime("2020-02-12 10:43:00"), "tikv-2", "tikv", 0.119),
 		types.MakeDatums(datetime("2020-02-12 10:44:00"), "tikv-2", "tikv", 0.120),
 		types.MakeDatums(datetime("2020-02-12 10:45:00"), "tikv-2", "tikv", 0.281),
@@ -628,11 +633,7 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-2", "tikv", 2.134),
 		types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-2", "tikv", 2.113),
 	}
-	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'")
-	require.NoError(t, err)
-	require.NotNil(t, rs)
-	err = rs.Next(ctx, rs.NewChunk(nil))
-	require.ErrorContains(t, err, "The workload in selected time window is too low")
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'").Check(testkit.Rows("5492"))
 
 	delete(mockData, "process_cpu_usage")
 	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'")
