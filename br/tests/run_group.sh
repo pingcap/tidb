@@ -58,7 +58,14 @@ elif [[ " ${!groups[*]} " =~ " ${group} " ]]; then
 	# Run test cases
 	if [[ -n $test_names ]]; then
 		echo "Run cases: ${test_names}"
-		TEST_NAME=${test_names} ${CUR}/run.sh
+        for case_name in $case_names; do
+            echo "Run cases: ${case_name}"
+            rm -rf /tmp/backup_restore_test
+            mkdir -p /tmp/backup_restore_test
+            rm -rf cover
+            mkdir cover
+            TEST_NAME=${case_name} ${CUR}/run.sh
+        done
 	fi
 else
 	echo "Error: invalid group name: ${group}"
