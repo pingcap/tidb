@@ -18,6 +18,7 @@ set -eu
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export PATH="$PATH:$CUR/../../bin:$CUR/../bin:$CUR/_utils"
 export TEST_DIR=/tmp/backup_restore_test
+source $CUR/_utils/run_services
 
 # Reset TEST_DIR
 rm -rf $TEST_DIR && mkdir -p $TEST_DIR
