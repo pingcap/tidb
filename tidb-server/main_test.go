@@ -51,7 +51,6 @@ func TestRunMain(t *testing.T) {
 
 func TestSetGlobalVars(t *testing.T) {
 	defer view.Stop()
-	defer executor.Stop()
 	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
 	require.Equal(t, "1073741824", variable.GetSysVar(variable.TiDBMemQuotaQuery).Value)
 	require.NotEqual(t, "test", variable.GetSysVar(variable.Version).Value)
@@ -81,4 +80,5 @@ func TestSetGlobalVars(t *testing.T) {
 	if hostname, err := os.Hostname(); err == nil {
 		require.Equal(t, variable.GetSysVar(variable.Hostname).Value, hostname)
 	}
+	executor.Stop()
 }

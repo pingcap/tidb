@@ -18,6 +18,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
@@ -31,6 +32,7 @@ import (
 
 // GlobalPDHelper is the global variable for PDHelper.
 var GlobalPDHelper *PDHelper
+var globalPDHelperOnce sync.Once
 
 func init() {
 	GlobalPDHelper = newPDHelper()
@@ -54,7 +56,9 @@ func newPDHelper() *PDHelper {
 
 // Start starts the PDHelper.
 func (p *PDHelper) Start() {
-	p.wg.Run(p.cacheForApproximateTableCountFromStorage.Start)
+	globalPDHelperOnce.Do(func() {
+		p.wg.Run(p.cacheForApproximateTableCountFromStorage.Start)
+	})
 }
 
 // Stop stops the PDHelper.
