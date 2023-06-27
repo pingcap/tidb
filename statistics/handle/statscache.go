@@ -73,6 +73,7 @@ type statsCache struct {
 	statsCacheInner
 }
 
+//nolint: unused
 func (sc statsCache) len() int {
 	return sc.statsCacheInner.Len()
 }
