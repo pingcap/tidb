@@ -45,7 +45,8 @@ type InternalSchedulerImpl struct {
 
 	mu struct {
 		sync.RWMutex
-		err     error
+		err error
+		// handled indicates whether the error has been updated to one of the subtask.
 		handled bool
 		// runtimeCancel is used to cancel the Run/Rollback when error occurs.
 		runtimeCancel context.CancelFunc
