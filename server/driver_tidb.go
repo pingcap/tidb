@@ -152,18 +152,23 @@ func (ts *TiDBStatement) Reset() error {
 		ts.boundParams[i] = nil
 	}
 	ts.hasActiveCursor = false
+
+	if ts.rs != nil && ts.rs.GetRowContainerReader() != nil {
+		ts.rs.GetRowContainerReader().Close()
+	}
 	ts.rs = nil
 
 	if ts.rowContainer != nil {
 		ts.rowContainer.GetMemTracker().Detach()
 		ts.rowContainer.GetDiskTracker().Detach()
 
-		err := ts.rowContainer.Close()
+		rc := ts.rowContainer
+		ts.rowContainer = nil
+
+		err := rc.Close()
 		if err != nil {
 			return err
 		}
-
-		ts.rowContainer = nil
 	}
 
 	return nil
@@ -171,6 +176,10 @@ func (ts *TiDBStatement) Reset() error {
 
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
+	if ts.rs != nil && ts.rs.GetRowContainerReader() != nil {
+		ts.rs.GetRowContainerReader().Close()
+	}
+
 	if ts.rowContainer != nil {
 		ts.rowContainer.GetMemTracker().Detach()
 		ts.rowContainer.GetDiskTracker().Detach()
@@ -520,15 +529,15 @@ var _ cursorResultSet = &tidbCursorResultSet{}
 type tidbCursorResultSet struct {
 	ResultSet
 
-	iter chunk.Iterator
+	reader chunk.RowContainerReader
 }
 
-func (tcrs *tidbCursorResultSet) StoreRowIterator(iter chunk.Iterator) {
-	tcrs.iter = iter
+func (tcrs *tidbCursorResultSet) StoreRowContainerReader(reader chunk.RowContainerReader) {
+	tcrs.reader = reader
 }
 
-func (tcrs *tidbCursorResultSet) GetRowIterator() chunk.Iterator {
-	return tcrs.iter
+func (tcrs *tidbCursorResultSet) GetRowContainerReader() chunk.RowContainerReader {
+	return tcrs.reader
 }
 
 func convertColumnInfo(fld *ast.ResultField) (ci *column.Info) {
