@@ -1758,6 +1758,14 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		}
 	}
 
+	if FindColumnInfoByID(is.Columns, model.ExtraPhysTblID) != nil {
+		indexCols = append(indexCols, &expression.Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			ID:       model.ExtraPhysTblID,
+			UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+		})
+	}
+
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
