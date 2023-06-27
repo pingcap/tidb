@@ -604,7 +604,7 @@ type planMeta struct {
 
 // normalizedSQLMap is a wrapped map used to register normalizedSQL.
 type normalizedSQLMap struct {
-	data   atomic.Value // *sync.Map
+	data   atomic.Pointer[sync.Map]
 	length atomic2.Int64
 }
 
@@ -621,7 +621,7 @@ func (m *normalizedSQLMap) register(sqlDigest []byte, normalizedSQL string, isIn
 		reporter_metrics.IgnoreExceedSQLCounter.Inc()
 		return
 	}
-	data := m.data.Load().(*sync.Map)
+	data := m.data.Load()
 	_, loaded := data.LoadOrStore(string(sqlDigest), sqlMeta{
 		normalizedSQL: normalizedSQL,
 		isInternal:    isInternal,
@@ -633,7 +633,7 @@ func (m *normalizedSQLMap) register(sqlDigest []byte, normalizedSQL string, isIn
 
 // take away all data inside normalizedSQLMap, put them in the returned new normalizedSQLMap.
 func (m *normalizedSQLMap) take() *normalizedSQLMap {
-	data := m.data.Load().(*sync.Map)
+	data := m.data.Load()
 	length := m.length.Load()
 	r := &normalizedSQLMap{}
 	r.data.Store(data)
@@ -646,7 +646,7 @@ func (m *normalizedSQLMap) take() *normalizedSQLMap {
 // toProto converts the normalizedSQLMap to the corresponding protobuf representation.
 func (m *normalizedSQLMap) toProto() []tipb.SQLMeta {
 	metas := make([]tipb.SQLMeta, 0, m.length.Load())
-	m.data.Load().(*sync.Map).Range(func(k, v interface{}) bool {
+	m.data.Load().Range(func(k, v interface{}) bool {
 		meta := v.(sqlMeta)
 		metas = append(metas, tipb.SQLMeta{
 			SqlDigest:     []byte(k.(string)),
@@ -668,7 +668,7 @@ type planBinaryCompressFunc func([]byte) string
 
 // normalizedSQLMap is a wrapped map used to register normalizedPlan.
 type normalizedPlanMap struct {
-	data   atomic.Value // *sync.Map
+	data   atomic.Pointer[sync.Map]
 	length atomic2.Int64
 }
 
@@ -685,7 +685,7 @@ func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string, i
 		reporter_metrics.IgnoreExceedPlanCounter.Inc()
 		return
 	}
-	data := m.data.Load().(*sync.Map)
+	data := m.data.Load()
 	_, loaded := data.LoadOrStore(string(planDigest), planMeta{
 		binaryNormalizedPlan: normalizedPlan,
 		isLarge:              isLarge,
@@ -697,7 +697,7 @@ func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string, i
 
 // take away all data inside normalizedPlanMap, put them in the returned new normalizedPlanMap.
 func (m *normalizedPlanMap) take() *normalizedPlanMap {
-	data := m.data.Load().(*sync.Map)
+	data := m.data.Load()
 	length := m.length.Load()
 	r := &normalizedPlanMap{}
 	r.data.Store(data)
@@ -710,7 +710,7 @@ func (m *normalizedPlanMap) take() *normalizedPlanMap {
 // toProto converts the normalizedPlanMap to the corresponding protobuf representation.
 func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
 	metas := make([]tipb.PlanMeta, 0, m.length.Load())
-	m.data.Load().(*sync.Map).Range(func(k, v interface{}) bool {
+	m.data.Load().Range(func(k, v interface{}) bool {
 		originalMeta := v.(planMeta)
 		protoMeta := tipb.PlanMeta{
 			PlanDigest: hack.Slice(k.(string)),
