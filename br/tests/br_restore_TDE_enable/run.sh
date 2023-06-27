@@ -107,7 +107,7 @@ for p in $(seq 2); do
       --s3.sse AES256
     
 # ensure the tikv data file are encrypted
-bin/tikv-ctl --config=tests/config/tikv.toml encryption-meta dump-file | grep "Aes256Ctr"
+tikv-ctl --config=$CUR/../config/tikv.toml encryption-meta dump-file | grep "Aes256Ctr"
 
 
   for i in $(seq $DB_COUNT); do
