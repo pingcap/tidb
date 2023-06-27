@@ -17,7 +17,6 @@ package reporter
 import (
 	"bytes"
 	"sort"
-	"sync"
 	"testing"
 
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -329,17 +328,17 @@ func Test_normalizedSQLMap_register(t *testing.T) {
 	m.register([]byte("SQL-2"), "SQL-2", false)
 	m.register([]byte("SQL-3"), "SQL-3", true)
 	require.Equal(t, int64(2), m.length.Load())
-	v, ok := m.data.Load().(*sync.Map).Load("SQL-1")
+	v, ok := m.data.Load().Load("SQL-1")
 	meta := v.(sqlMeta)
 	require.True(t, ok)
 	require.Equal(t, "SQL-1", meta.normalizedSQL)
 	require.True(t, meta.isInternal)
-	v, ok = m.data.Load().(*sync.Map).Load("SQL-2")
+	v, ok = m.data.Load().Load("SQL-2")
 	meta = v.(sqlMeta)
 	require.True(t, ok)
 	require.Equal(t, "SQL-2", meta.normalizedSQL)
 	require.False(t, meta.isInternal)
-	_, ok = m.data.Load().(*sync.Map).Load("SQL-3")
+	_, ok = m.data.Load().Load("SQL-3")
 	require.False(t, ok)
 }
 
@@ -352,14 +351,14 @@ func Test_normalizedSQLMap_take(t *testing.T) {
 	m2 := m1.take()
 	require.Equal(t, int64(0), m1.length.Load())
 	require.Equal(t, int64(3), m2.length.Load())
-	data1 := m1.data.Load().(*sync.Map)
+	data1 := m1.data.Load()
 	_, ok := data1.Load("SQL-1")
 	require.False(t, ok)
 	_, ok = data1.Load("SQL-2")
 	require.False(t, ok)
 	_, ok = data1.Load("SQL-3")
 	require.False(t, ok)
-	data2 := m2.data.Load().(*sync.Map)
+	data2 := m2.data.Load()
 	_, ok = data2.Load("SQL-1")
 	require.True(t, ok)
 	_, ok = data2.Load("SQL-2")
@@ -404,19 +403,19 @@ func Test_normalizedPlanMap_register(t *testing.T) {
 	m.register([]byte("PLAN-2"), "PLAN-2", true)
 	m.register([]byte("PLAN-3"), "PLAN-3", false)
 	require.Equal(t, int64(2), m.length.Load())
-	v, ok := m.data.Load().(*sync.Map).Load("PLAN-1")
+	v, ok := m.data.Load().Load("PLAN-1")
 	require.True(t, ok)
 	require.Equal(t, planMeta{
 		binaryNormalizedPlan: "PLAN-1",
 		isLarge:              false,
 	}, v.(planMeta))
-	v, ok = m.data.Load().(*sync.Map).Load("PLAN-2")
+	v, ok = m.data.Load().Load("PLAN-2")
 	require.True(t, ok)
 	require.Equal(t, planMeta{
 		binaryNormalizedPlan: "PLAN-2",
 		isLarge:              true,
 	}, v.(planMeta))
-	_, ok = m.data.Load().(*sync.Map).Load("PLAN-3")
+	_, ok = m.data.Load().Load("PLAN-3")
 	require.False(t, ok)
 }
 
@@ -429,14 +428,14 @@ func Test_normalizedPlanMap_take(t *testing.T) {
 	m2 := m1.take()
 	require.Equal(t, int64(0), m1.length.Load())
 	require.Equal(t, int64(3), m2.length.Load())
-	data1 := m1.data.Load().(*sync.Map)
+	data1 := m1.data.Load()
 	_, ok := data1.Load("PLAN-1")
 	require.False(t, ok)
 	_, ok = data1.Load("PLAN-2")
 	require.False(t, ok)
 	_, ok = data1.Load("PLAN-3")
 	require.False(t, ok)
-	data2 := m2.data.Load().(*sync.Map)
+	data2 := m2.data.Load()
 	_, ok = data2.Load("PLAN-1")
 	require.True(t, ok)
 	_, ok = data2.Load("PLAN-2")
