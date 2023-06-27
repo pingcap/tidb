@@ -1032,9 +1032,6 @@ func (b *batchCopIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		return nil, errors.Trace(resp.err)
 	}
 
-	if b.req.ConnID != 0 {
-		logutil.BgLogger().Debug("test")
-	}
 	err := b.store.CheckVisibility(b.req.StartTs)
 	if err != nil {
 		return nil, errors.Trace(err)
