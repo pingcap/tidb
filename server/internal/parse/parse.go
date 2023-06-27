@@ -349,6 +349,7 @@ func binaryDurationWithMS(pos int, paramValues []byte,
 	return pos, fmt.Sprintf("%s.%06d", dur, microSecond)
 }
 
+// StmtFetchCmd parse COM_STMT_FETCH command
 func StmtFetchCmd(data []byte) (stmtID uint32, fetchSize uint32, err error) {
 	if len(data) != 8 {
 		return 0, 0, mysql.ErrMalformPacket
