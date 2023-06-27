@@ -43,15 +43,13 @@ fi
 
 echo "selected test cases: $SELECTED_TEST_NAME"
 
-# wait for global variable cache invalid
-sleep 2
-
-for casename in $SELECTED_TEST_NAME; do
-    script=$CUR/$casename/run.sh
+run_case() {
+    local case=$1
+    local script=$2
     echo "*===== Running test $script... =====*"
     INTEGRATION_TEST=1 \
     TEST_DIR="$TEST_DIR" \
-    TEST_NAME="$casename" \
+    TEST_NAME="$case" \
     CLUSTER_VERSION_MAJOR="${CLUSTER_VERSION_MAJOR#v}" \
     CLUSTER_VERSION_MINOR="$CLUSTER_VERSION_MINOR" \
     CLUSTER_VERSION_REVISION="$CLUSTER_VERSION_REVISION" \
@@ -62,5 +60,13 @@ for casename in $SELECTED_TEST_NAME; do
     TIDB_STATUS_ADDR="$TIDB_STATUS_ADDR" \
     TIKV_ADDR="$TIKV_ADDR" \
     BR_LOG_TO_TERM=1 \
-    bash "$script" && echo "TEST: [$casename] success!"
+    bash "$script" && echo "TEST: [$case] success!"
+}
+
+# wait for global variable cache invalid
+sleep 2
+
+for casename in $SELECTED_TEST_NAME; do
+    script="$CUR/$casename/run.sh"
+    run_case "$casename" "$script"
 done
