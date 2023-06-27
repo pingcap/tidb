@@ -82,7 +82,7 @@ func (t *MockTaskTable) HasSubtasksInStates(instanceID string, taskID int64, sta
 }
 
 // UpdateErrorToSubtask implements SubtaskTable.UpdateErrorToSubtask.
-func (t *MockTaskTable) UpdateErrorToSubtask(instanceID string, err error) error {
+func (*MockTaskTable) UpdateErrorToSubtask(_ string, err error) error {
 	return err
 }
 
