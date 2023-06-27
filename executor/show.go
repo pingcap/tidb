@@ -1834,7 +1834,7 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 
 // fetchShowPumpOrDrainerStatus gets status of all pumps or drainers and fill them into e.rows.
 func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
-	registry, needToClose, err := createRegistry(config.GetGlobalConfig().Path)
+	registry, needToClose, err := getOrCreateBinlogRegistry(config.GetGlobalConfig().Path)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1860,8 +1860,8 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 	return nil
 }
 
-// createRegistry returns an ectd registry, need to close, and error
-func createRegistry(urls string) (*node.EtcdRegistry, bool, error) {
+// getOrCreateBinlogRegistry returns an etcd registry for binlog, need to close, and error
+func getOrCreateBinlogRegistry(urls string) (*node.EtcdRegistry, bool, error) {
 	if pumpClient := binloginfo.GetPumpsClient(); pumpClient != nil && pumpClient.EtcdRegistry != nil {
 		return pumpClient.EtcdRegistry, false, nil
 	}
