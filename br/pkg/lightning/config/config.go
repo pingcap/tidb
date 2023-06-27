@@ -937,7 +937,7 @@ func NewConfig() *Config {
 		Cron: Cron{
 			SwitchMode:     Duration{Duration: DefaultSwitchTiKVModeInterval},
 			LogProgress:    Duration{Duration: 5 * time.Minute},
-			CheckDiskQuota: Duration{Duration: 10 * time.Second},
+			CheckDiskQuota: Duration{Duration: 1 * time.Minute},
 		},
 		Mydumper: MydumperRuntime{
 			ReadBlockSize: ReadBlockSize,
