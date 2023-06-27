@@ -1456,6 +1456,7 @@ import (
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
 	DynamicCalibrateResourceOption         "Dynamic resource calibrate option"
+	DynamicCalibrateTimeOption             "Dynamic calibrate time option for start time and end time"
 	CalibrateOption                        "Dynamic or static calibrate option"
 	DynamicCalibrateOptionList             "Anomymous or direct dynamic resource calibrate option list"
 	CalibrateResourceWorkloadOption        "Calibrate Resource workload option"
@@ -15710,13 +15711,17 @@ DynamicCalibrateOptionList:
 	}
 
 DynamicCalibrateResourceOption:
-	"START_TIME" EqOpt stringLit
+	"START_TIME" EqOpt DynamicCalibrateTimeOption
 	{
-		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateStartTime, Ts: ast.NewValueExpr($3, "", "")}
+		ret := $3.(*ast.DynamicCalibrateResourceOption)
+		ret.Tp = ast.CalibrateStartTime
+		$$ = ret
 	}
-|	"END_TIME" EqOpt stringLit
+|	"END_TIME" EqOpt DynamicCalibrateTimeOption
 	{
-		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateEndTime, Ts: ast.NewValueExpr($3, "", "")}
+		ret := $3.(*ast.DynamicCalibrateResourceOption)
+		ret.Tp = ast.CalibrateEndTime
+		$$ = ret
 	}
 |	"DURATION" EqOpt stringLit
 	{
@@ -15726,6 +15731,25 @@ DynamicCalibrateResourceOption:
 			return 1
 		}
 		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateDuration, StrValue: $3}
+	}
+
+DynamicCalibrateTimeOption:
+	NowSymOptionFraction
+	{
+		$$ = &ast.DynamicCalibrateResourceOption{Ts: $1}
+	}
+|	stringLit
+	{
+		$$ = &ast.DynamicCalibrateResourceOption{Ts: ast.NewValueExpr($1, "", "")}
+	}
+|	NowSymOptionFraction '-' stringLit
+	{
+		_, err := duration.ParseDuration($3)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The DURATION option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.DynamicCalibrateResourceOption{Ts: $1, StrValue: $3}
 	}
 
 CalibrateResourceWorkloadOption:

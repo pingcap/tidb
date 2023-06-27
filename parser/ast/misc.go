@@ -3859,10 +3859,18 @@ func (n *DynamicCalibrateResourceOption) Restore(ctx *format.RestoreCtx) error {
 		if err := n.Ts.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing DynamicCalibrateResourceOption StartTime")
 		}
+		if len(n.StrValue) > 0 {
+			ctx.WritePlain(" - ")
+			ctx.WriteString(n.StrValue)
+		}
 	case CalibrateEndTime:
 		ctx.WriteKeyWord("END_TIME ")
 		if err := n.Ts.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing DynamicCalibrateResourceOption EndTime")
+		}
+		if len(n.StrValue) > 0 {
+			ctx.WritePlain(" - ")
+			ctx.WriteString(n.StrValue)
 		}
 	case CalibrateDuration:
 		ctx.WriteKeyWord("DURATION ")

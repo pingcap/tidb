@@ -23,6 +23,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -130,12 +131,26 @@ func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (sta
 				return
 			}
 			startTime = oracle.GetTimeFromTS(ts)
+			if len(op.StrValue) > 0 {
+				dur, err = duration.ParseDuration(op.StrValue)
+				if err != nil {
+					return
+				}
+				startTime = startTime.Add(-dur)
+			}
 		case ast.CalibrateEndTime:
 			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, op.Ts)
 			if err != nil {
 				return
 			}
 			endTime = oracle.GetTimeFromTS(ts)
+			if len(op.StrValue) > 0 {
+				dur, err = duration.ParseDuration(op.StrValue)
+				if err != nil {
+					return
+				}
+				endTime = endTime.Add(-dur)
+			}
 		case ast.CalibrateDuration:
 			dur, err = duration.ParseDuration(op.StrValue)
 			if err != nil {
@@ -164,7 +179,6 @@ func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (sta
 	if dur < minDuration {
 		err = errors.Errorf("the duration of calibration is too short, which could lead to inaccurate output. Please make the duration between %s and %s", minDuration.String(), maxDuration.String())
 	}
-
 	return
 }
 
@@ -216,6 +230,32 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	if err != nil {
 		return err
 	}
+	failpoint.Inject("mockMetricsDataFilter", func() {
+		ret := make([]*timePointValue, 0)
+		for _, point := range tikvCPUs.vals {
+			if point.tp.After(endTs) || point.tp.Before(startTs) {
+				continue
+			}
+			ret = append(ret, point)
+		}
+		tikvCPUs.vals = ret
+		ret = make([]*timePointValue, 0)
+		for _, point := range tidbCPUs.vals {
+			if point.tp.After(endTs) || point.tp.Before(startTs) {
+				continue
+			}
+			ret = append(ret, point)
+		}
+		tidbCPUs.vals = ret
+		ret = make([]*timePointValue, 0)
+		for _, point := range rus.vals {
+			if point.tp.After(endTs) || point.tp.Before(startTs) {
+				continue
+			}
+			ret = append(ret, point)
+		}
+		rus.vals = ret
+	})
 	quotas := make([]float64, 0)
 	lowCount := 0
 	for {
