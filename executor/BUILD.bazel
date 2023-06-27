@@ -153,6 +153,7 @@ go_library(
         "//resourcemanager/util",
         "//session/txninfo",
         "//sessionctx",
+        "//sessionctx/binloginfo",
         "//sessionctx/sessionstates",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
