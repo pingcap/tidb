@@ -10,6 +10,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/ddl/tests/adminpause",
     visibility = ["//visibility:public"],
     deps = [
+        "//ddl",
+        "//domain",
         "//parser/model",
         "//testkit",
         "//util/logutil",
@@ -28,7 +30,7 @@ go_test(
     embed = [":adminpause"],
     flaky = True,
     race = "on",
-    shard_count = 8,
+    shard_count = 14,
     deps = [
         "//config",
         "//ddl",

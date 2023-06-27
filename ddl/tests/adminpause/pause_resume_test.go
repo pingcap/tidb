@@ -297,6 +297,7 @@ func TestPauseResumeCancelAndRerunIndexStmt(t *testing.T) {
 		stmtCase.simpleRunStmt(stmtKit)
 	}
 }
+
 func TestPauseResumeCancelAndRerunColumnStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 

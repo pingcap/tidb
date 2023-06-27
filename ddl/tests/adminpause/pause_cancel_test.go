@@ -215,6 +215,7 @@ func TestPauseCancelAndRerunColumnStmt(t *testing.T) {
 		stmtCase.simpleRunStmt(stmtKit)
 	}
 }
+
 func TestPauseCancelAndRerunPartitionTableStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
