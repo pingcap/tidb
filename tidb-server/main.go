@@ -224,9 +224,9 @@ func main() {
 	terror.RegisterFinish()
 
 	exited := make(chan struct{})
-	signal.SetupSignalHandler(func(graceful bool) {
+	signal.SetupSignalHandler(func() {
 		svr.Close()
-		cleanup(svr, storage, dom, graceful)
+		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()
 		close(exited)
 	})
@@ -839,7 +839,7 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 // We should better provider a dynamic way to set this value.
 var gracefulCloseConnectionsTimeout = 15 * time.Second
 
-func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, _ bool) {
+func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	dom.StopAutoAnalyze()
 
 	drainClientWait := gracefulCloseConnectionsTimeout
