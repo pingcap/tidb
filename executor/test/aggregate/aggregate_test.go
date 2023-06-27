@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package aggregate
 
 import (
 	"context"
@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/internal"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -650,7 +651,7 @@ func TestSelectDistinct(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	fillData(tk, "select_distinct_test")
+	internal.FillData(tk, "select_distinct_test")
 
 	tk.MustExec("begin")
 	r := tk.MustQuery("select distinct name from select_distinct_test;")
