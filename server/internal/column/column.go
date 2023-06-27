@@ -12,19 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package column
 
 import (
 	"fmt"
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/internal/dump"
 )
 
 const maxColumnNameSize = 256
 
-// ColumnInfo contains information of a column
-type ColumnInfo struct {
+// Info contains information of a column
+type Info struct {
+	DefaultValue any
 	Schema       string
 	Table        string
 	OrgTable     string
@@ -35,22 +37,21 @@ type ColumnInfo struct {
 	Flag         uint16
 	Decimal      uint8
 	Type         uint8
-	DefaultValue any
 }
 
-// Dump dumps ColumnInfo to bytes.
-func (column *ColumnInfo) Dump(buffer []byte, d *resultEncoder) []byte {
+// Dump dumps Info to bytes.
+func (column *Info) Dump(buffer []byte, d *ResultEncoder) []byte {
 	return column.dump(buffer, d, false)
 }
 
-// DumpWithDefault dumps ColumnInfo to bytes, including column defaults. This is used for ComFieldList responses.
-func (column *ColumnInfo) DumpWithDefault(buffer []byte, d *resultEncoder) []byte {
+// DumpWithDefault dumps Info to bytes, including column defaults. This is used for ComFieldList responses.
+func (column *Info) DumpWithDefault(buffer []byte, d *ResultEncoder) []byte {
 	return column.dump(buffer, d, true)
 }
 
-func (column *ColumnInfo) dump(buffer []byte, d *resultEncoder, withDefault bool) []byte {
+func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []byte {
 	if d == nil {
-		d = newResultEncoder(charset.CharsetUTF8MB4)
+		d = NewResultEncoder(charset.CharsetUTF8MB4)
 	}
 	nameDump, orgnameDump := []byte(column.Name), []byte(column.OrgName)
 	if len(nameDump) > maxColumnNameSize {
@@ -59,18 +60,18 @@ func (column *ColumnInfo) dump(buffer []byte, d *resultEncoder, withDefault bool
 	if len(orgnameDump) > maxColumnNameSize {
 		orgnameDump = orgnameDump[0:maxColumnNameSize]
 	}
-	buffer = dumpLengthEncodedString(buffer, []byte("def"))
-	buffer = dumpLengthEncodedString(buffer, d.encodeMeta([]byte(column.Schema)))
-	buffer = dumpLengthEncodedString(buffer, d.encodeMeta([]byte(column.Table)))
-	buffer = dumpLengthEncodedString(buffer, d.encodeMeta([]byte(column.OrgTable)))
-	buffer = dumpLengthEncodedString(buffer, d.encodeMeta(nameDump))
-	buffer = dumpLengthEncodedString(buffer, d.encodeMeta(orgnameDump))
+	buffer = dump.LengthEncodedString(buffer, []byte("def"))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Schema)))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Table)))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.OrgTable)))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(nameDump))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(orgnameDump))
 
 	buffer = append(buffer, 0x0c)
-	buffer = dumpUint16(buffer, d.columnTypeInfoCharsetID(column))
-	buffer = dumpUint32(buffer, column.ColumnLength)
+	buffer = dump.Uint16(buffer, d.ColumnTypeInfoCharsetID(column))
+	buffer = dump.Uint32(buffer, column.ColumnLength)
 	buffer = append(buffer, dumpType(column.Type))
-	buffer = dumpUint16(buffer, dumpFlag(column.Type, column.Flag))
+	buffer = dump.Uint16(buffer, DumpFlag(column.Type, column.Flag))
 	buffer = append(buffer, column.Decimal)
 	buffer = append(buffer, 0, 0)
 
@@ -80,24 +81,15 @@ func (column *ColumnInfo) dump(buffer []byte, d *resultEncoder, withDefault bool
 			buffer = append(buffer, 251) // NULL
 		default:
 			defaultValStr := fmt.Sprintf("%v", column.DefaultValue)
-			buffer = dumpLengthEncodedString(buffer, []byte(defaultValStr))
+			buffer = dump.LengthEncodedString(buffer, []byte(defaultValStr))
 		}
 	}
 
 	return buffer
 }
 
-func isStringColumnType(tp byte) bool {
-	switch tp {
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
-		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
-		mysql.TypeEnum, mysql.TypeSet, mysql.TypeJSON:
-		return true
-	}
-	return false
-}
-
-func dumpFlag(tp byte, flag uint16) uint16 {
+// DumpFlag dumps flag of a column.
+func DumpFlag(tp byte, flag uint16) uint16 {
 	switch tp {
 	case mysql.TypeSet:
 		return flag | uint16(mysql.SetFlag)
