@@ -53,6 +53,8 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/server/internal/dump"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
@@ -75,11 +77,11 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	// status ok
 	data = append(data, 0)
 	// stmt id
-	data = dumpUint32(data, uint32(stmt.ID()))
+	data = dump.Uint32(data, uint32(stmt.ID()))
 	// number columns
-	data = dumpUint16(data, uint16(len(columns)))
+	data = dump.Uint16(data, uint16(len(columns)))
 	// number params
-	data = dumpUint16(data, uint16(len(params)))
+	data = dump.Uint16(data, uint16(len(params)))
 	// filter [00]
 	data = append(data, 0)
 	// warning count
@@ -90,7 +92,7 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	}
 
 	cc.initResultEncoder(ctx)
-	defer cc.rsEncoder.clean()
+	defer cc.rsEncoder.Clean()
 	if len(params) > 0 {
 		for i := 0; i < len(params); i++ {
 			data = data[0:4]
@@ -308,7 +310,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	// Tell the client cursor exists in server by setting proper serverStatus.
 	if useCursor {
 		cc.initResultEncoder(ctx)
-		defer cc.rsEncoder.clean()
+		defer cc.rsEncoder.Clean()
 		// fetch all results of the resultSet, and stored them locally, so that the future `FETCH` command can read
 		// the rows directly to avoid running executor and accessing shared params/variables in the session
 		// NOTE: chunk should not be allocated from the connection allocator, which will reset after executing this command
@@ -427,7 +429,7 @@ func parseStmtFetchCmd(data []byte) (stmtID uint32, fetchSize uint32, err error)
 }
 
 func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boundParams [][]byte,
-	nullBitmap, paramTypes, paramValues []byte, enc *inputDecoder) (err error) {
+	nullBitmap, paramTypes, paramValues []byte, enc *util2.InputDecoder) (err error) {
 	pos := 0
 	var (
 		tmp    interface{}
@@ -436,7 +438,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression,
 		isNull bool
 	)
 	if enc == nil {
-		enc = newInputDecoder(charset.CharsetUTF8)
+		enc = util2.NewInputDecoder(charset.CharsetUTF8)
 	}
 
 	args := make([]types.Datum, len(params))
@@ -445,7 +447,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression,
 		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
 		// see clientConn#handleStmtSendLongData
 		if boundParams[i] != nil {
-			args[i] = types.NewBytesDatum(enc.decodeInput(boundParams[i]))
+			args[i] = types.NewBytesDatum(enc.DecodeInput(boundParams[i]))
 			continue
 		}
 
@@ -616,7 +618,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression,
 				return
 			}
 
-			v, isNull, n, err = parseLengthEncodedBytes(paramValues[pos:])
+			v, isNull, n, err = util2.ParseLengthEncodedBytes(paramValues[pos:])
 			pos += n
 			if err != nil {
 				return
@@ -638,7 +640,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression,
 				err = mysql.ErrMalformPacket
 				return
 			}
-			v, isNull, n, err = parseLengthEncodedBytes(paramValues[pos:])
+			v, isNull, n, err = util2.ParseLengthEncodedBytes(paramValues[pos:])
 			pos += n
 			if err != nil {
 				return
@@ -657,14 +659,14 @@ func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression,
 				return
 			}
 
-			v, isNull, n, err = parseLengthEncodedBytes(paramValues[pos:])
+			v, isNull, n, err = util2.ParseLengthEncodedBytes(paramValues[pos:])
 			pos += n
 			if err != nil {
 				return
 			}
 
 			if !isNull {
-				v = enc.decodeInput(v)
+				v = enc.DecodeInput(v)
 				tmp = string(hack.String(v))
 			} else {
 				tmp = nil

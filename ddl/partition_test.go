@@ -41,7 +41,10 @@ func TestDropAndTruncatePartition(t *testing.T) {
 	ctx := testkit.NewTestKit(t, store).Session()
 	testCreateTable(t, ctx, d, dbInfo, tblInfo)
 	testDropPartition(t, ctx, d, dbInfo, tblInfo, []string{"p0", "p1"})
-	testTruncatePartition(t, ctx, d, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]})
+
+	newIDs, err := genGlobalIDs(store, 2)
+	require.NoError(t, err)
+	testTruncatePartition(t, ctx, d, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]}, newIDs)
 }
 
 func buildTableInfoWithPartition(t *testing.T, store kv.Storage) (*model.TableInfo, []int64) {
@@ -122,18 +125,19 @@ func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *
 	return job
 }
 
-func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64) *model.Job {
+func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
 	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionTruncateTablePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{pids},
+		SchemaID:    dbInfo.ID,
+		TableID:     tblInfo.ID,
+		Type:        model.ActionTruncateTablePartition,
+		SchemaState: model.StatePublic,
+		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{pids, newIDs},
 	}
 }
 
-func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64) *model.Job {
-	job := buildTruncatePartitionJob(dbInfo, tblInfo, pids)
+func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
+	job := buildTruncatePartitionJob(dbInfo, tblInfo, pids, newIDs)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
