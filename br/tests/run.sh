@@ -47,7 +47,7 @@ echo "selected test cases: $SELECTED_TEST_NAME"
 sleep 2
 
 for casename in $SELECTED_TEST_NAME; do
-    script=tests/$casename/run.sh
+    script=$CUR/$casename/run.sh
     echo "*===== Running test $script... =====*"
     INTEGRATION_TEST=1 \
     TEST_DIR="$TEST_DIR" \
