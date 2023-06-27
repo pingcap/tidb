@@ -312,8 +312,8 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 	return nil
 }
 
-// / DFS to check if plan need report execution summary through ReportMPPTaskStatus mpp service
-// / Currently, return true if plan contains limit operator
+// DFS to check if plan needs report execution summary through ReportMPPTaskStatus mpp service
+// Currently, return true if plan contains limit operator
 func needReportExecutionSummary(plan plannercore.PhysicalPlan) bool {
 	switch x := plan.(type) {
 	case *plannercore.PhysicalLimit:
