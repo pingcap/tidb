@@ -85,6 +85,14 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 	}
 }
 
+func (m *memIndexReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
+	data, err := m.getMemRows(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &defaultRowsIter{data: data}, nil
+}
+
 func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
 	defer tracing.StartRegion(ctx, "memIndexReader.getMemRows").End()
 	tps := make([]*types.FieldType, 0, len(m.index.Columns)+1)
@@ -227,6 +235,99 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		pkColIDs:   pkColIDs,
 		cacheTable: us.cacheTable,
 	}
+}
+
+type txnMemBufferIter struct {
+	*memTableReader
+	txn  kv.Transaction
+	idx  int
+	curr kv.Iterator
+}
+
+func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
+	var ret []types.Datum
+	for iter.idx < len(iter.kvRanges) {
+		if iter.curr == nil {
+			rg := iter.kvRanges[iter.idx]
+			tmp := iter.txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
+			snapCacheIter, err := getSnapIter(iter.ctx, iter.cacheTable, rg)
+			if err != nil {
+				return nil, err
+			}
+			if snapCacheIter != nil {
+				tmp, err = transaction.NewUnionIter(tmp, snapCacheIter, false)
+				if err != nil {
+					return nil, err
+				}
+			}
+			iter.curr = tmp
+		} else {
+			var err error
+			ret, err = iter.next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if ret != nil {
+				break
+			}
+			iter.idx++
+			iter.curr = nil
+		}
+	}
+	return ret, nil
+}
+
+func (iter *txnMemBufferIter) next() ([]types.Datum, error) {
+	var err error
+	curr := iter.curr
+	for ; err == nil && curr.Valid(); err = curr.Next() {
+		// check whether the key was been deleted.
+		if len(curr.Value()) == 0 {
+			continue
+		}
+
+		mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
+		resultRows := make([]types.Datum, len(iter.columns))
+		resultRows, err = iter.decodeRecordKeyValue(curr.Key(), curr.Value(), &resultRows)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		mutableRow.SetDatums(resultRows...)
+		matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, mutableRow.ToRow())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !matched {
+			continue
+		}
+		return resultRows, curr.Next()
+	}
+	return nil, err
+}
+
+func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
+	if !m.desc {
+		m.offsets = make([]int, len(m.columns))
+		for i, col := range m.columns {
+			m.offsets[i] = m.colIDs[col.ID]
+		}
+		txn, err := m.ctx.Txn(true)
+		if err != nil {
+			return nil, err
+		}
+
+		return &txnMemBufferIter{
+			memTableReader: m,
+			txn:            txn,
+		}, nil
+	}
+
+	data, err := m.getMemRows(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &defaultRowsIter{data: data}, nil
 }
 
 // TODO: Try to make memXXXReader lazy, There is no need to decode many rows when parent operator only need 1 row.
@@ -515,6 +616,14 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 	}
 }
 
+func (m *memIndexLookUpReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
+	data, err := m.getMemRows(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &defaultRowsIter{data: data}, nil
+}
+
 func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "memIndexLookUpReader.getMemRows")
 	defer r.End()
@@ -641,6 +750,32 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 		partitionTables:   indexMergeReader.prunedPartitions,
 		partitionKVRanges: indexMergeReader.partitionKeyRanges,
 	}
+}
+
+type memRowsIter interface {
+	Next() ([]types.Datum, error)
+}
+
+type defaultRowsIter struct {
+	data   [][]types.Datum
+	cursor int
+}
+
+func (iter *defaultRowsIter) Next() ([]types.Datum, error) {
+	if iter.cursor < len(iter.data) {
+		ret := iter.data[iter.cursor]
+		iter.cursor++
+		return ret, nil
+	}
+	return nil, nil
+}
+
+func (m *memIndexMergeReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
+	data, err := m.getMemRows(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &defaultRowsIter{data: data}, nil
 }
 
 func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
