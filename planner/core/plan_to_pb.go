@@ -632,7 +632,8 @@ func (fb *FrameBound) ToPB(ctx sessionctx.Context) (*tipb.WindowFrameBound, erro
 	offset := fb.Num
 	pbBound.Offset = &offset
 
-	if len(fb.CalcFuncs) > 0 {
+	// Length of CalcFuncs can only be one when it's a range frame type
+	if len(fb.CalcFuncs) == 1 {
 		rangeFrame, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, fb.CalcFuncs, ctx.GetClient())
 		if err != nil {
 			return nil, err

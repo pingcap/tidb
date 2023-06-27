@@ -2804,6 +2804,8 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		if !allSupported {
 			return nil
 		}
+
+		// TODO switch on the range frame's pushdown
 		if lw.Frame != nil && lw.Frame.Type == ast.Ranges {
 			if _, err := expression.ExpressionsToPBList(lw.SCtx().GetSessionVars().StmtCtx, lw.Frame.Start.CalcFuncs, lw.ctx.GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
