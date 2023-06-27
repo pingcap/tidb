@@ -25,6 +25,8 @@ import (
 	"testing"
 )
 
+const dbTestLease = 600 * time.Millisecond
+
 // Logger is the global logger in this package
 var Logger = logutil.BgLogger()
 

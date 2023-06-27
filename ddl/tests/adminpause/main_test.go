@@ -24,8 +24,6 @@ import (
 	"go.uber.org/goleak"
 )
 
-const dbTestLease = 600 * time.Millisecond
-
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
