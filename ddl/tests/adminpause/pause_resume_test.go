@@ -19,10 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
-	"testing"
-	"time"
 
-	ddlctrl "github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -31,125 +28,8 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"testing"
 )
-
-var localPRCJobID int64 = 0
-var localPRCAdminCommandMutex sync.Mutex
-
-var localPRCPauseResult []sqlexec.RecordSet
-var localPRCPauseErr error
-var localPRCIsPaused = false
-
-func localPRCPauseFunc(adminCommandKit *testkit.TestKit, stmtCase *StmtCase) func(*model.Job) {
-	return func(job *model.Job) {
-		Logger.Debug("pauseResumeAndCancel: OnJobRunBeforeExported, ",
-			zap.String("Job Type", job.Type.String()),
-			zap.String("Job State", job.State.String()),
-			zap.String("Job Schema State", job.SchemaState.String()),
-			zap.String("Expected Schema State", stmtCase.schemaState.String()))
-
-		// All hooks are running inside a READ mutex `d.mu()`, we need to lock for the variable's modification.
-		localPRCAdminCommandMutex.Lock()
-		defer localPRCAdminCommandMutex.Unlock()
-		if MatchTargetState(job, stmtCase.schemaState) &&
-			stmtCase.isJobPausable && //
-			!localPRCIsPaused {
-			localPRCJobID = job.ID
-			stmt := "admin pause ddl jobs " + strconv.FormatInt(localPRCJobID, 10)
-			localPRCPauseResult, localPRCPauseErr = adminCommandKit.Session().Execute(context.Background(), stmt)
-
-			Logger.Info("pauseResumeAndCancel: pause command by hook.OnJobRunBeforeExported,",
-				zap.Error(localPRCPauseErr), zap.String("Statement", stmtCase.stmt), zap.Int64("Job ID", localPRCJobID))
-
-			// In case that it runs into this scope again and again
-			localPRCIsPaused = true
-		}
-	}
-}
-func localPRCVerifyPauseResult(t *testing.T, adminCommandKit *testkit.TestKit) {
-	localPRCAdminCommandMutex.Lock()
-	defer localPRCAdminCommandMutex.Unlock()
-
-	require.True(t, localPRCIsPaused)
-	require.NoError(t, localPRCPauseErr)
-	result := adminCommandKit.ResultSetToResultWithCtx(context.Background(),
-		localPRCPauseResult[0], "pause ddl job successfully")
-	result.Check(testkit.Rows(fmt.Sprintf("%d successful", localPRCJobID)))
-
-	localPRCIsPaused = false
-}
-
-var localPRCIsResumed = false
-var localPRCResumeResult []sqlexec.RecordSet
-var localPRCResumeErr error
-
-func localPRCResumeFunc(adminCommandKit *testkit.TestKit, stmtCase *StmtCase) func(*model.Job) {
-	return func(job *model.Job) {
-		Logger.Debug("pauseResumeAndCancel: OnJobUpdatedExported, ",
-			zap.String("Job Type", job.Type.String()),
-			zap.String("Job State", job.State.String()),
-			zap.String("Job Schema State", job.SchemaState.String()),
-			zap.String("Expected Schema State", stmtCase.schemaState.String()))
-
-		localPRCAdminCommandMutex.Lock()
-		defer localPRCAdminCommandMutex.Unlock()
-		if job.IsPaused() && localPRCIsPaused && !localPRCIsResumed {
-			stmt := "admin resume ddl jobs " + strconv.FormatInt(localPRCJobID, 10)
-			localPRCResumeResult, localPRCResumeErr = adminCommandKit.Session().Execute(context.Background(), stmt)
-
-			Logger.Info("pauseResumeAndCancel: resume command by hook.OnJobUpdatedExported: ",
-				zap.Error(localPRCResumeErr), zap.String("Statement", stmtCase.stmt), zap.Int64("Job ID", localPRCJobID))
-
-			// In case that it runs into this scope again and again
-			localPRCIsResumed = true
-		}
-	}
-}
-func localPRCVerifyResumeResult(t *testing.T, adminCommandKit *testkit.TestKit) {
-	localPRCAdminCommandMutex.Lock()
-	defer localPRCAdminCommandMutex.Unlock()
-
-	require.True(t, localPRCIsResumed)
-	require.NoError(t, localPRCResumeErr)
-	result := adminCommandKit.ResultSetToResultWithCtx(context.Background(),
-		localPRCResumeResult[0], "resume ddl job successfully")
-	result.Check(testkit.Rows(fmt.Sprintf("%d successful", localPRCJobID)))
-
-	localPRCIsResumed = false
-}
-
-var localPRCCancelResult []sqlexec.RecordSet
-var localPRCCancelErr error
-var localPRCIsCancelled = false
-
-func localPRCCancelFunc(adminCommandKit *testkit.TestKit, stmtCase *StmtCase) func(string) {
-	return func(jobType string) {
-		localPRCAdminCommandMutex.Lock()
-		defer localPRCAdminCommandMutex.Unlock()
-		if localPRCIsPaused && localPRCIsResumed && !localPRCIsCancelled {
-			stmt := "admin cancel ddl jobs " + strconv.FormatInt(localPRCJobID, 10)
-			localPRCCancelResult, localPRCCancelErr = adminCommandKit.Session().Execute(context.Background(), stmt)
-
-			Logger.Info("pauseResumeAndCancel: cancel command by hook.OnGetJobBeforeExported: ",
-				zap.Error(localPRCCancelErr), zap.String("Statement", stmtCase.stmt), zap.Int64("Job ID", localPRCJobID))
-
-			// In case that it runs into this scope again and again
-			localPRCIsCancelled = true
-		}
-	}
-}
-func localPRCVerifyCancelResult(t *testing.T, adminCommandKit *testkit.TestKit) {
-	localPRCAdminCommandMutex.Lock()
-	defer localPRCAdminCommandMutex.Unlock()
-
-	require.True(t, localPRCIsCancelled)
-	require.NoError(t, localPRCCancelErr)
-	result := adminCommandKit.ResultSetToResultWithCtx(context.Background(),
-		localPRCCancelResult[0], "resume ddl job successfully")
-	result.Check(testkit.Rows(fmt.Sprintf("%d successful", localPRCJobID)))
-
-	localPRCIsCancelled = false
-}
 
 func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit *testkit.TestKit, dom *domain.Domain, stmtCase *StmtCase, doCancel bool) {
 	Logger.Info("pauseResumeAndCancel: case start,",
@@ -160,6 +40,116 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 		zap.Strings("Rollback statement", stmtCase.rollbackStmts),
 		zap.Bool("Job pausable", stmtCase.isJobPausable))
 
+	var jobID int64 = 0
+	var adminCommandMutex sync.Mutex
+
+	var isPaused = false
+	var pauseResult []sqlexec.RecordSet
+	var pauseErr error
+	var pauseFunc = func(job *model.Job) {
+		Logger.Debug("pauseResumeAndCancel: OnJobRunBeforeExported, ",
+			zap.String("Job Type", job.Type.String()),
+			zap.String("Job State", job.State.String()),
+			zap.String("Job Schema State", job.SchemaState.String()),
+			zap.String("Expected Schema State", stmtCase.schemaState.String()))
+
+		// All hooks are running inside a READ mutex `d.mu()`, we need to lock for the variable's modification.
+		adminCommandMutex.Lock()
+		defer adminCommandMutex.Unlock()
+		if matchTargetState(job, stmtCase.schemaState) &&
+			stmtCase.isJobPausable && //
+			!isPaused {
+			jobID = job.ID
+			stmt := "admin pause ddl jobs " + strconv.FormatInt(jobID, 10)
+			pauseResult, pauseErr = adminCommandKit.Session().Execute(context.Background(), stmt)
+
+			Logger.Info("pauseResumeAndCancel: pause command by hook.OnJobRunBeforeExported,",
+				zap.Error(pauseErr), zap.String("Statement", stmtCase.stmt), zap.Int64("Job ID", jobID))
+
+			// In case that it runs into this scope again and again
+			isPaused = true
+		}
+	}
+
+	var verifyPauseResult = func(t *testing.T, adminCommandKit *testkit.TestKit) {
+		adminCommandMutex.Lock()
+		defer adminCommandMutex.Unlock()
+
+		require.True(t, isPaused)
+		require.NoError(t, pauseErr)
+		result := adminCommandKit.ResultSetToResultWithCtx(context.Background(),
+			pauseResult[0], "pause ddl job successfully")
+		result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+
+		isPaused = false
+	}
+
+	var isResumed = false
+	var resumeResult []sqlexec.RecordSet
+	var resumeErr error
+	var resumeFunc = func(job *model.Job) {
+		Logger.Debug("pauseResumeAndCancel: OnJobUpdatedExported, ",
+			zap.String("Job Type", job.Type.String()),
+			zap.String("Job State", job.State.String()),
+			zap.String("Job Schema State", job.SchemaState.String()),
+			zap.String("Expected Schema State", stmtCase.schemaState.String()))
+
+		adminCommandMutex.Lock()
+		defer adminCommandMutex.Unlock()
+		if job.IsPaused() && isPaused && !isResumed {
+			stmt := "admin resume ddl jobs " + strconv.FormatInt(jobID, 10)
+			resumeResult, resumeErr = adminCommandKit.Session().Execute(context.Background(), stmt)
+
+			Logger.Info("pauseResumeAndCancel: resume command by hook.OnJobUpdatedExported: ",
+				zap.Error(resumeErr), zap.String("Statement", stmtCase.stmt), zap.Int64("Job ID", jobID))
+
+			// In case that it runs into this scope again and again
+			isResumed = true
+		}
+	}
+	var verifyResumeResult = func(t *testing.T, adminCommandKit *testkit.TestKit) {
+		adminCommandMutex.Lock()
+		defer adminCommandMutex.Unlock()
+
+		require.True(t, isResumed)
+		require.NoError(t, resumeErr)
+		result := adminCommandKit.ResultSetToResultWithCtx(context.Background(),
+			resumeResult[0], "resume ddl job successfully")
+		result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+
+		isResumed = false
+	}
+
+	var isCancelled = false
+	var cancelResult []sqlexec.RecordSet
+	var cancelErr error
+	var cancelFunc = func(jobType string) {
+		adminCommandMutex.Lock()
+		defer adminCommandMutex.Unlock()
+		if isPaused && isResumed && !isCancelled {
+			stmt := "admin cancel ddl jobs " + strconv.FormatInt(jobID, 10)
+			cancelResult, cancelErr = adminCommandKit.Session().Execute(context.Background(), stmt)
+
+			Logger.Info("pauseResumeAndCancel: cancel command by hook.OnGetJobBeforeExported: ",
+				zap.Error(cancelErr), zap.String("Statement", stmtCase.stmt), zap.Int64("Job ID", jobID))
+
+			// In case that it runs into this scope again and again
+			isCancelled = true
+		}
+	}
+	var verifyCancelResult = func(t *testing.T, adminCommandKit *testkit.TestKit) {
+		adminCommandMutex.Lock()
+		defer adminCommandMutex.Unlock()
+
+		require.True(t, isCancelled)
+		require.NoError(t, cancelErr)
+		result := adminCommandKit.ResultSetToResultWithCtx(context.Background(),
+			cancelResult[0], "resume ddl job successfully")
+		result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+
+		isCancelled = false
+	}
+
 	for _, prepareStmt := range stmtCase.preConditionStmts {
 		Logger.Debug("pauseResumeAndCancel: ", zap.String("Prepare schema before test", prepareStmt))
 		stmtKit.MustExec(prepareStmt)
@@ -168,20 +158,20 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 	var hook = &callback.TestDDLCallback{Do: dom}
 	originalHook := dom.DDL().GetHook()
 
-	hook.OnJobRunBeforeExported = localPRCPauseFunc(adminCommandKit, stmtCase)
-	var rf = localPRCResumeFunc(adminCommandKit, stmtCase)
+	hook.OnJobRunBeforeExported = pauseFunc
+	var rf = resumeFunc
 	hook.OnJobUpdatedExported.Store(&rf)
 
 	Logger.Info("pauseResumeAndCancel: statement execute", zap.String("DDL Statement", stmtCase.stmt))
 	if stmtCase.isJobPausable {
 		if doCancel {
-			hook.OnGetJobBeforeExported = localPRCCancelFunc(adminCommandKit, stmtCase)
+			hook.OnGetJobBeforeExported = cancelFunc
 			dom.DDL().SetHook(hook.Clone())
 
 			stmtKit.MustGetErrCode(stmtCase.stmt, errno.ErrCancelledDDLJob)
 			Logger.Info("pauseResumeAndCancel: statement execution should be cancelled.")
 
-			localPRCVerifyCancelResult(t, adminCommandKit)
+			verifyCancelResult(t, adminCommandKit)
 		} else {
 			dom.DDL().SetHook(hook.Clone())
 
@@ -189,20 +179,20 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 			Logger.Info("pauseResumeAndCancel: statement execution should finish successfully.")
 
 			// If not `doCancel`, then we should not run the `admin cancel`, which the indication should be false.
-			require.False(t, localPRCIsCancelled)
+			require.False(t, isCancelled)
 		}
 
 		// The reason why we don't check the result of `admin pause`, `admin resume` and `admin cancel` inside the
 		// hook is that the hook may not be triggered, which we may not know it.
-		localPRCVerifyPauseResult(t, adminCommandKit)
-		localPRCVerifyResumeResult(t, adminCommandKit)
+		verifyPauseResult(t, adminCommandKit)
+		verifyResumeResult(t, adminCommandKit)
 	} else {
 		dom.DDL().SetHook(hook.Clone())
 		stmtKit.MustExec(stmtCase.stmt)
 
-		require.False(t, localPRCIsPaused)
-		require.False(t, localPRCIsResumed)
-		require.False(t, localPRCIsCancelled)
+		require.False(t, isPaused)
+		require.False(t, isResumed)
+		require.False(t, isCancelled)
 	}
 
 	// Should not affect the 'stmtCase.rollbackStmts'
@@ -217,20 +207,8 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 	Logger.Info("pauseResumeAndCancel: statement case finished, ", zap.String("Statement", stmtCase.stmt))
 }
 
-// TestPauseAndResumePositive
-// - positive cases
-// - pause the job, and resume it, then it should finish successfully
-// - iterate all the `StmtCase` statements
-func TestPauseAndResume(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	stmtKit := testkit.NewTestKit(t, store)
-	adminCommandKit := testkit.NewTestKit(t, store)
-
-	ddlctrl.ReorgWaitTimeout = 10 * time.Millisecond
-	stmtKit.MustExec("set @@global.tidb_ddl_reorg_batch_size = 2")
-	stmtKit.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
-	stmtKit = testkit.NewTestKit(t, store)
-	stmtKit.MustExec("use test")
+func TestPauseAndResumeSchemaStmt(t *testing.T) {
+	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
 	require.Nil(t, generateTblUser(stmtKit, 1000))
 
@@ -240,14 +218,96 @@ func TestPauseAndResume(t *testing.T) {
 	for _, stmtCase := range tableDDLStmt {
 		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, false)
 	}
+
+	for _, stmtCase := range placeRulDDLStmtCase {
+		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, false)
+	}
+}
+
+func TestPauseAndResumeIndexStmt(t *testing.T) {
+	var dom, stmtKit, adminCommandKit = prepareDomain(t)
+
+	require.Nil(t, generateTblUser(stmtKit, 1000))
+
 	for _, stmtCase := range indexDDLStmtCase {
 		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, false)
 	}
+}
+
+func TestPauseAndResumeColumnStmt(t *testing.T) {
+	var dom, stmtKit, adminCommandKit = prepareDomain(t)
+
+	require.Nil(t, generateTblUser(stmtKit, 1000))
+
 	for _, stmtCase := range columnDDLStmtCase {
 		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, false)
 	}
-	for _, stmtCase := range placeRulDDLStmtCase {
+}
+
+func TestPauseAndResumePartitionTableStmt(t *testing.T) {
+	var dom, stmtKit, adminCommandKit = prepareDomain(t)
+
+	require.Nil(t, generateTblUser(stmtKit, 0))
+
+	require.Nil(t, generateTblUserParition(stmtKit, 0))
+	for _, stmtCase := range tablePartitionDDLStmtCase {
 		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, false)
+	}
+}
+
+func TestPauseResumeCancelAndRerunSchemaStmt(t *testing.T) {
+	var dom, stmtKit, adminCommandKit = prepareDomain(t)
+
+	require.Nil(t, generateTblUser(stmtKit, 1000))
+
+	for _, stmtCase := range schemaDDLStmtCase {
+		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
+
+		Logger.Info("TestPauseResumeCancelAndRerun: statement execution again after `admin cancel`",
+			zap.String("DDL Statement", stmtCase.stmt))
+		stmtCase.simpleRunStmt(stmtKit)
+	}
+	for _, stmtCase := range tableDDLStmt {
+		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
+
+		Logger.Info("TestPauseResumeCancelAndRerun: statement execution again after `admin cancel`",
+			zap.String("DDL Statement", stmtCase.stmt))
+		stmtCase.simpleRunStmt(stmtKit)
+	}
+
+	for _, stmtCase := range placeRulDDLStmtCase {
+		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
+
+		Logger.Info("TestPauseResumeCancelAndRerun: statement execution again after `admin cancel`",
+			zap.String("DDL Statement", stmtCase.stmt))
+		stmtCase.simpleRunStmt(stmtKit)
+	}
+}
+
+func TestPauseResumeCancelAndRerunIndexStmt(t *testing.T) {
+	var dom, stmtKit, adminCommandKit = prepareDomain(t)
+
+	require.Nil(t, generateTblUser(stmtKit, 1000))
+
+	for _, stmtCase := range indexDDLStmtCase {
+		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
+
+		Logger.Info("TestPauseResumeCancelAndRerun: statement execution again after `admin cancel`",
+			zap.String("DDL Statement", stmtCase.stmt))
+		stmtCase.simpleRunStmt(stmtKit)
+	}
+}
+func TestPauseResumeCancelAndRerunColumnStmt(t *testing.T) {
+	var dom, stmtKit, adminCommandKit = prepareDomain(t)
+
+	require.Nil(t, generateTblUser(stmtKit, 1000))
+
+	for _, stmtCase := range columnDDLStmtCase {
+		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
+
+		Logger.Info("TestPauseResumeCancelAndRerun: statement execution again after `admin cancel`",
+			zap.String("DDL Statement", stmtCase.stmt))
+		stmtCase.simpleRunStmt(stmtKit)
 	}
 
 	// It will be out of control if the tuples generated is not in the range of some cases for partition. Then it would
@@ -256,70 +316,20 @@ func TestPauseAndResume(t *testing.T) {
 
 	require.Nil(t, generateTblUserParition(stmtKit, 0))
 	for _, stmtCase := range tablePartitionDDLStmtCase {
-		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, false)
+		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
+
+		Logger.Info("TestPauseResumeCancelAndRerun: statement execution again after `admin cancel`",
+			zap.String("DDL Statement", stmtCase.stmt))
+		stmtCase.simpleRunStmt(stmtKit)
 	}
 
-	Logger.Info("TestPauseAndResumePositive: all cases finished.")
+	Logger.Info("TestPauseResumeCancelAndRerun: all cases finished.")
 }
 
-// TestPauseAndResumePositive
-// - positive cases
-// - pause the job, and resume it, and then cancel it. The statement should be cancelled
-// - run the `stmt` again
-// - iterate all the `StmtCase` statements
-func TestPauseResumeCancelAndRerun(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+func TestPauseResumeCancelAndRerunPartitionTableStmt(t *testing.T) {
+	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
-	stmtKit := testkit.NewTestKit(t, store)
-	adminCommandKit := testkit.NewTestKit(t, store)
-
-	ddlctrl.ReorgWaitTimeout = 10 * time.Millisecond
-	stmtKit.MustExec("set @@global.tidb_ddl_reorg_batch_size = 2")
-	stmtKit.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
-	stmtKit = testkit.NewTestKit(t, store)
-	stmtKit.MustExec("use test")
-
-	require.Nil(t, generateTblUser(stmtKit, 1000))
-
-	for _, stmtCase := range schemaDDLStmtCase {
-		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
-
-		Logger.Info("TestPauseResumeCancelAndRerun: statement execution again after `admin cancel`",
-			zap.String("DDL Statement", stmtCase.stmt))
-		stmtCase.simpleRunStmt(stmtKit)
-	}
-	for _, stmtCase := range tableDDLStmt {
-		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
-
-		Logger.Info("TestPauseResumeCancelAndRerun: statement execution again after `admin cancel`",
-			zap.String("DDL Statement", stmtCase.stmt))
-		stmtCase.simpleRunStmt(stmtKit)
-	}
-	for _, stmtCase := range indexDDLStmtCase {
-		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
-
-		Logger.Info("TestPauseResumeCancelAndRerun: statement execution again after `admin cancel`",
-			zap.String("DDL Statement", stmtCase.stmt))
-		stmtCase.simpleRunStmt(stmtKit)
-	}
-	for _, stmtCase := range columnDDLStmtCase {
-		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
-
-		Logger.Info("TestPauseResumeCancelAndRerun: statement execution again after `admin cancel`",
-			zap.String("DDL Statement", stmtCase.stmt))
-		stmtCase.simpleRunStmt(stmtKit)
-	}
-	for _, stmtCase := range placeRulDDLStmtCase {
-		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)
-
-		Logger.Info("TestPauseResumeCancelAndRerun: statement execution again after `admin cancel`",
-			zap.String("DDL Statement", stmtCase.stmt))
-		stmtCase.simpleRunStmt(stmtKit)
-	}
-
-	// It will be out of control if the tuples generated is not in the range of some cases for partition. Then it would
-	// fail. Just truncate the tuples here because we don't care about the partition itself but the DDL.
-	stmtKit.MustExec("truncate " + adminPauseTestTable)
+	require.Nil(t, generateTblUser(stmtKit, 0))
 
 	require.Nil(t, generateTblUserParition(stmtKit, 0))
 	for _, stmtCase := range tablePartitionDDLStmtCase {

@@ -15,8 +15,14 @@
 package adminpause
 
 import (
+	"time"
+
+	ddlctrl "github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
+	"testing"
 )
 
 // Logger is the global logger in this package
@@ -25,8 +31,8 @@ var Logger = logutil.BgLogger()
 // SubStates is a slice of SchemaState.
 type SubStates = []model.SchemaState
 
-// MatchTargetState is used to test whether the cancel state matches.
-func MatchTargetState( /*t *testing.T, */ job *model.Job, targetState interface{}) bool {
+// matchTargetState is used to test whether the cancel state matches.
+func matchTargetState( /*t *testing.T, */ job *model.Job, targetState interface{}) bool {
 	switch v := targetState.(type) {
 	case model.SchemaState:
 		if job.Type == model.ActionMultiSchemaChange {
@@ -51,4 +57,18 @@ func MatchTargetState( /*t *testing.T, */ job *model.Job, targetState interface{
 	default:
 		return false
 	}
+}
+
+func prepareDomain(t *testing.T) (*domain.Domain, *testkit.TestKit, *testkit.TestKit) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	stmtKit := testkit.NewTestKit(t, store)
+	adminCommandKit := testkit.NewTestKit(t, store)
+
+	ddlctrl.ReorgWaitTimeout = 10 * time.Millisecond
+	stmtKit.MustExec("set @@global.tidb_ddl_reorg_batch_size = 2")
+	stmtKit.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
+	stmtKit = testkit.NewTestKit(t, store)
+	stmtKit.MustExec("use test")
+
+	return dom, stmtKit, adminCommandKit
 }
