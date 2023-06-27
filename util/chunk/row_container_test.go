@@ -15,10 +15,14 @@
 package chunk
 
 import (
+	"crypto/rand"
+	rand2 "math/rand"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
@@ -302,4 +306,195 @@ func TestActionBlocked(t *testing.T) {
 	}()
 	ac.Action(tracker)
 	require.GreaterOrEqual(t, time.Since(starttime), 200*time.Millisecond)
+}
+
+func TestRowContainerReaderInDisk(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
+
+	longVarCharTyp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlen(4096).Build()
+	fields := []*types.FieldType{&longVarCharTyp}
+
+	// create a row container which stores the data in disk
+	rc := NewRowContainer(fields, 1<<10)
+	rc.SpillToDisk()
+
+	allRows := [][]byte{}
+	// insert 16 chunks
+	for i := 0; i < 16; i++ {
+		chk := NewChunkWithCapacity(fields, 1<<10)
+		// insert 16 rows for each chunk
+		for j := 0; j < 16; j++ {
+			length := rand2.Uint32()
+			randomBytes := make([]byte, length%4096)
+			_, err := rand.Read(randomBytes)
+			require.NoError(t, err)
+
+			chk.AppendBytes(0, randomBytes)
+			allRows = append(allRows, randomBytes)
+		}
+		rc.Add(chk)
+	}
+
+	iter := NewRowContainerReader(rc)
+	for i := 0; i < 16; i++ {
+		for j := 0; j < 16; j++ {
+			row := iter.Current()
+			require.Equal(t, allRows[i*16+j], row.GetBytes(0))
+			iter.Next()
+		}
+	}
+}
+
+func TestCloseRowContainerReader(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
+
+	longVarCharTyp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlen(4096).Build()
+	fields := []*types.FieldType{&longVarCharTyp}
+
+	// create a row container which stores the data in disk
+	rc := NewRowContainer(fields, 1<<10)
+	rc.SpillToDisk()
+
+	allRows := [][]byte{}
+	// insert 16 chunks
+	for i := 0; i < 16; i++ {
+		chk := NewChunkWithCapacity(fields, 1<<10)
+		// insert 16 rows for each chunk
+		for j := 0; j < 16; j++ {
+			length := rand2.Uint32()
+			randomBytes := make([]byte, length%4096)
+			_, err := rand.Read(randomBytes)
+			require.NoError(t, err)
+
+			chk.AppendBytes(0, randomBytes)
+			allRows = append(allRows, randomBytes)
+		}
+		rc.Add(chk)
+	}
+
+	// read 8.5 of these chunks
+	reader := NewRowContainerReader(rc)
+	for i := 0; i < 8; i++ {
+		for j := 0; j < 16; j++ {
+			row := reader.Current()
+			require.Equal(t, allRows[i*16+j], row.GetBytes(0))
+			reader.Next()
+		}
+	}
+	for j := 0; j < 8; j++ {
+		row := reader.Current()
+		require.Equal(t, allRows[8*16+j], row.GetBytes(0))
+		reader.Next()
+	}
+
+	// close the reader
+	reader.Close()
+}
+
+func TestConcurrentSpillWithRowContainerReader(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
+
+	longVarCharTyp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlen(4096).Build()
+	fields := []*types.FieldType{&longVarCharTyp}
+
+	// create a row container which stores the data in disk
+	rc := NewRowContainer(fields, 1<<10)
+	allRows := [][]byte{}
+	// insert 16 chunks
+	for i := 0; i < 16; i++ {
+		chk := NewChunkWithCapacity(fields, 1<<10)
+		// insert 16 rows for each chunk
+		for j := 0; j < 1024; j++ {
+			length := rand2.Uint32()
+			randomBytes := make([]byte, length%4096)
+			_, err := rand.Read(randomBytes)
+			require.NoError(t, err)
+
+			chk.AppendBytes(0, randomBytes)
+			allRows = append(allRows, randomBytes)
+		}
+		rc.Add(chk)
+	}
+
+	var wg sync.WaitGroup
+	// concurrently read and spill to disk
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reader := NewRowContainerReader(rc)
+
+		for i := 0; i < 16; i++ {
+			for j := 0; j < 1024; j++ {
+				row := reader.Current()
+				require.Equal(t, allRows[i*1024+j], row.GetBytes(0))
+				reader.Next()
+			}
+		}
+	}()
+	rc.SpillToDisk()
+	wg.Wait()
+}
+
+func BenchmarkRowContainerReaderInDiskWithRowSize512(b *testing.B) {
+	benchmarkRowContainerReaderInDiskWithRowLength(b, 512)
+}
+
+func BenchmarkRowContainerReaderInDiskWithRowSize1024(b *testing.B) {
+	benchmarkRowContainerReaderInDiskWithRowLength(b, 1024)
+}
+
+func BenchmarkRowContainerReaderInDiskWithRowSize4096(b *testing.B) {
+	benchmarkRowContainerReaderInDiskWithRowLength(b, 4096)
+}
+
+func benchmarkRowContainerReaderInDiskWithRowLength(b *testing.B, rowLength int) {
+	b.StopTimer()
+
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = b.TempDir()
+	})
+
+	longVarCharTyp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlen(rowLength).Build()
+	fields := []*types.FieldType{&longVarCharTyp}
+
+	randomBytes := make([]byte, rowLength)
+	_, err := rand.Read(randomBytes)
+	require.NoError(b, err)
+
+	// create a row container which stores the data in disk
+	rc := NewRowContainer(fields, 1<<10)
+	rc.SpillToDisk()
+
+	// insert `b.N * 1<<10` rows (`b.N` chunks) into the rc
+	for i := 0; i < b.N; i++ {
+		chk := NewChunkWithCapacity(fields, 1<<10)
+		for j := 0; j < 1<<10; j++ {
+			chk.AppendBytes(0, randomBytes)
+		}
+
+		rc.Add(chk)
+	}
+
+	iter := NewRowContainerReader(rc)
+	b.StartTimer()
+	for n := 0; n < b.N; n++ {
+		for i := 0; i < 1<<10; i++ {
+			iter.Next()
+		}
+	}
+	require.NoError(b, iter.Error())
 }

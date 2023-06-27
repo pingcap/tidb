@@ -2410,10 +2410,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs cursorResultSet, serverStatus uint16, fetchSize int) error {
-	iter := rs.GetRowIterator()
-
 	// construct the rows sent to the client according to fetchSize.
 	var curRows []chunk.Row
+	iter := rs.GetRowContainerReader()
+	// send the rows to the client according to fetchSize.
 	for i := 0; i < fetchSize && iter.Current() != iter.End(); i++ {
 		curRows = append(curRows, iter.Current())
 		iter.Next()

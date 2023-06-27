@@ -384,8 +384,8 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 			}
 		}
 
-		iter := chunk.NewIterator4RowContainer(rowContainer)
-		crs.StoreRowIterator(iter)
+		reader := chunk.NewRowContainerReader(rowContainer)
+		crs.StoreRowContainerReader(reader)
 		stmt.StoreResultSet(crs)
 		stmt.StoreRowContainer(rowContainer)
 		if cl, ok := crs.(fetchNotifier); ok {
@@ -394,6 +394,8 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		stmt.SetCursorActive(true)
 		defer func() {
 			if err != nil {
+				reader.Close()
+
 				// the resultSet and rowContainer have been closed in former "defer" statement.
 				stmt.StoreResultSet(nil)
 				stmt.StoreRowContainer(nil)
@@ -472,7 +474,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 
 	_, err = cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), int(fetchSize))
 	// if the iterator reached the end before writing result, we could say the `FETCH` command will send EOF
-	if rs.GetRowIterator().Current() == rs.GetRowIterator().End() {
+	if rs.GetRowContainerReader().Current() == rs.GetRowContainerReader().End() {
 		// also reset the statement when the cursor reaches the end
 		// don't overwrite the `err` in outer scope, to avoid redundant `Reset()` in `defer` statement (though, it's not
 		// a big problem, as the `Reset()` function call is idempotent.)

@@ -95,8 +95,8 @@ type ResultSet interface {
 type cursorResultSet interface {
 	ResultSet
 
-	StoreRowIterator(chunk.Iterator)
-	GetRowIterator() chunk.Iterator
+	StoreRowContainerReader(reader chunk.RowContainerReader)
+	GetRowContainerReader() chunk.RowContainerReader
 }
 
 // fetchNotifier represents notifier will be called in COM_FETCH.
