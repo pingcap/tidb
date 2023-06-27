@@ -102,14 +102,15 @@ type mppRequestReport struct {
 
 // localMppCoordinator stands for constructing and dispatching mpp tasks in local tidb server, since these work might be done remotely too
 type localMppCoordinator struct {
-	sessionCtx      sessionctx.Context
-	is              infoschema.InfoSchema
-	originalPlan    plannercore.PhysicalPlan
-	planIDs         []int
-	startTS         uint64
-	mppQueryID      kv.MPPQueryID
-	gatherID        uint64
-	coordinatorAddr string // empty if coordinator service not available
+	sessionCtx          sessionctx.Context
+	is                  infoschema.InfoSchema
+	originalPlan        plannercore.PhysicalPlan
+	planIDs             []int
+	startTS             uint64
+	mppQueryID          kv.MPPQueryID
+	gatherID            uint64
+	coordinatorAddr     string // empty if coordinator service not available
+	reportExecutionInfo bool   // if each mpp task needs to report execution info directly to coordinator through ReportMPPTaskStatus
 
 	mppReqs []*kv.MPPDispatchRequest
 
@@ -141,7 +142,7 @@ type localMppCoordinator struct {
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
 func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string, memTracker *memory.Tracker) *localMppCoordinator {
-	if sctx.GetSessionVars().DisableMPPReportStatus || sctx.GetSessionVars().ChooseMppVersion() < kv.MppVersionV2 {
+	if sctx.GetSessionVars().ChooseMppVersion() < kv.MppVersionV2 {
 		coordinatorAddr = ""
 	}
 	coord := &localMppCoordinator{
@@ -160,6 +161,10 @@ func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, p
 		reportStatusCh:  make(chan struct{}),
 		vars:            sctx.GetSessionVars().KVVars,
 		reqMap:          make(map[int64]*mppRequestReport),
+	}
+
+	if len(coordinatorAddr) > 0 && needReportExecutionSummary(coord.originalPlan) {
+		coord.reportExecutionInfo = true
 	}
 	return coord
 }
@@ -205,18 +210,19 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
 		)
 		req := &kv.MPPDispatchRequest{
-			Data:               pbData,
-			Meta:               mppTask.Meta,
-			ID:                 mppTask.ID,
-			IsRoot:             pf.IsRoot,
-			Timeout:            10,
-			SchemaVar:          c.is.SchemaMetaVersion(),
-			StartTs:            c.startTS,
-			MppQueryID:         mppTask.MppQueryID,
-			GatherID:           c.gatherID,
-			MppVersion:         mppTask.MppVersion,
-			CoordinatorAddress: c.coordinatorAddr,
-			State:              kv.MppTaskReady,
+			Data:                   pbData,
+			Meta:                   mppTask.Meta,
+			ID:                     mppTask.ID,
+			IsRoot:                 pf.IsRoot,
+			Timeout:                10,
+			SchemaVar:              c.is.SchemaMetaVersion(),
+			StartTs:                c.startTS,
+			MppQueryID:             mppTask.MppQueryID,
+			GatherID:               c.gatherID,
+			MppVersion:             mppTask.MppVersion,
+			CoordinatorAddress:     c.coordinatorAddr,
+			ReportExecutionSummary: c.reportExecutionInfo,
+			State:                  kv.MppTaskReady,
 		}
 		c.reqMap[req.ID] = &mppRequestReport{mppReq: req, receivedReport: false, errMsg: "", executionSummaries: nil}
 		c.mppReqs = append(c.mppReqs, req)
@@ -304,6 +310,22 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 		}
 	}
 	return nil
+}
+
+// / DFS to check if plan need report execution summary through ReportMPPTaskStatus mpp service
+// / Currently, return true if plan contains limit operator
+func needReportExecutionSummary(plan plannercore.PhysicalPlan) bool {
+	switch x := plan.(type) {
+	case *plannercore.PhysicalLimit:
+		return true
+	default:
+		for _, child := range x.Children() {
+			if needReportExecutionSummary(child) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *localMppCoordinator) dispatchAll(ctx context.Context) {
@@ -531,7 +553,7 @@ func (c *localMppCoordinator) ReportStatus(info kv.ReportStatusRequest) error {
 }
 
 func (c *localMppCoordinator) handleAllReports() {
-	if len(c.coordinatorAddr) > 0 && atomic.LoadUint32(&c.dispatchFailed) == 0 {
+	if c.reportExecutionInfo && atomic.LoadUint32(&c.dispatchFailed) == 0 {
 		startTime := time.Now()
 		select {
 		case <-c.reportStatusCh:
