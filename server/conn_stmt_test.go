@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -219,7 +220,7 @@ func TestParseExecArgsAndEncode(t *testing.T) {
 		[]byte{0x0},
 		[]byte{mysql.TypeVarchar, 0},
 		[]byte{4, 178, 226, 202, 212},
-		newInputDecoder("gbk"))
+		util.NewInputDecoder("gbk"))
 	require.NoError(t, err)
 	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetValue())
 
@@ -229,7 +230,7 @@ func TestParseExecArgsAndEncode(t *testing.T) {
 		[]byte{0x0},
 		[]byte{mysql.TypeString, 0},
 		[]byte{},
-		newInputDecoder("gbk"))
+		util.NewInputDecoder("gbk"))
 	require.NoError(t, err)
 	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetString())
 }
