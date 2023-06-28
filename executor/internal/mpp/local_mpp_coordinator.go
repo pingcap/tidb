@@ -525,6 +525,7 @@ func (c *localMppCoordinator) ReportStatus(info kv.ReportStatusRequest) error {
 	executionInfo := new(tipb.TiFlashExecutionInfo)
 	err := executionInfo.Unmarshal(info.Request.GetData())
 	if err != nil {
+		// since it is very corner case to reach here, and it won't cause forever hang due to not close reportStatusCh
 		return err
 	}
 
