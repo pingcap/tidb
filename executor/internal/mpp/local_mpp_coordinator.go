@@ -457,6 +457,7 @@ func (c *localMppCoordinator) cancelMppTasks() {
 		if task.State == kv.MppTaskRunning && !usedStoreAddrs[task.Meta.GetAddress()] {
 			usedStoreAddrs[task.Meta.GetAddress()] = true
 		} else if task.State == kv.MppTaskCancelled {
+			c.mu.Unlock()
 			return
 		}
 		task.State = kv.MppTaskCancelled
