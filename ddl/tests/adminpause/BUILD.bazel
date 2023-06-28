@@ -15,6 +15,7 @@ go_library(
         "//parser/model",
         "//testkit",
         "//util/logutil",
+        "@com_github_stretchr_testify//require",
     ],
 )
 
