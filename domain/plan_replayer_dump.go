@@ -547,7 +547,10 @@ func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain, his
 		}
 		allFallBackTbls = append(allFallBackTbls, fallBackTbls...)
 	}
-	msg := "Historical stats for " + strings.Join(allFallBackTbls, ", ") + " are unavailable, fallback to latest stats"
+	var msg string
+	if len(allFallBackTbls) > 0 {
+		msg = "Historical stats for " + strings.Join(allFallBackTbls, ", ") + " are unavailable, fallback to latest stats"
+	}
 	return msg, nil
 }
 

@@ -394,7 +394,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.False(t, jsonTbls1[0].IsHistoricalStats)
 	require.Equal(t, jsonTbls1[0], stats2)
 
-	// because we failed to get historicalStats, there's an error message.
+	// because we failed to get historical stats, there's an error message.
 	require.Equal(t, []string{"Historical stats for t are unavailable, fallback to latest stats", ""}, errMsg1)
 
 	// 2-2. specify time2 to get the plan replayer
@@ -402,7 +402,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 		fmt.Sprintf(template, time2.Format("2006-01-02 15:04:05.000000"), query),
 	).Rows()[0][0].(string)
 	zip2 := fetchZipFromPlanReplayerAPI(t, client, filename2)
-	jsonTbls2, metas2, _ := getInfoFromPlanReplayerZip(t, zip2)
+	jsonTbls2, metas2, errMsg2 := getInfoFromPlanReplayerZip(t, zip2)
 
 	// the TS is recorded in the plan replayer, and it's the same as the TS we calculated above
 	require.Len(t, metas2, 1)
@@ -417,12 +417,15 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	jsonTbls2[0].IsHistoricalStats = false
 	require.Equal(t, jsonTbls2[0], stats1)
 
+	// succeeded to get historical stats, there should be no error message.
+	require.Empty(t, errMsg2)
+
 	// 2-3. specify time3 to get the plan replayer
 	filename3 := tk.MustQuery(
 		fmt.Sprintf(template, time3.Format("2006-01-02T15:04:05.000000Z07:00"), query),
 	).Rows()[0][0].(string)
 	zip3 := fetchZipFromPlanReplayerAPI(t, client, filename3)
-	jsonTbls3, metas3, _ := getInfoFromPlanReplayerZip(t, zip3)
+	jsonTbls3, metas3, errMsg3 := getInfoFromPlanReplayerZip(t, zip3)
 
 	// the TS is recorded in the plan replayer, and it's the same as the TS we calculated above
 	require.Len(t, metas3, 1)
@@ -436,6 +439,9 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.True(t, jsonTbls3[0].IsHistoricalStats)
 	jsonTbls3[0].IsHistoricalStats = false
 	require.Equal(t, jsonTbls3[0], stats2)
+
+	// succeeded to get historical stats, there should be no error message.
+	require.Empty(t, errMsg3)
 
 	// 3. remove the plan replayer files generated during the test
 	gcHandler := dom.GetDumpFileGCChecker()
