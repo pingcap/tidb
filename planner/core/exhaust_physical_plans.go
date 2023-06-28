@@ -55,6 +55,13 @@ func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 			"MPP mode may be blocked because operator `UnionScan` is not supported now.")
 		return nil, true, nil
 	}
+	if ds, ok := p.children[0].(*DataSource); ok &&
+		ds.tableInfo.GetPartitionInfo() != nil &&
+		p.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode &&
+		tableHasDirtyContent(p.ctx, ds.tableInfo) &&
+		len(prop.SortItems) > 0 {
+		return nil, true, nil
+	}
 	childProp := prop.CloneEssentialFields()
 	us := PhysicalUnionScan{
 		Conditions: p.conditions,

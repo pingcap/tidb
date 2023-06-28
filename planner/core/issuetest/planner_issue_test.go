@@ -106,3 +106,16 @@ func TestIssue44051(t *testing.T) {
 	rs := tk.MustQuery("WITH tmp AS (SELECT t2.* FROM t2) SELECT * FROM t1 WHERE t1.id = (select id from tmp where id = 1) or t1.id = (select id from tmp where id = 2) or t1.id = (select id from tmp where id = 3)")
 	rs.Sort().Check(testkit.Rows("1 <nil> <nil> <nil>", "2 <nil> <nil> <nil>", "3 <nil> <nil> <nil>"))
 }
+
+func TestIssue45007(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, primary key(b)) PARTITION BY HASH(b) partitions 4")
+	tk.MustExec("analyze table t")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t(a, b) values (6,6),(3,3),(9,9),(4,4),(5,5),(7,7),(8,8);")
+	tk.MustQuery("select * from t where b > 1 order by b limit 5;").Check(testkit.Rows("3 3", "4 4", "5 5", "6 6", "7 7"))
+	tk.MustExec("rollback")
+}
