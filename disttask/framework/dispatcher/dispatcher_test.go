@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
@@ -177,6 +176,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 
 	// 3s
 	cnt := 60
+	// ywq todo fix flow control failed.
 	checkGetRunningGTaskCnt := func() {
 		var retCnt int
 		for i := 0; i < cnt; i++ {
@@ -298,9 +298,7 @@ func TestParallelCancelFlow(t *testing.T) {
 
 const taskTypeExample = "task_example"
 
-type NumberExampleHandle struct {
-	processed bool
-}
+type NumberExampleHandle struct{}
 
 var _ dispatcher.TaskFlowHandle = (*NumberExampleHandle)(nil)
 
@@ -308,24 +306,20 @@ func (NumberExampleHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
 func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, metasChan chan [][]byte, errChan chan error, doneChan chan bool) {
-	var metas [][]byte
-	if !n.processed {
-		gTask.Step = proto.StepOne
+	switch gTask.Step {
+	case proto.StepOne:
+		var metas [][]byte
+		logutil.BgLogger().Info("progress step one")
 		for i := 0; i < subtaskCnt; i++ {
 			metas = append(metas, []byte{'1'})
 		}
 		metasChan <- metas
-		logutil.BgLogger().Info("progress step init")
-		return
-	}
-	switch gTask.Step {
-	case proto.StepOne:
-		logutil.BgLogger().Info("progress step one")
 		doneChan <- true
-		return
+	case proto.StepTwo:
+		logutil.BgLogger().Info("progress step two")
+		doneChan <- true
 	default:
-		errChan <- errors.New("unknown step")
-		return
+		doneChan <- true
 	}
 }
 

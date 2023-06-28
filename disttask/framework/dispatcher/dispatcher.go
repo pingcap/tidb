@@ -146,15 +146,14 @@ func (d *dispatcher) DispatchTaskLoop() {
 	logutil.BgLogger().Info("dispatch task loop start")
 	ticker := time.NewTicker(checkTaskRunningInterval)
 	defer ticker.Stop()
-	var atomicCnt atomic.Int32
-	atomicCnt.Store(0)
 	for {
 		select {
 		case <-d.ctx.Done():
 			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(d.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
 			return
 		case <-ticker.C:
-			if d.checkConcurrencyOverflow(int(atomicCnt.Load())) {
+			cnt := d.getRunningGTaskCnt()
+			if d.checkConcurrencyOverflow(cnt) {
 				break
 			}
 
@@ -168,11 +167,13 @@ func (d *dispatcher) DispatchTaskLoop() {
 			if len(gTasks) == 0 {
 				break
 			}
-			// var atomicOverflow atomic.Bool
-			// atomicOverflow.Store(false)
+			var atomicCnt atomic.Int32
+			atomicCnt.Store(int32(cnt))
 			for _, gTask := range gTasks {
 				if gTask.Flag != proto.TaskSubStateDispatching {
-					d.wg.Run(func() {
+					d.wg.Add(1)
+					go func(gTask *proto.Task) {
+						defer d.wg.Done()
 						// This global task is running, so no need to reprocess it.
 						if d.isRunningGTask(gTask.ID) {
 							return
@@ -200,7 +201,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 							return
 						}
 						d.setRunningGTask(gTask)
-					})
+					}(gTask)
 				}
 			}
 		}
@@ -488,16 +489,14 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 	errChan := make(chan error)
 	doneChan := make(chan bool)
 	metaCnt := 0
-	err = d.gPool.Run(func() {
+	processFlow := func() {
 		if receiveErr != nil {
 			processErrFlow(d.ctx, d, gTask, receiveErr, metasChan, errChan, doneChan)
 		} else {
 			processNormalFlow(d.ctx, d, gTask, metasChan, errChan, doneChan)
 		}
-	})
-	if err != nil {
-		return false, err
 	}
+	d.wg.Run(processFlow)
 
 	// 3. select dist-plan from chan, and dispatch each of them.
 	doneDispatch := false
