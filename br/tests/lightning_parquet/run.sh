@@ -29,7 +29,7 @@ for BACKEND in local tidb; do
     fi
     run_sql 'DROP DATABASE IF EXISTS test'
     run_sql 'CREATE DATABASE test'
-    run_sql "source $cur/db.sql;" -D test
+    run_sql "source $CUR/db.sql;" -D test
 
     run_lightning --backend $BACKEND
 

@@ -18,14 +18,14 @@ set -eux
 
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-run_lightning --backend=local -d "$cur/data"
+run_lightning --backend=local -d "$CUR/data"
 
 LOG_FILE1="$TEST_DIR/lightning_partition_incremental1.log"
 LOG_FILE2="$TEST_DIR/lightning_partition_incremental2.log"
 
-run_lightning --log-file "$LOG_FILE1" --config "$cur/config1.toml" -d "$cur/data1" &
+run_lightning --log-file "$LOG_FILE1" --config "$CUR/config1.toml" -d "$CUR/data1" &
 pid1="$!"
-run_lightning --log-file "$LOG_FILE2" --config "$cur/config2.toml" -d "$cur/data2" &
+run_lightning --log-file "$LOG_FILE2" --config "$CUR/config2.toml" -d "$CUR/data2" &
 pid2="$!"
 
 # Must wait for pid explicitly. Otherwise, we can't detect whether the process is exited with error.

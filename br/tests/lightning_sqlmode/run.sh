@@ -53,7 +53,7 @@ check_contains 'd: '
 run_sql 'DROP DATABASE IF EXISTS sqlmodedb'
 run_sql 'DROP DATABASE IF EXISTS sqlmodedb_lightning_task_info'
 
-run_lightning --config "$cur/on.toml" --log-file "$TEST_DIR/sqlmode-error.log"
+run_lightning --config "$CUR/on.toml" --log-file "$TEST_DIR/sqlmode-error.log"
 
 grep -q '\["kv convert failed"\].*\[original=.*kind=uint64,val=9.*\] \[originalCol=1\] \[colName=a\] \[colType="timestamp BINARY"\]' "$TEST_DIR/sqlmode-error.log"
 
