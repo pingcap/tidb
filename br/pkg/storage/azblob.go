@@ -77,6 +77,8 @@ func defineAzblobFlags(flags *pflag.FlagSet) {
 	flags.String(azblobAccountKey, "", "Specify the account key for azblob")
 	flags.String(azblobSASToken, "", "Specify the SAS (shared access signatures) for azblob")
 	flags.String(azblobEncryptionScope, "", "Specify the server side encryption scope")
+
+	_ = flags.MarkHidden(azblobEncryptionScope)
 }
 
 func hiddenAzblobFlags(flags *pflag.FlagSet) {
@@ -84,6 +86,8 @@ func hiddenAzblobFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(azblobAccessTierOption)
 	_ = flags.MarkHidden(azblobAccountName)
 	_ = flags.MarkHidden(azblobAccountKey)
+	_ = flags.MarkHidden(azblobSASToken)
+	_ = flags.MarkHidden(azblobEncryptionScope)
 }
 
 func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {

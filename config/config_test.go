@@ -655,7 +655,8 @@ engines = ["tikv", "tiflash", "tidb"]
 
 	for _, test := range configTest {
 		conf := new(Config)
-		configFile := "config.toml"
+		storeDir := t.TempDir()
+		configFile := filepath.Join(storeDir, "config.toml")
 		f, err := os.Create(configFile)
 		require.NoError(t, err)
 		// Write the sample config file
@@ -690,7 +691,8 @@ func TestConfig(t *testing.T) {
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
 	conf.Instance.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
-	configFile := "config.toml"
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func(configFile string) {
@@ -1021,7 +1023,8 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 func TestConflictInstanceConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)
-	configFile := "config.toml"
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
@@ -1077,7 +1080,8 @@ func TestConflictInstanceConfig(t *testing.T) {
 func TestDeprecatedConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)
-	configFile := "config.toml"
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)

@@ -1830,6 +1830,7 @@ type DropIndexStmt struct {
 	IndexName string
 	Table     *TableName
 	LockAlg   *IndexLockAndAlgorithm
+	IsHypo    bool // whether this operation is for a hypothetical index.
 }
 
 // Restore implements Node interface.

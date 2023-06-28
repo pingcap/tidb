@@ -550,11 +550,12 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc := dc.getReorgCtx(job.ID)
 	if rc == nil {
-		logutil.BgLogger().Warn("cannot find reorgCtx", zap.Int64("jobID", job.ID))
+		logutil.BgLogger().Warn("cannot find reorgCtx", zap.Int64("Job ID", job.ID))
 		return
 	}
 	logutil.BgLogger().Info("[ddl] notify reorg worker the job's state",
-		zap.Int64("jobID", job.ID), zap.Int32("jobState", int32(job.State)), zap.Int("jobState", int(job.SchemaState)))
+		zap.Int64("Job ID", job.ID), zap.String("Job State", job.State.String()),
+		zap.String("Schema State", job.SchemaState.String()))
 	rc.notifyJobState(job.State)
 }
 
@@ -678,17 +679,26 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
-	scheduler.RegisterSchedulerConstructor("backfill",
+	scheduler.RegisterTaskType("backfill")
+	scheduler.RegisterSchedulerConstructor("backfill", proto.StepOne,
+		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
+		})
+
+	scheduler.RegisterSchedulerConstructor("backfill", proto.StepTwo,
 		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
 			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
 		})
 
 	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
-	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
-		return &BackFillSubtaskExecutor{
-			Task: minimalTask,
-		}, nil
-	})
+	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
+		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
+			return &scheduler.EmptyExecutor{}, nil
+		})
+	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
+		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
+			return &scheduler.EmptyExecutor{}, nil
+		})
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL

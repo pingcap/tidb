@@ -238,10 +238,6 @@ func main() {
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreAndDomain(keyspaceName)
 	svr := createServer(storage, dom)
-	err = driver.TrySetupGlobalResourceController(context.Background(), dom.ServerID(), storage)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to setup global resource controller", zap.Error(err))
-	}
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
 	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
@@ -249,9 +245,9 @@ func main() {
 	terror.RegisterFinish()
 
 	exited := make(chan struct{})
-	signal.SetupSignalHandler(func(graceful bool) {
+	signal.SetupSignalHandler(func() {
 		svr.Close()
-		cleanup(svr, storage, dom, graceful)
+		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()
 		resourcemanager.InstanceResourceManager.Stop()
 		close(exited)
@@ -858,7 +854,7 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 // We should better provider a dynamic way to set this value.
 var gracefulCloseConnectionsTimeout = 15 * time.Second
 
-func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, _ bool) {
+func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	dom.StopAutoAnalyze()
 
 	drainClientWait := gracefulCloseConnectionsTimeout
