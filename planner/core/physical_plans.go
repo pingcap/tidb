@@ -1059,11 +1059,11 @@ type PhysicalProjection struct {
 func (p *PhysicalProjection) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalProjection)
 	*cloned = *p
-	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalPlan = *base
+	cloned.physicalSchemaProducer = *base
 	cloned.Exprs = util.CloneExprs(p.Exprs)
 	return cloned, err
 }
