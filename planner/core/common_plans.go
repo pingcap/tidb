@@ -620,9 +620,9 @@ type UnlockStats struct {
 // PlanReplayer represents a plan replayer plan.
 type PlanReplayer struct {
 	baseSchemaProducer
-	ExecStmt       ast.StmtNode
-	Analyze        bool
-	Load           bool
+	ExecStmt          ast.StmtNode
+	Analyze           bool
+	Load              bool
 	File              string
 	HistoricalStatsTS uint64
 
