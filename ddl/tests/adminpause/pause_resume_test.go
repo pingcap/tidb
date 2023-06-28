@@ -56,8 +56,8 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 		// All hooks are running inside a READ mutex `d.mu()`, we need to lock for the variable's modification.
 		adminCommandMutex.Lock()
 		defer adminCommandMutex.Unlock()
-		if matchTargetState(job, stmtCase.schemaState) &&
-			stmtCase.isJobPausable && //
+		if matchTargetState(t, job, stmtCase.schemaState) &&
+			stmtCase.isJobPausable &&
 			!isPaused {
 			jobID = job.ID
 			stmt := "admin pause ddl jobs " + strconv.FormatInt(jobID, 10)
