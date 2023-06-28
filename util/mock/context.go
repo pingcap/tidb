@@ -413,6 +413,11 @@ func (*Context) GetAdvisoryLock(_ string, _ int64) error {
 	return nil
 }
 
+// IsUsedAdvisoryLock check if a lock name is in use
+func (*Context) IsUsedAdvisoryLock(_ string) uint64 {
+	return 0
+}
+
 // ReleaseAdvisoryLock releases an advisory lock
 func (*Context) ReleaseAdvisoryLock(_ string) bool {
 	return true

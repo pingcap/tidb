@@ -152,7 +152,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 	for _, mppTask := range pf.ExchangeSender.Tasks {
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
-		} else if !mppTask.IsDisaggregatedTiFlashStaticPrune {
+		} else if !mppTask.TiFlashStaticPrune {
 			// If isDisaggregatedTiFlashStaticPrune is true, it means this TableScan is under PartitionUnoin,
 			// tableID in TableScan is already the physical table id of this partition, no need to update again.
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, []int64{mppTask.TableID})
@@ -538,24 +538,24 @@ func (c *localMppCoordinator) Next(ctx context.Context) (kv.ResultSubset, error)
 }
 
 // Execute executes physical plan and returns a response.
-func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, error) {
+func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.KeyRange, error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := c.originalPlan.(*plannercore.PhysicalExchangeSender)
 	sctx := c.sessionCtx
-	frags, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.mppQueryID, sender, c.is)
+	frags, kvRanges, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.mppQueryID, sender, c.is)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	for _, frag := range frags {
 		err = c.appendMPPDispatchReq(frag)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 	}
 	failpoint.Inject("checkTotalMPPTasks", func(val failpoint.Value) {
 		if val.(int) != len(c.mppReqs) {
-			failpoint.Return(nil, errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(c.mppReqs)))
+			failpoint.Return(nil, nil, errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(c.mppReqs)))
 		}
 	})
 
@@ -569,5 +569,5 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, error) 
 	ctxChild, c.cancelFunc = context.WithCancel(ctx)
 	go c.dispatchAll(ctxChild)
 
-	return c, nil
+	return c, kvRanges, nil
 }

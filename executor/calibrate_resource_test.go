@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -44,16 +44,10 @@ func TestCalibrateResource(t *testing.T) {
 
 	tk.MustExec("SET GLOBAL tidb_enable_resource_control='ON';")
 
-	// resource group controller is not inited.
-	rs, err = tk.Exec("CALIBRATE RESOURCE")
-	require.NoError(t, err)
-	require.NotNil(t, rs)
-	err = rs.Next(context.Background(), rs.NewChunk(nil))
-	require.ErrorContains(t, err, "resource group controller is not initialized")
-
-	oldResourceCtl := executor.GetResourceGroupController()
+	do := domain.GetDomain(tk.Session())
+	oldResourceCtl := do.ResourceGroupsController()
 	defer func() {
-		executor.SetResourceGroupController(oldResourceCtl)
+		do.SetResourceGroupsController(oldResourceCtl)
 	}()
 
 	mockPrivider := &mockResourceGroupProvider{
@@ -69,7 +63,7 @@ func TestCalibrateResource(t *testing.T) {
 	}
 	resourceCtl, err := rmclient.NewResourceGroupController(context.Background(), 1, mockPrivider, nil)
 	require.NoError(t, err)
-	executor.SetResourceGroupController(resourceCtl)
+	do.SetResourceGroupsController(resourceCtl)
 
 	// empty metrics error
 	rs, err = tk.Exec("CALIBRATE RESOURCE")
@@ -95,24 +89,30 @@ func TestCalibrateResource(t *testing.T) {
 		return time
 	}
 
-	mockData := map[string][][]types.Datum{
-		"tikv_cpu_quota": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", 8.0),
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-1", 8.0),
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-2", 8.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", 8.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", 8.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-2", 8.0),
-		},
-		"tidb_server_maxprocs": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", 40.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", 40.0),
-		},
-	}
+	mockData := make(map[string][][]types.Datum)
 	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
 	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
 		return fpName == fpname
 	})
+	rs, err = tk.Exec("CALIBRATE RESOURCE")
+	require.NoError(t, err)
+	require.NotNil(t, rs)
+	err = rs.Next(ctx, rs.NewChunk(nil))
+	// because when mock metrics is empty, error is always `pd unavailable`, don't check detail.
+	require.ErrorContains(t, err, "There is no CPU quota metrics, query metric error: pd unavailable")
+
+	mockData["tikv_cpu_quota"] = [][]types.Datum{
+		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", 8.0),
+		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-1", 8.0),
+		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-2", 8.0),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", 8.0),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", 8.0),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-2", 8.0),
+	}
+	mockData["tidb_server_maxprocs"] = [][]types.Datum{
+		types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", 40.0),
+		types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", 40.0),
+	}
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE").Check(testkit.Rows("69768"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD TPCC").Check(testkit.Rows("69768"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_WRITE").Check(testkit.Rows("55823"))
@@ -402,7 +402,7 @@ func TestCalibrateResource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(ctx, rs.NewChunk(nil))
-	require.ErrorContains(t, err, "There are too few metrics points available in selected time window")
+	require.ErrorContains(t, err, "The workload in selected time window is too low")
 
 	ru3 := [][]types.Datum{
 		types.MakeDatums(datetime("2020-02-12 10:25:00"), 2200.0),
@@ -442,7 +442,7 @@ func TestCalibrateResource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(ctx, rs.NewChunk(nil))
-	require.ErrorContains(t, err, "There are too few metrics points available in selected time window")
+	require.ErrorContains(t, err, "The workload in selected time window is too low")
 
 	// flash back to init data.
 	mockData["resource_manager_resource_unit"] = ru1
@@ -553,7 +553,14 @@ func TestCalibrateResource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rs)
 	err = rs.Next(ctx, rs.NewChunk(nil))
-	require.ErrorContains(t, err, "There are too few metrics points available in selected time window")
+	require.ErrorContains(t, err, "The workload in selected time window is too low")
+
+	delete(mockData, "process_cpu_usage")
+	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'")
+	require.NoError(t, err)
+	require.NotNil(t, rs)
+	err = rs.Next(ctx, rs.NewChunk(nil))
+	require.ErrorContains(t, err, "query metric error: pd unavailable")
 }
 
 type mockResourceGroupProvider struct {

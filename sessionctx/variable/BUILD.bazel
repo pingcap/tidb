@@ -32,6 +32,7 @@ go_library(
         "//parser/model",
         "//parser/mysql",
         "//parser/types",
+        "//planner/util/fixcontrol",
         "//privilege/privileges/ldap",
         "//sessionctx/sessionstates",
         "//sessionctx/stmtctx",

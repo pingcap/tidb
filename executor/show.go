@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1246,7 +1247,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		fmt.Fprintf(buf, " COMPRESSION='%s'", tableInfo.Compression)
 	}
 
-	incrementAllocator := allocators.Get(autoid.RowIDAllocType)
+	incrementAllocator := allocators.Get(autoid.AutoIncrementType)
 	if hasAutoIncID && incrementAllocator != nil {
 		autoIncID, err := incrementAllocator.NextGlobalAutoID()
 		if err != nil {
@@ -1876,16 +1877,18 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 
 // fetchShowPumpOrDrainerStatus gets status of all pumps or drainers and fill them into e.rows.
 func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
-	registry, err := createRegistry(config.GetGlobalConfig().Path)
+	registry, needToClose, err := getOrCreateBinlogRegistry(config.GetGlobalConfig().Path)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
-	if err != nil {
-		return errors.Trace(err)
+	if needToClose {
+		defer func() {
+			_ = registry.Close()
+		}()
 	}
-	err = registry.Close()
+
+	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1900,18 +1903,21 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 	return nil
 }
 
-// createRegistry returns an ectd registry
-func createRegistry(urls string) (*node.EtcdRegistry, error) {
+// getOrCreateBinlogRegistry returns an etcd registry for binlog, need to close, and error
+func getOrCreateBinlogRegistry(urls string) (*node.EtcdRegistry, bool, error) {
+	if pumpClient := binloginfo.GetPumpsClient(); pumpClient != nil && pumpClient.EtcdRegistry != nil {
+		return pumpClient.EtcdRegistry, false, nil
+	}
 	ectdEndpoints, err := util.ParseHostPortAddr(urls)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 	cli, err := etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, node.DefaultRootPath, nil)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 
-	return node.NewEtcdRegistry(cli, etcdDialTimeout), nil
+	return node.NewEtcdRegistry(cli, etcdDialTimeout), true, nil
 }
 
 func (e *ShowExec) getTable() (table.Table, error) {
@@ -2201,7 +2207,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	e.appendRow([]interface{}{stateJSON, tokenJSON})
 	return nil
 }
-func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount uint64) {
+func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount int64) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
 	result.AppendString(1, info.Parameters.FileLocation)
@@ -2212,27 +2218,35 @@ func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 	result.AppendString(6, units.HumanSize(float64(info.SourceFileSize)))
 	if info.Summary != nil {
 		result.AppendUint64(7, info.Summary.ImportedRows)
-	} else if importedRowCount > 0 {
-		result.AppendUint64(7, importedRowCount)
+	} else if importedRowCount >= 0 {
+		result.AppendUint64(7, uint64(importedRowCount))
 	} else {
 		result.AppendNull(7)
 	}
 	result.AppendString(8, info.ErrorMessage)
 	result.AppendTime(9, info.CreateTime)
-	result.AppendTime(10, info.StartTime)
-	result.AppendTime(11, info.EndTime)
+	if info.StartTime.IsZero() {
+		result.AppendNull(10)
+	} else {
+		result.AppendTime(10, info.StartTime)
+	}
+	if info.EndTime.IsZero() {
+		result.AppendNull(11)
+	} else {
+		result.AppendTime(11, info.EndTime)
+	}
 	result.AppendString(12, info.CreatedBy)
 }
 
 func handleImportJobInfo(info *importer.JobInfo, result *chunk.Chunk) error {
-	var importedRowCount uint64
+	var importedRowCount int64 = -1
 	if info.Summary == nil && info.Status == importer.JobStatusRunning {
 		// for running jobs, need get from distributed framework.
 		rows, err := importinto.GetTaskImportedRows(info.ID)
 		if err != nil {
 			return err
 		}
-		importedRowCount = rows
+		importedRowCount = int64(rows)
 	}
 	fillOneImportJobInfo(info, result, importedRowCount)
 	return nil
