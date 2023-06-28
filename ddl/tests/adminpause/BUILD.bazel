@@ -15,7 +15,6 @@ go_library(
         "//parser/model",
         "//testkit",
         "//util/logutil",
-        "@com_github_stretchr_testify//require",
     ],
 )
 
@@ -35,6 +34,7 @@ go_test(
     deps = [
         "//config",
         "//ddl",
+        "//ddl/testutil",
         "//ddl/util/callback",
         "//domain",
         "//errno",
