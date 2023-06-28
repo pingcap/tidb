@@ -819,11 +819,12 @@ func filterAllStoresAccordingToTiFlashReplicaRead(allStores []uint64, aliveStore
 }
 
 // getAliveStoresAndStoreIDs gets alive TiFlash stores and their IDs.
-// If `isAllReplicasPolicy` is false, it will also return the IDs of the alive TiFlash stores in TiDB zone.
-func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, ttl time.Duration, store *kvStore, isAllReplicasPolicy bool, tidbZone string) (aliveStoresInAllZones, aliveStoresInTiDBZone []*tikv.Store, aliveStoreIDsInAllZones, aliveStoreIDsInTiDBZone map[uint64]struct{}) {
+// If tiflashReplicaReadPolicy is not all_replicas, it will also return the IDs of the alive TiFlash stores in TiDB zone.
+func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, ttl time.Duration, store *kvStore, tiflashReplicaReadPolicy tiflash.ReplicaRead, tidbZone string) (aliveStoresInAllZones, aliveStoresInTiDBZone []*tikv.Store, aliveStoreIDsInAllZones, aliveStoreIDsInTiDBZone map[uint64]struct{}) {
 	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 	aliveStoresInAllZones = filterAliveStores(ctx, allTiFlashStores, ttl, store)
-	if !isAllReplicasPolicy {
+
+	if !tiflashReplicaReadPolicy.IsAllReplicas() {
 		aliveStoreIDsInTiDBZone = make(map[uint64]struct{}, len(aliveStoresInAllZones))
 		for _, as := range aliveStoresInAllZones {
 			// If the `zone` label of the TiFlash store is not set, we treat it as a TiFlash store in other zones.
@@ -832,7 +833,8 @@ func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, ttl time
 				aliveStoresInTiDBZone = append(aliveStoresInTiDBZone, as)
 			}
 		}
-	} else {
+	}
+	if !tiflashReplicaReadPolicy.IsClosestReplicas() {
 		aliveStoreIDsInAllZones = make(map[uint64]struct{}, len(aliveStoresInAllZones))
 		for _, as := range aliveStoresInAllZones {
 			aliveStoreIDsInAllZones[as.StoreID()] = struct{}{}
@@ -906,7 +908,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				})
 			}
 		}
-		aliveStoresInAllZones, aliveStoresInTiDBZone, aliveStoreIDsInAllZones, aliveStoreIDsInTiDBZone = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, ttl, store, tiflashReplicaReadPolicy.IsAllReplicas(), tidbZone)
+		aliveStoresInAllZones, aliveStoresInTiDBZone, aliveStoreIDsInAllZones, aliveStoreIDsInTiDBZone = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, ttl, store, tiflashReplicaReadPolicy, tidbZone)
 		if tiflashReplicaReadPolicy.IsClosestReplicas() {
 			maxRemoteReadCountAllowed = len(aliveStoreIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
 		}
