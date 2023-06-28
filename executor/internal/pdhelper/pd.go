@@ -46,8 +46,8 @@ type PDHelper struct {
 
 func newPDHelper() *PDHelper {
 	cache := ttlcache.New[string, float64](
-		ttlcache.WithTTL[string, float64](1*time.Second),
-		ttlcache.WithCapacity[string, float64](1000),
+		ttlcache.WithTTL[string, float64](30*time.Second),
+		ttlcache.WithCapacity[string, float64](1204*1024),
 	)
 	return &PDHelper{
 		cacheForApproximateTableCountFromStorage: cache,
