@@ -4,13 +4,13 @@ go_test(
     name = "framework_test",
     timeout = "short",
     srcs = [
-        "framework_rollback_test.go",
         "framework_async_processflow_test.go",
+        "framework_rollback_test.go",
         "framework_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 10,
+    shard_count = 12,
     deps = [
         "//disttask/framework/dispatcher",
         "//disttask/framework/proto",
@@ -18,10 +18,7 @@ go_test(
         "//disttask/framework/storage",
         "//domain/infosync",
         "//testkit",
-        "//util/disttask",
-        "//util/logutil",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
-        "@org_uber_go_zap//:zap",
     ],
 )
