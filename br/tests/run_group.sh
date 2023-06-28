@@ -58,7 +58,7 @@ elif [[ " ${!groups[*]} " =~ " ${group} " ]]; then
 	# Run test cases
 	if [[ -n $test_names ]]; then
 		echo "Run cases: ${test_names}"
-        for case_name in $case_names; do
+        for case_name in $test_names; do
             echo "Run cases: ${case_name}"
             rm -rf /tmp/backup_restore_test
             mkdir -p /tmp/backup_restore_test
