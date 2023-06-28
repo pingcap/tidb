@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/globalconfigsync"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
@@ -64,9 +66,12 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -86,6 +91,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
@@ -147,17 +153,19 @@ type Domain struct {
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
 	// TODO: use Run for each process in future pr
-	wg                    *util.WaitGroupEnhancedWrapper
-	statsUpdating         atomicutil.Int32
-	cancel                context.CancelFunc
-	indexUsageSyncLease   time.Duration
-	dumpFileGcChecker     *dumpFileGcChecker
-	planReplayerHandle    *planReplayerHandle
-	extractTaskHandle     *ExtractHandle
-	expiredTimeStamp4PC   types.Time
-	logBackupAdvancer     *daemon.OwnerDaemon
-	historicalStatsWorker *HistoricalStatsWorker
-	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
+	wg                       *util.WaitGroupEnhancedWrapper
+	statsUpdating            atomicutil.Int32
+	cancel                   context.CancelFunc
+	indexUsageSyncLease      time.Duration
+	dumpFileGcChecker        *dumpFileGcChecker
+	planReplayerHandle       *planReplayerHandle
+	extractTaskHandle        *ExtractHandle
+	expiredTimeStamp4PC      types.Time
+	logBackupAdvancer        *daemon.OwnerDaemon
+	historicalStatsWorker    *HistoricalStatsWorker
+	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
+	runawayManager           *resourcegroup.RunawayManager
+	resourceGroupsController *rmclient.ResourceGroupsController
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -178,7 +186,6 @@ type Domain struct {
 
 	mdlCheckCh      chan struct{}
 	stopAutoAnalyze atomicutil.Bool
-	resourcePool    *pools.ResourcePool
 }
 
 type mdlCheckTableInfo struct {
@@ -990,6 +997,9 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
+	if rm := do.RunawayManager(); rm != nil {
+		rm.Stop()
+	}
 
 	if do.unprefixedEtcdCli != nil {
 		terror.Log(errors.Trace(do.unprefixedEtcdCli.Close()))
@@ -1007,6 +1017,12 @@ func (do *Domain) Close() {
 	}
 	gctuner.WaitMemoryLimitTunerExitInTest()
 	close(do.mdlCheckCh)
+
+	// close MockGlobalServerInfoManagerEntry in order to refresh mock server info.
+	if intest.InTest {
+		infosync.MockGlobalServerInfoManagerEntry.Close()
+	}
+
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -1021,7 +1037,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		sysSessionPool:      newSessionPool(capacity, factory),
 		statsLease:          statsLease,
 		infoCache:           infoschema.NewCache(16),
-		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
+		slowQuery:           newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		indexUsageSyncLease: idxUsageSyncLease,
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
@@ -1112,7 +1128,6 @@ func (do *Domain) Init(
 		return sysExecutorFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
-	do.resourcePool = sysCtxPool
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback
@@ -1173,6 +1188,10 @@ func (do *Domain) Init(
 	if err != nil {
 		return err
 	}
+	err = do.initResourceGroupsController(ctx, pdCli)
+	if err != nil {
+		return err
+	}
 	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdCli)
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
@@ -1202,6 +1221,7 @@ func (do *Domain) Init(
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
+	do.wg.Run(do.runawayRecordFlushLoop, "runawayRecordFlushLoop")
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
 	}
@@ -1219,9 +1239,263 @@ func (do *Domain) Init(
 	return nil
 }
 
+// InitInfo4Test init infosync for distributed execution test.
+func (do *Domain) InitInfo4Test() {
+	infosync.MockGlobalServerInfoManagerEntry.Add(do.ddl.GetID(), do.ServerID)
+}
+
 // SetOnClose used to set do.onClose func.
 func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose
+}
+
+const (
+	runawayRecordFluashInterval  = time.Second
+	quarantineRecordGCInterval   = time.Minute * 10
+	runawayRecordGCInterval      = time.Hour * 24
+	runawayRecordExpiredDuration = time.Hour * 24 * 7
+
+	runawayRecordGCBatchSize       = 100
+	runawayRecordGCSelectBatchSize = runawayRecordGCBatchSize * 5
+)
+
+var systemSchemaCIStr = model.NewCIStr("mysql")
+
+func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration time.Duration) {
+	if !do.DDL().OwnerManager().IsOwner() {
+		return
+	}
+	failpoint.Inject("FastRunawayGC", func() {
+		expiredDuration = time.Second * 1
+	})
+	expiredTime := time.Now().Add(-expiredDuration)
+	tbCIStr := model.NewCIStr(tableName)
+	tbl, err := do.InfoSchema().TableByName(systemSchemaCIStr, tbCIStr)
+	if err != nil {
+		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
+		return
+	}
+	tbInfo := tbl.Meta()
+	col := tbInfo.FindPublicColumnByName(colName)
+	if col == nil {
+		logutil.BgLogger().Error("time column is not public in table", zap.String("table", tableName), zap.String("column", colName))
+		return
+	}
+	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, model.NewCIStr(""), col)
+	if err != nil {
+		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
+		return
+	}
+	generator, err := sqlbuilder.NewScanQueryGenerator(tb, expiredTime, nil, nil)
+	if err != nil {
+		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
+		return
+	}
+	var leftRows [][]types.Datum
+	for {
+		sql := ""
+		if sql, err = generator.NextSQL(leftRows, runawayRecordGCSelectBatchSize); err != nil {
+			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
+			return
+		}
+		// to remove
+		if len(sql) == 0 {
+			return
+		}
+
+		rows, sqlErr := do.execRestrictedSQL(sql, nil)
+		if sqlErr != nil {
+			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
+			return
+		}
+		leftRows = make([][]types.Datum, len(rows))
+		for i, row := range rows {
+			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
+		}
+
+		for len(leftRows) > 0 {
+			var delBatch [][]types.Datum
+			if len(leftRows) < runawayRecordGCBatchSize {
+				delBatch = leftRows
+				leftRows = nil
+			} else {
+				delBatch = leftRows[0:runawayRecordGCBatchSize]
+				leftRows = leftRows[runawayRecordGCBatchSize:]
+			}
+			sql, err := sqlbuilder.BuildDeleteSQL(tb, delBatch, expiredTime)
+			if err != nil {
+				logutil.BgLogger().Error(
+					"build delete SQL failed when deleting system table",
+					zap.Error(err),
+					zap.String("table", tb.Schema.O+"."+tb.Name.O),
+				)
+				return
+			}
+
+			_, err = do.execRestrictedSQL(sql, nil)
+			if err != nil {
+				logutil.BgLogger().Error(
+					"delete SQL failed when deleting system table", zap.Error(err), zap.String("SQL", sql),
+				)
+			}
+		}
+	}
+}
+
+func (do *Domain) runawayRecordFlushLoop() {
+	defer util.Recover(metrics.LabelDomain, "runawayRecordFlushLoop", nil, false)
+
+	// this times is used to batch flushing rocords, with 1s duration,
+	// we can guarantee a watch record can be seen by the user within 1s.
+	runawayRecordFluashTimer := time.NewTimer(runawayRecordFluashInterval)
+	runawayRecordGCTicker := time.NewTicker(runawayRecordGCInterval)
+	quarantineRecordGCTicker := time.NewTicker(quarantineRecordGCInterval)
+	failpoint.Inject("FastRunawayGC", func() {
+		runawayRecordFluashTimer.Stop()
+		runawayRecordGCTicker.Stop()
+		quarantineRecordGCTicker.Stop()
+		runawayRecordFluashTimer = time.NewTimer(time.Millisecond * 50)
+		runawayRecordGCTicker = time.NewTicker(time.Millisecond * 200)
+		quarantineRecordGCTicker = time.NewTicker(time.Millisecond * 200)
+	})
+
+	fired := false
+	recordCh := do.RunawayManager().RunawayRecordChan()
+	quarantineRecordCh := do.RunawayManager().QuarantineRecordChan()
+	flushThrehold := do.runawayManager.FlushThreshold()
+	records := make([]*resourcegroup.RunawayRecord, 0, flushThrehold)
+	quarantineRecords := make([]*resourcegroup.QuarantineRecord, 0)
+
+	flushRunawayRecords := func() {
+		if len(records) == 0 {
+			return
+		}
+		sql, params := genRunawayQueriesStmt(records)
+		if _, err := do.execRestrictedSQL(sql, params); err != nil {
+			logutil.BgLogger().Error("flush runaway records failed", zap.Error(err), zap.Int("count", len(records)))
+		}
+		records = records[:0]
+	}
+	flushQuarantineRecords := func() {
+		if len(quarantineRecords) == 0 {
+			return
+		}
+		sql, params := genQuarantineQueriesStmt(quarantineRecords)
+		if _, err := do.execRestrictedSQL(sql, params); err != nil {
+			logutil.BgLogger().Error("flush quarantine records failed", zap.Error(err), zap.Int("count", len(quarantineRecords)))
+		}
+		quarantineRecords = quarantineRecords[:0]
+	}
+	for {
+		select {
+		case <-do.exit:
+			return
+		case <-runawayRecordFluashTimer.C:
+			flushRunawayRecords()
+			fired = true
+		case r := <-quarantineRecordCh:
+			quarantineRecords = append(quarantineRecords, r)
+			// we expect quarantine record should not be triggered very often, so always
+			// flush as soon as possible.
+			if len(quarantineRecordCh) == 0 || len(quarantineRecords) >= flushThrehold {
+				flushQuarantineRecords()
+			}
+		case r := <-recordCh:
+			records = append(records, r)
+			failpoint.Inject("FastRunawayGC", func() {
+				flushRunawayRecords()
+			})
+			if len(records) >= flushThrehold {
+				flushRunawayRecords()
+			} else if fired {
+				fired = false
+				// meet a new record, reset the timer.
+				runawayRecordFluashTimer.Reset(runawayRecordFluashInterval)
+			}
+		case <-runawayRecordGCTicker.C:
+			go do.deleteExpiredRows("tidb_runaway_queries", "time", runawayRecordExpiredDuration)
+		case <-quarantineRecordGCTicker.C:
+			go do.deleteExpiredRows("tidb_runaway_quarantined_watch", "end_time", time.Duration(0))
+		}
+	}
+}
+
+func (do *Domain) execRestrictedSQL(sql string, params []interface{}) ([]chunk.Row, error) {
+	se, err := do.sysSessionPool.Get()
+	defer func() {
+		do.sysSessionPool.Put(se)
+	}()
+	if err != nil {
+		return nil, errors.Annotate(err, "get session failed")
+	}
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	r, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		sql, params...,
+	)
+	return r, err
+}
+
+func genRunawayQueriesStmt(records []*resourcegroup.RunawayRecord) (string, []interface{}) {
+	var builder strings.Builder
+	params := make([]interface{}, 0, len(records)*7)
+	builder.WriteString("insert into mysql.tidb_runaway_queries VALUES ")
+	for count, r := range records {
+		if count > 0 {
+			builder.WriteByte(',')
+		}
+		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?)")
+		params = append(params, r.ResourceGroupName)
+		params = append(params, r.Time)
+		params = append(params, r.Match)
+		params = append(params, r.Action)
+		params = append(params, r.SQLText)
+		params = append(params, r.PlanDigest)
+		params = append(params, r.From)
+	}
+	return builder.String(), params
+}
+
+func genQuarantineQueriesStmt(records []*resourcegroup.QuarantineRecord) (string, []interface{}) {
+	var builder strings.Builder
+	params := make([]interface{}, 0, len(records)*7)
+	builder.WriteString("insert into mysql.tidb_runaway_quarantined_watch VALUES ")
+	for count, r := range records {
+		if count > 0 {
+			builder.WriteByte(',')
+		}
+		builder.WriteString("(%?, %?, %?, %?, %?, %?)")
+		params = append(params, r.ResourceGroupName)
+		params = append(params, r.StartTime)
+		params = append(params, r.EndTime)
+		params = append(params, r.Watch)
+		params = append(params, r.WatchText)
+		params = append(params, r.From)
+	}
+	return builder.String(), params
+}
+
+func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.Client) error {
+	if pdClient == nil {
+		logutil.BgLogger().Warn("cannot setup up resource controller, not using tikv storage")
+		// return nil as unistore doesn't support it
+		return nil
+	}
+
+	control, err := rmclient.NewResourceGroupController(ctx, do.ServerID(), pdClient, nil, rmclient.WithMaxWaitDuration(resourcegroup.MaxWaitDuration))
+	if err != nil {
+		return err
+	}
+	control.Start(ctx)
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return err
+	}
+	serverAddr := net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
+	do.runawayManager = resourcegroup.NewRunawayManager(control, serverAddr)
+	do.resourceGroupsController = control
+	tikv.SetResourceControlInterceptor(control)
+	return nil
 }
 
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
@@ -1379,8 +1653,15 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		}
 	})
 
-	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
-	serverID := generateSubtaskExecID(ctx, do.ddl.GetID())
+	taskManager := storage.NewTaskManager(ctx, do.sysSessionPool)
+	var serverID string
+	if intest.InTest {
+		do.InitInfo4Test()
+		serverID = disttaskutil.GenerateSubtaskExecID4Test(do.ddl.GetID())
+	} else {
+		serverID = disttaskutil.GenerateSubtaskExecID(ctx, do.ddl.GetID())
+	}
+
 	if serverID == "" {
 		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
 		return errors.New(errMsg)
@@ -1400,17 +1681,6 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	return nil
 }
 
-func generateSubtaskExecID(ctx context.Context, ID string) string {
-	serverInfos, err := infosync.GetAllServerInfo(ctx)
-	if err != nil || len(serverInfos) == 0 {
-		return ""
-	}
-	if serverNode, ok := serverInfos[ID]; ok {
-		return disttaskutil.GenerateExecID(serverNode.IP, serverNode.Port)
-	}
-	return ""
-}
-
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
 	schedulerManager.Start()
 	logutil.BgLogger().Info("dist task scheduler started")
@@ -1425,7 +1695,6 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if dispatch != nil {
 			return
 		}
-
 		newDispatch, err := dispatcher.NewDispatcher(ctx, taskManager)
 		if err != nil {
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
@@ -1433,14 +1702,13 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		}
 		dispatch = newDispatch
 		dispatch.Start()
-		logutil.BgLogger().Info("a new dist task dispatcher started for current node becomes the DDL owner")
 	}
 	stopDispatchIfNeeded := func() {
 		if dispatch != nil {
-			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore")
+			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
 			dispatch.Stop()
 			dispatch = nil
-			logutil.BgLogger().Info("dist task dispatcher stopped")
+			logutil.BgLogger().Info("dist task dispatcher stopped", zap.String("id", do.ddl.GetID()))
 		}
 	}
 
@@ -1910,6 +2178,21 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 		}
 		do.planReplayerHandle.planReplayerTaskDumpHandle.workers = append(do.planReplayerHandle.planReplayerTaskDumpHandle.workers, worker)
 	}
+}
+
+// RunawayManager returns the runaway manager.
+func (do *Domain) RunawayManager() *resourcegroup.RunawayManager {
+	return do.runawayManager
+}
+
+// ResourceGroupsController returns the resource groups controller.
+func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController {
+	return do.resourceGroupsController
+}
+
+// SetResourceGroupsController is only used in test.
+func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroupsController) {
+	do.resourceGroupsController = controller
 }
 
 // SetupHistoricalStatsWorker setups worker

@@ -34,7 +34,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"net/http"         //nolint:goimports
 	_ "net/http/pprof" // #nosec G108 for pprof
@@ -99,7 +98,6 @@ func init() {
 }
 
 var (
-	errUnknownFieldType        = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
 	errInvalidSequence         = dbterror.ClassServer.NewStd(errno.ErrInvalidSequence)
 	errInvalidType             = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
 	errNotAllowedCommand       = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
@@ -327,9 +325,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		}
 	}
 
-	// Init rand seed for randomBuf()
-	rand.Seed(time.Now().UTC().UnixNano())
-
 	variable.RegisterStatistics(s)
 
 	return s, nil
@@ -548,8 +543,6 @@ func (s *Server) closeListener() {
 	s.wg.Wait()
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
-
-var gracefulCloseConnectionsTimeout = 15 * time.Second
 
 // Close closes the server.
 func (s *Server) Close() {
@@ -804,6 +797,19 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	return conn.ctx.ShowProcess(), ok
 }
 
+// GetConAttrs returns the connection attributes
+func (s *Server) GetConAttrs() map[uint64]map[string]string {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	rs := make(map[uint64]map[string]string)
+	for _, client := range s.clients {
+		if pi := client.ctx.ShowProcess(); pi != nil {
+			rs[pi.ID] = client.attrs
+		}
+	}
+	return rs
+}
+
 // Kill implements the SessionManager interface.
 func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 	logutil.BgLogger().Info("kill", zap.Uint64("conn", connectionID), zap.Bool("query", query))
@@ -904,6 +910,9 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	go func() {
 		defer close(allDone)
 		for _, conn := range conns {
+			if !conn.getCtx().GetSessionVars().InTxn() {
+				continue
+			}
 			select {
 			case <-conn.quit:
 			case <-quitWaitingForConns:

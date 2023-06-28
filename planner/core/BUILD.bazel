@@ -111,6 +111,7 @@ go_library(
         "//planner/property",
         "//planner/util",
         "//planner/util/debugtrace",
+        "//planner/util/fixcontrol",
         "//privilege",
         "//sessionctx",
         "//sessionctx/stmtctx",

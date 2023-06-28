@@ -1818,9 +1818,21 @@ DirectResourceGroupOption:
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
 	}
+|	"BURSTABLE" EqOpt Boolean
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: $3.(bool)}
+	}
 |	"QUERY_LIMIT" EqOpt '(' ResourceGroupRunawayOptionList ')'
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: $4.([]*ast.ResourceGroupRunawayOption)}
+	}
+|	"QUERY_LIMIT" EqOpt '(' ')'
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: nil}
+	}
+|	"QUERY_LIMIT" EqOpt "NULL"
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: nil}
 	}
 
 PlacementOptionList:
@@ -3146,7 +3158,7 @@ AnalyzeOption:
 
 /*******************************************************************************************/
 Assignment:
-	ColumnName eq ExprOrDefault
+	ColumnName EqOrAssignmentEq ExprOrDefault
 	{
 		$$ = &ast.Assignment{Column: $1.(*ast.ColumnName), Expr: $3}
 	}
@@ -5011,6 +5023,10 @@ DropIndexStmt:
 			}
 		}
 		$$ = &ast.DropIndexStmt{IfExists: $3.(bool), IndexName: $4, Table: $6.(*ast.TableName), LockAlg: indexLockAndAlgorithm}
+	}
+|	"DROP" "HYPO" "INDEX" IfExists Identifier "ON" TableName
+	{
+		$$ = &ast.DropIndexStmt{IfExists: $4.(bool), IndexName: $5, Table: $7.(*ast.TableName), IsHypo: true}
 	}
 
 DropTableStmt:
@@ -7107,7 +7123,7 @@ ExprOrDefault:
 	}
 
 ColumnSetValueList:
-	ColumnName eq ExprOrDefault
+	ColumnName EqOrAssignmentEq ExprOrDefault
 	{
 		$$ = &ast.InsertStmt{
 			Columns: []*ast.ColumnName{$1.(*ast.ColumnName)},
@@ -7115,7 +7131,7 @@ ColumnSetValueList:
 			Setlist: true,
 		}
 	}
-|	ColumnSetValueList ',' ColumnName eq ExprOrDefault
+|	ColumnSetValueList ',' ColumnName EqOrAssignmentEq ExprOrDefault
 	{
 		ins := $1.(*ast.InsertStmt)
 		ins.Columns = append(ins.Columns, $3.(*ast.ColumnName))
@@ -10303,11 +10319,11 @@ SetStmt:
 	{
 		$$ = &ast.SetStmt{Variables: $2.([]*ast.VariableAssignment)}
 	}
-|	"SET" "PASSWORD" eq PasswordOpt
+|	"SET" "PASSWORD" EqOrAssignmentEq PasswordOpt
 	{
 		$$ = &ast.SetPwdStmt{Password: $4}
 	}
-|	"SET" "PASSWORD" "FOR" Username eq PasswordOpt
+|	"SET" "PASSWORD" "FOR" Username EqOrAssignmentEq PasswordOpt
 	{
 		$$ = &ast.SetPwdStmt{User: $4.(*auth.UserIdentity), Password: $6}
 	}

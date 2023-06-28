@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	internalutil "github.com/pingcap/tidb/executor/internal/util"
 	"github.com/pingcap/tidb/expression"
@@ -2014,7 +2015,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 			procID = chunkRow.GetUint64(10)
 		}
 
-		var remainDurationStr, progressStr, estimatedRowCntStr interface{}
+		var remainDurationStr, progressDouble, estimatedRowCntStr interface{}
 		if state == statistics.AnalyzeRunning {
 			startTime, ok := startTime.(types.Time)
 			if !ok {
@@ -2029,7 +2030,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 			if RemainingDuration != nil {
 				remainDurationStr = execdetails.FormatDuration(*RemainingDuration)
 			}
-			progressStr = progress
+			progressDouble = progress
 			estimatedRowCntStr = int64(estimatedRowCnt)
 		}
 		row := types.MakeDatums(
@@ -2045,7 +2046,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 			instance,           // INSTANCE
 			procID,             // PROCESS_ID
 			remainDurationStr,  // REMAINING_SECONDS
-			progressStr,        // PROGRESS
+			progressDouble,     // PROGRESS
 			estimatedRowCntStr, // ESTIMATED_TOTAL_ROWS
 		)
 		rows = append(rows, row)
@@ -3253,7 +3254,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 		burstable := burstdisableStr
 		priority := model.PriorityValueToName(uint64(group.Priority))
 		fillrate := unlimitedFillRate
-		isDefaultInReservedSetting := group.Name == "default" && group.RUSettings.RU.Settings.FillRate == math.MaxInt32
+		isDefaultInReservedSetting := group.Name == resourcegroup.DefaultResourceGroupName && group.RUSettings.RU.Settings.FillRate == math.MaxInt32
 		if !isDefaultInReservedSetting {
 			fillrate = strconv.FormatUint(group.RUSettings.RU.Settings.FillRate, 10)
 		}
@@ -3265,11 +3266,11 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 				return errors.Errorf("unexpected runaway config in resource group")
 			}
 			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
-			runawayRule = fmt.Sprintf("%s=%s", "EXEC_ELAPSED", dur.String())
-			runawayAction = fmt.Sprintf("%s=%s", "ACTION", model.RunawayActionType(setting.Action).String())
+			runawayRule = fmt.Sprintf("%s='%s'", "EXEC_ELAPSED", dur.String())
+			runawayAction = fmt.Sprintf("%s=%s", "ACTION", model.RunawayActionType(setting.Action+1).String())
 			if setting.Watch != nil {
 				dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
-				runawayWatch = fmt.Sprintf("%s=%s[%s]", "WATCH", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())
+				runawayWatch = fmt.Sprintf("%s=%s %s='%s'", "WATCH", model.RunawayWatchType(setting.Watch.Type).String(), "DURATION", dur.String())
 				queryLimit = fmt.Sprintf("%s, %s, %s", runawayRule, runawayAction, runawayWatch)
 			} else {
 				queryLimit = fmt.Sprintf("%s, %s", runawayRule, runawayAction)

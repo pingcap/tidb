@@ -34,18 +34,54 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"golang.org/x/exp/slices"
 )
+
+var expectedFilesInReplayer = []string{
+	"config.toml",
+	"debug_trace/debug_trace0.json",
+	"explain.txt",
+	"global_bindings.sql",
+	"meta.txt",
+	"schema/planreplayer.t.schema.txt",
+	"schema/schema_meta.txt",
+	"session_bindings.sql",
+	"sql/sql0.sql",
+	"sql_meta.toml",
+	"stats/planreplayer.t.json",
+	"statsMem/planreplayer.t.txt",
+	"table_tiflash_replica.txt",
+	"variables.toml",
+}
+
+var expectedFilesInReplayerForCapture = []string{
+	"config.toml",
+	"debug_trace/debug_trace0.json",
+	"explain/sql.txt",
+	"global_bindings.sql",
+	"meta.txt",
+	"schema/planreplayer.t.schema.txt",
+	"schema/schema_meta.txt",
+	"session_bindings.sql",
+	"sql/sql0.sql",
+	"sql_meta.toml",
+	"stats/planreplayer.t.json",
+	"statsMem/planreplayer.t.txt",
+	"table_tiflash_replica.txt",
+	"variables.toml",
+}
 
 func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.Domain) (server *Server, client *testServerClient) {
 	driver := NewTiDBDriver(store)
 	client = newTestServerClient()
 
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true
@@ -68,21 +104,53 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
+	// 1. setup and prepare plan replayer files by manual command and capture
 	server, client := prepareServerAndClientForTest(t, store, dom)
 	defer server.Close()
-	statsHandle := dom.StatsHandle()
 
-	filename := prepareData4PlanReplayer(t, client, statsHandle)
+	filename, fileNameFromCapture := prepareData4PlanReplayer(t, client, dom)
 
+	// 2. check the contents of the plan replayer zip files.
+
+	var filesInReplayer []string
+	collectFileNameAndAssertFileSize := func(f *zip.File) {
+		// collect file name
+		filesInReplayer = append(filesInReplayer, f.Name)
+		// except for {global,session}_bindings.sql and table_tiflash_replica.txt, the file should not be empty
+		if !strings.Contains(f.Name, "table_tiflash_replica.txt") &&
+			!strings.Contains(f.Name, "bindings.sql") {
+			require.NotZero(t, f.UncompressedSize64, f.Name)
+		}
+	}
+
+	// 2-1. check the plan replayer file from manual command
 	resp0, err := client.fetchStatus(filepath.Join("/plan_replayer/dump/", filename))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp0.Body.Close())
 	}()
-
 	body, err := io.ReadAll(resp0.Body)
 	require.NoError(t, err)
+	forEachFileInZipBytes(t, body, collectFileNameAndAssertFileSize)
+	slices.Sort(filesInReplayer)
+	require.Equal(t, expectedFilesInReplayer, filesInReplayer)
 
+	// 2-2. check the plan replayer file from capture
+	resp1, err := client.fetchStatus(filepath.Join("/plan_replayer/dump/", fileNameFromCapture))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp1.Body.Close())
+	}()
+	body, err = io.ReadAll(resp1.Body)
+	require.NoError(t, err)
+	filesInReplayer = filesInReplayer[:0]
+	forEachFileInZipBytes(t, body, collectFileNameAndAssertFileSize)
+	slices.Sort(filesInReplayer)
+	require.Equal(t, expectedFilesInReplayerForCapture, filesInReplayer)
+
+	// 3. check plan replayer load
+
+	// 3-1. write the plan replayer file from manual command to a file
 	path := "/tmp/plan_replayer.zip"
 	fp, err := os.Create(path)
 	require.NoError(t, err)
@@ -96,6 +164,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, fp.Sync())
 
+	// 3-2. connect to tidb and use PLAN REPLAYER LOAD to load this file
 	db, err := sql.Open("mysql", client.getDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
 	}))
@@ -109,6 +178,8 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	tk.MustExec("use planReplayer")
 	tk.MustExec("drop table planReplayer.t")
 	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
+
+	// 3-3. assert that the count and modify count in the stats is as expected
 	rows := tk.MustQuery("show stats_meta")
 	require.True(t, rows.Next(), "unexpected data")
 	var dbName, tableName string
@@ -122,7 +193,11 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	require.Equal(t, int64(8), count)
 }
 
-func prepareData4PlanReplayer(t *testing.T, client *testServerClient, h *handle.Handle) string {
+// prepareData4PlanReplayer trigger tidb to dump 2 plan replayer files,
+// one by manual command, the other by capture, and return the filenames.
+func prepareData4PlanReplayer(t *testing.T, client *testServerClient, dom *domain.Domain) (string, string) {
+	h := dom.StatsHandle()
+	replayerHandle := dom.GetPlanReplayerHandle()
 	db, err := sql.Open("mysql", client.getDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
@@ -144,17 +219,37 @@ func prepareData4PlanReplayer(t *testing.T, client *testServerClient, h *handle.
 	rows := tk.MustQuery("plan replayer dump explain select * from t")
 	require.True(t, rows.Next(), "unexpected data")
 	var filename string
-	err = rows.Scan(&filename)
-	require.NoError(t, err)
-	rows.Close()
+	require.NoError(t, rows.Scan(&filename))
+	require.NoError(t, rows.Close())
 	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
 	require.True(t, rows.Next(), "unexpected data")
 	var filename2 string
-	err = rows.Scan(&filename2)
-	require.NoError(t, err)
-	rows.Close()
+	require.NoError(t, rows.Scan(&filename2))
+	require.NoError(t, rows.Close())
 	require.Equal(t, filename, filename2)
-	return filename
+
+	tk.MustExec("plan replayer capture 'e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7' '*'")
+	tk.MustQuery("select * from t")
+	task := replayerHandle.DrainTask()
+	require.NotNil(t, task)
+	worker := replayerHandle.GetWorker()
+	require.True(t, worker.HandleTask(task))
+	rows = tk.MustQuery("select token from mysql.plan_replayer_status where length(sql_digest) > 0")
+	require.True(t, rows.Next(), "unexpected data")
+	var filename3 string
+	require.NoError(t, rows.Scan(&filename3))
+	require.NoError(t, rows.Close())
+
+	return filename, filename3
+}
+
+func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {
+	br := bytes.NewReader(b)
+	z, err := zip.NewReader(br, int64(len(b)))
+	require.NoError(t, err)
+	for _, f := range z.File {
+		fn(f)
+	}
 }
 
 func getStatsAndMetaFromPlanReplayerAPI(

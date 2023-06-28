@@ -44,6 +44,10 @@ func TestValidCharset(t *testing.T) {
 		{"UTF8MB4", "UTF8MB4_bin", true},
 		{"UTF8MB4", "UTF8MB4_general_ci", true},
 		{"Utf8", "uTf8_bIN", true},
+		{"utf8mb3", "", true},
+		{"utf8mb3", "utf8mb3_bin", true},
+		{"utf8mb3", "utf8mb3_general_ci", true},
+		{"utf8mb3", "utf8mb3_unicode_ci", true},
 	}
 	for _, tt := range tests {
 		testValidCharset(t, tt.cs, tt.co, tt.succ)
@@ -142,6 +146,30 @@ func TestValidCustomCharset(t *testing.T) {
 	}
 	for _, tt := range tests {
 		testValidCharset(t, tt.cs, tt.co, tt.succ)
+	}
+}
+
+func TestUTF8MB3(t *testing.T) {
+	colname, err := GetDefaultCollationLegacy("utf8mb3")
+	require.NoError(t, err)
+	require.Equal(t, colname, "utf8_bin")
+
+	csinfo, err := GetCharsetInfo("utf8mb3")
+	require.NoError(t, err)
+	require.Equal(t, csinfo.Name, "utf8")
+
+	tests := []struct {
+		cs    string
+		alias string
+	}{
+		{"utf8mb3_bin", "utf8_bin"},
+		{"utf8mb3_general_ci", "utf8_general_ci"},
+		{"utf8mb3_unicode_ci", "utf8_unicode_ci"},
+	}
+	for _, tt := range tests {
+		col, err := GetCollationByName(tt.cs)
+		require.NoError(t, err)
+		require.Equal(t, col.Name, tt.alias)
 	}
 }
 

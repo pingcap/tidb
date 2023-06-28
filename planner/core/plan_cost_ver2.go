@@ -35,9 +35,15 @@ func GetPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOpt
 	return getPlanCost(p, taskType, option)
 }
 
+// GenPlanCostTrace define a hook function to customize the cost calculation.
+var GenPlanCostTrace func(p PhysicalPlan, costV *costVer2, taskType property.TaskType, option *PlanCostOption)
+
 func getPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOption) (float64, error) {
 	if p.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 		planCost, err := p.getPlanCostVer2(taskType, option)
+		if traceCost(option) && GenPlanCostTrace != nil {
+			GenPlanCostTrace(p, &planCost, taskType, option)
+		}
 		return planCost.cost, err
 	}
 	return p.getPlanCostVer1(taskType, option)
@@ -1058,10 +1064,10 @@ func sumCostVer2(costs ...costVer2) (ret costVer2) {
 	if len(costs) == 0 {
 		return
 	}
-	for i, c := range costs {
+	for _, c := range costs {
 		ret.cost += c.cost
 		if c.trace != nil {
-			if i == 0 { // init
+			if ret.trace == nil { // init
 				ret.trace = &costTrace{make(map[string]float64), ""}
 			}
 			for factor, factorCost := range c.trace.factorCosts {

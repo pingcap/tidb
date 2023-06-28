@@ -71,14 +71,6 @@ type BackfillSubTaskMeta struct {
 	EndKey          []byte `json:"end_key"`
 }
 
-// BackfillMinimalTask is the minimal-task for backfilling index.
-type BackfillMinimalTask struct {
-}
-
-// IsMinimalTask implements the MinimalTask interface.
-func (*BackfillMinimalTask) IsMinimalTask() {
-}
-
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
 func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl, stepForImport bool) (scheduler.Scheduler, error) {
 	bh := &backfillSchedulerHandle{d: d}
@@ -337,16 +329,6 @@ func (b *backfillSchedulerHandle) Rollback(context.Context) error {
 	logutil.BgLogger().Info("[ddl] rollback backfill add index task", zap.Int64("jobID", b.job.ID))
 	ingest.LitBackCtxMgr.Unregister(b.job.ID)
 	b.d.removeReorgCtx(b.job.ID)
-	return nil
-}
-
-// BackFillSubtaskExecutor is the executor for backfill subtask.
-type BackFillSubtaskExecutor struct {
-	Task proto.MinimalTask
-}
-
-// Run implements the Executor interface.
-func (*BackFillSubtaskExecutor) Run(_ context.Context) error {
 	return nil
 }
 

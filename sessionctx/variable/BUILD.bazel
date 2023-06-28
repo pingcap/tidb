@@ -19,6 +19,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//config",
+        "//domain/resourcegroup",
         "//errno",
         "//keyspace",
         "//kv",
@@ -31,6 +32,7 @@ go_library(
         "//parser/model",
         "//parser/mysql",
         "//parser/types",
+        "//planner/util/fixcontrol",
         "//privilege/privileges/ldap",
         "//sessionctx/sessionstates",
         "//sessionctx/stmtctx",

@@ -49,6 +49,21 @@ func (res *Result) Check(expected [][]interface{}) {
 	res.require.Equal(needBuff.String(), resBuff.String(), res.comment)
 }
 
+// Equal check whether the result equals the expected results.
+func (res *Result) Equal(expected [][]interface{}) bool {
+	resBuff := bytes.NewBufferString("")
+	for _, row := range res.rows {
+		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
+	}
+
+	needBuff := bytes.NewBufferString("")
+	for _, row := range expected {
+		_, _ = fmt.Fprintf(needBuff, "%s\n", row)
+	}
+
+	return bytes.Equal(needBuff.Bytes(), resBuff.Bytes())
+}
+
 // AddComment adds the extra comment for the Result's output.
 func (res *Result) AddComment(c string) {
 	res.comment += "\n" + c

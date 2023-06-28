@@ -149,6 +149,22 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	return tk.MustQueryWithContext(context.Background(), sql, args...)
 }
 
+// EventuallyMustQueryAndCheck query the statements and assert that
+// result rows.lt will equal the expected results in waitFor time, periodically checking equality each tick.
+// Note: retry can't ignore error of the statements. If statements returns error, it will break out.
+func (tk *TestKit) EventuallyMustQueryAndCheck(sql string, args []interface{},
+	expected [][]interface{}, waitFor time.Duration, tick time.Duration) {
+	defer func() {
+		if tk.alloc != nil {
+			tk.alloc.Reset()
+		}
+	}()
+	tk.require.Eventually(func() bool {
+		res := tk.MustQueryWithContext(context.Background(), sql, args...)
+		return res.Equal(expected)
+	}, waitFor, tick)
+}
+
 // MustQueryWithContext query the statements and returns result rows.
 func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ...interface{}) *Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
