@@ -39,7 +39,7 @@ func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, clien
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
-			return nil, errors.Trace(err)
+			return nil, ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
 		}
 		pbExpr = append(pbExpr, v)
 	}

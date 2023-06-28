@@ -15,12 +15,14 @@
 package expression
 
 import (
+	"context"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -95,6 +97,7 @@ func (b *BuiltinGroupingImplSig) getGroupingMode() tipb.GroupingMode {
 func (b *BuiltinGroupingImplSig) metadata() proto.Message {
 	err := b.checkMetadata()
 	if err != nil {
+		logutil.Logger(context.Background()).Error("grouping meta check err: " + err.Error())
 		return &tipb.GroupingFunctionMetadata{}
 	}
 	args := &tipb.GroupingFunctionMetadata{}
