@@ -36,7 +36,7 @@ import (
 // The variables cancelResultChn, pauseResultChn should not be out of the function domain because of parallel case
 // execution
 func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit *testkit.TestKit, dom *domain.Domain, stmtCase *StmtCase) {
-	Logger.Info("TestPauseCancelAndRerun: case start,",
+	Logger.Info("pauseAndCancelStmt: case start,",
 		zap.Int("Global ID", stmtCase.globalID),
 		zap.String("Statement", stmtCase.stmt),
 		zap.String("Schema state", stmtCase.schemaState.String()),
@@ -50,7 +50,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 	var pauseResultChn = make(chan []sqlexec.RecordSet, 1)
 	var pauseErrChn = make(chan error, 1)
 	var pauseFunc = func(job *model.Job) {
-		Logger.Debug("TestPauseCancelAndRerun: OnJobRunBeforeExported, ",
+		Logger.Debug("pauseAndCancelStmt: OnJobRunBeforeExported, ",
 			zap.String("Job Type", job.Type.String()),
 			zap.String("Job State", job.State.String()),
 			zap.String("Job Schema State", job.SchemaState.String()),
@@ -67,7 +67,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 			pauseErrChn <- pe
 			pauseResultChn <- pr
 
-			Logger.Info("TestPauseCancelAndRerun: pause command by hook.OnJobRunBeforeExported, result to channel")
+			Logger.Info("pauseAndCancelStmt: pause command by hook.OnJobRunBeforeExported, result to channel")
 
 			// In case that it runs into this scope again and again
 			isPaused.CompareAndSwap(false, true)
@@ -91,7 +91,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 	var cancelResultChn = make(chan []sqlexec.RecordSet, 1)
 	var cancelErrChn = make(chan error, 1)
 	var cancelFunc = func(jobType string) {
-		Logger.Debug("TestPauseCancelAndRerun: OnGetJobBeforeExported, ",
+		Logger.Debug("pauseAndCancelStmt: OnGetJobBeforeExported, ",
 			zap.String("Expected Schema State", stmtCase.schemaState.String()))
 
 		if isPaused.Load() && !isCancelled.Load() {
@@ -103,7 +103,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 			cancelErrChn <- re
 			cancelResultChn <- rr
 
-			Logger.Info("TestPauseCancelAndRerun: cancel command by hook.OnGetJobBeforeExported, result to channel")
+			Logger.Info("pauseAndCancelStmt: cancel command by hook.OnGetJobBeforeExported, result to channel")
 
 			isCancelled.CompareAndSwap(false, true) // In case that it runs into this scope again and again
 		}
@@ -135,16 +135,16 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 
 	isPaused.Store(false)
 	isCancelled.Store(false)
-	Logger.Info("TestPauseCancelAndRerun: statement execute", zap.String("DDL Statement", stmtCase.stmt))
+	Logger.Debug("pauseAndCancelStmt: statement execute", zap.String("DDL Statement", stmtCase.stmt))
 	if stmtCase.isJobPausable {
 		stmtKit.MustGetErrCode(stmtCase.stmt, errno.ErrCancelledDDLJob)
-		Logger.Info("TestPauseCancelAndRerun: statement execution should have been cancelled.")
+		Logger.Info("pauseAndCancelStmt: statement execution should have been cancelled.")
 
 		verifyPauseResult(t, adminCommandKit)
 		verifyCancelResult(t, adminCommandKit)
 	} else {
 		stmtKit.MustExec(stmtCase.stmt)
-		Logger.Info("TestPauseCancelAndRerun: statement execution should have been finished successfully.")
+		Logger.Info("pauseAndCancelStmt: statement execution should have been finished successfully.")
 
 		require.False(t, isPaused.Load())
 		require.False(t, isCancelled.Load())
@@ -157,6 +157,9 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 		// no care about the result here, since the `statement` could have been cancelled OR finished successfully.
 		_, _ = stmtKit.Exec(rollbackStmt)
 	}
+
+	Logger.Info("pauseAndCancelStmt: statement case finished, ",
+		zap.String("Global ID", strconv.Itoa(stmtCase.globalID)))
 }
 
 func TestPauseCancelAndRerunSchemaStmt(t *testing.T) {
@@ -167,14 +170,14 @@ func TestPauseCancelAndRerunSchemaStmt(t *testing.T) {
 	for _, stmtCase := range schemaDDLStmtCase {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)
 
-		Logger.Info("TestPauseCancelAndRerun: statement execution again after `admin cancel`",
+		Logger.Info("TestPauseCancelAndRerunSchemaStmt: statement execution again after `admin cancel`",
 			zap.String("DDL Statement", stmtCase.stmt))
 		stmtCase.simpleRunStmt(stmtKit)
 	}
 	for _, stmtCase := range tableDDLStmt {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)
 
-		Logger.Info("TestPauseCancelAndRerun: statement execution again after `admin cancel`",
+		Logger.Info("TestPauseCancelAndRerunSchemaStmt: statement execution again after `admin cancel`",
 			zap.String("DDL Statement", stmtCase.stmt))
 		stmtCase.simpleRunStmt(stmtKit)
 	}
@@ -182,10 +185,11 @@ func TestPauseCancelAndRerunSchemaStmt(t *testing.T) {
 	for _, stmtCase := range placeRulDDLStmtCase {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)
 
-		Logger.Info("TestPauseCancelAndRerun: statement execution again after `admin cancel`",
+		Logger.Info("TestPauseCancelAndRerunSchemaStmt: statement execution again after `admin cancel`",
 			zap.String("DDL Statement", stmtCase.stmt))
 		stmtCase.simpleRunStmt(stmtKit)
 	}
+	Logger.Info("TestPauseCancelAndRerunSchemaStmt: all cases finished.")
 }
 
 func TestPauseCancelAndRerunIndexStmt(t *testing.T) {
@@ -196,10 +200,11 @@ func TestPauseCancelAndRerunIndexStmt(t *testing.T) {
 	for _, stmtCase := range indexDDLStmtCase {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)
 
-		Logger.Info("TestPauseCancelAndRerun: statement execution again after `admin cancel`",
+		Logger.Info("TestPauseCancelAndRerunIndexStmt: statement execution again after `admin cancel`",
 			zap.String("DDL Statement", stmtCase.stmt))
 		stmtCase.simpleRunStmt(stmtKit)
 	}
+	Logger.Info("TestPauseCancelAndRerunIndexStmt: all cases finished.")
 }
 
 func TestPauseCancelAndRerunColumnStmt(t *testing.T) {
@@ -210,10 +215,12 @@ func TestPauseCancelAndRerunColumnStmt(t *testing.T) {
 	for _, stmtCase := range columnDDLStmtCase {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)
 
-		Logger.Info("TestPauseCancelAndRerun: statement execution again after `admin cancel`",
+		Logger.Info("TestPauseCancelAndRerunColumnStmt: statement execution again after `admin cancel`",
 			zap.String("DDL Statement", stmtCase.stmt))
 		stmtCase.simpleRunStmt(stmtKit)
 	}
+
+	Logger.Info("TestPauseCancelAndRerunColumnStmt: all cases finished.")
 }
 
 func TestPauseCancelAndRerunPartitionTableStmt(t *testing.T) {
@@ -225,10 +232,10 @@ func TestPauseCancelAndRerunPartitionTableStmt(t *testing.T) {
 	for _, stmtCase := range tablePartitionDDLStmtCase {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)
 
-		Logger.Info("TestPauseCancelAndRerun: statement execution again after `admin cancel`",
+		Logger.Info("TestPauseCancelAndRerunPartitionTableStmt: statement execution again after `admin cancel`",
 			zap.String("DDL Statement", stmtCase.stmt))
 		stmtCase.simpleRunStmt(stmtKit)
 	}
 
-	Logger.Info("TestPauseCancelAndRerun: all cases finished.")
+	Logger.Info("TestPauseCancelAndRerunPartitionTableStmt: all cases finished.")
 }
