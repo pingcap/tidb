@@ -964,7 +964,11 @@ func (lp *ForListPruning) locateListPartitionByRow(ctx sessionctx.Context, r []t
 	if isNull {
 		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("NULL")
 	}
-	return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(strconv.FormatInt(value, 10))
+	valueMsg := fmt.Sprintf("%d", value)
+	if mysql.HasUnsignedFlag(lp.LocateExpr.GetType().GetFlag()) {
+		valueMsg = fmt.Sprintf("%d", uint64(value))
+	}
+	return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 }
 
 func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context, r []types.Datum) (int, error) {
@@ -1366,6 +1370,9 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, partitio
 				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 				if err == nil {
 					valueMsg = fmt.Sprintf("%d", val)
+					if unsigned {
+						valueMsg = fmt.Sprintf("%d", uint64(val))
+					}
 				}
 			}
 		} else {
