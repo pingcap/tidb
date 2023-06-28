@@ -59,7 +59,7 @@ func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 		ds.tableInfo.GetPartitionInfo() != nil &&
 		p.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode &&
 		tableHasDirtyContent(p.ctx, ds.tableInfo) &&
-		len(prop.SortItems) > 0 {
+		!prop.IsSortItemEmpty() {
 		return nil, true, nil
 	}
 	childProp := prop.CloneEssentialFields()
