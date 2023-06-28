@@ -366,7 +366,7 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", countRunningTasks)
 		}
-		if !m.meetTTLRunningTask(int(rows[0].GetInt64(0))) {
+		if !m.meetTTLRunningTask(int(rows[0].GetInt64(0)), task.Status) {
 			return errors.WithStack(errTooManyRunningTasks)
 		}
 
@@ -544,7 +544,12 @@ func (m *taskManager) reportMetrics() {
 	metrics.DeletingTaskCnt.Set(float64(deletingTaskCnt))
 }
 
-func (m *taskManager) meetTTLRunningTask(count int) bool {
+func (m *taskManager) meetTTLRunningTask(count int, taskStatus cache.TaskStatus) bool {
+	if taskStatus == cache.TaskStatusRunning {
+		// always return true for already running task because it is already included in count
+		return true
+	}
+
 	ttlRunningTask := variable.TTLRunningTasks.Load()
 	// `-1` is the auto value, means we should calculate the limit according to the count of TiKV
 	if ttlRunningTask != -1 {
