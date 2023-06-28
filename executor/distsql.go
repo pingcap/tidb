@@ -643,7 +643,7 @@ func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error
 
 	// TODO: fix global index related bugs later
 	// For `SelectLock`, the `ExtraPhysTblID` will contained in schema,
-	// but it needn't partition handle to keep order anymore.
+	// but it needn't partition handle to keep order.
 	if needPartitionHandle && !ret && !e.index.Global {
 		return ret, errors.Errorf("Internal error, needPartitionHandle != ret, tp(%d)", tp)
 	}

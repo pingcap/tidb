@@ -611,7 +611,7 @@ func (w *partialTableWorker) needPartitionHandle() (bool, error) {
 	ret := col.ID == model.ExtraPhysTblID
 
 	// For `SelectLock`, the `ExtraPhysTblID` will contained in schema,
-	// but it needn't partition handle to keep order anymore.
+	// but it needn't partition handle to keep order.
 	if needPartitionHandle && !ret {
 		return ret, errors.Errorf("Internal error, needPartitionHandle != ret")
 	}
@@ -1471,7 +1471,7 @@ func (w *partialIndexWorker) needPartitionHandle() (bool, error) {
 	ret := col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
 
 	// For `SelectLock`, the `ExtraPhysTblID` will contained in schema,
-	// but it needn't partition handle to keep order anymore.
+	// but it needn't partition handle to keep order.
 	if needPartitionHandle && !ret {
 		return ret, errors.Errorf("Internal error, needPartitionHandle != ret")
 	}
