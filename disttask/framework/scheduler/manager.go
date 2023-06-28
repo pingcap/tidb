@@ -197,7 +197,7 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 		if !exist {
 			continue
 		}
-		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Any("id", task.ID))
+		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Any("id", task.ID), zap.String("state", task.State))
 		m.addHandlingTask(task.ID)
 		t := task
 		err = m.schedulerPool.Run(func() {

@@ -25,14 +25,12 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
-	disttaskutil "github.com/pingcap/tidb/util/disttask"
-	"github.com/pingcap/tidb/util/logutil"
 
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
-type rollbackFlowHandle struct{}
+type rollbackFlowHandle struct {
+}
 
 var _ dispatcher.TaskFlowHandle = (*rollbackFlowHandle)(nil)
 var rollbackCnt atomic.Int32
@@ -40,41 +38,28 @@ var rollbackCnt atomic.Int32
 func (*rollbackFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
-func (*rollbackFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
-	if gTask.State == proto.TaskStatePending {
-		gTask.Step = proto.StepOne
-		return [][]byte{
+func (f *rollbackFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task,
+	metasChan chan [][]byte, errChan chan error, doneChan chan bool) {
+	switch gTask.Step {
+	case proto.StepOne:
+		metasChan <- [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
 			[]byte("task3"),
-		}, nil
+		}
+		doneChan <- true
+	default:
+		doneChan <- true
 	}
-	return nil, nil
 }
 
-func (*rollbackFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return []byte("rollbacktask1"), nil
+func (*rollbackFlowHandle) ProcessErrFlow(ctx context.Context, h dispatcher.TaskHandle, gTask *proto.Task, receiveErr []error, metasChan chan [][]byte, errChan chan error, doneChan chan bool) {
+	metasChan <- [][]byte{[]byte("rollbacktask1")}
+	doneChan <- true
 }
 
 func (*rollbackFlowHandle) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return generateSchedulerNodes4Test()
-}
-
-func generateSubtasks4Test(ctx context.Context, gTask *proto.Task, serverNodes []*infosync.ServerInfo, subtaskMetas [][]byte) ([][]*proto.Subtask, error) {
-	subTasks := make([][]*proto.Subtask, len(serverNodes))
-	for i, meta := range subtaskMetas {
-		// we assign the subtask to the instance in a round-robin way.
-		pos := i % len(serverNodes)
-		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
-		logutil.BgLogger().Debug("create subtasks",
-			zap.Int("gTask.ID", int(gTask.ID)), zap.String("type", gTask.Type), zap.String("instanceID", instanceID))
-		subTasks[pos] = append(subTasks[pos], proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta))
-	}
-	return subTasks, nil
-}
-
-func (*rollbackFlowHandle) GenerateSubtasks(ctx context.Context, gTask *proto.Task, serverNodes []*infosync.ServerInfo, subtaskMetas [][]byte) ([][]*proto.Subtask, error) {
-	return generateSubtasks4Test(ctx, gTask, serverNodes, subtaskMetas)
 }
 
 func (*rollbackFlowHandle) IsRetryableErr(error) bool {
@@ -156,6 +141,7 @@ func TestFrameworkRollback(t *testing.T) {
 	DispatchTaskAndCheckFail("key2", proto.TaskTypeRollbackExample, t, &v)
 	require.Equal(t, int32(0), rollbackCnt.Load())
 	rollbackCnt.Store(0)
+
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrNotRetryable"))
 
 	// 3. dispatch normal subtasks fail.
@@ -163,14 +149,16 @@ func TestFrameworkRollback(t *testing.T) {
 	DispatchTaskAndCheckFail("key3", proto.TaskTypeRollbackExample, t, &v)
 	require.Equal(t, int32(0), rollbackCnt.Load())
 	rollbackCnt.Store(0)
+
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFail"))
 
-	// 4. insert revert subtasks fail.
+	// // 4. insert revert subtasks fail.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe", "1*return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/insertSubtasksFail", "return(true)"))
 	DispatchTaskAndCheckFail("key4", proto.TaskTypeRollbackExample, t, &v)
 	require.Equal(t, int32(2), rollbackCnt.Load())
 	rollbackCnt.Store(0)
+
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/insertSubtasksFail"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe"))
 	distContext.Close()

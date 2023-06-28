@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "framework_rollback_test.go",
+        "framework_async_processflow_test.go",
         "framework_test.go",
     ],
     flaky = True,

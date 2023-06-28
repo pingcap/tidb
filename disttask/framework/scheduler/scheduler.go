@@ -156,18 +156,19 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 			if task.Flag == proto.TaskSubStateDispatching {
 				// TODO: change time.
 				time.Sleep(500 * time.Millisecond)
-				continue
+			} else {
+				break
 			}
-			break
-		}
-		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateRunning, nil)
-		if err := s.getError(); err != nil {
-			break
-		}
-		s.subtaskWg.Add(1)
-		s.runSubtask(runCtx, scheduler, subtask, task.Step, minimalTaskCh)
-		if !concurrentSubtask {
-			s.subtaskWg.Wait()
+		} else {
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateRunning, nil)
+			if err := s.getError(); err != nil {
+				break
+			}
+			s.subtaskWg.Add(1)
+			s.runSubtask(runCtx, scheduler, subtask, task.Step, minimalTaskCh)
+			if !concurrentSubtask {
+				s.subtaskWg.Wait()
+			}
 		}
 	}
 	s.subtaskWg.Wait()
@@ -307,12 +308,22 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 		}
 
 		if subtask == nil {
-			break
-		}
-
-		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, nil)
-		if err = s.getError(); err != nil {
-			return err
+			task, err = s.taskTable.GetGlobalTaskByID(task.ID)
+			if err != nil {
+				s.onError(err)
+				break
+			}
+			if task.Flag == proto.TaskSubStateDispatching {
+				// TODO: change time.
+				time.Sleep(500 * time.Millisecond)
+			} else {
+				break
+			}
+		} else {
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, nil)
+			if err = s.getError(); err != nil {
+				return err
+			}
 		}
 	}
 

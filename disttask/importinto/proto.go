@@ -36,6 +36,8 @@ const (
 	// StepPostProcess we verify checksum and add index in this step.
 	// TODO: Might split into StepValidate and StepAddIndex later.
 	StepPostProcess int64 = 2
+	// Step Finish
+	StepFinish int64 = 3
 )
 
 // TaskMeta is the task of IMPORT INTO.

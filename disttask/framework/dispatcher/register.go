@@ -35,16 +35,14 @@ type TaskFlowHandle interface {
 	// it's called when:
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks of previous step has all finished with no error.
-	ProcessNormalFlow(ctx context.Context, h TaskHandle, gTask *proto.Task) (subtaskMetas [][]byte, err error)
+	ProcessNormalFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, metasChan chan [][]byte, errChan chan error, doneChan chan bool)
 	// ProcessErrFlow is called when:
 	// 	1. subtask is finished with error.
 	// 	2. task is cancelled after we have dispatched some subtasks.
-	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr []error) (subtaskMeta []byte, err error)
+	ProcessErrFlow(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr []error, metasChan chan [][]byte, errChan chan error, doneChan chan bool)
 	// GetEligibleInstances is used to get the eligible instances for the global task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
 	GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error)
-	// GenerateSubtasks is used to generate and split subtasks
-	GenerateSubtasks(ctx context.Context, gTask *proto.Task, serverNodes []*infosync.ServerInfo, subtaskMetas [][]byte) ([][]*proto.Subtask, error)
 
 	IsRetryableErr(err error) bool
 }

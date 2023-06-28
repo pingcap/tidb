@@ -55,7 +55,7 @@ const (
 
 // TaskStep is the step of task.
 const (
-	StepInit int64 = -1
+	StepInit int64 = 0
 	StepOne  int64 = 1
 	StepTwo  int64 = 2
 )
@@ -122,6 +122,8 @@ const (
 	TaskTypeExample = "Example"
 	// TaskTypeRollbackExample is TaskType of Rollback Example
 	TaskTypeRollbackExample = "RollbackExample"
+	// TaskTypeAsyncExample is TaskType of Async generate subtasks Example.
+	TaskTypeAsyncExample = "AsyncExample"
 	// ImportInto is TaskType of ImportInto.
 	ImportInto = "ImportInto"
 )
@@ -131,8 +133,12 @@ func Type2Int(t string) int {
 	switch t {
 	case TaskTypeExample:
 		return 1
-	case ImportInto:
+	case TaskTypeRollbackExample:
 		return 2
+	case TaskTypeAsyncExample:
+		return 3
+	case ImportInto:
+		return 4
 	default:
 		return 0
 	}
@@ -144,6 +150,10 @@ func Int2Type(i int) string {
 	case 1:
 		return TaskTypeExample
 	case 2:
+		return TaskTypeRollbackExample
+	case 3:
+		return TaskTypeAsyncExample
+	case 4:
 		return ImportInto
 	default:
 		return ""

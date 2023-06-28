@@ -39,22 +39,18 @@ type testFlowHandle struct{}
 func (*testFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
-func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
-	return nil, nil
+func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, metasChan chan [][]byte, errChan chan error, doneChan chan bool) {
+	doneChan <- true
 }
 
-func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return nil, nil
+func (*testFlowHandle) ProcessErrFlow(ctx context.Context, h dispatcher.TaskHandle, gTask *proto.Task, receiveErr []error, metasChan chan [][]byte, errChan chan error, doneChan chan bool) {
+	doneChan <- true
 }
 
 var mockedAllServerInfos = []*infosync.ServerInfo{}
 
 func (*testFlowHandle) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return mockedAllServerInfos, nil
-}
-
-func (*testFlowHandle) GenerateSubtasks(ctx context.Context, gTask *proto.Task, serverNodes []*infosync.ServerInfo, subtaskMetas [][]byte) ([][]*proto.Subtask, error) {
-	return dispatcher.GenerateOneBatchSubtasks(ctx, gTask, serverNodes, subtaskMetas)
 }
 
 func (*testFlowHandle) IsRetryableErr(error) bool {
@@ -302,44 +298,44 @@ func TestParallelCancelFlow(t *testing.T) {
 
 const taskTypeExample = "task_example"
 
-type NumberExampleHandle struct{}
+type NumberExampleHandle struct {
+	processed bool
+}
 
 var _ dispatcher.TaskFlowHandle = (*NumberExampleHandle)(nil)
 
 func (NumberExampleHandle) OnTicker(_ context.Context, _ *proto.Task) {
 }
 
-func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
-	if gTask.State == proto.TaskStatePending {
-		gTask.Step = proto.StepInit
-	}
-	switch gTask.Step {
-	case proto.StepInit:
+func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, metasChan chan [][]byte, errChan chan error, doneChan chan bool) {
+	var metas [][]byte
+	if !n.processed {
 		gTask.Step = proto.StepOne
 		for i := 0; i < subtaskCnt; i++ {
 			metas = append(metas, []byte{'1'})
 		}
+		metasChan <- metas
 		logutil.BgLogger().Info("progress step init")
+		return
+	}
+	switch gTask.Step {
 	case proto.StepOne:
 		logutil.BgLogger().Info("progress step one")
-		return nil, nil
+		doneChan <- true
+		return
 	default:
-		return nil, errors.New("unknown step")
+		errChan <- errors.New("unknown step")
+		return
 	}
-	return metas, nil
 }
 
-func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (NumberExampleHandle) ProcessErrFlow(ctx context.Context, h dispatcher.TaskHandle, gTask *proto.Task, receiveErr []error, metasChan chan [][]byte, errChan chan error, doneChan chan bool) {
 	// Don't handle not.
-	return nil, nil
+	doneChan <- true
 }
 
 func (NumberExampleHandle) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return dispatcher.GenerateSchedulerNodes(ctx)
-}
-
-func (NumberExampleHandle) GenerateSubtasks(ctx context.Context, gTask *proto.Task, serverNodes []*infosync.ServerInfo, subtaskMetas [][]byte) ([][]*proto.Subtask, error) {
-	return dispatcher.GenerateOneBatchSubtasks(ctx, gTask, serverNodes, subtaskMetas)
 }
 
 func (NumberExampleHandle) IsRetryableErr(error) bool {
