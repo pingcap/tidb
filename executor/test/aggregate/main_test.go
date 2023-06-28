@@ -12,38 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package writetest
+package aggregate
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/tikv/client-go/v2/tikv"
-	"go.opencensus.io/stats/view"
+	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
-func TestMain(m *testing.M) {
-	autoid.SetStep(5000)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Log.SlowThreshold = 30000 // 30s
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-		conf.Experimental.AllowsExpressionIndex = true
-	})
-	tikv.EnableFailpoints()
+var aggMergeSuiteData testdata.TestData
+var testDataMap = make(testdata.BookKeeper)
 
+func TestMain(m *testing.M) {
+	testsetup.SetupForCommonTest()
+	testDataMap.LoadTestSuiteData("testdata", "agg_suite")
+	aggMergeSuiteData = testDataMap["agg_suite"]
 	opts := []goleak.Option{
-		goleak.Cleanup(func(_ int) {
-			view.Stop()
-		}),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
-		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-
 	goleak.VerifyTestMain(m, opts...)
 }

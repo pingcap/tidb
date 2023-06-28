@@ -181,8 +181,6 @@ type memTableReader struct {
 	pkColIDs      []int64
 	cacheTable    kv.MemBuffer
 	offsets       []int
-	chk *chunk.Chunk
-	datumRow []types.Datum
 }
 
 type allocBuf struct {
@@ -222,7 +220,6 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		return tablecodec.EncodeValue(us.ctx.GetSessionVars().StmtCtx, nil, d)
 	}
 	def := func(i int, chk *chunk.Chunk) error {
-		// ci := getColInfoByID(tbl, reqCols[i].ID)
 		ci := us.columns[i]
 		d, err := table.GetColOriginDefaultValue(us.ctx, ci)
 		if err != nil {
@@ -231,8 +228,8 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		chk.AppendDatum(i, &d)
 		return nil
 	}
-	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, defVal, us.ctx.GetSessionVars().Location())
 	cd := rowcodec.NewChunkDecoder(colInfo, pkColIDs, def, us.ctx.GetSessionVars().Location())
+	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, defVal, us.ctx.GetSessionVars().Location())
 	return &memTableReader{
 		ctx:           us.ctx,
 		table:         us.table.Meta(),
@@ -249,8 +246,6 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		},
 		pkColIDs:   pkColIDs,
 		cacheTable: us.cacheTable,
-		chk: chunk.New(retTypes(us), 1, 1),
-		datumRow: make([]types.Datum, 0, len(retTypes(us))),
 	}
 }
 
@@ -259,7 +254,10 @@ type txnMemBufferIter struct {
 	txn  kv.Transaction
 	idx  int
 	curr kv.Iterator
-	// mutableRow chunk.MutRow
+
+	cd *rowcodec.ChunkDecoder
+	chk *chunk.Chunk
+	datumRow []types.Datum
 }
 
 func (iter *txnMemBufferIter) Next() ([]types.Datum, error) {
@@ -304,27 +302,15 @@ func (iter *txnMemBufferIter) next() ([]types.Datum, error) {
 			continue
 		}
 
-
 		handle, err := tablecodec.DecodeRowKey(curr.Key())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-
-		err = iter.buffer.cd.DecodeToChunk(curr.Value(), handle, iter.chk)
+		err = iter.cd.DecodeToChunk(curr.Value(), handle, iter.chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		// return m.chk.GetRow(0).GetDatumRowWithBuffer(m.retFieldTypes, m.datumRow), nil
-		// resultRows := make([]types.Datum, len(iter.columns))
-		// resultRows, err = iter.decodeRecordKeyValue(curr.Key(), curr.Value(), &resultRows)
-		// if err != nil {
-		// 	return nil, errors.Trace(err)
-		// }
-
-		// iter.mutableRow.SetDatums(resultRows...)
-
-		// matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, iter.mutableRow.ToRow())
 		row := iter.chk.GetRow(0)
 		matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, row)
 		if err != nil {
@@ -333,7 +319,9 @@ func (iter *txnMemBufferIter) next() ([]types.Datum, error) {
 		if !matched {
 			continue
 		}
-		return row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow), curr.Next()
+		ret := row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow)
+		iter.chk.Reset()
+		return ret, curr.Next()
 	}
 	return nil, err
 }
@@ -352,7 +340,9 @@ func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 		return &txnMemBufferIter{
 			memTableReader: m,
 			txn:            txn,
-			// mutableRow : chunk.MutRowFromTypes(m.retFieldTypes),
+			cd: m.buffer.cd,
+			chk: chunk.New(m.retFieldTypes, 1, 1),
+			datumRow: make([]types.Datum, 0, len(m.retFieldTypes)),
 		}, nil
 	}
 
