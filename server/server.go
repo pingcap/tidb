@@ -98,7 +98,6 @@ func init() {
 }
 
 var (
-	errUnknownFieldType        = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
 	errInvalidSequence         = dbterror.ClassServer.NewStd(errno.ErrInvalidSequence)
 	errInvalidType             = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
 	errNotAllowedCommand       = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
