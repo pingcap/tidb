@@ -121,6 +121,9 @@ func (b *BuiltinGroupingImplSig) Clone() builtinFunc {
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.mode = b.mode
 	newSig.groupingMarks = b.groupingMarks
+	// mpp task generation will clone whole plan tree, including every expression related.
+	// if grouping function missed cloning this field, the ToPB check will errors.
+	newSig.isMetaInited = b.isMetaInited
 	return newSig
 }
 
