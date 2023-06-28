@@ -23,7 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/pingcap/tidb/parser/model"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -347,58 +348,115 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 		terror.Log(m.cmdCli.ResponseCommand(m.ctx, requestID, err))
 	}
 
-	if err = m.infoSchemaCache.Update(se); err != nil {
+	is, ok := se.GetDomainInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		responseErr(errors.New("invalid information schema"))
+		return
+	}
+
+	tbl, err := is.TableByName(model.NewCIStr(cmd.DBName), model.NewCIStr(cmd.TableName))
+	if err != nil {
 		responseErr(err)
 		return
 	}
 
-	if err = m.tableStatusCache.Update(m.ctx, se); err != nil {
-		responseErr(err)
-		return
-	}
-
-	var tables []*cache.PhysicalTable
-	for _, tbl := range m.infoSchemaCache.Tables {
-		if tbl.Schema.L == strings.ToLower(cmd.DBName) && tbl.Name.L == strings.ToLower(cmd.TableName) {
-			tables = append(tables, tbl)
+	tblInfo := tbl.Meta()
+	var tableResults []*client.TriggerNewTTLJobTableResult
+	if tblInfo.Partition == nil {
+		tableResults = []*client.TriggerNewTTLJobTableResult{
+			{
+				TableID:   tblInfo.ID,
+				DBName:    cmd.DBName,
+				TableName: cmd.TableName,
+			},
+		}
+	} else {
+		defs := tblInfo.Partition.Definitions
+		tableResults = make([]*client.TriggerNewTTLJobTableResult, 0, len(defs))
+		for _, def := range defs {
+			tableResults = append(tableResults, &client.TriggerNewTTLJobTableResult{
+				TableID:       def.ID,
+				DBName:        cmd.DBName,
+				TableName:     cmd.TableName,
+				PartitionName: def.Name.O,
+			})
 		}
 	}
 
-	if len(tables) == 0 {
-		responseErr(errors.Errorf("table %s.%s not exists", cmd.DBName, cmd.TableName))
-		return
-	}
+	m.timerRT.SyncTimers(m.ctx)
+	cli := m.timerRT.cli
 
-	now := time.Now()
-	tableResults := make([]*client.TriggerNewTTLJobTableResult, 0, len(tables))
-	allError := true
-	var firstError error
-	for _, ttlTbl := range tables {
-		tblResult := &client.TriggerNewTTLJobTableResult{
-			TableID:       ttlTbl.ID,
-			DBName:        cmd.DBName,
-			TableName:     cmd.TableName,
-			PartitionName: ttlTbl.Partition.O,
-		}
-
-		job, err := m.lockNewJob(m.ctx, se, ttlTbl, now, uuid.NewString())
+	finished := make(map[int64]struct{})
+	for _, r := range tableResults {
+		key := fmt.Sprintf("%s%d/%d", timerPrefix, tblInfo.ID, r.TableID)
+		timer, err := cli.GetTimerByKey(m.ctx, key)
 		if err != nil {
-			firstError = err
-			tblResult.ErrorMessage = err.Error()
-			tableResults = append(tableResults, tblResult)
+			r.ErrorMessage = err.Error()
+			finished[r.TableID] = struct{}{}
 			continue
 		}
 
-		allError = false
-		if job != nil {
-			m.appendJob(job)
-			tblResult.JobID = job.id
-			tableResults = append(tableResults, tblResult)
+		if _, err = cli.ManualTriggerEvent(m.ctx, timer.ID); err != nil {
+			finished[r.TableID] = struct{}{}
+			r.ErrorMessage = err.Error()
+		}
+	}
+
+	start := time.Now()
+	for {
+		time.Sleep(time.Second)
+		timeout := time.Since(start) >= 2*time.Minute
+		allFinished := true
+		for _, r := range tableResults {
+			if _, ok = finished[r.TableID]; ok {
+				continue
+			}
+
+			if timeout {
+				r.ErrorMessage = "timeout"
+				finished[r.TableID] = struct{}{}
+				continue
+			}
+
+			key := fmt.Sprintf("%s%d/%d", timerPrefix, tblInfo.ID, r.TableID)
+			tm, err := cli.GetTimerByKey(m.ctx, key)
+			if err != nil {
+				r.ErrorMessage = err.Error()
+				finished[r.TableID] = struct{}{}
+				continue
+			}
+
+			if tm.IsManualRequesting() {
+				allFinished = false
+				continue
+			}
+
+			finished[r.TableID] = struct{}{}
+			r.JobID = tm.EventManualRequestID
+			if r.JobID == "" {
+				r.ErrorMessage = "unable to find job id"
+			}
+		}
+
+		if allFinished {
+			break
+		}
+	}
+
+	allError := true
+	var firstErr error
+	for _, r := range tableResults {
+		if r.ErrorMessage != "" && firstErr == nil {
+			firstErr = errors.New(r.ErrorMessage)
+		}
+
+		if r.ErrorMessage == "" {
+			allError = false
 		}
 	}
 
 	if allError {
-		responseErr(firstError)
+		responseErr(firstErr)
 		return
 	}
 
@@ -1043,7 +1101,7 @@ func (a *managerJobAdapter) GetJob(ctx context.Context, id string, _ int64, _ in
 		finished = true
 	}
 
-	summaryText := rows[1].GetBytes(0)
+	summaryText := rows[0].GetBytes(1)
 	var summary TTLSummary
 	if err = json.Unmarshal(summaryText, &summary); err != nil {
 		return nil, err

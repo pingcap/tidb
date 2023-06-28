@@ -162,7 +162,7 @@ func (t *ttlJobTaskHandle) ProcessNormalFlow(ctx context.Context, _ dispatcher.T
 	}
 }
 
-func (t *ttlJobTaskHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (subtaskMeta []byte, err error) {
+func (t *ttlJobTaskHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (subtaskMeta []byte, err error) {
 	return nil, nil
 }
 
