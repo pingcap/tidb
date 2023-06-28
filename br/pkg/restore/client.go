@@ -2190,6 +2190,7 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 			// we should not set available to true. because we cannot guarantee the raft log lag of tiflash when restore finished.
 			// just let tiflash ticker set it by checking lag of all related regions.
 			table.Info.TiFlashReplica.Available = false
+			table.Info.TiFlashReplica.AvailablePartitionIDs = nil
 			if recorder != nil {
 				recorder.AddTable(table.Info.ID, *table.Info.TiFlashReplica)
 				log.Info("record tiflash replica for table, to reset it by ddl later",
