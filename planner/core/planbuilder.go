@@ -5447,8 +5447,8 @@ func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
 	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
 
-	if pc.HistoryStatsInfo != nil {
-		p.HistoryStatsTS = calcTSForPlanReplayer(b.ctx, pc.HistoryStatsInfo.TsExpr)
+	if pc.HistoricalStatsInfo != nil {
+		p.HistoricalStatsTS = calcTSForPlanReplayer(b.ctx, pc.HistoricalStatsInfo.TsExpr)
 	}
 
 	schema := newColumnsWithNames(1)

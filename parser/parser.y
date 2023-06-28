@@ -14940,7 +14940,7 @@ PlanReplayerStmt:
 			Limit:   nil,
 		}
 		if $4 != nil {
-			x.HistoryStatsInfo = $4.(*ast.AsOfClause)
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
 		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
@@ -14959,7 +14959,7 @@ PlanReplayerStmt:
 			Limit:   nil,
 		}
 		if $4 != nil {
-			x.HistoryStatsInfo = $4.(*ast.AsOfClause)
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
 		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
@@ -14975,7 +14975,7 @@ PlanReplayerStmt:
 			File:    "",
 		}
 		if $4 != nil {
-			x.HistoryStatsInfo = $4.(*ast.AsOfClause)
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		if $8 != nil {
 			x.Where = $8.(ast.ExprNode)
@@ -14998,7 +14998,7 @@ PlanReplayerStmt:
 			File:    "",
 		}
 		if $4 != nil {
-			x.HistoryStatsInfo = $4.(*ast.AsOfClause)
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		if $9 != nil {
 			x.Where = $9.(ast.ExprNode)
@@ -15021,7 +15021,7 @@ PlanReplayerStmt:
 			File:    $6,
 		}
 		if $4 != nil {
-			x.HistoryStatsInfo = $4.(*ast.AsOfClause)
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		$$ = x
 	}
@@ -15034,7 +15034,7 @@ PlanReplayerStmt:
 			File:    $7,
 		}
 		if $4 != nil {
-			x.HistoryStatsInfo = $4.(*ast.AsOfClause)
+			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		$$ = x
 	}

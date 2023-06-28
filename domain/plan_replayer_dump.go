@@ -315,7 +315,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		}
 	} else {
 		// Dump stats
-		fallbackMsg, err := dumpStats(zw, pairs, do, task.HistoryStatsTS)
+		fallbackMsg, err := dumpStats(zw, pairs, do, task.HistoricalStatsTS)
 		if err != nil {
 			return err
 		}
@@ -407,8 +407,8 @@ func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
 	varMap[PlanReplayerTaskMetaSQLDigest] = task.SQLDigest
 	varMap[PlanReplayerTaskMetaPlanDigest] = task.PlanDigest
 	varMap[PlanReplayerTaskEnableHistoricalStats] = strconv.FormatBool(variable.EnableHistoricalStatsForCapture.Load())
-	if task.HistoryStatsTS > 0 {
-		varMap[PlanReplayerHistoricalStatsTS] = strconv.FormatUint(task.HistoryStatsTS, 10)
+	if task.HistoricalStatsTS > 0 {
+		varMap[PlanReplayerHistoricalStatsTS] = strconv.FormatUint(task.HistoricalStatsTS, 10)
 	}
 	if err := toml.NewEncoder(cf).Encode(varMap); err != nil {
 		return errors.AddStack(err)

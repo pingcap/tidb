@@ -623,8 +623,8 @@ type PlanReplayer struct {
 	ExecStmt       ast.StmtNode
 	Analyze        bool
 	Load           bool
-	File           string
-	HistoryStatsTS uint64
+	File              string
+	HistoricalStatsTS uint64
 
 	Capture    bool
 	Remove     bool

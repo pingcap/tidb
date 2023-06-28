@@ -60,13 +60,13 @@ type PlanReplayerCaptureInfo struct {
 
 // PlanReplayerDumpInfo indicates dump info
 type PlanReplayerDumpInfo struct {
-	ExecStmts      []ast.StmtNode
-	Analyze        bool
-	HistoryStatsTS uint64
-	Path           string
-	File           *os.File
-	FileName       string
-	ctx            sessionctx.Context
+	ExecStmts         []ast.StmtNode
+	Analyze           bool
+	HistoricalStatsTS uint64
+	Path              string
+	File              *os.File
+	FileName          string
+	ctx               sessionctx.Context
 }
 
 // Next implements the Executor Next interface.
@@ -169,14 +169,14 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 		return err
 	}
 	task := &domain.PlanReplayerDumpTask{
-		StartTS:        startTS,
-		FileName:       fileName,
-		Zf:             zf,
-		SessionVars:    e.ctx.GetSessionVars(),
-		TblStats:       nil,
-		ExecStmts:      e.ExecStmts,
-		Analyze:        e.Analyze,
-		HistoryStatsTS: e.HistoryStatsTS,
+		StartTS:           startTS,
+		FileName:          fileName,
+		Zf:                zf,
+		SessionVars:       e.ctx.GetSessionVars(),
+		TblStats:          nil,
+		ExecStmts:         e.ExecStmts,
+		Analyze:           e.Analyze,
+		HistoricalStatsTS: e.HistoricalStatsTS,
 	}
 	err = domain.DumpPlanReplayerInfo(ctx, e.ctx, task)
 	if err != nil {
