@@ -93,7 +93,7 @@ func (m *MPPCoordinatorManager) detectAndDelete(nowTs uint64) {
 	}
 }
 
-// Stop stop background goroutine
+// Stop stops background goroutine
 func (m *MPPCoordinatorManager) Stop() {
 	m.cancel()
 	m.wg.Wait()
@@ -118,7 +118,7 @@ func (m *MPPCoordinatorManager) Register(coordID CoordinatorUniqueID, mppCoord k
 	defer m.mu.Unlock()
 	_, exists := m.coordinatorMap[coordID]
 	if exists {
-		return errors.Errorf("Already added mpp coordinator: %d %d %d %d", coordID.MPPQueryID.QueryTs, coordID.MPPQueryID.LocalQueryID, coordID.MPPQueryID.ServerID, coordID.GatherID)
+		return errors.Errorf("Mpp coordinator already registered: %d %d %d %d", coordID.MPPQueryID.QueryTs, coordID.MPPQueryID.LocalQueryID, coordID.MPPQueryID.ServerID, coordID.GatherID)
 	}
 	m.coordinatorMap[coordID] = mppCoord
 	metrics.MppCoordinatorStatsTotalRegisteredNumber.Inc()
@@ -151,14 +151,21 @@ func (m *MPPCoordinatorManager) ReportStatus(request *mpp.ReportTaskStatusReques
 	m.mu.Lock()
 	coord, exists := m.coordinatorMap[coordID]
 	m.mu.Unlock()
+
+	// Following logic is not lock protected, thus shouldn't change any state outside coordinator itself
 	resp := new(mpp.ReportTaskStatusResponse)
 	if !exists {
-		resp.Error = &mpp.Error{MppVersion: request.Meta.MppVersion, Msg: fmt.Sprintf("MppTask not exists, taskID: %d", request.Meta.TaskId)}
+		// It is expected that coordinator has chance to be unregistered before ReportStatus, no log needed here
+		resp.Error = &mpp.Error{MppVersion: request.Meta.MppVersion, Msg: "MppCoordinator not exists"}
 		return resp
 	}
 	err := coord.ReportStatus(kv.ReportStatusRequest{Request: request})
 	if err != nil {
 		resp.Error = &mpp.Error{MppVersion: request.Meta.MppVersion, Msg: err.Error()}
+		logutil.BgLogger().Warn(fmt.Sprintf("Mpp coordinator handles ReportMPPTaskStatus met error: %s", err.Error()),
+			zap.Uint64("QueryID", coordID.MPPQueryID.LocalQueryID),
+			zap.Uint64("QueryTs", coordID.MPPQueryID.QueryTs),
+			zap.Int64("TaskID", request.Meta.TaskId))
 		return resp
 	}
 	return resp

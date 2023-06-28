@@ -208,6 +208,7 @@ type MppCoordinator interface {
 	// Next returns next data
 	Next(ctx context.Context) (ResultSubset, error)
 	// ReportStatus report task execution info to coordinator
+	// It shouldn't change any state outside coordinator itself, since the query which generated the coordinator may not exist
 	ReportStatus(info ReportStatusRequest) error
 	// Close and release the used resources.
 	Close() error

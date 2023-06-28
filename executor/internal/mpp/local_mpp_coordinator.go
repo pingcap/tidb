@@ -515,6 +515,7 @@ func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMet
 	}
 }
 
+// ReportStatus implements MppCoordinator interface
 func (c *localMppCoordinator) ReportStatus(info kv.ReportStatusRequest) error {
 	taskID := info.Request.Meta.TaskId
 	var errMsg string
@@ -572,7 +573,7 @@ func (c *localMppCoordinator) handleAllReports() {
 			distsql.FillDummySummariesForMppTasks(c.sessionCtx.GetSessionVars().StmtCtx, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
 		case <-time.After(receiveReportTimeout):
 			metrics.MppCoordinatorStatsReportNotReceived.Inc()
-			logutil.BgLogger().Warn(fmt.Sprintf("Not received all reports within %d seconds", int(receiveReportTimeout.Seconds())),
+			logutil.BgLogger().Warn(fmt.Sprintf("Mpp coordinator not received all reports within %d seconds", int(receiveReportTimeout.Seconds())),
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Uint64("gatherID", c.gatherID),
 				zap.Int("expectCount", len(c.mppReqs)),
@@ -581,7 +582,7 @@ func (c *localMppCoordinator) handleAllReports() {
 	}
 }
 
-// Close and release the used resources.
+// Close implements MppCoordinator interface
 // TODO: Test the case that user cancels the query.
 func (c *localMppCoordinator) Close() error {
 	if atomic.CompareAndSwapUint32(&c.closed, 0, 1) {
@@ -596,10 +597,11 @@ func (c *localMppCoordinator) Close() error {
 func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
 	if response.Error != nil {
 		c.mu.Lock()
-		defer c.mu.Unlock()
-		// firstErrMsg is only used when already received error response from root tasks, avoid false error messages caused by cancel-by-limit
-		if len(c.firstErrMsg) > 0 {
-			err = errors.Errorf("other error for mpp stream: %s", c.firstErrMsg)
+		firstErrMsg := c.firstErrMsg
+		c.mu.Unlock()
+		// firstErrMsg is only used when already received error response from root tasks, avoid confusing error messages
+		if len(firstErrMsg) > 0 {
+			err = errors.Errorf("other error for mpp stream: %s", firstErrMsg)
 		} else {
 			err = errors.Errorf("other error for mpp stream: %s", response.Error.Msg)
 		}
@@ -656,7 +658,7 @@ func (c *localMppCoordinator) nextImpl(ctx context.Context) (resp *mppResponse, 
 	}
 }
 
-// Next returns next result subset
+// Next implements MppCoordinator interface
 func (c *localMppCoordinator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	resp, ok, closed, err := c.nextImpl(ctx)
 	if err != nil {
@@ -677,7 +679,7 @@ func (c *localMppCoordinator) Next(ctx context.Context) (kv.ResultSubset, error)
 	return resp, nil
 }
 
-// Execute executes physical plan and returns a response.
+// Execute implements MppCoordinator interface
 func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.KeyRange, error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := c.originalPlan.(*plannercore.PhysicalExchangeSender)
