@@ -2120,9 +2120,18 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 		return err
 	}
 	for _, table := range tables {
+<<<<<<< HEAD
 		if recorder != nil ||
 			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > tiFlashStoreCount) {
 			if recorder != nil && table.Info.TiFlashReplica != nil {
+=======
+		if table.Info.TiFlashReplica != nil {
+			// we should not set available to true. because we cannot guarantee the raft log lag of tiflash when restore finished.
+			// just let tiflash ticker set it by checking lag of all related regions.
+			table.Info.TiFlashReplica.Available = false
+			table.Info.TiFlashReplica.AvailablePartitionIDs = nil
+			if recorder != nil {
+>>>>>>> a7b54adfede (br: cleanup `AvaliablePartitionIDs` for tiflash when restore (#45016))
 				recorder.AddTable(table.Info.ID, *table.Info.TiFlashReplica)
 			}
 			// we cannot satisfy TiFlash replica in restore cluster. so we should
