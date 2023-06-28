@@ -5331,5 +5331,4 @@ func TestIssue45033(t *testing.T) {
 				                from   (select distinct alias3.c4 as c2
 				                        from   t3 alias3) alias4
 				                where  alias4.c2 = alias2.alias_col1);`).Check(testkit.Rows("0"))
-
 }
