@@ -625,27 +625,27 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 
 func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {
 	var col *expression.Column
-	var needPartitionHandle, ret bool
+	var needPartitionHandle, hasExtraCol bool
 	needPartitionHandle = e.index.Global || (e.partitionTableMode && e.keepOrder)
 	if tp == getHandleFromIndex {
 		cols := e.idxPlans[0].Schema().Columns
 		outputOffsets := e.dagPB.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
-		ret = col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
+		hasExtraCol = col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
 	} else {
 		cols := e.tblPlans[0].Schema().Columns
 		outputOffsets := e.tableRequest.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
 
 		// no ExtraPidColID here, because TableScan shouldn't contain them.
-		ret = col.ID == model.ExtraPhysTblID
+		hasExtraCol = col.ID == model.ExtraPhysTblID
 	}
 
 	// TODO: fix global index related bugs later
 	// For `SelectLock`, the `ExtraPhysTblID` will contained in schema,
 	// but it needn't partition handle to keep order.
-	if needPartitionHandle && !ret && !e.index.Global {
-		return ret, errors.Errorf("Internal error, needPartitionHandle != ret, tp(%d)", tp)
+	if needPartitionHandle && !hasExtraCol && !e.index.Global {
+		return needPartitionHandle, errors.Errorf("Internal error, needPartitionHandle != ret, tp(%d)", tp)
 	}
 	return needPartitionHandle, nil
 }
