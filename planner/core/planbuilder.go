@@ -5464,17 +5464,18 @@ func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return 0
 	}
-	// can't be NULL
+	// mustn't be NULL
 	if tsVal.IsNull() {
 		return 0
 	}
 
-	// first treat it as a TSO
+	// first, treat it as a TSO
 	tpLonglong := types.NewFieldType(mysql.TypeLonglong)
 	tpLonglong.SetFlag(mysql.UnsignedFlag)
 	// We need a strict check, which means no truncate or any other warnings/errors, or it will wrongly try to parse
 	// a date/time string into a TSO.
-	// Maybe it's better not to modify and reuse the original StatementContext, so we use a temporary one here.
+	// To achieve this, we need to set fields like StatementContext.IgnoreTruncate to false, and maybe it's better
+	// not to modify and reuse the original StatementContext, so we use a temporary one here.
 	tmpStmtCtx := &stmtctx.StatementContext{TimeZone: sctx.GetSessionVars().Location()}
 	tso, err := tsVal.ConvertTo(tmpStmtCtx, tpLonglong)
 	if err == nil {

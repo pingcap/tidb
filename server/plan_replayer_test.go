@@ -252,14 +252,7 @@ func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {
 	}
 }
 
-func getStatsAndMetaFromPlanReplayerAPI(
-	t *testing.T,
-	client *testServerClient,
-	filename string,
-) (
-	jsonTbls []*handle.JSONTable,
-	metas []map[string]string,
-) {
+func fetchZipFromPlanReplayerAPI(t *testing.T, client *testServerClient, filename string) *zip.Reader {
 	resp0, err := client.fetchStatus(filepath.Join("/plan_replayer/dump/", filename))
 	require.NoError(t, err)
 	defer func() {
@@ -270,7 +263,17 @@ func getStatsAndMetaFromPlanReplayerAPI(
 	b := bytes.NewReader(body)
 	z, err := zip.NewReader(b, int64(len(body)))
 	require.NoError(t, err)
+	return z
+}
 
+func getInfoFromPlanReplayerZip(
+	t *testing.T,
+	z *zip.Reader,
+) (
+	jsonTbls []*handle.JSONTable,
+	metas []map[string]string,
+	errMsgs []string,
+) {
 	for _, zipFile := range z.File {
 		if strings.HasPrefix(zipFile.Name, "stats/") {
 			jsonTbl := &handle.JSONTable{}
@@ -299,6 +302,16 @@ func getStatsAndMetaFromPlanReplayerAPI(
 			require.NoError(t, err)
 
 			metas = append(metas, meta)
+		} else if zipFile.Name == "errors.txt" {
+			r, err := zipFile.Open()
+			require.NoError(t, err)
+			//nolint: all_revive
+			defer func() {
+				require.NoError(t, r.Close())
+			}()
+			content, err := io.ReadAll(r)
+			require.NoError(t, err)
+			errMsgs = strings.Split(string(content), "\n")
 		}
 	}
 	return
@@ -366,7 +379,8 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	filename1 := tk.MustQuery(
 		fmt.Sprintf(template, strconv.FormatUint(ts1, 10), query),
 	).Rows()[0][0].(string)
-	jsonTbls1, metas1 := getStatsAndMetaFromPlanReplayerAPI(t, client, filename1)
+	zip1 := fetchZipFromPlanReplayerAPI(t, client, filename1)
+	jsonTbls1, metas1, errMsg1 := getInfoFromPlanReplayerZip(t, zip1)
 
 	// the TS is recorded in the plan replayer, and it's the same as the TS we calculated above
 	require.Len(t, metas1, 1)
@@ -380,11 +394,15 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.False(t, jsonTbls1[0].IsHistoricalStats)
 	require.Equal(t, jsonTbls1[0], stats2)
 
+	// because we failed to get historicalStats, there's an error message.
+	require.Equal(t, []string{"Historical stats for t are unavailable, fallback to latest stats", ""}, errMsg1)
+
 	// 2-2. specify time2 to get the plan replayer
 	filename2 := tk.MustQuery(
 		fmt.Sprintf(template, time2.Format("2006-01-02 15:04:05.000000"), query),
 	).Rows()[0][0].(string)
-	jsonTbls2, metas2 := getStatsAndMetaFromPlanReplayerAPI(t, client, filename2)
+	zip2 := fetchZipFromPlanReplayerAPI(t, client, filename2)
+	jsonTbls2, metas2, _ := getInfoFromPlanReplayerZip(t, zip2)
 
 	// the TS is recorded in the plan replayer, and it's the same as the TS we calculated above
 	require.Len(t, metas2, 1)
@@ -403,7 +421,8 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	filename3 := tk.MustQuery(
 		fmt.Sprintf(template, time3.Format("2006-01-02T15:04:05.000000Z07:00"), query),
 	).Rows()[0][0].(string)
-	jsonTbls3, metas3 := getStatsAndMetaFromPlanReplayerAPI(t, client, filename3)
+	zip3 := fetchZipFromPlanReplayerAPI(t, client, filename3)
+	jsonTbls3, metas3, _ := getInfoFromPlanReplayerZip(t, zip3)
 
 	// the TS is recorded in the plan replayer, and it's the same as the TS we calculated above
 	require.Len(t, metas3, 1)

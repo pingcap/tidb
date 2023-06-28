@@ -59,6 +59,8 @@ const (
 	PlanReplayerGlobalBindingFile = "global_bindings.sql"
 	// PlanReplayerSchemaMetaFile indicates the schema meta
 	PlanReplayerSchemaMetaFile = "schema_meta.txt"
+	// PlanReplayerErrorMessageFile is the file name for error messages
+	PlanReplayerErrorMessageFile = "errors.txt"
 )
 
 const (
@@ -207,6 +209,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	execStmts := task.ExecStmts
 	zw := zip.NewWriter(zf)
 	var records []PlanReplayerStatusRecord
+	var errMsgs []string
 	sqls := make([]string, 0)
 	for _, execStmt := range task.ExecStmts {
 		sqls = append(sqls, execStmt.Text())
@@ -296,8 +299,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	if task.IsCapture && task.IsContinuesCapture {
 		if !variable.EnableHistoricalStatsForCapture.Load() {
 			// Dump stats
-			if err = dumpStats(zw, pairs, do, 0); err != nil {
+			fallbackMsg, err := dumpStats(zw, pairs, do, 0)
+			if err != nil {
 				return err
+			}
+			if len(fallbackMsg) > 0 {
+				errMsgs = append(errMsgs, fallbackMsg)
 			}
 		} else {
 			failpoint.Inject("shouldDumpStats", func(val failpoint.Value) {
@@ -308,8 +315,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		}
 	} else {
 		// Dump stats
-		if err = dumpStats(zw, pairs, do, task.HistoryStatsTS); err != nil {
+		fallbackMsg, err := dumpStats(zw, pairs, do, task.HistoryStatsTS)
+		if err != nil {
 			return err
+		}
+		if len(fallbackMsg) > 0 {
+			errMsgs = append(errMsgs, fallbackMsg)
 		}
 	}
 
@@ -357,6 +368,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 
 	if task.DebugTrace != nil {
 		if err = dumpDebugTrace(zw, task.DebugTrace); err != nil {
+			return err
+		}
+	}
+
+	if len(errMsgs) > 0 {
+		if err = dumpErrorMsgs(zw, errMsgs); err != nil {
 			return err
 		}
 	}
@@ -506,29 +523,32 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 	return nil
 }
 
-func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain, historyStatsTS uint64) error {
+func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain, historyStatsTS uint64) (string, error) {
+	var allFallBackTbls []string
 	for pair := range pairs {
 		if pair.IsView {
 			continue
 		}
-		jsonTbl, err := getStatsForTable(do, pair, historyStatsTS)
+		jsonTbl, fallBackTbls, err := getStatsForTable(do, pair, historyStatsTS)
 		if err != nil {
-			return err
+			return "", err
 		}
 		statsFw, err := zw.Create(fmt.Sprintf("stats/%v.%v.json", pair.DBName, pair.TableName))
 		if err != nil {
-			return errors.AddStack(err)
+			return "", errors.AddStack(err)
 		}
 		data, err := json.Marshal(jsonTbl)
 		if err != nil {
-			return errors.AddStack(err)
+			return "", errors.AddStack(err)
 		}
 		_, err = statsFw.Write(data)
 		if err != nil {
-			return errors.AddStack(err)
+			return "", errors.AddStack(err)
 		}
+		allFallBackTbls = append(allFallBackTbls, fallBackTbls...)
 	}
-	return nil
+	msg := "Historical stats for " + strings.Join(allFallBackTbls, ", ") + " are unavailable, fallback to latest stats"
+	return msg, nil
 }
 
 func dumpSQLs(execStmts []ast.StmtNode, zw *zip.Writer) error {
@@ -750,17 +770,18 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	return tableExtractor.getTablesAndViews(), nil
 }
 
-func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*handle.JSONTable, error) {
+func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*handle.JSONTable, []string, error) {
 	is := do.InfoSchema()
 	h := do.StatsHandle()
 	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if historyStatsTS > 0 {
 		return h.DumpHistoricalStatsBySnapshot(pair.DBName, tbl.Meta(), historyStatsTS)
 	}
-	return h.DumpStatsToJSON(pair.DBName, tbl.Meta(), nil, true)
+	jt, err := h.DumpStatsToJSON(pair.DBName, tbl.Meta(), nil, true)
+	return jt, nil, err
 }
 
 func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Context) error {
@@ -874,4 +895,22 @@ func dumpOneDebugTrace(w io.Writer, debugTrace interface{}) error {
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	jsonEncoder.SetEscapeHTML(false)
 	return jsonEncoder.Encode(debugTrace)
+}
+
+func dumpErrorMsgs(zw *zip.Writer, msgs []string) error {
+	mt, err := zw.Create(PlanReplayerErrorMessageFile)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	for _, msg := range msgs {
+		_, err = mt.Write([]byte(msg))
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		_, err = mt.Write([]byte{'\n'})
+		if err != nil {
+			return errors.AddStack(err)
+		}
+	}
+	return nil
 }
