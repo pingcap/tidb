@@ -208,6 +208,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
 			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
 			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
+			zap.Uint64("GatherID", c.gatherID),
 		)
 		req := &kv.MPPDispatchRequest{
 			Data:                   pbData,
@@ -571,7 +572,7 @@ func (c *localMppCoordinator) handleAllReports() {
 					}
 				}
 			}
-			distsql.FillDummySummariesForMppTasks(c.sessionCtx.GetSessionVars().StmtCtx, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
+			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
 		case <-time.After(receiveReportTimeout):
 			metrics.MppCoordinatorStatsReportNotReceived.Inc()
 			logutil.BgLogger().Warn(fmt.Sprintf("Mpp coordinator not received all reports within %d seconds", int(receiveReportTimeout.Seconds())),
