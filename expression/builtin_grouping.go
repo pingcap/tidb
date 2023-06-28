@@ -75,6 +75,7 @@ func (b *BuiltinGroupingImplSig) SetMetadata(mode tipb.GroupingMode, groupingMar
 	b.isMetaInited = true
 	err := b.checkMetadata()
 	if err != nil {
+		logutil.Logger(context.Background()).Error("grouping meta check err: " + err.Error())
 		b.isMetaInited = false
 		return err
 	}
