@@ -524,7 +524,7 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 }
 
 func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain, historyStatsTS uint64) (string, error) {
-	var allFallBackTbls []string
+	allFallBackTbls := make([]string, 0)
 	for pair := range pairs {
 		if pair.IsView {
 			continue
