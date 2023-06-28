@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -56,7 +57,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 			zap.String("Expected Schema State", stmtCase.schemaState.String()))
 
 		// stmtCase is read-only among the whole test suite which is not necessary to be atomic
-		if matchTargetState(t, job, stmtCase.schemaState) &&
+		if testddlutil.TestMatchCancelState(t, job, stmtCase.schemaState, stmtCase.stmt) &&
 			stmtCase.isJobPausable && //
 			!isPaused.Load() {
 			jobID.Store(job.ID)
@@ -154,7 +155,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 
 	for _, rollbackStmt := range stmtCase.rollbackStmts {
 		// no care about the result here, since the `statement` could have been cancelled OR finished successfully.
-		stmtKit.Exec(rollbackStmt)
+		_, _ = stmtKit.Exec(rollbackStmt)
 	}
 }
 

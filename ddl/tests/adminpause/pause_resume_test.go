@@ -21,6 +21,7 @@ import (
 	"sync"
 	"testing"
 
+	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -56,7 +57,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 		// All hooks are running inside a READ mutex `d.mu()`, we need to lock for the variable's modification.
 		adminCommandMutex.Lock()
 		defer adminCommandMutex.Unlock()
-		if matchTargetState(t, job, stmtCase.schemaState) &&
+		if testddlutil.TestMatchCancelState(t, job, stmtCase.schemaState, stmtCase.stmt) &&
 			stmtCase.isJobPausable &&
 			!isPaused {
 			jobID = job.ID
