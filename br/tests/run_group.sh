@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # This script split the integration tests into 16 groups to support parallel group tests execution.
 # all the integration tests are located in br/tests directory. only the directories
