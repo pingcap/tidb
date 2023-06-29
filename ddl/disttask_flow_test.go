@@ -17,17 +17,20 @@ package ddl_test
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,7 +41,6 @@ func TestBackfillFlowHandle(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// test partition table ProcessNormalFlow
 	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
 		"PARTITION p0 VALUES LESS THAN (10),\n" +
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
@@ -48,35 +50,57 @@ func TestBackfillFlowHandle(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	metas, err := handler.ProcessNormalFlow(context.Background(), nil, gTask)
-	require.NoError(t, err)
-	require.Equal(t, proto.StepOne, gTask.Step)
-	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
-	for i, par := range tblInfo.Partition.Definitions {
-		var subTask ddl.BackfillSubTaskMeta
-		require.NoError(t, json.Unmarshal(metas[i], &subTask))
-		require.Equal(t, par.ID, subTask.PhysicalTableID)
-	}
 
-	// test partition table ProcessNormalFlow after step1 finished
-	gTask.State = proto.TaskStateRunning
-	metas, err = handler.ProcessNormalFlow(context.Background(), nil, gTask)
-	require.NoError(t, err)
-	require.Equal(t, 0, len(metas))
+	// 1. test partition table ProcessNormalFlow
+	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
+		logutil.BgLogger().Info("ywq test check1")
+		require.Equal(t, proto.StepOne, gTask.Step)
+		require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
+		for i, par := range tblInfo.Partition.Definitions {
+			var subTask ddl.BackfillSubTaskMeta
+			require.NoError(t, json.Unmarshal(metas[i], &subTask))
+			require.Equal(t, par.ID, subTask.PhysicalTableID)
+		}
+	}, nil)
 
-	// test partition table ProcessErrFlow
-	errMeta, err := handler.ProcessErrFlow(context.Background(), nil, gTask, []error{errors.New("mockErr")})
-	require.NoError(t, err)
-	require.Nil(t, errMeta)
+	// 2. test partition table ProcessNormalFlow after step1 finished
+	gTask.Step++
+	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
+		logutil.BgLogger().Info("ywq test check2")
+		require.NoError(t, err)
+		require.Equal(t, 0, len(metas))
+	}, nil)
 
-	errMeta, err = handler.ProcessErrFlow(context.Background(), nil, gTask, []error{errors.New("mockErr")})
-	require.NoError(t, err)
-	require.Nil(t, errMeta)
+	// 3. test partition table ProcessErrFlow
 
+	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
+		require.Nil(t, metas)
+	}, []error{errors.New("mockErr")})
+	// check idempotent.
+	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
+		require.Nil(t, metas)
+	}, []error{errors.New("mockErr")})
+
+	// 4. test non-partition-table. This have bug...
 	tk.MustExec("create table t1(id int primary key, v int)")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.BackfillTaskType)
-	_, err = handler.ProcessNormalFlow(context.Background(), nil, gTask)
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
+		logutil.BgLogger().Info("ywq test check3")
+		require.Equal(t, proto.StepOne, gTask.Step)
+	}, nil)
+	gTask.Step++
+	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
+		logutil.BgLogger().Info("ywq test check4")
+		for _, meta := range metas {
+			var subTask ddl.BackfillSubTaskMeta
+			require.NoError(t, json.Unmarshal(meta, &subTask))
+			require.Equal(t, []uint8([]byte(nil)), subTask.StartKey)
+			require.Equal(t, []uint8([]byte(nil)), subTask.EndKey)
+		}
+	}, nil)
 }
 
 func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string, taskType string) *proto.Task {
@@ -110,12 +134,56 @@ func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName 
 	gTask := &proto.Task{
 		ID:              time.Now().UnixMicro(),
 		Type:            taskType,
-		Step:            proto.StepInit,
-		State:           proto.TaskStatePending,
+		Step:            proto.StepOne,
+		State:           proto.TaskStateRunning,
 		Meta:            gTaskMetaBytes,
 		StartTime:       time.Now(),
 		StateUpdateTime: time.Now(),
 	}
 
 	return gTask
+}
+
+func processAndCheck(t *testing.T,
+	handler dispatcher.TaskFlowHandle,
+	gTask *proto.Task, tblInfo *model.TableInfo,
+	checkGTaskAndMeta func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo),
+	receiverErr []error) {
+
+	metasChan := make(chan [][]byte)
+	errChan := make(chan error)
+	doneChan := make(chan bool)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		if receiverErr == nil {
+			handler.ProcessNormalFlow(context.Background(), nil, gTask, metasChan, errChan, doneChan)
+		} else {
+			handler.ProcessErrFlow(context.Background(), nil, gTask, receiverErr, metasChan, errChan, doneChan)
+		}
+		wg.Done()
+	}()
+
+	doneDispatch := false
+	var metas [][]byte
+	for !doneDispatch {
+		select {
+		case metas = <-metasChan:
+			logutil.BgLogger().Info("ywq test")
+		case <-errChan:
+			logutil.BgLogger().Info("ywq test err")
+		case <-doneChan:
+			logutil.BgLogger().Info("ywq test done")
+			if !doneDispatch {
+				doneDispatch = true
+				close(metasChan)
+				close(doneChan)
+				close(errChan)
+			}
+		}
+	}
+
+	checkGTaskAndMeta(t, metas, gTask, tblInfo)
+	wg.Wait()
 }

@@ -77,7 +77,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 	var subTaskMetas [][]byte
 	if tblInfo.Partition == nil {
 		switch gTask.Step {
-		case proto.StepOne:
+		case proto.StepTwo:
 			serverNodes, err := dispatcher.GenerateSchedulerNodes(d.ctx)
 			if err != nil {
 				errChan <- err
@@ -96,7 +96,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 			metasChan <- subTaskMetas
 			doneChan <- true
 			return
-		case proto.StepTwo:
+		case proto.StepFinished:
 			doneChan <- true
 			return
 		default:
@@ -154,7 +154,8 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 			subTaskMetas = append(subTaskMetas, metaBytes)
 		}
 	} else {
-		if gTask.State != proto.TaskStateRunning {
+		// This flow for partition table has only one step, finish task when it is not StepOne
+		if gTask.Step != proto.StepOne {
 			doneChan <- true
 			return
 		}
@@ -180,7 +181,6 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 			subTaskMetas = append(subTaskMetas, metaBytes)
 		}
 	}
-
 	metasChan <- subTaskMetas
 	doneChan <- true
 }

@@ -55,9 +55,10 @@ const (
 
 // TaskStep is the step of task.
 const (
-	StepInit int64 = 0
-	StepOne  int64 = 1
-	StepTwo  int64 = 2
+	StepInit     int64 = 0
+	StepOne      int64 = 1
+	StepTwo      int64 = 2
+	StepFinished int64 = 3
 )
 
 // Task represents the task of distribute framework.
