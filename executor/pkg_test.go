@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -73,7 +74,7 @@ func TestNestedLoopApply(t *testing.T) {
 		joiner:       joiner,
 		ctx:          sctx,
 	}
-	join.innerList = chunk.NewList(retTypes(innerExec), innerExec.initCap, innerExec.maxChunkSize)
+	join.innerList = chunk.NewList(retTypes(innerExec), innerExec.InitCap(), innerExec.MaxChunkSize())
 	join.innerChunk = newFirstChunk(innerExec)
 	join.outerChunk = newFirstChunk(outerExec)
 	joinChk := newFirstChunk(join)

@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/executor/internal/builder"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -122,7 +123,7 @@ func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Re
 	}, nil
 }
 
-func buildTableReader(sctx sessionctx.Context) Executor {
+func buildTableReader(sctx sessionctx.Context) exec.Executor {
 	e := &TableReaderExecutor{
 		BaseExecutor:     buildMockBaseExec(sctx),
 		table:            &tables.TableCommon{},
@@ -144,7 +145,7 @@ func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
 	return req
 }
 
-func buildMockBaseExec(sctx sessionctx.Context) baseExecutor {
+func buildMockBaseExec(sctx sessionctx.Context) exec.BaseExecutor {
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
 	cols := make([]*expression.Column, len(retTypes))
 	for i := range retTypes {
@@ -197,7 +198,7 @@ func TestTableReaderRequiredRows(t *testing.T) {
 	}
 }
 
-func buildIndexReader(sctx sessionctx.Context) Executor {
+func buildIndexReader(sctx sessionctx.Context) exec.Executor {
 	e := &IndexReaderExecutor{
 		BaseExecutor:     buildMockBaseExec(sctx),
 		dagPB:            buildMockDAGRequest(sctx),
