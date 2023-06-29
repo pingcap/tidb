@@ -24,6 +24,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -113,7 +114,7 @@ const (
 )
 
 type calibrateResourceExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	optionList   []*ast.DynamicCalibrateResourceOption
 	workloadType ast.CalibrateResourceType
 	done         bool
@@ -125,13 +126,13 @@ func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (sta
 	for _, op := range e.optionList {
 		switch op.Tp {
 		case ast.CalibrateStartTime:
-			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, op.Ts)
+			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.Ctx(), op.Ts)
 			if err != nil {
 				return
 			}
 			startTime = oracle.GetTimeFromTS(ts)
 		case ast.CalibrateEndTime:
-			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, op.Ts)
+			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.Ctx(), op.Ts)
 			if err != nil {
 				return
 			}
@@ -175,7 +176,7 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	}
 	e.done = true
 
-	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	if len(e.optionList) > 0 {
 		return e.dynamicCalibrate(ctx, req, exec)
@@ -193,8 +194,8 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	if err != nil {
 		return err
 	}
-	startTime := startTs.In(e.ctx.GetSessionVars().Location()).Format(time.DateTime)
-	endTime := endTs.In(e.ctx.GetSessionVars().Location()).Format(time.DateTime)
+	startTime := startTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
+	endTime := endTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
@@ -204,15 +205,15 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	if err != nil {
 		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
-	rus, err := getRUPerSec(ctx, e.ctx, exec, startTime, endTime)
+	rus, err := getRUPerSec(ctx, e.Ctx(), exec, startTime, endTime)
 	if err != nil {
 		return err
 	}
-	tikvCPUs, err := getComponentCPUUsagePerSec(ctx, e.ctx, exec, "tikv", startTime, endTime)
+	tikvCPUs, err := getComponentCPUUsagePerSec(ctx, e.Ctx(), exec, "tikv", startTime, endTime)
 	if err != nil {
 		return err
 	}
-	tidbCPUs, err := getComponentCPUUsagePerSec(ctx, e.ctx, exec, "tidb", startTime, endTime)
+	tidbCPUs, err := getComponentCPUUsagePerSec(ctx, e.Ctx(), exec, "tidb", startTime, endTime)
 	if err != nil {
 		return err
 	}
@@ -271,7 +272,7 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 	if !variable.EnableResourceControl.Load() {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
-	resourceGroupCtl := domain.GetDomain(e.ctx).ResourceGroupsController()
+	resourceGroupCtl := domain.GetDomain(e.Ctx()).ResourceGroupsController()
 	// first fetch the ru settings config.
 	if resourceGroupCtl == nil {
 		return errors.New("resource group controller is not initialized")

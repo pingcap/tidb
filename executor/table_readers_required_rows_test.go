@@ -124,7 +124,7 @@ func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Re
 
 func buildTableReader(sctx sessionctx.Context) Executor {
 	e := &TableReaderExecutor{
-		baseExecutor:     buildMockBaseExec(sctx),
+		BaseExecutor:     buildMockBaseExec(sctx),
 		table:            &tables.TableCommon{},
 		dagPB:            buildMockDAGRequest(sctx),
 		selectResultHook: selectResultHook{mockSelectResult},
@@ -151,7 +151,7 @@ func buildMockBaseExec(sctx sessionctx.Context) baseExecutor {
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := newBaseExecutor(sctx, schema, 0)
+	baseExec := exec.NewBaseExecutor(sctx, schema, 0)
 	return baseExec
 }
 
@@ -199,7 +199,7 @@ func TestTableReaderRequiredRows(t *testing.T) {
 
 func buildIndexReader(sctx sessionctx.Context) Executor {
 	e := &IndexReaderExecutor{
-		baseExecutor:     buildMockBaseExec(sctx),
+		BaseExecutor:     buildMockBaseExec(sctx),
 		dagPB:            buildMockDAGRequest(sctx),
 		index:            &model.IndexInfo{},
 		selectResultHook: selectResultHook{mockSelectResult},

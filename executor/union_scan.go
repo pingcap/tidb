@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"runtime/trace"
 
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -34,7 +35,7 @@ import (
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
 type UnionScanExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	memBuf     kv.MemBuffer
 	memBufSnap kv.Getter
@@ -74,7 +75,7 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 	r, ctx := tracing.StartRegionEx(ctx, "UnionScanExec.Open")
 	defer r.End()
 
-	if err := us.baseExecutor.Open(ctx); err != nil {
+	if err := us.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	return us.open(ctx)
@@ -82,16 +83,16 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 
 func (us *UnionScanExec) open(ctx context.Context) error {
 	var err error
-	reader := us.children[0]
+	reader := us.Children(0)
 
 	// If the push-downed condition contains virtual column, we may build a selection upon reader. Since unionScanExec
 	// has already contained condition, we can ignore the selection.
 	if sel, ok := reader.(*SelectionExec); ok {
-		reader = sel.children[0]
+		reader = sel.Children(0)
 	}
 
 	defer trace.StartRegion(ctx, "UnionScanBuildRows").End()
-	txn, err := us.ctx.Txn(false)
+	txn, err := us.Ctx().Txn(false)
 	if err != nil {
 		return err
 	}
@@ -140,7 +141,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	// Assume req.Capacity() > 0 after GrowAndReset(), if this assumption fail,
 	// the for-loop may exit without read one single row!
-	req.GrowAndReset(us.maxChunkSize)
+	req.GrowAndReset(us.MaxChunkSize())
 
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
@@ -155,13 +156,13 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		mutableRow.SetDatums(row...)
 
 		for _, idx := range us.virtualColumnIndex {
-			datum, err := us.schema.Columns[idx].EvalVirtualColumn(mutableRow.ToRow())
+			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(mutableRow.ToRow())
 			if err != nil {
 				return err
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := table.CastValue(us.ctx, datum, us.columns[idx], false, true)
+			castDatum, err := table.CastValue(us.Ctx(), datum, us.columns[idx], false, true)
 			if err != nil {
 				return err
 			}
@@ -172,7 +173,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			mutableRow.SetDatum(idx, castDatum)
 		}
 
-		matched, _, err := expression.EvalBool(us.ctx, us.conditionsWithVirCol, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(us.Ctx(), us.conditionsWithVirCol, mutableRow.ToRow())
 		if err != nil {
 			return err
 		}
@@ -188,7 +189,7 @@ func (us *UnionScanExec) Close() error {
 	us.cursor4AddRows = nil
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
-	return us.children[0].Close()
+	return us.Children(0).Close()
 }
 
 // getOneRow gets one result row from dirty table or child.
@@ -244,7 +245,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
-		err = Next(ctx, us.children[0], us.snapshotChunkBuffer)
+		err = Next(ctx, us.Children(0), us.snapshotChunkBuffer)
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, err
 		}
@@ -267,7 +268,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 				// commit, but for simplicity, we don't handle it here.
 				continue
 			}
-			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.children[0])))
+			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.Children(0))))
 		}
 	}
 	return us.snapshotRows[0], nil
@@ -306,7 +307,7 @@ func (us *UnionScanExec) shouldPickFirstRow(a, b []types.Datum) (bool, error) {
 }
 
 func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
-	sc := us.ctx.GetSessionVars().StmtCtx
+	sc := us.Ctx().GetSessionVars().StmtCtx
 	for _, colOff := range us.usedIndex {
 		aColumn := a[colOff]
 		bColumn := b[colOff]

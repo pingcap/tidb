@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -49,7 +50,7 @@ import (
 // 3. main thread receives the task and fetch results from the channel in task one by one.
 // 4. If channel has been closed, main thread receives the next task.
 type IndexLookUpMergeJoin struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	resultCh   <-chan *lookUpMergeJoinTask
 	cancelFunc context.CancelFunc
@@ -120,7 +121,7 @@ type outerMergeWorker struct {
 	lookup *IndexLookUpMergeJoin
 
 	ctx      sessionctx.Context
-	executor Executor
+	executor exec.Executor
 
 	maxBatchSize int
 	batchSize    int
@@ -140,7 +141,7 @@ type innerMergeWorker struct {
 	joinChkResourceCh chan *chunk.Chunk
 	outerMergeCtx     outerMergeCtx
 	ctx               sessionctx.Context
-	innerExec         Executor
+	innerExec         exec.Executor
 	joiner            joiner
 	retFieldTypes     []*types.FieldType
 
@@ -157,23 +158,23 @@ type indexMergeJoinResult struct {
 
 // Open implements the Executor interface
 func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
-	err := e.children[0].Open(ctx)
+	err := e.Children(0).Open(ctx)
 	if err != nil {
 		return err
 	}
-	e.memTracker = memory.NewTracker(e.id, -1)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker = memory.NewTracker(e.ID(), -1)
+	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	return nil
 }
 
 func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	// TODO: consider another session currency variable for index merge join.
 	// Because its parallelization is not complete.
-	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
-	if e.runtimeStats != nil {
+	concurrency := e.Ctx().GetSessionVars().IndexLookupJoinConcurrency()
+	if e.RuntimeStats() != nil {
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
+		e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), runtimeStats)
 	}
 
 	resultCh := make(chan *lookUpMergeJoinTask, concurrency)
@@ -182,7 +183,7 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	for i := 0; i < concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, numResChkHold)
 		for j := 0; j < numResChkHold; j++ {
-			e.joinChkResourceCh[i] <- chunk.NewChunkWithCapacity(e.retFieldTypes, e.maxChunkSize)
+			e.joinChkResourceCh[i] <- chunk.NewChunkWithCapacity(e.RetFieldTypes(), e.MaxChunkSize())
 		}
 	}
 	workerCtx, cancelFunc := context.WithCancel(ctx)
@@ -199,13 +200,13 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMergeJoinTask) *outerMergeWorker {
 	omw := &outerMergeWorker{
 		outerMergeCtx:         e.outerMergeCtx,
-		ctx:                   e.ctx,
+		ctx:                   e.Ctx(),
 		lookup:                e,
-		executor:              e.children[0],
+		executor:              e.Children(0),
 		resultCh:              resultCh,
 		innerCh:               innerCh,
 		batchSize:             32,
-		maxBatchSize:          e.ctx.GetSessionVars().IndexJoinBatchSize,
+		maxBatchSize:          e.Ctx().GetSessionVars().IndexJoinBatchSize,
 		parentMemTracker:      e.memTracker,
 		nextColCompareFilters: e.lastColHelper,
 	}
@@ -225,13 +226,13 @@ func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinT
 		innerMergeCtx:     e.innerMergeCtx,
 		outerMergeCtx:     e.outerMergeCtx,
 		taskCh:            taskCh,
-		ctx:               e.ctx,
+		ctx:               e.Ctx(),
 		indexRanges:       copiedRanges,
 		keyOff2IdxOff:     e.keyOff2IdxOff,
 		joiner:            e.joiners[workID],
 		joinChkResourceCh: e.joinChkResourceCh[workID],
-		retFieldTypes:     e.retFieldTypes,
-		maxChunkSize:      e.maxChunkSize,
+		retFieldTypes:     e.RetFieldTypes(),
+		maxChunkSize:      e.MaxChunkSize(),
 	}
 	if e.lastColHelper != nil {
 		// nextCwf.TmpConstant needs to be reset for every individual
@@ -343,7 +344,7 @@ func (omw *outerMergeWorker) pushToChan(ctx context.Context, task *lookUpMergeJo
 func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTask, error) {
 	task := &lookUpMergeJoinTask{
 		results:     make(chan *indexMergeJoinResult, numResChkHold),
-		outerResult: chunk.NewList(omw.rowTypes, omw.executor.base().initCap, omw.executor.base().maxChunkSize),
+		outerResult: chunk.NewList(omw.rowTypes, omw.executor.Base().InitCap(), omw.executor.Base().MaxChunkSize()),
 	}
 	task.memTracker = memory.NewTracker(memory.LabelForSimpleTask, -1)
 	task.memTracker.AttachTo(omw.parentMemTracker)
@@ -706,7 +707,7 @@ func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*indexJoinLoo
 
 // fetchNextInnerResult collects a chunk of inner results from inner child executor.
 func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *lookUpMergeJoinTask) (beginRow chunk.Row, err error) {
-	task.innerResult = imw.ctx.GetSessionVars().GetNewChunkWithCapacity(retTypes(imw.innerExec), imw.ctx.GetSessionVars().MaxChunkSize, imw.ctx.GetSessionVars().MaxChunkSize, imw.innerExec.base().AllocPool)
+	task.innerResult = imw.ctx.GetSessionVars().GetNewChunkWithCapacity(retTypes(imw.innerExec), imw.ctx.GetSessionVars().MaxChunkSize, imw.ctx.GetSessionVars().MaxChunkSize, imw.innerExec.Base().AllocPool)
 	err = Next(ctx, imw.innerExec, task.innerResult)
 	task.innerIter = chunk.NewIterator4Chunk(task.innerResult)
 	beginRow = task.innerIter.Begin()
@@ -715,8 +716,8 @@ func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *loo
 
 // Close implements the Executor interface.
 func (e *IndexLookUpMergeJoin) Close() error {
-	if e.runtimeStats != nil {
-		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.runtimeStats)
+	if e.RuntimeStats() != nil {
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.RuntimeStats())
 	}
 	if e.cancelFunc != nil {
 		e.cancelFunc()
@@ -733,5 +734,5 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	e.workerWg.Wait()
 	e.memTracker = nil
 	e.prepared = false
-	return e.baseExecutor.Close()
+	return e.BaseExecutor.Close()
 }

@@ -232,7 +232,7 @@ func TestSortSpillDisk(t *testing.T) {
 	}
 	dataSource := buildMockDataSource(opt)
 	exec := &SortExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
+		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.schema,
 	}
@@ -327,7 +327,7 @@ func TestSortSpillDisk(t *testing.T) {
 	}
 	dataSource = buildMockDataSource(opt)
 	exec = &SortExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
+		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.schema,
 	}

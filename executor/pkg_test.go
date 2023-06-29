@@ -65,7 +65,7 @@ func TestNestedLoopApply(t *testing.T) {
 		retTypes(outerExec), retTypes(innerExec), nil, false)
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
-		baseExecutor: newBaseExecutor(sctx, joinSchema, 0),
+		BaseExecutor: exec.NewBaseExecutor(sctx, joinSchema, 0),
 		outerExec:    outerExec,
 		innerExec:    innerExec,
 		outerFilter:  []expression.Expression{outerFilter},
