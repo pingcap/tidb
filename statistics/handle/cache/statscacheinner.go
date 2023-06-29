@@ -74,18 +74,20 @@ type StatsCacheWrapper struct {
 	// minorVersion is to differentiate the cache when the version is unchanged while the cache contents are
 	// modified indeed. This can happen when we load extra column histograms into cache, or when we modify the cache with
 	// statistics feedbacks, etc. We cannot bump the version then because no new changes of `mysql.stats_meta` are loaded,
-	// while the override of StatsCacheWrapper is in a Copy-on-write way, to make sure the StatsCacheWrapper is unchanged by others during the
-	// the interval of 'Copy' and 'write', every 'write' should bump / check this minorVersion if the version keeps
+	// while the override of StatsCacheWrapper is in a copy-on-write way, to make sure the StatsCacheWrapper is unchanged by others during the
+	// the interval of 'copy' and 'write', every 'write' should bump / check this minorVersion if the version keeps
 	// unchanged.
 	// This bump / check logic is encapsulated in `StatsCacheWrapper.update` and `updateStatsCache`, callers don't need to care
 	// about this minorVersion actually.
 	minorVersion uint64
 }
 
+// Len returns the number of tables in the cache.
 func (sc StatsCacheWrapper) Len() int {
 	return sc.StatsCacheInner.Len()
 }
 
+// Copy copies the cache.
 func (sc StatsCacheWrapper) Copy() StatsCacheWrapper {
 	newCache := StatsCacheWrapper{
 		version:      sc.version,
@@ -95,10 +97,12 @@ func (sc StatsCacheWrapper) Copy() StatsCacheWrapper {
 	return newCache
 }
 
+// SetVersion sets the version of the cache.
 func (sc *StatsCacheWrapper) SetVersion(version uint64) {
 	sc.version = version
 }
 
+// Version returns the version of the cache.
 func (sc StatsCacheWrapper) Version() uint64 {
 	return sc.version
 }
