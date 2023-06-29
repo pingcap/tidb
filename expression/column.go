@@ -37,7 +37,6 @@ type CorrelatedColumn struct {
 	Column
 
 	Data           *types.Datum
-	columnHashCode []byte
 }
 
 // Clone implements Expression interface.
