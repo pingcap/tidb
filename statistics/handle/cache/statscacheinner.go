@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -83,12 +83,12 @@ type StatsCacheWrapper struct {
 }
 
 // Len returns the number of tables in the cache.
-func (sc StatsCacheWrapper) Len() int {
+func (sc *StatsCacheWrapper) Len() int {
 	return sc.StatsCacheInner.Len()
 }
 
 // Copy copies the cache.
-func (sc StatsCacheWrapper) Copy() StatsCacheWrapper {
+func (sc *StatsCacheWrapper) Copy() StatsCacheWrapper {
 	newCache := StatsCacheWrapper{
 		version:      sc.version,
 		minorVersion: sc.minorVersion,
@@ -103,12 +103,12 @@ func (sc *StatsCacheWrapper) SetVersion(version uint64) {
 }
 
 // Version returns the version of the cache.
-func (sc StatsCacheWrapper) Version() uint64 {
+func (sc *StatsCacheWrapper) Version() uint64 {
 	return sc.version
 }
 
 // Update updates the statistics table cache using Copy on write.
-func (sc StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64, opts ...TableStatsOpt) StatsCacheWrapper {
+func (sc *StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64, opts ...TableStatsOpt) StatsCacheWrapper {
 	option := &TableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
