@@ -1755,7 +1755,7 @@ func buildPauseSafePointName(taskName string) string {
 	return fmt.Sprintf("%s_pause_safepoint", taskName)
 }
 
-func checkClusterEmpty(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *conn.Mgr) error {
+func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *conn.Mgr) error {
 	userDBs := restore.GetExistedUserDBs(mgr.GetDomain())
 	if len(userDBs) > 0 {
 		userDBNames := make([]string, 0, len(userDBs))
@@ -1832,7 +1832,7 @@ func checkPiTRTaskInfo(
 			// Only when use checkpoint and not the first execution,
 			// skip checking requirements.
 			log.Info("check pitr requirements for the first execution")
-			if err := checkClusterEmpty(ctx, g, cfg, mgr); err != nil {
+			if err := checkPiTRRequirements(ctx, g, cfg, mgr); err != nil {
 				if len(errTaskMsg) > 0 {
 					err = errors.Annotatef(err, "The current restore task is regarded as %s. "+
 						"If you ensure that no changes have been made to the cluster since the last execution, "+
