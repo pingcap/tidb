@@ -158,10 +158,12 @@ func (s *Server) GetStatusServerAddr() (on bool, addr string) {
 	if !s.cfg.Status.ReportStatus {
 		return false, ""
 	}
-	// TODO: better way to get the proper ip to be used by TiFlash nodes
 	if strings.Contains(s.statusAddr, config.DefStatusHost) {
 		if s.cfg.Host != config.DefHost {
 			return true, strings.ReplaceAll(s.statusAddr, config.DefStatusHost, s.cfg.Host)
+		}
+		if len(s.cfg.AdvertiseAddress) != 0 {
+			return true, strings.ReplaceAll(s.statusAddr, config.DefStatusHost, s.cfg.AdvertiseAddress)
 		}
 		return false, ""
 	}

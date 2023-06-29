@@ -98,7 +98,7 @@ func InitExecutorMetrics() {
 			Namespace: "tidb",
 			Subsystem: "executor",
 			Name:      "mpp_coordinator_latency",
-			Help:      "Bucketed histogram of processing time (s) of mpp coordinator operations.",
+			Help:      "Bucketed histogram of processing time (ms) of mpp coordinator operations.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType})
 }
