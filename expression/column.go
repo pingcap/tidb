@@ -37,8 +37,7 @@ import (
 type CorrelatedColumn struct {
 	Column
 
-	Data           *types.Datum
-	columnHashCode []byte
+	Data *types.Datum
 }
 
 // Clone implements Expression interface.
