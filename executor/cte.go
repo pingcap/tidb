@@ -41,25 +41,24 @@ var _ Executor = &CTEExec{}
 // which will be the input for new iteration.
 // At the end of each iteration, data in `iterOutTbl` will also be added into `resTbl`.
 // `resTbl` stores data of all iteration.
-//
-//	                               +----------+
-//	                 write         |iterOutTbl|
-//	   CTEExec ------------------->|          |
-//	      |                        +----+-----+
-//	-------------                       | write
-//	|           |                       v
-//
-// other op     other op             +----------+
-// (seed)       (recursive)          |  resTbl  |
-//
-//	      ^                |          |
-//	      |                +----------+
-//	CTETableReaderExec
-//	       ^
-//	       |  read         +----------+
-//	       +---------------+iterInTbl |
-//	                       |          |
-//	                       +----------+
+/*
+                                   +----------+
+                     write         |iterOutTbl|
+       CTEExec ------------------->|          |
+          |                        +----+-----+
+    -------------                       | write
+    |           |                       v
+ other op     other op             +----------+
+ (seed)       (recursive)          |  resTbl  |
+                  ^                |          |
+                  |                +----------+
+            CTETableReaderExec
+                   ^
+                   |  read         +----------+
+                   +---------------+iterInTbl |
+                                   |          |
+                                   +----------+
+*/
 type CTEExec struct {
 	baseExecutor
 
@@ -169,21 +168,10 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 		return err
 	}
 
-<<<<<<< HEAD
-	e.memTracker = memory.NewTracker(e.id, -1)
-	e.diskTracker = disk.NewTracker(e.id, -1)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
-=======
-	if p.memTracker != nil {
-		p.memTracker.Reset()
-	} else {
-		p.memTracker = memory.NewTracker(cteExec.id, -1)
-	}
+	p.memTracker = memory.NewTracker(cteExec.id, -1)
 	p.diskTracker = disk.NewTracker(cteExec.id, -1)
 	p.memTracker.AttachTo(p.ctx.GetSessionVars().StmtCtx.MemTracker)
 	p.diskTracker.AttachTo(p.ctx.GetSessionVars().StmtCtx.DiskTracker)
->>>>>>> cfef1b05ccd (executor: add CTEProducer that shared by all CTEExec (#44643))
 
 	if p.recursiveExec != nil {
 		if err = p.recursiveExec.Open(ctx); err != nil {
@@ -241,43 +229,8 @@ func (p *cteProducer) closeProducer() (err error) {
 
 func (p *cteProducer) getChunk(ctx context.Context, cteExec *CTEExec, req *chunk.Chunk) (err error) {
 	req.Reset()
-<<<<<<< HEAD
-	e.resTbl.Lock()
-	defer e.resTbl.Unlock()
-	if !e.resTbl.Done() {
-		if e.resTbl.Error() != nil {
-			return e.resTbl.Error()
-		}
-		resAction := setupCTEStorageTracker(e.resTbl, e.ctx, e.memTracker, e.diskTracker)
-		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx, e.memTracker, e.diskTracker)
-		var iterOutAction *chunk.SpillDiskAction
-		if e.iterOutTbl != nil {
-			iterOutAction = setupCTEStorageTracker(e.iterOutTbl, e.ctx, e.memTracker, e.diskTracker)
-		}
-
-		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
-			if val.(bool) && config.GetGlobalConfig().OOMUseTmpStorage {
-				defer resAction.WaitForTest()
-				defer iterInAction.WaitForTest()
-				if iterOutAction != nil {
-					defer iterOutAction.WaitForTest()
-				}
-			}
-		})
-
-		if err = e.computeSeedPart(ctx); err != nil {
-			e.resTbl.SetError(err)
-			return err
-		}
-		if err = e.computeRecursivePart(ctx); err != nil {
-			e.resTbl.SetError(err)
-			return err
-		}
-		e.resTbl.SetDone()
-=======
 	if p.hasLimit {
 		return p.nextChunkLimit(cteExec, req)
->>>>>>> cfef1b05ccd (executor: add CTEProducer that shared by all CTEExec (#44643))
 	}
 	if cteExec.chkIdx < p.resTbl.NumChunks() {
 		res, err := p.resTbl.GetChunk(cteExec.chkIdx)
@@ -293,141 +246,10 @@ func (p *cteProducer) getChunk(ctx context.Context, cteExec *CTEExec, req *chunk
 	return nil
 }
 
-<<<<<<< HEAD
-// Close implements the Executor interface.
-func (e *CTEExec) Close() (err error) {
-	e.reset()
-	if err = e.seedExec.Close(); err != nil {
-		return err
-	}
-	if e.recursiveExec != nil {
-		if err = e.recursiveExec.Close(); err != nil {
-			return err
-		}
-		// `iterInTbl` and `resTbl` are shared by multiple operators,
-		// so will be closed when the SQL finishes.
-		if e.iterOutTbl != nil {
-			if err = e.iterOutTbl.DerefAndClose(); err != nil {
-				return err
-			}
-		}
-	}
-	if e.isInApply {
-		if err = e.reopenTbls(); err != nil {
-			return err
-		}
-	}
-
-	return e.baseExecutor.Close()
-}
-
-func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
-	defer func() {
-		if r := recover(); r != nil && err == nil {
-			err = errors.Errorf("%v", r)
-		}
-	}()
-	failpoint.Inject("testCTESeedPanic", nil)
-	e.curIter = 0
-	e.iterInTbl.SetIter(e.curIter)
-	chks := make([]*chunk.Chunk, 0, 10)
-	for {
-		if e.limitDone(e.iterInTbl) {
-			break
-		}
-		chk := newFirstChunk(e.seedExec)
-		if err = Next(ctx, e.seedExec, chk); err != nil {
-			return
-		}
-		if chk.NumRows() == 0 {
-			break
-		}
-		if chk, err = e.tryDedupAndAdd(chk, e.iterInTbl, e.hashTbl); err != nil {
-			return
-		}
-		chks = append(chks, chk)
-	}
-	// Initial resTbl is empty, so no need to deduplicate chk using resTbl.
-	// Just adding is ok.
-	for _, chk := range chks {
-		if err = e.resTbl.Add(chk); err != nil {
-			return
-		}
-	}
-	e.curIter++
-	e.iterInTbl.SetIter(e.curIter)
-
-	return
-}
-
-func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
-	defer func() {
-		if r := recover(); r != nil && err == nil {
-			err = errors.Errorf("%v", r)
-		}
-	}()
-	failpoint.Inject("testCTERecursivePanic", nil)
-	if e.recursiveExec == nil || e.iterInTbl.NumChunks() == 0 {
-		return
-	}
-
-	if e.curIter > e.ctx.GetSessionVars().CTEMaxRecursionDepth {
-		return ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
-	}
-
-	if e.limitDone(e.resTbl) {
-		return
-	}
-
-	for {
-		chk := newFirstChunk(e.recursiveExec)
-		if err = Next(ctx, e.recursiveExec, chk); err != nil {
-			return
-		}
-		if chk.NumRows() == 0 {
-			if err = e.setupTblsForNewIteration(); err != nil {
-				return
-			}
-			if e.limitDone(e.resTbl) {
-				break
-			}
-			if e.iterInTbl.NumChunks() == 0 {
-				break
-			}
-			// Next iteration begins. Need use iterOutTbl as input of next iteration.
-			e.curIter++
-			e.iterInTbl.SetIter(e.curIter)
-			if e.curIter > e.ctx.GetSessionVars().CTEMaxRecursionDepth {
-				return ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
-			}
-			// Make sure iterInTbl is setup before Close/Open,
-			// because some executors will read iterInTbl in Open() (like IndexLookupJoin).
-			if err = e.recursiveExec.Close(); err != nil {
-				return
-			}
-			if err = e.recursiveExec.Open(ctx); err != nil {
-				return
-			}
-		} else {
-			if err = e.iterOutTbl.Add(chk); err != nil {
-				return
-			}
-		}
-	}
-	return
-}
-
-// Get next chunk from resTbl for limit.
-func (e *CTEExec) nextChunkLimit(req *chunk.Chunk) error {
-	if !e.meetFirstBatch {
-		for e.chkIdx < e.resTbl.NumChunks() {
-			res, err := e.resTbl.GetChunk(e.chkIdx)
-=======
 func (p *cteProducer) nextChunkLimit(cteExec *CTEExec, req *chunk.Chunk) error {
 	if !cteExec.meetFirstBatch {
 		for cteExec.chkIdx < p.resTbl.NumChunks() {
 			res, err := p.resTbl.GetChunk(cteExec.chkIdx)
->>>>>>> cfef1b05ccd (executor: add CTEProducer that shared by all CTEExec (#44643))
 			if err != nil {
 				return err
 			}
@@ -480,7 +302,7 @@ func (p *cteProducer) produce(ctx context.Context, cteExec *CTEExec) (err error)
 	}
 
 	failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
-		if val.(bool) && variable.EnableTmpStorageOnOOM.Load() {
+		if val.(bool) && config.GetGlobalConfig().OOMUseTmpStorage {
 			defer resAction.WaitForTest()
 			defer iterInAction.WaitForTest()
 			if iterOutAction != nil {
@@ -515,7 +337,7 @@ func (p *cteProducer) computeSeedPart(ctx context.Context) (err error) {
 		if p.limitDone(p.iterInTbl) {
 			break
 		}
-		chk := tryNewCacheChunk(p.seedExec)
+		chk := newFirstChunk(p.seedExec)
 		if err = Next(ctx, p.seedExec, chk); err != nil {
 			return
 		}
@@ -552,7 +374,7 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 	}
 
 	if p.curIter > p.ctx.GetSessionVars().CTEMaxRecursionDepth {
-		return exeerrors.ErrCTEMaxRecursionDepth.GenWithStackByArgs(p.curIter)
+		return ErrCTEMaxRecursionDepth.GenWithStackByArgs(p.curIter)
 	}
 
 	if p.limitDone(p.resTbl) {
@@ -560,7 +382,7 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 	}
 
 	for {
-		chk := tryNewCacheChunk(p.recursiveExec)
+		chk := newFirstChunk(p.recursiveExec)
 		if err = Next(ctx, p.recursiveExec, chk); err != nil {
 			return
 		}
@@ -578,7 +400,7 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 			p.curIter++
 			p.iterInTbl.SetIter(p.curIter)
 			if p.curIter > p.ctx.GetSessionVars().CTEMaxRecursionDepth {
-				return exeerrors.ErrCTEMaxRecursionDepth.GenWithStackByArgs(p.curIter)
+				return ErrCTEMaxRecursionDepth.GenWithStackByArgs(p.curIter)
 			}
 			// Make sure iterInTbl is setup before Close/Open,
 			// because some executors will read iterInTbl in Open() (like IndexLookupJoin).
