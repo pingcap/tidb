@@ -265,8 +265,8 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 	return jsonTbl, nil
 }
 
-// getTableHistoricalStatsToJSONWithFallback try to get table historical stats, if not exit, directly fallback to the
-// latest stats, and the second return value would be true
+// getTableHistoricalStatsToJSONWithFallback try to get table historical stats, if not exist, directly fallback to the
+// latest stats, and the second return value would be true.
 func (h *Handle) getTableHistoricalStatsToJSONWithFallback(
 	dbName string,
 	tableInfo *model.TableInfo,
