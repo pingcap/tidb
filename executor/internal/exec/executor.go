@@ -52,14 +52,14 @@ var _ Executor = &BaseExecutor{}
 
 type BaseExecutor struct {
 	ctx           sessionctx.Context
-	id            int
+	AllocPool     chunk.Allocator
 	schema        *expression.Schema // output schema
-	initCap       int
-	maxChunkSize  int
+	runtimeStats  *execdetails.BasicRuntimeStats
 	children      []Executor
 	retFieldTypes []*types.FieldType
-	runtimeStats  *execdetails.BasicRuntimeStats
-	AllocPool     chunk.Allocator
+	id            int
+	initCap       int
+	maxChunkSize  int
 }
 
 func NewBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) BaseExecutor {
