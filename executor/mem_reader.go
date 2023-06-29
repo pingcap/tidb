@@ -15,7 +15,6 @@
 package executor
 
 import (
-	// "fmt"
 	"context"
 
 	"github.com/pingcap/errors"
@@ -194,9 +193,7 @@ type allocBuf struct {
 func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.KeyRange) *memTableReader {
 	defer tracing.StartRegion(ctx, "buildMemTableReader").End()
 	colIDs := make(map[int64]int, len(us.columns))
-	// fmt.Println("build mem table reader, column info here ==")
 	for i, col := range us.columns {
-		// fmt.Println("col[i] ==", *col)
 		colIDs[col.ID] = i
 	}
 
@@ -237,7 +234,6 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		chk.AppendDatum(i, &d)
 		return nil
 	}
-	// fmt.Println("!!!=== !!!", pkColIDs)
 	cd := rowcodec.NewChunkDecoder(colInfo, pkColIDs, def, us.ctx.GetSessionVars().Location())
 	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, defVal, us.ctx.GetSessionVars().Location())
 	return &memTableReader{
@@ -316,7 +312,6 @@ func (iter *txnMemBufferIter) next() ([]types.Datum, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// fmt.Println("handle ===", handle, "value ==", curr.Value())
 		iter.chk.Reset()
 		err = iter.cd.DecodeToChunk(curr.Value(), handle, iter.chk)
 		if err != nil {
@@ -328,13 +323,10 @@ func (iter *txnMemBufferIter) next() ([]types.Datum, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// fmt.Println("get row to string ===", row.ToString(iter.retFieldTypes))
 		if !matched {
-			// fmt.Println("matched is false ==", row)
 			continue
 		}
 		ret := row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow)
-		// fmt.Println("in next() value for row is", ret)
 		return ret, curr.Next()
 	}
 	return nil, err

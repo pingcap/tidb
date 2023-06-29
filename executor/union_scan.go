@@ -281,7 +281,6 @@ func (us *UnionScanExec) getAddedRow() ([]types.Datum, error) {
 			return nil, err
 		}
 	}
-	// fmt.Println("get added row get ==", us.cursor4AddRows)
 	return us.cursor4AddRows, nil
 }
 
