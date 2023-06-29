@@ -147,14 +147,11 @@ func (e *Engine) setError(err error) {
 	}
 }
 
-<<<<<<< HEAD
-=======
 func (e *Engine) getDB() *pebble.DB {
 	return e.db.Load()
 }
 
 // Close closes the engine and release all resources.
->>>>>>> 244d9c33880 (lightning: fix check disk quota routine block when some engine is importing (#44877))
 func (e *Engine) Close() error {
 	e.logger.Debug("closing local engine", zap.Stringer("engine", e.UUID), zap.Stack("stack"))
 	db := e.getDB()
@@ -990,44 +987,7 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
-<<<<<<< HEAD
-	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
-=======
-	return newDupDetectIter(e.getDB(), e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
-}
-
-// getFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
-// in the engine. Empty upperBound means unbounded.
-func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
-	if len(upperBound) == 0 {
-		// we use empty slice for unbounded upper bound, but it means max value in pebble
-		// so reset to nil
-		upperBound = nil
-	}
-	opt := &pebble.IterOptions{
-		LowerBound: lowerBound,
-		UpperBound: upperBound,
-	}
-
-	iter := e.newKVIter(context.Background(), opt)
-	//nolint: errcheck
-	defer iter.Close()
-	// Needs seek to first because NewIter returns an iterator that is unpositioned
-	hasKey := iter.First()
-	if iter.Error() != nil {
-		return nil, nil, errors.Annotate(iter.Error(), "failed to read the first key")
-	}
-	if !hasKey {
-		return nil, nil, nil
-	}
-	firstKey := append([]byte{}, iter.Key()...)
-	iter.Last()
-	if iter.Error() != nil {
-		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
-	}
-	lastKey := append([]byte{}, iter.Key()...)
-	return firstKey, lastKey, nil
->>>>>>> 244d9c33880 (lightning: fix check disk quota routine block when some engine is importing (#44877))
+	return newDupDetectIter(ctx, e.getDB(), e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
 }
 
 type sstMeta struct {
