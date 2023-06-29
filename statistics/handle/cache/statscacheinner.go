@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle/internal/cache"
-	"github.com/pingcap/tidb/statistics/handle/internal/cache/lru"
-	"github.com/pingcap/tidb/statistics/handle/internal/cache/mapcache"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/lru"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/mapcache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -68,7 +68,7 @@ func NewStatsCacheWrapper() StatsCacheWrapper {
 
 // StatsCacheWrapper caches the tables in memory for Handle.
 type StatsCacheWrapper struct {
-	cache.StatsCacheInner
+	internal.StatsCacheInner
 	// version is the latest version of cache. It is bumped when new records of `mysql.stats_meta` are loaded into cache.
 	version uint64
 	// minorVersion is to differentiate the cache when the version is unchanged while the cache contents are
