@@ -32,10 +32,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
-	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
@@ -51,14 +49,7 @@ const (
 var (
 	serviceSafePointTTL int64 = 10 * 60 // 10 min in seconds
 
-	// MinDistSQLScanConcurrency is the minimum value of tidb_distsql_scan_concurrency.
-	MinDistSQLScanConcurrency = 4
-
-	// DefaultBackoffWeight is the default value of tidb_backoff_weight for checksum.
-	// when TiKV client encounters an error of "region not leader", it will keep retrying every 500 ms.
-	// If it still fails after 2 * 20 = 40 seconds, it will return "region unavailable".
-	// If we increase the BackOffWeight to 6, then the TiKV client will keep retrying for 120 seconds.
-	DefaultBackoffWeight = 3 * tikvstore.DefBackOffWeight
+	minDistSQLScanConcurrency = 4
 )
 
 // RemoteChecksum represents a checksum result got from tidb.
@@ -111,15 +102,6 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 
 	task := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "remote checksum")
 
-	conn, err := e.db.Conn(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer func() {
-		if err := conn.Close(); err != nil {
-			task.Warn("close connection failed", zap.Error(err))
-		}
-	}()
 	// ADMIN CHECKSUM TABLE <table>,<table>  example.
 	// 	mysql> admin checksum table test.t;
 	// +---------+------------+---------------------+-----------+-------------+
@@ -127,23 +109,9 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	// +---------+------------+---------------------+-----------+-------------+
 	// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
 	// +---------+------------+---------------------+-----------+-------------+
-	backoffWeight, err := common.GetBackoffWeightFromDB(ctx, e.db)
-	if err == nil && backoffWeight < DefaultBackoffWeight {
-		task.Info("increase tidb_backoff_weight", zap.Int("original", backoffWeight), zap.Int("new", DefaultBackoffWeight))
-		// increase backoff weight
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, DefaultBackoffWeight)); err != nil {
-			task.Warn("set tidb_backoff_weight failed", zap.Error(err))
-		} else {
-			defer func() {
-				if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, backoffWeight)); err != nil {
-					task.Warn("recover tidb_backoff_weight failed", zap.Error(err))
-				}
-			}()
-		}
-	}
 
 	cs := RemoteChecksum{}
-	err = common.SQLWithRetry{DB: conn, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
+	err = common.SQLWithRetry{DB: e.db, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
 		"ADMIN CHECKSUM TABLE "+tableName, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,
 	)
 	dur := task.End(zap.ErrorLevel, err)
@@ -271,25 +239,22 @@ type TiKVChecksumManager struct {
 	client                 kv.Client
 	manager                gcTTLManager
 	distSQLScanConcurrency uint
-	backoffWeight          int
 }
 
 var _ ChecksumManager = &TiKVChecksumManager{}
 
 // NewTiKVChecksumManager return a new tikv checksum manager
-func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint, backoffWeight int) *TiKVChecksumManager {
+func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint) *TiKVChecksumManager {
 	return &TiKVChecksumManager{
 		client:                 client,
 		manager:                newGCTTLManager(pdClient),
 		distSQLScanConcurrency: distSQLScanConcurrency,
-		backoffWeight:          backoffWeight,
 	}
 }
 
 func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, ts uint64) (*RemoteChecksum, error) {
 	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, ts).
 		SetConcurrency(e.distSQLScanConcurrency).
-		SetBackoffWeight(e.backoffWeight).
 		Build()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -321,8 +286,8 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 		if !common.IsRetryableError(err) {
 			break
 		}
-		if distSQLScanConcurrency > MinDistSQLScanConcurrency {
-			distSQLScanConcurrency = mathutil.Max(distSQLScanConcurrency/2, MinDistSQLScanConcurrency)
+		if distSQLScanConcurrency > minDistSQLScanConcurrency {
+			distSQLScanConcurrency = mathutil.Max(distSQLScanConcurrency/2, minDistSQLScanConcurrency)
 		}
 	}
 

@@ -28,8 +28,7 @@ type ExecutorBuilder struct {
 
 	oldTable *metautil.Table
 
-	concurrency   uint
-	backoffWeight int
+	concurrency uint
 
 	oldKeyspace []byte
 	newKeyspace []byte
@@ -57,12 +56,6 @@ func (builder *ExecutorBuilder) SetConcurrency(conc uint) *ExecutorBuilder {
 	return builder
 }
 
-// SetBackoffWeight set the backoffWeight of the checksum executing.
-func (builder *ExecutorBuilder) SetBackoffWeight(backoffWeight int) *ExecutorBuilder {
-	builder.backoffWeight = backoffWeight
-	return builder
-}
-
 func (builder *ExecutorBuilder) SetOldKeyspace(keyspace []byte) *ExecutorBuilder {
 	builder.oldKeyspace = keyspace
 	return builder
@@ -86,7 +79,7 @@ func (builder *ExecutorBuilder) Build() (*Executor, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &Executor{reqs: reqs, backoffWeight: builder.backoffWeight}, nil
+	return &Executor{reqs: reqs}, nil
 }
 
 func buildChecksumRequest(
@@ -301,8 +294,7 @@ func updateChecksumResponse(resp, update *tipb.ChecksumResponse) {
 
 // Executor is a checksum executor.
 type Executor struct {
-	reqs          []*kv.Request
-	backoffWeight int
+	reqs []*kv.Request
 }
 
 // Len returns the total number of checksum requests.
@@ -355,11 +347,7 @@ func (exec *Executor) Execute(
 			err  error
 		)
 		err = utils.WithRetry(ctx, func() error {
-			vars := kv.NewVariables(&killed)
-			if exec.backoffWeight > 0 {
-				vars.BackOffWeight = exec.backoffWeight
-			}
-			resp, err = sendChecksumRequest(ctx, client, req, vars)
+			resp, err = sendChecksumRequest(ctx, client, req, kv.NewVariables(&killed))
 			failpoint.Inject("checksumRetryErr", func(val failpoint.Value) {
 				// first time reach here. return error
 				if val.(bool) {

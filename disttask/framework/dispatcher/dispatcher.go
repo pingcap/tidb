@@ -483,41 +483,12 @@ func (d *dispatcher) GetAllSchedulerIDs(ctx context.Context, gTaskID int64) ([]s
 	return ids, nil
 }
 
-<<<<<<< HEAD
 func matchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string) bool {
 	for _, serverInfo := range serverInfos {
 		serverID := disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port)
 		if serverID == schedulerID {
 			return true
 		}
-=======
-func (d *dispatcher) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error) {
-	previousSubtasks, err := d.taskMgr.GetSucceedSubtasksByStep(gTaskID, step)
-	if err != nil {
-		logutil.BgLogger().Warn("get previous succeed subtask failed", zap.Int64("ID", gTaskID), zap.Int64("step", step))
-		return nil, err
-	}
-	previousSubtaskMetas := make([][]byte, 0, len(previousSubtasks))
-	for _, subtask := range previousSubtasks {
-		previousSubtaskMetas = append(previousSubtaskMetas, subtask.Meta)
-	}
-	return previousSubtaskMetas, nil
-}
-
-func (d *dispatcher) WithNewSession(fn func(se sessionctx.Context) error) error {
-	return d.taskMgr.WithNewSession(fn)
-}
-
-func (d *dispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
-	return d.taskMgr.WithNewTxn(ctx, fn)
-}
-
-func (*dispatcher) checkConcurrencyOverflow(cnt int) bool {
-	if cnt >= DefaultDispatchConcurrency {
-		logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency",
-			zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
-		return true
->>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 	}
 	return false
 }

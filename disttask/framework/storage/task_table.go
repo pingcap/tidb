@@ -34,17 +34,6 @@ import (
 	"go.uber.org/zap"
 )
 
-<<<<<<< HEAD
-=======
-// SessionExecutor defines the interface for executing SQLs in a session.
-type SessionExecutor interface {
-	// WithNewSession executes the function with a new session.
-	WithNewSession(fn func(se sessionctx.Context) error) error
-	// WithNewTxn executes the fn in a new transaction.
-	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error
-}
-
->>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 // TaskManager is the manager of global/sub task.
 type TaskManager struct {
 	ctx    context.Context
@@ -76,9 +65,9 @@ func SetTaskManager(is *TaskManager) {
 	taskManagerInstance.Store(is)
 }
 
-// ExecSQL executes the sql and returns the result.
+// execSQL executes the sql and returns the result.
 // TODO: consider retry.
-func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+func execSQL(ctx context.Context, se sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
 	rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -125,17 +114,9 @@ func (stm *TaskManager) withNewSession(fn func(se sessionctx.Context) error) err
 	return fn(se.(sessionctx.Context))
 }
 
-<<<<<<< HEAD
 func (stm *TaskManager) withNewTxn(fn func(se sessionctx.Context) error) error {
 	return stm.withNewSession(func(se sessionctx.Context) (err error) {
 		_, err = execSQL(stm.ctx, se, "begin")
-=======
-// WithNewTxn executes the fn in a new transaction.
-func (stm *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-	return stm.WithNewSession(func(se sessionctx.Context) (err error) {
-		_, err = ExecSQL(ctx, se, "begin")
->>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 		if err != nil {
 			return err
 		}
@@ -146,7 +127,7 @@ func (stm *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Co
 			if success {
 				sql = "commit"
 			}
-			_, commitErr := ExecSQL(ctx, se, sql)
+			_, commitErr := execSQL(stm.ctx, se, sql)
 			if err == nil && commitErr != nil {
 				err = commitErr
 			}
@@ -162,13 +143,8 @@ func (stm *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Co
 }
 
 func (stm *TaskManager) executeSQLWithNewSession(ctx context.Context, sql string, args ...interface{}) (rs []chunk.Row, err error) {
-<<<<<<< HEAD
 	err = stm.withNewSession(func(se sessionctx.Context) error {
 		rs, err = execSQL(ctx, se, sql, args...)
-=======
-	err = stm.WithNewSession(func(se sessionctx.Context) error {
-		rs, err = ExecSQL(ctx, se, sql, args...)
->>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 		return err
 	})
 
@@ -206,30 +182,6 @@ func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta [
 	return
 }
 
-<<<<<<< HEAD
-=======
-// AddGlobalTaskWithSession adds a new task to global task table with session.
-func (stm *TaskManager) AddGlobalTaskWithSession(se sessionctx.Context, key, tp string, concurrency int, meta []byte) (taskID int64, err error) {
-	_, err = ExecSQL(stm.ctx, se,
-		`insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, state_update_time)
-		values (%?, %?, %?, %?, %?, %?, %?)`,
-		key, tp, proto.TaskStatePending, concurrency, proto.StepInit, meta, time.Now().UTC().String())
-	if err != nil {
-		return 0, err
-	}
-
-	rs, err := ExecSQL(stm.ctx, se, "select @@last_insert_id")
-	if err != nil {
-		return 0, err
-	}
-
-	taskID = int64(rs[0].GetUint64(0))
-	failpoint.Inject("testSetLastTaskID", func() { TestLastTaskID.Store(taskID) })
-
-	return taskID, nil
-}
-
->>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 // GetNewGlobalTask get a new task from global task table, it's used by dispatcher only.
 func (stm *TaskManager) GetNewGlobalTask() (task *proto.Task, err error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
@@ -417,15 +369,9 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, isSubtaskRevert bool) error {
-<<<<<<< HEAD
 	return stm.withNewTxn(func(se sessionctx.Context) error {
 		_, err := execSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, error = %? where id = %?",
 			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Error, gTask.ID)
-=======
-	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
-		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %? where id = %?",
-			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, gTask.Error, gTask.ID)
->>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 		if err != nil {
 			return err
 		}
@@ -443,13 +389,8 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 
 		for _, subtask := range subtasks {
 			// TODO: insert subtasks in batch
-<<<<<<< HEAD
 			_, err = execSQL(stm.ctx, se, "insert into mysql.tidb_background_subtask(task_key, exec_id, meta, state, type, checkpoint) values (%?, %?, %?, %?, %?, %?)",
 				gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{})
-=======
-			_, err = ExecSQL(stm.ctx, se, "insert into mysql.tidb_background_subtask(step, task_key, exec_id, meta, state, type, checkpoint) values (%?, %?, %?, %?, %?, %?, %?)",
-				gTask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{})
->>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 			if err != nil {
 				return err
 			}
@@ -467,16 +408,6 @@ func (stm *TaskManager) CancelGlobalTask(taskID int64) error {
 	return err
 }
 
-<<<<<<< HEAD
-=======
-// CancelGlobalTaskByKeySession cancels global task by key using input session
-func (stm *TaskManager) CancelGlobalTaskByKeySession(se sessionctx.Context, taskKey string) error {
-	_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state=%? where task_key=%? and state in (%?, %?)",
-		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning)
-	return err
-}
-
->>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 // IsGlobalTaskCancelling checks whether the task state is cancelling
 func (stm *TaskManager) IsGlobalTaskCancelling(taskID int64) (bool, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select 1 from mysql.tidb_global_task where id=%? and state = %?",

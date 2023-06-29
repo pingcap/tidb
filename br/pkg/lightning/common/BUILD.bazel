@@ -26,11 +26,6 @@ go_library(
         "//kv",
         "//meta/autoid",
         "//parser/model",
-<<<<<<< HEAD
-=======
-        "//parser/mysql",
-        "//sessionctx/variable",
->>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
         "//store/driver/error",
         "//table/tables",
         "//util",
