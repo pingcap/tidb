@@ -26,15 +26,7 @@ type ExecutorBuilder struct {
 
 	oldTable *metautil.Table
 
-<<<<<<< HEAD
 	concurrency uint
-=======
-	concurrency   uint
-	backoffWeight int
-
-	oldKeyspace []byte
-	newKeyspace []byte
->>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 }
 
 // NewExecutorBuilder returns a new executor builder.
@@ -59,32 +51,13 @@ func (builder *ExecutorBuilder) SetConcurrency(conc uint) *ExecutorBuilder {
 	return builder
 }
 
-<<<<<<< HEAD
-=======
-// SetBackoffWeight set the backoffWeight of the checksum executing.
-func (builder *ExecutorBuilder) SetBackoffWeight(backoffWeight int) *ExecutorBuilder {
-	builder.backoffWeight = backoffWeight
-	return builder
-}
-
-func (builder *ExecutorBuilder) SetOldKeyspace(keyspace []byte) *ExecutorBuilder {
-	builder.oldKeyspace = keyspace
-	return builder
-}
-
-func (builder *ExecutorBuilder) SetNewKeyspace(keyspace []byte) *ExecutorBuilder {
-	builder.newKeyspace = keyspace
-	return builder
-}
-
->>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 // Build builds a checksum executor.
 func (builder *ExecutorBuilder) Build() (*Executor, error) {
 	reqs, err := buildChecksumRequest(builder.table, builder.oldTable, builder.ts, builder.concurrency)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &Executor{reqs: reqs, backoffWeight: builder.backoffWeight}, nil
+	return &Executor{reqs: reqs}, nil
 }
 
 func buildChecksumRequest(
@@ -289,8 +262,7 @@ func updateChecksumResponse(resp, update *tipb.ChecksumResponse) {
 
 // Executor is a checksum executor.
 type Executor struct {
-	reqs          []*kv.Request
-	backoffWeight int
+	reqs []*kv.Request
 }
 
 // Len returns the total number of checksum requests.
@@ -336,31 +308,7 @@ func (exec *Executor) Execute(
 		//
 		// It is useful in TiDB, however, it's a place holder in BR.
 		killed := uint32(0)
-<<<<<<< HEAD
 		resp, err := sendChecksumRequest(ctx, client, req, kv.NewVariables(&killed))
-=======
-		var (
-			resp *tipb.ChecksumResponse
-			err  error
-		)
-		err = utils.WithRetry(ctx, func() error {
-			vars := kv.NewVariables(&killed)
-			if exec.backoffWeight > 0 {
-				vars.BackOffWeight = exec.backoffWeight
-			}
-			resp, err = sendChecksumRequest(ctx, client, req, vars)
-			failpoint.Inject("checksumRetryErr", func(val failpoint.Value) {
-				// first time reach here. return error
-				if val.(bool) {
-					err = errors.New("inject checksum error")
-				}
-			})
-			if err != nil {
-				return errors.Trace(err)
-			}
-			return nil
-		}, &checksumBackoffer)
->>>>>>> 89bf7432279 (importinto/lightning: do remote checksum via sql (#44803))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
