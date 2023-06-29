@@ -88,7 +88,7 @@ type Handle struct {
 
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
-	statsCache cache.StatsCache
+	statsCache *cache.StatsCache
 
 	// feedback is used to store query feedback info.
 	feedback struct {

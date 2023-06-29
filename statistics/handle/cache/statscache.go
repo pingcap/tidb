@@ -27,13 +27,13 @@ type StatsCache struct {
 	mu         syncutil.Mutex
 }
 
-func NewStatsCache() StatsCache {
+func NewStatsCache() *StatsCache {
 	newCache := NewStatsCacheWrapper()
 	result := StatsCache{
 		memTracker: memory.NewTracker(memory.LabelForStatsCache, -1),
 	}
 	result.cache.Store(&newCache)
-	return result
+	return &result
 }
 
 // Clear removes all cached stats from the cache.
