@@ -4626,6 +4626,39 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	return statsTbl
 }
 
+func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) (version uint64) {
+	statsHandle := domain.GetDomain(ctx).StatsHandle()
+	if statsHandle == nil {
+		return 0
+	}
+
+	// the overall logical is similar to getStatsTable()
+	var statsTbl *statistics.Table
+	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		statsTbl = statsHandle.GetTableStats(tblInfo, handle.WithTableStatsByQuery())
+	} else {
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, handle.WithTableStatsByQuery())
+	}
+
+	// use pseudo stats if the row count is 0
+	realtimeRowCount := statsTbl.RealtimeCount
+	if !ctx.GetSessionVars().ConsiderRealtimeStatsForEstimation() {
+		realtimeRowCount = mathutil.Max(int64(statsTbl.GetAnalyzeRowCount()), 0)
+	}
+	if realtimeRowCount == 0 {
+		return 0
+	}
+
+	// use the max LastUpdateVersion among all Columns and Indices
+	for _, col := range statsTbl.Columns {
+		version = mathutil.Max(version, col.LastUpdateVersion)
+	}
+	for _, idx := range statsTbl.Indices {
+		version = mathutil.Max(version, idx.LastUpdateVersion)
+	}
+	return version
+}
+
 func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	for i := len(b.outerCTEs) - 1; i >= 0; i-- {
 		cte := b.outerCTEs[i]
