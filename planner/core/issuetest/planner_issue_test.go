@@ -113,6 +113,7 @@ func TestIssue45007(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, primary key(b)) PARTITION BY HASH(b) partitions 4")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("analyze table t")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t(a, b) values (6,6),(3,3),(9,9),(4,4),(5,5),(7,7),(8,8);")

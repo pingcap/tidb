@@ -58,7 +58,6 @@ func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	if ds, ok := p.children[0].(*DataSource); ok &&
 		ds.tableInfo.GetPartitionInfo() != nil &&
 		p.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode &&
-		tableHasDirtyContent(p.ctx, ds.tableInfo) &&
 		!prop.IsSortItemEmpty() {
 		return nil, true, nil
 	}
