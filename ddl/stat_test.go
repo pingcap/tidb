@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
@@ -92,4 +94,39 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
 				Length: types.UnspecifiedLength}}},
 	}
+}
+
+func TestIssue42268(t *testing.T) {
+	// issue 42268 missing table name in 'admin show ddl' result during drop table
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_0")
+	tk.MustExec("create table t_0 (c1 int, c2 int)")
+
+	tbl := external.GetTableByName(t, tk, "test", "t_0")
+	require.NotNil(t, tbl)
+	require.Equal(t, 2, len(tbl.Cols()))
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateNone:
+		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+			rs := tk1.MustQuery("admin show ddl jobs")
+			tblName := fmt.Sprintf("%s", rs.Rows()[0][2])
+			require.Equal(t, tblName, "t_0")
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk.MustExec("drop table t_0")
 }
