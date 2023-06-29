@@ -606,7 +606,7 @@ func TestLocalIngestLoop(t *testing.T) {
 			CompactConcurrency: 4,
 		},
 	}
-	f.db.Store(db)
+	f.db.Store(unsafe.Pointer(db))
 	f.sstIngester = testIngester{}
 	f.wg.Add(1)
 	go f.ingestSSTLoop()
@@ -823,7 +823,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 			CompactConcurrency: 4,
 		},
 	}
-	f.db.Store(db)
+	f.db.Store(unsafe.Pointer(db))
 
 	createSSTWriter := func() (*sstWriter, error) {
 		path := filepath.Join(f.sstDir, uuid.New().String()+".sst")
