@@ -2410,13 +2410,39 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs cursorResultSet, serverStatus uint16, fetchSize int) error {
-	// construct the rows sent to the client according to fetchSize.
-	var curRows []chunk.Row
+	var (
+		stmtDetail *execdetails.StmtExecDetails
+		err        error
+		start      time.Time
+	)
+	data := cc.alloc.AllocWithLen(4, 1024)
+	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
+	if stmtDetailRaw != nil {
+		//nolint:forcetypeassert
+		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
+	}
+	if stmtDetail != nil {
+		start = time.Now()
+	}
+
 	iter := rs.GetRowContainerReader()
 	// send the rows to the client according to fetchSize.
 	for i := 0; i < fetchSize && iter.Current() != iter.End(); i++ {
-		curRows = append(curRows, iter.Current())
+		row := iter.Current()
+
+		data = data[0:4]
+		data, err = dumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
+		if err != nil {
+			return err
+		}
+		if err = cc.writePacket(data); err != nil {
+			return err
+		}
+
 		iter.Next()
+	}
+	if iter.Error() != nil {
+		return iter.Error()
 	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
@@ -2426,43 +2452,8 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs cursorRes
 		serverStatus |= mysql.ServerStatusLastRowSend
 	}
 
-	var (
-		stmtDetail *execdetails.StmtExecDetails
-		err        error
-		start      time.Time
-	)
-
-	if len(curRows) != 0 {
-		data := cc.alloc.AllocWithLen(4, 1024)
-		stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
-		if stmtDetailRaw != nil {
-			//nolint:forcetypeassert
-			stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
-		}
-		if stmtDetail != nil {
-			start = time.Now()
-		}
-
-		for _, row := range curRows {
-			data = data[0:4]
-			data, err = dumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
-			if err != nil {
-				return err
-			}
-			if err = cc.writePacket(data); err != nil {
-				return err
-			}
-		}
-
-		if stmtDetail != nil {
-			stmtDetail.WriteSQLRespDuration += time.Since(start)
-		}
-		if cl, ok := rs.(fetchNotifier); ok {
-			cl.OnFetchReturned()
-		}
-		if stmtDetail != nil {
-			start = time.Now()
-		}
+	if cl, ok := rs.(fetchNotifier); ok {
+		cl.OnFetchReturned()
 	}
 
 	err = cc.writeEOF(ctx, serverStatus)
