@@ -274,6 +274,9 @@ const (
 
 	// TiDBUseAlloc indicates whether the last statement used chunk alloc
 	TiDBUseAlloc = "last_sql_use_alloc"
+
+	// TiDBExplicitRequestSourceType indicates the source of the request, which can be ["lightning", "br", "dumping", "tispark", "background"].
+	TiDBExplicitRequestSourceType = "tidb_request_source_type"
 )
 
 // TiDB system variable names that both in session and global scope.

@@ -495,6 +495,18 @@ func TestSessionCtx(t *testing.T) {
 					`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
+		{
+			// check reqest source
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec(`set @@tidb_reqest_source="BR"`)
+				require.Equal(t, "BR", tk.Session().GetSessionVars().RequestSourceType)
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustExec(`select count(*) from test.t1`)
+				tk.MustQuery(`select @@tidb_reqest_source`).Check(testkit.Rows("BR"))
+			},
+		},
 	}
 
 	for _, tt := range tests {
