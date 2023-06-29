@@ -27,6 +27,7 @@ import (
 	"sort"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/sstable"
@@ -156,7 +157,7 @@ func (e *Engine) Close() error {
 		return nil
 	}
 	err := errors.Trace(db.Close())
-	e.db.Store(nil)
+	e.db.Store(unsafe.Pointer(nil))
 	return err
 }
 
