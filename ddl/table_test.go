@@ -368,6 +368,10 @@ func TestCreateTables(t *testing.T) {
 }
 
 func TestRenameTableIntermediateState(t *testing.T) {
+	ddl.RunInGoTest = true
+	defer func() {
+		ddl.RunInGoTest = false
+	}()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
