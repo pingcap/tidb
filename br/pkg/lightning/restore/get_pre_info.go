@@ -367,6 +367,19 @@ func (p *PreRestoreInfoGetterImpl) GetAllTableStructures(ctx context.Context, op
 
 func (p *PreRestoreInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Context, dbSrcFileMeta *mydump.MDDatabaseMeta, getPreInfoCfg *ropts.GetPreInfoConfig) ([]*model.TableInfo, error) {
 	dbName := dbSrcFileMeta.Name
+	failpoint.Inject(
+		"getTableStructuresByFileMeta_BeforeFetchRemoteTableModels",
+		func(v failpoint.Value) {
+			fmt.Println("failpoint: getTableStructuresByFileMeta_BeforeFetchRemoteTableModels")
+			const defaultMilliSeconds int = 5000
+			sleepMilliSeconds, ok := v.(int)
+			if !ok || sleepMilliSeconds <= 0 || sleepMilliSeconds > 30000 {
+				sleepMilliSeconds = defaultMilliSeconds
+			}
+			//nolint: errcheck
+			failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/FetchRemoteTableModels_BeforeFetchTableAutoIDInfos", fmt.Sprintf("sleep(%d)", sleepMilliSeconds))
+		},
+	)
 	currentTableInfosFromDB, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName)
 	if err != nil {
 		if getPreInfoCfg != nil && getPreInfoCfg.IgnoreDBNotExist {
