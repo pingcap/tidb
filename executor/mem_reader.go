@@ -15,6 +15,7 @@
 package executor
 
 import (
+	// "fmt"
 	"context"
 
 	"github.com/pingcap/errors"
@@ -187,27 +188,36 @@ type allocBuf struct {
 	// cache for decode handle.
 	handleBytes []byte
 	rd          *rowcodec.BytesDecoder
-	cd *rowcodec.ChunkDecoder
+	cd          *rowcodec.ChunkDecoder
 }
 
 func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.KeyRange) *memTableReader {
 	defer tracing.StartRegion(ctx, "buildMemTableReader").End()
 	colIDs := make(map[int64]int, len(us.columns))
+	// fmt.Println("build mem table reader, column info here ==")
 	for i, col := range us.columns {
+		// fmt.Println("col[i] ==", *col)
 		colIDs[col.ID] = i
 	}
 
+	var pkColIDs []int64
 	colInfo := make([]rowcodec.ColInfo, 0, len(us.columns))
 	for i := range us.columns {
 		col := us.columns[i]
-		colInfo = append(colInfo, rowcodec.ColInfo{
+		tmp := rowcodec.ColInfo{
 			ID:         col.ID,
 			IsPKHandle: us.table.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
 			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		})
+		}
+		colInfo = append(colInfo, tmp)
+		if tmp.IsPKHandle {
+			pkColIDs = append(pkColIDs, tmp.ID)
+		}
 	}
 
-	pkColIDs := tables.TryGetCommonPkColumnIds(us.table.Meta())
+	if len(pkColIDs) == 0 {
+		pkColIDs = tables.TryGetCommonPkColumnIds(us.table.Meta())
+	}
 	if len(pkColIDs) == 0 {
 		pkColIDs = []int64{-1}
 	}
@@ -220,14 +230,14 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		return tablecodec.EncodeValue(us.ctx.GetSessionVars().StmtCtx, nil, d)
 	}
 	def := func(i int, chk *chunk.Chunk) error {
-		ci := us.columns[i]
-		d, err := table.GetColOriginDefaultValue(us.ctx, ci)
+		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(us.ctx, us.columns[i])
 		if err != nil {
 			return err
 		}
 		chk.AppendDatum(i, &d)
 		return nil
 	}
+	// fmt.Println("!!!=== !!!", pkColIDs)
 	cd := rowcodec.NewChunkDecoder(colInfo, pkColIDs, def, us.ctx.GetSessionVars().Location())
 	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, defVal, us.ctx.GetSessionVars().Location())
 	return &memTableReader{
@@ -242,7 +252,7 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		buffer: allocBuf{
 			handleBytes: make([]byte, 0, 16),
 			rd:          rd,
-			cd: cd,
+			cd:          cd,
 		},
 		pkColIDs:   pkColIDs,
 		cacheTable: us.cacheTable,
@@ -255,8 +265,8 @@ type txnMemBufferIter struct {
 	idx  int
 	curr kv.Iterator
 
-	cd *rowcodec.ChunkDecoder
-	chk *chunk.Chunk
+	cd       *rowcodec.ChunkDecoder
+	chk      *chunk.Chunk
 	datumRow []types.Datum
 }
 
@@ -306,6 +316,8 @@ func (iter *txnMemBufferIter) next() ([]types.Datum, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		// fmt.Println("handle ===", handle, "value ==", curr.Value())
+		iter.chk.Reset()
 		err = iter.cd.DecodeToChunk(curr.Value(), handle, iter.chk)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -316,11 +328,13 @@ func (iter *txnMemBufferIter) next() ([]types.Datum, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		// fmt.Println("get row to string ===", row.ToString(iter.retFieldTypes))
 		if !matched {
+			// fmt.Println("matched is false ==", row)
 			continue
 		}
 		ret := row.GetDatumRowWithBuffer(iter.retFieldTypes, iter.datumRow)
-		iter.chk.Reset()
+		// fmt.Println("in next() value for row is", ret)
 		return ret, curr.Next()
 	}
 	return nil, err
@@ -340,9 +354,9 @@ func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error
 		return &txnMemBufferIter{
 			memTableReader: m,
 			txn:            txn,
-			cd: m.buffer.cd,
-			chk: chunk.New(m.retFieldTypes, 1, 1),
-			datumRow: make([]types.Datum, 0, len(m.retFieldTypes)),
+			cd:             m.buffer.cd,
+			chk:            chunk.New(m.retFieldTypes, 1, 1),
+			datumRow:       make([]types.Datum, len(m.retFieldTypes)),
 		}, nil
 	}
 

@@ -220,6 +220,7 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 		}
 
 		idx, isNil, notFound := decoder.row.findColID(col.ID)
+		// fmt.Println("col ==", col, idx, notFound, isNil)
 		if !notFound && !isNil {
 			colData := decoder.getData(idx)
 			err := decoder.decodeColToChunk(colIdx, col, colData, chk)
@@ -258,7 +259,9 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 	if handle == nil {
 		return false
 	}
+	// fmt.Println("try append handle column==", colIdx, col, handle, decoder.handleColIDs)
 	if handle.IsInt() && col.ID == decoder.handleColIDs[0] {
+		// fmt.Println("append to here??", colIdx, handle.IntValue())
 		chk.AppendInt64(colIdx, handle.IntValue())
 		return true
 	}
@@ -272,6 +275,7 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 			return err == nil
 		}
 	}
+	// fmt.Println("try append handl col false")
 	return false
 }
 
