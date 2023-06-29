@@ -50,6 +50,7 @@ type Executor interface {
 
 var _ Executor = &BaseExecutor{}
 
+// BaseExecutor holds common information for executors.
 type BaseExecutor struct {
 	ctx           sessionctx.Context
 	AllocPool     chunk.Allocator
@@ -62,6 +63,7 @@ type BaseExecutor struct {
 	maxChunkSize  int
 }
 
+// NewBaseExecutor creates a new BaseExecutor instance.
 func NewBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) BaseExecutor {
 	e := BaseExecutor{
 		children:     children,
@@ -87,50 +89,62 @@ func NewBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, 
 	return e
 }
 
+// RuntimeStats returns the runtime stats of an executor.
 func (e *BaseExecutor) RuntimeStats() *execdetails.BasicRuntimeStats {
 	return e.runtimeStats
 }
 
+// ID returns the id of an executor.
 func (e *BaseExecutor) ID() int {
 	return e.id
 }
 
+// AllChildren returns all children.
 func (e *BaseExecutor) AllChildren() []Executor {
 	return e.children
 }
 
+// ChildrenLen returns the length of children.
 func (e *BaseExecutor) ChildrenLen() int {
 	return len(e.children)
 }
 
+// EmptyChildren judges whether the children is empty.
 func (e *BaseExecutor) EmptyChildren() bool {
 	return len(e.children) == 0
 }
 
+// SetChildren sets the children for an executor.
 func (e *BaseExecutor) SetChildren(idx int, ex Executor) {
 	e.children[idx] = ex
 }
 
+// Children returns the children for an executor.
 func (e *BaseExecutor) Children(idx int) Executor {
 	return e.children[idx]
 }
 
+// RetFieldTypes returns the return field types of an executor.
 func (e *BaseExecutor) RetFieldTypes() []*types.FieldType {
 	return e.retFieldTypes
 }
 
+// InitCap returns the initial capacity for chunk
 func (e *BaseExecutor) InitCap() int {
 	return e.initCap
 }
 
-func (e *BaseExecutor) SetInitCap(cap int) {
-	e.initCap = cap
+// SetInitCap sets the initial capacity for chunk
+func (e *BaseExecutor) SetInitCap(c int) {
+	e.initCap = c
 }
 
+// MaxChunkSize returns the max chunk size.
 func (e *BaseExecutor) MaxChunkSize() int {
-	return e.MaxChunkSize()
+	return e.maxChunkSize
 }
 
+// SetMaxChunkSize sets the max chunk size.
 func (e *BaseExecutor) SetMaxChunkSize(size int) {
 	e.maxChunkSize = size
 }
@@ -171,23 +185,27 @@ func (e *BaseExecutor) Schema() *expression.Schema {
 }
 
 // Next fills multiple rows into a chunk.
-func (e *BaseExecutor) Next(_ context.Context, _ *chunk.Chunk) error {
+func (*BaseExecutor) Next(_ context.Context, _ *chunk.Chunk) error {
 	return nil
 }
 
+// Ctx return ```sessionctx.Context``` of Executor
 func (e *BaseExecutor) Ctx() sessionctx.Context {
 	return e.ctx
 }
 
+// GetSchema gets the schema.
 func (e *BaseExecutor) GetSchema() *expression.Schema {
 	return e.schema
 }
 
+// UpdateDeltaForTableID updates the delta info for the table with tableID.
 func (e *BaseExecutor) UpdateDeltaForTableID(id int64) {
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
 }
 
+// GetSysSession gets a system session context from executor.
 func (e *BaseExecutor) GetSysSession() (sessionctx.Context, error) {
 	dom := domain.GetDomain(e.Ctx())
 	sysSessionPool := dom.SysSessionPool()
@@ -200,6 +218,7 @@ func (e *BaseExecutor) GetSysSession() (sessionctx.Context, error) {
 	return restrictedCtx, nil
 }
 
+// ReleaseSysSession releases a system session context to executor.
 func (e *BaseExecutor) ReleaseSysSession(ctx context.Context, sctx sessionctx.Context) {
 	if sctx == nil {
 		return
