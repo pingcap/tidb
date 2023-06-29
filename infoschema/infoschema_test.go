@@ -666,7 +666,8 @@ func TestIndexComment(t *testing.T) {
 }
 
 func TestIssue42400(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustQuery("show create table information_schema.ddl_jobs").CheckContain("`QUERY` text")
