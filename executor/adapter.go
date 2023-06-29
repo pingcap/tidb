@@ -984,7 +984,8 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) error {
 	if cteErr != nil {
 		logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
 	}
-
+	a.FinishExecuteStmt(txnStartTS, lastErr, false)
+	a.logAudit()
 	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
 	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
 		if stmtCtx.DiskTracker != nil {
