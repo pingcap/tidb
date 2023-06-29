@@ -490,7 +490,8 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
 	failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks")
 	tk.MustExec("set @@session.tidb_partition_prune_mode='static-only'")
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(false)`)
+	// when we lift the restriction of partition table can not take MPP path, here should `return(true)`
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(true)`)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
 	tk.MustExec("set @@session.tidb_partition_prune_mode='dynamic-only'")
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(true)`)
@@ -1178,6 +1179,7 @@ func TestTiflashPartitionTableScan(t *testing.T) {
 	tk.MustExec("insert into t values(1),(11),(21),(31),(41);")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 	// MPP
 	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
 	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))
@@ -1708,4 +1710,105 @@ func TestMppStoreCntWithErrors(t *testing.T) {
 	require.Nil(t, failpoint.Disable(mppStoreCountSetLastUpdateTime))
 	require.Nil(t, failpoint.Disable(mppStoreCountSetLastUpdateTimeP2))
 	require.Nil(t, failpoint.Disable(mppStoreCountPDError))
+}
+
+func TestUnionScan(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_allow_mpp=1")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=off")
+
+	for x := 0; x < 2; x++ {
+		tk.MustExec("drop table if exists t")
+		if x == 0 {
+			// Test cache table.
+			tk.MustExec("create table t(a int not null primary key, b int not null)")
+			tk.MustExec("alter table t set tiflash replica 1")
+			tb := external.GetTableByName(t, tk, "test", "t")
+			err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+			require.NoError(t, err)
+			tk.MustExec("alter table t cache")
+		} else {
+			// Test dirty transaction.
+			tk.MustExec("create table t(a int not null primary key, b int not null) partition by hash(a) partitions 2")
+			tk.MustExec("alter table t set tiflash replica 1")
+			tb := external.GetTableByName(t, tk, "test", "t")
+			err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+			require.NoError(t, err)
+		}
+
+		insertStr := "insert into t values(0, 0)"
+		for i := 1; i < 10; i++ {
+			insertStr += fmt.Sprintf(",(%d, %d)", i, i)
+		}
+		tk.MustExec(insertStr)
+
+		if x != 0 {
+			// Test dirty transaction.
+			tk.MustExec("begin")
+		}
+
+		// Test Basic.
+		sql := "select /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("10"))
+
+		// Test Delete.
+		tk.MustExec("delete from t where a = 0")
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("9"))
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9"))
+
+		// Test Insert.
+		tk.MustExec("insert into t values(100, 100)")
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("10"))
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1, 2"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9", "100 100"))
+
+		// Test Update
+		tk.MustExec("update t set b = 200 where a = 100")
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("10"))
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1, 2"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9", "100 200"))
+
+		if x != 0 {
+			// Test dirty transaction.
+			tk.MustExec("commit")
+		}
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("10"))
+
+		if x == 0 {
+			tk.MustExec("alter table t nocache")
+		}
+	}
+}
+
+func checkMPPInExplain(t *testing.T, tk *testkit.TestKit, sql string) {
+	rows := tk.MustQuery(sql).Rows()
+	resBuff := bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res := resBuff.String()
+	require.Contains(t, res, "mpp[tiflash]")
 }

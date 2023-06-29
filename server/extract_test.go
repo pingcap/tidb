@@ -26,6 +26,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -41,7 +42,7 @@ func TestExtractHandler(t *testing.T) {
 
 	driver := NewTiDBDriver(store)
 	client := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true

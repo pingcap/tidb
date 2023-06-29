@@ -599,6 +599,7 @@ type PostRestore struct {
 	Level1Compact     bool        `toml:"level-1-compact" json:"level-1-compact"`
 	PostProcessAtLast bool        `toml:"post-process-at-last" json:"post-process-at-last"`
 	Compact           bool        `toml:"compact" json:"compact"`
+	ChecksumViaSQL    bool        `toml:"checksum-via-sql" json:"checksum-via-sql"`
 }
 
 // StringOrStringSlice can unmarshal a TOML string as string slice with one element.
@@ -974,6 +975,7 @@ func NewConfig() *Config {
 			Checksum:          OpLevelRequired,
 			Analyze:           OpLevelOptional,
 			PostProcessAtLast: true,
+			ChecksumViaSQL:    true,
 		},
 	}
 }
