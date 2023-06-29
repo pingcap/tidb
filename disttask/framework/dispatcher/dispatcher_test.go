@@ -176,7 +176,6 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 
 	// 3s
 	cnt := 60
-	// ywq todo fix flow control failed.
 	checkGetRunningGTaskCnt := func() {
 		var retCnt int
 		for i := 0; i < cnt; i++ {
