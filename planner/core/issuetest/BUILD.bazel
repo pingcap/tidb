@@ -6,6 +6,19 @@ go_test(
     srcs = ["planner_issue_test.go"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 3,
     deps = ["//testkit"],
+=======
+    shard_count = 5,
+    deps = [
+        "//parser",
+        "//planner",
+        "//planner/core",
+        "//testkit",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+>>>>>>> 1213045d008 (planner: a quick fix to solve the column alias in ORDER BY's subquery (#45003))
 )
