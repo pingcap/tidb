@@ -159,9 +159,6 @@ func (s *Server) GetStatusServerAddr() (on bool, addr string) {
 		return false, ""
 	}
 	if strings.Contains(s.statusAddr, config.DefStatusHost) {
-		if s.cfg.Host != config.DefHost {
-			return true, strings.ReplaceAll(s.statusAddr, config.DefStatusHost, s.cfg.Host)
-		}
 		if len(s.cfg.AdvertiseAddress) != 0 {
 			return true, strings.ReplaceAll(s.statusAddr, config.DefStatusHost, s.cfg.AdvertiseAddress)
 		}
