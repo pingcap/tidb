@@ -451,15 +451,21 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 // NOTE: We do not retry here, because retry is helpless when errors result from TiFlash or Network. If errors occur, the execution on TiFlash will finally stop after some minutes.
 // This function is exclusively called, and only the first call succeeds sending Tasks and setting all Tasks as cancelled, while others will not work.
 func (c *localMppCoordinator) cancelMppTasks() {
+	if len(c.mppReqs) == 0 {
+		return
+	}
 	usedStoreAddrs := make(map[string]bool)
 	c.mu.Lock()
+	// 1. One address will receive one cancel request, since cancel request cancels all mpp tasks within the same mpp gather
+	// 2. Cancel process will set all mpp task requests' states, thus if one request's state is Cancelled already, just return
+	if c.mppReqs[0].State == kv.MppTaskCancelled {
+		c.mu.Unlock()
+		return
+	}
 	for _, task := range c.mppReqs {
-		// get the store address of running tasks
+		// get the store address of running tasks,
 		if task.State == kv.MppTaskRunning && !usedStoreAddrs[task.Meta.GetAddress()] {
 			usedStoreAddrs[task.Meta.GetAddress()] = true
-		} else if task.State == kv.MppTaskCancelled {
-			c.mu.Unlock()
-			return
 		}
 		task.State = kv.MppTaskCancelled
 	}
