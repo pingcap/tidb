@@ -1204,6 +1204,7 @@ func TestIssue44737(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	tk.MustExec("create table t (a int)")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
