@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,7 +52,6 @@ func TestBackfillFlowHandle(t *testing.T) {
 
 	// 1. test partition table ProcessNormalFlow
 	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
-		logutil.BgLogger().Info("ywq test check1")
 		require.Equal(t, proto.StepOne, gTask.Step)
 		require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
 		for i, par := range tblInfo.Partition.Definitions {
@@ -66,7 +64,6 @@ func TestBackfillFlowHandle(t *testing.T) {
 	// 2. test partition table ProcessNormalFlow after step1 finished
 	gTask.Step++
 	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
-		logutil.BgLogger().Info("ywq test check2")
 		require.NoError(t, err)
 		require.Equal(t, 0, len(metas))
 	}, nil)
@@ -88,12 +85,10 @@ func TestBackfillFlowHandle(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
-		logutil.BgLogger().Info("ywq test check3")
 		require.Equal(t, proto.StepOne, gTask.Step)
 	}, nil)
 	gTask.Step++
 	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
-		logutil.BgLogger().Info("ywq test check4")
 		for _, meta := range metas {
 			var subTask ddl.BackfillSubTaskMeta
 			require.NoError(t, json.Unmarshal(meta, &subTask))
@@ -170,11 +165,8 @@ func processAndCheck(t *testing.T,
 	for !doneDispatch {
 		select {
 		case metas = <-metasChan:
-			logutil.BgLogger().Info("ywq test")
 		case <-errChan:
-			logutil.BgLogger().Info("ywq test err")
 		case <-doneChan:
-			logutil.BgLogger().Info("ywq test done")
 			if !doneDispatch {
 				doneDispatch = true
 				close(metasChan)

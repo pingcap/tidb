@@ -233,6 +233,7 @@ go_test(
         "//ddl/testutil",
         "//ddl/util",
         "//ddl/util/callback",
+        "//disttask/framework/dispatcher",
         "//disttask/framework/proto",
         "//domain",
         "//domain/infosync",
