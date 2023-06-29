@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle/cache"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -89,11 +88,7 @@ type Handle struct {
 
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
-	statsCache struct {
-		atomic.Pointer[statsCache]
-		memTracker *memory.Tracker
-		sync.Mutex
-	}
+	statsCache cache.StatsCache
 
 	// feedback is used to store query feedback info.
 	feedback struct {
@@ -302,7 +297,7 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 			logutil.BgLogger().Error("[stats] error occurred when update mysql.stats_meta", zap.Error(err))
 			return "", err
 		}
-		TableRowStatsCache.Invalidate(tid)
+		cache.TableRowStatsCache.Invalidate(tid)
 
 		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
 		if err != nil {
@@ -329,7 +324,7 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 			logutil.BgLogger().Error("[stats] error occurred when update mysql.stats_meta", zap.Error(err))
 			return "", err
 		}
-		TableRowStatsCache.Invalidate(tid)
+		cache.TableRowStatsCache.Invalidate(tid)
 
 		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
 		if err != nil {
@@ -452,11 +447,7 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 func (h *Handle) Clear() {
 	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
 	h.mu.Lock()
-	h.statsCache.Lock()
-	newCache := newStatsCache()
-	h.statsCache.Store(&newCache)
-	h.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
-	h.statsCache.Unlock()
+	h.statsCache.Clear()
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
@@ -497,11 +488,9 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	}
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
-	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
-	newCache := newStatsCache()
-	handle.statsCache.Store(&newCache)
+	handle.statsCache = cache.NewStatsCache()
 	handle.globalMap.data = make(tableDeltaMap)
 	handle.feedback.data = statistics.NewQueryFeedbackMap()
 	handle.colMap.data = make(colStatsUsageMap)
@@ -571,7 +560,7 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 }
 
 // Update reads stats meta from store and updates the stats map.
-func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
+func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) error {
 	oldCache := h.statsCache.Load()
 	lastVersion := oldCache.version
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
@@ -981,12 +970,12 @@ func (h *Handle) GetMemConsumed() (size int64) {
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (h *Handle) GetTableStats(tblInfo *model.TableInfo, opts ...TableStatsOpt) *statistics.Table {
+func (h *Handle) GetTableStats(tblInfo *model.TableInfo, opts ...cache.TableStatsOpt) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID, opts...)
 }
 
 // GetPartitionStats retrieves the partition stats from cache.
-func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...TableStatsOpt) *statistics.Table {
+func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...cache.TableStatsOpt) *statistics.Table {
 	var tbl *statistics.Table
 	if h == nil {
 		tbl = statistics.PseudoTable(tblInfo)
@@ -1022,7 +1011,7 @@ func (h *Handle) statsCacheLen() int {
 // updateStatsCache overrides the global statsCache with a new one, it may fail
 // if the global statsCache has been modified by others already.
 // Callers should add retry loop if necessary.
-func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
+func (h *Handle) updateStatsCache(newCache cache.StatsCache) (updated bool) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load()
 	newCost := newCache.Cost()
@@ -1454,7 +1443,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 		}
 		statsVer = version
 	}
-	TableRowStatsCache.Invalidate(tableID)
+	cache.TableRowStatsCache.Invalidate(tableID)
 	// 2. Save histograms.
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
@@ -1572,7 +1561,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
 		_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
-		TableRowStatsCache.Invalidate(tableID)
+		cache.TableRowStatsCache.Invalidate(tableID)
 	} else {
 		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %?", version, tableID)
 	}
@@ -1650,7 +1639,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 	version := txn.StartTS()
 	_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
 	statsVer = version
-	TableRowStatsCache.Invalidate(tableID)
+	cache.TableRowStatsCache.Invalidate(tableID)
 	return err
 }
 
@@ -2283,20 +2272,6 @@ func (h *Handle) DeleteAnalyzeJobs(updateTime time.Time) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, _, err := h.execRestrictedSQL(ctx, "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
 	return err
-}
-
-type tableStatsOption struct {
-	byQuery bool
-}
-
-// TableStatsOpt used to edit getTableStatsOption
-type TableStatsOpt func(*tableStatsOption)
-
-// WithTableStatsByQuery indicates user needed
-func WithTableStatsByQuery() TableStatsOpt {
-	return func(option *tableStatsOption) {
-		option.byQuery = true
-	}
 }
 
 // SetStatsCacheCapacity sets capacity

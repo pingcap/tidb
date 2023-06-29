@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle
+package cache
 
 import (
 	"context"
@@ -34,6 +34,20 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
 )
+
+type TableStatsOption struct {
+	byQuery bool
+}
+
+// TableStatsOpt used to edit getTableStatsOption
+type TableStatsOpt func(*TableStatsOption)
+
+// WithTableStatsByQuery indicates user needed
+func WithTableStatsByQuery() TableStatsOpt {
+	return func(option *TableStatsOption) {
+		option.byQuery = true
+	}
+}
 
 func newStatsCache() statsCache {
 	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
@@ -79,7 +93,7 @@ func (sc statsCache) copy() statsCache {
 
 // update updates the statistics table cache using copy on write.
 func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64, opts ...TableStatsOpt) statsCache {
-	option := &tableStatsOption{}
+	option := &TableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
 	}

@@ -14,7 +14,9 @@
 
 package cache
 
-import "github.com/pingcap/tidb/statistics"
+import (
+	"github.com/pingcap/tidb/statistics"
+)
 
 // StatsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
 type StatsCacheInner interface {
