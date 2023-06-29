@@ -2,7 +2,7 @@
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// You may obtain a Copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
@@ -39,6 +39,10 @@ type TableStatsOption struct {
 	byQuery bool
 }
 
+func (t *TableStatsOption) ByQuery() bool {
+	return t.byQuery
+}
+
 // TableStatsOpt used to edit getTableStatsOption
 type TableStatsOpt func(*TableStatsOption)
 
@@ -49,41 +53,41 @@ func WithTableStatsByQuery() TableStatsOpt {
 	}
 }
 
-func newStatsCache() statsCache {
+func NewStatsCacheWrapper() StatsCacheWrapper {
 	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
 	if enableQuota {
 		capacity := variable.StatsCacheMemQuota.Load()
-		return statsCache{
+		return StatsCacheWrapper{
 			StatsCacheInner: lru.NewStatsLruCache(capacity),
 		}
 	}
-	return statsCache{
+	return StatsCacheWrapper{
 		StatsCacheInner: mapcache.NewMapCache(),
 	}
 }
 
-// statsCache caches the tables in memory for Handle.
-type statsCache struct {
+// StatsCacheWrapper caches the tables in memory for Handle.
+type StatsCacheWrapper struct {
 	cache.StatsCacheInner
 	// version is the latest version of cache. It is bumped when new records of `mysql.stats_meta` are loaded into cache.
 	version uint64
 	// minorVersion is to differentiate the cache when the version is unchanged while the cache contents are
 	// modified indeed. This can happen when we load extra column histograms into cache, or when we modify the cache with
 	// statistics feedbacks, etc. We cannot bump the version then because no new changes of `mysql.stats_meta` are loaded,
-	// while the override of statsCache is in a copy-on-write way, to make sure the statsCache is unchanged by others during the
-	// the interval of 'copy' and 'write', every 'write' should bump / check this minorVersion if the version keeps
+	// while the override of StatsCacheWrapper is in a Copy-on-write way, to make sure the StatsCacheWrapper is unchanged by others during the
+	// the interval of 'Copy' and 'write', every 'write' should bump / check this minorVersion if the version keeps
 	// unchanged.
-	// This bump / check logic is encapsulated in `statsCache.update` and `updateStatsCache`, callers don't need to care
+	// This bump / check logic is encapsulated in `StatsCacheWrapper.update` and `updateStatsCache`, callers don't need to care
 	// about this minorVersion actually.
 	minorVersion uint64
 }
 
-func (sc statsCache) len() int {
+func (sc StatsCacheWrapper) Len() int {
 	return sc.StatsCacheInner.Len()
 }
 
-func (sc statsCache) copy() statsCache {
-	newCache := statsCache{
+func (sc StatsCacheWrapper) Copy() StatsCacheWrapper {
+	newCache := StatsCacheWrapper{
 		version:      sc.version,
 		minorVersion: sc.minorVersion,
 	}
@@ -91,13 +95,21 @@ func (sc statsCache) copy() statsCache {
 	return newCache
 }
 
-// update updates the statistics table cache using copy on write.
-func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64, opts ...TableStatsOpt) statsCache {
+func (sc *StatsCacheWrapper) SetVersion(version uint64) {
+	sc.version = version
+}
+
+func (sc StatsCacheWrapper) Version() uint64 {
+	return sc.version
+}
+
+// Update updates the statistics table cache using Copy on write.
+func (sc StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64, opts ...TableStatsOpt) StatsCacheWrapper {
 	option := &TableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
 	}
-	newCache := sc.copy()
+	newCache := sc.Copy()
 	if newVersion == newCache.version {
 		newCache.minorVersion += uint64(1)
 	} else {

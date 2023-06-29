@@ -760,7 +760,7 @@ OUTER:
 			}
 			for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 				oldCache := h.statsCache.Load()
-				if h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version)) {
+				if h.updateStatsCache(oldCache.Update([]*statistics.Table{newTblStats}, nil, oldCache.Version())) {
 					break
 				}
 			}
@@ -797,7 +797,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 	h.mu.Unlock()
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 		oldCache := h.statsCache.Load()
-		if h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version)) {
+		if h.updateStatsCache(oldCache.Update(tbls, nil, oldCache.Version())) {
 			break
 		}
 	}
