@@ -88,7 +88,16 @@ func (p *dumpFileGcChecker) setupSctx(sctx sessionctx.Context) {
 func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationDefault, gcDurationForCapture time.Duration) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		logutil.BgLogger().Warn("[dumpFileGcChecker] open plan replayer directory failed", zap.Error(err))
+		if !os.IsNotExist(err) {
+			absPath, err2 := filepath.Abs(path)
+			if err2 != nil {
+				logutil.BgLogger().Warn("[dumpFileGcChecker] failed to get absolute path", zap.Error(err2))
+				absPath = path
+			}
+			logutil.BgLogger().Warn("[dumpFileGcChecker] open plan replayer directory failed",
+				zap.Error(err),
+				zap.String("path", absPath))
+		}
 	}
 
 	gcTargetTimeDefault := time.Now().Add(-gcDurationDefault)
