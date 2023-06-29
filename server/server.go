@@ -41,6 +41,7 @@ import (
 	"os/user"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -152,9 +153,19 @@ type Server struct {
 	printMDLLogTime     time.Time
 }
 
-// GetStatusServerAddr gets statusServer address
+// GetStatusServerAddr gets statusServer address for MppCoordinatorManager usage
 func (s *Server) GetStatusServerAddr() (on bool, addr string) {
-	return s.cfg.Status.ReportStatus, s.statusAddr
+	if !s.cfg.Status.ReportStatus {
+		return false, ""
+	}
+	// TODO: better way to get the proper ip to be used by TiFlash nodes
+	if s.cfg.Status.StatusHost == config.DefStatusHost {
+		if s.cfg.Host != config.DefHost {
+			return true, strings.ReplaceAll(s.statusAddr, config.DefStatusHost, s.cfg.Host)
+		}
+		return false, ""
+	}
+	return true, s.statusServer.Addr
 }
 
 // ConnectionCount gets current connection count.

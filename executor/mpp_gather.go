@@ -86,6 +86,7 @@ func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 }
 
 // allocMPPGatherID allocates mpp gather id for mpp gathers. It will reset the gather id when the query finished.
+// To support mpp_gather level cancel/retry and mpp_gather under apply executors, need to generate incremental ids when Open function is invoked
 func allocMPPGatherID(ctx sessionctx.Context) uint64 {
 	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
 	return mppQueryInfo.AllocatedMPPGatherID.Add(1)
