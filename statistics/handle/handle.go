@@ -189,11 +189,11 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 	}
 
 	strTids := fmt.Sprintf("%v", tids)
-	logutil.BgLogger().Info("[stats] lock table ", zap.String("tableIDs", strTids))
+	logutil.BgLogger().Info("lock table ", zap.String("category", "stats"), zap.String("tableIDs", strTids))
 	for i, tid := range tids {
 		_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_table_locked(table_id) select %? from dual where not exists(select table_id from mysql.stats_table_locked where table_id = %?)", tid, tid)
 		if err != nil {
-			logutil.BgLogger().Error("[stats] error occurred when insert mysql.stats_table_locked ", zap.Error(err))
+			logutil.BgLogger().Error("error occurred when insert mysql.stats_table_locked ", zap.String("category", "stats"), zap.Error(err))
 			return "", err
 		}
 		// update handle
@@ -208,7 +208,7 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 	for _, tid := range pids {
 		_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_table_locked(table_id) select %? from dual where not exists(select table_id from mysql.stats_table_locked where table_id = %?)", tid, tid)
 		if err != nil {
-			logutil.BgLogger().Error("[stats] error occurred when insert mysql.stats_table_locked ", zap.Error(err))
+			logutil.BgLogger().Error("error occurred when insert mysql.stats_table_locked ", zap.String("category", "stats"), zap.Error(err))
 			return "", err
 		}
 		if !isTableLocked(tableLocked, tid) {
@@ -288,25 +288,25 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	}
 
 	strTids := fmt.Sprintf("%v", tids)
-	logutil.BgLogger().Info("[stats] unlock table ", zap.String("tableIDs", strTids))
+	logutil.BgLogger().Info("unlock table ", zap.String("category", "stats"), zap.String("tableIDs", strTids))
 	for i, tid := range tids {
 		// get stats delta during table locked
 		count, modifyCount, version, err := h.getStatsDeltaFromTableLocked(ctx, tid)
 		if err != nil {
-			logutil.BgLogger().Error("[stats] error occurred when getStatsDeltaFromTableLocked", zap.Error(err))
+			logutil.BgLogger().Error("error occurred when getStatsDeltaFromTableLocked", zap.String("category", "stats"), zap.Error(err))
 			return "", err
 		}
 		// update stats_meta with stats delta
 		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", version, count, modifyCount, tid)
 		if err != nil {
-			logutil.BgLogger().Error("[stats] error occurred when update mysql.stats_meta", zap.Error(err))
+			logutil.BgLogger().Error("error occurred when update mysql.stats_meta", zap.String("category", "stats"), zap.Error(err))
 			return "", err
 		}
 		TableRowStatsCache.Invalidate(tid)
 
 		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
 		if err != nil {
-			logutil.BgLogger().Error("[stats] error occurred when delete from mysql.stats_table_locked ", zap.Error(err))
+			logutil.BgLogger().Error("error occurred when delete from mysql.stats_table_locked ", zap.String("category", "stats"), zap.Error(err))
 			return "", err
 		}
 		var exist bool
@@ -320,20 +320,20 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 		// get stats delta during table locked
 		count, modifyCount, version, err := h.getStatsDeltaFromTableLocked(ctx, tid)
 		if err != nil {
-			logutil.BgLogger().Error("[stats] error occurred when getStatsDeltaFromTableLocked", zap.Error(err))
+			logutil.BgLogger().Error("error occurred when getStatsDeltaFromTableLocked", zap.String("category", "stats"), zap.Error(err))
 			return "", err
 		}
 		// update stats_meta with stats delta
 		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", version, count, modifyCount, tid)
 		if err != nil {
-			logutil.BgLogger().Error("[stats] error occurred when update mysql.stats_meta", zap.Error(err))
+			logutil.BgLogger().Error("error occurred when update mysql.stats_meta", zap.String("category", "stats"), zap.Error(err))
 			return "", err
 		}
 		TableRowStatsCache.Invalidate(tid)
 
 		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
 		if err != nil {
-			logutil.BgLogger().Error("[stats] error occurred when delete from mysql.stats_table_locked ", zap.Error(err))
+			logutil.BgLogger().Error("error occurred when delete from mysql.stats_table_locked ", zap.String("category", "stats"), zap.Error(err))
 			return "", err
 		}
 		_, tableLocked = removeIfTableLocked(tableLocked, tid)
@@ -615,7 +615,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			logutil.BgLogger().Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
+			logutil.BgLogger().Error("error occurred when read table stats", zap.String("category", "stats"), zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
 		}
 		if tbl == nil {
@@ -1199,14 +1199,14 @@ func (h *Handle) FlushStats() {
 	for len(h.ddlEventCh) > 0 {
 		e := <-h.ddlEventCh
 		if err := h.HandleDDLEvent(e); err != nil {
-			logutil.BgLogger().Error("[stats] handle ddl event fail", zap.Error(err))
+			logutil.BgLogger().Error("handle ddl event fail", zap.String("category", "stats"), zap.Error(err))
 		}
 	}
 	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
-		logutil.BgLogger().Error("[stats] dump stats delta fail", zap.Error(err))
+		logutil.BgLogger().Error("dump stats delta fail", zap.String("category", "stats"), zap.Error(err))
 	}
 	if err := h.DumpStatsFeedbackToKV(); err != nil {
-		logutil.BgLogger().Error("[stats] dump stats feedback fail", zap.Error(err))
+		logutil.BgLogger().Error("dump stats feedback fail", zap.String("category", "stats"), zap.Error(err))
 	}
 }
 
@@ -1422,7 +1422,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 		if modifyCnt < 0 {
 			modifyCnt = 0
 		}
-		logutil.BgLogger().Info("[stats] incrementally update modifyCount",
+		logutil.BgLogger().Info("incrementally update modifyCount", zap.String("category", "stats"),
 			zap.Int64("tableID", tableID),
 			zap.Int64("curModifyCnt", curModifyCnt),
 			zap.Int64("results.BaseModifyCnt", results.BaseModifyCnt),
@@ -1433,7 +1433,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 			if cnt < 0 {
 				cnt = 0
 			}
-			logutil.BgLogger().Info("[stats] incrementally update count",
+			logutil.BgLogger().Info("incrementally update count", zap.String("category", "stats"),
 				zap.Int64("tableID", tableID),
 				zap.Int64("curCnt", curCnt),
 				zap.Int64("results.Count", results.Count),
@@ -1444,7 +1444,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 			if cnt < 0 {
 				cnt = 0
 			}
-			logutil.BgLogger().Info("[stats] directly update count",
+			logutil.BgLogger().Info("directly update count", zap.String("category", "stats"),
 				zap.Int64("tableID", tableID),
 				zap.Int64("results.Count", results.Count),
 				zap.Int64("count", cnt))
