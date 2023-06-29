@@ -626,17 +626,21 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {
 	var col *expression.Column
 	var needPartitionHandle, hasExtraCol bool
-	needPartitionHandle = e.index.Global || (e.partitionTableMode && e.keepOrder)
 	if tp == getHandleFromIndex {
 		cols := e.idxPlans[0].Schema().Columns
 		outputOffsets := e.dagPB.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
+		// For indexScan, need partitionHandle when global index or keepOrder with partitionTable
+		needPartitionHandle = e.index.Global || e.partitionTableMode && e.keepOrder
 		hasExtraCol = col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
 	} else {
 		cols := e.tblPlans[0].Schema().Columns
 		outputOffsets := e.tableRequest.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
 
+		// For tableScan, only need partitionHandle when e.keepOrder == true
+		// and get parition handle from indexScan.task
+		needPartitionHandle = (e.index.Global || e.partitionTableMode) && e.keepOrder
 		// no ExtraPidColID here, because TableScan shouldn't contain them.
 		hasExtraCol = col.ID == model.ExtraPhysTblID
 	}
