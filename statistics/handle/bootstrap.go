@@ -82,9 +82,9 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (cache.StatsCacheWrappe
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsMeta4Chunk(is, &tables, iter)
+		h.initStatsMeta4Chunk(is, tables, iter)
 	}
-	return tables, nil
+	return *tables, nil
 }
 
 func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *cache.StatsCacheWrapper, iter *chunk.Iterator4Chunk) {

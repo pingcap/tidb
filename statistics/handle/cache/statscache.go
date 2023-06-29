@@ -32,7 +32,7 @@ func NewStatsCache() *StatsCache {
 	result := StatsCache{
 		memTracker: memory.NewTracker(memory.LabelForStatsCache, -1),
 	}
-	result.cache.Store(&newCache)
+	result.cache.Store(newCache)
 	return &result
 }
 
@@ -41,7 +41,7 @@ func (s *StatsCache) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	newCache := NewStatsCacheWrapper()
-	s.cache.Store(&newCache)
+	s.cache.Store(newCache)
 	s.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 }
 

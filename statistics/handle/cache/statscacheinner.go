@@ -53,15 +53,15 @@ func WithTableStatsByQuery() TableStatsOpt {
 	}
 }
 
-func NewStatsCacheWrapper() StatsCacheWrapper {
+func NewStatsCacheWrapper() *StatsCacheWrapper {
 	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
 	if enableQuota {
 		capacity := variable.StatsCacheMemQuota.Load()
-		return StatsCacheWrapper{
+		return &StatsCacheWrapper{
 			StatsCacheInner: lru.NewStatsLruCache(capacity),
 		}
 	}
-	return StatsCacheWrapper{
+	return &StatsCacheWrapper{
 		StatsCacheInner: mapcache.NewMapCache(),
 	}
 }
