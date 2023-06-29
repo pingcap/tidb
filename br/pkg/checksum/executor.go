@@ -26,7 +26,8 @@ type ExecutorBuilder struct {
 
 	oldTable *metautil.Table
 
-	concurrency uint
+	concurrency   uint
+	backoffWeight int
 }
 
 // NewExecutorBuilder returns a new executor builder.
@@ -51,13 +52,19 @@ func (builder *ExecutorBuilder) SetConcurrency(conc uint) *ExecutorBuilder {
 	return builder
 }
 
+// SetBackoffWeight set the backoffWeight of the checksum executing.
+func (builder *ExecutorBuilder) SetBackoffWeight(backoffWeight int) *ExecutorBuilder {
+	builder.backoffWeight = backoffWeight
+	return builder
+}
+
 // Build builds a checksum executor.
 func (builder *ExecutorBuilder) Build() (*Executor, error) {
 	reqs, err := buildChecksumRequest(builder.table, builder.oldTable, builder.ts, builder.concurrency)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &Executor{reqs: reqs}, nil
+	return &Executor{reqs: reqs, backoffWeight: builder.backoffWeight}, nil
 }
 
 func buildChecksumRequest(
@@ -262,7 +269,8 @@ func updateChecksumResponse(resp, update *tipb.ChecksumResponse) {
 
 // Executor is a checksum executor.
 type Executor struct {
-	reqs []*kv.Request
+	reqs          []*kv.Request
+	backoffWeight int
 }
 
 // Len returns the total number of checksum requests.
@@ -308,7 +316,11 @@ func (exec *Executor) Execute(
 		//
 		// It is useful in TiDB, however, it's a place holder in BR.
 		killed := uint32(0)
-		resp, err := sendChecksumRequest(ctx, client, req, kv.NewVariables(&killed))
+		vars := kv.NewVariables(&killed)
+		if exec.backoffWeight > 0 {
+			vars.BackOffWeight = exec.backoffWeight
+		}
+		resp, err := sendChecksumRequest(ctx, client, req, vars)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
