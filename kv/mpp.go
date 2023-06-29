@@ -212,6 +212,8 @@ type MppCoordinator interface {
 	ReportStatus(info ReportStatusRequest) error
 	// Close and release the used resources.
 	Close() error
+	// IsClosed returns whether mpp coordinator is closed or not
+	IsClosed() bool
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.

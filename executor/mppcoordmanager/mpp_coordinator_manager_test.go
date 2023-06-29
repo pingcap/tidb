@@ -47,6 +47,11 @@ func (*IdleCoordinator) Close() error {
 	return nil
 }
 
+// IsClosed implements MppCoordinator interface function.
+func (*IdleCoordinator) IsClosed() bool {
+	return true
+}
+
 func TestDetectAndDelete(t *testing.T) {
 	startTs := uint64(time.Now().UnixNano())
 	InstanceMPPCoordinatorManager.maxLifeTime = uint64(copr.TiFlashReadTimeoutUltraLong.Nanoseconds() + detectFrequency.Nanoseconds())

@@ -61,6 +61,7 @@ type MPPGather struct {
 	originalPlan plannercore.PhysicalPlan
 	startTS      uint64
 	mppQueryID   kv.MPPQueryID
+	gatherID     uint64 // used for mpp_gather level retry, since each time should use different gatherIDs
 	respIter     distsql.SelectResult
 
 	memTracker *memory.Tracker
@@ -84,6 +85,12 @@ func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 	return ids
 }
 
+// allocMPPGatherID allocates mpp gather id for mpp gathers. It will reset the gather id when the query finished.
+func allocMPPGatherID(ctx sessionctx.Context) uint64 {
+	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
+	return mppQueryInfo.AllocatedMPPGatherID.Add(1)
+}
+
 // Open builds coordinator and invoke coordinator's Execute function to execute physical plan
 // If any task fails, it would cancel the rest tasks.
 func (e *MPPGather) Open(ctx context.Context) (err error) {
@@ -96,8 +103,9 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		return err
 	}
 	planIDs := collectPlanIDS(e.originalPlan, nil)
+	e.gatherID = allocMPPGatherID(e.ctx)
 	coord := e.buildCoordinator(planIDs)
-	err = mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: uint64(e.id)}, coord)
+	err = mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID}, coord)
 	if err != nil {
 		return err
 	}
@@ -112,7 +120,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 
 func (e *MPPGather) buildCoordinator(planIDs []int) kv.MppCoordinator {
 	_, serverAddr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
-	coord := mpp.NewLocalMPPCoordinator(e.ctx, e.is, e.originalPlan, planIDs, e.startTS, e.mppQueryID, uint64(e.id), serverAddr, e.memTracker)
+	coord := mpp.NewLocalMPPCoordinator(e.ctx, e.is, e.originalPlan, planIDs, e.startTS, e.mppQueryID, e.gatherID, serverAddr, e.memTracker)
 	return coord
 }
 
@@ -142,7 +150,7 @@ func (e *MPPGather) Close() error {
 	if e.respIter != nil {
 		err = e.respIter.Close()
 	}
-	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: uint64(e.id)})
+	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID})
 	if err != nil {
 		return err
 	}

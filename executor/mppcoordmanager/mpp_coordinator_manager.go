@@ -77,8 +77,9 @@ func (m *MPPCoordinatorManager) Run() {
 func (m *MPPCoordinatorManager) detectAndDelete(nowTs uint64) {
 	var outOfTimeIDs []CoordinatorUniqueID
 	m.mu.Lock()
-	for id := range m.coordinatorMap {
-		if nowTs > id.MPPQueryID.QueryTs+m.maxLifeTime {
+	for id, coord := range m.coordinatorMap {
+		// Mpp queries may run forever if it continuously sends data to coordinator, thus we need check IsClosed here
+		if nowTs > id.MPPQueryID.QueryTs+m.maxLifeTime && coord.IsClosed() {
 			outOfTimeIDs = append(outOfTimeIDs, id)
 			delete(m.coordinatorMap, id)
 		}

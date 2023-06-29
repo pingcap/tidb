@@ -590,6 +590,11 @@ func (c *localMppCoordinator) handleAllReports() {
 	}
 }
 
+// IsClosed implements MppCoordinator interface
+func (c *localMppCoordinator) IsClosed() bool {
+	return atomic.LoadUint32(&c.closed) == 1
+}
+
 // Close implements MppCoordinator interface
 // TODO: Test the case that user cancels the query.
 func (c *localMppCoordinator) Close() error {
