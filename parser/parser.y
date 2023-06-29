@@ -4160,6 +4160,7 @@ PolicyName:
 
 ResourceGroupName:
 	Identifier
+| 	"DEFAULT"
 
 DatabaseOption:
 	DefaultKwdOpt CharsetKw EqOpt CharsetName
