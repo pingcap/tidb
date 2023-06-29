@@ -34,6 +34,10 @@ go_test(
     timeout = "short",
     srcs = ["tidb_test.go"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 12,
+>>>>>>> 2f1c891d075 (lightning: refine fetching table structure error handling (#44801))
     deps = [
         ":tidb",
         "//br/pkg/lightning/backend",
