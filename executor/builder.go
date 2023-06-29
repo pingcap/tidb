@@ -100,6 +100,9 @@ type executorBuilder struct {
 	// can return a correct value even if the session context has already been destroyed
 	forDataReaderBuilder bool
 	dataReaderTS         uint64
+
+	// Used when building MPPGather.
+	encounterUnionScan bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -1329,6 +1332,11 @@ func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) Executor {
 }
 
 func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) Executor {
+	oriEncounterUnionScan := b.encounterUnionScan
+	b.encounterUnionScan = true
+	defer func() {
+		b.encounterUnionScan = oriEncounterUnionScan
+	}()
 	reader := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -1375,10 +1383,13 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	}
 
 	switch x := reader.(type) {
-	// todo: when we full banned cop tiflash, we should think about combination of MPPGather and UnionScan
 	case *MPPGather:
-		b.err = errors.New("union scan integrated with MPPGather is not supported now")
-		return nil
+		us.desc = false
+		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
+		us.columns = x.columns
+		us.table = x.table
+		us.virtualColumnIndex = x.virtualColumnIndex
+		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
@@ -3462,6 +3473,8 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		virtualColumnRetFieldTypes: []*types.FieldType{},
 	}
 
+	gather.memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
+
 	var hasVirtualCol bool
 	for _, col := range v.Schema().Columns {
 		if col.VirtualExpr != nil {
@@ -3469,18 +3482,43 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 			break
 		}
 	}
-	if hasVirtualCol {
-		// If hasVirtualCol, Join should not pushdown to tiflash,
-		// so there is only one TableScan.
-		ts, err := v.GetTableScan()
-		if err != nil {
-			b.err = err
+
+	var isSingleDataSource bool
+	tableScans := v.GetTableScans()
+	if len(tableScans) == 1 {
+		isSingleDataSource = true
+	}
+
+	// 1. hasVirtualCol: when got virtual column in TableScan, will generate plan like the following,
+	//                   and there will be no other operators in the MPP fragment.
+	//     MPPGather
+	//       ExchangeSender
+	//         PhysicalTableScan
+	// 2. UnionScan: there won't be any operators like Join between UnionScan and TableScan.
+	//               and UnionScan cannot push down to tiflash.
+	if !isSingleDataSource {
+		if hasVirtualCol || b.encounterUnionScan {
+			b.err = errors.Errorf("should only have one TableScan in MPP fragment(hasVirtualCol: %v, encounterUnionScan: %v)", hasVirtualCol, b.encounterUnionScan)
 			return nil
 		}
-		gather.columns = ts.Columns
+		return gather
+	}
+
+	// Setup MPPGather.table if isSingleDataSource.
+	// Virtual Column or UnionScan need to use it.
+	ts := tableScans[0]
+	gather.columns = ts.Columns
+	if hasVirtualCol {
 		gather.virtualColumnIndex, gather.virtualColumnRetFieldTypes = buildVirtualColumnInfo(gather.Schema(), gather.columns)
 	}
-	gather.memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
+	tbl, _ := b.is.TableByID(ts.Table.ID)
+	isPartition, physicalTableID := ts.IsPartition()
+	if isPartition {
+		// Only for static pruning partition table.
+		pt := tbl.(table.PartitionedTable)
+		tbl = pt.GetPartition(physicalTableID)
+	}
+	gather.table = tbl
 	return gather
 }
 
