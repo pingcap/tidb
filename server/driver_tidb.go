@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/server/internal/column"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
@@ -275,12 +276,12 @@ func (tc *TiDBContext) Close() error {
 }
 
 // FieldList implements QueryCtx FieldList method.
-func (tc *TiDBContext) FieldList(table string) (columns []*ColumnInfo, err error) {
+func (tc *TiDBContext) FieldList(table string) (columns []*column.Info, err error) {
 	fields, err := tc.Session.FieldList(table)
 	if err != nil {
 		return nil, err
 	}
-	columns = make([]*ColumnInfo, 0, len(fields))
+	columns = make([]*column.Info, 0, len(fields))
 	for _, f := range fields {
 		columns = append(columns, convertColumnInfo(f))
 	}
@@ -297,7 +298,7 @@ func (tc *TiDBContext) GetStatement(stmtID int) PreparedStatement {
 }
 
 // Prepare implements QueryCtx Prepare method.
-func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns, params []*ColumnInfo, err error) {
+func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns, params []*column.Info, err error) {
 	stmtID, paramCount, fields, err := tc.Session.PrepareStmt(sql)
 	if err != nil {
 		return
@@ -310,13 +311,13 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 		ctx:         tc,
 	}
 	statement = stmt
-	columns = make([]*ColumnInfo, len(fields))
+	columns = make([]*column.Info, len(fields))
 	for i := range fields {
 		columns[i] = convertColumnInfo(fields[i])
 	}
-	params = make([]*ColumnInfo, paramCount)
+	params = make([]*column.Info, paramCount)
 	for i := range params {
-		params[i] = &ColumnInfo{
+		params[i] = &column.Info{
 			Type: mysql.TypeBlob,
 		}
 	}
@@ -414,7 +415,7 @@ func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, sctx sessionctx.
 
 type tidbResultSet struct {
 	recordSet    sqlexec.RecordSet
-	columns      []*ColumnInfo
+	columns      []*column.Info
 	rows         []chunk.Row
 	closed       int32
 	preparedStmt *core.PlanCacheStmt
@@ -460,14 +461,14 @@ func (trs *tidbResultSet) OnFetchReturned() {
 	}
 }
 
-func (trs *tidbResultSet) Columns() []*ColumnInfo {
+func (trs *tidbResultSet) Columns() []*column.Info {
 	if trs.columns != nil {
 		return trs.columns
 	}
 	// for prepare statement, try to get cached columnInfo array
 	if trs.preparedStmt != nil {
 		ps := trs.preparedStmt
-		if colInfos, ok := ps.ColumnInfos.([]*ColumnInfo); ok {
+		if colInfos, ok := ps.ColumnInfos.([]*column.Info); ok {
 			trs.columns = colInfos
 		}
 	}
@@ -477,16 +478,16 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 			trs.columns = append(trs.columns, convertColumnInfo(v))
 		}
 		if trs.preparedStmt != nil {
-			// if ColumnInfo struct has allocated object,
-			// here maybe we need deep copy ColumnInfo to do caching
+			// if Info struct has allocated object,
+			// here maybe we need deep copy Info to do caching
 			trs.preparedStmt.ColumnInfos = trs.columns
 		}
 	}
 	return trs.columns
 }
 
-func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
-	ci = &ColumnInfo{
+func convertColumnInfo(fld *ast.ResultField) (ci *column.Info) {
+	ci = &column.Info{
 		Name:         fld.ColumnAsName.O,
 		OrgName:      fld.Column.Name.O,
 		Table:        fld.TableAsName.O,

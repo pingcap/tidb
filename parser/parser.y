@@ -4160,6 +4160,7 @@ PolicyName:
 
 ResourceGroupName:
 	Identifier
+| 	"DEFAULT"
 
 DatabaseOption:
 	DefaultKwdOpt CharsetKw EqOpt CharsetName
@@ -5022,6 +5023,10 @@ DropIndexStmt:
 			}
 		}
 		$$ = &ast.DropIndexStmt{IfExists: $3.(bool), IndexName: $4, Table: $6.(*ast.TableName), LockAlg: indexLockAndAlgorithm}
+	}
+|	"DROP" "HYPO" "INDEX" IfExists Identifier "ON" TableName
+	{
+		$$ = &ast.DropIndexStmt{IfExists: $4.(bool), IndexName: $5, Table: $7.(*ast.TableName), IsHypo: true}
 	}
 
 DropTableStmt:
