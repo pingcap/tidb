@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -417,4 +418,34 @@ func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
 		result := tk.MustQuery("select t1.* from tnormal t1, tnormal t2 use index(a) where t1.a=t2.b and " + cond).Sort().Rows()
 		tk.MustQuery("select /*+ TIDB_INLJ(t1, t2) */ t1.* from t t1, t t2 use index(a) where t1.a=t2.b and " + cond).Sort().Check(result)
 	}
+}
+
+func TestPartitionTableRangeRequestOrdered(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/checkKeyRangeSorted", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/checkKeyRangeSorted"))
+	}()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE tp (" +
+		"id int, c varchar(128), " +
+		"key c(c))" +
+		"partition by range (id) (" +
+		"partition p0 values less than (10), " +
+		"partition p1 values less than MAXVALUE" +
+		")")
+	tk.MustExec("alter table tp truncate partition p0")
+	tk.MustExec("insert into tp values (1, 'a'), (100, 'b')")
+	tk.MustExec("analyze table tp")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustQuery("select * from tp order by id asc").Check(testkit.Rows("1 a", "100 b"))
+	tk.MustQuery("select /*+ use_index(tp, c) */ * from tp order by c asc").Check(testkit.Rows("1 a", "100 b"))
+	tk.MustQuery("select /*+ use_index(tp, c) */ c from tp order by c asc").Check(testkit.Rows("a", "b"))
+	tk.MustQuery("select count(*) from tp").Check(testkit.Rows("2"))
+	tk.MustQuery("select /*+ inl_join(t1, t2)*/ * from tp t1, tp t2 where t1.c=t2.c order by t1.id asc").Check(testkit.Rows("1 a 1 a", "100 b 100 b"))
+	tk.MustQuery("select /*+ hash_join(t1, t2)*/ * from tp t1, tp t2 where t1.c=t2.c order by t1.id asc").Check(testkit.Rows("1 a 1 a", "100 b 100 b"))
+	tk.MustQuery("select /*+ inl_hash_join(t1, t2)*/ * from tp t1, tp t2 where t1.c=t2.c order by t1.id asc").Check(testkit.Rows("1 a 1 a", "100 b 100 b"))
 }

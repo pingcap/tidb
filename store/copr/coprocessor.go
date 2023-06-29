@@ -15,6 +15,7 @@
 package copr
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -52,6 +53,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var coprCacheHistogramEvict = tidbmetrics.DistSQLCoprCacheHistogram.WithLabelValues("evict")
@@ -71,6 +73,15 @@ type CopClient struct {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, option *kv.ClientSendOption) kv.Response {
+	failpoint.Inject("checkKeyRangeSorted", func(_ failpoint.Value) {
+		isSorted := slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		})
+		if !isSorted {
+			logutil.BgLogger().Fatal("distsql request key range not sorted!")
+		}
+	})
+
 	eventCb := option.EventCb
 	enabledRateLimitAction := option.EnabledRateLimitAction
 	sessionMemTracker := option.SessionMemTracker

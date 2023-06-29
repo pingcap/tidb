@@ -386,6 +386,16 @@ func (m SQLMode) HasAllowInvalidDatesMode() bool {
 	return m&ModeAllowInvalidDates == ModeAllowInvalidDates
 }
 
+// DelSQLMode delete sql mode from ori
+func DelSQLMode(ori SQLMode, del SQLMode) SQLMode {
+	return ori & (^del)
+}
+
+// SetSQLMode add sql mode to ori
+func SetSQLMode(ori SQLMode, add SQLMode) SQLMode {
+	return ori | add
+}
+
 // consts for sql modes.
 // see https://dev.mysql.com/doc/internals/en/query-event.html#q-sql-mode-code
 const (
@@ -594,4 +604,11 @@ const (
 	PrimaryKeyName = "PRIMARY"
 	// DefaultDecimal defines the default decimal value when the value out of range.
 	DefaultDecimal = "99999999999999999999999999999999999999999999999999999999999999999"
+)
+
+// This is enum_cursor_type in MySQL
+const (
+	CursorTypeReadOnly = 1 << iota
+	CursorTypeForUpdate
+	CursorTypeScrollable
 )

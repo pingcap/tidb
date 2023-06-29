@@ -1429,3 +1429,33 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 		}
 	}
 }
+
+// Args2Expressions4Test converts these values to an expression list.
+// This conversion is incomplete, so only use for test.
+func Args2Expressions4Test(args ...interface{}) []Expression {
+	exprs := make([]Expression, len(args))
+	for i, v := range args {
+		d := types.NewDatum(v)
+		var ft *types.FieldType
+		switch d.Kind() {
+		case types.KindNull:
+			ft = types.NewFieldType(mysql.TypeNull)
+		case types.KindInt64:
+			ft = types.NewFieldType(mysql.TypeLong)
+		case types.KindUint64:
+			ft = types.NewFieldType(mysql.TypeLong)
+			ft.AddFlag(mysql.UnsignedFlag)
+		case types.KindFloat64:
+			ft = types.NewFieldType(mysql.TypeDouble)
+		case types.KindString:
+			ft = types.NewFieldType(mysql.TypeVarString)
+		case types.KindMysqlTime:
+			ft = types.NewFieldType(mysql.TypeTimestamp)
+		default:
+			exprs[i] = nil
+			continue
+		}
+		exprs[i] = &Constant{Value: d, RetType: ft}
+	}
+	return exprs
+}

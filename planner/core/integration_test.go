@@ -6713,3 +6713,109 @@ func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
 		KEY idx_autoinc_id (id)
 	)`)
 }
+
+// https://github.com/pingcap/tidb/issues/41355
+// The "virtual generated column" push down is not supported now.
+// This test covers: TopN, Projection, Selection.
+func TestVirtualExprPushDown(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (c1 int DEFAULT 0, c2 int GENERATED ALWAYS AS (abs(c1)) VIRTUAL);")
+	tk.MustExec("insert into t(c1) values(1), (-1), (2), (-2), (99), (-99);")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tikv'")
+
+	// TopN to tikv.
+	rows := [][]interface{}{
+		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader_13", "root", "data:TableFullScan_12"},
+		{"  └─TableFullScan_12", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+
+	// Projection to tikv.
+	rows = [][]interface{}{
+		{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#4"},
+		{"└─TableReader_5", "root", "data:TableFullScan_4"},
+		{"  └─TableFullScan_4", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustExec("set session tidb_opt_projection_push_down='ON';")
+	tk.MustQuery("explain select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustExec("set session tidb_opt_projection_push_down='OFF';")
+
+	// Selection to tikv.
+	rows = [][]interface{}{
+		{"Selection_7", "root", "gt(test.t.c2, 1)"},
+		{"└─TableReader_6", "root", "data:TableFullScan_5"},
+		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
+
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	// TopN to tiflash.
+	rows = [][]interface{}{
+		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader_15", "root", "data:TableFullScan_14"},
+		{"  └─TableFullScan_14", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+
+	// Projection to tiflash.
+	rows = [][]interface{}{
+		{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#4"},
+		{"└─TableReader_6", "root", "data:TableFullScan_5"},
+		{"  └─TableFullScan_5", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustExec("set session tidb_opt_projection_push_down='ON';")
+	tk.MustQuery("explain select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustExec("set session tidb_opt_projection_push_down='OFF';")
+
+	// Selection to tiflash.
+	rows = [][]interface{}{
+		{"Selection_8", "root", "gt(test.t.c2, 1)"},
+		{"└─TableReader_7", "root", "data:TableFullScan_6"},
+		{"  └─TableFullScan_6", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+// https://github.com/pingcap/tidb/issues/41273
+func TestIssue41273(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+    	a set('nwbk','r5','1ad3u','van','ir1z','y','9m','f1','z','e6yd','wfev') NOT NULL DEFAULT 'ir1z,f1,e6yd',
+    	b enum('soo2','4s4j','qi9om','8ue','i71o','qon','3','3feh','6o1i','5yebx','d') NOT NULL DEFAULT '8ue',
+    	c varchar(66) DEFAULT '13mdezixgcn',
+    	PRIMARY KEY (a,b) /*T![clustered_index] CLUSTERED */,
+    	UNIQUE KEY ib(b),
+    	KEY ia(a)
+    )ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin;`)
+	tk.MustExec("INSERT INTO t VALUES('ir1z,f1,e6yd','i71o','13mdezixgcn'),('ir1z,f1,e6yd','d','13mdezixgcn'),('nwbk','8ue','13mdezixgcn');")
+	expectedRes := []string{"ir1z,f1,e6yd d 13mdezixgcn", "ir1z,f1,e6yd i71o 13mdezixgcn", "nwbk 8ue 13mdezixgcn"}
+	tk.MustQuery("select * from t where a between 'e6yd' and 'z' or b <> '8ue';").Sort().Check(testkit.Rows(expectedRes...))
+	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';").Sort().Check(testkit.Rows(expectedRes...))
+	// For now tidb doesn't support push set type to TiKV, and column a is a set type, so we shouldn't generate a IndexMerge path.
+	require.False(t,
+		tk.HasPlan("select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue'",
+			"IndexMerge"),
+	)
+}

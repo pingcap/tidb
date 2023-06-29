@@ -1415,10 +1415,8 @@ func TestLogAndShowSlowLog(t *testing.T) {
 }
 
 func TestReportingMinStartTimestamp(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	_, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	se := tk.Session()
 
 	infoSyncer := dom.InfoSyncer()
 	sm := &testkit.MockSessionManager{
@@ -1434,19 +1432,12 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 	validTS := oracle.GoTimeToLowerLimitStartTS(now.Add(time.Minute), tikv.MaxTxnTimeUse)
 	lowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
 	sm.PS = []*util.ProcessInfo{
-		{CurTxnStartTS: 0, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
-		{CurTxnStartTS: math.MaxUint64, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
-		{CurTxnStartTS: lowerLimit, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
-		{CurTxnStartTS: validTS, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
+		{CurTxnStartTS: 0},
+		{CurTxnStartTS: math.MaxUint64},
+		{CurTxnStartTS: lowerLimit},
+		{CurTxnStartTS: validTS},
 	}
-	infoSyncer.ReportMinStartTS(dom.Store())
-	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
-
-	unhold := se.GetSessionVars().ProtectedTSList.HoldTS(validTS - 1)
-	infoSyncer.ReportMinStartTS(dom.Store())
-	require.Equal(t, validTS-1, infoSyncer.GetMinStartTS())
-
-	unhold()
+	infoSyncer.SetSessionManager(sm)
 	infoSyncer.ReportMinStartTS(dom.Store())
 	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
 }

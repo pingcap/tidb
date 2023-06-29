@@ -1623,7 +1623,7 @@ func (tr *TableRestore) restoreTable(
 		web.BroadcastTableCheckpoint(tr.tableName, cp)
 
 		// rebase the allocator so it exceeds the number of rows.
-		if tr.tableInfo.Core.PKIsHandle && tr.tableInfo.Core.ContainsAutoRandomBits() {
+		if tr.tableInfo.Core.ContainsAutoRandomBits() {
 			cp.AllocBase = mathutil.Max(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
 			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
 				return false, err
@@ -2303,7 +2303,7 @@ func saveCheckpoint(rc *Controller, t *TableRestore, engineID int32, chunk *chec
 	// or integer primary key), which can only be obtained by reading all data.
 
 	var base int64
-	if t.tableInfo.Core.PKIsHandle && t.tableInfo.Core.ContainsAutoRandomBits() {
+	if t.tableInfo.Core.ContainsAutoRandomBits() {
 		base = t.alloc.Get(autoid.AutoRandomType).Base() + 1
 	} else {
 		base = t.alloc.Get(autoid.RowIDAllocType).Base() + 1

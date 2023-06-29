@@ -445,7 +445,7 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		return nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return err
 	}
@@ -463,7 +463,7 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 		return nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return err
 	}

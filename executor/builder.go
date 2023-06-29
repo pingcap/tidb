@@ -72,6 +72,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -3358,6 +3359,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	if len(partitions) == 0 {
 		return &TableDualExec{baseExecutor: *ret.base()}
 	}
+
+	slices.SortFunc(partitions, func(a, b table.PhysicalTable) bool {
+		return a.GetPhysicalID() < b.GetPhysicalID()
+	})
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 		sctx:       b.ctx,
 		partitions: partitions,
@@ -3455,6 +3460,9 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 			locateKey[keyColOffsets[i]] = date
 		}
 		p, err := partitionTbl.GetPartitionByRow(builder.ctx, locateKey)
+		if table.ErrNoPartitionForGivenValue.Equal(err) {
+			continue
+		}
 		if err != nil {
 			return nil, false, nil, err
 		}
@@ -3470,6 +3478,9 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 			usedPartition = append(usedPartition, p)
 		}
 	}
+	slices.SortFunc(usedPartition, func(a, b table.PhysicalTable) bool {
+		return a.GetPhysicalID() < b.GetPhysicalID()
+	})
 	return usedPartition, true, contentPos, nil
 }
 
@@ -4021,6 +4032,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 					locateKey[keyColOffsets[i]] = data
 				}
 				p, err := pt.GetPartitionByRow(e.ctx, locateKey)
+				if table.ErrNoPartitionForGivenValue.Equal(err) {
+					continue
+				}
 				if err != nil {
 					return nil, err
 				}
@@ -4048,6 +4062,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				kvRanges = append(tmp, kvRanges...)
 			}
 		}
+		slices.SortFunc(kvRanges, func(a, b kv.KeyRange) bool {
+			return bytes.Compare(a.StartKey, b.StartKey) < 0
+		})
 		return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 	}
 
@@ -4061,6 +4078,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				locateKey[keyColOffsets[i]] = data
 			}
 			p, err := pt.GetPartitionByRow(e.ctx, locateKey)
+			if table.ErrNoPartitionForGivenValue.Equal(err) {
+				continue
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -4078,6 +4098,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			kvRanges = append(kvRanges, tmp...)
 		}
 	}
+	slices.SortFunc(kvRanges, func(a, b kv.KeyRange) bool {
+		return bytes.Compare(a.StartKey, b.StartKey) < 0
+	})
 	return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 }
 

@@ -1364,7 +1364,12 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 
 	p := parserPool.Get().(*parser.Parser)
 	defer parserPool.Put(p)
-	p.SetSQLMode(s.sessionVars.SQLMode)
+
+	sqlMode := s.sessionVars.SQLMode
+	if s.isInternal() {
+		sqlMode = mysql.DelSQLMode(sqlMode, mysql.ModeNoBackslashEscapes)
+	}
+	p.SetSQLMode(sqlMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
@@ -1410,7 +1415,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		StatsInfo:         plannercore.GetStatsInfo,
 		MaxExecutionTime:  maxExecutionTime,
 		RedactSQL:         s.sessionVars.EnableRedactLog,
-		ProtectedTSList:   &s.sessionVars.ProtectedTSList,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1438,6 +1442,16 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		pi.Host = s.sessionVars.User.Hostname
 	}
 	s.processInfo.Store(&pi)
+}
+
+// UpdateProcessInfo updates the session's process info for the running statement.
+func (s *session) UpdateProcessInfo() {
+	pi := s.ShowProcess()
+	if pi == nil || pi.CurTxnStartTS != 0 {
+		return
+	}
+	// Update the current transaction start timestamp.
+	pi.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
 }
 
 func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
@@ -2928,8 +2942,12 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if dom.GetEtcdClient() != nil {
 		// We only want telemetry data in production-like clusters. When TiDB is deployed over other engines,
 		// for example, unistore engine (used for local tests), we just skip it. Its etcd client is nil.
-		dom.TelemetryReportLoop(ses[5])
-		dom.TelemetryRotateSubWindowLoop(ses[5])
+		if config.GetGlobalConfig().EnableTelemetry {
+			// There is no way to turn telemetry on with global variable `tidb_enable_telemetry`
+			// when it is disabled in config. See IsTelemetryEnabled function in telemetry/telemetry.go
+			dom.TelemetryReportLoop(ses[5])
+			dom.TelemetryRotateSubWindowLoop(ses[5])
+		}
 	}
 
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
@@ -3454,7 +3472,7 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", vars.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
 		is = snap
-	} else if vars.TxnCtx != nil && vars.InTxn() {
+	} else if vars.TxnCtx != nil {
 		if tmp, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
 			is = tmp
 		}

@@ -63,6 +63,7 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 	chk := newFirstChunk(e)
 	tps := e.base().retFieldTypes
 	var totalChunks, partChunks []tipb.Chunk
+	memTracker := h.sctx.GetSessionVars().StmtCtx.MemTracker
 	for {
 		chk.Reset()
 		err = Next(ctx, e, chk)
@@ -75,6 +76,9 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		partChunks, err = h.buildChunk(chk, tps)
 		if err != nil {
 			return h.buildErrorResponse(err)
+		}
+		for _, ch := range partChunks {
+			memTracker.Consume(int64(ch.Size()))
 		}
 		totalChunks = append(totalChunks, partChunks...)
 	}

@@ -2669,7 +2669,7 @@ func (b *builtinTimestamp1ArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 		if b.isFloat {
 			tm, err = types.ParseTimeFromFloatString(sc, s, mysql.TypeDatetime, types.GetFsp(s))
 		} else {
-			tm, err = types.ParseTime(sc, s, mysql.TypeDatetime, types.GetFsp(s))
+			tm, err = types.ParseTime(sc, s, mysql.TypeDatetime, types.GetFsp(s), nil)
 		}
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
@@ -2722,7 +2722,7 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if b.isFloat {
 			tm, err = types.ParseTimeFromFloatString(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0))
 		} else {
-			tm, err = types.ParseTime(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0))
+			tm, err = types.ParseTime(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0), nil)
 		}
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {

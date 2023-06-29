@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/topsql"
@@ -231,11 +232,18 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 // The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) (bool, error) {
+	vars := (&cc.ctx).GetSessionVars()
 	rs, err := stmt.Execute(ctx, args)
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	if rs == nil {
+		if useCursor {
+			vars.SetStatusFlag(mysql.ServerStatusCursorExists, false)
+		}
 		return false, cc.writeOK(ctx)
 	}
 
@@ -245,12 +253,31 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	if useCursor {
 		cc.initResultEncoder(ctx)
 		defer cc.rsEncoder.clean()
-		// fix https://github.com/pingcap/tidb/issues/39447. we need to hold the start-ts here because the process info
-		// will be set to sleep after fetch returned.
-		if pi := cc.ctx.ShowProcess(); pi != nil && pi.ProtectedTSList != nil && pi.CurTxnStartTS > 0 {
-			unhold := pi.HoldTS(pi.CurTxnStartTS)
-			rs = &rsWithHooks{ResultSet: rs, onClosed: unhold}
+		// fetch all results of the resultSet, and stored them locally, so that the future `FETCH` command can read
+		// the rows directly to avoid running executor and accessing shared params/variables in the session
+		// NOTE: chunk should not be allocated from the connection allocator, which will reset after executing this command
+		// but the rows are still needed in the following FETCH command.
+		//
+		// TODO: trace the memory used here
+		chk := rs.NewChunk(nil)
+		var rows []chunk.Row
+		for {
+			if err = rs.Next(ctx, chk); err != nil {
+				return false, err
+			}
+			rowCount := chk.NumRows()
+			if rowCount == 0 {
+				break
+			}
+			// filling fetchedRows with chunk
+			for i := 0; i < rowCount; i++ {
+				row := chk.GetRow(i)
+				rows = append(rows, row)
+			}
+			chk = chunk.Renew(chk, vars.MaxChunkSize)
 		}
+		rs.StoreFetchedRows(rows)
+
 		stmt.StoreResultSet(rs)
 		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
@@ -259,10 +286,10 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		if cl, ok := rs.(fetchNotifier); ok {
 			cl.OnFetchReturned()
 		}
+
 		// explicitly flush columnInfo to client.
 		return false, cc.flush(ctx)
 	}
-	defer terror.Call(rs.Close)
 	retryable, err := cc.writeResultset(ctx, rs, true, 0, 0)
 	if err != nil {
 		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
@@ -309,6 +336,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
+
 	return nil
 }
 
@@ -639,6 +667,7 @@ func (cc *clientConn) handleStmtClose(data []byte) (err error) {
 	if stmt != nil {
 		return stmt.Close()
 	}
+
 	return
 }
 

@@ -293,7 +293,21 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	switch argTp {
 	case types.ETInt:
 		if bf.tp.GetFlen() == types.UnspecifiedLength {
-			bf.tp.SetFlen(args[0].GetType().GetFlen())
+			// check https://github.com/pingcap/tidb/issues/44786
+			// set flen from integers may truncate integers, e.g. char(1) can not display -1[int(1)]
+			switch args[0].GetType().GetType() {
+			case mysql.TypeTiny:
+				bf.tp.SetFlen(4)
+			case mysql.TypeShort:
+				bf.tp.SetFlen(6)
+			case mysql.TypeInt24:
+				bf.tp.SetFlen(9)
+			case mysql.TypeLong:
+				// set it to 11 as mysql
+				bf.tp.SetFlen(11)
+			default:
+				bf.tp.SetFlen(args[0].GetType().GetFlen())
+			}
 		}
 		sig = &builtinCastIntAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsString)
@@ -890,7 +904,7 @@ func (b *builtinCastRealAsTimeSig) evalTime(row chunk.Row) (types.Time, bool, er
 		return types.ZeroTime, false, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err := types.ParseTime(sc, fv, b.tp.GetType(), b.tp.GetDecimal())
+	res, err := types.ParseTime(sc, fv, b.tp.GetType(), b.tp.GetDecimal(), nil)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
@@ -1288,7 +1302,7 @@ func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, is
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTime(sc, val, b.tp.GetType(), b.tp.GetDecimal())
+	res, err = types.ParseTime(sc, val, b.tp.GetType(), b.tp.GetDecimal(), nil)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
@@ -1734,7 +1748,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 		return res, false, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTime(sc, s, b.tp.GetType(), b.tp.GetDecimal())
+	res, err = types.ParseTime(sc, s, b.tp.GetType(), b.tp.GetDecimal(), nil)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}

@@ -3710,18 +3710,23 @@ func TestShardIndexOnTiFlash(t *testing.T) {
 			}
 		}
 	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
 	rows := tk.MustQuery("explain select max(b) from t").Rows()
 	for _, row := range rows {
 		line := fmt.Sprintf("%v", row)
-		require.NotContains(t, line, "tiflash")
+		if strings.Contains(line, "TableFullScan") {
+			require.Contains(t, line, "tiflash")
+		}
 	}
 	tk.MustExec("set @@session.tidb_enforce_mpp = 0")
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
 	rows = tk.MustQuery("explain select max(b) from t").Rows()
 	for _, row := range rows {
 		line := fmt.Sprintf("%v", row)
-		require.NotContains(t, line, "tiflash")
+		if strings.Contains(line, "TableFullScan") {
+			require.NotContains(t, line, "mpp[tiflash]")
+		}
 	}
 }
 
@@ -7438,4 +7443,29 @@ func TestIssue39146(t *testing.T) {
 	tk.MustQuery(`select str_to_date(substr(dest,1,6),'%H%i%s') from sun;`).Check(testkit.Rows("20:23:10"))
 	tk.MustExec("set @@tidb_enable_vectorized_expression = off;")
 	tk.MustQuery(`select str_to_date(substr(dest,1,6),'%H%i%s') from sun;`).Check(testkit.Rows("20:23:10"))
+}
+
+func TestAesDecryptionVecEvalWithZeroChunk(t *testing.T) {
+	// see issue: https://github.com/pingcap/tidb/issues/43063
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test (name1 blob,name2 blob)")
+	tk.MustExec("insert into test values(aes_encrypt('a', 'x'), aes_encrypt('b', 'x'))")
+	tk.MustQuery("SELECT * FROM test WHERE CAST(AES_DECRYPT(name1, 'x') AS CHAR) = '00' AND CAST(AES_DECRYPT(name2, 'x') AS CHAR) = '1'").Check(testkit.Rows())
+}
+
+func TestIfFunctionWithNull(t *testing.T) {
+	// issue 43805
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ordres;")
+	tk.MustExec("CREATE TABLE orders (id bigint(20) unsigned NOT NULL ,account_id bigint(20) unsigned NOT NULL DEFAULT '0' ,loan bigint(20) unsigned NOT NULL DEFAULT '0' ,stage_num int(20) unsigned NOT NULL DEFAULT '0' ,apply_time bigint(20) unsigned NOT NULL DEFAULT '0' ,PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,KEY idx_orders_account_id (account_id),KEY idx_orders_apply_time (apply_time));")
+	tk.MustExec("insert into orders values (20, 210802010000721168, 20000 , 2 , 1682484268727), (22, 210802010000721168, 35100 , 4 , 1650885615002);")
+	tk.MustQuery("select min(if(apply_to_now_days <= 30,loan,null)) as min, max(if(apply_to_now_days <= 720,loan,null)) as max from (select loan, datediff(from_unixtime(unix_timestamp('2023-05-18 18:43:43') + 18000), from_unixtime(apply_time/1000 + 18000)) as apply_to_now_days from orders) t1;").Sort().Check(
+		testkit.Rows("20000 35100"))
 }

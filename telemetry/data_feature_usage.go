@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/metrics"
+	"go.uber.org/zap"
 )
 
 // emptyClusterIndexUsage is empty ClusterIndexUsage, deprecated.
@@ -61,7 +62,7 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 	var err error
 	usage.NewClusterIndex, usage.ClusterIndex, err = getClusterIndexUsageInfo(ctx)
 	if err != nil {
-		logutil.BgLogger().Info(err.Error())
+		logutil.BgLogger().Info("Failed to get feature usage", zap.Error(err))
 		return nil, err
 	}
 
