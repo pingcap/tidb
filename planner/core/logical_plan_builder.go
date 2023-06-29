@@ -2761,8 +2761,9 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 					if colName != nil {
 						columnNameExpr := &ast.ColumnNameExpr{Name: colName}
 						for _, field := range sel.Fields.Fields {
-							if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && colMatch(c.Name, columnNameExpr.Name) {
+							if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && colMatch(c.Name, columnNameExpr.Name) && field.AsName.L == "" {
 								// deduplicate select fields: don't append it once it already has one.
+								// TODO: we add the field if it has alias, but actually they are the same column. We should not have two duplicate one.
 								columnNameExpr = nil
 								break
 							}
