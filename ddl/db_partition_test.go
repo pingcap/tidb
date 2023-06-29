@@ -383,16 +383,20 @@ func TestCreateTableWithHashPartition(t *testing.T) {
 ) PARTITION BY HASH(store_id) PARTITIONS 102400000000;`, tmysql.ErrTooManyPartitions)
 
 	tk.MustExec("CREATE TABLE t_linear (a int, b varchar(128)) PARTITION BY LINEAR HASH(a) PARTITIONS 4")
-	tk.MustGetErrCode("select * from t_linear partition (p0)", tmysql.ErrPartitionClauseOnNonpartitioned)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 LINEAR HASH is not supported, using non-linear HASH instead"))
+	tk.MustQuery(`show create table t_linear`).Check(testkit.Rows("" +
+		"t_linear CREATE TABLE `t_linear` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(128) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 4"))
+	tk.MustQuery("select * from t_linear partition (p0)").Check(testkit.Rows())
 
 	tk.MustExec(`CREATE TABLE t_sub (a int, b varchar(128)) PARTITION BY RANGE( a ) SUBPARTITION BY HASH( a )
                                    SUBPARTITIONS 2 (
                                        PARTITION p0 VALUES LESS THAN (100),
                                        PARTITION p1 VALUES LESS THAN (200),
                                        PARTITION p2 VALUES LESS THAN MAXVALUE)`)
-<<<<<<< HEAD
-	tk.MustGetErrCode("select * from t_sub partition (p0)", tmysql.ErrPartitionClauseOnNonpartitioned)
-=======
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using RANGE partitioning"))
 	tk.MustQuery("select * from t_sub partition (p0)").Check(testkit.Rows())
 	tk.MustQuery("show create table t_sub").Check(testkit.Rows("" +
@@ -404,7 +408,6 @@ func TestCreateTableWithHashPartition(t *testing.T) {
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (200),\n" +
 		" PARTITION `p2` VALUES LESS THAN (MAXVALUE))"))
->>>>>>> 7a442947a91 (ddl: Only warn of subpartitions, still allow first level partitioning (#41207))
 
 	// Fix create partition table using extract() function as partition key.
 	tk.MustExec("create table t2 (a date, b datetime) partition by hash (EXTRACT(YEAR_MONTH FROM a)) partitions 7")
@@ -413,7 +416,8 @@ func TestCreateTableWithHashPartition(t *testing.T) {
 }
 
 func TestSubPartitioning(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -438,10 +442,11 @@ func TestSubPartitioning(t *testing.T) {
 	tk.MustExec(`drop table t`)
 
 	tk.MustGetErrMsg(`create table t (a int) partition by hash (a) partitions 2 subpartition by key (a) subpartitions 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
-	tk.MustGetErrMsg(`create table t (a int) partition by key (a) partitions 2 subpartition by hash (a) subpartitions 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
+
+	tk.MustExec(`create table t (a int) partition by key (a) partitions 2 subpartition by hash (a) subpartitions 2`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported partition type KEY, treat as normal table"))
 
 	tk.MustGetErrMsg(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY HASH(col1) PARTITIONS 4 SUBPARTITION BY HASH(col3) SUBPARTITIONS 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
-	tk.MustGetErrMsg(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY KEY(col1) PARTITIONS 4 SUBPARTITION BY KEY(col3) SUBPARTITIONS 2`, "[ddl:1500]It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning")
 }
 
 func TestCreateTableWithRangeColumnPartition(t *testing.T) {
