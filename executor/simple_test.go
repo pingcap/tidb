@@ -154,6 +154,8 @@ func TestSetResourceGroup(t *testing.T) {
 	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg2"))
 	tk.MustExec("SET RESOURCE GROUP ``")
 	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("default"))
+	tk.MustExec("SET RESOURCE GROUP default")
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("default"))
 
 	tk.RefreshSession()
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
