@@ -78,7 +78,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 		require.Nil(t, metas)
 	}, []error{errors.New("mockErr")})
 
-	// 4. test non-partition-table. This have bug...
+	// 4. test non-partition-table.
 	tk.MustExec("create table t1(id int primary key, v int)")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.BackfillTaskType)
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
@@ -86,6 +86,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 	tblInfo = tbl.Meta()
 	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
 		require.Equal(t, proto.StepOne, gTask.Step)
+		// TODO: check meta
 	}, nil)
 	gTask.Step++
 	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
@@ -161,6 +162,7 @@ func processAndCheck(t *testing.T,
 	}()
 
 	doneDispatch := false
+	// TODO: receive metas array
 	var metas [][]byte
 	for !doneDispatch {
 		select {
