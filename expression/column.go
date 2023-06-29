@@ -36,7 +36,8 @@ import (
 type CorrelatedColumn struct {
 	Column
 
-	Data *types.Datum
+	Data           *types.Datum
+	columnHashCode []byte
 }
 
 // Clone implements Expression interface.
@@ -190,6 +191,30 @@ func (col *CorrelatedColumn) ResolveIndicesByVirtualExpr(_ *Schema) (Expression,
 
 func (col *CorrelatedColumn) resolveIndicesByVirtualExpr(_ *Schema) bool {
 	return true
+}
+
+// HashCode implements Expression interface.
+func (col *CorrelatedColumn) HashCode(sc *stmtctx.StatementContext) []byte {
+	if len(col.columnHashCode) == 0 {
+		col.columnHashCode = make([]byte, 0, 9)
+		col.columnHashCode = append(col.columnHashCode, columnFlag)
+		col.columnHashCode = codec.EncodeInt(col.columnHashCode, col.UniqueID)
+	}
+
+	if len(col.hashcode) < len(col.columnHashCode) {
+		if len(col.hashcode) == 0 {
+			col.hashcode = make([]byte, 0, len(col.columnHashCode))
+		} else {
+			col.hashcode = col.hashcode[:0]
+		}
+		col.hashcode = append(col.hashcode, col.columnHashCode...)
+	}
+
+	// Because col.Data can be changed anytime, so always use newest Datum to calc hash code.
+	if col.Data != nil {
+		col.hashcode = codec.HashCode(col.hashcode, *col.Data)
+	}
+	return col.hashcode
 }
 
 // Column represents a column.
