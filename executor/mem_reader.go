@@ -313,6 +313,27 @@ func (iter *txnMemBufferIter) next() ([]types.Datum, error) {
 			return nil, errors.Trace(err)
 		}
 		iter.chk.Reset()
+
+		if !rowcodec.IsNewFormat(curr.Value()) {
+			// TODO: remove the legacy code!
+			// fallback to the old way.
+			iter.datumRow, err = iter.decodeRecordKeyValue(curr.Key(), curr.Value(), &iter.datumRow)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
+			mutableRow.SetDatums(iter.datumRow...)
+			matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, mutableRow.ToRow())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !matched {
+				continue
+			}
+			return iter.datumRow, curr.Next()
+		}
+
 		err = iter.cd.DecodeToChunk(curr.Value(), handle, iter.chk)
 		if err != nil {
 			return nil, errors.Trace(err)
