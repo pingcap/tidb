@@ -530,6 +530,9 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			schemaName = job.BinlogInfo.DBInfo.Name.L
 		}
 	}
+	if len(tableName) == 0 {
+		tableName = job.TableName
+	}
 	// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
 	if len(schemaName) == 0 {
 		schemaName = getSchemaName(e.is, job.SchemaID)
@@ -1300,8 +1303,12 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
+		if pi, ok := sctx.(processinfoSetter); ok {
+			// Before executing the sub-query, we need update the processinfo to make the progress bar more accurate.
+			// because the sub-query may take a long time.
+			pi.UpdateProcessInfo()
+		}
 		chk := newFirstChunk(exec)
-
 		err = Next(ctx, exec, chk)
 		if err != nil {
 			return nil, err

@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -6104,4 +6105,25 @@ func TestIsFastPlan(t *testing.T) {
 		ok = executor.IsFastPlan(p)
 		require.Equal(t, ca.isFastPlan, ok)
 	}
+}
+
+func TestProcessInfoOfSubQuery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int, j int);")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tk.MustQuery("select 1, (select sleep(count(1) + 2) from t);")
+		wg.Done()
+	}()
+	time.Sleep(time.Second)
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk2.MustQuery("select 1 from information_schema.processlist where TxnStart != '' and info like 'select%sleep% from t%'").Check(testkit.Rows("1"))
+	wg.Wait()
 }
