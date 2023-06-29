@@ -159,13 +159,13 @@ func (s *Server) GetStatusServerAddr() (on bool, addr string) {
 		return false, ""
 	}
 	// TODO: better way to get the proper ip to be used by TiFlash nodes
-	if s.cfg.Status.StatusHost == config.DefStatusHost {
+	if strings.Contains(s.statusAddr, config.DefStatusHost) {
 		if s.cfg.Host != config.DefHost {
 			return true, strings.ReplaceAll(s.statusAddr, config.DefStatusHost, s.cfg.Host)
 		}
 		return false, ""
 	}
-	return true, s.statusServer.Addr
+	return true, s.statusAddr
 }
 
 // ConnectionCount gets current connection count.
