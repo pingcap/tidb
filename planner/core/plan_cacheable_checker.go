@@ -17,7 +17,6 @@ package core
 import (
 	"fmt"
 	"math"
-	"strconv"
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
@@ -27,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
+	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/filter"
@@ -688,16 +687,12 @@ func getMaxParamLimit(sctx sessionctx.Context) int {
 	if sctx == nil || sctx.GetSessionVars() == nil || sctx.GetSessionVars().OptimizerFixControl == nil {
 		return v
 	}
-	if sctx.GetSessionVars().OptimizerFixControl[variable.TiDBOptFixControl44823] != "" {
-		n, err := strconv.Atoi(sctx.GetSessionVars().OptimizerFixControl[variable.TiDBOptFixControl44823])
-		if err != nil {
-			return v
-		}
-		if n == 0 {
-			v = math.MaxInt32 // no limitation
-		} else if n > 0 {
-			v = n
-		}
+	n := fixcontrol.GetIntWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44823, int64(v))
+	if n == 0 {
+		v = math.MaxInt32 // no limitation
+	} else if n > 0 {
+		v = int(n)
 	}
+
 	return v
 }
