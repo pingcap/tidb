@@ -382,7 +382,7 @@ func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 
 func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
 	if needNotifyAndStopReorgWorker(job) {
-		logutil.Logger(w.logCtx).Info("pausing the DDL job", zap.String("category", "DDL"), zap.String("job", job.String()))
+		logutil.Logger(w.logCtx).Info("pausing the DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
 		d.notifyReorgWorkerJobStateChange(job)
 	}
 
