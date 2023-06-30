@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -235,8 +234,8 @@ func TestReadyForNewJobTables(t *testing.T) {
 			tables := m.readyForNewJobTables(se.Now())
 			if c.shouldSchedule {
 				require.Len(t, tables, 1)
-				assert.Equal(t, int64(0), tables[0].ID)
-				assert.Equal(t, int64(0), tables[0].TableInfo.ID)
+				require.Equal(t, int64(0), tables[0].ID)
+				require.Equal(t, int64(0), tables[0].TableInfo.ID)
 			} else {
 				require.Len(t, tables, 0)
 			}
@@ -370,8 +369,8 @@ func TestLockNewTable(t *testing.T) {
 			se := newMockSession(t)
 			se.executeSQL = func(ctx context.Context, sql string, args ...interface{}) (rows []chunk.Row, err error) {
 				require.Less(t, sqlCounter, len(c.sqls))
-				assert.Equal(t, c.sqls[sqlCounter].sql, sql)
-				assert.Equal(t, c.sqls[sqlCounter].args, args)
+				require.Equal(t, c.sqls[sqlCounter].sql, sql)
+				require.Equal(t, c.sqls[sqlCounter].args, args)
 
 				rows = c.sqls[sqlCounter].rows
 				err = c.sqls[sqlCounter].err
@@ -413,7 +412,7 @@ func TestLocalJobs(t *testing.T) {
 		},
 	}
 	require.Len(t, m.localJobs(), 1)
-	assert.Equal(t, m.localJobs()[0].id, "1")
+	require.Equal(t, m.localJobs()[0].id, "1")
 }
 
 func TestRescheduleJobsOutOfWindow(t *testing.T) {

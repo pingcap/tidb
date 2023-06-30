@@ -17,7 +17,6 @@ package mock
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,7 +33,7 @@ func TestContext(t *testing.T) {
 
 	ctx.SetValue(contextKey, 1)
 	v := ctx.Value(contextKey)
-	assert.Equal(t, 1, v)
+	require.Equal(t, 1, v)
 
 	ctx.ClearValue(contextKey)
 	v = ctx.Value(contextKey)

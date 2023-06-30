@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/util/topsql/state"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -39,8 +38,8 @@ func TestKvExecCounter(t *testing.T) {
 		})("TIKV-2", nil)
 	}
 	require.Len(t, counter.marked, 2)
-	assert.Contains(t, counter.marked, "TIKV-1")
-	assert.Contains(t, counter.marked, "TIKV-2")
+	require.Contains(t, counter.marked, "TIKV-1")
+	require.Contains(t, counter.marked, "TIKV-2")
 	require.NotNil(t, stats.data[SQLPlanDigest{SQLDigest: "SQL-1"}])
-	assert.Equal(t, uint64(1), stats.data[SQLPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["TIKV-1"])
+	require.Equal(t, uint64(1), stats.data[SQLPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["TIKV-1"])
 }

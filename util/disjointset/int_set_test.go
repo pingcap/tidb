@@ -25,7 +25,7 @@ func TestIntDisjointSet(t *testing.T) {
 	set := NewIntSet(10)
 	require.Len(t, set.parent, 10)
 	for i := range set.parent {
-		assert.Equal(t, i, set.parent[i])
+		require.Equal(t, i, set.parent[i])
 	}
 	set.Union(0, 1)
 	set.Union(1, 3)
@@ -34,11 +34,11 @@ func TestIntDisjointSet(t *testing.T) {
 	set.Union(3, 5)
 	set.Union(7, 8)
 	set.Union(9, 6)
-	assert.Equal(t, set.FindRoot(0), set.FindRoot(1))
-	assert.Equal(t, set.FindRoot(3), set.FindRoot(1))
-	assert.Equal(t, set.FindRoot(5), set.FindRoot(1))
-	assert.Equal(t, set.FindRoot(2), set.FindRoot(4))
-	assert.Equal(t, set.FindRoot(6), set.FindRoot(4))
-	assert.Equal(t, set.FindRoot(9), set.FindRoot(2))
+	require.Equal(t, set.FindRoot(0), set.FindRoot(1))
+	require.Equal(t, set.FindRoot(3), set.FindRoot(1))
+	require.Equal(t, set.FindRoot(5), set.FindRoot(1))
+	require.Equal(t, set.FindRoot(2), set.FindRoot(4))
+	require.Equal(t, set.FindRoot(6), set.FindRoot(4))
+	require.Equal(t, set.FindRoot(9), set.FindRoot(2))
 	assert.Equal(t, set.FindRoot(7), set.FindRoot(8))
 }

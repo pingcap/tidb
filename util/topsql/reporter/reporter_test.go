@@ -25,7 +25,6 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -516,8 +515,8 @@ func TestReporterWorker(t *testing.T) {
 	}
 
 	require.Len(t, data.DataRecords, 1)
-	assert.Equal(t, []byte("S1"), data.DataRecords[0].SqlDigest)
-	assert.Equal(t, []byte("P1"), data.DataRecords[0].PlanDigest)
+	require.Equal(t, []byte("S1"), data.DataRecords[0].SqlDigest)
+	require.Equal(t, []byte("P1"), data.DataRecords[0].PlanDigest)
 }
 
 func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {

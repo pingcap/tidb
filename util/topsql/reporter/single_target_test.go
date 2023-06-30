@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -76,9 +75,9 @@ func TestSingleTargetDataSink(t *testing.T) {
 	require.Len(t, server.GetLatestRecords(), 1)
 	require.Len(t, server.GetTotalSQLMetas(), 1)
 	sqlMeta, exist := server.GetSQLMetaByDigestBlocking([]byte("S1"), 5*time.Second)
-	assert.True(t, exist)
-	assert.Equal(t, sqlMeta.NormalizedSql, "SQL-1")
+	require.True(t, exist)
+	require.Equal(t, sqlMeta.NormalizedSql, "SQL-1")
 	normalizedPlan, exist := server.GetPlanMetaByDigestBlocking([]byte("P1"), 5*time.Second)
-	assert.True(t, exist)
-	assert.Equal(t, normalizedPlan, "PLAN-1")
+	require.True(t, exist)
+	require.Equal(t, normalizedPlan, "PLAN-1")
 }

@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util/topsql/state"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
@@ -32,7 +31,7 @@ func Test_SetupCloseAggregator(t *testing.T) {
 		require.False(t, globalAggregator.closed())
 		CloseAggregator()
 		time.Sleep(100 * time.Millisecond)
-		assert.True(t, globalAggregator.closed())
+		require.True(t, globalAggregator.closed())
 	}
 }
 
@@ -43,7 +42,7 @@ func Test_RegisterUnregisterCollector(t *testing.T) {
 	collector := newMockCollector(func(data StatementStatsMap) {})
 	RegisterCollector(collector)
 	_, ok := globalAggregator.collectors.Load(collector)
-	assert.True(t, ok)
+	require.True(t, ok)
 	UnregisterCollector(collector)
 	_, ok = globalAggregator.collectors.Load(collector)
 	require.False(t, ok)
@@ -66,18 +65,18 @@ func Test_aggregator_register_collect(t *testing.T) {
 	}))
 	a.aggregate()
 	require.NotEmpty(t, total)
-	assert.Equal(t, uint64(1), total[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
-	assert.Equal(t, uint64(time.Millisecond.Nanoseconds()), total[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
+	require.Equal(t, uint64(1), total[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
+	require.Equal(t, uint64(time.Millisecond.Nanoseconds()), total[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
 }
 
 func Test_aggregator_run_close(t *testing.T) {
 	a := newAggregator()
-	assert.True(t, a.closed())
+	require.True(t, a.closed())
 	a.start()
 	time.Sleep(100 * time.Millisecond)
 	require.False(t, a.closed())
 	a.close()
-	assert.True(t, a.closed())
+	require.True(t, a.closed())
 
 	// randomly start and close
 	for i := 0; i < 100; i++ {

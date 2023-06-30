@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +34,7 @@ func TestDefaultDataSinkRegisterer(t *testing.T) {
 	require.Len(t, r.dataSinks, 2)
 	r.Deregister(m1)
 	r.Deregister(m2)
-	assert.Empty(t, r.dataSinks)
+	require.Empty(t, r.dataSinks)
 }
 
 type mockDataSink2 struct {

@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,9 +39,9 @@ func TestConcurrentBitmapSet(t *testing.T) {
 
 	for i := 0; i < loopCount; i++ {
 		if i%interval == 0 {
-			assert.Equal(t, true, bm.UnsafeIsSet(i))
+			require.Equal(t, true, bm.UnsafeIsSet(i))
 		} else {
-			assert.Equal(t, false, bm.UnsafeIsSet(i))
+			require.Equal(t, false, bm.UnsafeIsSet(i))
 		}
 	}
 }
@@ -76,7 +75,7 @@ func TestConcurrentBitmapUniqueSetter(t *testing.T) {
 	}
 	wg.Wait()
 	require.Less(t, clearCounter, uint64(loopCount))
-	assert.Equal(t, setterCounter, clearCounter+1)
+	require.Equal(t, setterCounter, clearCounter+1)
 }
 
 // TestResetConcurrentBitmap test the reset of concurrentBitmap.
@@ -87,8 +86,8 @@ func TestResetConcurrentBitmap(t *testing.T) {
 	bm.Set(7)
 	bm.Set(16)
 	bm.Reset(8)
-	assert.Equal(t, bm.bitLen, 8)
-	assert.Equal(t, bm.UnsafeIsSet(1), false)
-	assert.Equal(t, bm.UnsafeIsSet(3), false)
-	assert.Equal(t, bm.UnsafeIsSet(7), false)
+	require.Equal(t, bm.bitLen, 8)
+	require.Equal(t, bm.UnsafeIsSet(1), false)
+	require.Equal(t, bm.UnsafeIsSet(3), false)
+	require.Equal(t, bm.UnsafeIsSet(7), false)
 }

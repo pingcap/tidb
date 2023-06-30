@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -99,6 +98,6 @@ func TestProfileToDatum(t *testing.T) {
 			}
 		}
 		require.Nil(t, err, comment)
-		assert.True(t, equal, comment)
+		require.True(t, equal, comment)
 	}
 }

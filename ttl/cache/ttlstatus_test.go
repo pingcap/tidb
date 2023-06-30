@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,7 +51,7 @@ func TestTTLStatusCache(t *testing.T) {
 	require.Equal(t, 1, len(isc.Tables))
 	tk.MustExec("delete from mysql.tidb_ttl_table_status where table_id = 1")
 	require.NoError(t, isc.Update(context.Background(), ttlSession))
-	assert.Equal(t, 0, len(isc.Tables))
+	require.Equal(t, 0, len(isc.Tables))
 
 	timeZone := tk.Session().GetSessionVars().TimeZone
 
@@ -65,17 +64,17 @@ func TestTTLStatusCache(t *testing.T) {
 		{
 			"parent_table_id",
 			"2",
-			func(table *cache.TableStatus) { assert.Equal(t, int64(2), table.ParentTableID) },
+			func(table *cache.TableStatus) { require.Equal(t, int64(2), table.ParentTableID) },
 		},
 		{
 			"table_statistics",
 			"'test str'",
-			func(table *cache.TableStatus) { assert.Equal(t, "test str", table.TableStatistics) },
+			func(table *cache.TableStatus) { require.Equal(t, "test str", table.TableStatistics) },
 		},
 		{
 			"last_job_id",
 			"'test job id'",
-			func(table *cache.TableStatus) { assert.Equal(t, "test job id", table.LastJobID) },
+			func(table *cache.TableStatus) { require.Equal(t, "test job id", table.LastJobID) },
 		},
 		{
 			"last_job_start_time",
@@ -83,7 +82,7 @@ func TestTTLStatusCache(t *testing.T) {
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:49:01", timeZone)
 				require.NoError(t, err)
-				assert.Equal(t, expectedTime, table.LastJobStartTime)
+				require.Equal(t, expectedTime, table.LastJobStartTime)
 			},
 		},
 		{
@@ -92,7 +91,7 @@ func TestTTLStatusCache(t *testing.T) {
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:50:01", timeZone)
 				require.NoError(t, err)
-				assert.Equal(t, expectedTime, table.LastJobFinishTime)
+				require.Equal(t, expectedTime, table.LastJobFinishTime)
 			},
 		},
 		{
@@ -101,23 +100,23 @@ func TestTTLStatusCache(t *testing.T) {
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:51:01", timeZone)
 				require.NoError(t, err)
-				assert.Equal(t, expectedTime, table.LastJobTTLExpire)
+				require.Equal(t, expectedTime, table.LastJobTTLExpire)
 			},
 		},
 		{
 			"last_job_summary",
 			"'test summary'",
-			func(table *cache.TableStatus) { assert.Equal(t, "test summary", table.LastJobSummary) },
+			func(table *cache.TableStatus) { require.Equal(t, "test summary", table.LastJobSummary) },
 		},
 		{
 			"current_job_id",
 			"'test current job id'",
-			func(table *cache.TableStatus) { assert.Equal(t, "test current job id", table.CurrentJobID) },
+			func(table *cache.TableStatus) { require.Equal(t, "test current job id", table.CurrentJobID) },
 		},
 		{
 			"current_job_owner_id",
 			"'test current job owner id'",
-			func(table *cache.TableStatus) { assert.Equal(t, "test current job owner id", table.CurrentJobOwnerID) },
+			func(table *cache.TableStatus) { require.Equal(t, "test current job owner id", table.CurrentJobOwnerID) },
 		},
 		{
 			"current_job_owner_hb_time",

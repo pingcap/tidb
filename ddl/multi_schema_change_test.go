@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1056,14 +1055,14 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 			require.Equal(t, rows[1][2], "t")
 			require.Equal(t, rows[1][3], "add index /* subjob */ /* txn-merge */")
 			require.Equal(t, rows[1][4], "delete only")
-			assert.Equal(t, rows[1][len(rows[1])-1], "running")
+			require.Equal(t, rows[1][len(rows[1])-1], "running")
 			require.True(t, len(rows[1][8].(string)) > 0)
 			require.True(t, len(rows[1][9].(string)) > 0)
 			require.True(t, len(rows[1][10].(string)) > 0)
 
-			assert.Equal(t, rows[2][3], "add index /* subjob */")
-			assert.Equal(t, rows[2][4], "none")
-			assert.Equal(t, rows[2][len(rows[2])-1], "queueing")
+			require.Equal(t, rows[2][3], "add index /* subjob */")
+			require.Equal(t, rows[2][4], "none")
+			require.Equal(t, rows[2][len(rows[2])-1], "queueing")
 			require.True(t, len(rows[2][8].(string)) > 0)
 			require.True(t, len(rows[2][9].(string)) > 0)
 			require.True(t, len(rows[2][10].(string)) > 0)
@@ -1143,7 +1142,7 @@ func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
 		if checkErr != nil {
 			return
 		}
-		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
+		require.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteOnly {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test;")
@@ -1245,7 +1244,7 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 		if checkErr != nil {
 			return
 		}
-		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
+		require.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[9].SchemaState == model.StateDeleteOnly {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test;")

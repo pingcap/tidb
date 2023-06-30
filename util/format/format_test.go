@@ -20,7 +20,6 @@ import (
 	"io"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +28,7 @@ func checkFormat(t *testing.T, f Formatter, buf *bytes.Buffer, str, expect strin
 	require.Nil(t, err)
 	b, err := io.ReadAll(buf)
 	require.Nil(t, err)
-	assert.Equal(t, string(b), expect)
+	require.Equal(t, string(b), expect)
 }
 
 func TestFormat(t *testing.T) {

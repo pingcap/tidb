@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -79,9 +78,9 @@ func TestKvStatementStatsItem_Merge(t *testing.T) {
 	item1.Merge(item2)
 	require.Len(t, item1.KvExecCount, 3)
 	require.Len(t, item2.KvExecCount, 2)
-	assert.Equal(t, uint64(1), item1.KvExecCount["127.0.0.1:10001"])
-	assert.Equal(t, uint64(3), item1.KvExecCount["127.0.0.1:10003"])
-	assert.Equal(t, uint64(3), item1.KvExecCount["127.0.0.1:10003"])
+	require.Equal(t, uint64(1), item1.KvExecCount["127.0.0.1:10001"])
+	require.Equal(t, uint64(3), item1.KvExecCount["127.0.0.1:10003"])
+	require.Equal(t, uint64(3), item1.KvExecCount["127.0.0.1:10003"])
 }
 
 func TestStatementsStatsItem_Merge(t *testing.T) {
@@ -96,8 +95,8 @@ func TestStatementsStatsItem_Merge(t *testing.T) {
 		KvStatsItem:   NewKvStatementStatsItem(),
 	}
 	item1.Merge(item2)
-	assert.Equal(t, uint64(3), item1.ExecCount)
-	assert.Equal(t, uint64(150), item1.SumDurationNs)
+	require.Equal(t, uint64(3), item1.ExecCount)
+	require.Equal(t, uint64(150), item1.SumDurationNs)
 }
 
 func TestStatementStatsMap_Merge(t *testing.T) {
@@ -150,18 +149,18 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 	m1.Merge(m2)
 	require.Len(t, m1, 3)
 	require.Len(t, m2, 2)
-	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
-	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
-	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
-	assert.Equal(t, uint64(100), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
-	assert.Equal(t, uint64(300), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].SumDurationNs)
-	assert.Equal(t, uint64(50), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].SumDurationNs)
-	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["KV-1"])
-	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["KV-2"])
-	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].KvStatsItem.KvExecCount["KV-1"])
-	assert.Equal(t, uint64(4), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].KvStatsItem.KvExecCount["KV-2"])
-	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].KvStatsItem.KvExecCount["KV-1"])
-	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].KvStatsItem.KvExecCount["KV-2"])
+	require.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
+	require.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
+	require.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
+	require.Equal(t, uint64(100), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
+	require.Equal(t, uint64(300), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].SumDurationNs)
+	require.Equal(t, uint64(50), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].SumDurationNs)
+	require.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["KV-1"])
+	require.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["KV-2"])
+	require.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].KvStatsItem.KvExecCount["KV-1"])
+	require.Equal(t, uint64(4), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].KvStatsItem.KvExecCount["KV-2"])
+	require.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].KvStatsItem.KvExecCount["KV-1"])
+	require.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].KvStatsItem.KvExecCount["KV-2"])
 	m1.Merge(nil)
 	require.Len(t, m1, 3)
 }
@@ -170,10 +169,10 @@ func TestCreateStatementStats(t *testing.T) {
 	stats := CreateStatementStats()
 	require.NotNil(t, stats)
 	_, ok := globalAggregator.statsSet.Load(stats)
-	assert.True(t, ok)
+	require.True(t, ok)
 	require.False(t, stats.Finished())
 	stats.SetFinished()
-	assert.True(t, stats.Finished())
+	require.True(t, stats.Finished())
 }
 
 func TestExecCounter_AddExecCount_Take(t *testing.T) {

@@ -17,7 +17,6 @@ package arena
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,36 +30,36 @@ const (
 func TestSimpleArenaAllocator(t *testing.T) {
 	arena := NewAllocator(arenaCap)
 	slice := arena.Alloc(allocCapSmall)
-	assert.Equal(t, allocCapSmall, arena.off)
+	require.Equal(t, allocCapSmall, arena.off)
 	require.Len(t, slice, 0)
-	assert.Equal(t, allocCapSmall, cap(slice))
+	require.Equal(t, allocCapSmall, cap(slice))
 
 	slice = arena.Alloc(allocCapMedium)
-	assert.Equal(t, allocCapSmall+allocCapMedium, arena.off)
+	require.Equal(t, allocCapSmall+allocCapMedium, arena.off)
 	require.Len(t, slice, 0)
-	assert.Equal(t, allocCapMedium, cap(slice))
+	require.Equal(t, allocCapMedium, cap(slice))
 
 	slice = arena.Alloc(allocCapOut)
-	assert.Equal(t, allocCapSmall+allocCapMedium, arena.off)
+	require.Equal(t, allocCapSmall+allocCapMedium, arena.off)
 	require.Len(t, slice, 0)
-	assert.Equal(t, allocCapOut, cap(slice))
+	require.Equal(t, allocCapOut, cap(slice))
 
 	slice = arena.AllocWithLen(2, allocCapSmall)
-	assert.Equal(t, allocCapSmall+allocCapMedium+allocCapSmall, arena.off)
+	require.Equal(t, allocCapSmall+allocCapMedium+allocCapSmall, arena.off)
 	require.Len(t, slice, 2)
-	assert.Equal(t, allocCapSmall, cap(slice))
+	require.Equal(t, allocCapSmall, cap(slice))
 
 	arena.Reset()
-	assert.Zero(t, arena.off)
-	assert.Equal(t, arenaCap, cap(arena.arena))
+	require.Zero(t, arena.off)
+	require.Equal(t, arenaCap, cap(arena.arena))
 }
 
 func TestStdAllocator(t *testing.T) {
 	slice := StdAllocator.Alloc(allocCapMedium)
 	require.Len(t, slice, 0)
-	assert.Equal(t, allocCapMedium, cap(slice))
+	require.Equal(t, allocCapMedium, cap(slice))
 
 	slice = StdAllocator.AllocWithLen(allocCapSmall, allocCapMedium)
 	require.Len(t, slice, allocCapSmall)
-	assert.Equal(t, allocCapMedium, cap(slice))
+	require.Equal(t, allocCapMedium, cap(slice))
 }

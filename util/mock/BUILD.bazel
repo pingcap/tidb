@@ -48,7 +48,6 @@ go_test(
     deps = [
         "//kv",
         "//testkit/testsetup",
-        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
