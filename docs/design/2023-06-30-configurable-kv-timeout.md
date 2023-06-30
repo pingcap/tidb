@@ -8,7 +8,7 @@
 The associated TiKV requests are typically processed quickly, taking only a few milliseconds. However, if 
 there is disk IO or network latency jitter on a specified TiKV node, the duration of these requests may spike 
 to several seconds or more. This usually happens when there is an EBS issue like the EBS is repairing its 
-replica. As a result, the related query latency may spike a lot.
+replica.
 
 Currently, the timeout limit for the TiKV requests is fixed and cannot be adjusted.  For example:
 - `ReadTimeoutShort`: [30 seconds](https://github.com/tikv/client-go/blob/ce9203ef66e99dcc8b14f68777c520830ba99099/internal/client/client.go#L82), which is used for the Get RPC request.
@@ -195,6 +195,17 @@ fn parse_request_and_check_memory_locks(
 }
 ```
 This change needs to be done in the `tikv` repository.
+
+## Timeout Retry
+
+- When timeout happens, retry the next available peer for the read requests like stale read and `non-leader-only`
+snapshot read requests. The strategy is:
+  1. Try the next peer if the first request times out immediately.
+  2. If all the responses from all the peers are `timeout` errors, return `timeout` error to the upper layer,
+  3. Backoff with the `timeout` error and retry the requests with **the orginal default** `ReadShortTimeout`
+  and `ReadMediumTimeout` values.
+  4. Continue to process like before.
+- The timeout retry details should be recorded and handled properly in the request tracker, so are the metrics.
 
 
 ## Compatibility
