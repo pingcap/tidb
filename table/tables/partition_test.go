@@ -2422,6 +2422,19 @@ func TestKeyPartitionTableDDL(t *testing.T) {
 	result.CheckContain("Unsupported partition type KEY, treat as normal table")
 }
 
+func TestLocatePartitionErrorInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t_44966")
+	tk.MustExec("create table t_44966 (a bigint unsigned) partition by range (a) (partition p0 values less than (10))")
+	err := tk.ExecToErr("insert into t_44966 values (0xffffffffffffffff)")
+	require.Regexp(t, "Table has no partition for value 18446744073709551615", err)
+	tk.MustExec("drop tables if exists t_44966")
+	tk.MustExec("create table t_44966 (a bigint unsigned) partition by list (a) (partition p0 values in (1,2))")
+	require.Regexp(t, "Table has no partition for value 18446744073709551615", err)
+}
+
 func TestPruneModeWarningInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
