@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIsRequestTypeSupported(t *testing.T) {
