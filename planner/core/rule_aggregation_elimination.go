@@ -152,6 +152,7 @@ func appendDistinctEliminateTraceStep(agg *LogicalAggregation, uniqueKey express
 }
 
 // CheckCanConvertAggToProj check whether a special old aggregation (which has already been pushed down) to projection.
+// link: issue#44795
 func CheckCanConvertAggToProj(agg *LogicalAggregation) bool {
 	var mayNullSchema *expression.Schema
 	if join, ok := agg.Children()[0].(*LogicalJoin); ok {
