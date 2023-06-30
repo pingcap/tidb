@@ -102,8 +102,11 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 
 	// meta for current task.
 	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
-		Address:    req.Meta.GetAddress(),
-		MppVersion: req.MppVersion.ToInt64(),
+		GatherId:               req.GatherID,
+		Address:                req.Meta.GetAddress(),
+		CoordinatorAddress:     req.CoordinatorAddress,
+		ReportExecutionSummary: req.ReportExecutionSummary,
+		MppVersion:             req.MppVersion.ToInt64(),
 	}
 
 	mppReq := &mpp.DispatchTaskRequest{
@@ -185,8 +188,9 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 // NOTE: We do not retry here, because retry is helpless when errors result from TiFlash or Network. If errors occur, the execution on TiFlash will finally stop after some minutes.
 // This function is exclusively called, and only the first call succeeds sending tasks and setting all tasks as cancelled, while others will not work.
 func (c *MPPClient) CancelMPPTasks(param kv.CancelMPPTasksParam) {
+	usedStoreAddrs := param.StoreAddr
 	reqs := param.Reqs
-	if len(reqs) == 0 {
+	if len(usedStoreAddrs) == 0 || len(reqs) == 0 {
 		return
 	}
 
@@ -197,17 +201,6 @@ func (c *MPPClient) CancelMPPTasks(param kv.CancelMPPTasksParam) {
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
 	wrappedReq.StoreTp = getEndPointType(kv.TiFlash)
-
-	usedStoreAddrs := make(map[string]bool)
-	for _, task := range reqs {
-		// get the store address of running tasks
-		if task.State == kv.MppTaskRunning && !usedStoreAddrs[task.Meta.GetAddress()] {
-			usedStoreAddrs[task.Meta.GetAddress()] = true
-		} else if task.State == kv.MppTaskCancelled {
-			return
-		}
-		task.State = kv.MppTaskCancelled
-	}
 
 	// send cancel cmd to all stores where tasks run
 	invalidPDCache := config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler
@@ -255,7 +248,7 @@ func (c *MPPClient) EstablishMPPConns(param kv.EstablishMPPConnsParam) (*tikvrpc
 
 	// Drain results from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
-	rpcResp, err := c.store.GetTiKVClient().SendRequest(param.Ctx, req.Meta.GetAddress(), wrappedReq, readTimeoutUltraLong)
+	rpcResp, err := c.store.GetTiKVClient().SendRequest(param.Ctx, req.Meta.GetAddress(), wrappedReq, TiFlashReadTimeoutUltraLong)
 
 	if err != nil {
 		logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))

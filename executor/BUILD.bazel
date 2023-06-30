@@ -124,6 +124,7 @@ go_library(
         "//executor/internal/mpp",
         "//executor/internal/util",
         "//executor/metrics",
+        "//executor/mppcoordmanager",
         "//expression",
         "//expression/aggregation",
         "//infoschema",

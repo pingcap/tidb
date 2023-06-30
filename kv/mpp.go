@@ -37,7 +37,8 @@ const (
 	// MppVersionV1 supports TiFlash version [v6.6.x, ~]
 	MppVersionV1
 
-	// MppVersionV2
+	// MppVersionV2 supports TiFlash version [v7.3, ~], support ReportMPPTaskStatus service
+	MppVersionV2
 	// MppVersionV3
 
 	mppVersionMax
@@ -141,17 +142,21 @@ type MPPDispatchRequest struct {
 	IsRoot  bool        // root task returns data to tidb directly.
 	Timeout uint64      // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
 	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
-	SchemaVar  int64
-	StartTs    uint64
-	MppQueryID MPPQueryID
-	ID         int64 // identify a single task
-	MppVersion MppVersion
-	State      MppTaskStates
+	SchemaVar              int64
+	StartTs                uint64
+	MppQueryID             MPPQueryID
+	GatherID               uint64
+	ID                     int64 // identify a single task
+	MppVersion             MppVersion
+	CoordinatorAddress     string
+	ReportExecutionSummary bool
+	State                  MppTaskStates
 }
 
 // CancelMPPTasksParam represents parameter for MPPClient's CancelMPPTasks
 type CancelMPPTasksParam struct {
-	Reqs []*MPPDispatchRequest
+	StoreAddr map[string]bool
+	Reqs      []*MPPDispatchRequest
 }
 
 // EstablishMPPConnsParam represents parameter for MPPClient's EstablishMPPConns
@@ -191,14 +196,24 @@ type MPPClient interface {
 	GetMPPStoreCount() (int, error)
 }
 
+// ReportStatusRequest wraps mpp ReportStatusRequest
+type ReportStatusRequest struct {
+	Request *mpp.ReportTaskStatusRequest
+}
+
 // MppCoordinator describes the basic api for executing mpp physical plan.
 type MppCoordinator interface {
 	// Execute generates and executes mpp tasks for mpp physical plan.
 	Execute(ctx context.Context) (Response, []KeyRange, error)
 	// Next returns next data
 	Next(ctx context.Context) (ResultSubset, error)
+	// ReportStatus report task execution info to coordinator
+	// It shouldn't change any state outside coordinator itself, since the query which generated the coordinator may not exist
+	ReportStatus(info ReportStatusRequest) error
 	// Close and release the used resources.
 	Close() error
+	// IsClosed returns whether mpp coordinator is closed or not
+	IsClosed() bool
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.
