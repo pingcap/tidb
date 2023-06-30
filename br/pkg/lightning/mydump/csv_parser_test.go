@@ -697,7 +697,7 @@ func TestTooLargeRow(t *testing.T) {
 	}
 	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
 	require.NoError(t, err)
-	parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(testCase.String()), int64(config.ReadBlockSize), ioWorkers, false, charsetConvertor)
+	parser, err := mydump.NewCSVParser(&cfg.CSV, mydump.NewStringReader(testCase.String()), int64(config.ReadBlockSize), ioWorkers, false, charsetConvertor)
 	require.NoError(t, err)
 	e := parser.ReadRow()
 	require.Error(t, e)
