@@ -328,7 +328,10 @@ func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 func (b *backfillSchedulerHandle) Rollback(context.Context) error {
 	logutil.BgLogger().Info("[ddl] rollback backfill add index task", zap.Int64("jobID", b.job.ID))
 	ingest.LitBackCtxMgr.Unregister(b.job.ID)
-	b.d.removeReorgCtx(b.job.ID)
+	if !b.d.OwnerManager().IsOwner() {
+		// For owner, reorg ctx will be removed after the reorg job is done.
+		b.d.removeReorgCtx(b.job.ID)
+	}
 	return nil
 }
 

@@ -120,3 +120,15 @@ func TestIssue45007(t *testing.T) {
 	tk.MustQuery("select * from t where b > 1 order by b limit 5;").Check(testkit.Rows("3 3", "4 4", "5 5", "6 6", "7 7"))
 	tk.MustExec("rollback")
 }
+
+func TestIssue42732(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 (a INT, b INT)")
+	tk.MustExec("CREATE TABLE t2 (a INT, b INT)")
+	tk.MustExec("INSERT INTO t1 VALUES (1, 1)")
+	tk.MustExec("INSERT INTO t2 VALUES (1, 1)")
+	tk.MustQuery("SELECT one.a, one.b as b2 FROM t1 one ORDER BY (SELECT two.b FROM t2 two WHERE two.a = one.b)").Check(testkit.Rows("1 1"))
+}
