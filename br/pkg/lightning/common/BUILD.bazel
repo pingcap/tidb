@@ -23,6 +23,7 @@ go_library(
         "//br/pkg/utils",
         "//errno",
         "//parser/model",
+        "//sessionctx/variable",
         "//store/driver/error",
         "//table/tables",
         "//util",
