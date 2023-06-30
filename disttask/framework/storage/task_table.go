@@ -287,6 +287,57 @@ func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, states .
 	return row2SubTask(rs[0]), nil
 }
 
+<<<<<<< HEAD
+=======
+// UpdateErrorToSubtask updates the error to subtask.
+func (stm *TaskManager) UpdateErrorToSubtask(tidbID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	_, err1 := stm.executeSQLWithNewSession(stm.ctx,
+		"update mysql.tidb_background_subtask set state = %?, error = %? where exec_id = %? and state = %? limit 1;",
+		proto.TaskStateFailed, serializeErr(err), tidbID, proto.TaskStatePending)
+	return err1
+}
+
+// PrintSubtaskInfo log the subtask info by taskKey.
+func (stm *TaskManager) PrintSubtaskInfo(taskKey int) {
+	rs, _ := stm.executeSQLWithNewSession(stm.ctx,
+		"select * from mysql.tidb_background_subtask where task_key = %?", taskKey)
+
+	for _, r := range rs {
+		errBytes := r.GetBytes(13)
+		var err error
+		if len(errBytes) > 0 {
+			stdErr := errors.Normalize("")
+			err1 := stdErr.UnmarshalJSON(errBytes)
+			if err1 != nil {
+				err = err1
+			} else {
+				err = stdErr
+			}
+		}
+		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", row2SubTask(r)), zap.Error(err))
+	}
+}
+
+// GetSucceedSubtasksByStep gets the subtask in the success state.
+func (stm *TaskManager) GetSucceedSubtasksByStep(taskID int64, step int64) ([]*proto.Subtask, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select * from mysql.tidb_background_subtask where task_key = %? and state = %? and step = %?", taskID, proto.TaskStateSucceed, step)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	subtasks := make([]*proto.Subtask, 0, len(rs))
+	for _, r := range rs {
+		subtasks = append(subtasks, row2SubTask(r))
+	}
+	return subtasks, nil
+}
+
+>>>>>>> de437fefac8 (disttask: update error to subtasks properly (#44961))
 // GetSubtaskInStatesCnt gets the subtask count in the states.
 func (stm *TaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interface{}) (int64, error) {
 	args := []interface{}{taskID}
@@ -368,10 +419,17 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 }
 
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
+<<<<<<< HEAD
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, isSubtaskRevert bool) error {
 	return stm.withNewTxn(func(se sessionctx.Context) error {
 		_, err := execSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, error = %? where id = %?",
 			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Error, gTask.ID)
+=======
+func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask) error {
+	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
+		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %? where id = %?",
+			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.ID)
+>>>>>>> de437fefac8 (disttask: update error to subtasks properly (#44961))
 		if err != nil {
 			return err
 		}
@@ -383,7 +441,7 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 		})
 
 		subtaskState := proto.TaskStatePending
-		if isSubtaskRevert {
+		if gTask.State == proto.TaskStateReverting {
 			subtaskState = proto.TaskStateRevertPending
 		}
 

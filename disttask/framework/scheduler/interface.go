@@ -27,6 +27,7 @@ type TaskTable interface {
 	GetSubtaskInStates(instanceID string, taskID int64, states ...interface{}) (*proto.Subtask, error)
 	UpdateSubtaskStateAndError(id int64, state string, err string) error
 	HasSubtasksInStates(instanceID string, taskID int64, states ...interface{}) (bool, error)
+	UpdateErrorToSubtask(tidbID string, err error) error
 }
 
 // Pool defines the interface of a pool.

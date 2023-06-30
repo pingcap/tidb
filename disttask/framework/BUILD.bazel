@@ -5,6 +5,11 @@ go_test(
     timeout = "short",
     srcs = ["framework_test.go"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    race = "on",
+    shard_count = 9,
+>>>>>>> de437fefac8 (disttask: update error to subtasks properly (#44961))
     deps = [
         "//disttask/framework/dispatcher",
         "//disttask/framework/proto",

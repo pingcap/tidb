@@ -194,6 +194,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 	}
 }
 
+<<<<<<< HEAD
 func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [][]byte) {
 	// TODO: Consider putting the following operations into a transaction.
 	// TODO: Consider collect some information about the tasks.
@@ -209,10 +210,25 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		}
 
 		cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateFailed)
+=======
+func (d *dispatcher) probeTask(taskID int64) (gTask *proto.Task, finished bool, subTaskErrs []error) {
+	// TODO: Consider putting the following operations into a transaction.
+	gTask, err := d.taskMgr.GetGlobalTaskByID(taskID)
+	if err != nil {
+		logutil.BgLogger().Error("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
+		return nil, false, nil
+	}
+	switch gTask.State {
+	case proto.TaskStateCancelling:
+		return gTask, false, []error{errors.New("cancel")}
+	case proto.TaskStateReverting:
+		cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateRevertPending, proto.TaskStateReverting)
+>>>>>>> de437fefac8 (disttask: update error to subtasks properly (#44961))
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
-			return false, nil
+			return gTask, false, nil
 		}
+<<<<<<< HEAD
 		if cnt > 0 {
 			subTaskErr, err = d.taskMgr.CollectSubTaskError(gTask.ID)
 			if err != nil {
@@ -223,10 +239,25 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		}
 
 		cnt, err = d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStatePending, proto.TaskStateRunning)
+=======
+		return gTask, cnt == 0, nil
+	default:
+		subTaskErrs, err = d.taskMgr.CollectSubTaskError(gTask.ID)
+		if err != nil {
+			logutil.BgLogger().Warn("collect subtask error failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
+			return gTask, false, nil
+		}
+		if len(subTaskErrs) > 0 {
+			return gTask, false, subTaskErrs
+		}
+		// check subtasks pending or running.
+		cnt, err := d.taskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStatePending, proto.TaskStateRunning)
+>>>>>>> de437fefac8 (disttask: update error to subtasks properly (#44961))
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
-			return false, nil
+			return gTask, false, nil
 		}
+<<<<<<< HEAD
 		if cnt > 0 {
 			logutil.BgLogger().Info("check task, subtasks aren't finished", zap.Int64("task ID", gTask.ID), zap.Int64("cnt", cnt))
 			return false, nil
@@ -243,6 +274,10 @@ func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr [
 		return false, nil
 	}
 	return true, nil
+=======
+		return gTask, cnt == 0, nil
+	}
+>>>>>>> de437fefac8 (disttask: update error to subtasks properly (#44961))
 }
 
 // DetectTaskLoop monitors the status of the subtasks and processes them.
@@ -255,25 +290,40 @@ func (d *dispatcher) DetectTaskLoop() {
 			return
 		case task := <-d.detectPendingGTaskCh:
 			// Using the pool with block, so it wouldn't return an error.
-			_ = d.gPool.Run(func() { d.detectTask(task) })
+			_ = d.gPool.Run(func() { d.detectTask(task.ID) })
 		}
 	}
 }
 
-func (d *dispatcher) detectTask(gTask *proto.Task) {
+func (d *dispatcher) detectTask(taskID int64) {
 	ticker := time.NewTicker(checkTaskFinishedInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-d.ctx.Done():
-			logutil.BgLogger().Info("detect task exits", zap.Int64("task ID", gTask.ID), zap.Error(d.ctx.Err()))
+			logutil.BgLogger().Info("detect task exits", zap.Int64("task ID", taskID), zap.Error(d.ctx.Err()))
 			return
 		case <-ticker.C:
+<<<<<<< HEAD
 			// TODO: Consider actively obtaining information about task completion.
 			stepIsFinished, errStr := d.probeTask(gTask)
 			// The global task isn't finished and failed.
 			if !stepIsFinished && len(errStr) == 0 {
+=======
+			failpoint.Inject("cancelTaskBeforeProbe", func(val failpoint.Value) {
+				if val.(bool) {
+					err := d.taskMgr.CancelGlobalTask(taskID)
+					if err != nil {
+						logutil.BgLogger().Error("cancel global task failed", zap.Error(err))
+					}
+				}
+			})
+			gTask, stepIsFinished, errs := d.probeTask(taskID)
+			// The global task isn't finished and not failed.
+			if !stepIsFinished && len(errs) == 0 {
+				GetTaskFlowHandle(gTask.Type).OnTicker(d.ctx, gTask)
+>>>>>>> de437fefac8 (disttask: update error to subtasks properly (#44961))
 				logutil.BgLogger().Debug("detect task, this task keeps current state",
 					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
 				break
@@ -323,7 +373,7 @@ func (d *dispatcher) updateTask(gTask *proto.Task, gTaskState string, newSubTask
 	prevState := gTask.State
 	gTask.State = gTaskState
 	for i := 0; i < retryTimes; i++ {
-		err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(gTask, newSubTasks, gTaskState == proto.TaskStateReverting)
+		err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(gTask, newSubTasks)
 		if err == nil {
 			break
 		}

@@ -39,6 +39,8 @@ type InternalSchedulerImpl struct {
 	mu struct {
 		sync.RWMutex
 		err error
+		// handled indicates whether the error has been updated to one of the subtask.
+		handled bool
 		// runtimeCancel is used to cancel the Run/Rollback when error occurs.
 		runtimeCancel context.CancelFunc
 	}
@@ -91,6 +93,14 @@ func (s *InternalSchedulerImpl) Stop() {
 
 // Run runs the scheduler task.
 func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error {
+	err := s.run(ctx, task)
+	if s.mu.handled {
+		return err
+	}
+	return s.taskTable.UpdateErrorToSubtask(s.id, err)
+}
+
+func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error {
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 	s.registerCancelFunc(runCancel)
@@ -103,6 +113,9 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 		return s.getError()
 	}
 
+	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
+		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
+	})
 	if err := scheduler.InitSubtaskExecEnv(runCtx); err != nil {
 		s.onError(err)
 		return s.getError()
@@ -184,6 +197,86 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 	return s.getError()
 }
 
+<<<<<<< HEAD
+=======
+func (s *InternalSchedulerImpl) runSubtask(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask, step int64, minimalTaskCh chan func()) {
+	minimalTasks, err := scheduler.SplitSubtask(ctx, subtask.Meta)
+	if err != nil {
+		s.onError(err)
+		if errors.Cause(err) == context.Canceled {
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, nil)
+		} else {
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
+		}
+		s.markErrorHandled()
+		s.subtaskWg.Done()
+		return
+	}
+	logutil.Logger(s.logCtx).Info("split subTask", zap.Int("cnt", len(minimalTasks)), zap.Int64("subtask-id", subtask.ID))
+
+	// fast path for ADD INDEX.
+	// ADD INDEX is a special case now, no minimal tasks will be generated.
+	// run it synchronously now.
+	if len(minimalTasks) == 0 {
+		s.onSubtaskFinished(ctx, scheduler, subtask)
+		s.subtaskWg.Done()
+		return
+	}
+
+	var mu sync.Mutex
+	var cnt int
+	for _, minimalTask := range minimalTasks {
+		j := minimalTask
+		minimalTaskCh <- func() {
+			defer func() {
+				mu.Lock()
+				defer mu.Unlock()
+				cnt++
+				// last minimal task should mark subtask as finished
+				if cnt == len(minimalTasks) {
+					s.onSubtaskFinished(ctx, scheduler, subtask)
+					s.subtaskWg.Done()
+				}
+			}()
+			s.runMinimalTask(ctx, j, subtask.Type, step)
+		}
+	}
+	failpoint.Inject("waitUntilError", func() {
+		for i := 0; i < 10; i++ {
+			if s.getError() != nil {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	})
+}
+
+func (s *InternalSchedulerImpl) onSubtaskFinished(ctx context.Context, scheduler Scheduler, subtask *proto.Subtask) {
+	var subtaskMeta []byte
+	if err := s.getError(); err == nil {
+		if subtaskMeta, err = scheduler.OnSubtaskFinished(ctx, subtask.Meta); err != nil {
+			s.onError(err)
+		}
+	}
+	if err := s.getError(); err != nil {
+		if errors.Cause(err) == context.Canceled {
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, nil)
+		} else {
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
+		}
+		s.markErrorHandled()
+		return
+	}
+	if err := s.taskTable.FinishSubtask(subtask.ID, subtaskMeta); err != nil {
+		s.onError(err)
+	}
+	failpoint.Inject("syncAfterSubtaskFinish", func() {
+		TestSyncChan <- struct{}{}
+		<-TestSyncChan
+	})
+}
+
+>>>>>>> de437fefac8 (disttask: update error to subtasks properly (#44961))
 func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, minimalTask proto.MinimalTask, tp string, step int64) {
 	logutil.Logger(s.logCtx).Info("scheduler run a minimalTask", zap.Any("step", step), zap.Any("minimal_task", minimalTask))
 	select {
@@ -303,6 +396,12 @@ func (s *InternalSchedulerImpl) onError(err error) {
 	}
 }
 
+func (s *InternalSchedulerImpl) markErrorHandled() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.handled = true
+}
+
 func (s *InternalSchedulerImpl) getError() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -313,6 +412,7 @@ func (s *InternalSchedulerImpl) resetError() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.err = nil
+	s.mu.handled = false
 }
 
 func (s *InternalSchedulerImpl) updateSubtaskStateAndError(id int64, state string, subTaskErr string) {
