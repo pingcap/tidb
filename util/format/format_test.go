@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func checkFormat(t *testing.T, f Formatter, buf *bytes.Buffer, str, expect string) {
@@ -50,5 +51,5 @@ z
 
 	str1 := fmt.Sprintf("%c%c%s%c%c%s", '\'', '\000', "abc", '\n', '\r', "def")
 	str2 := OutputFormat(str1)
-	assert.Equal(t, str2, "''\\0abc\\n\\rdef")
+	require.Equal(t, str2, "''\\0abc\\n\\rdef")
 }

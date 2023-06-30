@@ -24,13 +24,10 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/util/globalconn"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAutoIncPool(t *testing.T) {
-	assert := assert.New(t)
-
 	const SizeInBits uint32 = 8
 	const Size uint64 = 1 << SizeInBits
 	const TryCnt = 4
@@ -43,18 +40,18 @@ func TestAutoIncPool(t *testing.T) {
 	)
 
 	pool.InitExt(Size, true, TryCnt)
-	assert.Equal(0, pool.Len())
+	require.Equal(t, 0, pool.Len())
 
 	// get all.
 	for i = 1; i < Size; i++ {
 		val, ok = pool.Get()
-		assert.True(ok)
-		assert.Equal(i, val)
+		require.True(t, ok)
+		require.Equal(t, i, val)
 	}
 	val, ok = pool.Get()
-	assert.True(ok)
-	assert.Equal(uint64(0), val) // wrap around to 0
-	assert.Equal(int(Size), pool.Len())
+	require.True(t, ok)
+	require.Equal(t, uint64(0), val) // wrap around to 0
+	require.Equal(t, int(Size), pool.Len())
 
 	_, ok = pool.Get() // exhausted. try TryCnt times, lastID is added to 0+TryCnt.
 	require.False(t, ok)
@@ -62,14 +59,14 @@ func TestAutoIncPool(t *testing.T) {
 	nextVal := uint64(TryCnt + 1)
 	pool.Put(nextVal)
 	val, ok = pool.Get()
-	assert.True(ok)
-	assert.Equal(nextVal, val)
+	require.True(t, ok)
+	require.Equal(t, nextVal, val)
 
 	nextVal += TryCnt - 1
 	pool.Put(nextVal)
 	val, ok = pool.Get()
-	assert.True(ok)
-	assert.Equal(nextVal, val)
+	require.True(t, ok)
+	require.Equal(t, nextVal, val)
 
 	nextVal += TryCnt + 1
 	pool.Put(nextVal)
@@ -78,7 +75,6 @@ func TestAutoIncPool(t *testing.T) {
 }
 
 func TestLockFreePoolBasic(t *testing.T) {
-	assert := assert.New(t)
 
 	const SizeInBits uint32 = 8
 	const Size uint64 = 1<<SizeInBits - 1
@@ -91,26 +87,7 @@ func TestLockFreePoolBasic(t *testing.T) {
 	)
 
 	pool.InitExt(uint32(1<<SizeInBits), math.MaxUint32)
-	assert.Equal(int(Size), pool.Len())
-
-	// get all.
-	for i = 1; i <= Size; i++ {
-		val, ok = pool.Get()
-		assert.True(ok)
-		assert.Equal(i, val)
-	}
-	_, ok = pool.Get()
-	require.False(t, ok)
-	assert.Equal(0, pool.Len())
-
-	// put to full.
-	for i = 1; i <= Size; i++ {
-		ok = pool.Put(i)
-		assert.True(ok)
-	}
-	ok = pool.Put(0)
-	require.False(t, ok)
-	assert.Equal(int(Size), pool.Len())
+	require.Equal(t, int(Size), pool.Len())
 
 	// get all.
 	for i = 1; i <= Size; i++ {
@@ -121,23 +98,6 @@ func TestLockFreePoolBasic(t *testing.T) {
 	_, ok = pool.Get()
 	require.False(t, ok)
 	require.Equal(t, 0, pool.Len())
-}
-
-func TestLockFreePoolInitEmpty(t *testing.T) {
-	assert := assert.New(t)
-
-	const SizeInBits uint32 = 8
-	const Size uint64 = 1<<SizeInBits - 1
-
-	var (
-		pool globalconn.LockFreeCircularPool
-		val  uint64
-		ok   bool
-		i    uint64
-	)
-
-	pool.InitExt(uint32(1<<SizeInBits), 0)
-	assert.Equal(0, pool.Len())
 
 	// put to full.
 	for i = 1; i <= Size; i++ {
@@ -151,12 +111,46 @@ func TestLockFreePoolInitEmpty(t *testing.T) {
 	// get all.
 	for i = 1; i <= Size; i++ {
 		val, ok = pool.Get()
-		assert.True(ok)
-		assert.Equal(i, val)
+		require.True(t, ok)
+		require.Equal(t, i, val)
 	}
 	_, ok = pool.Get()
 	require.False(t, ok)
-	assert.Equal(0, pool.Len())
+	require.Equal(t, 0, pool.Len())
+}
+
+func TestLockFreePoolInitEmpty(t *testing.T) {
+	const SizeInBits uint32 = 8
+	const Size uint64 = 1<<SizeInBits - 1
+
+	var (
+		pool globalconn.LockFreeCircularPool
+		val  uint64
+		ok   bool
+		i    uint64
+	)
+
+	pool.InitExt(uint32(1<<SizeInBits), 0)
+	require.Equal(t, 0, pool.Len())
+
+	// put to full.
+	for i = 1; i <= Size; i++ {
+		ok = pool.Put(i)
+		require.True(t, ok)
+	}
+	ok = pool.Put(0)
+	require.False(t, ok)
+	require.Equal(t, int(Size), pool.Len())
+
+	// get all.
+	for i = 1; i <= Size; i++ {
+		val, ok = pool.Get()
+		require.True(t, ok)
+		require.Equal(t, i, val)
+	}
+	_, ok = pool.Get()
+	require.False(t, ok)
+	require.Equal(t, 0, pool.Len())
 }
 
 var _ globalconn.IDPool = (*LockBasedCircularPool)(nil)
@@ -353,8 +347,6 @@ func testLockBasedPoolConcurrency(poolSizeInBits uint32, producers int, consumer
 }
 
 func TestLockFreePoolBasicConcurrencySafety(t *testing.T) {
-	assert := assert.New(t)
-
 	var (
 		expected int64
 		actual   int64
@@ -370,11 +362,11 @@ func TestLockFreePoolBasicConcurrencySafety(t *testing.T) {
 	)
 
 	expected, actual = testLockFreePoolConcurrency(sizeInBits, fillCount, producers, consumers, requests, 0)
-	assert.Equal(expected, actual)
+	require.Equal(t, expected, actual)
 
 	// test overflow of head & tail
 	expected, actual = testLockFreePoolConcurrency(sizeInBits, fillCount, producers, consumers, requests, headPos)
-	assert.Equal(expected, actual)
+	require.Equal(t, expected, actual)
 }
 
 func TestLockBasedPoolConcurrencySafety(t *testing.T) {
@@ -391,7 +383,7 @@ func TestLockBasedPoolConcurrencySafety(t *testing.T) {
 	)
 
 	expected, actual = testLockBasedPoolConcurrency(sizeInBits, producers, consumers, requests)
-	assert.Equal(t, expected, actual)
+	require.Equal(t, t, expected, actual)
 }
 
 type poolConcurrencyTestCase struct {
@@ -430,7 +422,7 @@ func TestLockFreePoolConcurrencySafety(t *testing.T) {
 
 	for i, ca := range cases {
 		expected, actual := testLockFreePoolConcurrency(ca.sizeInBits, ca.fillCount, ca.producers, ca.consumers, requests, 0)
-		assert.Equalf(t, expected, actual, "case #%v: %v", i+1, ca)
+		require.Equalf(t, expected, actual, "case #%v: %v", i+1, ca)
 	}
 }
 

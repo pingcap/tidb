@@ -21,13 +21,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/util/globalconn"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestToConnID(t *testing.T) {
-	assert := assert.New(t)
-
 	type Case struct {
 		gcid        globalconn.GCID
 		shouldPanic bool
@@ -93,17 +90,16 @@ func TestToConnID(t *testing.T) {
 
 	for _, c := range cases {
 		if c.shouldPanic {
-			assert.Panics(func() {
+			require.Panics(t, func() {
 				c.gcid.ToConnID()
 			})
 		} else {
-			assert.Equal(c.expected, c.gcid.ToConnID())
+			require.Equal(t, c.expected, c.gcid.ToConnID())
 		}
 	}
 }
 
 func TestGlobalConnID(t *testing.T) {
-	assert := assert.New(t)
 	var (
 		err         error
 		isTruncated bool
@@ -111,43 +107,41 @@ func TestGlobalConnID(t *testing.T) {
 
 	// exceeds int64
 	_, _, err = globalconn.ParseConnID(0x80000000_00000321)
-	require.NotNil(t, err)
+	require.NotNil(t, t, err)
 
 	// 64bits truncated
 	_, isTruncated, err = globalconn.ParseConnID(101)
-	require.Nil(t, err)
-	assert.True(isTruncated)
+	require.Nil(t, t, err)
+	require.True(t, isTruncated)
 
 	// 64bits
 	id1 := (uint64(1001) << 41) | (uint64(123) << 1) | 1
 	gcid1, isTruncated, err := globalconn.ParseConnID(id1)
-	require.Nil(t, err)
+	require.Nil(t, t, err)
 	require.False(t, isTruncated)
-	assert.Equal(uint64(1001), gcid1.ServerID)
-	assert.Equal(uint64(123), gcid1.LocalConnID)
-	assert.True(gcid1.Is64bits)
+	require.Equal(t, uint64(1001), gcid1.ServerID)
+	require.Equal(t, uint64(123), gcid1.LocalConnID)
+	require.True(t, gcid1.Is64bits)
 
 	// exceeds uint32
 	_, _, err = globalconn.ParseConnID(0x1_00000320)
-	require.NotNil(t, err)
+	require.NotNil(t, t, err)
 
 	// 32bits
 	id2 := (uint64(2002) << 21) | (uint64(321) << 1)
 	gcid2, isTruncated, err := globalconn.ParseConnID(id2)
-	require.Nil(t, err)
+	require.Nil(t, t, err)
 	require.False(t, isTruncated)
-	assert.Equal(uint64(2002), gcid2.ServerID)
-	assert.Equal(uint64(321), gcid2.LocalConnID)
+	require.Equal(t, uint64(2002), gcid2.ServerID)
+	require.Equal(t, uint64(321), gcid2.LocalConnID)
 	require.False(t, gcid2.Is64bits)
-	assert.Equal(gcid2.ToConnID(), id2)
+	require.Equal(t, gcid2.ToConnID(), id2)
 }
 
 func TestGetReservedConnID(t *testing.T) {
-	assert := assert.New(t)
-
 	simpleAlloc := globalconn.NewSimpleAllocator()
-	assert.Equal(math.MaxUint64-uint64(0), simpleAlloc.GetReservedConnID(0))
-	assert.Equal(math.MaxUint64-uint64(1), simpleAlloc.GetReservedConnID(1))
+	require.Equal(t, math.MaxUint64-uint64(0), simpleAlloc.GetReservedConnID(0))
+	require.Equal(t, math.MaxUint64-uint64(1), simpleAlloc.GetReservedConnID(1))
 
 	serverID := func() uint64 {
 		return 1001
@@ -155,8 +149,8 @@ func TestGetReservedConnID(t *testing.T) {
 
 	globalAlloc := globalconn.NewGlobalAllocator(serverID)
 	var maxLocalConnID uint64 = 1<<40 - 1
-	assert.Equal(uint64(1001)<<41|(maxLocalConnID)<<1|1, globalAlloc.GetReservedConnID(0))
-	assert.Equal(uint64(1001)<<41|(maxLocalConnID-1)<<1|1, globalAlloc.GetReservedConnID(1))
+	require.Equal(t, uint64(1001)<<41|(maxLocalConnID)<<1|1, globalAlloc.GetReservedConnID(0))
+	require.Equal(t, uint64(1001)<<41|(maxLocalConnID-1)<<1|1, globalAlloc.GetReservedConnID(1))
 }
 
 func benchmarkLocalConnIDAllocator32(b *testing.B, pool globalconn.IDPool) {

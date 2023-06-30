@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
+	"github.com/stretchr/testify/require"
 )
 
 // NewTaskManager is an exported version of newTaskManager for test

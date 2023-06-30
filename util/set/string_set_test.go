@@ -18,12 +18,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStringSet(t *testing.T) {
-	assert := assert.New(t)
-
 	set := NewStringSet()
 	vals := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}
 	for i := range vals {
@@ -33,32 +31,32 @@ func TestStringSet(t *testing.T) {
 		set.Insert(vals[i])
 		set.Insert(vals[i])
 	}
-	require.Equal(len(vals), set.Count())
+	require.Equal(t, len(vals), set.Count())
 
-	assert.Equal(len(vals), len(set))
+	require.Equal(t, len(vals), len(set))
 	for i := range vals {
-		require.True(set.Exist(vals[i]))
+		require.True(t, set.Exist(vals[i]))
 	}
 
-	require.False(set.Exist("11"))
+	require.False(t, set.Exist("11"))
 
 	set = NewStringSet("1", "2", "3", "4", "5", "6")
 	for i := 1; i < 7; i++ {
-		assert.True(set.Exist(fmt.Sprintf("%d", i)))
+		require.True(t, set.Exist(fmt.Sprintf("%d", i)))
 	}
-	require.False(set.Exist("7"))
+	require.False(t, set.Exist("7"))
 
 	s1 := NewStringSet("1", "2", "3")
 	s2 := NewStringSet("4", "2", "3")
 	s3 := s1.Intersection(s2)
-	assert.Equal(NewStringSet("2", "3"), s3)
+	require.Equal(t, NewStringSet("2", "3"), s3)
 
 	s4 := NewStringSet("4", "5", "3")
-	assert.Equal(NewStringSet("3"), s3.Intersection(s4))
+	require.Equal(t, NewStringSet("3"), s3.Intersection(s4))
 
 	s5 := NewStringSet("4", "5")
-	assert.Equal(NewStringSet(), s3.Intersection(s5))
+	require.Equal(t, NewStringSet(), s3.Intersection(s5))
 
 	s6 := NewStringSet()
-	assert.Equal(NewStringSet(), s3.Intersection(s6))
+	require.Equal(t, NewStringSet(), s3.Intersection(s6))
 }

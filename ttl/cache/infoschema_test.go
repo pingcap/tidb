@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInfoSchemaCache(t *testing.T) {
@@ -69,5 +69,5 @@ func TestInfoSchemaCache(t *testing.T) {
 		require.Equal(t, id, table.PartitionDef.ID)
 		partitions = append(partitions, table.PartitionDef.Name.L)
 	}
-	assert.ElementsMatch(t, []string{"p0", "p1"}, partitions)
+	require.ElementsMatch(t, []string{"p0", "p1"}, partitions)
 }

@@ -17,7 +17,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,7 +29,6 @@ func newSliceIterWithCopy(data []*kv.Entry) *SliceIter {
 }
 
 func TestSliceIter(t *testing.T) {
-	assert := assert.New(t)
 	slices := []struct {
 		data []*kv.Entry
 	}{
@@ -53,8 +51,8 @@ func TestSliceIter(t *testing.T) {
 		iter := newSliceIterWithCopy(s.data)
 		for _, entry := range s.data {
 			require.True(t, iter.Valid())
-			assert.Equal(entry.Key, iter.Key())
-			assert.Equal(entry.Value, iter.Value())
+			require.Equal(t, entry.Key, iter.Key())
+			require.Equal(t, entry.Value, iter.Value())
 			err := iter.Next()
 			require.Nil(t, err)
 		}
@@ -64,10 +62,10 @@ func TestSliceIter(t *testing.T) {
 
 		// Slice should not be modified
 		slice := iter.GetSlice()
-		assert.Equal(len(s.data), len(slice))
+		require.Equal(t, len(s.data), len(slice))
 		for i := range s.data {
-			assert.Equal(s.data[i].Key, slice[i].Key)
-			assert.Equal(s.data[i].Value, slice[i].Value)
+			require.Equal(t, s.data[i].Key, slice[i].Key)
+			require.Equal(t, s.data[i].Value, slice[i].Value)
 		}
 
 		// Iteration after close
@@ -84,10 +82,10 @@ func TestSliceIter(t *testing.T) {
 
 		// Slice should not be modified
 		slice = iter.GetSlice()
-		assert.Equal(len(s.data), len(slice))
+		require.Equal(t, len(s.data), len(slice))
 		for i := range s.data {
-			assert.Equal(s.data[i].Key, slice[i].Key)
-			assert.Equal(s.data[i].Value, slice[i].Value)
+			require.Equal(t, s.data[i].Key, slice[i].Key)
+			require.Equal(t, s.data[i].Value, slice[i].Value)
 		}
 	}
 }

@@ -17,12 +17,10 @@ package set
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFloat64Set(t *testing.T) {
-	assert := assert.New(t)
-
 	set := NewFloat64Set()
 	vals := []float64{1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0}
 	for i := range vals {
@@ -32,12 +30,12 @@ func TestFloat64Set(t *testing.T) {
 		set.Insert(vals[i])
 		set.Insert(vals[i])
 	}
-	require.Equal(len(vals), set.Count())
+	require.Equal(t, len(vals), set.Count())
 
-	require.Equal(len(vals), len(set))
+	require.Equal(t, len(vals), len(set))
 	for i := range vals {
-		require.True(set.Exist(vals[i]))
+		require.True(t, set.Exist(vals[i]))
 	}
 
-	require.False(set.Exist(3))
+	require.False(t, set.Exist(3))
 }

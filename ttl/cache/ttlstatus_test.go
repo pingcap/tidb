@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTTLStatusCache(t *testing.T) {
@@ -124,7 +125,7 @@ func TestTTLStatusCache(t *testing.T) {
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:52:01", timeZone)
 				require.NoError(t, err)
-				assert.Equal(t, expectedTime, table.CurrentJobOwnerHBTime)
+				require.Equal(t, expectedTime, table.CurrentJobOwnerHBTime)
 			},
 		},
 		{
@@ -133,7 +134,7 @@ func TestTTLStatusCache(t *testing.T) {
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:53:01", timeZone)
 				require.NoError(t, err)
-				assert.Equal(t, expectedTime, table.CurrentJobStartTime)
+				require.Equal(t, expectedTime, table.CurrentJobStartTime)
 			},
 		},
 		{
@@ -142,19 +143,19 @@ func TestTTLStatusCache(t *testing.T) {
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:54:01", timeZone)
 				require.NoError(t, err)
-				assert.Equal(t, expectedTime, table.CurrentJobTTLExpire)
+				require.Equal(t, expectedTime, table.CurrentJobTTLExpire)
 			},
 		},
 		{
 			"current_job_state",
 			"'test state'",
-			func(table *cache.TableStatus) { assert.Equal(t, "test state", table.CurrentJobState) },
+			func(table *cache.TableStatus) { require.Equal(t, "test state", table.CurrentJobState) },
 		},
 		{
 			"current_job_status",
 			"'test status'",
 			func(table *cache.TableStatus) {
-				assert.Equal(t, cache.JobStatus("test status"), table.CurrentJobStatus)
+				require.Equal(t, cache.JobStatus("test status"), table.CurrentJobStatus)
 			},
 		},
 		{
@@ -163,7 +164,7 @@ func TestTTLStatusCache(t *testing.T) {
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:55:01", timeZone)
 				require.NoError(t, err)
-				assert.Equal(t, expectedTime, table.CurrentJobStatusUpdateTime)
+				require.Equal(t, expectedTime, table.CurrentJobStatusUpdateTime)
 			},
 		},
 	}
@@ -174,7 +175,7 @@ func TestTTLStatusCache(t *testing.T) {
 
 			tk.MustExec(sql)
 			require.NoError(t, isc.Update(context.Background(), ttlSession))
-			assert.Equal(t, index+1, len(isc.Tables))
+			require.Equal(t, index+1, len(isc.Tables))
 			testCase.assert(isc.Tables[int64(index)])
 		})
 	}
