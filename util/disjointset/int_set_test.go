@@ -17,7 +17,6 @@ package disjointset
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,5 +39,5 @@ func TestIntDisjointSet(t *testing.T) {
 	require.Equal(t, set.FindRoot(2), set.FindRoot(4))
 	require.Equal(t, set.FindRoot(6), set.FindRoot(4))
 	require.Equal(t, set.FindRoot(9), set.FindRoot(2))
-	assert.Equal(t, set.FindRoot(7), set.FindRoot(8))
+	require.Equal(t, set.FindRoot(7), set.FindRoot(8))
 }

@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-binlog"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -1707,7 +1706,7 @@ func TestWriteWithChecksums(t *testing.T) {
 				expectChecksums = append(expectChecksums, checksum)
 			}
 			// validate checksums
-			assert.Equal(t, expectChecksums, actualChecksums)
+			require.Equal(t, expectChecksums, actualChecksums)
 		}
 
 		// init and run sub test

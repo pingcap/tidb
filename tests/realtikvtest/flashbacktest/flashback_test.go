@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
@@ -564,9 +563,9 @@ func TestFlashbackInProcessErrorMsg(t *testing.T) {
 				require.NoError(t, err)
 				_, err = meta.NewMeta(txn).ListDatabases()
 				errorMsg := err.Error()
-				assert.Contains(t, errorMsg, "is in flashback progress, FlashbackStartTS is ")
+				require.Contains(t, errorMsg, "is in flashback progress, FlashbackStartTS is ")
 				slices := strings.Split(errorMsg, "is in flashback progress, FlashbackStartTS is ")
-				assert.Equal(t, len(slices), 2)
+				require.Equal(t, len(slices), 2)
 				require.NotEqual(t, slices[1], "0")
 				txn.Rollback()
 			}

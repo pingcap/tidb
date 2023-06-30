@@ -17,6 +17,8 @@ package kv
 import (
 	"context"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestInterface(t *testing.T) {

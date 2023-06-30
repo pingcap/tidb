@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -205,11 +204,11 @@ func TestUnionIterErrors(t *testing.T) {
 		}
 
 		if ca.injectDirtyError != nil {
-			assert.Equal(t, ca.injectDirtyError, err)
+			require.Equal(t, ca.injectDirtyError, err)
 		}
 
 		if ca.injectSnapError != nil {
-			assert.Equal(t, ca.injectSnapError, err)
+			require.Equal(t, ca.injectSnapError, err)
 		}
 
 		require.False(t, dirtyIter.Closed())
@@ -244,21 +243,21 @@ func assertIter(t *testing.T, iter *UnionIter, expected []*kv.Entry) {
 		err := iter.Next()
 		require.Nil(t, err)
 	}
-	assert.Equal(t, len(expected), len(records))
+	require.Equal(t, len(expected), len(records))
 	for idx, record := range records {
-		assert.Equal(t, record.Key, expected[idx].Key)
-		assert.Equal(t, record.Value, expected[idx].Value)
+		require.Equal(t, record.Key, expected[idx].Key)
+		require.Equal(t, record.Value, expected[idx].Value)
 	}
 }
 
 func assertClose(t *testing.T, iter *UnionIter) {
 	dirtyIt := iter.dirtyIt.(*mock.MockedIter)
 	snapIt := iter.snapshotIt.(*mock.MockedIter)
-	assert.False(t, dirtyIt.Closed())
-	assert.False(t, snapIt.Closed())
+	require.False(t, dirtyIt.Closed())
+	require.False(t, snapIt.Closed())
 	iter.Close()
-	assert.True(t, dirtyIt.Closed())
-	assert.True(t, snapIt.Closed())
+	require.True(t, dirtyIt.Closed())
+	require.True(t, snapIt.Closed())
 	// multi close is safe
 	iter.Close()
 }

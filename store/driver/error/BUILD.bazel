@@ -26,7 +26,7 @@ go_test(
         "//parser/terror",
         "//testkit/testsetup",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//error",
         "@org_uber_go_goleak//:goleak",
     ],

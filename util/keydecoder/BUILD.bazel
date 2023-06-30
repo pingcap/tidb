@@ -36,7 +36,6 @@ go_test(
         "//testkit/testutil",
         "//types",
         "//util/codec",
-        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",

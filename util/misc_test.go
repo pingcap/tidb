@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunWithRetry(t *testing.T) {

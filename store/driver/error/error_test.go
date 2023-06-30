@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit/testsetup"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/goleak"
 )
@@ -48,6 +48,6 @@ func TestConvertError(t *testing.T) {
 	e := tikverr.ErrResultUndetermined
 	for _, f := range wrapFuncs {
 		tidbErr := ToTiDBErr(f(e))
-		assert.True(t, errors.ErrorEqual(tidbErr, terror.ErrResultUndetermined))
+		require.True(t, errors.ErrorEqual(tidbErr, terror.ErrResultUndetermined))
 	}
 }
