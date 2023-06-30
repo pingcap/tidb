@@ -709,17 +709,17 @@ func (b *executorBuilder) buildChecksumTable(v *plannercore.ChecksumTable) exec.
 }
 
 func (b *executorBuilder) buildReloadExprPushdownBlacklist(_ *plannercore.ReloadExprPushdownBlacklist) exec.Executor {
-	base := exec.NewBaseExecutor(b.ctx, nil, 0, nil)
+	base := exec.NewBaseExecutor(b.ctx, nil, 0)
 	return &ReloadExprPushdownBlacklistExec{base}
 }
 
 func (b *executorBuilder) buildReloadOptRuleBlacklist(_ *plannercore.ReloadOptRuleBlacklist) exec.Executor {
-	base := exec.NewBaseExecutor(b.ctx, nil, 0, nil)
+	base := exec.NewBaseExecutor(b.ctx, nil, 0)
 	return &ReloadOptRuleBlacklistExec{BaseExecutor: base}
 }
 
 func (b *executorBuilder) buildAdminPlugins(v *plannercore.AdminPlugins) exec.Executor {
-	base := exec.NewBaseExecutor(b.ctx, nil, 0, nil)
+	base := exec.NewBaseExecutor(b.ctx, nil, 0)
 	return &AdminPluginsExec{BaseExecutor: base, Action: v.Action, Plugins: v.Plugins}
 }
 

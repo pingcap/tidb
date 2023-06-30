@@ -2332,7 +2332,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 }
 
 func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(sessionctx.Context) error) error {
-	b := exec.NewBaseExecutor(sctx, nil, 0, nil)
+	b := exec.NewBaseExecutor(sctx, nil, 0)
 	sysCtx, err := b.GetSysSession()
 	if err != nil {
 		return err

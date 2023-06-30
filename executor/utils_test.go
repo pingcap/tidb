@@ -120,7 +120,7 @@ func TestEqualDatumsAsBinary(t *testing.T) {
 		{[]interface{}{1}, []interface{}{1, 1}, false},
 		{[]interface{}{nil}, []interface{}{1}, false},
 	}
-	base := exec.NewBaseExecutor(core.MockContext(), nil, 0, nil)
+	base := exec.NewBaseExecutor(core.MockContext(), nil, 0)
 	e := &InsertValues{BaseExecutor: base}
 	for _, tt := range tests {
 		res, err := e.equalDatumsAsBinary(types.MakeDatums(tt.a...), types.MakeDatums(tt.b...))
