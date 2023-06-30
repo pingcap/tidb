@@ -16,7 +16,7 @@ package mapcache
 
 import (
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle/internal/cache"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 )
 
 type cacheItem struct {
@@ -142,7 +142,7 @@ func (m *MapCache) FreshMemUsage() {
 }
 
 // Copy implements StatsCacheInner
-func (m *MapCache) Copy() cache.StatsCacheInner {
+func (m *MapCache) Copy() internal.StatsCacheInner {
 	newM := &MapCache{
 		tables:   make(map[int64]cacheItem, len(m.tables)),
 		memUsage: m.memUsage,
@@ -154,9 +154,9 @@ func (m *MapCache) Copy() cache.StatsCacheInner {
 }
 
 // SetCapacity implements StatsCacheInner
-func (m *MapCache) SetCapacity(int64) {}
+func (*MapCache) SetCapacity(int64) {}
 
 // Front implements StatsCacheInner
-func (m *MapCache) Front() int64 {
+func (*MapCache) Front() int64 {
 	return 0
 }

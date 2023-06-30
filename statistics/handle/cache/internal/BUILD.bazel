@@ -7,3 +7,11 @@ go_library(
     visibility = ["//statistics/handle:__subpackages__"],
     deps = ["//statistics"],
 )
+
+go_library(
+    name = "internal",
+    srcs = ["inner.go"],
+    importpath = "github.com/pingcap/tidb/statistics/handle/cache/internal",
+    visibility = ["//statistics/handle/cache:__subpackages__"],
+    deps = ["//statistics"],
+)

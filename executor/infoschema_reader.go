@@ -52,7 +52,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -483,7 +483,7 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 }
 
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	err := handle.TableRowStatsCache.Update(ctx, sctx)
+	err := cache.TableRowStatsCache.Update(ctx, sctx)
 	if err != nil {
 		return err
 	}
@@ -525,7 +525,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					}
 				}
 
-				cache := handle.TableRowStatsCache
+				cache := cache.TableRowStatsCache
 				var rowCount, dataLength, indexLength uint64
 				if table.GetPartitionInfo() == nil {
 					rowCount = cache.GetTableRows(table.ID)
@@ -867,7 +867,7 @@ func calcCharOctLength(lenInChar int, cs string) int {
 }
 
 func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	cache := handle.TableRowStatsCache
+	cache := cache.TableRowStatsCache
 	err := cache.Update(ctx, sctx)
 	if err != nil {
 		return err

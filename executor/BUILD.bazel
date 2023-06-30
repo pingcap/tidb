@@ -162,6 +162,7 @@ go_library(
         "//sessiontxn/staleread",
         "//statistics",
         "//statistics/handle",
+        "//statistics/handle/cache",
         "//store/driver/backoff",
         "//store/driver/error",
         "//store/driver/txn",

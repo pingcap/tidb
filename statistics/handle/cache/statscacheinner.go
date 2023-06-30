@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle
+package cache
 
 import (
 	"context"
@@ -26,50 +26,73 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle/internal/cache"
-	"github.com/pingcap/tidb/statistics/handle/internal/cache/lru"
-	"github.com/pingcap/tidb/statistics/handle/internal/cache/mapcache"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/lru"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal/mapcache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
 )
 
-func newStatsCache() statsCache {
+// TableStatsOption used to indicate the way to get table stats
+type TableStatsOption struct {
+	byQuery bool
+}
+
+// ByQuery indicates whether the stats is got by query
+func (t *TableStatsOption) ByQuery() bool {
+	return t.byQuery
+}
+
+// TableStatsOpt used to edit getTableStatsOption
+type TableStatsOpt func(*TableStatsOption)
+
+// WithTableStatsByQuery indicates user needed
+func WithTableStatsByQuery() TableStatsOpt {
+	return func(option *TableStatsOption) {
+		option.byQuery = true
+	}
+}
+
+// NewStatsCacheWrapper creates a new StatsCacheWrapper.
+func NewStatsCacheWrapper() *StatsCacheWrapper {
 	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
 	if enableQuota {
 		capacity := variable.StatsCacheMemQuota.Load()
-		return statsCache{
+		return &StatsCacheWrapper{
 			StatsCacheInner: lru.NewStatsLruCache(capacity),
 		}
 	}
-	return statsCache{
+	return &StatsCacheWrapper{
 		StatsCacheInner: mapcache.NewMapCache(),
 	}
 }
 
-// statsCache caches the tables in memory for Handle.
-type statsCache struct {
-	cache.StatsCacheInner
+// StatsCacheWrapper caches the tables in memory for Handle.
+type StatsCacheWrapper struct {
+	internal.StatsCacheInner
 	// version is the latest version of cache. It is bumped when new records of `mysql.stats_meta` are loaded into cache.
 	version uint64
 	// minorVersion is to differentiate the cache when the version is unchanged while the cache contents are
 	// modified indeed. This can happen when we load extra column histograms into cache, or when we modify the cache with
 	// statistics feedbacks, etc. We cannot bump the version then because no new changes of `mysql.stats_meta` are loaded,
-	// while the override of statsCache is in a copy-on-write way, to make sure the statsCache is unchanged by others during the
+	// while the override of StatsCacheWrapper is in a copy-on-write way, to make sure the StatsCacheWrapper is unchanged by others during the
 	// the interval of 'copy' and 'write', every 'write' should bump / check this minorVersion if the version keeps
 	// unchanged.
-	// This bump / check logic is encapsulated in `statsCache.update` and `updateStatsCache`, callers don't need to care
+	// This bump / check logic is encapsulated in `StatsCacheWrapper.update` and `updateStatsCache`, callers don't need to care
 	// about this minorVersion actually.
 	minorVersion uint64
 }
 
-func (sc statsCache) len() int {
+// Len returns the number of tables in the cache.
+func (sc *StatsCacheWrapper) Len() int {
 	return sc.StatsCacheInner.Len()
 }
 
-func (sc statsCache) copy() statsCache {
-	newCache := statsCache{
+// Copy copies the cache.
+func (sc *StatsCacheWrapper) Copy() StatsCacheWrapper {
+	newCache := StatsCacheWrapper{
 		version:      sc.version,
 		minorVersion: sc.minorVersion,
 	}
@@ -77,13 +100,23 @@ func (sc statsCache) copy() statsCache {
 	return newCache
 }
 
-// update updates the statistics table cache using copy on write.
-func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64, opts ...TableStatsOpt) statsCache {
-	option := &tableStatsOption{}
+// SetVersion sets the version of the cache.
+func (sc *StatsCacheWrapper) SetVersion(version uint64) {
+	sc.version = version
+}
+
+// Version returns the version of the cache.
+func (sc *StatsCacheWrapper) Version() uint64 {
+	return sc.version
+}
+
+// Update updates the statistics table cache using Copy on write.
+func (sc *StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64, opts ...TableStatsOpt) StatsCacheWrapper {
+	option := &TableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
 	}
-	newCache := sc.copy()
+	newCache := sc.Copy()
 	if newVersion == newCache.version {
 		newCache.minorVersion += uint64(1)
 	} else {
@@ -256,7 +289,7 @@ func getColLengthTables(ctx context.Context, sctx sessionctx.Context, tableIDs .
 }
 
 // GetDataAndIndexLength gets the data and index length of the table.
-func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64) (uint64, uint64) {
+func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64) (dataLength, indexLength uint64) {
 	columnLength := make(map[string]uint64, len(info.Columns))
 	for _, col := range info.Columns {
 		if col.State != model.StatePublic {
@@ -270,7 +303,6 @@ func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physic
 			columnLength[col.Name.L] = length
 		}
 	}
-	dataLength, indexLength := uint64(0), uint64(0)
 	for _, length := range columnLength {
 		dataLength += length
 	}
