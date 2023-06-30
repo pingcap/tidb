@@ -1226,7 +1226,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			for _, def := range spec.PartDefinitions {
 				pName := def.Name.String()
 				if isIncorrectName(pName) {
-					p.err = dbterror.ErrWrongPartitionName.GenWithStackByArgs(pName)
+					p.err = dbterror.ErrWrongPartitionName.GenWithStackByArgs()
 					return
 				}
 			}
