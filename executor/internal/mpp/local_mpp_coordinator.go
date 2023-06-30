@@ -136,6 +136,7 @@ type localMppCoordinator struct {
 	reqMap                     map[int64]*mppRequestReport
 	reportedReqCount           int
 	dispatchFailed             uint32
+	allReportsHandled          uint32
 
 	memTracker *memory.Tracker
 }
@@ -563,7 +564,7 @@ func (c *localMppCoordinator) ReportStatus(info kv.ReportStatusRequest) error {
 }
 
 func (c *localMppCoordinator) handleAllReports() {
-	if c.reportExecutionInfo && atomic.LoadUint32(&c.dispatchFailed) == 0 {
+	if c.reportExecutionInfo && atomic.LoadUint32(&c.dispatchFailed) == 0 && atomic.CompareAndSwapUint32(&c.allReportsHandled, 0, 1) {
 		startTime := time.Now()
 		select {
 		case <-c.reportStatusCh:
