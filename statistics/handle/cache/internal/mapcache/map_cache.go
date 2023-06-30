@@ -154,9 +154,9 @@ func (m *MapCache) Copy() internal.StatsCacheInner {
 }
 
 // SetCapacity implements StatsCacheInner
-func (m *MapCache) SetCapacity(int64) {}
+func (*MapCache) SetCapacity(int64) {}
 
 // Front implements StatsCacheInner
-func (m *MapCache) Front() int64 {
+func (*MapCache) Front() int64 {
 	return 0
 }
