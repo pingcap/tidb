@@ -32,7 +32,7 @@ type aggregationEliminator struct {
 }
 
 type aggregationEliminateChecker struct {
-	// in agg pushed down cases, for example:
+	// used for agg pushed down cases, for example:
 	// agg -> join -> datasource1
 	//             -> datasource2
 	// we just make a new agg upon datasource1 or datasource2, while the old agg is still existed and waiting for elimination.
