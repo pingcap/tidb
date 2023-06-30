@@ -699,3 +699,19 @@ func TestCoprocessorBatchByStore(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexLookUpWithSelectForUpdateOnPartitionTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index k(b)) PARTITION BY HASH(a) partitions 4")
+	tk.MustExec("insert into t(a, b) values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8)")
+	tk.HasPlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "UnionScan")
+	tk.HasPlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "IndexLookUp")
+	tk.MustQuery("select b from t use index(k) where b > 2 order by b limit 1 for update").Check(testkit.Rows("3"))
+
+	tk.MustExec("analyze table t")
+	tk.HasPlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "IndexLookUp")
+	tk.MustQuery("select b from t use index(k) where b > 2 order by b limit 1 for update").Check(testkit.Rows("3"))
+}

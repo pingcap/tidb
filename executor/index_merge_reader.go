@@ -608,12 +608,15 @@ func (w *partialTableWorker) needPartitionHandle() (bool, error) {
 
 	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
 	// no ExtraPidColID here, because a clustered index couldn't be a global index.
-	ret := col.ID == model.ExtraPhysTblID
+	hasExtraCol := col.ID == model.ExtraPhysTblID
 
-	if needPartitionHandle != ret {
-		return ret, errors.Errorf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret)
+	// There will be two needPartitionHandle != hasExtraCol situations.
+	// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.
+	// `ExtraPhysTblID` will be used in `SelectLock` when `needPartitionHandle` == false and `hasExtraCol` == true.
+	if needPartitionHandle && !hasExtraCol {
+		return needPartitionHandle, errors.Errorf("Internal error, needPartitionHandle != ret")
 	}
-	return ret, nil
+	return needPartitionHandle, nil
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask,
@@ -1466,12 +1469,15 @@ func (w *partialIndexWorker) needPartitionHandle() (bool, error) {
 	col := cols[outputOffsets[len(outputOffsets)-1]]
 
 	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
-	ret := col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
+	hasExtraCol := col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
 
-	if needPartitionHandle != ret {
-		return ret, errors.Errorf("Internal error, needPartitionHandle(%t) != ret(%t)", needPartitionHandle, ret)
+	// There will be two needPartitionHandle != hasExtraCol situations.
+	// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.
+	// `ExtraPhysTblID` will be used in `SelectLock` when `needPartitionHandle` == false and `hasExtraCol` == true.
+	if needPartitionHandle && !hasExtraCol {
+		return needPartitionHandle, errors.Errorf("Internal error, needPartitionHandle != ret")
 	}
-	return ret, nil
+	return needPartitionHandle, nil
 }
 
 func (w *partialIndexWorker) fetchHandles(
