@@ -31,7 +31,7 @@ import (
 
 // maxMinEliminator tries to eliminate max/min aggregate function.
 // For SQL like `select max(id) from t;`, we could optimize it to `select max(id) from (select id from t order by id desc limit 1 where id is not null) t;`.
-// For SQL like `select min(id) from t;`, we could optimize it to `select max(id) from (select id from t order by id limit 1 where id is not null) t;`.
+// For SQL like `select min(id) from t;`, we could optimize it to `select min(id) from (select id from t order by id limit 1 where id is not null) t;`.
 // For SQL like `select max(id), min(id) from t;`, we could optimize it to the cartesianJoin result of the two queries above if `id` has an index.
 type maxMinEliminator struct {
 }
