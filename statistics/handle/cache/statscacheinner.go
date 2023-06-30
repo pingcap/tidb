@@ -35,10 +35,12 @@ import (
 	"github.com/pingcap/tidb/util/syncutil"
 )
 
+// TableStatsOption used to indicate the way to get table stats
 type TableStatsOption struct {
 	byQuery bool
 }
 
+// ByQuery indicates whether the stats is got by query
 func (t *TableStatsOption) ByQuery() bool {
 	return t.byQuery
 }
