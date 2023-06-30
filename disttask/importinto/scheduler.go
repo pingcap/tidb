@@ -42,9 +42,7 @@ type importStepScheduler struct {
 	sharedVars    sync.Map
 	logger        *zap.Logger
 
-	importCtx    context.Context
-	importCancel context.CancelFunc
-	wg           sync.WaitGroup
+	wg sync.WaitGroup
 }
 
 func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
@@ -78,11 +76,10 @@ func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	}
 	s.tableImporter = tableImporter
 
-	s.importCtx, s.importCancel = context.WithCancel(context.Background())
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.tableImporter.CheckDiskQuota(s.importCtx)
+		s.tableImporter.CheckDiskQuota(ctx)
 	}()
 	return nil
 }
@@ -179,7 +176,6 @@ func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMeta
 
 func (s *importStepScheduler) CleanupSubtaskExecEnv(_ context.Context) (err error) {
 	s.logger.Info("cleanup subtask env")
-	s.importCancel()
 	s.wg.Wait()
 	return s.tableImporter.Close()
 }
