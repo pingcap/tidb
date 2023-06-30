@@ -120,7 +120,6 @@ fi
 
 # clear restore environment
 run_sql "DROP DATABASE $DB;"
-run_sql "DROP DATABASE '__tidb_br_temporary_mysql';"
 
 # restore full
 echo "restore start..."
@@ -136,7 +135,7 @@ fi
 
 # clear restore environment
 run_sql "DROP DATABASE $DB;"
-run_sql "DROP DATABASE '__tidb_br_temporary_mysql';"
+run_sql "DROP DATABASE __tidb_br_temporary_mysql;"
 # restore full
 echo "restore start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/pdutil/PDEnabledPauseConfig=return(true)"
@@ -191,4 +190,3 @@ if $fail; then
 fi
 
 run_sql "DROP DATABASE $DB;"
-run_sql "DROP DATABASE '__tidb_br_temporary_mysql';"
