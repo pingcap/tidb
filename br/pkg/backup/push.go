@@ -84,11 +84,7 @@ func (push *pushDown) pushBackup(
 			// BR should be able to backup even some of stores disconnected.
 			// The regions managed by this store can be retried at fine-grained backup then.
 			logutil.CL(lctx).Warn("fail to connect store, skipping", zap.Error(err))
-<<<<<<< HEAD
-			return res, nil
-=======
 			continue
->>>>>>> f22ae5f8a30 (backup: check the store state by last heartbeat (#43099))
 		}
 		wg.Add(1)
 		go func() {
