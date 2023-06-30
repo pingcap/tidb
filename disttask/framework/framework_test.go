@@ -280,3 +280,19 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	DispatchTaskAndCheckFail("key1", t, &v)
 	distContext.Close()
 }
+
+func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+	distContext := testkit.NewDistExecutionContext(t, 1)
+	err := failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockExecSubtaskInitEnvErr", "return()")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockExecSubtaskInitEnvErr"))
+	}()
+	DispatchTaskAndCheckFail("key1", t, &v)
+	distContext.Close()
+}
