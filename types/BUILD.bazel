@@ -110,7 +110,6 @@ go_test(
         "//util/hack",
         "//util/mock",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

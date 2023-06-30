@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -2050,7 +2049,7 @@ func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		require.Equal(t, model.ActionDropTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")
@@ -2112,7 +2111,7 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		require.Equal(t, model.ActionDropTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")
@@ -2226,7 +2225,7 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 	var err error
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
+		require.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
@@ -2262,7 +2261,7 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 	var err error
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
+		require.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
@@ -2296,7 +2295,7 @@ func TestGlobalIndexReaderInTruncatePartition(t *testing.T) {
 
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
+		require.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
@@ -2332,7 +2331,7 @@ func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
 	var err error
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
+		require.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
@@ -2366,7 +2365,7 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 	var indexScanResult *testkit.Result
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		require.Equal(t, model.ActionDropTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
@@ -2403,7 +2402,7 @@ func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
 	var indexLookupResult *testkit.Result
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		require.Equal(t, model.ActionDropTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")

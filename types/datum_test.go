@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -658,7 +657,7 @@ func TestProduceDecWithSpecifiedTp(t *testing.T) {
 		newDec, err := ProduceDecWithSpecifiedTp(dec, tp, sc)
 		if tt.isOverflow {
 			if !ErrOverflow.Equal(err) {
-				assert.FailNow(t, "Error is not overflow", "err: %v before: %v after: %v", err, tt.dec, dec)
+				require.FailNow(t, "Error is not overflow", "err: %v before: %v after: %v", err, tt.dec, dec)
 			}
 		} else {
 			require.NoError(t, err, tt)
@@ -667,11 +666,11 @@ func TestProduceDecWithSpecifiedTp(t *testing.T) {
 		warn := sc.TruncateWarnings(0)
 		if tt.isTruncated {
 			if len(warn) != 1 || !ErrTruncatedWrongVal.Equal(warn[0].Err) {
-				assert.FailNow(t, "Warn is not truncated", "warn: %v before: %v after: %v", warn, tt.dec, dec)
+				require.FailNow(t, "Warn is not truncated", "warn: %v before: %v after: %v", warn, tt.dec, dec)
 			}
 		} else {
 			if warn != nil {
-				assert.FailNow(t, "Warn is not nil", "warn: %v before: %v after: %v", warn, tt.dec, dec)
+				require.FailNow(t, "Warn is not nil", "warn: %v before: %v after: %v", warn, tt.dec, dec)
 			}
 		}
 	}
