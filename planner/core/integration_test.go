@@ -135,8 +135,8 @@ func TestAggPushDownLeftJoin(t *testing.T) {
 		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows("6 0"))
 	tk.MustQuery("explain format='brief' select c_custkey, count(o_orderkey) as c_count from customer left outer join orders " +
 		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows(
-		"Projection 10000.00 root  test.customer.c_custkey, Column#7",
-		"└─Projection 10000.00 root  if(isnull(Column#8), 0, 1)->Column#7, test.customer.c_custkey",
+		"Projection 8000.00 root  test.customer.c_custkey, Column#7",
+		"└─HashAgg 8000.00 root  group by:test.customer.c_custkey, funcs:count(Column#8)->Column#7, funcs:firstrow(test.customer.c_custkey)->test.customer.c_custkey",
 		"  └─HashJoin 10000.00 root  left outer join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
 		"    ├─HashAgg(Build) 8000.00 root  group by:test.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(test.orders.o_custkey)->test.orders.o_custkey",
 		"    │ └─TableReader 8000.00 root  data:HashAgg",
@@ -149,8 +149,8 @@ func TestAggPushDownLeftJoin(t *testing.T) {
 		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows("6 0"))
 	tk.MustQuery("explain format='brief' select c_custkey, count(o_orderkey) as c_count from orders right outer join customer " +
 		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows(
-		"Projection 10000.00 root  test.customer.c_custkey, Column#7",
-		"└─Projection 10000.00 root  if(isnull(Column#8), 0, 1)->Column#7, test.customer.c_custkey",
+		"Projection 8000.00 root  test.customer.c_custkey, Column#7",
+		"└─HashAgg 8000.00 root  group by:test.customer.c_custkey, funcs:count(Column#8)->Column#7, funcs:firstrow(test.customer.c_custkey)->test.customer.c_custkey",
 		"  └─HashJoin 10000.00 root  right outer join, equal:[eq(test.orders.o_custkey, test.customer.c_custkey)]",
 		"    ├─HashAgg(Build) 8000.00 root  group by:test.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(test.orders.o_custkey)->test.orders.o_custkey",
 		"    │ └─TableReader 8000.00 root  data:HashAgg",
