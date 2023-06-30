@@ -1,0 +1,219 @@
+# Proposal: Configurable KV Timeout
+
+* Authors: [cfzjywxk](https://github.com/cfzjywxk)
+* Tracking issue: TODO
+
+## Motivation
+
+During query execution in TiDB, the associated TiKV requests are typically processed quickly, 
+taking only a few milliseconds. However, if there is disk IO or network latency jitter on a specified  
+TiKV node, the duration of these requests may spike to several seconds or more. This usually happens when 
+there is an EBS issue like the EBS is repairing its replica.
+
+Currently, the timeout limit for the TiKV requests is fixed and cannot be adjusted.  For example:
+- `ReadTimeoutShort`: [30 seconds](https://github.com/tikv/client-go/blob/ce9203ef66e99dcc8b14f68777c520830ba99099/internal/client/client.go#L82), which is used for the Get RPC request.
+- `ReadTimeoutMedium`: [60 seconds](https://github.com/tikv/client-go/blob/ce9203ef66e99dcc8b14f68777c520830ba99099/internal/client/client.go#L83), which is used for the BatchGet, Cop RPC request.
+
+The kv-client or TiDB may wait for the responses from TiKV nodes until timeout happens, 
+it could not retry or redirect the requests to other nodes quickly as the timeout configuration is usually 
+tens of seconds. As a result, the application may experience a query latency spike when TiKV node jitter is 
+encountered.
+
+A possible improvement suggested by [#44771](https://github.com/pingcap/tidb/issues/44771) is to make the
+timeout values of specific KV requests configurable. For example:
+- Adding a session variable `tidb_kv_read_timeout`, which is used to control the timeout for a single 
+TiKV read RPC request. When the user sets the value of this variable, all read RPC request timeouts will use this value. 
+The default value of this variable is 0, and the timeout of TiKV read RPC requests is still the original 
+value of `ReadTimeoutShort` and `ReadTimeoutMedium`.
+- Adding statement level hint like `SELECT /*+ tidb_kv_read_timeout(500ms) */ * FROM t where id = ?;` to
+set the timeout value of the KV requests of this single query to the certain value.
+
+## Example Usage
+
+Consider the stale read usage case:
+
+```SQL
+set @@tidb_read_staleness=-5;
+# The unit is miliseconds. The session variable usage.
+set @@tidb_tikv_tidb_timeout=500;
+select * from t where id = 1;
+# The unit is miliseconds. The query hint usage.
+select /*+ tidb_kv_read_timeout(500ms) */ * FROM t where id = 1;
+```
+
+## Benefits
+
+For latency sensitive applications, providing predictable sub-second read latency by set fast retrying 
+is valuable. queries that are usually very fast (such as point-select query), setting the value 
+of `tidb_kv_read_timeout` to short value like  `500ms`, the TiDB cluster would be more tolerable 
+for network latency or io latency jitter for a single storage node, because the retry are more quickly.
+
+## Problems
+
+- Setting the variable `tidb_kv_read_timeout ` may not be easy if it affects the timeout for all 
+TiKV read requests, such as Get, BatchGet, Cop in this session.A timeout of 1 second may be sufficient for GET requests, 
+but may be small for COP requests. Some large COP requests may keep timing out and could not be processed properly.
+- If the value of the variable `tidb_kv_read_timeout` is set too small, more retries will occur, 
+increasing the load pressure on the TiDB cluster. In the worst case the query would not return until the 
+max backoff timeout is reached if the `tidb_kv_read_timeout` is set to a value which none of the replicas
+could finish processing within that time.
+
+
+## Detailed Design
+
+The query hint usage would be more flexible and safer as the impact is limited to a single query.
+
+### Add Hint Support For `tidb_kv_read_timeout`
+
+- Add related field in the `StatementContext` struct like
+```go
+type StmtHints struct {
+	...
+	kv_read_timeout: Duration
+}
+```
+- Support `tidb_kv_read_timeout` processing in `ExtractTableHintsFromStmtNode` and `handleStmtHints`, convert
+the user input hint value into `StmtContext` so it could be used later.
+
+## Support Timeout Configuration For Get And Batch-Get
+
+- Add related filed in the `KVSnapshot` struct like
+
+```go
+type KVSnapshot struct {
+	...
+	KVReadTimeout: Duration
+}
+```
+
+This change is to be done in the `client-go` repository.
+
+- Add set interface `SetKVReadTimeout` and get interface `GetKVReadTimeout`
+```go
+func (s *KVSnapshot) SetKVReadTimeout(KVTimeout Duration) {
+	s.KVReadTimeout = KVTimeout
+}
+```
+
+This change is to be done both in the `client-go` repository and `tidb` repository.
+
+- Call the set interfaces to pass the timeout value from `StmtContext` to the `KVSnapshot` structures, when
+the `PointGet` and `BatchPointGet` executors are built.
+- Change the `kvproto` to pass the read timeout value for the [`GetRequest`](https://github.com/pingcap/kvproto/blob/master/proto/kvrpcpb.proto#L26)
+```protobuf
+message GetRequest {
+    Context context = 1;
+    bytes key = 2;
+    uint64 version = 3;
+    uint32 read_timeout = 4; // Add this new field.
+}
+```
+- Change the `kvproto` to pass the read timeout value ~ the [`BatchGetRequest`](https://github.com/pingcap/kvproto/blob/master/proto/kvrpcpb.proto#L414)
+```protobuf
+message BatchGetRequest {
+    Context context = 1;
+    repeated bytes keys = 2;
+    uint64 version = 3;
+    uint32 read_timeout = 4; // Add this new field.
+}
+```
+These changes need to be done in the `kvproto` repository.
+- Support timeout check during the request handling in TiKV. When there's new point get and batch point get 
+requests are created, the `kv_read_timeout` value should be read from the `GetReuqest` and `BatchGetRequest`
+and passed to the `pointGetter`. But by now there's no canceling mechanism when the task is scheduled to the
+read pool in TiKV, a simpler way is to check the deadline duration before next processing and try to return
+directly if the deadline is already exceeded so the resources could be saved.
+```rust
+pub fn get(
+    &self,
+    mut ctx: Context,
+    key: Key,
+    start_ts: TimeStamp,
+) -> impl Future<Output = Result<(Option<Value>, KvGetStatistics)>> {
+    ...
+     let res = self.read_pool.spawn_handle(
+            async move {
+                // Add timeout check.
+                let snapshot =
+                    Self::with_tls_engine(|engine| Self::snapshot(engine, snap_ctx)).await?;
+
+                {
+                    ...
+                    let result = Self::with_perf_context(CMD, || {
+                        let _guard = sample.observe_cpu();
+                        let snap_store = SnapshotStore::new(
+                            snapshot,
+                            start_ts,
+                            ctx.get_isolation_level(),
+                            !ctx.get_not_fill_cache(),
+                            bypass_locks,
+                            access_locks,
+                            false,
+                        );
+                        // Add timeout check.
+                        snap_store
+                        .get(&key, &mut statistics)
+                    });
+                 ...   
+            ...        
+        );
+}
+```
+These changes need to be done in the `tikv` repository.
+
+## Support Timeout Configuration For Coprocessor Tasks
+
+- Add related field in the `copTask` struct like
+```go
+type copTask struct {
+	...
+	KVReadTimeout: Duration
+}
+```
+- Add the `kv_read_timeout` field in the [`coprocessor.Request`](https://github.com/pingcap/kvproto/blob/master/proto/coprocessor.proto#L24)
+This change needs to be done in the `kvproto` repository.
+- Use the `kv_read_timeout` value passed in to calculate the `deadline` result in `parse_and_handle_unary_request`,
+```rust
+fn parse_request_and_check_memory_locks(
+    &self,
+    mut req: coppb::Request,
+    peer: Option<String>,
+    is_streaming: bool,
+) -> Result<(RequestHandlerBuilder<E::Snap>, ReqContext)> {
+    ...
+     req_ctx = ReqContext::new(
+        tag,
+        context,
+        ranges,
+        self.max_handle_duration, // Here use the specified timeout value.
+        peer,
+        Some(is_desc_scan),
+        start_ts.into(),
+        cache_match_version,
+        self.perf_level,
+    );
+}
+```
+This change needs to be done in the `tikv` repository.
+
+
+## Compatibility
+
+As new fields are added into the structs in the `kvproto` repository. The requests with configurable timeout
+values would take effect on newer versions. These fields are expected not to take effect when down-grading the
+cluster theoretically.
+
+## More comprehensive solution
+There’s already a query level timeout configuration `max_execution_time` which could be configured using 
+variables and query hints. 
+If the timeout of RPC or TiKV requests could derive the timeout values from the `max_execution_time` in an 
+intelligent way, maybe it’s not needed to expose another variable like `tidb_kv_read_timeout`.
+
+For example, consider the strategy:
+- The  `max_execution_time` is configured to `1s` on the query level
+- The first RPC timeout is configured to some proportional value of the `max_execution_time` like `500ms`
+- When first RPC times out the retry RPC is configured to left value of the `max_execution_time` like `400ms`
+
+From the application’s perspective, TiDB is trying to finish the requests ASAP considering the 
+input `max_execution_time` value, and when TiDB could not finish in time the timeout error is returned 
+to the application and the query fails fast.
