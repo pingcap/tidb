@@ -78,7 +78,9 @@ func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	}
 	s.tableImporter = tableImporter
 
-	s.importCtx, s.importCancel = context.WithCancel(context.Background())
+	// we need this sub context since CleanupSubtaskExecEnv which wait on this routine is called
+	// before parent context is canceled in normal flow.
+	s.importCtx, s.importCancel = context.WithCancel(ctx)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
