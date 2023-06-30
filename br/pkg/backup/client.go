@@ -787,7 +787,7 @@ func (bc *Client) fineGrainedBackup(
 			log.Info("handle fine grained", zap.Int("backoffMs", ms))
 			err := bo.BackOff()
 			if err != nil {
-				return errors.Annotatef(err, "at fine-grained backup, remained ranges = %d", pr.Res.Len())
+				return errors.Annotatef(err, "at fine-grained backup, remained ranges = %d", rangeTree.Len())
 			}
 		}
 	}
