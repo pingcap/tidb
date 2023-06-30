@@ -67,12 +67,11 @@ CTE_0	2.00	root		Recursive CTE
     └─CTETable_17	1.00	root		Scan on CTE_0
 explain with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte t1, cte t2;
 id	estRows	task	access object	operator info
-HashJoin_26	2.56	root		CARTESIAN inner join
-├─CTEFullScan_29(Build)	1.60	root	CTE:t2	data:CTE_0
-└─CTEFullScan_28(Probe)	1.60	root	CTE:t1	data:CTE_0
-CTE_0	1.60	root		Non-Recursive CTE
-└─Selection_21(Seed Part)	1.60	root		1
-  └─CTEFullScan_23	2.00	root	CTE:cte1	data:CTE_1
+HashJoin_25	4.00	root		CARTESIAN inner join
+├─CTEFullScan_28(Build)	2.00	root	CTE:t2	data:CTE_0
+└─CTEFullScan_27(Probe)	2.00	root	CTE:t1	data:CTE_0
+CTE_0	2.00	root		Non-Recursive CTE
+└─CTEFullScan_22(Seed Part)	2.00	root	CTE:cte1	data:CTE_1
 CTE_1	2.00	root		Recursive CTE
 ├─Projection_16(Seed Part)	1.00	root		1->Column#2
 │ └─TableDual_17	1.00	root		rows:1
@@ -98,15 +97,13 @@ CTE_1	8001.00	root		Recursive CTE
     └─CTETable_33	10000.00	root		Scan on CTE_1
 explain with q(a,b) as (select * from t1) select /*+ merge(q) no_merge(q1) */ * from q, q q1 where q.a=1 and q1.a=2;
 id	estRows	task	access object	operator info
-HashJoin_19	40960000.00	root		CARTESIAN inner join
-├─Selection_23(Build)	6400.00	root		eq(test.t1.c1, 2)
-│ └─CTEFullScan_24	8000.00	root	CTE:q1	data:CTE_0
-└─Selection_21(Probe)	6400.00	root		eq(test.t1.c1, 1)
-  └─CTEFullScan_22	8000.00	root	CTE:q	data:CTE_0
-CTE_0	8000.00	root		Non-Recursive CTE
-└─Selection_11(Seed Part)	8000.00	root		or(eq(test.t1.c1, 1), eq(test.t1.c1, 2))
-  └─TableReader_14	10000.00	root		data:TableFullScan_13
-    └─TableFullScan_13	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin_15	2.56	root		CARTESIAN inner join
+├─Selection_19(Build)	1.60	root		eq(test.t1.c1, 2)
+│ └─CTEFullScan_20	2.00	root	CTE:q1	data:CTE_0
+└─Selection_17(Probe)	1.60	root		eq(test.t1.c1, 1)
+  └─CTEFullScan_18	2.00	root	CTE:q	data:CTE_0
+CTE_0	2.00	root		Non-Recursive CTE
+└─Batch_Point_Get_12(Seed Part)	2.00	root	table:t1	handle:[1 2], keep order:false, desc:false
 explain with recursive cte(a,b) as (select 1, concat('a', 1) union select a+1, concat(b, 1) from cte where a < 5) select * from cte;
 id	estRows	task	access object	operator info
 CTEFullScan_17	2.00	root	CTE:cte	data:CTE_0
