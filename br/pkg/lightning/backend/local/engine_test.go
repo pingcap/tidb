@@ -21,7 +21,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
 	"testing"
+	"unsafe"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/sstable"
@@ -30,6 +32,53 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 )
+
+func makePebbleDB(t *testing.T, opt *pebble.Options) (*pebble.DB, string) {
+	dir := t.TempDir()
+	db, err := pebble.Open(path.Join(dir, "test"), opt)
+	require.NoError(t, err)
+	tmpPath := filepath.Join(dir, "test.sst")
+	err = os.Mkdir(tmpPath, 0o755)
+	require.NoError(t, err)
+	return db, tmpPath
+}
+
+func TestGetEngineSizeWhenImport(t *testing.T) {
+	opt := &pebble.Options{
+		MemTableSize:             1024 * 1024,
+		MaxConcurrentCompactions: 16,
+		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
+		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
+		DisableWAL:               true,
+		ReadOnly:                 false,
+	}
+	db, tmpPath := makePebbleDB(t, opt)
+
+	_, engineUUID := backend.MakeUUID("ww", 0)
+	engineCtx, cancel := context.WithCancel(context.Background())
+	f := &Engine{
+		UUID:         engineUUID,
+		sstDir:       tmpPath,
+		ctx:          engineCtx,
+		cancel:       cancel,
+		sstMetasChan: make(chan metaOrFlush, 64),
+		keyAdapter:   noopKeyAdapter{},
+	}
+	f.db.Store(unsafe.Pointer(db))
+	// simulate import
+	f.lock(importMutexStateImport)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		engineFileSize := f.getEngineFileSize()
+		require.Equal(t, f.UUID, engineFileSize.UUID)
+		require.True(t, engineFileSize.IsImporting)
+	}()
+	wg.Wait()
+	f.unlock()
+	require.NoError(t, f.Close())
+}
 
 func TestIngestSSTWithClosedEngine(t *testing.T) {
 	dir := t.TempDir()
@@ -50,7 +99,6 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
 	f := &Engine{
-		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
@@ -58,6 +106,7 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 		sstMetasChan: make(chan metaOrFlush, 64),
 		keyAdapter:   noopKeyAdapter{},
 	}
+	f.db.Store(unsafe.Pointer(db))
 	f.sstIngester = dbSSTIngester{e: f}
 	sstPath := path.Join(tmpPath, uuid.New().String()+".sst")
 	file, err := os.Create(sstPath)
