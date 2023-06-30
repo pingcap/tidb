@@ -82,7 +82,8 @@ restart_services
 
 echo "--> restore without with-sys-table flag, only restore data"
 run_br restore full --log-file $br_log_file -s "local://$backup_dir"
-check_contains "the target cluster is not fresh"
+run_sql "select count(*) from mysql.user"
+check_contains "count(*): 1"
 
 echo "--> restore without with-sys-table flag and set explicit mysql.* filter, will not restore priv data"
 run_sql "drop database db1;"
