@@ -10,7 +10,6 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xitongsys/parquet-go-source/local"
 	writer2 "github.com/xitongsys/parquet-go/writer"
@@ -136,8 +135,8 @@ func TestParquetVariousTypes(t *testing.T) {
 	row := reader.lastRow.Row
 	require.Len(t, rowValue, len(row))
 	for i := 0; i < len(row); i++ {
-		assert.Equal(t, types.KindString, row[i].Kind())
-		assert.Equal(t, row[i].GetString(), rowValue[i])
+		require.Equal(t, types.KindString, row[i].Kind())
+		require.Equal(t, row[i].GetString(), rowValue[i])
 	}
 
 	type TestDecimal struct {
@@ -171,7 +170,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		} else {
 			td.DecimalRef = nil
 		}
-		assert.NoError(t, writer.Write(td))
+		require.NoError(t, writer.Write(td))
 	}
 	require.NoError(t, writer.WriteStop())
 	require.NoError(t, pf.Close())
@@ -183,7 +182,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	defer reader.Close()
 
 	for i, testCase := range cases {
-		assert.NoError(t, reader.ReadRow())
+		require.NoError(t, reader.ReadRow())
 		strDatum, ok := testCase[1].(string)
 		require.True(t, ok)
 		vals := []types.Datum{types.NewCollationStringDatum(strDatum, "")}
@@ -194,10 +193,10 @@ func TestParquetVariousTypes(t *testing.T) {
 		}
 		// because we always reuse the datums in reader.lastRow.Row, so we can't directly
 		// compare will `DeepEqual` here
-		assert.Len(t, reader.lastRow.Row, len(vals))
+		require.Len(t, reader.lastRow.Row, len(vals))
 		for i, val := range vals {
-			assert.Equal(t, val.Kind(), reader.lastRow.Row[i].Kind())
-			assert.Equal(t, val.GetValue(), reader.lastRow.Row[i].GetValue())
+			require.Equal(t, val.Kind(), reader.lastRow.Row[i].Kind())
+			require.Equal(t, val.GetValue(), reader.lastRow.Row[i].GetValue())
 		}
 	}
 
@@ -224,12 +223,12 @@ func TestParquetVariousTypes(t *testing.T) {
 
 	// because we always reuse the datums in reader.lastRow.Row, so we can't directly
 	// compare will `DeepEqual` here
-	assert.NoError(t, reader.ReadRow())
-	assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
-	assert.Equal(t, uint64(0), reader.lastRow.Row[0].GetValue())
-	assert.NoError(t, reader.ReadRow())
-	assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
-	assert.Equal(t, uint64(1), reader.lastRow.Row[0].GetValue())
+	require.NoError(t, reader.ReadRow())
+	require.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
+	require.Equal(t, uint64(0), reader.lastRow.Row[0].GetValue())
+	require.NoError(t, reader.ReadRow())
+	require.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
+	require.Equal(t, uint64(1), reader.lastRow.Row[0].GetValue())
 }
 
 func TestParquetAurora(t *testing.T) {
@@ -270,16 +269,16 @@ func TestParquetAurora(t *testing.T) {
 
 	for i := 0; i < len(expectedRes); i++ {
 		err = parser.ReadRow()
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		expectedValues := expectedRes[i]
 		row := parser.LastRow().Row
-		assert.Len(t, expectedValues, len(row))
+		require.Len(t, expectedValues, len(row))
 		for j := 0; j < len(row); j++ {
 			switch v := expectedValues[j].(type) {
 			case int64:
-				assert.Equal(t, row[j].GetInt64(), v)
+				require.Equal(t, row[j].GetInt64(), v)
 			case string:
-				assert.Equal(t, row[j].GetString(), v)
+				require.Equal(t, row[j].GetString(), v)
 			default:
 				t.Fatal("unexpected value: ", expectedValues[j])
 			}

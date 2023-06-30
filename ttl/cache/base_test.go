@@ -17,17 +17,15 @@ package cache
 import (
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestBaseCache(t *testing.T) {
 	baseCache := newBaseCache(time.Nanosecond)
 	time.Sleep(time.Microsecond)
 
-	assert.True(t, baseCache.ShouldUpdate())
+	require.True(t, baseCache.ShouldUpdate())
 
 	baseCache.updateTime = time.Now()
 	baseCache.SetInterval(time.Hour)
-	assert.False(t, baseCache.ShouldUpdate())
+	require.False(t, baseCache.ShouldUpdate())
 }

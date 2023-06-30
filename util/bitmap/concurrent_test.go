@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestConcurrentBitmapSet(t *testing.T) {
@@ -74,7 +75,7 @@ func TestConcurrentBitmapUniqueSetter(t *testing.T) {
 		}
 	}
 	wg.Wait()
-	assert.Less(t, clearCounter, uint64(loopCount))
+	require.Less(t, clearCounter, uint64(loopCount))
 	assert.Equal(t, setterCounter, clearCounter+1)
 }
 

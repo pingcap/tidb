@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -41,54 +40,54 @@ func TestFaultInjectionBasic(t *testing.T) {
 	ver := Version{Ver: 1}
 	snap := storage.GetSnapshot(ver)
 	b, err := txn.Get(context.TODO(), []byte{'a'})
-	assert.NotNil(t, err)
-	assert.Equal(t, err1.Error(), err.Error())
-	assert.Nil(t, b)
+	require.NotNil(t, err)
+	require.Equal(t, err1.Error(), err.Error())
+	require.Nil(t, b)
 
 	b, err = snap.Get(context.TODO(), []byte{'a'})
-	assert.NotNil(t, err)
-	assert.Equal(t, err1.Error(), err.Error())
-	assert.Nil(t, b)
+	require.NotNil(t, err)
+	require.Equal(t, err1.Error(), err.Error())
+	require.Nil(t, b)
 
 	bs, err := snap.BatchGet(context.Background(), nil)
-	assert.NotNil(t, err)
-	assert.Equal(t, err1.Error(), err.Error())
-	assert.Nil(t, bs)
+	require.NotNil(t, err)
+	require.Equal(t, err1.Error(), err.Error())
+	require.Nil(t, bs)
 
 	bs, err = txn.BatchGet(context.Background(), nil)
-	assert.NotNil(t, err)
-	assert.Equal(t, err1.Error(), err.Error())
-	assert.Nil(t, bs)
+	require.NotNil(t, err)
+	require.Equal(t, err1.Error(), err.Error())
+	require.Nil(t, bs)
 
 	err = txn.Commit(context.Background())
-	assert.NotNil(t, err)
-	assert.Equal(t, err1.Error(), err.Error())
+	require.NotNil(t, err)
+	require.Equal(t, err1.Error(), err.Error())
 
 	cfg.SetGetError(nil)
 	cfg.SetCommitError(nil)
 
 	storage = NewInjectedStore(newMockStorage(), &cfg)
 	txn, err = storage.Begin()
-	assert.Nil(t, err)
+	require.Nil(t, err)
 
 	snap = storage.GetSnapshot(ver)
 	b, err = txn.Get(context.TODO(), []byte{'a'})
-	assert.Nil(t, err)
-	assert.Nil(t, b)
+	require.Nil(t, err)
+	require.Nil(t, b)
 
 	bs, err = txn.BatchGet(context.Background(), nil)
-	assert.Nil(t, err)
-	assert.Nil(t, bs)
+	require.Nil(t, err)
+	require.Nil(t, bs)
 
 	b, err = snap.Get(context.TODO(), []byte{'a'})
-	assert.True(t, terror.ErrorEqual(ErrNotExist, err))
-	assert.Nil(t, b)
+	require.True(t, terror.ErrorEqual(ErrNotExist, err))
+	require.Nil(t, b)
 
 	bs, err = snap.BatchGet(context.Background(), []Key{[]byte("a")})
-	assert.Nil(t, err)
-	assert.Len(t, bs, 0)
+	require.Nil(t, err)
+	require.Len(t, bs, 0)
 
 	err = txn.Commit(context.Background())
-	assert.NotNil(t, err)
-	assert.True(t, terror.ErrorEqual(err, ErrTxnRetryable))
+	require.NotNil(t, err)
+	require.True(t, terror.ErrorEqual(err, ErrTxnRetryable))
 }

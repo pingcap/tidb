@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_getTTLInfoInOptions(t *testing.T) {
@@ -142,9 +142,9 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 	for _, c := range cases {
 		ttlInfo, ttlEnable, ttlCronJobSchedule, err := getTTLInfoInOptions(c.options)
 
-		assert.Equal(t, c.ttlInfo, ttlInfo)
-		assert.Equal(t, c.ttlEnable, ttlEnable)
-		assert.Equal(t, c.ttlCronJobSchedule, ttlCronJobSchedule)
-		assert.Equal(t, c.err, err)
+		require.Equal(t, c.ttlInfo, ttlInfo)
+		require.Equal(t, c.ttlEnable, ttlEnable)
+		require.Equal(t, c.ttlCronJobSchedule, ttlCronJobSchedule)
+		require.Equal(t, c.err, err)
 	}
 }

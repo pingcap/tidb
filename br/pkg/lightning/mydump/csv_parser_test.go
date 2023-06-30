@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -41,28 +40,28 @@ type testCase struct {
 func runTestCasesCSV(t *testing.T, cfg *config.MydumperRuntime, blockBufSize int64, cases []testCase) {
 	for _, tc := range cases {
 		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(tc.input), blockBufSize, ioWorkersForCSV, false, charsetConvertor)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		for i, row := range tc.expected {
 			comment := fmt.Sprintf("input = %q, row = %d", tc.input, i+1)
 			e := parser.ReadRow()
-			assert.NoErrorf(t, e, "input = %q, row = %d, error = %s", tc.input, i+1, errors.ErrorStack(e))
-			assert.Equal(t, int64(i)+1, parser.LastRow().RowID, comment)
-			assert.Equal(t, row, parser.LastRow().Row, comment)
+			require.NoErrorf(t, e, "input = %q, row = %d, error = %s", tc.input, i+1, errors.ErrorStack(e))
+			require.Equal(t, int64(i)+1, parser.LastRow().RowID, comment)
+			require.Equal(t, row, parser.LastRow().Row, comment)
 		}
-		assert.ErrorIsf(t, errors.Cause(parser.ReadRow()), io.EOF, "input = %q", tc.input)
+		require.ErrorIsf(t, errors.Cause(parser.ReadRow()), io.EOF, "input = %q", tc.input)
 	}
 }
 
 func runFailingTestCasesCSV(t *testing.T, cfg *config.MydumperRuntime, blockBufSize int64, cases []string) {
 	for _, tc := range cases {
 		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(tc), blockBufSize, ioWorkersForCSV, false, charsetConvertor)
 		require.NoError(t, err)
 		e := parser.ReadRow()
-		assert.Regexpf(t, "syntax error.*", e.Error(), "input = %q / %s", tc, errors.ErrorStack(e))
+		require.Regexpf(t, "syntax error.*", e.Error(), "input = %q / %s", tc, errors.ErrorStack(e))
 	}
 }
 
@@ -1527,17 +1526,17 @@ func TestHeaderSchemaMatch(t *testing.T) {
 		cfg.CSV.Header = tc.Header
 		cfg.CSV.HeaderSchemaMatch = tc.HeaderSchemaMatch
 		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(inputData), int64(config.ReadBlockSize), ioWorkersForCSV, tc.Header, charsetConvertor)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		for i, row := range tc.ExpectedData {
 			comment := fmt.Sprintf("row = %d, header = %v, header-schema-match = %v", i+1, tc.Header, tc.HeaderSchemaMatch)
 			e := parser.ReadRow()
-			assert.NoErrorf(t, e, "row = %d, error = %s", i+1, errors.ErrorStack(e))
-			assert.Equal(t, int64(i)+1, parser.LastRow().RowID, comment)
-			assert.Equal(t, row, parser.LastRow().Row, comment)
+			require.NoErrorf(t, e, "row = %d, error = %s", i+1, errors.ErrorStack(e))
+			require.Equal(t, int64(i)+1, parser.LastRow().RowID, comment)
+			require.Equal(t, row, parser.LastRow().Row, comment)
 		}
-		assert.ErrorIsf(t, errors.Cause(parser.ReadRow()), io.EOF, comment)
-		assert.Equal(t, tc.ExpectedColumns, parser.Columns(), comment)
+		require.ErrorIsf(t, errors.Cause(parser.ReadRow()), io.EOF, comment)
+		require.Equal(t, tc.ExpectedColumns, parser.Columns(), comment)
 	}
 }

@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -58,7 +57,7 @@ func TestPause(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			err := p.Wait(context.Background())
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}()
 	}
 

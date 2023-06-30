@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type contextKeyType int
@@ -37,7 +38,7 @@ func TestContext(t *testing.T) {
 
 	ctx.ClearValue(contextKey)
 	v = ctx.Value(contextKey)
-	assert.Nil(t, v)
+	require.Nil(t, v)
 }
 
 func BenchmarkNewContext(b *testing.B) {

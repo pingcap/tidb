@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
 
@@ -217,7 +218,7 @@ func TestGetDatum(t *testing.T) {
 		v, ok := d.GetValue().(types.Time)
 		assert.True(t, ok)
 		tm, err := v.GoTime(time.UTC)
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		return tm
 	}
 
@@ -301,7 +302,7 @@ func TestErrDeadlockToDeadlockRecord(t *testing.T) {
 
 	record := ErrDeadlockToDeadlockRecord(err)
 	// The OccurTime is set to time.Now
-	assert.Less(t, time.Since(record.OccurTime), time.Millisecond*5)
+	require.Less(t, time.Since(record.OccurTime), time.Millisecond*5)
 	expectedRecord.OccurTime = record.OccurTime
 	assert.Equal(t, expectedRecord, record)
 }

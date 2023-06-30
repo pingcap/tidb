@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // SliceIter is used to iterate slice
@@ -121,7 +121,7 @@ func (i *MockedIter) Next() error {
 // Close implements kv.Iterator.Close
 func (i *MockedIter) Close() {
 	if i.closed && i.failOnMultiClose {
-		assert.FailNow(i.t, "Multi close iter")
+		require.FailNow(i.t, "Multi close iter")
 	}
 	i.closed = true
 	i.Iterator.Close()

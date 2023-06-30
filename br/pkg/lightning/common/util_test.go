@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/dbutil"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -164,22 +163,22 @@ func TestSQLWithRetry(t *testing.T) {
 }
 
 func TestStringSliceEqual(t *testing.T) {
-	assert.True(t, common.StringSliceEqual(nil, nil))
-	assert.True(t, common.StringSliceEqual(nil, []string{}))
-	assert.False(t, common.StringSliceEqual(nil, []string{"a"}))
-	assert.False(t, common.StringSliceEqual([]string{"a"}, nil))
-	assert.True(t, common.StringSliceEqual([]string{"a"}, []string{"a"}))
-	assert.False(t, common.StringSliceEqual([]string{"a"}, []string{"b"}))
-	assert.True(t, common.StringSliceEqual([]string{"a", "b", "c"}, []string{"a", "b", "c"}))
-	assert.False(t, common.StringSliceEqual([]string{"a"}, []string{"a", "b", "c"}))
-	assert.False(t, common.StringSliceEqual([]string{"a", "b", "c"}, []string{"a", "b"}))
-	assert.False(t, common.StringSliceEqual([]string{"a", "x", "y"}, []string{"a", "y", "x"}))
+	require.True(t, common.StringSliceEqual(nil, nil))
+	require.True(t, common.StringSliceEqual(nil, []string{}))
+	require.False(t, common.StringSliceEqual(nil, []string{"a"}))
+	require.False(t, common.StringSliceEqual([]string{"a"}, nil))
+	require.True(t, common.StringSliceEqual([]string{"a"}, []string{"a"}))
+	require.False(t, common.StringSliceEqual([]string{"a"}, []string{"b"}))
+	require.True(t, common.StringSliceEqual([]string{"a", "b", "c"}, []string{"a", "b", "c"}))
+	require.False(t, common.StringSliceEqual([]string{"a"}, []string{"a", "b", "c"}))
+	require.False(t, common.StringSliceEqual([]string{"a", "b", "c"}, []string{"a", "b"}))
+	require.False(t, common.StringSliceEqual([]string{"a", "x", "y"}, []string{"a", "y", "x"}))
 }
 
 func TestInterpolateMySQLString(t *testing.T) {
-	assert.Equal(t, "'123'", common.InterpolateMySQLString("123"))
-	assert.Equal(t, "'1''23'", common.InterpolateMySQLString("1'23"))
-	assert.Equal(t, "'1''2''''3'", common.InterpolateMySQLString("1'2''3"))
+	require.Equal(t, "'123'", common.InterpolateMySQLString("123"))
+	require.Equal(t, "'1''23'", common.InterpolateMySQLString("1'23"))
+	require.Equal(t, "'1''2''''3'", common.InterpolateMySQLString("1'2''3"))
 }
 
 func TestGetAutoRandomColumn(t *testing.T) {

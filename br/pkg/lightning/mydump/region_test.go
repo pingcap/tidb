@@ -24,7 +24,6 @@ import (
 	. "github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -199,28 +198,28 @@ func TestMakeTableRegionsSplitLargeFile(t *testing.T) {
 
 	ctx := context.Background()
 	store, err := storage.NewLocalStorage(".")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	meta.DataFiles[0].FileMeta.Compression = CompressionNone
 	divideConfig := NewDataDivideConfig(cfg, colCnt, nil, store, meta)
 	regions, err := MakeTableRegions(ctx, divideConfig)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	offsets := [][]int64{{6, 12}, {12, 18}, {18, 24}, {24, 30}}
-	assert.Len(t, regions, len(offsets))
+	require.Len(t, regions, len(offsets))
 	for i := range offsets {
-		assert.Equal(t, offsets[i][0], regions[i].Chunk.Offset)
-		assert.Equal(t, offsets[i][1], regions[i].Chunk.EndOffset)
-		assert.Equal(t, columns, regions[i].Chunk.Columns)
+		require.Equal(t, offsets[i][0], regions[i].Chunk.Offset)
+		require.Equal(t, offsets[i][1], regions[i].Chunk.EndOffset)
+		require.Equal(t, columns, regions[i].Chunk.Columns)
 	}
 
 	// test - gzip compression
 	meta.DataFiles[0].FileMeta.Compression = CompressionGZ
 	regions, err = MakeTableRegions(ctx, divideConfig)
-	assert.NoError(t, err)
-	assert.Len(t, regions, 1)
-	assert.Equal(t, int64(0), regions[0].Chunk.Offset)
-	assert.Equal(t, TableFileSizeINF, regions[0].Chunk.EndOffset)
-	assert.Len(t, regions[0].Chunk.Columns, 0)
+	require.NoError(t, err)
+	require.Len(t, regions, 1)
+	require.Equal(t, int64(0), regions[0].Chunk.Offset)
+	require.Equal(t, TableFileSizeINF, regions[0].Chunk.EndOffset)
+	require.Len(t, regions[0].Chunk.Columns, 0)
 
 	// test canceled context will not panic
 	ctx, cancel := context.WithCancel(context.Background())
@@ -250,7 +249,7 @@ func TestCompressedMakeSourceFileRegion(t *testing.T) {
 
 	ctx := context.Background()
 	store, err := storage.NewLocalStorage(".")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	compressRatio, err := SampleFileCompressRatio(ctx, fileInfo.FileMeta, store)
 	require.NoError(t, err)
 	fileInfo.FileMeta.RealSize = int64(compressRatio * float64(fileInfo.FileMeta.FileSize))
@@ -260,15 +259,15 @@ func TestCompressedMakeSourceFileRegion(t *testing.T) {
 		TableMeta: meta,
 	}
 	regions, sizes, err := MakeSourceFileRegion(ctx, divideConfig, fileInfo)
-	assert.NoError(t, err)
-	assert.Len(t, regions, 1)
-	assert.Equal(t, int64(0), regions[0].Chunk.Offset)
-	assert.Equal(t, int64(0), regions[0].Chunk.RealOffset)
-	assert.Equal(t, TableFileSizeINF, regions[0].Chunk.EndOffset)
+	require.NoError(t, err)
+	require.Len(t, regions, 1)
+	require.Equal(t, int64(0), regions[0].Chunk.Offset)
+	require.Equal(t, int64(0), regions[0].Chunk.RealOffset)
+	require.Equal(t, TableFileSizeINF, regions[0].Chunk.EndOffset)
 	rowIDMax := fileInfo.FileMeta.RealSize * CompressSizeFactor / int64(colCnt)
-	assert.Equal(t, rowIDMax, regions[0].Chunk.RowIDMax)
-	assert.Len(t, regions[0].Chunk.Columns, 0)
-	assert.Equal(t, fileInfo.FileMeta.RealSize, int64(sizes[0]))
+	require.Equal(t, rowIDMax, regions[0].Chunk.RowIDMax)
+	require.Len(t, regions[0].Chunk.Columns, 0)
+	require.Equal(t, fileInfo.FileMeta.RealSize, int64(sizes[0]))
 }
 
 func TestSplitLargeFile(t *testing.T) {
@@ -300,7 +299,7 @@ func TestSplitLargeFile(t *testing.T) {
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: filePath, Type: SourceTypeCSV, FileSize: fileSize}}
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 	store, err := storage.NewLocalStorage(".")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	divideConfig := NewDataDivideConfig(cfg, 3, ioWorker, store, meta)
 	columns := []string{"a", "b", "c"}
 	for _, tc := range []struct {
@@ -318,12 +317,12 @@ func TestSplitLargeFile(t *testing.T) {
 		divideConfig.MaxChunkSize = int64(tc.maxRegionSize)
 
 		regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo)
-		assert.NoError(t, err)
-		assert.Len(t, regions, len(tc.offsets))
+		require.NoError(t, err)
+		require.Len(t, regions, len(tc.offsets))
 		for i := range tc.offsets {
-			assert.Equal(t, tc.offsets[i][0], regions[i].Chunk.Offset)
-			assert.Equal(t, tc.offsets[i][1], regions[i].Chunk.EndOffset)
-			assert.Equal(t, columns, regions[i].Chunk.Columns)
+			require.Equal(t, tc.offsets[i][0], regions[i].Chunk.Offset)
+			require.Equal(t, tc.offsets[i][1], regions[i].Chunk.EndOffset)
+			require.Equal(t, columns, regions[i].Chunk.Columns)
 		}
 	}
 }

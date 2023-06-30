@@ -7,7 +7,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/util/filter"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +22,7 @@ func TestRouteParser(t *testing.T) {
 	}
 	for _, r := range rules {
 		_, err := NewFileRouter([]*config.FileRouteRule{r}, log.L())
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 
 	// invalid rules
@@ -34,13 +33,13 @@ func TestRouteParser(t *testing.T) {
 	}
 	for _, r := range invalidRules {
 		_, err := NewFileRouter([]*config.FileRouteRule{r}, log.L())
-		assert.Error(t, err)
+		require.Error(t, err)
 	}
 }
 
 func TestDefaultRouter(t *testing.T) {
 	r, err := NewFileRouter(defaultFileRouteRules, log.L())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	inputOutputMap := map[string][]string{
 		"a/test-schema-create.sql.bak":           nil,
@@ -58,19 +57,19 @@ func TestDefaultRouter(t *testing.T) {
 	}
 	for path, fields := range inputOutputMap {
 		res, err := r.Route(path)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		if len(fields) == 0 {
-			assert.Equal(t, res.Type, SourceTypeIgnore)
-			assert.Len(t, res.Schema, 0)
-			assert.Len(t, res.Name, 0)
+			require.Equal(t, res.Type, SourceTypeIgnore)
+			require.Len(t, res.Schema, 0)
+			require.Len(t, res.Name, 0)
 			continue
 		}
 		compress, e := parseCompressionType(fields[3])
-		assert.NoError(t, e)
+		require.NoError(t, e)
 		ty, e := parseSourceType(fields[4])
-		assert.NoError(t, e)
+		require.NoError(t, e)
 		exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
-		assert.Equal(t, exp, res)
+		require.Equal(t, exp, res)
 	}
 }
 
@@ -121,13 +120,13 @@ func TestSingleRouteRule(t *testing.T) {
 	}
 	for path, fields := range inputOutputMap {
 		res, err := r.Route(path)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		compress, e := parseCompressionType(fields[3])
-		assert.NoError(t, e)
+		require.NoError(t, e)
 		ty, e := parseSourceType(fields[4])
-		assert.NoError(t, e)
+		require.NoError(t, e)
 		exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
-		assert.Equal(t, exp, res)
+		require.Equal(t, exp, res)
 	}
 
 	notMatchPaths := []string{
@@ -139,8 +138,8 @@ func TestSingleRouteRule(t *testing.T) {
 	}
 	for _, p := range notMatchPaths {
 		res, err := r.Route(p)
-		assert.Nil(t, res)
-		assert.NoError(t, err)
+		require.Nil(t, res)
+		require.NoError(t, err)
 	}
 
 	rule := &config.FileRouteRule{Pattern: `^(?:[^/]*/)*([^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>\w+)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "$1", Table: "$table", Type: "$type", Key: "$key", Compression: "$cp"}
@@ -153,14 +152,14 @@ func TestSingleRouteRule(t *testing.T) {
 	}
 	for _, p := range invalidMatchPaths {
 		res, err := r.Route(p)
-		assert.Nil(t, res)
-		assert.Error(t, err)
+		require.Nil(t, res)
+		require.Error(t, err)
 	}
 
 	res, err := r.Route("my_schema.my_table.sql.gz")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	exp := &RouteResult{filter.Table{Schema: "my_schema", Name: "my_table"}, "", CompressionGZ, SourceTypeSQL}
-	assert.Equal(t, exp, res)
+	require.Equal(t, exp, res)
 }
 
 func TestMultiRouteRule(t *testing.T) {
@@ -187,16 +186,16 @@ func TestMultiRouteRule(t *testing.T) {
 	}
 	for path, fields := range inputOutputMap {
 		res, err := r.Route(path)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		if len(fields) == 0 {
-			assert.Nil(t, res)
+			require.Nil(t, res)
 		} else {
 			compress, e := parseCompressionType(fields[3])
-			assert.NoError(t, e)
+			require.NoError(t, e)
 			ty, e := parseSourceType(fields[4])
-			assert.NoError(t, e)
+			require.NoError(t, e)
 			exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
-			assert.Equal(t, exp, res)
+			require.Equal(t, exp, res)
 		}
 	}
 
@@ -208,16 +207,16 @@ func TestMultiRouteRule(t *testing.T) {
 	require.NoError(t, err)
 	for path, fields := range inputOutputMap {
 		res, err := r.Route(path)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		if len(fields) == 0 {
-			assert.Nil(t, res)
+			require.Nil(t, res)
 		} else {
 			compress, e := parseCompressionType(fields[3])
-			assert.NoError(t, e)
+			require.NoError(t, e)
 			ty, e := parseSourceType(fields[4])
-			assert.NoError(t, e)
+			require.NoError(t, e)
 			exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
-			assert.Equal(t, exp, res)
+			require.Equal(t, exp, res)
 		}
 	}
 }
@@ -251,18 +250,18 @@ func TestRouteExpanding(t *testing.T) {
 	for pat, value := range tablePatternResMap {
 		rule.Table = pat
 		router, err := NewFileRouter([]*config.FileRouteRule{rule}, log.L())
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		res, err := router.Route(path)
-		assert.NoError(t, err)
-		assert.NotNil(t, res)
-		assert.Equal(t, value, res.Name)
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		require.Equal(t, value, res.Name)
 	}
 
 	invalidPatterns := []string{"$1_$schema", "$schema_$table_name", "$6"}
 	for _, pat := range invalidPatterns {
 		rule.Table = pat
 		_, err := NewFileRouter([]*config.FileRouteRule{rule}, log.L())
-		assert.Error(t, err)
+		require.Error(t, err)
 	}
 }
 

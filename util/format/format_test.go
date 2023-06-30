@@ -25,9 +25,9 @@ import (
 
 func checkFormat(t *testing.T, f Formatter, buf *bytes.Buffer, str, expect string) {
 	_, err := f.Format(str, 3)
-	assert.Nil(t, err)
+	require.Nil(t, err)
 	b, err := io.ReadAll(buf)
-	assert.Nil(t, err)
+	require.Nil(t, err)
 	assert.Equal(t, string(b), expect)
 }
 

@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -33,7 +32,7 @@ func TestBackOff(t *testing.T) {
 }
 
 func mustBackOff(t *testing.T, cnt uint, sleep int) {
-	assert.LessOrEqual(t, BackOff(cnt), sleep*int(time.Millisecond))
+	require.LessOrEqual(t, BackOff(cnt), sleep*int(time.Millisecond))
 }
 
 func TestRetryExceedCountError(t *testing.T) {
@@ -46,17 +45,17 @@ func TestRetryExceedCountError(t *testing.T) {
 	err := RunInNewTxn(ctx, &mockStorage{}, true, func(ctx context.Context, txn Transaction) error {
 		return nil
 	})
-	assert.NotNil(t, err)
+	require.NotNil(t, err)
 
 	err = RunInNewTxn(ctx, &mockStorage{}, true, func(ctx context.Context, txn Transaction) error {
 		return ErrTxnRetryable
 	})
-	assert.NotNil(t, err)
+	require.NotNil(t, err)
 
 	err = RunInNewTxn(ctx, &mockStorage{}, true, func(ctx context.Context, txn Transaction) error {
 		return errors.New("do not retry")
 	})
-	assert.NotNil(t, err)
+	require.NotNil(t, err)
 
 	var cfg InjectionConfig
 	err1 := errors.New("foo")
@@ -66,18 +65,18 @@ func TestRetryExceedCountError(t *testing.T) {
 	err = RunInNewTxn(ctx, storage, true, func(ctx context.Context, txn Transaction) error {
 		return nil
 	})
-	assert.NotNil(t, err)
+	require.NotNil(t, err)
 }
 
 func TestInnerTxnStartTsBox(t *testing.T) {
 	// case1: store and delete
 	globalInnerTxnTsBox.storeInnerTxnTS(5)
 	_, ok := globalInnerTxnTsBox.innerTxnStartTsMap[5]
-	assert.Equal(t, true, ok)
+	require.Equal(t, true, ok)
 
 	globalInnerTxnTsBox.deleteInnerTxnTS(5)
 	_, ok = globalInnerTxnTsBox.innerTxnStartTsMap[5]
-	assert.Equal(t, false, ok)
+	require.Equal(t, false, ok)
 
 	// case2: test for GetMinInnerTxnStartTS
 	tm0 := time.Date(2022, time.March, 8, 12, 10, 01, 0, time.UTC)

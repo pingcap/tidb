@@ -33,20 +33,20 @@ func TestStringSet(t *testing.T) {
 		set.Insert(vals[i])
 		set.Insert(vals[i])
 	}
-	assert.Equal(len(vals), set.Count())
+	require.Equal(len(vals), set.Count())
 
 	assert.Equal(len(vals), len(set))
 	for i := range vals {
-		assert.True(set.Exist(vals[i]))
+		require.True(set.Exist(vals[i]))
 	}
 
-	assert.False(set.Exist("11"))
+	require.False(set.Exist("11"))
 
 	set = NewStringSet("1", "2", "3", "4", "5", "6")
 	for i := 1; i < 7; i++ {
 		assert.True(set.Exist(fmt.Sprintf("%d", i)))
 	}
-	assert.False(set.Exist("7"))
+	require.False(set.Exist("7"))
 
 	s1 := NewStringSet("1", "2", "3")
 	s2 := NewStringSet("4", "2", "3")

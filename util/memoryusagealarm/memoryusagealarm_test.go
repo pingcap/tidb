@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIfNeedDoRecord(t *testing.T) {
@@ -32,7 +33,7 @@ func TestIfNeedDoRecord(t *testing.T) {
 	// mem usage ratio < 70% will not be recorded
 	memUsed := 0.69 * float64(record.serverMemoryLimit)
 	needRecord, reason := record.needRecord(uint64(memUsed))
-	assert.False(t, needRecord)
+	require.False(t, needRecord)
 	assert.Equal(t, NoReason, reason)
 
 	// mem usage ratio > 70% will not be recorded
@@ -46,7 +47,7 @@ func TestIfNeedDoRecord(t *testing.T) {
 	// check time - last record time < 60s will not be recorded
 	memUsed = 0.71 * float64(record.serverMemoryLimit)
 	needRecord, reason = record.needRecord(uint64(memUsed))
-	assert.False(t, needRecord)
+	require.False(t, needRecord)
 	assert.Equal(t, NoReason, reason)
 
 	// check time - last record time > 60s will be recorded
@@ -61,7 +62,7 @@ func TestIfNeedDoRecord(t *testing.T) {
 	// mem usage ratio - last mem usage ratio < 10% will not be recorded
 	memUsed = 0.80 * float64(record.serverMemoryLimit)
 	needRecord, reason = record.needRecord(uint64(memUsed))
-	assert.False(t, needRecord)
+	require.False(t, needRecord)
 	assert.Equal(t, NoReason, reason)
 
 	// mem usage ratio - last mem usage ratio > 10% will not be recorded even though check time - last record time

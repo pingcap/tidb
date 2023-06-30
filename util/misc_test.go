@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestRunWithRetry(t *testing.T) {
@@ -43,8 +42,8 @@ func TestRunWithRetry(t *testing.T) {
 			}
 			return true, nil
 		})
-		assert.Nil(t, err)
-		assert.Equal(t, 2, cnt)
+		require.Nil(t, err)
+		require.Equal(t, 2, cnt)
 	})
 
 	t.Run("retry exceeds", func(t *testing.T) {
@@ -56,8 +55,8 @@ func TestRunWithRetry(t *testing.T) {
 			}
 			return true, nil
 		})
-		assert.NotNil(t, err)
-		assert.Equal(t, 3, cnt)
+		require.NotNil(t, err)
+		require.Equal(t, 3, cnt)
 	})
 
 	t.Run("failed result", func(t *testing.T) {
@@ -69,13 +68,13 @@ func TestRunWithRetry(t *testing.T) {
 			}
 			return true, nil
 		})
-		assert.NotNil(t, err)
-		assert.Equal(t, 1, cnt)
+		require.NotNil(t, err)
+		require.Equal(t, 1, cnt)
 	})
 }
 
 func TestX509NameParseMatch(t *testing.T) {
-	assert.Equal(t, "", X509NameOnline(pkix.Name{}))
+	require.Equal(t, "", X509NameOnline(pkix.Name{}))
 
 	check := pkix.Name{
 		Names: []pkix.AttributeTypeAndValue{
@@ -89,7 +88,7 @@ func TestX509NameParseMatch(t *testing.T) {
 		},
 	}
 	result := "/C=SE/ST=Stockholm2/L=Stockholm/O=MySQL demo client certificate/OU=testUnit/CN=client/emailAddress=client@example.com"
-	assert.Equal(t, result, X509NameOnline(check))
+	require.Equal(t, result, X509NameOnline(check))
 }
 
 func TestBasicFuncWithRecovery(t *testing.T) {
@@ -99,18 +98,18 @@ func TestBasicFuncWithRecovery(t *testing.T) {
 	}, func(r interface{}) {
 		recovery = r
 	})
-	assert.Equal(t, "test", recovery)
+	require.Equal(t, "test", recovery)
 }
 
 func TestBasicFuncSyntaxError(t *testing.T) {
-	assert.Nil(t, SyntaxError(nil))
-	assert.True(t, terror.ErrorEqual(SyntaxError(errors.New("test")), parser.ErrParse))
-	assert.True(t, terror.ErrorEqual(SyntaxError(parser.ErrSyntax.GenWithStackByArgs()), parser.ErrSyntax))
+	require.Nil(t, SyntaxError(nil))
+	require.True(t, terror.ErrorEqual(SyntaxError(errors.New("test")), parser.ErrParse))
+	require.True(t, terror.ErrorEqual(SyntaxError(parser.ErrSyntax.GenWithStackByArgs()), parser.ErrSyntax))
 }
 
 func TestBasicFuncSyntaxWarn(t *testing.T) {
-	assert.Nil(t, SyntaxWarn(nil))
-	assert.True(t, terror.ErrorEqual(SyntaxWarn(errors.New("test")), parser.ErrParse))
+	require.Nil(t, SyntaxWarn(nil))
+	require.True(t, terror.ErrorEqual(SyntaxWarn(errors.New("test")), parser.ErrParse))
 }
 
 func TestBasicFuncProcessInfo(t *testing.T) {
@@ -130,27 +129,27 @@ func TestBasicFuncProcessInfo(t *testing.T) {
 	}
 	row := pi.ToRowForShow(false)
 	row2 := pi.ToRowForShow(true)
-	assert.Equal(t, row2, row)
-	assert.Len(t, row, 8)
-	assert.Equal(t, pi.ID, row[0])
-	assert.Equal(t, pi.User, row[1])
-	assert.Equal(t, pi.Host, row[2])
-	assert.Equal(t, pi.DB, row[3])
-	assert.Equal(t, "Sleep", row[4])
-	assert.Equal(t, uint64(0), row[5])
-	assert.Equal(t, "in transaction; autocommit", row[6])
-	assert.Equal(t, "test", row[7])
+	require.Equal(t, row2, row)
+	require.Len(t, row, 8)
+	require.Equal(t, pi.ID, row[0])
+	require.Equal(t, pi.User, row[1])
+	require.Equal(t, pi.Host, row[2])
+	require.Equal(t, pi.DB, row[3])
+	require.Equal(t, "Sleep", row[4])
+	require.Equal(t, uint64(0), row[5])
+	require.Equal(t, "in transaction; autocommit", row[6])
+	require.Equal(t, "test", row[7])
 
 	row3 := pi.ToRow(time.UTC)
-	assert.Equal(t, row, row3[:8])
-	assert.Equal(t, int64(0), row3[9])
+	require.Equal(t, row, row3[:8])
+	require.Equal(t, int64(0), row3[9])
 }
 
 func TestBasicFuncRandomBuf(t *testing.T) {
 	buf := fastrand.Buf(5)
-	assert.Len(t, buf, 5)
-	assert.False(t, bytes.Contains(buf, []byte("$")))
-	assert.False(t, bytes.Contains(buf, []byte{0}))
+	require.Len(t, buf, 5)
+	require.False(t, bytes.Contains(buf, []byte("$")))
+	require.False(t, bytes.Contains(buf, []byte{0}))
 }
 
 func TestToPB(t *testing.T) {
@@ -174,27 +173,27 @@ func TestToPB(t *testing.T) {
 	}
 	column2.SetCollate("utf8mb4_bin")
 
-	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnToProto(column, false).String())
-	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false, false)[0].String())
+	require.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnToProto(column, false).String())
+	require.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false, false)[0].String())
 }
 
 func TestComposeURL(t *testing.T) {
 	// TODO Setup config for TLS and verify https protocol output
-	assert.Equal(t, ComposeURL("server.example.com", ""), "http://server.example.com")
-	assert.Equal(t, ComposeURL("httpserver.example.com", ""), "http://httpserver.example.com")
-	assert.Equal(t, ComposeURL("http://httpserver.example.com", "/"), "http://httpserver.example.com/")
-	assert.Equal(t, ComposeURL("https://httpserver.example.com", "/api/test"), "https://httpserver.example.com/api/test")
-	assert.Equal(t, ComposeURL("http://server.example.com", ""), "http://server.example.com")
-	assert.Equal(t, ComposeURL("https://server.example.com", ""), "https://server.example.com")
+	require.Equal(t, ComposeURL("server.example.com", ""), "http://server.example.com")
+	require.Equal(t, ComposeURL("httpserver.example.com", ""), "http://httpserver.example.com")
+	require.Equal(t, ComposeURL("http://httpserver.example.com", "/"), "http://httpserver.example.com/")
+	require.Equal(t, ComposeURL("https://httpserver.example.com", "/api/test"), "https://httpserver.example.com/api/test")
+	require.Equal(t, ComposeURL("http://server.example.com", ""), "http://server.example.com")
+	require.Equal(t, ComposeURL("https://server.example.com", ""), "https://server.example.com")
 }
 
 func assertChannel[T any](t *testing.T, ch <-chan T, items ...T) {
 	for i, item := range items {
-		assert.Equal(t, <-ch, item, "the %d-th item doesn't match", i)
+		require.Equal(t, <-ch, item, "the %d-th item doesn't match", i)
 	}
 	select {
 	case item, ok := <-ch:
-		assert.False(t, ok, "channel not closed: more item %v", item)
+		require.False(t, ok, "channel not closed: more item %v", item)
 	default:
 		t.Fatal("channel not closed: blocked")
 	}

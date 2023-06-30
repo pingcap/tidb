@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type mockSingleTargetDataSinkRegisterer struct{}
@@ -32,7 +33,7 @@ func (r *mockSingleTargetDataSinkRegisterer) Deregister(dataSink DataSink) {}
 
 func TestSingleTargetDataSink(t *testing.T) {
 	server, err := mock.StartMockAgentServer()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer server.Stop()
 
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -67,13 +68,13 @@ func TestSingleTargetDataSink(t *testing.T) {
 			NormalizedPlan: "PLAN-1",
 		}},
 	}, time.Now().Add(10*time.Second))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	server.WaitCollectCnt(recordsCnt, 1, 5*time.Second)
 	server.WaitCollectCntOfSQLMeta(sqlMetaCnt, 1, 5*time.Second)
 
-	assert.Len(t, server.GetLatestRecords(), 1)
-	assert.Len(t, server.GetTotalSQLMetas(), 1)
+	require.Len(t, server.GetLatestRecords(), 1)
+	require.Len(t, server.GetTotalSQLMetas(), 1)
 	sqlMeta, exist := server.GetSQLMetaByDigestBlocking([]byte("S1"), 5*time.Second)
 	assert.True(t, exist)
 	assert.Equal(t, sqlMeta.NormalizedSql, "SQL-1")

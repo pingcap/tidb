@@ -25,6 +25,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAutoIncPool(t *testing.T) {
@@ -56,7 +57,7 @@ func TestAutoIncPool(t *testing.T) {
 	assert.Equal(int(Size), pool.Len())
 
 	_, ok = pool.Get() // exhausted. try TryCnt times, lastID is added to 0+TryCnt.
-	assert.False(ok)
+	require.False(t, ok)
 
 	nextVal := uint64(TryCnt + 1)
 	pool.Put(nextVal)
@@ -73,7 +74,7 @@ func TestAutoIncPool(t *testing.T) {
 	nextVal += TryCnt + 1
 	pool.Put(nextVal)
 	_, ok = pool.Get()
-	assert.False(ok)
+	require.False(t, ok)
 }
 
 func TestLockFreePoolBasic(t *testing.T) {
@@ -99,7 +100,7 @@ func TestLockFreePoolBasic(t *testing.T) {
 		assert.Equal(i, val)
 	}
 	_, ok = pool.Get()
-	assert.False(ok)
+	require.False(t, ok)
 	assert.Equal(0, pool.Len())
 
 	// put to full.
@@ -108,18 +109,18 @@ func TestLockFreePoolBasic(t *testing.T) {
 		assert.True(ok)
 	}
 	ok = pool.Put(0)
-	assert.False(ok)
+	require.False(t, ok)
 	assert.Equal(int(Size), pool.Len())
 
 	// get all.
 	for i = 1; i <= Size; i++ {
 		val, ok = pool.Get()
-		assert.True(ok)
-		assert.Equal(i, val)
+		require.True(t, ok)
+		require.Equal(t, i, val)
 	}
 	_, ok = pool.Get()
-	assert.False(ok)
-	assert.Equal(0, pool.Len())
+	require.False(t, ok)
+	require.Equal(t, 0, pool.Len())
 }
 
 func TestLockFreePoolInitEmpty(t *testing.T) {
@@ -141,11 +142,11 @@ func TestLockFreePoolInitEmpty(t *testing.T) {
 	// put to full.
 	for i = 1; i <= Size; i++ {
 		ok = pool.Put(i)
-		assert.True(ok)
+		require.True(t, ok)
 	}
 	ok = pool.Put(0)
-	assert.False(ok)
-	assert.Equal(int(Size), pool.Len())
+	require.False(t, ok)
+	require.Equal(t, int(Size), pool.Len())
 
 	// get all.
 	for i = 1; i <= Size; i++ {
@@ -154,7 +155,7 @@ func TestLockFreePoolInitEmpty(t *testing.T) {
 		assert.Equal(i, val)
 	}
 	_, ok = pool.Get()
-	assert.False(ok)
+	require.False(t, ok)
 	assert.Equal(0, pool.Len())
 }
 

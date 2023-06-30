@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
-	"github.com/stretchr/testify/assert"
 )
 
 // NewTaskManager is an exported version of newTaskManager for test
@@ -93,8 +92,8 @@ func TestResizeWorkers(t *testing.T) {
 	newWorkers, _, err := m.resizeWorkers(m.scanWorkers, 2, func() worker {
 		return scanWorker2
 	})
-	assert.NoError(t, err)
-	assert.Len(t, newWorkers, 2)
+	require.NoError(t, err)
+	require.Len(t, newWorkers, 2)
 	scanWorker1.checkWorkerStatus(workerStatusRunning, true, nil)
 	scanWorker2.checkWorkerStatus(workerStatusRunning, true, nil)
 
@@ -111,7 +110,7 @@ func TestResizeWorkers(t *testing.T) {
 		scanWorker2,
 	})
 
-	assert.NoError(t, m.resizeScanWorkers(1))
+	require.NoError(t, m.resizeScanWorkers(1))
 	scanWorker2.checkWorkerStatus(workerStatusStopped, false, nil)
 
 	// shrink scan workers after job is run
@@ -140,7 +139,7 @@ func TestResizeWorkers(t *testing.T) {
 		JobID:  "test-job-id",
 		ScanID: 1,
 	}}}
-	assert.NoError(t, m.resizeScanWorkers(1))
+	require.NoError(t, m.resizeScanWorkers(1))
 	scanWorker2.checkWorkerStatus(workerStatusStopped, false, nil)
-	assert.NotNil(t, m.runningTasks[0].result)
+	require.NotNil(t, m.runningTasks[0].result)
 }

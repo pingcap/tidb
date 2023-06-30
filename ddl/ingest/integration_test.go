@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -185,8 +184,8 @@ func TestAddIndexIngestCancel(t *testing.T) {
 			if idx.BackfillState == model.BackfillStateRunning {
 				tk2 := testkit.NewTestKit(t, store)
 				rs, err := tk2.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
-				assert.NoError(t, err)
-				assert.NoError(t, rs.Close())
+				require.NoError(t, err)
+				require.NoError(t, rs.Close())
 				cancelled = true
 			}
 		}
@@ -266,7 +265,7 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState == model.StateNone && first {
 			_, err := tkCancel.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			first = false
 		}
 	}

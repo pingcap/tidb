@@ -20,48 +20,47 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestIncInt64(t *testing.T) {
 	mb := newMockMap()
 	key := Key("key")
 	v, err := IncInt64(mb, key, 1)
-	assert.Nil(t, err)
-	assert.Equal(t, int64(1), v)
+	require.Nil(t, err)
+	require.Equal(t, int64(1), v)
 
 	v, err = IncInt64(mb, key, 10)
-	assert.Nil(t, err)
-	assert.Equal(t, int64(11), v)
+	require.Nil(t, err)
+	require.Equal(t, int64(11), v)
 
 	err = mb.Set(key, []byte("not int"))
-	assert.Nil(t, err)
+	require.Nil(t, err)
 
 	_, err = IncInt64(mb, key, 1)
-	assert.NotNil(t, err)
+	require.NotNil(t, err)
 
 	// test int overflow
 	maxUint32 := int64(^uint32(0))
 	err = mb.Set(key, []byte(strconv.FormatInt(maxUint32, 10)))
-	assert.Nil(t, err)
+	require.Nil(t, err)
 
 	v, err = IncInt64(mb, key, 1)
-	assert.Nil(t, err)
-	assert.Equal(t, maxUint32+1, v)
+	require.Nil(t, err)
+	require.Equal(t, maxUint32+1, v)
 }
 
 func TestGetInt64(t *testing.T) {
 	mb := newMockMap()
 	key := Key("key")
 	v, err := GetInt64(context.TODO(), mb, key)
-	assert.Equal(t, int64(0), v)
-	assert.Nil(t, err)
+	require.Equal(t, int64(0), v)
+	require.Nil(t, err)
 
 	_, err = IncInt64(mb, key, 15)
-	assert.Nil(t, err)
+	require.Nil(t, err)
 	v, err = GetInt64(context.TODO(), mb, key)
-	assert.Equal(t, int64(15), v)
-	assert.Nil(t, err)
+	require.Equal(t, int64(15), v)
+	require.Nil(t, err)
 }
 
 type mockMap struct {

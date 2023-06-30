@@ -561,13 +561,13 @@ func TestFlashbackInProcessErrorMsg(t *testing.T) {
 		hook.OnJobRunBeforeExported = func(job *model.Job) {
 			if job.Type == model.ActionFlashbackCluster && job.SchemaState == model.StateWriteReorganization {
 				txn, err := store.Begin()
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				_, err = meta.NewMeta(txn).ListDatabases()
 				errorMsg := err.Error()
 				assert.Contains(t, errorMsg, "is in flashback progress, FlashbackStartTS is ")
 				slices := strings.Split(errorMsg, "is in flashback progress, FlashbackStartTS is ")
 				assert.Equal(t, len(slices), 2)
-				assert.NotEqual(t, slices[1], "0")
+				require.NotEqual(t, slices[1], "0")
 				txn.Rollback()
 			}
 		}

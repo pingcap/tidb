@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newSliceIterWithCopy(data []*kv.Entry) *SliceIter {
@@ -51,15 +52,15 @@ func TestSliceIter(t *testing.T) {
 		// Normal iteration
 		iter := newSliceIterWithCopy(s.data)
 		for _, entry := range s.data {
-			assert.True(iter.Valid())
+			require.True(t, iter.Valid())
 			assert.Equal(entry.Key, iter.Key())
 			assert.Equal(entry.Value, iter.Value())
 			err := iter.Next()
-			assert.Nil(err)
+			require.Nil(t, err)
 		}
-		assert.False(iter.Valid())
+		require.False(t, iter.Valid())
 		err := iter.Next()
-		assert.NotNil(err)
+		require.NotNil(t, err)
 
 		// Slice should not be modified
 		slice := iter.GetSlice()
@@ -72,14 +73,14 @@ func TestSliceIter(t *testing.T) {
 		// Iteration after close
 		iter = newSliceIterWithCopy(s.data)
 		if len(s.data) == 0 {
-			assert.False(iter.Valid())
+			require.False(t, iter.Valid())
 		} else {
-			assert.True(iter.Valid())
+			require.True(t, iter.Valid())
 		}
 		iter.Close()
-		assert.False(iter.Valid())
+		require.False(t, iter.Valid())
 		err = iter.Next()
-		assert.NotNil(err)
+		require.NotNil(t, err)
 
 		// Slice should not be modified
 		slice = iter.GetSlice()

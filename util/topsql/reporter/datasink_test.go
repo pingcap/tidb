@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDefaultDataSinkRegisterer(t *testing.T) {
@@ -28,10 +29,10 @@ func TestDefaultDataSinkRegisterer(t *testing.T) {
 	m1 := newMockDataSink2()
 	m2 := newMockDataSink2()
 	err = r.Register(m1)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	err = r.Register(m2)
-	assert.NoError(t, err)
-	assert.Len(t, r.dataSinks, 2)
+	require.NoError(t, err)
+	require.Len(t, r.dataSinks, 2)
 	r.Deregister(m1)
 	r.Deregister(m2)
 	assert.Empty(t, r.dataSinks)

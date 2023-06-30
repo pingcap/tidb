@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
 
@@ -73,7 +74,7 @@ func TestDecodeKey(t *testing.T) {
 		// int handle, value = 1
 		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 	}, stubInfoschema)
-	assert.Nil(t, err)
+	require.Nil(t, err)
 	assert.Equal(t, int64(0), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(1), decodedKey.TableID)
@@ -81,12 +82,12 @@ func TestDecodeKey(t *testing.T) {
 	assert.Equal(t, int64(0), decodedKey.PartitionID)
 	assert.Equal(t, "", decodedKey.PartitionName)
 	assert.Equal(t, IntHandle, decodedKey.HandleType)
-	assert.False(t, decodedKey.IsPartitionHandle)
+	require.False(t, decodedKey.IsPartitionHandle)
 	assert.Equal(t, "1", decodedKey.HandleValue)
 	// These are default values, ie. will be omitted when got marshaled into json
 	assert.Equal(t, int64(0), decodedKey.IndexID)
 	assert.Equal(t, "", decodedKey.IndexName)
-	assert.Nil(t, decodedKey.IndexValues)
+	require.Nil(t, decodedKey.IndexValues)
 
 	ch := testutil.MustNewCommonHandle(t, 100, "abc")
 	encodedCommonKey := ch.Encoded()
@@ -100,7 +101,7 @@ func TestDecodeKey(t *testing.T) {
 	key = append(key, encodedCommonKey...)
 
 	decodedKey, err = DecodeKey(key, stubInfoschema)
-	assert.Nil(t, err)
+	require.Nil(t, err)
 	assert.Equal(t, int64(0), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(2), decodedKey.TableID)
@@ -108,17 +109,17 @@ func TestDecodeKey(t *testing.T) {
 	assert.Equal(t, int64(0), decodedKey.PartitionID)
 	assert.Equal(t, "", decodedKey.PartitionName)
 	assert.Equal(t, CommonHandle, decodedKey.HandleType)
-	assert.False(t, decodedKey.IsPartitionHandle)
+	require.False(t, decodedKey.IsPartitionHandle)
 	assert.Equal(t, "{100, abc}", decodedKey.HandleValue)
 	// These are default values, ie. will be omitted when got marshaled into json
 	assert.Equal(t, int64(0), decodedKey.IndexID)
 	assert.Equal(t, "", decodedKey.IndexName)
-	assert.Nil(t, decodedKey.IndexValues)
+	require.Nil(t, decodedKey.IndexValues)
 
 	values := types.MakeDatums("abc", 1)
 	sc := &stmtctx.StatementContext{}
 	encodedValue, err := codec.EncodeKey(sc, nil, values...)
-	assert.Nil(t, err)
+	require.Nil(t, err)
 	key = []byte{
 		't',
 		// table id = 1
@@ -131,7 +132,7 @@ func TestDecodeKey(t *testing.T) {
 	key = append(key, encodedValue...)
 
 	decodedKey, err = DecodeKey(key, stubInfoschema)
-	assert.Nil(t, err)
+	require.Nil(t, err)
 	assert.Equal(t, int64(0), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(1), decodedKey.TableID)
@@ -144,12 +145,12 @@ func TestDecodeKey(t *testing.T) {
 	// These are default values, ie. will be omitted when got marshaled into json
 	assert.Equal(t, HandleType(""), decodedKey.HandleType)
 	assert.Equal(t, "", decodedKey.HandleValue)
-	assert.False(t, decodedKey.IsPartitionHandle)
+	require.False(t, decodedKey.IsPartitionHandle)
 
 	// Row key in a partitioned table.
 	key = []byte("t\x80\x00\x00\x00\x00\x00\x00\x05_r\x80\x00\x00\x00\x00\x00\x00\x0a")
 	decodedKey, err = DecodeKey(key, stubInfoschema)
-	assert.Nil(t, err)
+	require.Nil(t, err)
 	assert.Equal(t, int64(0), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(3), decodedKey.TableID)
@@ -161,18 +162,18 @@ func TestDecodeKey(t *testing.T) {
 	// These are default values, ie. will be omitted when got marshaled into json
 	assert.Equal(t, int64(0), decodedKey.IndexID)
 	assert.Equal(t, "", decodedKey.IndexName)
-	assert.Nil(t, decodedKey.IndexValues)
-	assert.False(t, decodedKey.IsPartitionHandle)
+	require.Nil(t, decodedKey.IndexValues)
+	require.False(t, decodedKey.IsPartitionHandle)
 
 	// Index key in a partitioned table.
 	values = types.MakeDatums("abcde", 2)
 	encodedValue, err = codec.EncodeKey(sc, nil, values...)
-	assert.Nil(t, err)
+	require.Nil(t, err)
 	key = []byte("t\x80\x00\x00\x00\x00\x00\x00\x06_i\x80\x00\x00\x00\x00\x00\x00\x04")
 	key = append(key, encodedValue...)
 
 	decodedKey, err = DecodeKey(key, stubInfoschema)
-	assert.Nil(t, err)
+	require.Nil(t, err)
 	assert.Equal(t, int64(0), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(3), decodedKey.TableID)
@@ -185,12 +186,12 @@ func TestDecodeKey(t *testing.T) {
 	// These are default values, ie. will be omitted when got marshaled into json
 	assert.Equal(t, HandleType(""), decodedKey.HandleType)
 	assert.Equal(t, "", decodedKey.HandleValue)
-	assert.False(t, decodedKey.IsPartitionHandle)
+	require.False(t, decodedKey.IsPartitionHandle)
 
 	// Totally invalid key
 	key = []byte("this-is-a-totally-invalidkey")
 	decodedKey, err = DecodeKey(key, stubInfoschema)
-	assert.NotNil(t, err)
+	require.NotNil(t, err)
 	// "partly" invalid key, i.e. neither record nor index
 	key = []byte{
 		't',
@@ -199,7 +200,7 @@ func TestDecodeKey(t *testing.T) {
 	}
 	key = append(key, []byte("rest-part-is-invalid")...)
 	decodedKey, err = DecodeKey(key, stubInfoschema)
-	assert.NotNil(t, err)
+	require.NotNil(t, err)
 
 	// Table cannot be found in infoschema
 	// This is possible when the schema have changed since when the key is get.
@@ -213,7 +214,7 @@ func TestDecodeKey(t *testing.T) {
 		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 	}, stubInfoschema)
 	// We should get as much information as we can
-	assert.Nil(t, err)
+	require.Nil(t, err)
 	assert.Equal(t, int64(4), decodedKey.TableID)
 	assert.Equal(t, IntHandle, decodedKey.HandleType)
 	assert.Equal(t, "1", decodedKey.HandleValue)
@@ -226,6 +227,6 @@ func TestDecodeKey(t *testing.T) {
 	assert.Equal(t, "", decodedKey.PartitionName)
 	assert.Equal(t, int64(0), decodedKey.IndexID)
 	assert.Equal(t, "", decodedKey.IndexName)
-	assert.False(t, decodedKey.IsPartitionHandle)
-	assert.Nil(t, decodedKey.IndexValues)
+	require.False(t, decodedKey.IsPartitionHandle)
+	require.Nil(t, decodedKey.IndexValues)
 }

@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	router "github.com/pingcap/tidb/util/table-router"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -102,8 +101,8 @@ func TestLoader(t *testing.T) {
 	}
 
 	for i, table := range expected {
-		assert.Equal(t, table.name, dbMeta.Tables[i].Name)
-		assert.Equal(t, table.dataFiles, len(dbMeta.Tables[i].DataFiles))
+		require.Equal(t, table.name, dbMeta.Tables[i].Name)
+		require.Equal(t, table.dataFiles, len(dbMeta.Tables[i].DataFiles))
 	}
 }
 

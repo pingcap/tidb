@@ -2180,7 +2180,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	// Here it will fail with
 	// the partition is not in public.
 	err := tk3.ExecToErr(`insert into test_global values (15,15,15)`)
-	assert.NotNil(t, err)
+	require.NotNil(t, err)
 	tk2.MustExec(`commit`)
 	tk3.MustExec(`commit`)
 	<-syncChan
@@ -2231,7 +2231,7 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			err = tk1.ExecToErr("update test_global set a = 2 where a = 11")
-			assert.NotNil(t, err)
+			require.NotNil(t, err)
 		}
 	}
 	dom.DDL().SetHook(hook)
@@ -2267,7 +2267,7 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			err = tk1.ExecToErr("update test_global set a = 1 where a = 12")
-			assert.NotNil(t, err)
+			require.NotNil(t, err)
 		}
 	}
 	dom.DDL().SetHook(hook)
@@ -2337,7 +2337,7 @@ func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			err = tk1.ExecToErr("insert into test_global values(2, 2, 2)")
-			assert.NotNil(t, err)
+			require.NotNil(t, err)
 		}
 	}
 	dom.DDL().SetHook(hook)

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -316,7 +315,7 @@ func TestDB_ExecDDL(t *testing.T) {
 
 	for _, ddlJob := range ddlJobs {
 		err = db.ExecDDL(ctx, ddlJob)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 }
 
@@ -363,7 +362,7 @@ func TestFilterDDLJobByRules(t *testing.T) {
 
 	require.Equal(t, len(expectedDDLTypes), len(ddlJobs))
 	for i, ddlJob := range ddlJobs {
-		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
+		require.Equal(t, expectedDDLTypes[i], ddlJob.Type)
 	}
 }
 

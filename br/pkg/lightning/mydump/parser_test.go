@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,18 +34,18 @@ func runTestCases(t *testing.T, mode mysql.SQLMode, blockBufSize int64, cases []
 		for i, row := range tc.expected {
 			e := parser.ReadRow()
 			comment := fmt.Sprintf("input = %q, row = %d, err = %s", tc.input, i+1, errors.ErrorStack(e))
-			assert.NoError(t, e, comment)
-			assert.Equal(t, int64(i)+1, parser.LastRow().RowID, comment)
-			assert.Equal(t, row, parser.LastRow().Row, comment)
+			require.NoError(t, e, comment)
+			require.Equal(t, int64(i)+1, parser.LastRow().RowID, comment)
+			require.Equal(t, row, parser.LastRow().Row, comment)
 		}
-		assert.ErrorIsf(t, errors.Cause(parser.ReadRow()), io.EOF, "input = %q", tc.input)
+		require.ErrorIsf(t, errors.Cause(parser.ReadRow()), io.EOF, "input = %q", tc.input)
 	}
 }
 
 func runFailingTestCases(t *testing.T, mode mysql.SQLMode, blockBufSize int64, cases []string) {
 	for _, tc := range cases {
 		parser := mydump.NewChunkParser(context.Background(), mode, mydump.NewStringReader(tc), blockBufSize, ioWorkersForCSV)
-		assert.Regexpf(t, "syntax error.*", parser.ReadRow().Error(), "input = %q", tc)
+		require.Regexpf(t, "syntax error.*", parser.ReadRow().Error(), "input = %q", tc)
 	}
 }
 

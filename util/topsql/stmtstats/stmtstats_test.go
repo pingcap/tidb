@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // String is only used for debugging.
@@ -73,11 +74,11 @@ func TestKvStatementStatsItem_Merge(t *testing.T) {
 			"127.0.0.1:10003": 3,
 		},
 	}
-	assert.Len(t, item1.KvExecCount, 2)
-	assert.Len(t, item2.KvExecCount, 2)
+	require.Len(t, item1.KvExecCount, 2)
+	require.Len(t, item2.KvExecCount, 2)
 	item1.Merge(item2)
-	assert.Len(t, item1.KvExecCount, 3)
-	assert.Len(t, item2.KvExecCount, 2)
+	require.Len(t, item1.KvExecCount, 3)
+	require.Len(t, item2.KvExecCount, 2)
 	assert.Equal(t, uint64(1), item1.KvExecCount["127.0.0.1:10001"])
 	assert.Equal(t, uint64(3), item1.KvExecCount["127.0.0.1:10003"])
 	assert.Equal(t, uint64(3), item1.KvExecCount["127.0.0.1:10003"])
@@ -144,11 +145,11 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 			},
 		},
 	}
-	assert.Len(t, m1, 2)
-	assert.Len(t, m2, 2)
+	require.Len(t, m1, 2)
+	require.Len(t, m2, 2)
 	m1.Merge(m2)
-	assert.Len(t, m1, 3)
-	assert.Len(t, m2, 2)
+	require.Len(t, m1, 3)
+	require.Len(t, m2, 2)
 	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
 	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
 	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
@@ -162,15 +163,15 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].KvStatsItem.KvExecCount["KV-1"])
 	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].KvStatsItem.KvExecCount["KV-2"])
 	m1.Merge(nil)
-	assert.Len(t, m1, 3)
+	require.Len(t, m1, 3)
 }
 
 func TestCreateStatementStats(t *testing.T) {
 	stats := CreateStatementStats()
-	assert.NotNil(t, stats)
+	require.NotNil(t, stats)
 	_, ok := globalAggregator.statsSet.Load(stats)
 	assert.True(t, ok)
-	assert.False(t, stats.Finished())
+	require.False(t, stats.Finished())
 	stats.SetFinished()
 	assert.True(t, stats.Finished())
 }
@@ -178,7 +179,7 @@ func TestCreateStatementStats(t *testing.T) {
 func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	stats := CreateStatementStats()
 	m := stats.Take()
-	assert.Len(t, m, 0)
+	require.Len(t, m, 0)
 	for n := 0; n < 1; n++ {
 		stats.OnExecutionBegin([]byte("SQL-1"), []byte(""))
 	}
@@ -192,7 +193,7 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	}
 	stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), -time.Millisecond)
 	m = stats.Take()
-	assert.Len(t, m, 3)
+	require.Len(t, m, 3)
 	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
 	assert.Equal(t, uint64(0), m[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
 	assert.Equal(t, uint64(2), m[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
@@ -200,5 +201,5 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	assert.Equal(t, uint64(3), m[SQLPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
 	assert.Equal(t, uint64(3*10e5), m[SQLPlanDigest{SQLDigest: "SQL-3"}].SumDurationNs)
 	m = stats.Take()
-	assert.Len(t, m, 0)
+	require.Len(t, m, 0)
 }

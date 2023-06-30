@@ -390,10 +390,10 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 	tk.MustExec("insert into t values ()")
 	hook1 := &callback.TestDDLCallback{Do: dom}
 	hook1.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
+		require.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization {
 			rs, _ := tk.Exec("select b from t")
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "2")
+			require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "2")
 		}
 	}
 	dom.DDL().SetHook(hook1)
@@ -461,7 +461,7 @@ func TestMultiSchemaChangeAlterColumns(t *testing.T) {
 	tk.MustExec("create table t (a int default 1, b int default 2)")
 	hook1 := &callback.TestDDLCallback{Do: dom}
 	hook1.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
+		require.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteOnly {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("insert into test.t values ()")
@@ -976,13 +976,13 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 	var checked bool
 	callback := &callback.TestDDLCallback{Do: dom}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
-		assert.NotNil(t, job.MultiSchemaInfo)
+		require.NotNil(t, job.MultiSchemaInfo)
 		// "modify column a tinyint" in write-reorg.
 		if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization {
 			checked = true
 			rs, err := tk.Exec("select * from t use index(i1);")
-			assert.NoError(t, err)
-			assert.NoError(t, rs.Close())
+			require.NoError(t, err)
+			require.NoError(t, rs.Close())
 		}
 	}
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
@@ -1046,27 +1046,27 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 	originHook := dom.DDL().GetHook()
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
+		require.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateDeleteOnly {
 			newTk := testkit.NewTestKit(t, store)
 			rows := newTk.MustQuery("admin show ddl jobs 1").Rows()
 			// 1 history job and 1 running job with 2 subjobs
-			assert.Equal(t, len(rows), 4)
-			assert.Equal(t, rows[1][1], "test")
-			assert.Equal(t, rows[1][2], "t")
-			assert.Equal(t, rows[1][3], "add index /* subjob */ /* txn-merge */")
-			assert.Equal(t, rows[1][4], "delete only")
+			require.Equal(t, len(rows), 4)
+			require.Equal(t, rows[1][1], "test")
+			require.Equal(t, rows[1][2], "t")
+			require.Equal(t, rows[1][3], "add index /* subjob */ /* txn-merge */")
+			require.Equal(t, rows[1][4], "delete only")
 			assert.Equal(t, rows[1][len(rows[1])-1], "running")
-			assert.True(t, len(rows[1][8].(string)) > 0)
-			assert.True(t, len(rows[1][9].(string)) > 0)
-			assert.True(t, len(rows[1][10].(string)) > 0)
+			require.True(t, len(rows[1][8].(string)) > 0)
+			require.True(t, len(rows[1][9].(string)) > 0)
+			require.True(t, len(rows[1][10].(string)) > 0)
 
 			assert.Equal(t, rows[2][3], "add index /* subjob */")
 			assert.Equal(t, rows[2][4], "none")
 			assert.Equal(t, rows[2][len(rows[2])-1], "queueing")
-			assert.True(t, len(rows[2][8].(string)) > 0)
-			assert.True(t, len(rows[2][9].(string)) > 0)
-			assert.True(t, len(rows[2][10].(string)) > 0)
+			require.True(t, len(rows[2][8].(string)) > 0)
+			require.True(t, len(rows[2][9].(string)) > 0)
+			require.True(t, len(rows[2][10].(string)) > 0)
 		}
 	}
 
@@ -1204,7 +1204,7 @@ func TestMultiSchemaChangeSchemaVersion(t *testing.T) {
 		if schemaVer != 0 {
 			// No same return schemaVer during multi-schema change
 			_, ok := schemaVerMap[schemaVer]
-			assert.False(t, ok)
+			require.False(t, ok)
 			schemaVerMap[schemaVer] = struct{}{}
 		}
 	}
@@ -1342,6 +1342,6 @@ func putTheSameDDLJobTwice(t *testing.T, fn func()) {
 }
 
 func assertMultiSchema(t *testing.T, job *model.Job, subJobLen int) {
-	assert.NotNil(t, job.MultiSchemaInfo, job)
-	assert.Len(t, job.MultiSchemaInfo.SubJobs, subJobLen, job)
+	require.NotNil(t, job.MultiSchemaInfo, job)
+	require.Len(t, job.MultiSchemaInfo.SubJobs, subJobLen, job)
 }

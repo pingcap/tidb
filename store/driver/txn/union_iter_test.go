@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func r(key, value string) *kv.Entry {
@@ -185,22 +186,22 @@ func TestUnionIterErrors(t *testing.T) {
 
 		if ca.nextTimesWhenErrorHappens > 0 {
 			iter, err = NewUnionIter(dirtyIter, snapIter, false)
-			assert.NotNil(t, iter)
-			assert.Nil(t, err)
+			require.NotNil(t, iter)
+			require.Nil(t, err)
 			for i := 0; i < ca.nextTimesWhenErrorHappens-1; i++ {
 				err = iter.Next()
-				assert.Nil(t, err)
+				require.Nil(t, err)
 			}
 			dirtyIter.InjectNextError(ca.injectDirtyError)
 			snapIter.InjectNextError(ca.injectSnapError)
 			err = iter.Next()
-			assert.NotNil(t, err)
+			require.NotNil(t, err)
 		} else {
 			dirtyIter.InjectNextError(ca.injectDirtyError)
 			snapIter.InjectNextError(ca.injectSnapError)
 			iter, err = NewUnionIter(dirtyIter, snapIter, false)
-			assert.Nil(t, iter)
-			assert.NotNil(t, err)
+			require.Nil(t, iter)
+			require.NotNil(t, err)
 		}
 
 		if ca.injectDirtyError != nil {
@@ -211,8 +212,8 @@ func TestUnionIterErrors(t *testing.T) {
 			assert.Equal(t, ca.injectSnapError, err)
 		}
 
-		assert.False(t, dirtyIter.Closed())
-		assert.False(t, snapIter.Closed())
+		require.False(t, dirtyIter.Closed())
+		require.False(t, snapIter.Closed())
 		if iter != nil {
 			assertClose(t, iter)
 		}
@@ -223,7 +224,7 @@ func assertUnionIter(t *testing.T, dirtyRecords, snapRecords, expected []*kv.Ent
 	dirtyIter := mock.NewMockIterFromRecords(t, dirtyRecords, true)
 	snapIter := mock.NewMockIterFromRecords(t, snapRecords, true)
 	iter, err := NewUnionIter(dirtyIter, snapIter, false)
-	assert.Nil(t, err)
+	require.Nil(t, err)
 	assertIter(t, iter, expected)
 	assertClose(t, iter)
 
@@ -231,7 +232,7 @@ func assertUnionIter(t *testing.T, dirtyRecords, snapRecords, expected []*kv.Ent
 	dirtyIter = mock.NewMockIterFromRecords(t, reverseRecords(dirtyRecords), true)
 	snapIter = mock.NewMockIterFromRecords(t, reverseRecords(snapRecords), true)
 	iter, err = NewUnionIter(dirtyIter, snapIter, true)
-	assert.Nil(t, err)
+	require.Nil(t, err)
 	assertIter(t, iter, reverseRecords(expected))
 	assertClose(t, iter)
 }
@@ -241,7 +242,7 @@ func assertIter(t *testing.T, iter *UnionIter, expected []*kv.Entry) {
 	for iter.Valid() {
 		records = append(records, &kv.Entry{Key: iter.Key(), Value: iter.Value()})
 		err := iter.Next()
-		assert.Nil(t, err)
+		require.Nil(t, err)
 	}
 	assert.Equal(t, len(expected), len(records))
 	for idx, record := range records {

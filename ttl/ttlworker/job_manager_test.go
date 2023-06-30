@@ -234,11 +234,11 @@ func TestReadyForNewJobTables(t *testing.T) {
 
 			tables := m.readyForNewJobTables(se.Now())
 			if c.shouldSchedule {
-				assert.Len(t, tables, 1)
+				require.Len(t, tables, 1)
 				assert.Equal(t, int64(0), tables[0].ID)
 				assert.Equal(t, int64(0), tables[0].TableInfo.ID)
 			} else {
-				assert.Len(t, tables, 0)
+				require.Len(t, tables, 0)
 			}
 		})
 	}
@@ -246,7 +246,7 @@ func TestReadyForNewJobTables(t *testing.T) {
 
 func TestLockNewTable(t *testing.T) {
 	now, err := time.Parse(timeFormat, "2022-12-05 17:13:05")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	expireTime := now
 
 	testPhysicalTable := &cache.PhysicalTable{ID: 1, Schema: model.NewCIStr("test"), TableInfo: &model.TableInfo{ID: 1, Name: model.NewCIStr("t1"), TTLInfo: &model.TTLInfo{ColumnName: model.NewCIStr("test"), IntervalExprStr: "5 Year", JobInterval: "1h"}}}
@@ -369,7 +369,7 @@ func TestLockNewTable(t *testing.T) {
 			sqlCounter := 0
 			se := newMockSession(t)
 			se.executeSQL = func(ctx context.Context, sql string, args ...interface{}) (rows []chunk.Row, err error) {
-				assert.Less(t, sqlCounter, len(c.sqls))
+				require.Less(t, sqlCounter, len(c.sqls))
 				assert.Equal(t, c.sqls[sqlCounter].sql, sql)
 				assert.Equal(t, c.sqls[sqlCounter].args, args)
 
@@ -382,14 +382,14 @@ func TestLockNewTable(t *testing.T) {
 
 			job, err := m.lockNewJob(context.Background(), se, c.table, now, false)
 			if c.hasJob {
-				assert.NotNil(t, job)
+				require.NotNil(t, job)
 			} else {
-				assert.Nil(t, job)
+				require.Nil(t, job)
 			}
 			if c.hasError {
-				assert.NotNil(t, err)
+				require.NotNil(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.Nil(t, err)
 			}
 		})
 	}
@@ -412,7 +412,7 @@ func TestLocalJobs(t *testing.T) {
 			CurrentJobOwnerID: "another-id",
 		},
 	}
-	assert.Len(t, m.localJobs(), 1)
+	require.Len(t, m.localJobs(), 1)
 	assert.Equal(t, m.localJobs()[0].id, "1")
 }
 

@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestToConnID(t *testing.T) {
@@ -110,34 +111,34 @@ func TestGlobalConnID(t *testing.T) {
 
 	// exceeds int64
 	_, _, err = globalconn.ParseConnID(0x80000000_00000321)
-	assert.NotNil(err)
+	require.NotNil(t, err)
 
 	// 64bits truncated
 	_, isTruncated, err = globalconn.ParseConnID(101)
-	assert.Nil(err)
+	require.Nil(t, err)
 	assert.True(isTruncated)
 
 	// 64bits
 	id1 := (uint64(1001) << 41) | (uint64(123) << 1) | 1
 	gcid1, isTruncated, err := globalconn.ParseConnID(id1)
-	assert.Nil(err)
-	assert.False(isTruncated)
+	require.Nil(t, err)
+	require.False(t, isTruncated)
 	assert.Equal(uint64(1001), gcid1.ServerID)
 	assert.Equal(uint64(123), gcid1.LocalConnID)
 	assert.True(gcid1.Is64bits)
 
 	// exceeds uint32
 	_, _, err = globalconn.ParseConnID(0x1_00000320)
-	assert.NotNil(err)
+	require.NotNil(t, err)
 
 	// 32bits
 	id2 := (uint64(2002) << 21) | (uint64(321) << 1)
 	gcid2, isTruncated, err := globalconn.ParseConnID(id2)
-	assert.Nil(err)
-	assert.False(isTruncated)
+	require.Nil(t, err)
+	require.False(t, isTruncated)
 	assert.Equal(uint64(2002), gcid2.ServerID)
 	assert.Equal(uint64(321), gcid2.LocalConnID)
-	assert.False(gcid2.Is64bits)
+	require.False(t, gcid2.Is64bits)
 	assert.Equal(gcid2.ToConnID(), id2)
 }
 

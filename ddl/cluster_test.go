@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -85,11 +84,11 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
+		require.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteReorganization {
 			closeValue, err := infosync.GetPDScheduleConfig(context.Background())
-			assert.NoError(t, err)
-			assert.Equal(t, closeValue["merge-schedule-limit"], 0)
+			require.NoError(t, err)
+			require.Equal(t, closeValue["merge-schedule-limit"], 0)
 			// cancel flashback job
 			job.State = model.JobStateCancelled
 			job.Error = dbterror.ErrCancelledDDLJob
@@ -134,11 +133,11 @@ func TestAddDDLDuringFlashback(t *testing.T) {
 
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
+		require.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteOnly {
 			tk1 := testkit.NewTestKit(t, store)
 			_, err := tk1.Exec("alter table test.t add column b int")
-			assert.ErrorContains(t, err, "Can't add ddl job, have flashback cluster job")
+			require.ErrorContains(t, err, "Can't add ddl job, have flashback cluster job")
 		}
 	}
 	dom.DDL().SetHook(hook)
@@ -171,20 +170,20 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
+		require.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteReorganization {
 			rs, err := tk.Exec("show variables like 'tidb_gc_enable'")
-			assert.NoError(t, err)
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+			require.NoError(t, err)
+			require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 			rs, err = tk.Exec("show variables like 'tidb_enable_auto_analyze'")
-			assert.NoError(t, err)
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+			require.NoError(t, err)
+			require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 			rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
-			assert.NoError(t, err)
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
+			require.NoError(t, err)
+			require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 			rs, err = tk.Exec("show variables like 'tidb_ttl_job_enable'")
-			assert.NoError(t, err)
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+			require.NoError(t, err)
+			require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 		}
 	}
 	dom.DDL().SetHook(hook)
@@ -220,8 +219,8 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 	rs, err = tk.Exec("show variables like 'tidb_ttl_job_enable'")
-	assert.NoError(t, err)
-	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 
 	dom.DDL().SetHook(originHook)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
@@ -256,8 +255,8 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	hook.MustCancelDone(t)
 
 	rs, err := tk.Exec("show variables like 'tidb_ttl_job_enable'")
-	assert.NoError(t, err)
-	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 
 	// Try canceled on StateWriteReorganization, cancel failed
 	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
@@ -268,8 +267,8 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	hook.MustCancelFailed(t)
 
 	rs, err = tk.Exec("show variables like 'tidb_ttl_job_enable'")
-	assert.NoError(t, err)
-	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 
 	dom.DDL().SetHook(originHook)
 

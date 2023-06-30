@@ -31,5 +31,6 @@ go_test(
         "//util",
         "//util/memory",
         "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
     ],
 )

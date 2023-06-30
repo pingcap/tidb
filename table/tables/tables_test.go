@@ -1680,9 +1680,9 @@ func TestWriteWithChecksums(t *testing.T) {
 			// get actualChecksums in row value
 			actualChecksums := make([]uint32, 0, 2)
 			data, err := h.GetMvccByEncodedKey(key)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = dec.DecodeToDatumMap(data.Info.Writes[0].ShortValue, nil)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			if checksum, ok := dec.GetChecksum(); ok {
 				actualChecksums = append(actualChecksums, checksum)
 				if checksum, ok := dec.GetExtraChecksum(); ok {
@@ -1703,7 +1703,7 @@ func TestWriteWithChecksums(t *testing.T) {
 				data := rowcodec.RowData{Cols: cols}
 				sort.Sort(data)
 				checksum, err := data.Checksum()
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				expectChecksums = append(expectChecksums, checksum)
 			}
 			// validate checksums

@@ -32,12 +32,12 @@ func TestFloat64Set(t *testing.T) {
 		set.Insert(vals[i])
 		set.Insert(vals[i])
 	}
-	assert.Equal(len(vals), set.Count())
+	require.Equal(len(vals), set.Count())
 
-	assert.Equal(len(vals), len(set))
+	require.Equal(len(vals), len(set))
 	for i := range vals {
-		assert.True(set.Exist(vals[i]))
+		require.True(set.Exist(vals[i]))
 	}
 
-	assert.False(set.Exist(3))
+	require.False(set.Exist(3))
 }

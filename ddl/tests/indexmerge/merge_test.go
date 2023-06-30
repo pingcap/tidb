@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -115,7 +114,7 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 			// Add delete record 4 to the temporary index.
 			_, checkErr = tk2.Exec("delete from t where c1 = 4;")
 		}
-		assert.NoError(t, dom.Reload())
+		require.NoError(t, dom.Reload())
 	}
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	dom.DDL().SetHook(callback)
@@ -281,16 +280,16 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
 				_, err = tk1.Exec(sql)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 			// (1, 7), (2, 2), (3, 3), (5, 5), (0, 6)
 		case model.StateWriteOnly:
 			_, err = tk1.Exec("insert into t values (8, 8)")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("update t set b = 7 where a = 2")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("delete from t where b = 3")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8)
 		case model.StateWriteReorganization:
 			if reorgTime >= 1 {
@@ -298,13 +297,13 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 			}
 			reorgTime++
 			_, err = tk1.Exec("insert into t values (10, 10)")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("delete from t where b = 6")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("insert into t set b = 9")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("update t set b = 7 where a = 5")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			// (1, 7), (2, 7), (5, 7), (8, 8), (10, 10), (0, 9)
 		}
 	}
@@ -383,12 +382,12 @@ func TestAddIndexMergeDeleteUniqueOnWriteOnly(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			_, err = tk1.Exec("insert into t values (5, 5);")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		case model.StateWriteOnly:
 			_, err = tk1.Exec("insert into t values (5, 7);")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("delete from t where b = 7;")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 	}
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
@@ -410,7 +409,7 @@ func TestAddIndexMergeDeleteNullUnique(t *testing.T) {
 
 	ddl.MockDMLExecution = func() {
 		_, err := tk1.Exec("delete from t where id = 2;")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecution", "1*return(true)->return(false)"))
 	tk.MustExec("alter table t add unique index idx(a);")
@@ -440,7 +439,7 @@ func TestAddIndexMergeDoubleDelete(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			_, err := tk1.Exec("insert into t values (1, 1);")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 	}
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
@@ -448,11 +447,11 @@ func TestAddIndexMergeDoubleDelete(t *testing.T) {
 
 	ddl.MockDMLExecution = func() {
 		_, err := tk1.Exec("delete from t where id = 1;")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		_, err = tk1.Exec("insert into t values (2, 1);")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		_, err = tk1.Exec("delete from t where id = 2;")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecution", "1*return(true)->return(false)"))
 	tk.MustExec("alter table t add unique index idx(a);")
@@ -492,7 +491,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 		if job.SchemaState == model.StateWriteOnly {
 			// Write a record to the temp index.
 			_, err := tk2.Exec("update t set a = 2 where id = 1;")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 		if !runPessimisticTxn && job.SchemaState == model.StateWriteReorganization {
 			idx := testutil.FindIdxInfo(dom, "test", "t", "idx")
@@ -504,9 +503,9 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 			}
 			runPessimisticTxn = true
 			_, err := tk2.Exec("begin pessimistic;")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk2.Exec("update t set a = 3 where id = 1;")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			afterPessDML <- struct{}{}
 		}
 	}
@@ -553,12 +552,12 @@ func TestAddIndexMergeInsertOnMerging(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			_, err = tk1.Exec("insert into t values (5, 5)")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		case model.StateWriteOnly:
 			_, err = tk1.Exec("insert into t values (5, 7)")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("delete from t where b = 7")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 	}
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
@@ -566,9 +565,9 @@ func TestAddIndexMergeInsertOnMerging(t *testing.T) {
 
 	ddl.MockDMLExecutionStateMerging = func() {
 		_, err := tk1.Exec("insert into t values (5, 8);")
-		assert.Error(t, err) // [kv:1062]Duplicate entry '5' for key 't.idx'
+		require.Error(t, err) // [kv:1062]Duplicate entry '5' for key 't.idx'
 		_, err = tk1.Exec("insert into t values (5, 8) on duplicate key update a = 6;")
-		assert.NoError(t, err) // The row should be normally updated to (6, 5).
+		require.NoError(t, err) // The row should be normally updated to (6, 5).
 		ddl.MockDMLExecutionStateMerging = nil
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateMerging", "return(true)"))
@@ -591,12 +590,12 @@ func TestAddIndexMergeReplaceOnMerging(t *testing.T) {
 
 	ddl.MockDMLExecution = func() {
 		_, err := tk1.Exec("delete from t where b = 5;")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 
 	ddl.MockDMLExecutionStateMerging = func() {
 		_, err := tk1.Exec("replace into t values (5, 8);")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		ddl.MockDMLExecutionStateMerging = nil
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecution", "1*return(true)->return(false)"))
@@ -631,17 +630,17 @@ func TestAddIndexMergeInsertToDeletedTempIndex(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			_, err = tk1.Exec("delete from t where b = 5")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err := tk1.Exec("set @@tidb_constraint_check_in_place = true;")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("insert into t values (5, 8);")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("insert into t values (5, 8);")
-			assert.Error(t, err)
+			require.Error(t, err)
 			_, err = tk1.Exec("set @@tidb_constraint_check_in_place = false;")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("insert into t values (5, 8);")
-			assert.Error(t, err)
+			require.Error(t, err)
 		}
 	}
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
@@ -673,7 +672,7 @@ func TestAddIndexMergeReplaceDelete(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			_, err := tk1.Exec("insert into t values (1, 1);")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 	}
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
@@ -681,9 +680,9 @@ func TestAddIndexMergeReplaceDelete(t *testing.T) {
 
 	ddl.MockDMLExecutionMerging = func() {
 		_, err := tk1.Exec("replace into t values (2, 1);")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		_, err = tk1.Exec("delete from t where id = 2;")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionMerging", "1*return(true)->return(false)"))
 	tk.MustExec("alter table t add unique index idx(a);")
@@ -718,9 +717,9 @@ func TestAddIndexMergeDeleteDifferentHandle(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateWriteReorganization:
 			_, err := tk1.Exec("insert into t values (2, 'a');")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("replace into t values (3, 'a');")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			runDML = true
 		}
 	}
@@ -730,7 +729,7 @@ func TestAddIndexMergeDeleteDifferentHandle(t *testing.T) {
 	ddl.MockDMLExecution = func() {
 		// It is too late to remove the duplicated index value.
 		_, err := tk1.Exec("delete from t where id = 1;")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecution", "1*return(true)->return(false)"))
 	tk.MustGetErrCode("alter table t add unique index idx(c);", errno.ErrDupEntry)
@@ -765,9 +764,9 @@ func TestAddIndexDecodeTempIndexCommonHandle(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateWriteReorganization:
 			_, err := tk1.Exec("insert into t values (2, 'id_2', 'char_2');")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("insert into t values (3, 'id_3', 'char_3');")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			runDML = true
 		}
 	}
@@ -801,11 +800,11 @@ func TestAddIndexInsertIgnoreOnBackfill(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateWriteReorganization:
 			_, err := tk1.Exec("insert ignore into t values (1, 1);")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("insert ignore into t values (2, 2);")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("update t set b = null where id = 1;")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			runDML = true
 		}
 	}
@@ -839,10 +838,10 @@ func TestAddIndexMultipleDelete(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			_, err := tk1.Exec("delete from t where id in (4, 5, 6);")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		case model.StateWriteOnly:
 			_, err := tk1.Exec("delete from t where id in (2, 3);")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 	}
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
@@ -850,7 +849,7 @@ func TestAddIndexMultipleDelete(t *testing.T) {
 
 	ddl.MockDMLExecution = func() {
 		_, err := tk1.Exec("delete from t where id = 1;")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecution", "1*return(true)->return(false)"))
 	tk.MustExec("alter table t add unique index idx(b);")
@@ -882,11 +881,11 @@ func TestAddIndexDuplicateAndWriteConflict(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			_, err := tk1.Exec("insert into t values (2, 1);")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 		if job.State == model.JobStateRollingback {
 			_, err := tk1.Exec("admin cancel ddl jobs " + strconv.FormatInt(job.ID, 10))
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			runCancel = true
 		}
 	}
@@ -920,14 +919,14 @@ func TestAddIndexUpdateUntouchedValues(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateWriteReorganization:
 			_, err := tk1.Exec("begin;")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("update t set k=k+1 where id = 1;")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("insert into t values (2, 1, 2);")
 			// Should not report "invalid temp index value".
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			_, err = tk1.Exec("commit;")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			runDML = true
 		}
 	}

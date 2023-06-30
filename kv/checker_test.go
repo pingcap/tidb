@@ -18,16 +18,15 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestIsRequestTypeSupported(t *testing.T) {
 	checker := kv.RequestTypeSupportedChecker{}.IsRequestTypeSupported
-	assert.True(t, checker(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy))
-	assert.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature))
-	assert.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeDesc))
-	assert.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature))
-	assert.False(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeAnalyzeIdx))
-	assert.True(t, checker(kv.ReqTypeAnalyze, 0))
-	assert.False(t, checker(kv.ReqTypeChecksum, 0))
+	require.True(t, checker(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy))
+	require.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature))
+	require.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeDesc))
+	require.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature))
+	require.False(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeAnalyzeIdx))
+	require.True(t, checker(kv.ReqTypeAnalyze, 0))
+	require.False(t, checker(kv.ReqTypeChecksum, 0))
 }

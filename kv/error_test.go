@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestError(t *testing.T) {
@@ -37,7 +37,7 @@ func TestError(t *testing.T) {
 
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		assert.NotEqual(t, mysql.ErrUnknown, code)
-		assert.Equal(t, uint16(err.Code()), code)
+		require.NotEqual(t, mysql.ErrUnknown, code)
+		require.Equal(t, uint16(err.Code()), code)
 	}
 }

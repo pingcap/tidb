@@ -18,11 +18,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIntDisjointSet(t *testing.T) {
 	set := NewIntSet(10)
-	assert.Len(t, set.parent, 10)
+	require.Len(t, set.parent, 10)
 	for i := range set.parent {
 		assert.Equal(t, i, set.parent[i])
 	}

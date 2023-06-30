@@ -41,16 +41,16 @@ func TestTTLStatusCache(t *testing.T) {
 	isc := cache.NewTableStatusCache(time.Hour)
 
 	// test should update
-	assert.True(t, isc.ShouldUpdate())
-	assert.NoError(t, isc.Update(context.Background(), ttlSession))
-	assert.False(t, isc.ShouldUpdate())
+	require.True(t, isc.ShouldUpdate())
+	require.NoError(t, isc.Update(context.Background(), ttlSession))
+	require.False(t, isc.ShouldUpdate())
 
 	// test new entries are synced
 	tk.MustExec("insert into mysql.tidb_ttl_table_status(table_id, parent_table_id) values (1, 2)")
-	assert.NoError(t, isc.Update(context.Background(), ttlSession))
-	assert.Equal(t, 1, len(isc.Tables))
+	require.NoError(t, isc.Update(context.Background(), ttlSession))
+	require.Equal(t, 1, len(isc.Tables))
 	tk.MustExec("delete from mysql.tidb_ttl_table_status where table_id = 1")
-	assert.NoError(t, isc.Update(context.Background(), ttlSession))
+	require.NoError(t, isc.Update(context.Background(), ttlSession))
 	assert.Equal(t, 0, len(isc.Tables))
 
 	timeZone := tk.Session().GetSessionVars().TimeZone
@@ -81,7 +81,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"'2022-12-01 16:49:01'",
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:49:01", timeZone)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, expectedTime, table.LastJobStartTime)
 			},
 		},
@@ -90,7 +90,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"'2022-12-01 16:50:01'",
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:50:01", timeZone)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, expectedTime, table.LastJobFinishTime)
 			},
 		},
@@ -99,7 +99,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"'2022-12-01 16:51:01'",
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:51:01", timeZone)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, expectedTime, table.LastJobTTLExpire)
 			},
 		},
@@ -123,7 +123,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"'2022-12-01 16:52:01'",
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:52:01", timeZone)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, expectedTime, table.CurrentJobOwnerHBTime)
 			},
 		},
@@ -132,7 +132,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"'2022-12-01 16:53:01'",
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:53:01", timeZone)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, expectedTime, table.CurrentJobStartTime)
 			},
 		},
@@ -141,7 +141,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"'2022-12-01 16:54:01'",
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:54:01", timeZone)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, expectedTime, table.CurrentJobTTLExpire)
 			},
 		},
@@ -162,7 +162,7 @@ func TestTTLStatusCache(t *testing.T) {
 			"'2022-12-01 16:55:01'",
 			func(table *cache.TableStatus) {
 				expectedTime, err := time.ParseInLocation(time.DateTime, "2022-12-01 16:55:01", timeZone)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, expectedTime, table.CurrentJobStatusUpdateTime)
 			},
 		},
@@ -173,7 +173,7 @@ func TestTTLStatusCache(t *testing.T) {
 				testCase.columnName, index, testCase.sqlLiteral)
 
 			tk.MustExec(sql)
-			assert.NoError(t, isc.Update(context.Background(), ttlSession))
+			require.NoError(t, isc.Update(context.Background(), ttlSession))
 			assert.Equal(t, index+1, len(isc.Tables))
 			testCase.assert(isc.Tables[int64(index)])
 		})

@@ -17,8 +17,6 @@ package kv
 import (
 	"context"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestInterface(t *testing.T) {
@@ -26,19 +24,19 @@ func TestInterface(t *testing.T) {
 	storage.GetClient()
 	storage.UUID()
 	version, err := storage.CurrentVersion(GlobalTxnScope)
-	assert.Nil(t, err)
+	require.Nil(t, err)
 
 	snapshot := storage.GetSnapshot(version)
 	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
-	assert.Nil(t, err)
+	require.Nil(t, err)
 
 	snapshot.SetOption(Priority, PriorityNormal)
 	transaction, err := storage.Begin()
-	assert.Nil(t, err)
-	assert.NotNil(t, transaction)
+	require.Nil(t, err)
+	require.NotNil(t, transaction)
 
 	err = transaction.LockKeys(context.Background(), new(LockCtx), Key("lock"))
-	assert.Nil(t, err)
+	require.Nil(t, err)
 
 	transaction.SetOption(23, struct{}{})
 	if mock, ok := transaction.(*mockTxn); ok {
@@ -47,42 +45,42 @@ func TestInterface(t *testing.T) {
 	transaction.StartTS()
 	if transaction.IsReadOnly() {
 		_, err = transaction.Get(context.TODO(), Key("lock"))
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		err = transaction.Set(Key("lock"), []byte{})
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		_, err = transaction.Iter(Key("lock"), nil)
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		_, err = transaction.IterReverse(Key("lock"))
-		assert.Nil(t, err)
+		require.Nil(t, err)
 	}
 	_ = transaction.Commit(context.Background())
 
 	transaction, err = storage.Begin()
-	assert.Nil(t, err)
+	require.Nil(t, err)
 
 	// Test for mockTxn interface.
-	assert.Equal(t, "", transaction.String())
-	assert.True(t, transaction.Valid())
-	assert.Equal(t, 0, transaction.Len())
-	assert.Equal(t, 0, transaction.Size())
-	assert.Nil(t, transaction.GetMemBuffer())
+	require.Equal(t, "", transaction.String())
+	require.True(t, transaction.Valid())
+	require.Equal(t, 0, transaction.Len())
+	require.Equal(t, 0, transaction.Size())
+	require.Nil(t, transaction.GetMemBuffer())
 
 	transaction.Reset()
 	err = transaction.Rollback()
-	assert.Nil(t, err)
-	assert.False(t, transaction.Valid())
-	assert.False(t, transaction.IsPessimistic())
-	assert.Nil(t, transaction.Delete(nil))
+	require.Nil(t, err)
+	require.False(t, transaction.Valid())
+	require.False(t, transaction.IsPessimistic())
+	require.Nil(t, transaction.Delete(nil))
 
-	assert.Nil(t, storage.GetOracle())
-	assert.Equal(t, "KVMockStorage", storage.Name())
-	assert.Equal(t, "KVMockStorage is a mock Store implementation, only for unittests in KV package", storage.Describe())
-	assert.False(t, storage.SupportDeleteRange())
+	require.Nil(t, storage.GetOracle())
+	require.Equal(t, "KVMockStorage", storage.Name())
+	require.Equal(t, "KVMockStorage is a mock Store implementation, only for unittests in KV package", storage.Describe())
+	require.False(t, storage.SupportDeleteRange())
 
 	status, err := storage.ShowStatus(context.Background(), "")
-	assert.Nil(t, status)
-	assert.Nil(t, err)
+	require.Nil(t, status)
+	require.Nil(t, err)
 
 	err = storage.Close()
-	assert.Nil(t, err)
+	require.Nil(t, err)
 }

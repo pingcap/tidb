@@ -85,9 +85,9 @@ func TestProfileToDatum(t *testing.T) {
 	for i, row := range data {
 		comment := fmt.Sprintf("row %2d", i)
 		rowStr, err := types.DatumsToString(row, true)
-		assert.Nil(t, err, comment)
+		require.Nil(t, err, comment)
 		expectStr, err := types.DatumsToString(datums[i], true)
-		assert.Nil(t, err, comment)
+		require.Nil(t, err, comment)
 
 		comment = fmt.Sprintf("row %2d, actual (%s), expected (%s)", i, rowStr, expectStr)
 		equal := true
@@ -98,7 +98,7 @@ func TestProfileToDatum(t *testing.T) {
 				break
 			}
 		}
-		assert.Nil(t, err, comment)
+		require.Nil(t, err, comment)
 		assert.True(t, equal, comment)
 	}
 }

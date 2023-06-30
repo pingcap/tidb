@@ -23,6 +23,6 @@ go_test(
     flaky = True,
     deps = [
         "//testkit/testsetup",
-        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
     ],
 )

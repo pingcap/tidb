@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -106,14 +106,14 @@ func TestPubSubDataSink(t *testing.T) {
 			NormalizedPlan: "PLAN-1",
 		}},
 	}, time.Now().Add(10*time.Second))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	time.Sleep(1 * time.Second)
 
 	mockStream.Lock()
-	assert.Len(t, mockStream.records, 1)
-	assert.Len(t, mockStream.sqlMetas, 1)
-	assert.Len(t, mockStream.planMetas, 1)
+	require.Len(t, mockStream.records, 1)
+	require.Len(t, mockStream.sqlMetas, 1)
+	require.Len(t, mockStream.planMetas, 1)
 	mockStream.Unlock()
 
 	ds.OnReporterClosing()

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,7 +66,7 @@ func TestPrefix(t *testing.T) {
 	err = util.DelKeyWithPrefix(txn, []byte("key"))
 	require.NoError(t, err)
 	_, err = txn.Get(context.TODO(), k)
-	assert.True(t, terror.ErrorEqual(kv.ErrNotExist, err))
+	require.True(t, terror.ErrorEqual(kv.ErrNotExist, err))
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -78,8 +77,8 @@ func TestPrefixFilter(t *testing.T) {
 	rowKey[8] = 0x00
 	rowKey[9] = 0x00
 	f := util.RowKeyPrefixFilter(rowKey)
-	assert.False(t, f(append(rowKey, []byte("akjdf3*(34")...)))
-	assert.True(t, f([]byte("sjfkdlsaf")))
+	require.False(t, f(append(rowKey, []byte("akjdf3*(34")...)))
+	require.True(t, f([]byte("sjfkdlsaf")))
 }
 
 type mockContext struct {

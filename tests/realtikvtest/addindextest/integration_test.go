@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -442,7 +441,7 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateWriteReorganization:
 			_, err := tk1.Exec("insert into t values (1, 1, 1);")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			// row: [h1 -> 1]
 			// idx: []
 			// tmp: [1 -> h1]
@@ -451,24 +450,24 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 	}
 	ddl.MockDMLExecutionStateBeforeImport = func() {
 		_, err := tk1.Exec("update t set b = 2 where id = 1;")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		// row: [h1 -> 2]
 		// idx: [1 -> h1]
 		// tmp: [1 -> (h1,h1d), 2 -> h1]
 		_, err = tk1.Exec("begin;")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		_, err = tk1.Exec("insert into t values (2, 1, 2);")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		// row: [h1 -> 2, h2 -> 1]
 		// idx: [1 -> h1]
 		// tmp: [1 -> (h1,h1d,h2), 2 -> h1]
 		_, err = tk1.Exec("delete from t where id = 2;")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		// row: [h1 -> 2]
 		// idx: [1 -> h1]
 		// tmp: [1 -> (h1,h1d,h2,h2d), 2 -> h1]
 		_, err = tk1.Exec("commit;")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 	d.SetHook(callback)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateBeforeImport", "1*return"))

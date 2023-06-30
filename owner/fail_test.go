@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
@@ -56,7 +55,7 @@ func TestFailNewSession(t *testing.T) {
 	var stop util.WaitGroupWrapper
 	stop.Run(func() {
 		err = srv.Serve(ln)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	})
 
 	defer func() {

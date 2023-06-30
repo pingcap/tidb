@@ -18,6 +18,7 @@ go_test(
     embedsrcs = ["test.parquet"],
     flaky = True,
     race = "on",
+    shard_count = 2,
     deps = [
         "//br/pkg/lightning/backend/local",
         "//br/pkg/lightning/common",

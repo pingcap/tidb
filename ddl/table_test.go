@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -557,10 +556,10 @@ func TestRenameTableIntermediateState(t *testing.T) {
 				job.SchemaState == model.StatePublic && !runInsert && !t.Failed() {
 				_, err := tk2.Exec(tc.insertSQL)
 				if len(tc.errMsg) > 0 {
-					assert.NotNil(t, err)
-					assert.Equal(t, tc.errMsg, err.Error())
+					require.NotNil(t, err)
+					require.Equal(t, tc.errMsg, err.Error())
 				} else {
-					assert.NoError(t, err)
+					require.NoError(t, err)
 				}
 				runInsert = true
 			}

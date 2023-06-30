@@ -39,17 +39,17 @@ func TestInfoSchemaCache(t *testing.T) {
 	isc := cache.NewInfoSchemaCache(time.Hour)
 
 	// test should update
-	assert.True(t, isc.ShouldUpdate())
-	assert.NoError(t, isc.Update(se))
-	assert.False(t, isc.ShouldUpdate())
+	require.True(t, isc.ShouldUpdate())
+	require.NoError(t, isc.Update(se))
+	require.False(t, isc.ShouldUpdate())
 
 	// test new tables are synced
-	assert.Equal(t, 0, len(isc.Tables))
+	require.Equal(t, 0, len(isc.Tables))
 	tk.MustExec("create table test.t(created_at datetime) ttl = created_at + INTERVAL 5 YEAR")
-	assert.NoError(t, isc.Update(se))
-	assert.Equal(t, 1, len(isc.Tables))
+	require.NoError(t, isc.Update(se))
+	require.Equal(t, 1, len(isc.Tables))
 	for _, table := range isc.Tables {
-		assert.Equal(t, "t", table.TableInfo.Name.L)
+		require.Equal(t, "t", table.TableInfo.Name.L)
 	}
 
 	// test new partitioned table are synced
@@ -61,12 +61,12 @@ func TestInfoSchemaCache(t *testing.T) {
 			partition p1 values less than (2000)
 		)
 	`)
-	assert.NoError(t, isc.Update(se))
-	assert.Equal(t, 2, len(isc.Tables))
+	require.NoError(t, isc.Update(se))
+	require.Equal(t, 2, len(isc.Tables))
 	partitions := []string{}
 	for id, table := range isc.Tables {
-		assert.Equal(t, "t", table.TableInfo.Name.L)
-		assert.Equal(t, id, table.PartitionDef.ID)
+		require.Equal(t, "t", table.TableInfo.Name.L)
+		require.Equal(t, id, table.PartitionDef.ID)
 		partitions = append(partitions, table.PartitionDef.Name.L)
 	}
 	assert.ElementsMatch(t, []string{"p0", "p1"}, partitions)

@@ -77,7 +77,7 @@ func TestListInDisk(t *testing.T) {
 	}()
 	for _, chk := range chks {
 		err := l.Add(chk)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 	require.True(t, strings.HasPrefix(l.dataFile.disk.Name(), filepath.Join(os.TempDir(), "tidb_enable_tmp_storage_on_oom")))
 	assert.Equal(t, numChk, l.NumChunks())
@@ -86,7 +86,7 @@ func TestListInDisk(t *testing.T) {
 	for chkIdx := 0; chkIdx < numChk; chkIdx++ {
 		for rowIdx := 0; rowIdx < numRow; rowIdx++ {
 			row, err := l.GetRow(RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Equal(t, chks[chkIdx].GetRow(rowIdx).GetDatumRow(fields), row.GetDatumRow(fields))
 		}
 	}

@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -31,22 +32,22 @@ func TestSimpleArenaAllocator(t *testing.T) {
 	arena := NewAllocator(arenaCap)
 	slice := arena.Alloc(allocCapSmall)
 	assert.Equal(t, allocCapSmall, arena.off)
-	assert.Len(t, slice, 0)
+	require.Len(t, slice, 0)
 	assert.Equal(t, allocCapSmall, cap(slice))
 
 	slice = arena.Alloc(allocCapMedium)
 	assert.Equal(t, allocCapSmall+allocCapMedium, arena.off)
-	assert.Len(t, slice, 0)
+	require.Len(t, slice, 0)
 	assert.Equal(t, allocCapMedium, cap(slice))
 
 	slice = arena.Alloc(allocCapOut)
 	assert.Equal(t, allocCapSmall+allocCapMedium, arena.off)
-	assert.Len(t, slice, 0)
+	require.Len(t, slice, 0)
 	assert.Equal(t, allocCapOut, cap(slice))
 
 	slice = arena.AllocWithLen(2, allocCapSmall)
 	assert.Equal(t, allocCapSmall+allocCapMedium+allocCapSmall, arena.off)
-	assert.Len(t, slice, 2)
+	require.Len(t, slice, 2)
 	assert.Equal(t, allocCapSmall, cap(slice))
 
 	arena.Reset()
@@ -56,10 +57,10 @@ func TestSimpleArenaAllocator(t *testing.T) {
 
 func TestStdAllocator(t *testing.T) {
 	slice := StdAllocator.Alloc(allocCapMedium)
-	assert.Len(t, slice, 0)
+	require.Len(t, slice, 0)
 	assert.Equal(t, allocCapMedium, cap(slice))
 
 	slice = StdAllocator.AllocWithLen(allocCapSmall, allocCapMedium)
-	assert.Len(t, slice, allocCapSmall)
+	require.Len(t, slice, allocCapSmall)
 	assert.Equal(t, allocCapMedium, cap(slice))
 }

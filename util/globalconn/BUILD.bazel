@@ -28,5 +28,6 @@ go_test(
         ":globalconn",
         "@com_github_cznic_mathutil//:mathutil",
         "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
     ],
 )

@@ -25,11 +25,11 @@ import (
 func TestInvisibleSchema(t *testing.T) {
 	assert := assert.New(t)
 
-	assert.True(IsInvisibleSchema(metricsSchema))
-	assert.True(IsInvisibleSchema("METRICS_ScHEma"))
-	assert.False(IsInvisibleSchema("mysql"))
-	assert.False(IsInvisibleSchema(informationSchema))
-	assert.False(IsInvisibleSchema("Bogusname"))
+	require.True(IsInvisibleSchema(metricsSchema))
+	require.True(IsInvisibleSchema("METRICS_ScHEma"))
+	require.False(IsInvisibleSchema("mysql"))
+	require.False(IsInvisibleSchema(informationSchema))
+	require.False(IsInvisibleSchema("Bogusname"))
 }
 
 func TestIsInvisibleTable(t *testing.T) {
@@ -43,52 +43,52 @@ func TestIsInvisibleTable(t *testing.T) {
 		tidbProfileMemory, tidbProfileMutex, tikvProfileCPU}
 
 	for _, tbl := range mysqlTbls {
-		assert.True(IsInvisibleTable(mysql.SystemDB, tbl))
+		require.True(IsInvisibleTable(mysql.SystemDB, tbl))
 	}
 	for _, tbl := range infoSchemaTbls {
-		assert.True(IsInvisibleTable(informationSchema, tbl))
+		require.True(IsInvisibleTable(informationSchema, tbl))
 	}
 	for _, tbl := range perfSChemaTbls {
-		assert.True(IsInvisibleTable(performanceSchema, tbl))
+		require.True(IsInvisibleTable(performanceSchema, tbl))
 	}
 
-	assert.True(IsInvisibleTable(metricsSchema, "acdc"))
-	assert.True(IsInvisibleTable(metricsSchema, "fdsgfd"))
-	assert.False(IsInvisibleTable("test", "t1"))
+	require.True(IsInvisibleTable(metricsSchema, "acdc"))
+	require.True(IsInvisibleTable(metricsSchema, "fdsgfd"))
+	require.False(IsInvisibleTable("test", "t1"))
 }
 
 func TestIsRestrictedPrivilege(t *testing.T) {
 	assert := assert.New(t)
 
-	assert.True(IsRestrictedPrivilege("RESTRICTED_TABLES_ADMIN"))
-	assert.True(IsRestrictedPrivilege("RESTRICTED_STATUS_VARIABLES_ADMIN"))
-	assert.False(IsRestrictedPrivilege("CONNECTION_ADMIN"))
-	assert.False(IsRestrictedPrivilege("BACKUP_ADMIN"))
-	assert.False(IsRestrictedPrivilege("aa"))
+	require.True(IsRestrictedPrivilege("RESTRICTED_TABLES_ADMIN"))
+	require.True(IsRestrictedPrivilege("RESTRICTED_STATUS_VARIABLES_ADMIN"))
+	require.False(IsRestrictedPrivilege("CONNECTION_ADMIN"))
+	require.False(IsRestrictedPrivilege("BACKUP_ADMIN"))
+	require.False(IsRestrictedPrivilege("aa"))
 }
 
 func TestIsInvisibleStatusVar(t *testing.T) {
 	assert := assert.New(t)
 
-	assert.True(IsInvisibleStatusVar(tidbGCLeaderDesc))
-	assert.False(IsInvisibleStatusVar("server_id"))
-	assert.False(IsInvisibleStatusVar("ddl_schema_version"))
-	assert.False(IsInvisibleStatusVar("Ssl_version"))
+	require.True(IsInvisibleStatusVar(tidbGCLeaderDesc))
+	require.False(IsInvisibleStatusVar("server_id"))
+	require.False(IsInvisibleStatusVar("ddl_schema_version"))
+	require.False(IsInvisibleStatusVar("Ssl_version"))
 }
 
 func TestIsInvisibleSysVar(t *testing.T) {
 	assert := assert.New(t)
 
-	assert.False(IsInvisibleSysVar(variable.Hostname))                   // changes the value to default, but is not invisible
-	assert.False(IsInvisibleSysVar(variable.TiDBEnableEnhancedSecurity)) // should be able to see the mode is on.
-	assert.False(IsInvisibleSysVar(variable.TiDBAllowRemoveAutoInc))
+	require.False(IsInvisibleSysVar(variable.Hostname))                   // changes the value to default, but is not invisible
+	require.False(IsInvisibleSysVar(variable.TiDBEnableEnhancedSecurity)) // should be able to see the mode is on.
+	require.False(IsInvisibleSysVar(variable.TiDBAllowRemoveAutoInc))
 
-	assert.True(IsInvisibleSysVar(variable.TiDBCheckMb4ValueInUTF8))
-	assert.True(IsInvisibleSysVar(variable.TiDBConfig))
-	assert.True(IsInvisibleSysVar(variable.TiDBEnableSlowLog))
-	assert.True(IsInvisibleSysVar(variable.TiDBExpensiveQueryTimeThreshold))
-	assert.True(IsInvisibleSysVar(variable.TiDBForcePriority))
-	assert.True(IsInvisibleSysVar(variable.TiDBGeneralLog))
+	require.True(IsInvisibleSysVar(variable.TiDBCheckMb4ValueInUTF8))
+	require.True(IsInvisibleSysVar(variable.TiDBConfig))
+	require.True(IsInvisibleSysVar(variable.TiDBEnableSlowLog))
+	require.True(IsInvisibleSysVar(variable.TiDBExpensiveQueryTimeThreshold))
+	require.True(IsInvisibleSysVar(variable.TiDBForcePriority))
+	require.True(IsInvisibleSysVar(variable.TiDBGeneralLog))
 	assert.True(IsInvisibleSysVar(variable.TiDBMetricSchemaRangeDuration))
 	assert.True(IsInvisibleSysVar(variable.TiDBMetricSchemaStep))
 	assert.True(IsInvisibleSysVar(variable.TiDBOptWriteRowID))

@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,15 +45,15 @@ func TestPartialNext(t *testing.T) {
 
 	nextKey := Key(seekKey).Next()
 	cmp := bytes.Compare(nextKey, keyA)
-	assert.Equal(t, -1, cmp)
+	require.Equal(t, -1, cmp)
 
 	// Use next partial key, we can skip all index keys with first column value equal to "abc".
 	nextPartialKey := Key(seekKey).PrefixNext()
 	cmp = bytes.Compare(nextPartialKey, keyA)
-	assert.Equal(t, 1, cmp)
+	require.Equal(t, 1, cmp)
 
 	cmp = bytes.Compare(nextPartialKey, keyB)
-	assert.Equal(t, -1, cmp)
+	require.Equal(t, -1, cmp)
 }
 
 func TestIsPoint(t *testing.T) {
@@ -105,62 +104,62 @@ func TestIsPoint(t *testing.T) {
 			StartKey: tt.start,
 			EndKey:   tt.end,
 		}
-		assert.Equal(t, tt.isPoint, kr.IsPoint())
+		require.Equal(t, tt.isPoint, kr.IsPoint())
 	}
 }
 
 func TestBasicFunc(t *testing.T) {
-	assert.False(t, IsTxnRetryableError(nil))
-	assert.True(t, IsTxnRetryableError(ErrTxnRetryable))
-	assert.False(t, IsTxnRetryableError(errors.New("test")))
+	require.False(t, IsTxnRetryableError(nil))
+	require.True(t, IsTxnRetryableError(ErrTxnRetryable))
+	require.False(t, IsTxnRetryableError(errors.New("test")))
 }
 
 func TestHandle(t *testing.T) {
 	ih := IntHandle(100)
-	assert.True(t, ih.IsInt())
+	require.True(t, ih.IsInt())
 
 	_, iv, _ := codec.DecodeInt(ih.Encoded())
-	assert.Equal(t, ih.IntValue(), iv)
+	require.Equal(t, ih.IntValue(), iv)
 
 	ih2 := ih.Next()
-	assert.Equal(t, int64(101), ih2.IntValue())
-	assert.False(t, ih.Equal(ih2))
-	assert.Equal(t, -1, ih.Compare(ih2))
-	assert.Equal(t, "100", ih.String())
+	require.Equal(t, int64(101), ih2.IntValue())
+	require.False(t, ih.Equal(ih2))
+	require.Equal(t, -1, ih.Compare(ih2))
+	require.Equal(t, "100", ih.String())
 
 	ch := testutil.MustNewCommonHandle(t, 100, "abc")
-	assert.False(t, ch.IsInt())
+	require.False(t, ch.IsInt())
 
 	ch2 := ch.Next()
-	assert.False(t, ch.Equal(ch2))
-	assert.Equal(t, -1, ch.Compare(ch2))
-	assert.Len(t, ch2.Encoded(), len(ch.Encoded()))
-	assert.Equal(t, 2, ch.NumCols())
+	require.False(t, ch.Equal(ch2))
+	require.Equal(t, -1, ch.Compare(ch2))
+	require.Len(t, ch2.Encoded(), len(ch.Encoded()))
+	require.Equal(t, 2, ch.NumCols())
 
 	_, d, err := codec.DecodeOne(ch.EncodedCol(0))
-	assert.Nil(t, err)
-	assert.Equal(t, int64(100), d.GetInt64())
+	require.Nil(t, err)
+	require.Equal(t, int64(100), d.GetInt64())
 
 	_, d, err = codec.DecodeOne(ch.EncodedCol(1))
-	assert.Nil(t, err)
-	assert.Equal(t, "abc", d.GetString())
-	assert.Equal(t, "{100, abc}", ch.String())
+	require.Nil(t, err)
+	require.Equal(t, "abc", d.GetString())
+	require.Equal(t, "{100, abc}", ch.String())
 }
 
 func TestPaddingHandle(t *testing.T) {
 	dec := types.NewDecFromInt(1)
 	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
-	assert.Nil(t, err)
-	assert.Less(t, len(encoded), 9)
+	require.Nil(t, err)
+	require.Less(t, len(encoded), 9)
 
 	handle, err := NewCommonHandle(encoded)
-	assert.Nil(t, err)
-	assert.Len(t, handle.Encoded(), 9)
-	assert.Equal(t, encoded, handle.EncodedCol(0))
+	require.Nil(t, err)
+	require.Len(t, handle.Encoded(), 9)
+	require.Equal(t, encoded, handle.EncodedCol(0))
 
 	newHandle, err := NewCommonHandle(handle.Encoded())
-	assert.Nil(t, err)
-	assert.Equal(t, handle.EncodedCol(0), newHandle.EncodedCol(0))
+	require.Nil(t, err)
+	require.Equal(t, handle.EncodedCol(0), newHandle.EncodedCol(0))
 }
 
 func TestHandleMap(t *testing.T) {
@@ -169,41 +168,41 @@ func TestHandleMap(t *testing.T) {
 
 	m.Set(h, 1)
 	v, ok := m.Get(h)
-	assert.True(t, ok)
-	assert.Equal(t, 1, v)
+	require.True(t, ok)
+	require.Equal(t, 1, v)
 
 	m.Delete(h)
 	v, ok = m.Get(h)
-	assert.False(t, ok)
-	assert.Nil(t, v)
+	require.False(t, ok)
+	require.Nil(t, v)
 
 	ch := testutil.MustNewCommonHandle(t, 100, "abc")
 	m.Set(ch, "a")
 	v, ok = m.Get(ch)
-	assert.True(t, ok)
-	assert.Equal(t, "a", v)
+	require.True(t, ok)
+	require.Equal(t, "a", v)
 
 	m.Delete(ch)
 	v, ok = m.Get(ch)
-	assert.False(t, ok)
-	assert.Nil(t, v)
+	require.False(t, ok)
+	require.Nil(t, v)
 
 	m.Set(ch, "a")
 	ch2 := testutil.MustNewCommonHandle(t, 101, "abc")
 	m.Set(ch2, "b")
 	ch3 := testutil.MustNewCommonHandle(t, 99, "def")
 	m.Set(ch3, "c")
-	assert.Equal(t, 3, m.Len())
+	require.Equal(t, 3, m.Len())
 
 	cnt := 0
 	m.Range(func(h Handle, val interface{}) bool {
 		cnt++
 		if h.Equal(ch) {
-			assert.Equal(t, "a", val)
+			require.Equal(t, "a", val)
 		} else if h.Equal(ch2) {
-			assert.Equal(t, "b", val)
+			require.Equal(t, "b", val)
 		} else {
-			assert.Equal(t, "c", val)
+			require.Equal(t, "c", val)
 		}
 		if cnt == 2 {
 			return false
@@ -211,7 +210,7 @@ func TestHandleMap(t *testing.T) {
 		return true
 	})
 
-	assert.Equal(t, 2, cnt)
+	require.Equal(t, 2, cnt)
 }
 
 func TestHandleMapWithPartialHandle(t *testing.T) {
@@ -230,44 +229,44 @@ func TestHandleMapWithPartialHandle(t *testing.T) {
 
 	dec := types.NewDecFromInt(1)
 	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
-	assert.Nil(t, err)
-	assert.Less(t, len(encoded), 9)
+	require.Nil(t, err)
+	require.Less(t, len(encoded), 9)
 
 	ch, err := NewCommonHandle(encoded)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	m.Set(ch, 4)
 
 	v, ok := m.Get(ph1)
-	assert.True(t, ok)
-	assert.Equal(t, 1, v)
+	require.True(t, ok)
+	require.Equal(t, 1, v)
 
 	v, ok = m.Get(ph2)
-	assert.True(t, ok)
-	assert.Equal(t, 2, v)
+	require.True(t, ok)
+	require.Equal(t, 2, v)
 
 	v, ok = m.Get(ph3)
-	assert.True(t, ok)
-	assert.Equal(t, 5, v)
+	require.True(t, ok)
+	require.Equal(t, 5, v)
 
 	v, ok = m.Get(ih)
-	assert.True(t, ok)
-	assert.Equal(t, 3, v)
+	require.True(t, ok)
+	require.Equal(t, 3, v)
 
 	v, ok = m.Get(ch)
-	assert.True(t, ok)
-	assert.Equal(t, 4, v)
+	require.True(t, ok)
+	require.Equal(t, 4, v)
 
-	assert.Equal(t, 5, m.Len())
+	require.Equal(t, 5, m.Len())
 
 	m.Delete(ph1)
 	v, ok = m.Get(ph1)
-	assert.False(t, ok)
-	assert.Nil(t, v)
-	assert.Equal(t, 4, m.Len())
+	require.False(t, ok)
+	require.Nil(t, v)
+	require.Equal(t, 4, m.Len())
 
 	// not panic for delete non exsits handle
 	m.Delete(NewPartitionHandle(3, IntHandle(1)))
-	assert.Equal(t, 4, m.Len())
+	require.Equal(t, 4, m.Len())
 }
 
 func TestMemAwareHandleMapWithPartialHandle(t *testing.T) {
@@ -286,32 +285,32 @@ func TestMemAwareHandleMapWithPartialHandle(t *testing.T) {
 
 	dec := types.NewDecFromInt(1)
 	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
-	assert.Nil(t, err)
-	assert.Less(t, len(encoded), 9)
+	require.Nil(t, err)
+	require.Less(t, len(encoded), 9)
 
 	ch, err := NewCommonHandle(encoded)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	m.Set(ch, 4)
 
 	v, ok := m.Get(ph1)
-	assert.True(t, ok)
-	assert.Equal(t, 1, v)
+	require.True(t, ok)
+	require.Equal(t, 1, v)
 
 	v, ok = m.Get(ph2)
-	assert.True(t, ok)
-	assert.Equal(t, 2, v)
+	require.True(t, ok)
+	require.Equal(t, 2, v)
 
 	v, ok = m.Get(ph3)
-	assert.True(t, ok)
-	assert.Equal(t, 5, v)
+	require.True(t, ok)
+	require.Equal(t, 5, v)
 
 	v, ok = m.Get(ih)
-	assert.True(t, ok)
-	assert.Equal(t, 3, v)
+	require.True(t, ok)
+	require.Equal(t, 3, v)
 
 	v, ok = m.Get(ch)
-	assert.True(t, ok)
-	assert.Equal(t, 4, v)
+	require.True(t, ok)
+	require.Equal(t, 4, v)
 }
 
 func TestKeyRangeDefinition(t *testing.T) {

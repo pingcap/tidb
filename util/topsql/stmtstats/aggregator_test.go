@@ -29,7 +29,7 @@ func Test_SetupCloseAggregator(t *testing.T) {
 	for n := 0; n < 3; n++ {
 		SetupAggregator()
 		time.Sleep(100 * time.Millisecond)
-		assert.False(t, globalAggregator.closed())
+		require.False(t, globalAggregator.closed())
 		CloseAggregator()
 		time.Sleep(100 * time.Millisecond)
 		assert.True(t, globalAggregator.closed())
@@ -46,7 +46,7 @@ func Test_RegisterUnregisterCollector(t *testing.T) {
 	assert.True(t, ok)
 	UnregisterCollector(collector)
 	_, ok = globalAggregator.collectors.Load(collector)
-	assert.False(t, ok)
+	require.False(t, ok)
 }
 
 func Test_aggregator_register_collect(t *testing.T) {
@@ -65,7 +65,7 @@ func Test_aggregator_register_collect(t *testing.T) {
 		total.Merge(data)
 	}))
 	a.aggregate()
-	assert.NotEmpty(t, total)
+	require.NotEmpty(t, total)
 	assert.Equal(t, uint64(1), total[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
 	assert.Equal(t, uint64(time.Millisecond.Nanoseconds()), total[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
 }
@@ -75,7 +75,7 @@ func Test_aggregator_run_close(t *testing.T) {
 	assert.True(t, a.closed())
 	a.start()
 	time.Sleep(100 * time.Millisecond)
-	assert.False(t, a.closed())
+	require.False(t, a.closed())
 	a.close()
 	assert.True(t, a.closed())
 

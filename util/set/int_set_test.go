@@ -32,14 +32,14 @@ func TestIntSet(t *testing.T) {
 		set.Insert(vals[i])
 		set.Insert(vals[i])
 	}
-	assert.Equal(len(vals), set.Count())
+	require.Equal(len(vals), set.Count())
 
-	assert.Equal(len(vals), len(set))
+	require.Equal(len(vals), len(set))
 	for i := range vals {
-		assert.True(set.Exist(vals[i]))
+		require.True(set.Exist(vals[i]))
 	}
 
-	assert.False(set.Exist(11))
+	require.False(set.Exist(11))
 }
 
 func TestInt64Set(t *testing.T) {
@@ -55,16 +55,16 @@ func TestInt64Set(t *testing.T) {
 		set.Insert(vals[i])
 	}
 
-	assert.Equal(len(vals), len(set))
+	require.Equal(len(vals), len(set))
 	for i := range vals {
-		assert.True(set.Exist(vals[i]))
+		require.True(set.Exist(vals[i]))
 	}
 
-	assert.False(set.Exist(11))
+	require.False(set.Exist(11))
 
 	set = NewInt64Set(1, 2, 3, 4, 5, 6)
 	for i := 1; i < 7; i++ {
-		assert.True(set.Exist(int64(i)))
+		require.True(set.Exist(int64(i)))
 	}
-	assert.False(set.Exist(7))
+	require.False(set.Exist(7))
 }

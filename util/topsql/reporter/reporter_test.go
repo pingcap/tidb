@@ -488,7 +488,7 @@ func TestReporterWorker(t *testing.T) {
 	ch := make(chan *ReportData, 1)
 	ds := newMockDataSink(ch)
 	err := r.Register(ds)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	r.Collect(nil)
 	r.Collect([]collector.SQLCPUTimeRecord{{
@@ -515,7 +515,7 @@ func TestReporterWorker(t *testing.T) {
 		require.Fail(t, "no data in ch")
 	}
 
-	assert.Len(t, data.DataRecords, 1)
+	require.Len(t, data.DataRecords, 1)
 	assert.Equal(t, []byte("S1"), data.DataRecords[0].SqlDigest)
 	assert.Equal(t, []byte("P1"), data.DataRecords[0].PlanDigest)
 }
