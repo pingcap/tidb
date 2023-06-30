@@ -55,6 +55,8 @@ func (s *StatsCache) Load() *StatsCacheWrapper {
 
 // Version returns the version of the cached stats.
 func (s *StatsCache) Version() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.Load().Version()
 }
 
@@ -69,8 +71,9 @@ func (s *StatsCache) UpdateCache(newCache StatsCacheWrapper) (updated bool, newC
 	oldCache := s.cache.Load()
 	newCost = newCache.Cost()
 	s.memTracker.Consume(newCost - oldCache.Cost())
-	s.cache.Store(&newCache)
+	old := s.cache.Swap(&newCache)
 	updated = true
+	old.Release()
 	s.mu.Unlock()
 	return updated, newCost
 }
@@ -82,8 +85,32 @@ func (s *StatsCache) CreateAndUpdateCache(statsCache *StatsCacheWrapper, tables 
 	newCache := statsCache.Update(tables, deletedIDs, opts...)
 	newCost = newCache.Cost()
 	s.memTracker.Consume(newCost - oldCache.Cost())
-	s.cache.Store(&newCache)
+	old := s.cache.Swap(&newCache)
+	old.Release()
+	updated = true
 	updated = true
 	s.mu.Unlock()
 	return updated, newCost
+}
+
+// Values returns all the cached stats.
+func (s *StatsCache) Values() []*statistics.Table {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cache := s.Load()
+	return cache.Values()
+}
+
+// Get returns the cached stats of the table with the given ID.
+func (s *StatsCache) Get(id int64) (*statistics.Table, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Load().Get(id)
+}
+
+// GetByQuery returns the cached stats of the table with the given query ID.
+func (s *StatsCache) GetByQuery(id int64) (*statistics.Table, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Load().GetByQuery(id)
 }

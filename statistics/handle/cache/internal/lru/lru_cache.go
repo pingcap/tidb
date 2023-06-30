@@ -300,6 +300,9 @@ func (s *StatsInnerCache) Version() uint64 {
 	return s.maxTableStatsVersion
 }
 
+// Release implements the Cache interface.
+func (*StatsInnerCache) Release() {}
+
 // SetCapacity implements statsCacheInner
 func (s *StatsInnerCache) SetCapacity(c int64) {
 	s.Lock()

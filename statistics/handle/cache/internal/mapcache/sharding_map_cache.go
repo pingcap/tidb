@@ -123,6 +123,7 @@ func (m *MapCache) FreshMemUsage() {
 	}
 }
 
+// Release implements statsCacheInner
 func (m *MapCache) Release() {
 	for _, table := range m.tables {
 		table.Release()
@@ -144,10 +145,10 @@ func (m *MapCache) Copy() internal.StatsCacheInner {
 }
 
 // SetCapacity implements statsCacheInner
-func (m *MapCache) SetCapacity(int64) {}
+func (*MapCache) SetCapacity(int64) {}
 
 // Front implements statsCacheInner
-func (m *MapCache) Front() int64 {
+func (*MapCache) Front() int64 {
 	return 0
 }
 

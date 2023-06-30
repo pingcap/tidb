@@ -532,13 +532,13 @@ func DurationToTS(d time.Duration) uint64 {
 
 // UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 func (h *Handle) UpdateStatsHealthyMetrics() {
-	v := h.statsCache.Load()
-	if v == nil {
+	v := h.statsCache.Values()
+	if len(v) == 0 {
 		return
 	}
 
 	distribution := make([]int64, 5)
-	for _, tbl := range v.Values() {
+	for _, tbl := range v {
 		healthy, ok := tbl.GetStatsHealthy()
 		if !ok {
 			continue
@@ -981,21 +981,21 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 		tbl.PhysicalID = pid
 		return tbl
 	}
-	statsCache := h.statsCache.Load()
 	var ok bool
 	option := &cache.TableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
 	}
 	if option.ByQuery() {
-		tbl, ok = statsCache.GetByQuery(pid)
+		tbl, ok = h.statsCache.GetByQuery(pid)
 	} else {
-		tbl, ok = statsCache.Get(pid)
+		tbl, ok = h.statsCache.Get(pid)
 	}
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
 		if tblInfo.GetPartitionInfo() == nil || h.statsCacheLen() < 64 {
+			statsCache := h.statsCache.Load()
 			h.createAndUpdateStatsCache(statsCache, []*statistics.Table{tbl}, nil)
 		}
 		return tbl
