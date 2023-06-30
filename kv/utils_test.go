@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIncInt64(t *testing.T) {
