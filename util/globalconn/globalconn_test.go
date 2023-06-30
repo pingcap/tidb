@@ -107,17 +107,17 @@ func TestGlobalConnID(t *testing.T) {
 
 	// exceeds int64
 	_, _, err = globalconn.ParseConnID(0x80000000_00000321)
-	require.NotNil(t, t, err)
+	require.NotNil(t, err)
 
 	// 64bits truncated
 	_, isTruncated, err = globalconn.ParseConnID(101)
-	require.Nil(t, t, err)
+	require.Nil(t, err)
 	require.True(t, isTruncated)
 
 	// 64bits
 	id1 := (uint64(1001) << 41) | (uint64(123) << 1) | 1
 	gcid1, isTruncated, err := globalconn.ParseConnID(id1)
-	require.Nil(t, t, err)
+	require.Nil(t, err)
 	require.False(t, isTruncated)
 	require.Equal(t, uint64(1001), gcid1.ServerID)
 	require.Equal(t, uint64(123), gcid1.LocalConnID)
@@ -125,12 +125,12 @@ func TestGlobalConnID(t *testing.T) {
 
 	// exceeds uint32
 	_, _, err = globalconn.ParseConnID(0x1_00000320)
-	require.NotNil(t, t, err)
+	require.NotNil(t, err)
 
 	// 32bits
 	id2 := (uint64(2002) << 21) | (uint64(321) << 1)
 	gcid2, isTruncated, err := globalconn.ParseConnID(id2)
-	require.Nil(t, t, err)
+	require.Nil(t, err)
 	require.False(t, isTruncated)
 	require.Equal(t, uint64(2002), gcid2.ServerID)
 	require.Equal(t, uint64(321), gcid2.LocalConnID)
