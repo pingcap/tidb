@@ -638,16 +638,16 @@ func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error
 		outputOffsets := e.tableRequest.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
 
-		// For tableScan, only need partitionHandle when e.keepOrder == true
-		// and get parition handle from indexScan.task
+		// For TableScan, need partitionHandle in `indexOrder` when e.keepOrder == true
 		needPartitionHandle = (e.index.Global || e.partitionTableMode) && e.keepOrder
 		// no ExtraPidColID here, because TableScan shouldn't contain them.
 		hasExtraCol = col.ID == model.ExtraPhysTblID
 	}
 
 	// TODO: fix global index related bugs later
-	// For `SelectLock`, the `ExtraPhysTblID` will contained in schema,
-	// but it needn't partition handle to keep order.
+	// There will be two needPartitionHandle != hasExtraCol situations.
+	// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.
+	// `ExtraPhysTblID` will be used in `SelectLock` when `needPartitionHandle` == false and `hasExtraCol` == true.
 	if needPartitionHandle && !hasExtraCol && !e.index.Global {
 		return needPartitionHandle, errors.Errorf("Internal error, needPartitionHandle != ret, tp(%d)", tp)
 	}

@@ -610,8 +610,9 @@ func (w *partialTableWorker) needPartitionHandle() (bool, error) {
 	// no ExtraPidColID here, because a clustered index couldn't be a global index.
 	hasExtraCol := col.ID == model.ExtraPhysTblID
 
-	// For `SelectLock`, the `ExtraPhysTblID` will contained in schema,
-	// but it needn't partition handle to keep order.
+	// There will be two needPartitionHandle != hasExtraCol situations.
+	// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.
+	// `ExtraPhysTblID` will be used in `SelectLock` when `needPartitionHandle` == false and `hasExtraCol` == true.
 	if needPartitionHandle && !hasExtraCol {
 		return needPartitionHandle, errors.Errorf("Internal error, needPartitionHandle != ret")
 	}
@@ -1470,8 +1471,9 @@ func (w *partialIndexWorker) needPartitionHandle() (bool, error) {
 	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
 	hasExtraCol := col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
 
-	// For `SelectLock`, the `ExtraPhysTblID` will contained in schema,
-	// but it needn't partition handle to keep order.
+	// There will be two needPartitionHandle != hasExtraCol situations.
+	// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.
+	// `ExtraPhysTblID` will be used in `SelectLock` when `needPartitionHandle` == false and `hasExtraCol` == true.
 	if needPartitionHandle && !hasExtraCol {
 		return needPartitionHandle, errors.Errorf("Internal error, needPartitionHandle != ret")
 	}
