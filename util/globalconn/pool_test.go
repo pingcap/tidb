@@ -75,7 +75,6 @@ func TestAutoIncPool(t *testing.T) {
 }
 
 func TestLockFreePoolBasic(t *testing.T) {
-
 	const SizeInBits uint32 = 8
 	const Size uint64 = 1<<SizeInBits - 1
 
