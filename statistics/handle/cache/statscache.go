@@ -21,12 +21,14 @@ import (
 	"github.com/pingcap/tidb/util/syncutil"
 )
 
+// StatsCache is used to cache the stats of a table.
 type StatsCache struct {
 	cache      atomic.Pointer[StatsCacheWrapper]
 	memTracker *memory.Tracker
 	mu         syncutil.Mutex
 }
 
+// NewStatsCache creates a new StatsCache.
 func NewStatsCache() *StatsCache {
 	newCache := NewStatsCacheWrapper()
 	result := StatsCache{
@@ -45,18 +47,22 @@ func (s *StatsCache) Clear() {
 	s.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 }
 
+// Load loads the cached stats from the cache.
 func (s *StatsCache) Load() *StatsCacheWrapper {
 	return s.cache.Load()
 }
 
+// Version returns the version of the cached stats.
 func (s *StatsCache) Version() uint64 {
 	return s.Load().version
 }
 
+// GetMemConsumed returns the memory usage of the cache.
 func (s *StatsCache) GetMemConsumed() int64 {
 	return s.memTracker.BytesConsumed()
 }
 
+// UpdateCache updates the cache with the new cache.
 func (s *StatsCache) UpdateCache(newCache StatsCacheWrapper) (updated bool, newCost int64) {
 	s.mu.Lock()
 	oldCache := s.cache.Load()

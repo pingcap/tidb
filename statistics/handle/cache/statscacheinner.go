@@ -53,6 +53,7 @@ func WithTableStatsByQuery() TableStatsOpt {
 	}
 }
 
+// NewStatsCacheWrapper creates a new StatsCacheWrapper.
 func NewStatsCacheWrapper() *StatsCacheWrapper {
 	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
 	if enableQuota {
