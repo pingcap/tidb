@@ -4400,7 +4400,8 @@ func TestMutipleReplaceAndInsertInOneSession(t *testing.T) {
 
 func TestHandleColumnWithOnUpdateCurrentTimestamp(t *testing.T) {
 	// Test https://github.com/pingcap/tidb/issues/44565
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a timestamp on update current_timestamp(0), b int, primary key (a) clustered, key idx (a))")
