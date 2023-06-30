@@ -625,28 +625,33 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 
 func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {
 	var col *expression.Column
-	var needPartitionHandle, ret bool
+	var needPartitionHandle, hasExtraCol bool
 	if tp == getHandleFromIndex {
 		cols := e.idxPlans[0].Schema().Columns
 		outputOffsets := e.dagPB.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
-		needPartitionHandle = e.index.Global || (e.partitionTableMode && e.keepOrder)
-		ret = col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
+		// For indexScan, need partitionHandle when global index or keepOrder with partitionTable
+		needPartitionHandle = e.index.Global || e.partitionTableMode && e.keepOrder
+		hasExtraCol = col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
 	} else {
 		cols := e.tblPlans[0].Schema().Columns
 		outputOffsets := e.tableRequest.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
 
-		needPartitionHandle = e.index.Global || (e.partitionTableMode && e.keepOrder)
+		// For TableScan, need partitionHandle in `indexOrder` when e.keepOrder == true
+		needPartitionHandle = (e.index.Global || e.partitionTableMode) && e.keepOrder
 		// no ExtraPidColID here, because TableScan shouldn't contain them.
-		ret = col.ID == model.ExtraPhysTblID
+		hasExtraCol = col.ID == model.ExtraPhysTblID
 	}
 
 	// TODO: fix global index related bugs later
-	if needPartitionHandle != ret && !e.index.Global {
-		return ret, errors.Errorf("Internal error, needPartitionHandle(%t) != ret(%t), tp(%d)", needPartitionHandle, ret, tp)
+	// There will be two needPartitionHandle != hasExtraCol situations.
+	// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.
+	// `ExtraPhysTblID` will be used in `SelectLock` when `needPartitionHandle` == false and `hasExtraCol` == true.
+	if needPartitionHandle && !hasExtraCol && !e.index.Global {
+		return needPartitionHandle, errors.Errorf("Internal error, needPartitionHandle != ret, tp(%d)", tp)
 	}
-	return ret, nil
+	return needPartitionHandle, nil
 }
 
 func (e *IndexLookUpExecutor) isCommonHandle() bool {
