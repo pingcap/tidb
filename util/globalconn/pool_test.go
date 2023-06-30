@@ -382,7 +382,7 @@ func TestLockBasedPoolConcurrencySafety(t *testing.T) {
 	)
 
 	expected, actual = testLockBasedPoolConcurrency(sizeInBits, producers, consumers, requests)
-	require.Equal(t, t, expected, actual)
+	require.Equal(t, expected, actual)
 }
 
 type poolConcurrencyTestCase struct {
