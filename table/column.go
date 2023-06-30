@@ -47,6 +47,8 @@ type Column struct {
 	*model.ColumnInfo
 	// If this column is a generated column, the expression will be stored here.
 	GeneratedExpr ast.ExprNode
+	// GetGeneratedExpr gets the generated column exprNode. If we want to rewrite the node, please use this function to avoid data race.
+	GetGeneratedExpr func() ast.ExprNode
 	// If this column has default expr value, this expression will be stored here.
 	DefaultExpr ast.ExprNode
 }
@@ -93,6 +95,7 @@ func FindColLowerCase(cols []*Column, name string) *Column {
 func ToColumn(col *model.ColumnInfo) *Column {
 	return &Column{
 		col,
+		nil,
 		nil,
 		nil,
 	}

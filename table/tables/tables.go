@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -147,6 +148,13 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 				return nil, err
 			}
 			col.GeneratedExpr = expr
+			newCol := col
+			col.GetGeneratedExpr = func() ast.ExprNode {
+				// The error is checked before, so we can ignore them here.
+				expr, _ := generatedexpr.ParseExpression(newCol.GeneratedExprString)
+				expr, _ = generatedexpr.SimpleResolveName(expr, tblInfo)
+				return expr
+			}
 		}
 		// default value is expr.
 		if col.DefaultIsExpr {
