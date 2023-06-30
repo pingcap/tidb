@@ -25,23 +25,8 @@ import (
 )
 
 const (
-<<<<<<< HEAD
-	AnnPodNameKey        string = "tidb.pingcap.com/pod-name"
-	AnnTemporaryVolumeID string = "temporary/volume-id"
-	EC2K8SClusterNameKey string = "aws:eks:cluster-name"
-
 	pollingPendingSnapshotInterval = 30 * time.Second
 	errCodeTooManyPendingSnapshots = "PendingSnapshotLimitExceeded"
-
-	SourcePvcNameKey   string = "source/pvcName"
-	SourceVolumeIdKey  string = "source/VolumeId"
-	SourceTikvNameKey  string = "source/TikvName"
-	SourceNamespaceKey string = "source/Namespace"
-	SourceContextKey   string = "source/context"
-=======
-	pollingPendingSnapshotInterval = 30 * time.Second
-	errCodeTooManyPendingSnapshots = "PendingSnapshotLimitExceeded"
->>>>>>> ae82c20fc81 (br: ebs tags refactoring (#44381))
 )
 
 type EC2Session struct {
@@ -145,21 +130,10 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				instanceSpecification.SetInstanceId(aws.StringValue(ec2InstanceId)).SetExcludeBootVolume(true).SetExcludeDataVolumeIds(excludedVolumeIDs)
 
 				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
-<<<<<<< HEAD
 
-				resp, err := e.createSnapshotsWithRetry(context.TODO(), &createSnapshotInput)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				err = taggingAndFillResult(resp, vst, k8sClusterName)
-				if err != nil {
-					return errors.Trace(err)
-				}
-=======
 				// Copy tags from source volume
 				createSnapshotInput.SetCopyTagsFromSource("volume")
 				resp, err := e.createSnapshotsWithRetry(context.TODO(), &createSnapshotInput)
->>>>>>> ae82c20fc81 (br: ebs tags refactoring (#44381))
 
 				if err != nil {
 					return errors.Trace(err)
