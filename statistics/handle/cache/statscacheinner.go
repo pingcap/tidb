@@ -289,7 +289,7 @@ func getColLengthTables(ctx context.Context, sctx sessionctx.Context, tableIDs .
 }
 
 // GetDataAndIndexLength gets the data and index length of the table.
-func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64) (uint64, uint64) {
+func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64) (dataLength, indexLength uint64) {
 	columnLength := make(map[string]uint64, len(info.Columns))
 	for _, col := range info.Columns {
 		if col.State != model.StatePublic {
@@ -303,7 +303,6 @@ func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physic
 			columnLength[col.Name.L] = length
 		}
 	}
-	dataLength, indexLength := uint64(0), uint64(0)
 	for _, length := range columnLength {
 		dataLength += length
 	}
