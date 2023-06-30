@@ -20,7 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle/internal/cache"
+	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/statistics/handle/metrics"
 )
 
@@ -276,7 +276,7 @@ func (s *StatsInnerCache) FreshMemUsage() {
 }
 
 // Copy implements statsCacheInner
-func (s *StatsInnerCache) Copy() cache.StatsCacheInner {
+func (s *StatsInnerCache) Copy() internal.StatsCacheInner {
 	s.RLock()
 	defer s.RUnlock()
 	newCache := NewStatsLruCache(s.lru.capacity)
