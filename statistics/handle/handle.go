@@ -617,7 +617,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
-	h.updateStatsCache(oldCache.Update(tables, deletedTableIDs, opts...))
+	h.createAndUpdateStatsCache(oldCache, tables, deletedTableIDs, opts...)
 	return nil
 }
 
@@ -996,7 +996,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
 		if tblInfo.GetPartitionInfo() == nil || h.statsCacheLen() < 64 {
-			h.updateStatsCache(statsCache.Update([]*statistics.Table{tbl}, nil))
+			h.createAndUpdateStatsCache(statsCache, []*statistics.Table{tbl}, nil)
 		}
 		return tbl
 	}
@@ -1012,6 +1012,14 @@ func (h *Handle) statsCacheLen() int {
 // Callers should add retry loop if necessary.
 func (h *Handle) updateStatsCache(newCache cache.StatsCacheWrapper) (updated bool) {
 	updated, newCost := h.statsCache.UpdateCache(newCache)
+	if updated {
+		handle_metrics.CostGauge.Set(float64(newCost))
+	}
+	return
+}
+
+func (h *Handle) createAndUpdateStatsCache(newCache *cache.StatsCacheWrapper, tables []*statistics.Table, deletedIDs []int64, opts ...cache.TableStatsOpt) (updated bool) {
+	updated, newCost := h.statsCache.CreateAndUpdateCache(newCache, tables, deletedIDs, opts...)
 	if updated {
 		handle_metrics.CostGauge.Set(float64(newCost))
 	}
@@ -1104,7 +1112,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 	}
 	tbl = tbl.Copy()
 	tbl.Columns[c.ID] = colHist
-	if h.updateStatsCache(oldCache.Update([]*statistics.Table{tbl}, nil)) {
+	if h.createAndUpdateStatsCache(oldCache, []*statistics.Table{tbl}, nil) {
 		statistics.HistogramNeededItems.Delete(col)
 	}
 	return nil
@@ -1157,7 +1165,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 	}
 	tbl = tbl.Copy()
 	tbl.Indices[idx.ID] = idxHist
-	if h.updateStatsCache(oldCache.Update([]*statistics.Table{tbl}, nil)) {
+	if h.createAndUpdateStatsCache(oldCache, []*statistics.Table{tbl}, nil) {
 		statistics.HistogramNeededItems.Delete(idx)
 	}
 	return nil
@@ -1800,7 +1808,7 @@ func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 		}
 		newTbl := tbl.Copy()
 		delete(newTbl.ExtendedStats.Stats, statsName)
-		if h.updateStatsCache(oldCache.Update([]*statistics.Table{newTbl}, nil)) {
+		if h.createAndUpdateStatsCache(oldCache, []*statistics.Table{newTbl}, nil) {
 			return
 		}
 		if retry == 1 {
@@ -1833,7 +1841,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 			}
 			tables = append(tables, t)
 		}
-		if h.updateStatsCache(oldCache.Update(tables, nil)) {
+		if h.createAndUpdateStatsCache(oldCache, tables, nil) {
 			return nil
 		}
 	}

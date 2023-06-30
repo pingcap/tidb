@@ -17,6 +17,7 @@ package cache
 import (
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/syncutil"
 )
@@ -25,7 +26,7 @@ import (
 type StatsCache struct {
 	cache      atomic.Pointer[StatsCacheWrapper]
 	memTracker *memory.Tracker
-	mu         syncutil.Mutex
+	mu         syncutil.RWMutex
 }
 
 // NewStatsCache creates a new StatsCache.
@@ -66,6 +67,19 @@ func (s *StatsCache) GetMemConsumed() int64 {
 func (s *StatsCache) UpdateCache(newCache StatsCacheWrapper) (updated bool, newCost int64) {
 	s.mu.Lock()
 	oldCache := s.cache.Load()
+	newCost = newCache.Cost()
+	s.memTracker.Consume(newCost - oldCache.Cost())
+	s.cache.Store(&newCache)
+	updated = true
+	s.mu.Unlock()
+	return updated, newCost
+}
+
+// CreateAndUpdateCache creates a new cache and updates the cache with the new cache.
+func (s *StatsCache) CreateAndUpdateCache(statsCache *StatsCacheWrapper, tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) (updated bool, newCost int64) {
+	s.mu.Lock()
+	oldCache := s.cache.Load()
+	newCache := statsCache.Update(tables, deletedIDs, opts...)
 	newCost = newCache.Cost()
 	s.memTracker.Consume(newCost - oldCache.Cost())
 	s.cache.Store(&newCache)

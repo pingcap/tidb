@@ -19,31 +19,23 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 )
 
-type cacheItem struct {
-	value *statistics.Table
-	key   int64
-	cost  int64
-}
-
-func (c cacheItem) copy() cacheItem {
-	return cacheItem{
-		key:   c.key,
-		value: c.value,
-		cost:  c.cost,
-	}
-}
+const tablesCacheShardCnt = 256
 
 // MapCache is a cache based on map.
 type MapCache struct {
-	tables               map[int64]cacheItem
+	tables               [tablesCacheShardCnt]*tableCacheView
 	memUsage             int64
 	maxTableStatsVersion uint64
 }
 
 // NewMapCache creates a new map cache.
 func NewMapCache() *MapCache {
+	var tables [tablesCacheShardCnt]*tableCacheView
+	for v := range tables {
+		tables[v] = newTableCacheView()
+	}
 	return &MapCache{
-		tables:   make(map[int64]cacheItem),
+		tables:   tables,
 		memUsage: 0,
 	}
 }
@@ -53,116 +45,109 @@ func (m *MapCache) GetByQuery(k int64) (*statistics.Table, bool) {
 	return m.Get(k)
 }
 
-// Get implements StatsCacheInner
+// Get implements statsCacheInner
 func (m *MapCache) Get(k int64) (*statistics.Table, bool) {
-	v, ok := m.tables[k]
-	return v.value, ok
+	table := m.tables[k%tablesCacheShardCnt]
+	return table.Get(k)
 }
 
-// PutByQuery implements StatsCacheInner
+// PutByQuery implements statsCacheInner
 func (m *MapCache) PutByQuery(k int64, v *statistics.Table) {
 	m.Put(k, v)
 }
 
-// Put implements StatsCacheInner
+// Put implements statsCacheInner
 func (m *MapCache) Put(k int64, v *statistics.Table) {
-	if v.Version > m.maxTableStatsVersion {
-		m.maxTableStatsVersion = v.Version
-	}
-	item, ok := m.tables[k]
-	if ok {
-		oldCost := item.cost
-		newCost := v.MemoryUsage().TotalMemUsage
-		item.value = v
-		item.cost = newCost
-		m.tables[k] = item
-		m.memUsage += newCost - oldCost
-		return
-	}
-	cost := v.MemoryUsage().TotalMemUsage
-	item = cacheItem{
-		key:   k,
-		value: v,
-		cost:  cost,
-	}
-	m.tables[k] = item
-	m.memUsage += cost
+	table := m.tables[k%tablesCacheShardCnt]
+	delta := table.Put(k, v)
+	m.memUsage += delta
 }
 
-// Del implements StatsCacheInner
+// Del implements statsCacheInner
 func (m *MapCache) Del(k int64) {
-	item, ok := m.tables[k]
-	if !ok {
-		return
-	}
-	delete(m.tables, k)
-	m.memUsage -= item.cost
+	table := m.tables[k%tablesCacheShardCnt]
+	m.memUsage -= table.Del(k)
 }
 
-// Cost implements StatsCacheInner
+// Cost implements statsCacheInner
 func (m *MapCache) Cost() int64 {
 	return m.memUsage
 }
 
-// Keys implements StatsCacheInner
+// Keys implements statsCacheInner
 func (m *MapCache) Keys() []int64 {
 	ks := make([]int64, 0, len(m.tables))
-	for k := range m.tables {
-		ks = append(ks, k)
+	for _, table := range m.tables {
+		table.Iterate(func(k int64, _ *statistics.Table) {
+			ks = append(ks, k)
+		})
 	}
 	return ks
 }
 
-// Values implements StatsCacheInner
+// Values implements statsCacheInner
 func (m *MapCache) Values() []*statistics.Table {
 	vs := make([]*statistics.Table, 0, len(m.tables))
-	for _, v := range m.tables {
-		vs = append(vs, v.value)
+	for _, table := range m.tables {
+		table.Iterate(func(_ int64, v *statistics.Table) {
+			vs = append(vs, v)
+		})
 	}
 	return vs
 }
 
-// Map implements StatsCacheInner
+// Map implements statsCacheInner
 func (m *MapCache) Map() map[int64]*statistics.Table {
 	t := make(map[int64]*statistics.Table, len(m.tables))
-	for k, v := range m.tables {
-		t[k] = v.value
+	for _, table := range m.tables {
+		table.Iterate(func(k int64, v *statistics.Table) {
+			t[k] = v
+		})
 	}
 	return t
 }
 
-// Len implements StatsCacheInner
+// Len implements statsCacheInner
 func (m *MapCache) Len() int {
-	return len(m.tables)
+	var s int
+	for idx := range m.tables {
+		s += m.tables[idx].Len()
+	}
+	return s
 }
 
-// FreshMemUsage implements StatsCacheInner
+// FreshMemUsage implements statsCacheInner
 func (m *MapCache) FreshMemUsage() {
-	for _, v := range m.tables {
-		oldCost := v.cost
-		newCost := v.value.MemoryUsage().TotalMemUsage
-		m.memUsage += newCost - oldCost
+	for _, table := range m.tables {
+		m.memUsage += table.FreshMemUsage()
 	}
 }
 
-// Copy implements StatsCacheInner
+func (m *MapCache) Release() {
+	for _, table := range m.tables {
+		table.Release()
+	}
+}
+
+// Copy implements statsCacheInner
 func (m *MapCache) Copy() internal.StatsCacheInner {
+	var tables [tablesCacheShardCnt]*tableCacheView
+	for v := range tables {
+		tables[v] = (*m.tables[v]).Clone()
+	}
 	newM := &MapCache{
-		tables:               make(map[int64]cacheItem, len(m.tables)),
+		tables:               tables,
 		memUsage:             m.memUsage,
 		maxTableStatsVersion: m.maxTableStatsVersion,
-	}
-	for k, v := range m.tables {
-		newM.tables[k] = v.copy()
 	}
 	return newM
 }
 
-// SetCapacity implements StatsCacheInner
-func (*MapCache) SetCapacity(int64) {}
+// SetCapacity implements statsCacheInner
+func (m *MapCache) SetCapacity(int64) {}
 
-// Front implements StatsCacheInner
-func (*MapCache) Front() int64 {
+// Front implements statsCacheInner
+func (m *MapCache) Front() int64 {
 	return 0
 }
 
