@@ -5458,7 +5458,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 
 		var corColHashCodes [][]byte
 		for _, corCol := range corCols {
-			corColHashCodes = append(corColHashCodes, corCol.HashCode(b.ctx.GetSessionVars().StmtCtx))
+			corColHashCodes = append(corColHashCodes, getCorColHashCode(corCol))
 		}
 
 		producer = &cteProducer{
