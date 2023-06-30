@@ -5,10 +5,10 @@
 
 ## Motivation
 
-During query execution in TiDB, the associated TiKV requests are typically processed quickly, 
-taking only a few milliseconds. However, if there is disk IO or network latency jitter on a specified  
-TiKV node, the duration of these requests may spike to several seconds or more. This usually happens when 
-there is an EBS issue like the EBS is repairing its replica.
+The associated TiKV requests are typically processed quickly, taking only a few milliseconds. However, if 
+there is disk IO or network latency jitter on a specified TiKV node, the duration of these requests may spike 
+to several seconds or more. This usually happens when there is an EBS issue like the EBS is repairing its 
+replica. As a result, the related query latency may spike a lot.
 
 Currently, the timeout limit for the TiKV requests is fixed and cannot be adjusted.  For example:
 - `ReadTimeoutShort`: [30 seconds](https://github.com/tikv/client-go/blob/ce9203ef66e99dcc8b14f68777c520830ba99099/internal/client/client.go#L82), which is used for the Get RPC request.
