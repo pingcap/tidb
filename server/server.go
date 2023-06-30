@@ -41,6 +41,7 @@ import (
 	"os/user"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -149,6 +150,20 @@ type Server struct {
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
 	printMDLLogTime     time.Time
+}
+
+// GetStatusServerAddr gets statusServer address for MppCoordinatorManager usage
+func (s *Server) GetStatusServerAddr() (on bool, addr string) {
+	if !s.cfg.Status.ReportStatus {
+		return false, ""
+	}
+	if strings.Contains(s.statusAddr, config.DefStatusHost) {
+		if len(s.cfg.AdvertiseAddress) != 0 {
+			return true, strings.ReplaceAll(s.statusAddr, config.DefStatusHost, s.cfg.AdvertiseAddress)
+		}
+		return false, ""
+	}
+	return true, s.statusAddr
 }
 
 // ConnectionCount gets current connection count.
