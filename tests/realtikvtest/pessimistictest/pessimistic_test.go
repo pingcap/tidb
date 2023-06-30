@@ -3287,8 +3287,26 @@ func TestRCUpdateWithPointGet(t *testing.T) {
 	tk1.MustExec("commit")
 }
 
+func mustTimeout[T interface{}](t *testing.T, ch <-chan T, timeout time.Duration) {
+	select {
+	case res := <-ch:
+		require.FailNow(t, fmt.Sprintf("received signal when not expected: %v", res))
+	case <-time.After(timeout):
+	}
+}
+func mustRecv[T interface{}](t *testing.T, ch <-chan T) T {
+	select {
+	case <-time.After(time.Second):
+	case res := <-ch:
+		return res
+	}
+	require.FailNow(t, "signal not received after waiting for one second")
+	panic("unreachable")
+}
+
 func TestIssue43243(t *testing.T) {
-	store, domain := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, domain, clean := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	defer clean()
 
 	if *realtikvtest.WithRealTiKV {
 		// Disable in-memory pessimistic lock since it cannot be scanned in current implementation.
