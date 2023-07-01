@@ -415,7 +415,7 @@ func (m *ownerManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
 func GetOwnerOpValue(ctx context.Context, etcdCli *clientv3.Client, ownerPath, logPrefix string) (OpType, error) {
 	// It's using for testing.
 	if etcdCli == nil {
-		return mockOwnerOpValue, nil
+		return *mockOwnerOpValue.Load(), nil
 	}
 
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
