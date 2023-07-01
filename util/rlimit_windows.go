@@ -16,6 +16,6 @@
 package util
 
 // GenRLimit always return 1024.
-func GenRLimit() uint64 {
+func GenRLimit(source string) uint64 {
 	return 1024
 }
