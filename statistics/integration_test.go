@@ -16,11 +16,6 @@ package statistics_test
 
 import (
 	"fmt"
-	"math"
-	"strconv"
-	"strings"
-	"testing"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics"
@@ -28,6 +23,10 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
+	"math"
+	"strconv"
+	"strings"
+	"testing"
 )
 
 func TestChangeVerTo2Behavior(t *testing.T) {
@@ -642,85 +641,10 @@ func TestCrossValidationSelectivity(t *testing.T) {
 		"└─Selection 0.00 cop[tikv]  gt(test.t.c, 1000)",
 		"  └─TableRangeScan 2.00 cop[tikv] table:t range:(1 0,1 1000), keep order:false"))
 }
-<<<<<<< HEAD
-=======
-
-func TestShowHistogramsLoadStatus(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	h := dom.StatsHandle()
-	origLease := h.Lease()
-	h.SetLease(time.Second)
-	defer func() { h.SetLease(origLease) }()
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int primary key, b int, c int, index idx(b, c))")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	tk.MustExec("insert into t values (1,2,3), (4,5,6)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	tk.MustExec("analyze table t")
-	require.NoError(t, h.Update(dom.InfoSchema()))
-	rows := tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Rows()
-	for _, row := range rows {
-		if row[3] == "a" || row[3] == "idx" {
-			require.Equal(t, "allLoaded", row[10].(string))
-		} else {
-			require.Equal(t, "allEvicted", row[10].(string))
-		}
-	}
-}
-
-func TestSingleColumnIndexNDV(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	h := dom.StatsHandle()
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c varchar(20), d varchar(20), index idx_a(a), index idx_b(b), index idx_c(c), index idx_d(d))")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	tk.MustExec("insert into t values (1, 1, 'xxx', 'zzz'), (2, 2, 'yyy', 'zzz'), (1, 3, null, 'zzz')")
-	for i := 0; i < 5; i++ {
-		tk.MustExec("insert into t select * from t")
-	}
-	tk.MustExec("analyze table t")
-	rows := tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Sort().Rows()
-	expectedResults := [][]string{
-		{"a", "2", "0"}, {"b", "3", "0"}, {"c", "2", "32"}, {"d", "1", "0"},
-		{"idx_a", "2", "0"}, {"idx_b", "3", "0"}, {"idx_c", "2", "32"}, {"idx_d", "1", "0"},
-	}
-	for i, row := range rows {
-		require.Equal(t, expectedResults[i][0], row[3]) // column_name
-		require.Equal(t, expectedResults[i][1], row[6]) // distinct_count
-		require.Equal(t, expectedResults[i][2], row[7]) // null_count
-	}
-}
-
-func TestColumnStatsLazyLoad(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	h := dom.StatsHandle()
-	originLease := h.Lease()
-	defer h.SetLease(originLease)
-	// Set `Lease` to `Millisecond` to enable column stats lazy load.
-	h.SetLease(time.Millisecond)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t values (1,2), (3,4), (5,6), (7,8)")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	tk.MustExec("analyze table t")
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	c1 := tblInfo.Columns[0]
-	c2 := tblInfo.Columns[1]
-	require.True(t, h.GetTableStats(tblInfo).Columns[c1.ID].IsAllEvicted())
-	require.True(t, h.GetTableStats(tblInfo).Columns[c2.ID].IsAllEvicted())
-	tk.MustExec("analyze table t")
-	require.True(t, h.GetTableStats(tblInfo).Columns[c1.ID].IsAllEvicted())
-	require.True(t, h.GetTableStats(tblInfo).Columns[c2.ID].IsAllEvicted())
-}
 
 func TestUpdateNotLoadIndexFMSketch(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
@@ -742,4 +666,3 @@ func TestUpdateNotLoadIndexFMSketch(t *testing.T) {
 	require.Nil(t, h.GetPartitionStats(tblInfo, p0.ID).Indices[idxInfo.ID].FMSketch)
 	require.Nil(t, h.GetPartitionStats(tblInfo, p1.ID).Indices[idxInfo.ID].FMSketch)
 }
->>>>>>> cdab35847f8 (statistics: fix unnecessary index fmsketch loading (#42074))
