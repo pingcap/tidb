@@ -103,17 +103,15 @@ func (t *TLPTrans) transOneStmt(stmt *ast.SelectStmt) (ast.ResultSetNode, error)
 		selects = t.transWhere(stmt)
 	case OnCondition:
 		// only cross join is valid in on-condition transform
-		if stmt.From != nil && stmt.From.TableRefs != nil && stmt.From.TableRefs.Right != nil && !hasOuterJoin(stmt.From.TableRefs) {
-			selects = t.transOnCondition(stmt)
-		} else {
+		if !(stmt.From != nil && stmt.From.TableRefs != nil && stmt.From.TableRefs.Right != nil && !hasOuterJoin(stmt.From.TableRefs)) {
 			return nil, errors.New("from clause is invalid or has outer join")
 		}
+		selects = t.transOnCondition(stmt)
 	case HAVING:
-		if stmt.GroupBy != nil {
-			selects = t.transHaving(stmt)
-		} else {
+		if stmt.GroupBy == nil {
 			return nil, errors.New("group by is empty but has having")
 		}
+		selects = t.transHaving(stmt)
 	}
 
 	if stmt.Distinct {
