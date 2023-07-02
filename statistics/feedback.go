@@ -575,7 +575,7 @@ func (b *BucketFeedback) splitBucket(newNumBkts int, totalCount float64, originB
 
 // getOverlapFraction gets the overlap fraction of feedback and bucket range. In order to get the bucket count, it also
 // returns the ratio between bucket fraction and feedback fraction.
-func getOverlapFraction(fb Feedback, bkt bucket) (float64, float64) {
+func getOverlapFraction(fb Feedback, bkt bucket) (overlap, ratio float64) {
 	datums := make([]types.Datum, 0, 4)
 	datums = append(datums, *fb.Lower, *fb.Upper)
 	datums = append(datums, *bkt.Lower, *bkt.Upper)
@@ -588,7 +588,7 @@ func getOverlapFraction(fb Feedback, bkt bucket) (float64, float64) {
 	fbUpper := calcFraction4Datums(minValue, maxValue, fb.Upper)
 	bktLower := calcFraction4Datums(minValue, maxValue, bkt.Lower)
 	bktUpper := calcFraction4Datums(minValue, maxValue, bkt.Upper)
-	ratio := (bktUpper - bktLower) / (fbUpper - fbLower)
+	ratio = (bktUpper - bktLower) / (fbUpper - fbLower)
 	// full overlap
 	if fbLower <= bktLower && bktUpper <= fbUpper {
 		return bktUpper - bktLower, ratio
@@ -597,7 +597,7 @@ func getOverlapFraction(fb Feedback, bkt bucket) (float64, float64) {
 		return fbUpper - fbLower, ratio
 	}
 	// partial overlap
-	overlap := math.Min(bktUpper-fbLower, fbUpper-bktLower)
+	overlap = math.Min(bktUpper-fbLower, fbUpper-bktLower)
 	return overlap, ratio
 }
 
