@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"bytes"
 	"fmt"
 	"testing"
 
