@@ -71,7 +71,7 @@ func (l *Logger) writeLine(line string) error {
 		}
 	}()
 
-	if _, err = f.WriteString(fmt.Sprintf("%s\n", line)); err != nil {
+	if _, err = fmt.Fprintf(f, "%s\n", line); err != nil {
 		return errors.Trace(err)
 	}
 
