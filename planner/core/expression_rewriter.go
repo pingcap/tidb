@@ -828,7 +828,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		return v, true
 	}
 	np = er.popExistsSubPlan(np)
-	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, hasRewriteHint)
 		if er.err != nil || !er.asScalar {
 			return v, true
@@ -1012,7 +1012,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		return v, true
 	}
 	np = er.b.buildMaxOneRow(np)
-	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
@@ -1068,6 +1068,18 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		er.ctxStackAppend(constant, types.EmptyName)
 	}
 	return v, true
+}
+
+func hasCTEConsumerInSubPlan(p LogicalPlan) bool {
+	if _, ok := p.(*LogicalCTE); ok {
+		return true
+	}
+	for _, child := range p.Children() {
+		if hasCTEConsumerInSubPlan(child) {
+			return true
+		}
+	}
+	return false
 }
 
 // Leave implements Visitor interface.

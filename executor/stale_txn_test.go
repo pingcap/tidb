@@ -945,6 +945,7 @@ func TestSetTransactionInfoSchema(t *testing.T) {
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 
+	time.Sleep(100 * time.Millisecond)
 	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
 	time1 := time.Now()
 	time.Sleep(100 * time.Millisecond)
