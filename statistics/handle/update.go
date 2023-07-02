@@ -1658,7 +1658,7 @@ const minAdjustFactor = 0.7
 
 // getNewCountForIndex adjust the estimated `eqCount` and `rangeCount` according to the real count.
 // We assumes that `eqCount` and `rangeCount` contribute the same error rate.
-func getNewCountForIndex(eqCount, rangeCount, totalCount, realCount float64) (float64, float64) {
+func getNewCountForIndex(eqCount, rangeCount, totalCount, realCount float64) (equalityCount, rangeCnt float64) {
 	estimate := (eqCount / totalCount) * (rangeCount / totalCount) * totalCount
 	if estimate <= 1 {
 		return eqCount, rangeCount

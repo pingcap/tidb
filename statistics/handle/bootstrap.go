@@ -273,7 +273,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *cache.Stat
 	return nil
 }
 
-func (h *Handle) initStatsTopN4Chunk(cache *cache.StatsCacheWrapper, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsTopN4Chunk(cache *cache.StatsCacheWrapper, iter *chunk.Iterator4Chunk) {
 	affectedIndexes := make(map[*statistics.Index]struct{})
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := cache.Get(row.GetInt64(0))

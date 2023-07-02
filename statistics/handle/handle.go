@@ -544,15 +544,15 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 			continue
 		}
 		if healthy < 50 {
-			distribution[0] += 1
+			distribution[0]++
 		} else if healthy < 80 {
-			distribution[1] += 1
+			distribution[1]++
 		} else if healthy < 100 {
-			distribution[2] += 1
+			distribution[2]++
 		} else {
-			distribution[3] += 1
+			distribution[3]++
 		}
-		distribution[4] += 1
+		distribution[4]++
 	}
 	for i, val := range distribution {
 		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
