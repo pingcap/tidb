@@ -718,7 +718,22 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 		return err
 	}
 
-	dbInfos, err := LoadSchemaInfo(ctx, rc.dbMetas, getTableFunc)
+	dbInfos, err := LoadSchemaInfo(ctx, rc.dbMetas, func(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
+		failpoint.Inject(
+			"LoadSchemaInfo_lambda_BeforeGetTableFunc",
+			func(v failpoint.Value) {
+				fmt.Println("failpoint: LoadSchemaInfo_lambda_BeforeGetTableFunc")
+				const defaultMilliSeconds int = 5000
+				sleepMilliSeconds, ok := v.(int)
+				if !ok || sleepMilliSeconds <= 0 || sleepMilliSeconds > 30000 {
+					sleepMilliSeconds = defaultMilliSeconds
+				}
+				//nolint: errcheck
+				failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/FetchRemoteTableModels_BeforeFetchTableAutoIDInfos", fmt.Sprintf("sleep(%d)", sleepMilliSeconds))
+			},
+		)
+		return getTableFunc(ctx, schemaName)
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}

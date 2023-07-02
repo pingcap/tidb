@@ -24,7 +24,6 @@ import (
 	"flag"
 	"fmt"
 	osuser "os/user"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -2084,8 +2083,7 @@ func doDMLWorks(s Session) {
 func mustExecute(s Session, sql string, args ...interface{}) {
 	_, err := s.ExecuteInternal(context.Background(), sql, args...)
 	if err != nil {
-		debug.PrintStack()
-		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))
+		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err), zap.Stack("stack"))
 	}
 }
 

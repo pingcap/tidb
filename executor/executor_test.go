@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -3513,6 +3514,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		require.NotNil(t, p)
 
 		// This for loop level traverses the plan tree to get which operators are covered.
+		var hasCTE bool
 		for child := []plannercore.PhysicalPlan{p.(plannercore.PhysicalPlan)}; len(child) != 0; {
 			newChild := make([]plannercore.PhysicalPlan, 0, len(child))
 			for _, ch := range child {
@@ -3529,6 +3531,7 @@ func TestUnreasonablyClose(t *testing.T) {
 				case *plannercore.PhysicalCTE:
 					newChild = append(newChild, x.RecurPlan)
 					newChild = append(newChild, x.SeedPlan)
+					hasCTE = true
 					continue
 				case *plannercore.PhysicalShuffle:
 					newChild = append(newChild, x.DataSources...)
@@ -3540,6 +3543,12 @@ func TestUnreasonablyClose(t *testing.T) {
 			child = newChild
 		}
 
+		if hasCTE {
+			// Normally CTEStorages will be setup in ResetContextOfStmt.
+			// But the following case call e.Close() directly, instead of calling session.ExecStmt(), which calls ResetContextOfStmt.
+			// So need to setup CTEStorages manually.
+			tk.Session().GetSessionVars().StmtCtx.CTEStorageMap = map[int]*executor.CTEStorages{}
+		}
 		e := executorBuilder.Build(p)
 
 		func() {
@@ -6104,4 +6113,25 @@ func TestIsFastPlan(t *testing.T) {
 		ok = executor.IsFastPlan(p)
 		require.Equal(t, ca.isFastPlan, ok)
 	}
+}
+
+func TestProcessInfoOfSubQuery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int, j int);")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tk.MustQuery("select 1, (select sleep(count(1) + 2) from t);")
+		wg.Done()
+	}()
+	time.Sleep(time.Second)
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk2.MustQuery("select 1 from information_schema.processlist where TxnStart != '' and info like 'select%sleep% from t%'").Check(testkit.Rows("1"))
+	wg.Wait()
 }

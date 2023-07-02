@@ -438,23 +438,25 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	var enable bool
 	switch s.Tp {
 	case model.PartitionTypeRange:
-		// When tidb_enable_table_partition is 'on' or 'auto'.
-		if s.Sub == nil {
-			// Partition by range expression is enabled by default.
-			if s.ColumnNames == nil {
-				enable = true
-			}
-			// Partition by range columns and just one column.
-			if len(s.ColumnNames) == 1 {
-				enable = true
-			}
-		}
-	case model.PartitionTypeHash:
-		// Partition by hash is enabled by default.
-		// Note that linear hash is not enabled.
-		if !s.Linear && s.Sub == nil {
+		// Partition by range expression is enabled by default.
+		if s.ColumnNames == nil {
 			enable = true
 		}
+		// Partition by range columns and just one column.
+		if len(s.ColumnNames) == 1 {
+			enable = true
+		}
+	case model.PartitionTypeHash:
+		// Partition by hash and key is enabled by default.
+		if s.Sub != nil {
+			// Subpartitioning only allowed with Range or List
+			return ast.ErrSubpartition
+		}
+		// Note that linear hash is simply ignored, and creates non-linear hash/key.
+		if s.Linear {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
+		}
+		enable = true
 	case model.PartitionTypeList:
 		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
 		enable = ctx.GetSessionVars().EnableListTablePartition
@@ -463,6 +465,9 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	if !enable {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
+	}
+	if s.Sub != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
 	}
 
 	pi := &model.PartitionInfo{
@@ -2022,15 +2027,20 @@ func isColUnsigned(cols []*model.ColumnInfo, pi *model.PartitionInfo) bool {
 }
 
 // truncateTableByReassignPartitionIDs reassigns new partition ids.
-func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo) error {
-	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions))
-	for _, def := range tblInfo.Partition.Definitions {
-		pid, err := t.GenGlobalID()
+func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo, pids []int64) (err error) {
+	if len(pids) < len(tblInfo.Partition.Definitions) {
+		// To make it compatible with older versions when pids was not given
+		// and if there has been any add/reorganize partition increasing the number of partitions
+		morePids, err := t.GenGlobalIDs(len(tblInfo.Partition.Definitions) - len(pids))
 		if err != nil {
 			return errors.Trace(err)
 		}
+		pids = append(pids, morePids...)
+	}
+	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions))
+	for i, def := range tblInfo.Partition.Definitions {
 		newDef := def
-		newDef.ID = pid
+		newDef.ID = pids[i]
 		newDefs = append(newDefs, newDef)
 	}
 	tblInfo.Partition.Definitions = newDefs

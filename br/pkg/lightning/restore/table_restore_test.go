@@ -750,6 +750,7 @@ func (s *tableRestoreSuite) TestCompareChecksumSuccess() {
 		WithArgs("10m").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
+	mock.ExpectClose()
 
 	ctx := MockDoChecksumCtx(db)
 	remoteChecksum, err := DoChecksum(ctx, s.tr.tableInfo)
@@ -780,7 +781,7 @@ func (s *tableRestoreSuite) TestCompareChecksumFailure() {
 		WithArgs("10m").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
-
+	mock.ExpectClose()
 	ctx := MockDoChecksumCtx(db)
 	remoteChecksum, err := DoChecksum(ctx, s.tr.tableInfo)
 	require.NoError(s.T(), err)
