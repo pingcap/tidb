@@ -489,7 +489,7 @@ func TestCTEDelSpillFile(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2;")
-  tk.MustExec("create table t1(c1 int, c2 int);")
+	tk.MustExec("create table t1(c1 int, c2 int);")
 	tk.MustExec("create table t2(c1 int);")
 	tk.MustExec("set @@cte_max_recursion_depth = 1000000;")
 	tk.MustExec("set global tidb_mem_oom_action = 'log';")
