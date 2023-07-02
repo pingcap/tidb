@@ -320,7 +320,7 @@ func (h *Handle) initStatsTopN(cache *cache.StatsCacheWrapper) error {
 	return nil
 }
 
-func (h *Handle) initStatsFMSketch4Chunk(cache *cache.StatsCacheWrapper, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsFMSketch4Chunk(cache *cache.StatsCacheWrapper, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
@@ -369,7 +369,7 @@ func (h *Handle) initStatsFMSketch(cache *cache.StatsCacheWrapper) error {
 	return nil
 }
 
-func (h *Handle) initStatsBuckets4Chunk(cache *cache.StatsCacheWrapper, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsBuckets4Chunk(cache *cache.StatsCacheWrapper, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		table, ok := cache.Get(tableID)

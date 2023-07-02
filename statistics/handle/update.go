@@ -1025,7 +1025,7 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 //  2. If the table had been analyzed before, we need to analyze it when
 //     "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
 //     between `start` and `end`.
-func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64) (bool, string) {
+func NeedAnalyzeTable(tbl *statistics.Table, _ time.Duration, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		return true, "table unanalyzed"

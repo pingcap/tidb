@@ -242,7 +242,7 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 }
 
 // getStatsDeltaFromTableLocked get count, modify_count and version for the given table from mysql.stats_table_locked.
-func (h *Handle) getStatsDeltaFromTableLocked(ctx context.Context, tableID int64) (int64, int64, uint64, error) {
+func (h *Handle) getStatsDeltaFromTableLocked(ctx context.Context, tableID int64) (count, modifyCount int64, version uint64, err error) {
 	rows, _, err := h.execRestrictedSQL(ctx, "select count, modify_count, version from mysql.stats_table_locked where table_id = %?", tableID)
 	if err != nil {
 		return 0, 0, 0, err
@@ -251,9 +251,9 @@ func (h *Handle) getStatsDeltaFromTableLocked(ctx context.Context, tableID int64
 	if len(rows) == 0 {
 		return 0, 0, 0, nil
 	}
-	count := rows[0].GetInt64(0)
-	modifyCount := rows[0].GetInt64(1)
-	version := rows[0].GetUint64(2)
+	count = rows[0].GetInt64(0)
+	modifyCount = rows[0].GetInt64(1)
+	version = rows[0].GetUint64(2)
 	return count, modifyCount, version, nil
 }
 
@@ -856,7 +856,7 @@ func (h *Handle) mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics
 // To merge global stats topn by concurrency, we will separate the partition topn in concurrency part and deal it with different worker.
 // mergeConcurrency is used to control the total concurrency of the running worker, and mergeBatchSize is sued to control
 // the partition size for each worker to solve it
-func (h *Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wrapper *statistics.StatsWrapper,
+func (*Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wrapper *statistics.StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool, killed *uint32) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	if len(wrapper.AllTopN) < mergeConcurrency {
@@ -1228,7 +1228,7 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 }
 
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
-func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (int64, int64, error) {
+func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error) {
 	reader, err := h.getGlobalStatsReader(0)
 	if err != nil {
 		return 0, 0, err
@@ -1246,8 +1246,8 @@ func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (int64, int64, erro
 	if len(rows) == 0 {
 		return 0, 0, nil
 	}
-	count := int64(rows[0].GetUint64(0))
-	modifyCount := rows[0].GetInt64(1)
+	count = int64(rows[0].GetUint64(0))
+	modifyCount = rows[0].GetInt64(1)
 	return count, modifyCount, nil
 }
 
