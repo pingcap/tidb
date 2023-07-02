@@ -10,6 +10,18 @@
       "extension/enterprise/audit/filter.go": "extension/enterprise/audit/filter.go"
     }
   },
+  "revive_skip_test": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "/rules_go_work-*": "ignore generated code",
+      ".*_/testmain\\.go$": "ignore code",
+      ".*_test.go": "ignore test code",
+      "extension/enterprise/audit/entry.go": "extension/enterprise/audit/entry.go",
+      "extension/enterprise/audit/filter.go": "extension/enterprise/audit/filter.go"
+    }
+  },
   "asciicheck": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
