@@ -59,6 +59,7 @@ var defaultRules = []lint.Rule{
 	&rule.ErrorNamingRule{},
 	&rule.ErrorStringsRule{},
 	&rule.ReceiverNamingRule{},
+	&rule.DataRaceRule{},
 	//&rule.IncrementDecrementRule{},
 	&rule.ErrorReturnRule{},
 	//&rule.UnexportedReturnRule{},
