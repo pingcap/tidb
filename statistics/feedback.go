@@ -602,7 +602,8 @@ func getOverlapFraction(fb Feedback, bkt bucket) (float64, float64) {
 }
 
 // mergeFullyContainedFeedback merges the max fraction of non-overlapped feedbacks that are fully contained in the bucket.
-func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContext, bkt bucket) (float64, float64, int64, bool) {
+func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContext, bkt bucket) (
+	sumFraction, sumCount float64, ndv int64, ok bool) {
 	feedbacks := make([]Feedback, 0, len(b.feedback))
 	// Get all the fully contained feedbacks.
 	for _, fb := range b.feedback {
@@ -623,10 +624,6 @@ func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContex
 	if !ok {
 		return 0, 0, 0, false
 	}
-	var (
-		sumFraction, sumCount float64
-		ndv                   int64
-	)
 	for _, fb := range sortedFBs {
 		fraction, _ := getOverlapFraction(fb, bkt)
 		sumFraction += fraction
