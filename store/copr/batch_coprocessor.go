@@ -578,6 +578,7 @@ func filterAliveStoresHelper(ctx context.Context, stores []string, ttl time.Dura
 
 			mu.Lock()
 			defer mu.Unlock()
+			//nolint: revive_skip_test
 			aliveIdx = append(aliveIdx, idx)
 		}(i)
 	}
