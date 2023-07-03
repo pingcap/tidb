@@ -1631,7 +1631,8 @@ PARTITION p20220624 VALUES LESS THAN ("20220625")
 }
 
 func TestIssue44795(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`DROP TABLE IF EXISTS c`)
@@ -1669,11 +1670,11 @@ func TestIssue44795(t *testing.T) {
 		"Projection 8000.00 root  test.customer.c_custkey, Column#18",
 		"└─HashAgg 8000.00 root  group by:test.customer.c_custkey, funcs:count(Column#19)->Column#18, funcs:firstrow(test.customer.c_custkey)->test.customer.c_custkey",
 		"  └─HashJoin 10000.00 root  left outer join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
-		"    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-		"    │ └─TableFullScan 10000.00 cop[tikv] table:customer keep order:false, stats:pseudo",
-		"    └─HashAgg(Probe) 6400.00 root  group by:test.orders.o_custkey, funcs:count(Column#20)->Column#19, funcs:firstrow(test.orders.o_custkey)->test.orders.o_custkey",
-		"      └─TableReader 6400.00 root  data:HashAgg",
-		"        └─HashAgg 6400.00 cop[tikv]  group by:test.orders.o_custkey, funcs:count(test.orders.o_orderkey)->Column#20",
-		"          └─Selection 8000.00 cop[tikv]  not(like(test.orders.o_comment, \"%special%requests%\", 92))",
-		"            └─TableFullScan 10000.00 cop[tikv] table:orders keep order:false, stats:pseudo"))
+		"    ├─HashAgg(Build) 6400.00 root  group by:test.orders.o_custkey, funcs:count(Column#20)->Column#19, funcs:firstrow(test.orders.o_custkey)->test.orders.o_custkey",
+		"    │ └─TableReader 6400.00 root  data:HashAgg",
+		"    │   └─HashAgg 6400.00 cop[tikv]  group by:test.orders.o_custkey, funcs:count(test.orders.o_orderkey)->Column#20",
+		"    │     └─Selection 8000.00 cop[tikv]  not(like(test.orders.o_comment, \"%special%requests%\", 92))",
+		"    │       └─TableFullScan 10000.00 cop[tikv] table:orders keep order:false, stats:pseudo",
+		"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"      └─TableFullScan 10000.00 cop[tikv] table:customer keep order:false, stats:pseudo"))
 }
