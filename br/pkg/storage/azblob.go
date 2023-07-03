@@ -71,6 +71,10 @@ func (options *AzblobBackendOptions) apply(azblob *backuppb.AzureBlobStorage) er
 	azblob.AccessSig = options.SASToken
 	azblob.EncryptionScope = options.EncryptionScope
 
+	if len(options.EncryptionKey) == 0 {
+		options.EncryptionKey = os.Getenv("AZURE_ENCRYPTION_KEY")
+	}
+
 	if len(options.EncryptionKey) > 0 {
 		keySlice := []byte(options.EncryptionKey)
 		keySha256 := sha256.Sum256(keySlice)
