@@ -37,13 +37,13 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/atomic"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -76,7 +76,7 @@ func (t *taskInfo) register(ctx context.Context) {
 	if time.Since(t.lastRegisterTime) < refreshTaskTTLInterval {
 		return
 	}
-	logger := logutil.BgLogger().With(zap.Int64("task_id", t.taskID))
+	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
 	if t.taskRegister == nil {
 		client, err := importer.GetEtcdClient()
 		if err != nil {
@@ -100,7 +100,7 @@ func (t *taskInfo) register(ctx context.Context) {
 }
 
 func (t *taskInfo) close(ctx context.Context) {
-	logger := logutil.BgLogger().With(zap.Int64("task_id", t.taskID))
+	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
 	if t.taskRegister != nil {
 		timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
 		defer cancel()
@@ -128,6 +128,11 @@ type flowHandle struct {
 	lastSwitchTime atomic.Time
 	// taskInfoMap is a map from taskID to taskInfo
 	taskInfoMap sync.Map
+
+	// currTaskID is the taskID of the current running task.
+	// It may be changed when we switch to a new task or switch to a new owner.
+	currTaskID            atomic.Int64
+	disableTiKVImportMode atomic.Bool
 }
 
 var _ dispatcher.TaskFlowHandle = (*flowHandle)(nil)
@@ -142,6 +147,13 @@ func (h *flowHandle) OnTicker(ctx context.Context, task *proto.Task) {
 }
 
 func (h *flowHandle) switchTiKVMode(ctx context.Context, task *proto.Task) {
+	h.updateCurrentTask(task)
+	// only import step need to switch to IMPORT mode,
+	// If TiKV is in IMPORT mode during checksum, coprocessor will time out.
+	if h.disableTiKVImportMode.Load() || task.Step != StepImport {
+		return
+	}
+
 	if time.Since(h.lastSwitchTime.Load()) < config.DefaultSwitchTiKVModeInterval {
 		return
 	}
@@ -152,7 +164,7 @@ func (h *flowHandle) switchTiKVMode(ctx context.Context, task *proto.Task) {
 		return
 	}
 
-	logger := logutil.BgLogger().With(zap.Int64("task_id", task.ID))
+	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
 	switcher, err := importer.GetTiKVModeSwitcher(logger)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
@@ -175,11 +187,11 @@ func (h *flowHandle) unregisterTask(ctx context.Context, task *proto.Task) {
 	}
 }
 
-func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (_ [][]byte, err error) {
+func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (
+	resSubtaskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
-		zap.String("component", "dispatcher"),
 		zap.String("type", gTask.Type),
-		zap.Int64("ID", gTask.ID),
+		zap.Int64("task-id", gTask.ID),
 		zap.String("step", stepStr(gTask.Step)),
 	)
 	taskMeta := &TaskMeta{}
@@ -187,13 +199,14 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("process normal flow", zap.Any("task_meta", taskMeta))
+	logger.Info("process normal flow")
 
-	var taskFinished bool
 	defer func() {
+		// currently, framework will take the task as finished when err is not nil or resSubtaskMeta is empty.
+		taskFinished := err == nil && len(resSubtaskMeta) == 0
 		if taskFinished {
 			// todo: we're not running in a transaction with task update
-			if err2 := h.finishJob(ctx, handle, gTask, taskMeta, logger); err2 != nil {
+			if err2 := h.finishJob(ctx, handle, gTask, taskMeta); err2 != nil {
 				err = err2
 			}
 		} else if err != nil && !h.IsRetryableErr(err) {
@@ -217,7 +230,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		if err != nil {
 			return nil, err
 		}
-		logger.Info("generate subtasks", zap.Any("subtask_metas", subtaskMetas))
+		logger.Info("move to import step", zap.Any("subtask-count", len(subtaskMetas)))
 		metaBytes := make([][]byte, 0, len(subtaskMetas))
 		for _, subtaskMeta := range subtaskMetas {
 			bs, err := json.Marshal(subtaskMeta)
@@ -229,6 +242,10 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		gTask.Step = StepImport
 		return metaBytes, nil
 	case StepImport:
+		h.switchTiKV2NormalMode(ctx, gTask, logger)
+		failpoint.Inject("clearLastSwitchTime", func() {
+			h.lastSwitchTime.Store(time.Time{})
+		})
 		stepMeta, err2 := toPostProcessStep(handle, gTask, taskMeta)
 		if err2 != nil {
 			return nil, err2
@@ -237,7 +254,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 			return nil, err
 		}
 		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result),
-			zap.Any("step_meta", stepMeta))
+			zap.Any("step-meta", stepMeta))
 		bs, err := json.Marshal(stepMeta)
 		if err != nil {
 			return nil, err
@@ -248,32 +265,35 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		gTask.Step = StepPostProcess
 		return [][]byte{bs}, nil
 	case StepPostProcess:
-		taskFinished = true
 		return nil, nil
 	default:
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
 	}
 }
 
-func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
-	logger := logutil.BgLogger().With(zap.String("component", "dispatcher"), zap.String("type", gTask.Type), zap.Int64("ID", gTask.ID))
-	logger.Info("process error flow", zap.ByteStrings("error message", receiveErr))
+func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
+	logger := logutil.BgLogger().With(
+		zap.String("type", gTask.Type),
+		zap.Int64("task-id", gTask.ID),
+		zap.String("step", stepStr(gTask.Step)),
+	)
+	logger.Info("process error flow", zap.Errors("errors", receiveErrs))
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
 		return nil, err
 	}
-	errStrs := make([]string, 0, len(receiveErr))
-	for _, errStr := range receiveErr {
-		errStrs = append(errStrs, string(errStr))
+	errStrs := make([]string, 0, len(receiveErrs))
+	for _, receiveErr := range receiveErrs {
+		errStrs = append(errStrs, receiveErr.Error())
 	}
 	if err = h.failJob(ctx, handle, gTask, taskMeta, logger, strings.Join(errStrs, "; ")); err != nil {
 		return nil, err
 	}
 
-	gTask.Error = receiveErr[0]
+	gTask.Error = receiveErrs[0]
 
-	errStr := string(receiveErr[0])
+	errStr := receiveErrs[0].Error()
 	// do nothing if the error is resumable
 	if isResumableErr(errStr) {
 		return nil, nil
@@ -283,7 +303,7 @@ func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskH
 		err = rollback(ctx, handle, gTask, logger)
 		if err != nil {
 			// TODO: add error code according to spec.
-			gTask.Error = []byte(errStr + ", " + err.Error())
+			gTask.Error = errors.New(errStr + ", " + err.Error())
 		}
 	}
 	return nil, err
@@ -306,7 +326,12 @@ func (*flowHandle) IsRetryableErr(error) bool {
 	return false
 }
 
-func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logger) {
+func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
+	h.updateCurrentTask(task)
+	if h.disableTiKVImportMode.Load() {
+		return
+	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -321,9 +346,18 @@ func (h *flowHandle) switchTiKV2NormalMode(ctx context.Context, logger *zap.Logg
 	h.lastSwitchTime.Store(time.Time{})
 }
 
+func (h *flowHandle) updateCurrentTask(task *proto.Task) {
+	if h.currTaskID.Swap(task.ID) != task.ID {
+		taskMeta := &TaskMeta{}
+		if err := json.Unmarshal(task.Meta, taskMeta); err == nil {
+			h.disableTiKVImportMode.Store(taskMeta.Plan.DisableTiKVImportMode)
+		}
+	}
+}
+
 // preProcess does the pre-processing for the task.
 func preProcess(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) error {
-	logger.Info("pre process", zap.Any("table_info", taskMeta.Plan.TableInfo))
+	logger.Info("pre process")
 	// TODO: drop table indexes depends on the option.
 	// if err := dropTableIndexes(ctx, handle, taskMeta, logger); err != nil {
 	// 	return err
@@ -331,44 +365,7 @@ func preProcess(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, t
 	return updateMeta(gTask, taskMeta)
 }
 
-// postProcess does the post-processing for the task.
-func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
-	failpoint.Inject("syncBeforePostProcess", func() {
-		TestSyncChan <- struct{}{}
-		<-TestSyncChan
-	})
-	// TODO: create table indexes depends on the option.
-	// globalTaskManager, err := storage.GetTaskManager()
-	// if err != nil {
-	// 	return err
-	// }
-	// create table indexes even if the post process is failed.
-	// defer func() {
-	// 	err2 := createTableIndexes(ctx, globalTaskManager, taskMeta, logger)
-	// 	err = multierr.Append(err, err2)
-	// }()
-
-	controller, err := buildController(taskMeta)
-	if err != nil {
-		return err
-	}
-	// no need and should not call controller.InitDataFiles, files might not exist on this instance.
-
-	logger.Info("post process")
-
-	return verifyChecksum(ctx, controller, subtaskMeta.Checksum, logger)
-}
-
-func verifyChecksum(ctx context.Context, controller *importer.LoadDataController, checksum Checksum, logger *zap.Logger) error {
-	if controller.Checksum == config.OpLevelOff {
-		return nil
-	}
-	localChecksum := verify.MakeKVChecksum(checksum.Size, checksum.KVs, checksum.Sum)
-	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
-	return controller.VerifyChecksum(ctx, localChecksum)
-}
-
-// nolint:unused
+// nolint:deadcode
 func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tblInfo := taskMeta.Plan.TableInfo
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, tblInfo.Name.L)
@@ -395,6 +392,7 @@ func dropTableIndexes(ctx context.Context, handle dispatcher.TaskHandle, taskMet
 	return nil
 }
 
+// nolint:deadcode
 func createTableIndexes(ctx context.Context, executor storage.SessionExecutor, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
 	singleSQL, multiSQLs := common.BuildAddIndexSQL(tableName, taskMeta.Plan.TableInfo, taskMeta.Plan.DesiredTableInfo)
@@ -499,7 +497,6 @@ func generateImportStepMetas(ctx context.Context, taskMeta *TaskMeta) (subtaskMe
 		}
 		subtaskMeta := &ImportStepMeta{
 			ID:     id,
-			Plan:   taskMeta.Plan,
 			Chunks: chunkMap[id],
 		}
 		subtaskMetas = append(subtaskMetas, subtaskMeta)
@@ -575,10 +572,9 @@ func job2Step(ctx context.Context, taskMeta *TaskMeta, step string) error {
 	})
 }
 
-func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task,
-	taskMeta *TaskMeta, logger *zap.Logger) error {
-	h.switchTiKV2NormalMode(ctx, logger)
+func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
 	h.unregisterTask(ctx, gTask)
+	redactSensitiveInfo(gTask, taskMeta)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	return handle.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
@@ -588,12 +584,22 @@ func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle
 
 func (h *flowHandle) failJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
-	h.switchTiKV2NormalMode(ctx, logger)
+	h.switchTiKV2NormalMode(ctx, gTask, logger)
 	h.unregisterTask(ctx, gTask)
+	redactSensitiveInfo(gTask, taskMeta)
 	return handle.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
 	})
+}
+
+func redactSensitiveInfo(gTask *proto.Task, taskMeta *TaskMeta) {
+	taskMeta.Stmt = ""
+	taskMeta.Plan.Path = ast.RedactURL(taskMeta.Plan.Path)
+	if err := updateMeta(gTask, taskMeta); err != nil {
+		// marshal failed, should not happen
+		logutil.BgLogger().Warn("failed to update task meta", zap.Error(err))
+	}
 }
 
 // isResumableErr checks whether it's possible to rely on checkpoint to re-import data after the error has been fixed.
@@ -609,13 +615,14 @@ func rollback(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Ta
 		return err
 	}
 
-	logger.Info("rollback", zap.Any("task_meta", taskMeta))
+	logger.Info("rollback")
 
-	// create table indexes even if the rollback is failed.
-	defer func() {
-		err2 := createTableIndexes(ctx, handle, taskMeta, logger)
-		err = multierr.Append(err, err2)
-	}()
+	//	// TODO: create table indexes depends on the option.
+	//	// create table indexes even if the rollback is failed.
+	//	defer func() {
+	//		err2 := createTableIndexes(ctx, handle, taskMeta, logger)
+	//		err = multierr.Append(err, err2)
+	//	}()
 
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
 	// truncate the table

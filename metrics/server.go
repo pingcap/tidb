@@ -56,6 +56,7 @@ var (
 	TotalQueryProcHistogram         *prometheus.HistogramVec
 	TotalCopProcHistogram           *prometheus.HistogramVec
 	TotalCopWaitHistogram           *prometheus.HistogramVec
+	CopMVCCRatioHistogram           *prometheus.HistogramVec
 	MaxProcs                        prometheus.Gauge
 	GOGC                            prometheus.Gauge
 	ConnIdleDurationHistogram       *prometheus.HistogramVec
@@ -88,7 +89,7 @@ func InitServerMetrics() {
 			Name:      "handle_query_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
-		}, []string{LblSQLType, LblDb})
+		}, []string{LblSQLType, LblDb, LblResourceGroup})
 
 	QueryTotalCounter = NewCounterVec(
 		prometheus.CounterOpts{
@@ -254,6 +255,15 @@ func InitServerMetrics() {
 			Name:      "slow_query_wait_duration_seconds",
 			Help:      "Bucketed histogram of all cop waiting time (s) of of slow queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
+		}, []string{LblSQLType})
+
+	CopMVCCRatioHistogram = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "slow_query_cop_mvcc_ratio",
+			Help:      "Bucketed histogram of all cop total keys / processed keys in slow queries.",
+			Buckets:   prometheus.ExponentialBuckets(0.5, 2, 21), // 0.5 ~ 262144
 		}, []string{LblSQLType})
 
 	MaxProcs = NewGauge(

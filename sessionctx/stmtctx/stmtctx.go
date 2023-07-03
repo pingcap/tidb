@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -245,6 +246,7 @@ type StatementContext struct {
 	NotFillCache     bool
 	MemTracker       *memory.Tracker
 	DiskTracker      *disk.Tracker
+	RunawayChecker   *resourcegroup.RunawayChecker
 	IsTiFlash        atomic2.Bool
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
@@ -392,9 +394,10 @@ type StatementContext struct {
 
 	// MPPQueryInfo stores some id and timestamp of current MPP query statement.
 	MPPQueryInfo struct {
-		QueryID            atomic2.Uint64
-		QueryTS            atomic2.Uint64
-		AllocatedMPPTaskID atomic2.Int64
+		QueryID              atomic2.Uint64
+		QueryTS              atomic2.Uint64
+		AllocatedMPPTaskID   atomic2.Int64
+		AllocatedMPPGatherID atomic2.Uint64
 	}
 
 	// TableStats stores the visited runtime table stats by table id during query

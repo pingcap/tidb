@@ -977,7 +977,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 // It can be pushed to the index side when all columns used by ByItems are available from the index side and
 //
 //	there's no prefix index column.
-func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
+func (*PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
 	// If we call canPushToIndexPlan and there's no index plan, we should go into the index merge case.
 	// Index merge case is specially handled for now. So we directly return false here.
 	// So we directly return false.
@@ -1146,23 +1146,13 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			if plan, ok := finalScan.(*PhysicalTableScan); ok {
 				plan.ByItems = p.ByItems
 				if plan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
-					plan.schema.Append(&expression.Column{
-						RetType:  types.NewFieldType(mysql.TypeLonglong),
-						UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-						ID:       model.ExtraPhysTblID,
-					})
+					plan.Columns, plan.schema, _ = AddExtraPhysTblIDColumn(plan.ctx, plan.Columns, plan.Schema())
 				}
 			}
 			if plan, ok := finalScan.(*PhysicalIndexScan); ok {
 				plan.ByItems = p.ByItems
 				if plan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() && !plan.Index.Global {
-					plan.Columns = append(plan.Columns, model.NewExtraPhysTblIDColInfo())
-					plan.schema.Append(&expression.Column{
-						RetType:  types.NewFieldType(mysql.TypeLonglong),
-						UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-						ID:       model.ExtraPhysTblID,
-					})
+					plan.Columns, plan.schema, _ = AddExtraPhysTblIDColumn(plan.ctx, plan.Columns, plan.Schema())
 				}
 			}
 			partialScans = append(partialScans, finalScan)
@@ -1216,13 +1206,9 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		}
 		// global index for tableScan with keepOrder also need PhysicalTblID
 		if clonedTblScan.Table.GetPartitionInfo() != nil && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			clonedTblScan.Columns = append(clonedTblScan.Columns, model.NewExtraPhysTblIDColInfo())
-			clonedTblScan.Schema().Append(&expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-				ID:       model.ExtraPhysTblID,
-			})
-			copTsk.needExtraProj = true
+			var succ bool
+			clonedTblScan.Columns, clonedTblScan.schema, succ = AddExtraPhysTblIDColumn(clonedTblScan.ctx, clonedTblScan.Columns, clonedTblScan.Schema())
+			copTsk.needExtraProj = copTsk.needExtraProj || succ
 		}
 		clonedTblScan.HandleCols, err = clonedTblScan.HandleCols.ResolveIndices(clonedTblScan.Schema())
 		if err != nil {
@@ -2119,7 +2105,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 
 // cpuCostDivisor computes the concurrency to which we would amortize CPU cost
 // for hash aggregation.
-func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (float64, float64) {
+func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (divisor, con float64) {
 	if hasDistinct {
 		return 0, 0
 	}
@@ -2193,11 +2179,11 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 	}
 	sumNDV := float64(0)
 	for _, groupingSet := range groupingSets {
-		// for every grouping set, pick its cols out, and combine with normal group cols to get the NDV.
+		// for every grouping set, pick its cols out, and combine with normal group cols to get the ndv.
 		groupingSetCols := groupingSet.ExtractCols()
 		groupingSetCols = append(groupingSetCols, normalGbyCols...)
-		NDV, _ := getColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
-		sumNDV += NDV
+		ndv, _ := getColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
+		sumNDV += ndv
 	}
 	// After group operator, all same rows are grouped into one row, that means all
 	// change the sub-agg's stats

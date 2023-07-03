@@ -783,6 +783,8 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`set tidb_cost_model_version=2`)
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
+
 	testSQL := `create table if not exists show_warnings_expr_pushdown (a int, value date)`
 	tk.MustExec(testSQL)
 

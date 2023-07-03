@@ -21,6 +21,10 @@ import (
 
 func toChunkCheckpoint(chunk Chunk) checkpoints.ChunkCheckpoint {
 	return checkpoints.ChunkCheckpoint{
+		Key: checkpoints.ChunkCheckpointKey{
+			Path:   chunk.Path,
+			Offset: chunk.Offset,
+		},
 		FileMeta: mydump.SourceFileMeta{
 			Path:        chunk.Path,
 			Type:        chunk.Type,

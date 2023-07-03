@@ -2082,6 +2082,82 @@
         "Warning": [
           "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
+      },
+      {
+        "SQL": "select /*+ leading(tx, t1, t3) */ * from t1, (select * from t2) tx, t3 where t1.a=tx.a and tx.a=t3.a;",
+        "Plan": [
+          "Projection 15609.38 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(txx, tx, t1) */ * from t1, (select * from t2) tx, (select * from t3) txx where t1.a=tx.a and tx.a=txx.a;",
+        "Plan": [
+          "Projection 15609.38 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(txx, tx, t) */ * from (select * from t1) t, (select * from t2) tx, (select * from t3) txx where t.a=tx.a and tx.a=txx.a;",
+        "Plan": [
+          "Projection 15609.38 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(tx, t1, t3) */ * from t1, (select t2.* from t2, t4 where t2.a=t4.a) tx, t3 where t1.a=tx.a and tx.a=t3.a;",
+        "Plan": [
+          "HashJoin 19511.72 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t2.a, test.t4.a)]",
+          "  ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9990.00 cop[tikv] table:t4, index:a(a) keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
       }
     ]
   },
@@ -5392,7 +5468,7 @@
       {
         "SQL": "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t3.b)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -5412,7 +5488,7 @@
       {
         "SQL": "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t3.b)]",
@@ -5433,7 +5509,7 @@
       {
         "SQL": "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t1.a)]",
@@ -5454,7 +5530,7 @@
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t1.a)]",
@@ -5475,7 +5551,7 @@
       {
         "SQL": "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t1.a)]",
@@ -5496,7 +5572,7 @@
       {
         "SQL": "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
         "Plan": [
-          "TableReader 124625374.88 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 124625374.88 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 124625374.88 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 124625374.88 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
           "    └─HashJoin 124625374.88 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]",
@@ -5517,7 +5593,7 @@
       {
         "SQL": "select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
         "Plan": [
-          "TableReader 24365.26 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 24365.26 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 24365.26 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 24365.26 mpp[tiflash]  test.t4.a, test.t4.b, test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
           "    └─HashJoin 24365.26 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t3.b)]",
@@ -5550,7 +5626,7 @@
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
         "Plan": [
-          "TableReader 24365.26 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 24365.26 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 24365.26 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 24365.26 mpp[tiflash]  test.t4.a, test.t4.b, test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
           "    └─HashJoin 24365.26 mpp[tiflash]  left outer join, equal:[eq(test.t.a, test.t1.a)]",
@@ -5581,7 +5657,7 @@
       {
         "SQL": "select /*+ leading(t4, t3, t2, t, t1) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
         "Plan": [
-          "TableReader 24365.26 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 24365.26 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 24365.26 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 24365.26 mpp[tiflash]  test.t4.a, test.t4.b, test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
           "    └─HashJoin 24365.26 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t3.b)]",
@@ -5614,7 +5690,7 @@
       {
         "SQL": "select /*+ leading(t4, t3, t2, t) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
         "Plan": [
-          "TableReader 24365.26 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 24365.26 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 24365.26 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 24365.26 mpp[tiflash]  test.t4.a, test.t4.b, test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
           "    └─HashJoin 24365.26 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t3.b)]",
@@ -5647,7 +5723,7 @@
       {
         "SQL": "select /*+ leading(t3, t2, t) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
         "Plan": [
-          "TableReader 24365.26 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 24365.26 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 24365.26 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 24365.26 mpp[tiflash]  test.t4.a, test.t4.b, test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
           "    └─HashJoin 24365.26 mpp[tiflash]  left outer join, equal:[eq(test.t.a, test.t1.a)]",
@@ -5678,7 +5754,7 @@
       {
         "SQL": "select /*+ leading(t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
         "Plan": [
-          "TableReader 15609.38 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 15609.38 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 15609.38 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 15609.38 mpp[tiflash]  left outer join, equal:[eq(test.t2.b, test.t1.b)]",
           "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
@@ -5699,7 +5775,7 @@
       {
         "SQL": "select /*+ leading(t2, t1, t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
         "Plan": [
-          "TableReader 15609.38 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 15609.38 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 15609.38 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 15609.38 mpp[tiflash]  left outer join, equal:[eq(test.t2.b, test.t1.b)]",
           "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
@@ -5723,7 +5799,7 @@
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
         "Plan": [
-          "TableReader 19492.21 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 19492.21 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 19492.21 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 19492.21 mpp[tiflash]  left outer join, equal:[eq(test.t2.b, test.t1.b)]",
           "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
@@ -5752,7 +5828,7 @@
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
         "Plan": [
-          "TableReader 19492.21 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 19492.21 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 19492.21 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 19492.21 mpp[tiflash]  left outer join, equal:[eq(test.t2.b, test.t1.b)]",
           "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
@@ -5779,7 +5855,7 @@
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
         "Plan": [
-          "TableReader 30426.12 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 30426.12 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 30426.12 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 30426.12 mpp[tiflash]  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 30426.12 mpp[tiflash]  left outer join, equal:[eq(test.t2.b, test.t1.b)]",
@@ -5818,7 +5894,7 @@
       {
         "SQL": "select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
         "Plan": [
-          "TableReader 30426.12 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 30426.12 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 30426.12 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 30426.12 mpp[tiflash]  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 30426.12 mpp[tiflash]  left outer join, equal:[eq(test.t2.b, test.t1.b)]",
@@ -5858,7 +5934,7 @@
       {
         "SQL": "select /*+ leading(t5, t6, t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
         "Plan": [
-          "TableReader 30426.12 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 30426.12 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 30426.12 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 30426.12 mpp[tiflash]  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 30426.12 mpp[tiflash]  left outer join, equal:[eq(test.t2.b, test.t1.b)]",
@@ -5899,7 +5975,7 @@
       {
         "SQL": "select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
         "Plan": [
-          "TableReader 24389.65 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 24389.65 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 24389.65 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 24389.65 mpp[tiflash]  right outer join, equal:[eq(test.t.a, test.t1.a)]",
           "    ├─ExchangeReceiver(Build) 12487.50 mpp[tiflash]  ",
@@ -5931,7 +6007,7 @@
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
         "Plan": [
-          "TableReader 24389.65 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 24389.65 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 24389.65 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 24389.65 mpp[tiflash]  test.t4.a, test.t4.b, test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
           "    └─HashJoin 24389.65 mpp[tiflash]  right outer join, equal:[eq(test.t.a, test.t1.a)]",
@@ -5964,7 +6040,7 @@
       {
         "SQL": "select /*+ leading(t1, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
         "Plan": [
-          "TableReader 24389.65 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 24389.65 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 24389.65 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 24389.65 mpp[tiflash]  right outer join, equal:[eq(test.t.a, test.t1.a)]",
           "    ├─ExchangeReceiver(Build) 12487.50 mpp[tiflash]  ",
@@ -5998,7 +6074,7 @@
       {
         "SQL": "select /*+ leading(t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 15593.77 mpp[tiflash]  right outer join, equal:[eq(test.t2.b, test.t1.b)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -6017,7 +6093,7 @@
       {
         "SQL": "select /*+ leading(t2, t1, t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 15593.77 mpp[tiflash]  left outer join, equal:[eq(test.t1.a, test.t3.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -6036,7 +6112,7 @@
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
         "Plan": [
-          "TableReader 19492.21 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 19492.21 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 19492.21 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 19492.21 mpp[tiflash]  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
           "    └─HashJoin 19492.21 mpp[tiflash]  inner join, equal:[eq(test.t3.b, test.t4.b)]",
@@ -6064,7 +6140,7 @@
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
         "Plan": [
-          "TableReader 19492.21 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 19492.21 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 19492.21 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 19492.21 mpp[tiflash]  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
           "    └─HashJoin 19492.21 mpp[tiflash]  right outer join, equal:[eq(test.t2.b, test.t1.b)]",
@@ -6090,7 +6166,7 @@
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
         "Plan": [
-          "TableReader 30456.57 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 30456.57 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 30456.57 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 30456.57 mpp[tiflash]  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 30456.57 mpp[tiflash]  inner join, equal:[eq(test.t5.b, test.t6.b)]",
@@ -6126,7 +6202,7 @@
       {
         "SQL": "select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
         "Plan": [
-          "TableReader 30456.57 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 30456.57 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 30456.57 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 30456.57 mpp[tiflash]  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 30456.57 mpp[tiflash]  inner join, equal:[eq(test.t5.b, test.t6.b)]",
@@ -6164,7 +6240,7 @@
       {
         "SQL": "select /*+ leading(t3, t4, t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
         "Plan": [
-          "TableReader 243165526.37 root  MppVersion: 1, data:ExchangeSender",
+          "TableReader 243165526.37 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 243165526.37 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 243165526.37 mpp[tiflash]  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 243165526.37 mpp[tiflash]  inner join, equal:[eq(test.t3.a, test.t1.a) eq(test.t2.b, test.t1.b)]",
@@ -6271,13 +6347,13 @@
       {
         "SQL": "select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#11",
+          "Projection 1.00 root  test.t1.a, Column#11->Column#13",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#7, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexReader 10000.00 root  index:IndexFullScan",
           "  │   └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#7",
+          "    └─Projection 2.00 root  Column#7->Column#11",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -6287,7 +6363,7 @@
       {
         "SQL": "select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -6297,7 +6373,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -6906,7 +6982,7 @@
       {
         "SQL": "select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -6916,7 +6992,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -6926,7 +7002,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -6936,7 +7012,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -6948,7 +7024,7 @@
       {
         "SQL": "select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -6958,7 +7034,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -6970,7 +7046,7 @@
       {
         "SQL": "select /*+ leading(t1, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -6980,7 +7056,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -6993,7 +7069,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2, t2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -7003,7 +7079,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -7015,7 +7091,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2, t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexHashJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -7025,7 +7101,7 @@
           "  │     └─Selection 3.75 cop[tikv]  not(isnull(test.t1.a))",
           "  │       └─IndexRangeScan 3.75 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -7691,21 +7767,19 @@
         "SQL": "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a join (select * from t4) t3 on t2.b=t3.b;",
         "Plan": [
           "Projection 15593.77 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
-          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t2.b, test.t4.b)]",
+          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
           "  ├─TableReader(Build) 9990.00 root  data:Selection",
-          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t4.b, test.t2.b)]",
           "    ├─TableReader(Build) 9980.01 root  data:Selection",
           "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
           "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "    └─TableReader(Probe) 9990.00 root  data:Selection",
-          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
@@ -9054,7 +9128,7 @@
       {
         "SQL": "select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
@@ -9063,7 +9137,7 @@
           "  │   └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
           "  │     └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -9073,7 +9147,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
@@ -9082,7 +9156,7 @@
           "  │   └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
           "  │     └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -9094,7 +9168,7 @@
       {
         "SQL": "select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#14->Column#16",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
@@ -9103,7 +9177,7 @@
           "  │   └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
           "  │     └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
           "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─Projection 2.00 root  Column#10",
+          "    └─Projection 2.00 root  Column#10->Column#14",
           "      └─IndexReader 2.00 root  index:Selection",
           "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
           "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
@@ -9563,9 +9637,7 @@
           "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",

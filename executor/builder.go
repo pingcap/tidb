@@ -100,6 +100,9 @@ type executorBuilder struct {
 	// can return a correct value even if the session context has already been destroyed
 	forDataReaderBuilder bool
 	dataReaderTS         uint64
+
+	// Used when building MPPGather.
+	encounterUnionScan bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -108,6 +111,7 @@ type executorBuilder struct {
 type CTEStorages struct {
 	ResTbl    cteutil.Storage
 	IterInTbl cteutil.Storage
+	Producer  *cteProducer
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
@@ -475,6 +479,34 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 }
 
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
+	noMVIndexOrPrefixIndex := true
+	for _, idx := range v.IndexInfos {
+		if idx.MVIndex {
+			noMVIndexOrPrefixIndex = false
+			break
+		}
+		for _, col := range idx.Columns {
+			if col.Length != types.UnspecifiedLength {
+				noMVIndexOrPrefixIndex = false
+				break
+			}
+		}
+		if !noMVIndexOrPrefixIndex {
+			break
+		}
+	}
+	if b.ctx.GetSessionVars().FastCheckTable && noMVIndexOrPrefixIndex {
+		e := &FastCheckTableExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			dbName:       v.DBName,
+			table:        v.Table,
+			indexInfos:   v.IndexInfos,
+			is:           b.is,
+			err:          &atomic.Pointer[error]{},
+		}
+		return e
+	}
+
 	readerExecs := make([]*IndexLookUpExecutor, 0, len(v.IndexLookUpReaders))
 	for _, readerPlan := range v.IndexLookUpReaders {
 		readerExec, err := buildNoRangeIndexLookUpReader(b, readerPlan)
@@ -1300,6 +1332,11 @@ func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) Executor {
 }
 
 func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) Executor {
+	oriEncounterUnionScan := b.encounterUnionScan
+	b.encounterUnionScan = true
+	defer func() {
+		b.encounterUnionScan = oriEncounterUnionScan
+	}()
 	reader := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -1346,6 +1383,13 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	}
 
 	switch x := reader.(type) {
+	case *MPPGather:
+		us.desc = false
+		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
+		us.columns = x.columns
+		us.table = x.table
+		us.virtualColumnIndex = x.virtualColumnIndex
+		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
@@ -3429,6 +3473,8 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		virtualColumnRetFieldTypes: []*types.FieldType{},
 	}
 
+	gather.memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
+
 	var hasVirtualCol bool
 	for _, col := range v.Schema().Columns {
 		if col.VirtualExpr != nil {
@@ -3436,18 +3482,43 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 			break
 		}
 	}
-	if hasVirtualCol {
-		// If hasVirtualCol, Join should not pushdown to tiflash,
-		// so there is only one TableScan.
-		ts, err := v.GetTableScan()
-		if err != nil {
-			b.err = err
+
+	var isSingleDataSource bool
+	tableScans := v.GetTableScans()
+	if len(tableScans) == 1 {
+		isSingleDataSource = true
+	}
+
+	// 1. hasVirtualCol: when got virtual column in TableScan, will generate plan like the following,
+	//                   and there will be no other operators in the MPP fragment.
+	//     MPPGather
+	//       ExchangeSender
+	//         PhysicalTableScan
+	// 2. UnionScan: there won't be any operators like Join between UnionScan and TableScan.
+	//               and UnionScan cannot push down to tiflash.
+	if !isSingleDataSource {
+		if hasVirtualCol || b.encounterUnionScan {
+			b.err = errors.Errorf("should only have one TableScan in MPP fragment(hasVirtualCol: %v, encounterUnionScan: %v)", hasVirtualCol, b.encounterUnionScan)
 			return nil
 		}
-		gather.columns = ts.Columns
+		return gather
+	}
+
+	// Setup MPPGather.table if isSingleDataSource.
+	// Virtual Column or UnionScan need to use it.
+	ts := tableScans[0]
+	gather.columns = ts.Columns
+	if hasVirtualCol {
 		gather.virtualColumnIndex, gather.virtualColumnRetFieldTypes = buildVirtualColumnInfo(gather.Schema(), gather.columns)
 	}
-	gather.memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
+	tbl, _ := b.is.TableByID(ts.Table.ID)
+	isPartition, physicalTableID := ts.IsPartition()
+	if isPartition {
+		// Only for static pruning partition table.
+		pt := tbl.(table.PartitionedTable)
+		tbl = pt.GetPartition(physicalTableID)
+	}
+	gather.table = tbl
 	return gather
 }
 
@@ -5317,33 +5388,44 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 }
 
 func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
-	// 1. Build seedPlan.
 	if b.Ti != nil {
 		b.Ti.UseNonRecursive = true
 	}
-	seedExec := b.build(v.SeedPlan)
-	if b.err != nil {
-		return nil
+	if v.RecurPlan != nil && b.Ti != nil {
+		b.Ti.UseRecursive = true
 	}
-
-	// 2. Build tables to store intermediate results.
-	chkSize := b.ctx.GetSessionVars().MaxChunkSize
-	tps := seedExec.base().retFieldTypes
-	// iterOutTbl will be constructed in CTEExec.Open().
-	var resTbl cteutil.Storage
-	var iterInTbl cteutil.Storage
 
 	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
 	if !ok {
 		b.err = errors.New("type assertion for CTEStorageMap failed")
 		return nil
 	}
+
+	chkSize := b.ctx.GetSessionVars().MaxChunkSize
+	// iterOutTbl will be constructed in CTEExec.Open().
+	var resTbl cteutil.Storage
+	var iterInTbl cteutil.Storage
+	var producer *cteProducer
 	storages, ok := storageMap[v.CTE.IDForStorage]
 	if ok {
 		// Storage already setup.
 		resTbl = storages.ResTbl
 		iterInTbl = storages.IterInTbl
+		producer = storages.Producer
 	} else {
+		if v.SeedPlan == nil {
+			b.err = errors.New("cte.seedPlan cannot be nil")
+			return nil
+		}
+		// Build seed part.
+		corCols := plannercore.ExtractOuterApplyCorrelatedCols(v.SeedPlan)
+		seedExec := b.build(v.SeedPlan)
+		if b.err != nil {
+			return nil
+		}
+
+		// Setup storages.
+		tps := seedExec.base().retFieldTypes
 		resTbl = cteutil.NewStorageRowContainer(tps, chkSize)
 		if err := resTbl.OpenAndRef(); err != nil {
 			b.err = err
@@ -5355,38 +5437,50 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 			return nil
 		}
 		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl}
-	}
 
-	// 3. Build recursive part.
-	if v.RecurPlan != nil && b.Ti != nil {
-		b.Ti.UseRecursive = true
-	}
-	recursiveExec := b.build(v.RecurPlan)
-	if b.err != nil {
-		return nil
-	}
-
-	var sel []int
-	if v.CTE.IsDistinct {
-		sel = make([]int, chkSize)
-		for i := 0; i < chkSize; i++ {
-			sel[i] = i
+		// Build recursive part.
+		var recursiveExec Executor
+		if v.RecurPlan != nil {
+			recursiveExec = b.build(v.RecurPlan)
+			if b.err != nil {
+				return nil
+			}
+			corCols = append(corCols, plannercore.ExtractOuterApplyCorrelatedCols(v.RecurPlan)...)
 		}
+
+		var sel []int
+		if v.CTE.IsDistinct {
+			sel = make([]int, chkSize)
+			for i := 0; i < chkSize; i++ {
+				sel[i] = i
+			}
+		}
+
+		var corColHashCodes [][]byte
+		for _, corCol := range corCols {
+			corColHashCodes = append(corColHashCodes, getCorColHashCode(corCol))
+		}
+
+		producer = &cteProducer{
+			ctx:             b.ctx,
+			seedExec:        seedExec,
+			recursiveExec:   recursiveExec,
+			resTbl:          resTbl,
+			iterInTbl:       iterInTbl,
+			isDistinct:      v.CTE.IsDistinct,
+			sel:             sel,
+			hasLimit:        v.CTE.HasLimit,
+			limitBeg:        v.CTE.LimitBeg,
+			limitEnd:        v.CTE.LimitEnd,
+			corCols:         corCols,
+			corColHashCodes: corColHashCodes,
+		}
+		storageMap[v.CTE.IDForStorage].Producer = producer
 	}
 
 	return &CTEExec{
-		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		seedExec:      seedExec,
-		recursiveExec: recursiveExec,
-		resTbl:        resTbl,
-		iterInTbl:     iterInTbl,
-		chkIdx:        0,
-		isDistinct:    v.CTE.IsDistinct,
-		sel:           sel,
-		hasLimit:      v.CTE.HasLimit,
-		limitBeg:      v.CTE.LimitBeg,
-		limitEnd:      v.CTE.LimitEnd,
-		isInApply:     v.CTE.IsInApply,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		producer:     producer,
 	}
 }
 

@@ -17,6 +17,7 @@ package importer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -81,6 +82,14 @@ type ImportParameters struct {
 	Options map[string]interface{} `json:"options,omitempty"`
 }
 
+var _ fmt.Stringer = &ImportParameters{}
+
+// String implements fmt.Stringer interface.
+func (ip *ImportParameters) String() string {
+	b, _ := json.Marshal(ip)
+	return string(b)
+}
+
 // JobSummary is the summary info of import into job.
 type JobSummary struct {
 	// ImportedRows is the number of rows imported into TiKV.
@@ -143,6 +152,25 @@ func GetJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, user str
 		return nil, core.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
 	}
 	return info, nil
+}
+
+// GetActiveJobCnt returns the count of active import jobs.
+// Active import jobs include pending and running jobs.
+func GetActiveJobCnt(ctx context.Context, conn sqlexec.SQLExecutor) (int64, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
+
+	sql := `select count(1) from mysql.tidb_import_jobs where status in (%?, %?)`
+	rs, err := conn.ExecuteInternal(ctx, sql, jobStatusPending, JobStatusRunning)
+	if err != nil {
+		return 0, err
+	}
+	defer terror.Call(rs.Close)
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return 0, err
+	}
+	cnt := rows[0].GetInt64(0)
+	return cnt, nil
 }
 
 // CreateJob creates import into job by insert a record to system table.
@@ -239,24 +267,42 @@ func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMs
 }
 
 func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
+	// start_time, end_time, summary, error_message can be NULL, need to use row.IsNull() to check.
+	startTime, endTime := types.ZeroTime, types.ZeroTime
+	if !row.IsNull(2) {
+		startTime = row.GetTime(2)
+	}
+	if !row.IsNull(3) {
+		endTime = row.GetTime(3)
+	}
+
 	parameters := ImportParameters{}
 	parametersStr := row.GetString(8)
 	if err := json.Unmarshal([]byte(parametersStr), &parameters); err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	var summary *JobSummary
-	summaryStr := row.GetString(12)
+	var summaryStr string
+	if !row.IsNull(12) {
+		summaryStr = row.GetString(12)
+	}
 	if len(summaryStr) > 0 {
 		summary = &JobSummary{}
 		if err := json.Unmarshal([]byte(summaryStr), summary); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
+
+	var errMsg string
+	if !row.IsNull(13) {
+		errMsg = row.GetString(13)
+	}
 	return &JobInfo{
 		ID:             row.GetInt64(0),
 		CreateTime:     row.GetTime(1),
-		StartTime:      row.GetTime(2),
-		EndTime:        row.GetTime(3),
+		StartTime:      startTime,
+		EndTime:        endTime,
 		TableSchema:    row.GetString(4),
 		TableName:      row.GetString(5),
 		TableID:        row.GetInt64(6),
@@ -266,7 +312,7 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 		Status:         row.GetString(10),
 		Step:           row.GetString(11),
 		Summary:        summary,
-		ErrorMessage:   row.GetString(13),
+		ErrorMessage:   errMsg,
 	}, nil
 }
 

@@ -52,7 +52,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -483,7 +483,7 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 }
 
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	err := handle.TableRowStatsCache.Update(ctx, sctx)
+	err := cache.TableRowStatsCache.Update(ctx, sctx)
 	if err != nil {
 		return err
 	}
@@ -525,7 +525,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					}
 				}
 
-				cache := handle.TableRowStatsCache
+				cache := cache.TableRowStatsCache
 				var rowCount, dataLength, indexLength uint64
 				if table.GetPartitionInfo() == nil {
 					rowCount = cache.GetTableRows(table.ID)
@@ -867,7 +867,7 @@ func calcCharOctLength(lenInChar int, cs string) int {
 }
 
 func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	cache := handle.TableRowStatsCache
+	cache := cache.TableRowStatsCache
 	err := cache.Update(ctx, sctx)
 	if err != nil {
 		return err
@@ -2015,7 +2015,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 			procID = chunkRow.GetUint64(10)
 		}
 
-		var remainDurationStr, progressStr, estimatedRowCntStr interface{}
+		var remainDurationStr, progressDouble, estimatedRowCntStr interface{}
 		if state == statistics.AnalyzeRunning {
 			startTime, ok := startTime.(types.Time)
 			if !ok {
@@ -2030,7 +2030,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 			if RemainingDuration != nil {
 				remainDurationStr = execdetails.FormatDuration(*RemainingDuration)
 			}
-			progressStr = progress
+			progressDouble = progress
 			estimatedRowCntStr = int64(estimatedRowCnt)
 		}
 		row := types.MakeDatums(
@@ -2046,7 +2046,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 			instance,           // INSTANCE
 			procID,             // PROCESS_ID
 			remainDurationStr,  // REMAINING_SECONDS
-			progressStr,        // PROGRESS
+			progressDouble,     // PROGRESS
 			estimatedRowCntStr, // ESTIMATED_TOTAL_ROWS
 		)
 		rows = append(rows, row)
@@ -3266,11 +3266,11 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 				return errors.Errorf("unexpected runaway config in resource group")
 			}
 			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
-			runawayRule = fmt.Sprintf("%s=%s", "EXEC_ELAPSED", dur.String())
+			runawayRule = fmt.Sprintf("%s='%s'", "EXEC_ELAPSED", dur.String())
 			runawayAction = fmt.Sprintf("%s=%s", "ACTION", model.RunawayActionType(setting.Action+1).String())
 			if setting.Watch != nil {
 				dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
-				runawayWatch = fmt.Sprintf("%s=%s[%s]", "WATCH", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())
+				runawayWatch = fmt.Sprintf("%s=%s %s='%s'", "WATCH", model.RunawayWatchType(setting.Watch.Type).String(), "DURATION", dur.String())
 				queryLimit = fmt.Sprintf("%s, %s, %s", runawayRule, runawayAction, runawayWatch)
 			} else {
 				queryLimit = fmt.Sprintf("%s, %s", runawayRule, runawayAction)
