@@ -124,19 +124,19 @@ type indexHashJoinTask struct {
 
 // Open implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
-	err := e.children[0].Open(ctx)
+	err := e.Children(0).Open(ctx)
 	if err != nil {
 		return err
 	}
 	if e.memTracker != nil {
 		e.memTracker.Reset()
 	} else {
-		e.memTracker = memory.NewTracker(e.id, -1)
+		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	e.cancelFunc = nil
 	e.innerPtrBytes = make([][]byte, 0, 8)
-	if e.runtimeStats != nil {
+	if e.RuntimeStats() != nil {
 		e.stats = &indexLookUpJoinRuntimeStats{}
 	}
 	e.finished.Store(false)
@@ -144,7 +144,7 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 }
 
 func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
-	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
+	concurrency := e.Ctx().GetSessionVars().IndexLookupJoinConcurrency()
 	if e.stats != nil {
 		e.stats.concurrency = concurrency
 	}
@@ -292,7 +292,7 @@ func (e *IndexNestedLoopHashJoin) isDryUpTasks(ctx context.Context) bool {
 // Close implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Close() error {
 	if e.stats != nil {
-		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 	if e.cancelFunc != nil {
 		e.cancelFunc()
@@ -311,7 +311,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	e.joinChkResourceCh = nil
 	e.finished.Store(false)
 	e.prepared = false
-	return e.baseExecutor.Close()
+	return e.BaseExecutor.Close()
 }
 
 func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
@@ -395,10 +395,10 @@ func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask
 	ow := &indexHashJoinOuterWorker{
 		outerWorker: outerWorker{
 			outerCtx:         e.outerCtx,
-			ctx:              e.ctx,
-			executor:         e.children[0],
+			ctx:              e.Ctx(),
+			executor:         e.Children(0),
 			batchSize:        32,
-			maxBatchSize:     e.ctx.GetSessionVars().IndexJoinBatchSize,
+			maxBatchSize:     e.Ctx().GetSessionVars().IndexJoinBatchSize,
 			parentMemTracker: e.memTracker,
 			lookup:           &e.IndexLookUpJoin,
 		},
@@ -423,8 +423,8 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		innerWorker: innerWorker{
 			innerCtx:      e.innerCtx,
 			outerCtx:      e.outerCtx,
-			ctx:           e.ctx,
-			executorChk:   e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize, e.maxChunkSize, e.AllocPool),
+			ctx:           e.Ctx(),
+			executorChk:   e.Ctx().GetSessionVars().GetNewChunkWithCapacity(e.innerCtx.rowTypes, e.MaxChunkSize(), e.MaxChunkSize(), e.AllocPool),
 			indexRanges:   copiedRanges,
 			keyOff2IdxOff: e.keyOff2IdxOff,
 			stats:         innerStats,
@@ -435,9 +435,9 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		joiner:            e.joiners[workerID],
 		joinChkResourceCh: e.joinChkResourceCh[workerID],
 		resultCh:          e.resultCh,
-		matchedOuterPtrs:  make([]chunk.RowPtr, 0, e.maxChunkSize),
+		matchedOuterPtrs:  make([]chunk.RowPtr, 0, e.MaxChunkSize()),
 		joinKeyBuf:        make([]byte, 1),
-		outerRowStatus:    make([]outerRowStatusFlag, 0, e.maxChunkSize),
+		outerRowStatus:    make([]outerRowStatusFlag, 0, e.MaxChunkSize()),
 		rowIter:           chunk.NewIterator4Slice([]chunk.Row{}).(*chunk.Iterator4Slice),
 	}
 	iw.memTracker.AttachTo(e.memTracker)
@@ -446,7 +446,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		// memory usage of inner worker will be reset the end of iw.handleTask.
 		// While the life cycle of this memory consumption exists throughout the
 		// whole active period of inner worker.
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.Consume(2 * types.EstimatedMemUsage(copiedRanges[0].LowVal, len(copiedRanges)))
+		e.Ctx().GetSessionVars().StmtCtx.MemTracker.Consume(2 * types.EstimatedMemUsage(copiedRanges[0].LowVal, len(copiedRanges)))
 	}
 	if e.lastColHelper != nil {
 		// nextCwf.TmpConstant needs to be reset for every individual

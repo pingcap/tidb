@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -40,10 +41,10 @@ import (
 
 // ExplainExec represents an explain executor.
 type ExplainExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	explain        *core.Explain
-	analyzeExec    Executor
+	analyzeExec    exec.Executor
 	executed       bool
 	ruRuntimeStats *clientutil.RURuntimeStats
 	rows           [][]string
@@ -78,7 +79,7 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	req.GrowAndReset(e.maxChunkSize)
+	req.GrowAndReset(e.MaxChunkSize())
 	if e.cursor >= len(e.rows) {
 		return nil
 	}
@@ -105,7 +106,7 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				}
 			}
 		}()
-		if minHeapInUse, alarmRatio := e.ctx.GetSessionVars().MemoryDebugModeMinHeapInUse, e.ctx.GetSessionVars().MemoryDebugModeAlarmRatio; minHeapInUse != 0 && alarmRatio != 0 {
+		if minHeapInUse, alarmRatio := e.Ctx().GetSessionVars().MemoryDebugModeMinHeapInUse, e.Ctx().GetSessionVars().MemoryDebugModeAlarmRatio; minHeapInUse != 0 && alarmRatio != 0 {
 			memoryDebugModeCtx, cancel := context.WithCancel(ctx)
 			waitGroup := sync.WaitGroup{}
 			waitGroup.Add(1)
@@ -119,7 +120,7 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				minHeapInUse: mathutil.Abs(minHeapInUse),
 				alarmRatio:   alarmRatio,
 				autoGC:       minHeapInUse > 0,
-				memTracker:   e.ctx.GetSessionVars().MemTracker,
+				memTracker:   e.Ctx().GetSessionVars().MemTracker,
 				wg:           &waitGroup,
 			}).run()
 		}
@@ -134,7 +135,7 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	}
 	// Register the RU runtime stats to the runtime stats collection after the analyze executor has been executed.
 	if e.analyzeExec != nil && e.executed {
-		if coll := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil {
+		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil {
 			coll.RegisterStats(e.explain.TargetPlan.ID(), &ruRuntimeStats{e.ruRuntimeStats})
 		}
 	}
@@ -156,7 +157,7 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 // function and then commit transaction if needed.
 // Otherwise, in autocommit transaction, the table record change of analyze executor(insert/update/delete...)
 // will not be committed.
-func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() Executor {
+func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() exec.Executor {
 	if e.analyzeExec != nil && !e.executed && e.analyzeExec.Schema().Len() == 0 {
 		e.executed = true
 		return e.analyzeExec

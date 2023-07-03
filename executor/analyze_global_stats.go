@@ -53,7 +53,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 	for globalStatsID := range globalStatsMap {
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	tableIDs := map[int64]struct{}{}
 	for tableID := range globalStatsTableIDs {
 		tableIDs[tableID] = struct{}{}
@@ -67,8 +67,8 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 				logutil.BgLogger().Warn("cannot find the partitioned table, skip merging global stats", zap.Int64("tableID", globalStatsID.tableID))
 				continue
 			}
-			AddNewAnalyzeJob(e.ctx, job)
-			StartAnalyzeJob(e.ctx, job)
+			AddNewAnalyzeJob(e.Ctx(), job)
+			StartAnalyzeJob(e.Ctx(), job)
 			mergeStatsErr := func() error {
 				globalOpts := e.opts
 				if e.OptionsMap != nil {
@@ -76,7 +76,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 						globalOpts = v2Options.FilledOpts
 					}
 				}
-				globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema),
+				globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.Ctx(), globalOpts, e.Ctx().GetInfoSchema().(infoschema.InfoSchema),
 					globalStatsID.tableID, info.isIndex, info.histIDs,
 					tableAllPartitionStats)
 				if err != nil {
@@ -84,7 +84,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
 					if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 						// When we find some partition-level stats are missing, we need to report warning.
-						e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 					}
 					return err
 				}
@@ -110,12 +110,12 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 				}
 				return err
 			}()
-			FinishAnalyzeMergeJob(e.ctx, job, mergeStatsErr)
+			FinishAnalyzeMergeJob(e.Ctx(), job, mergeStatsErr)
 		}
 	}
 	for tableID := range tableIDs {
 		// Dump stats to historical storage.
-		if err := recordHistoricalStats(e.ctx, tableID); err != nil {
+		if err := recordHistoricalStats(e.Ctx(), tableID); err != nil {
 			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 		}
 	}
@@ -123,7 +123,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 }
 
 func (e *AnalyzeExec) newAnalyzeHandleGlobalStatsJob(key globalStatsKey) *statistics.AnalyzeJob {
-	dom := domain.GetDomain(e.ctx)
+	dom := domain.GetDomain(e.Ctx())
 	is := dom.InfoSchema()
 	table, ok := is.TableByID(key.tableID)
 	if !ok {

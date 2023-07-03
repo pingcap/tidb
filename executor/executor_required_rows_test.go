@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/parser/ast"
@@ -41,7 +42,7 @@ import (
 )
 
 type requiredRowsDataSource struct {
-	baseExecutor
+	exec.BaseExecutor
 	totalRows int
 	count     int
 	ctx       sessionctx.Context
@@ -67,7 +68,7 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := newBaseExecutor(ctx, schema, 0)
+	baseExec := exec.NewBaseExecutor(ctx, schema, 0)
 	return &requiredRowsDataSource{baseExec, totalRows, 0, ctx, expectedRowsRet, 0, defaultGenerator}
 }
 
@@ -180,25 +181,25 @@ func TestLimitRequiredRows(t *testing.T) {
 		sctx := defaultCtx()
 		ctx := context.Background()
 		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
-		exec := buildLimitExec(sctx, ds, testCase.limitOffset, testCase.limitCount)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		exe := buildLimitExec(sctx, ds, testCase.limitOffset, testCase.limitCount)
+		require.NoError(t, exe.Open(ctx))
+		chk := newFirstChunk(exe)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], sctx.GetSessionVars().MaxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, exe.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, exe.Close())
 		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
 
-func buildLimitExec(ctx sessionctx.Context, src Executor, offset, count int) Executor {
+func buildLimitExec(ctx sessionctx.Context, src exec.Executor, offset, count int) exec.Executor {
 	n := mathutil.Min(count, ctx.GetSessionVars().MaxChunkSize)
-	base := newBaseExecutor(ctx, src.Schema(), 0, src)
-	base.initCap = n
+	base := exec.NewBaseExecutor(ctx, src.Schema(), 0, src)
+	base.SetInitCap(n)
 	limitExec := &LimitExec{
-		baseExecutor: base,
+		BaseExecutor: base,
 		begin:        uint64(offset),
 		end:          uint64(offset + count),
 	}
@@ -277,9 +278,9 @@ func TestSortRequiredRows(t *testing.T) {
 	}
 }
 
-func buildSortExec(sctx sessionctx.Context, byItems []*util.ByItems, src Executor) Executor {
+func buildSortExec(sctx sessionctx.Context, byItems []*util.ByItems, src exec.Executor) exec.Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(sctx, src.Schema(), 0, src),
+		BaseExecutor: exec.NewBaseExecutor(sctx, src.Schema(), 0, src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -384,9 +385,9 @@ func TestTopNRequiredRows(t *testing.T) {
 	}
 }
 
-func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.ByItems, src Executor) Executor {
+func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.ByItems, src exec.Executor) exec.Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), 0, src),
+		BaseExecutor: exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -477,9 +478,9 @@ func TestSelectionRequiredRows(t *testing.T) {
 	}
 }
 
-func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src Executor) Executor {
+func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src exec.Executor) exec.Executor {
 	return &SelectionExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), 0, src),
+		BaseExecutor: exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
 		filters:      filters,
 	}
 }
@@ -595,9 +596,9 @@ func TestProjectionParallelRequiredRows(t *testing.T) {
 	}
 }
 
-func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src Executor, numWorkers int) Executor {
+func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src exec.Executor, numWorkers int) exec.Executor {
 	return &ProjectionExec{
-		baseExecutor:  newBaseExecutor(ctx, src.Schema(), 0, src),
+		BaseExecutor:  exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
 		numWorkers:    int64(numWorkers),
 		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
 	}
@@ -827,7 +828,7 @@ func TestVecGroupChecker4GroupCount(t *testing.T) {
 	}
 }
 
-func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc Executor) Executor {
+func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
 	if joinType == plannercore.RightOuterJoin {
 		innerSrc, outerSrc = outerSrc, innerSrc
 	}
@@ -852,10 +853,10 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 
 type mockPlan struct {
 	MockPhysicalPlan
-	exec Executor
+	exec exec.Executor
 }
 
-func (mp *mockPlan) GetExecutor() Executor {
+func (mp *mockPlan) GetExecutor() exec.Executor {
 	return mp.exec
 }
 

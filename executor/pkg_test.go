@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -65,7 +66,7 @@ func TestNestedLoopApply(t *testing.T) {
 		retTypes(outerExec), retTypes(innerExec), nil, false)
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
-		baseExecutor: newBaseExecutor(sctx, joinSchema, 0),
+		BaseExecutor: exec.NewBaseExecutor(sctx, joinSchema, 0),
 		outerExec:    outerExec,
 		innerExec:    innerExec,
 		outerFilter:  []expression.Expression{outerFilter},
@@ -73,7 +74,7 @@ func TestNestedLoopApply(t *testing.T) {
 		joiner:       joiner,
 		ctx:          sctx,
 	}
-	join.innerList = chunk.NewList(retTypes(innerExec), innerExec.initCap, innerExec.maxChunkSize)
+	join.innerList = chunk.NewList(retTypes(innerExec), innerExec.InitCap(), innerExec.MaxChunkSize())
 	join.innerChunk = newFirstChunk(innerExec)
 	join.outerChunk = newFirstChunk(outerExec)
 	joinChk := newFirstChunk(join)

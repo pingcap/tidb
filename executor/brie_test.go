@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -83,7 +84,7 @@ func TestFetchShowBRIE(t *testing.T) {
 
 	// Compose executor.
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(sctx, schema, 0),
+		BaseExecutor: exec.NewBaseExecutor(sctx, schema, 0),
 		Tp:           ast.ShowBackups,
 	}
 	require.NoError(t, e.Open(ctx))
@@ -98,7 +99,7 @@ func TestFetchShowBRIE(t *testing.T) {
 	// Register brie task info
 	info1 := &brieTaskInfo{
 		kind:       ast.BRIEKindBackup,
-		connID:     e.ctx.GetSessionVars().ConnectionID,
+		connID:     e.Ctx().GetSessionVars().ConnectionID,
 		queueTime:  lateTime,
 		execTime:   lateTime,
 		finishTime: lateTime,
@@ -127,7 +128,7 @@ func TestFetchShowBRIE(t *testing.T) {
 	info2 := &brieTaskInfo{
 		id:         2,
 		kind:       ast.BRIEKindBackup,
-		connID:     e.ctx.GetSessionVars().ConnectionID,
+		connID:     e.Ctx().GetSessionVars().ConnectionID,
 		queueTime:  currTime,
 		execTime:   currTime,
 		finishTime: currTime,
@@ -136,6 +137,6 @@ func TestFetchShowBRIE(t *testing.T) {
 	}
 	globalBRIEQueue.registerTask(ctx, info2)
 	info2Res := brieTaskInfoToResult(info2)
-	globalBRIEQueue.clearTask(e.ctx.GetSessionVars().StmtCtx)
+	globalBRIEQueue.clearTask(e.Ctx().GetSessionVars().StmtCtx)
 	require.Equal(t, info2Res, fetchShowBRIEResult(t, e, brieColTypes))
 }

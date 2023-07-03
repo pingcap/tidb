@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -39,7 +40,7 @@ import (
 
 // SetConfigExec executes 'SET CONFIG' statement.
 type SetConfigExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	p        *core.SetConfig
 	jsonBody string
 }
@@ -71,7 +72,7 @@ func (s *SetConfigExec) Open(ctx context.Context) error {
 		s.p.Name = strings.TrimPrefix(s.p.Name, "raftstore-proxy.")
 	}
 
-	body, err := ConvertConfigItem2JSON(s.ctx, s.p.Name, s.p.Value)
+	body, err := ConvertConfigItem2JSON(s.Ctx(), s.p.Name, s.p.Value)
 	s.jsonBody = body
 	return err
 }
@@ -86,11 +87,11 @@ var TestSetConfigHTTPHandlerKey stringutil.StringerStr = "TestSetConfigHTTPHandl
 func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	getServerFunc := infoschema.GetClusterServerInfo
-	if v := s.ctx.Value(TestSetConfigServerInfoKey); v != nil {
+	if v := s.Ctx().Value(TestSetConfigServerInfoKey); v != nil {
 		getServerFunc = v.(func(sessionctx.Context) ([]infoschema.ServerInfo, error))
 	}
 
-	serversInfo, err := getServerFunc(s.ctx)
+	serversInfo, err := getServerFunc(s.Ctx())
 	if err != nil {
 		return err
 	}
@@ -122,7 +123,7 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return errors.Errorf("Unknown server type %s", serverInfo.ServerType)
 		}
 		if err := s.doRequest(url); err != nil {
-			s.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			s.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}
 	return nil
@@ -135,7 +136,7 @@ func (s *SetConfigExec) doRequest(url string) (retErr error) {
 		return err
 	}
 	var httpHandler func(req *http.Request) (*http.Response, error)
-	if v := s.ctx.Value(TestSetConfigHTTPHandlerKey); v != nil {
+	if v := s.Ctx().Value(TestSetConfigHTTPHandlerKey); v != nil {
 		httpHandler = v.(func(*http.Request) (*http.Response, error))
 	} else {
 		httpHandler = util.InternalHTTPClient().Do

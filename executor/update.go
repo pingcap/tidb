@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"runtime/trace"
 
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -36,7 +37,7 @@ import (
 
 // UpdateExec represents a new update executor.
 type UpdateExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	OrderedList []*expression.Assignment
 
@@ -197,7 +198,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		// Update row
 		fkChecks := e.fkChecks[content.TblID]
 		fkCascades := e.fkCascades[content.TblID]
-		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks, fkCascades)
+		changed, err1 := updateRecord(ctx, e.Ctx(), handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks, fkCascades)
 		if err1 == nil {
 			_, exist := e.updatedRowKeys[content.Start].Get(handle)
 			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
@@ -208,7 +209,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 			continue
 		}
 
-		sc := e.ctx.GetSessionVars().StmtCtx
+		sc := e.Ctx().GetSessionVars().StmtCtx
 		if (kv.ErrKeyExists.Equal(err1) || table.ErrCheckConstraintViolated.Equal(err1)) && sc.DupKeyAsWarning {
 			sc.AppendWarning(err1)
 			continue
@@ -241,16 +242,16 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		e.drained = true
-		e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(numRows))
+		e.Ctx().GetSessionVars().StmtCtx.AddRecordRows(uint64(numRows))
 	}
 	return nil
 }
 
 func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
-	fields := retTypes(e.children[0])
+	fields := retTypes(e.Children(0))
 	colsInfo := plannercore.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
 	globalRowIdx := 0
-	chk := tryNewCacheChunk(e.children[0])
+	chk := tryNewCacheChunk(e.Children(0))
 	if !e.allAssignmentsAreConstant {
 		e.evalBuffer = chunk.MutRowFromTypes(fields)
 	}
@@ -262,7 +263,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	totalNumRows := 0
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
-		err := Next(ctx, e.children[0], chk)
+		err := Next(ctx, e.Children(0), chk)
 		if err != nil {
 			return 0, err
 		}
@@ -273,14 +274,14 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		memUsageOfChk = chk.MemoryUsage()
 		e.memTracker.Consume(memUsageOfChk)
 		if e.collectRuntimeStatsEnabled() {
-			txn, err := e.ctx.Txn(true)
+			txn, err := e.Ctx().Txn(true)
 			if err == nil && txn.GetSnapshot() != nil {
 				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			}
 		}
-		txn, err := e.ctx.Txn(true)
+		txn, err := e.Ctx().Txn(true)
 		if err == nil {
-			sc := e.ctx.GetSessionVars().StmtCtx
+			sc := e.Ctx().GetSessionVars().StmtCtx
 			txn.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 			if sc.KvExecCounter != nil {
 				// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
@@ -315,12 +316,12 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				}
 			}
 			// write to table
-			if err := e.exec(ctx, e.children[0].Schema(), datumRow, newRow); err != nil {
+			if err := e.exec(ctx, e.Children(0).Schema(), datumRow, newRow); err != nil {
 				return 0, err
 			}
 		}
 		totalNumRows += chk.NumRows()
-		chk = chunk.Renew(chk, e.maxChunkSize)
+		chk = chunk.Renew(chk, e.MaxChunkSize())
 	}
 	return totalNumRows, nil
 }
@@ -357,7 +358,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false, false)
+			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
 			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
@@ -384,7 +385,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false, false)
+			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
 			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
@@ -413,7 +414,7 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false, false)
+			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
 			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
@@ -429,27 +430,27 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 func (e *UpdateExec) Close() error {
 	defer e.memTracker.ReplaceBytesUsed(0)
 	e.setMessage()
-	if e.runtimeStats != nil && e.stats != nil {
-		txn, err := e.ctx.Txn(false)
+	if e.RuntimeStats() != nil && e.stats != nil {
+		txn, err := e.Ctx().Txn(false)
 		if err == nil && txn.Valid() && txn.GetSnapshot() != nil {
 			txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, nil)
 		}
-		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
-	return e.children[0].Close()
+	return e.Children(0).Close()
 }
 
 // Open implements the Executor Open interface.
 func (e *UpdateExec) Open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, -1)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker = memory.NewTracker(e.ID(), -1)
+	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	return e.children[0].Open(ctx)
+	return e.Children(0).Open(ctx)
 }
 
 // setMessage sets info message(ERR_UPDATE_INFO) generated by UPDATE statement
 func (e *UpdateExec) setMessage() {
-	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+	stmtCtx := e.Ctx().GetSessionVars().StmtCtx
 	numMatched := e.matched
 	numChanged := stmtCtx.UpdatedRows()
 	numWarnings := stmtCtx.WarningCount()
@@ -458,7 +459,7 @@ func (e *UpdateExec) setMessage() {
 }
 
 func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
-	if e.runtimeStats != nil {
+	if e.RuntimeStats() != nil {
 		if e.stats == nil {
 			e.stats = &updateRuntimeStats{
 				SnapshotRuntimeStats:  &txnsnapshot.SnapshotRuntimeStats{},

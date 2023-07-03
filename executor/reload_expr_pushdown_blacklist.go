@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -29,12 +30,12 @@ import (
 
 // ReloadExprPushdownBlacklistExec indicates ReloadExprPushdownBlacklist executor.
 type ReloadExprPushdownBlacklistExec struct {
-	baseExecutor
+	exec.BaseExecutor
 }
 
 // Next implements the Executor Next interface.
 func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	return LoadExprPushdownBlacklist(e.ctx)
+	return LoadExprPushdownBlacklist(e.Ctx())
 }
 
 // LoadExprPushdownBlacklist loads the latest data from table mysql.expr_pushdown_blacklist.

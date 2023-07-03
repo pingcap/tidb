@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannerutil "github.com/pingcap/tidb/planner/util"
@@ -231,41 +232,41 @@ func TestSortSpillDisk(t *testing.T) {
 		ndvs:   cas.ndvs,
 	}
 	dataSource := buildMockDataSource(opt)
-	exec := &SortExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
+	exe := &SortExec{
+		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
-		schema:       dataSource.schema,
+		schema:       dataSource.Schema(),
 	}
 	for _, idx := range cas.orderByIdx {
-		exec.ByItems = append(exec.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
+		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
 	}
 	tmpCtx := context.Background()
-	chk := newFirstChunk(exec)
+	chk := newFirstChunk(exe)
 	dataSource.prepareChunks()
-	err := exec.Open(tmpCtx)
+	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
 	for {
-		err = exec.Next(tmpCtx, chk)
+		err = exe.Next(tmpCtx, chk)
 		require.NoError(t, err)
 		if chk.NumRows() == 0 {
 			break
 		}
 	}
 	// Test only 1 partition and all data in memory.
-	require.Len(t, exec.partitionList, 1)
-	require.Equal(t, false, exec.partitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exec.partitionList[0].NumRow())
-	err = exec.Close()
+	require.Len(t, exe.partitionList, 1)
+	require.Equal(t, false, exe.partitionList[0].AlreadySpilledSafeForTest())
+	require.Equal(t, 2048, exe.partitionList[0].NumRow())
+	err = exe.Close()
 	require.NoError(t, err)
 
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 1)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	dataSource.prepareChunks()
-	err = exec.Open(tmpCtx)
+	err = exe.Open(tmpCtx)
 	require.NoError(t, err)
 	for {
-		err = exec.Next(tmpCtx, chk)
+		err = exe.Next(tmpCtx, chk)
 		require.NoError(t, err)
 		if chk.NumRows() == 0 {
 			break
@@ -275,39 +276,39 @@ func TestSortSpillDisk(t *testing.T) {
 	// Now spilling is in parallel.
 	// Maybe the second add() will called before spilling, depends on
 	// Golang goroutine scheduling. So the result has two possibilities.
-	if len(exec.partitionList) == 2 {
-		require.Len(t, exec.partitionList, 2)
-		require.Equal(t, true, exec.partitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, true, exec.partitionList[1].AlreadySpilledSafeForTest())
-		require.Equal(t, 1024, exec.partitionList[0].NumRow())
-		require.Equal(t, 1024, exec.partitionList[1].NumRow())
+	if len(exe.partitionList) == 2 {
+		require.Len(t, exe.partitionList, 2)
+		require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
+		require.Equal(t, true, exe.partitionList[1].AlreadySpilledSafeForTest())
+		require.Equal(t, 1024, exe.partitionList[0].NumRow())
+		require.Equal(t, 1024, exe.partitionList[1].NumRow())
 	} else {
-		require.Len(t, exec.partitionList, 1)
-		require.Equal(t, true, exec.partitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, 2048, exec.partitionList[0].NumRow())
+		require.Len(t, exe.partitionList, 1)
+		require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
+		require.Equal(t, 2048, exe.partitionList[0].NumRow())
 	}
 
-	err = exec.Close()
+	err = exe.Close()
 	require.NoError(t, err)
 
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 28000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	dataSource.prepareChunks()
-	err = exec.Open(tmpCtx)
+	err = exe.Open(tmpCtx)
 	require.NoError(t, err)
 	for {
-		err = exec.Next(tmpCtx, chk)
+		err = exe.Next(tmpCtx, chk)
 		require.NoError(t, err)
 		if chk.NumRows() == 0 {
 			break
 		}
 	}
 	// Test only 1 partition but spill disk.
-	require.Len(t, exec.partitionList, 1)
-	require.Equal(t, true, exec.partitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exec.partitionList[0].NumRow())
-	err = exec.Close()
+	require.Len(t, exe.partitionList, 1)
+	require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
+	require.Equal(t, 2048, exe.partitionList[0].NumRow())
+	err = exe.Close()
 	require.NoError(t, err)
 
 	// Test partition nums.
@@ -326,28 +327,28 @@ func TestSortSpillDisk(t *testing.T) {
 		ndvs:   cas.ndvs,
 	}
 	dataSource = buildMockDataSource(opt)
-	exec = &SortExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
+	exe = &SortExec{
+		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
-		schema:       dataSource.schema,
+		schema:       dataSource.Schema(),
 	}
 	for _, idx := range cas.orderByIdx {
-		exec.ByItems = append(exec.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
+		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
 	}
 	tmpCtx = context.Background()
-	chk = newFirstChunk(exec)
+	chk = newFirstChunk(exe)
 	dataSource.prepareChunks()
-	err = exec.Open(tmpCtx)
+	err = exe.Open(tmpCtx)
 	require.NoError(t, err)
 	for {
-		err = exec.Next(tmpCtx, chk)
+		err = exe.Next(tmpCtx, chk)
 		require.NoError(t, err)
 		if chk.NumRows() == 0 {
 			break
 		}
 	}
 	// Don't spill too many partitions.
-	require.True(t, len(exec.partitionList) <= 4)
-	err = exec.Close()
+	require.True(t, len(exe.partitionList) <= 4)
+	err = exe.Close()
 	require.NoError(t, err)
 }

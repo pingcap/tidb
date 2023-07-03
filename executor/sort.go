@@ -20,6 +20,7 @@ import (
 	"errors"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
@@ -33,7 +34,7 @@ import (
 
 // SortExec represents sorting executor.
 type SortExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	ByItems []*util.ByItems
 	Idx     int
@@ -81,7 +82,7 @@ func (e *SortExec) Close() error {
 		e.spillAction.SetFinished()
 	}
 	e.spillAction = nil
-	return e.children[0].Close()
+	return e.Children(0).Close()
 }
 
 // Open implements the Executor Open interface.
@@ -91,13 +92,13 @@ func (e *SortExec) Open(ctx context.Context) error {
 
 	// To avoid duplicated initialization for TopNExec.
 	if e.memTracker == nil {
-		e.memTracker = memory.NewTracker(e.id, -1)
-		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-		e.diskTracker = memory.NewTracker(e.id, -1)
-		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
+		e.memTracker = memory.NewTracker(e.ID(), -1)
+		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
+		e.diskTracker = memory.NewTracker(e.ID(), -1)
+		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	}
 	e.partitionList = e.partitionList[:0]
-	return e.children[0].Open(ctx)
+	return e.Children(0).Open(ctx)
 }
 
 // Next implements the Executor Next interface.
@@ -178,7 +179,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	for i, byItem := range e.ByItems {
 		byItemsDesc[i] = byItem.Desc
 	}
-	e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
+	e.rowChunks = chunk.NewSortedRowContainer(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	if variable.EnableTmpStorageOnOOM.Load() {
@@ -189,13 +190,13 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 				defer e.spillAction.WaitForTest()
 			}
 		})
-		e.ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 		e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
 	}
 	for {
-		chk := tryNewCacheChunk(e.children[0])
-		err := Next(ctx, e.children[0], chk)
+		chk := tryNewCacheChunk(e.Children(0))
+		err := Next(ctx, e.Children(0), chk)
 		if err != nil {
 			return err
 		}
@@ -206,7 +207,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		if err := e.rowChunks.Add(chk); err != nil {
 			if errors.Is(err, chunk.ErrCannotAddBecauseSorted) {
 				e.partitionList = append(e.partitionList, e.rowChunks)
-				e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
+				e.rowChunks = chunk.NewSortedRowContainer(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs)
 				e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 				e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 				e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
@@ -218,7 +219,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 						defer e.spillAction.WaitForTest()
 					}
 				})
-				e.ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+				e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 				err = e.rowChunks.Add(chk)
 			}
 			if err != nil {
@@ -228,8 +229,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	}
 	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
 		if val.(bool) {
-			if e.ctx.GetSessionVars().ConnectionID == 123456 {
-				e.ctx.GetSessionVars().MemTracker.NeedKill.Store(true)
+			if e.Ctx().GetSessionVars().ConnectionID == 123456 {
+				e.Ctx().GetSessionVars().MemTracker.NeedKill.Store(true)
 			}
 		}
 	})
@@ -388,13 +389,13 @@ func (e *TopNExec) initPointers() {
 
 // Open implements the Executor Open interface.
 func (e *TopNExec) Open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, -1)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker = memory.NewTracker(e.ID(), -1)
+	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
 	e.fetched = false
 	e.Idx = 0
 
-	return e.children[0].Open(ctx)
+	return e.Children(0).Open(ctx)
 }
 
 // Next implements the Executor Next interface.
@@ -430,14 +431,14 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
+	e.rowChunks = chunk.NewList(retTypes(e), e.InitCap(), e.MaxChunkSize())
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
-		srcChk := tryNewCacheChunk(e.children[0])
+		srcChk := tryNewCacheChunk(e.Children(0))
 		// adjust required rows by total limit
-		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.maxChunkSize)
-		err := Next(ctx, e.children[0], srcChk)
+		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.MaxChunkSize())
+		err := Next(ctx, e.Children(0), srcChk)
 		if err != nil {
 			return err
 		}
@@ -460,9 +461,9 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
 	}
-	childRowChk := tryNewCacheChunk(e.children[0])
+	childRowChk := tryNewCacheChunk(e.Children(0))
 	for {
-		err := Next(ctx, e.children[0], childRowChk)
+		err := Next(ctx, e.Children(0), childRowChk)
 		if err != nil {
 			return err
 		}
@@ -504,7 +505,7 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
+	newRowChunks := chunk.NewList(retTypes(e), e.InitCap(), e.MaxChunkSize())
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))

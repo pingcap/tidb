@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -54,7 +55,7 @@ var (
 
 // LoadDataExec represents a load data executor.
 type LoadDataExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	FileLocRef     ast.FileLocRefTp
 	loadDataWorker *LoadDataWorker
@@ -235,7 +236,7 @@ func initEncodeCommitWorkers(e *LoadDataWorker) (*encodeWorker, *commitWorker, e
 	if err2 != nil {
 		return nil, nil, err2
 	}
-	colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(insertValues.ctx)
+	colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(insertValues.Ctx())
 	if err2 != nil {
 		return nil, nil, err2
 	}
@@ -268,7 +269,7 @@ func createInsertValues(e *LoadDataWorker) (insertVal *InsertValues, err error) 
 		}
 	}
 	ret := &InsertValues{
-		baseExecutor:   newBaseExecutor(e.UserSctx, nil, e.planInfo.ID),
+		BaseExecutor:   exec.NewBaseExecutor(e.UserSctx, nil, e.planInfo.ID),
 		Table:          e.table,
 		Columns:        e.planInfo.Columns,
 		GenExprs:       e.planInfo.GenColExprs,
@@ -411,7 +412,7 @@ func (w *encodeWorker) readOneBatchRows(ctx context.Context, parser mydump.Parse
 		w.rows = append(w.rows, r)
 		w.curBatchCnt++
 		if w.maxRowsInBatch != 0 && w.rowCount%w.maxRowsInBatch == 0 {
-			logutil.Logger(ctx).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", w.maxChunkSize),
+			logutil.Logger(ctx).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", w.MaxChunkSize()),
 				zap.Uint64("totalRows", w.rowCount))
 			return nil
 		}
@@ -439,7 +440,7 @@ func (w *encodeWorker) parserData2TableData(
 	}
 
 	row := make([]types.Datum, 0, len(w.insertColumns))
-	sessionVars := w.ctx.GetSessionVars()
+	sessionVars := w.Ctx().GetSessionVars()
 	setVar := func(name string, col *types.Datum) {
 		// User variable names are not case-sensitive
 		// https://dev.mysql.com/doc/refman/8.0/en/user-variables.html
@@ -529,10 +530,10 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 
 		if err != nil {
 			background := context.Background()
-			w.ctx.StmtRollback(background, false)
-			w.ctx.RollbackTxn(background)
+			w.Ctx().StmtRollback(background, false)
+			w.Ctx().RollbackTxn(background)
 		} else {
-			if err = w.ctx.CommitTxn(ctx); err != nil {
+			if err = w.Ctx().CommitTxn(ctx); err != nil {
 				logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))
 			}
 		}
@@ -574,7 +575,7 @@ func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error
 	failpoint.Inject("commitOneTaskErr", func() {
 		failpoint.Return(errors.New("mock commit one task error"))
 	})
-	w.ctx.StmtCommit(ctx)
+	w.Ctx().StmtCommit(ctx)
 	return nil
 }
 
@@ -591,7 +592,7 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 	if cnt == 0 {
 		return err
 	}
-	w.ctx.GetSessionVars().StmtCtx.AddRecordRows(cnt)
+	w.Ctx().GetSessionVars().StmtCtx.AddRecordRows(cnt)
 
 	switch w.controller.OnDuplicate {
 	case ast.OnDuplicateKeyHandlingReplace:
@@ -600,7 +601,7 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, false)
 	case ast.OnDuplicateKeyHandlingError:
 		for i, row := range rows[0:cnt] {
-			sizeHintStep := int(w.ctx.GetSessionVars().ShardAllocateStep)
+			sizeHintStep := int(w.Ctx().GetSessionVars().ShardAllocateStep)
 			if sizeHintStep > 0 && i%sizeHintStep == 0 {
 				sizeHint := sizeHintStep
 				remain := len(rows[0:cnt]) - i
@@ -614,7 +615,7 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 			if err != nil {
 				return err
 			}
-			w.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+			w.Ctx().GetSessionVars().StmtCtx.AddCopiedRows(1)
 		}
 		return nil
 	default:
@@ -675,8 +676,8 @@ func (e *LoadDataWorker) TestLoadLocal(parser mydump.Parser) error {
 		return err
 	}
 	encoder.resetBatch()
-	committer.ctx.StmtCommit(ctx)
-	err = committer.ctx.CommitTxn(ctx)
+	committer.Ctx().StmtCommit(ctx)
+	err = committer.Ctx().CommitTxn(ctx)
 	if err != nil {
 		return err
 	}
@@ -730,12 +731,12 @@ func (k loadDataVarKeyType) String() string {
 const LoadDataVarKey loadDataVarKeyType = 0
 
 var (
-	_ Executor = (*LoadDataActionExec)(nil)
+	_ exec.Executor = (*LoadDataActionExec)(nil)
 )
 
 // LoadDataActionExec executes LoadDataActionStmt.
 type LoadDataActionExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	tp    ast.LoadDataActionTp
 	jobID int64
@@ -743,8 +744,8 @@ type LoadDataActionExec struct {
 
 // Next implements the Executor Next interface.
 func (e *LoadDataActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	sqlExec := e.ctx.(sqlexec.SQLExecutor)
-	user := e.ctx.GetSessionVars().User.String()
+	sqlExec := e.Ctx().(sqlexec.SQLExecutor)
+	user := e.Ctx().GetSessionVars().User.String()
 	job := asyncloaddata.NewJob(e.jobID, sqlExec, user)
 
 	switch e.tp {

@@ -30,6 +30,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -50,7 +51,7 @@ import (
 
 // TraceExec represents a root executor of trace query.
 type TraceExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	// CollectedSpans collects all span during execution. Span is appended via
 	// callback method which passes into tracer implementation.
 	CollectedSpans []basictracer.RawSpan
@@ -73,26 +74,26 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.exhausted {
 		return nil
 	}
-	se, ok := e.ctx.(sqlexec.SQLExecutor)
+	se, ok := e.Ctx().(sqlexec.SQLExecutor)
 	if !ok {
 		e.exhausted = true
 		return nil
 	}
 
 	// For audit log plugin to set the correct statement.
-	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+	stmtCtx := e.Ctx().GetSessionVars().StmtCtx
 	defer func() {
-		e.ctx.GetSessionVars().StmtCtx = stmtCtx
+		e.Ctx().GetSessionVars().StmtCtx = stmtCtx
 	}()
 
 	if e.optimizerTrace {
 		switch e.optimizerTraceTarget {
 		case core.TracePlanTargetEstimation:
-			return e.nextOptimizerCEPlanTrace(ctx, e.ctx, req)
+			return e.nextOptimizerCEPlanTrace(ctx, e.Ctx(), req)
 		case core.TracePlanTargetDebug:
-			return e.nextOptimizerDebugPlanTrace(ctx, e.ctx, req)
+			return e.nextOptimizerDebugPlanTrace(ctx, e.Ctx(), req)
 		default:
-			return e.nextOptimizerPlanTrace(ctx, e.ctx, req)
+			return e.nextOptimizerPlanTrace(ctx, e.Ctx(), req)
 		}
 	}
 
@@ -271,7 +272,7 @@ func (e *TraceExec) nextRowJSON(ctx context.Context, se sqlexec.SQLExecutor, req
 func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
 	// For audit log plugin to log the statement correctly.
 	// Should be logged as 'explain ...', instead of the executed SQL.
-	vars := e.ctx.GetSessionVars()
+	vars := e.Ctx().GetSessionVars()
 	origin := vars.InRestrictedSQL
 	vars.InRestrictedSQL = true
 	defer func() {
@@ -287,12 +288,12 @@ func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
 		logutil.Eventf(ctx, "execute with error(%d): %s", errCode, err.Error())
 	}
 	if rs != nil {
-		drainRecordSet(ctx, e.ctx, rs)
+		drainRecordSet(ctx, e.Ctx(), rs)
 		if err = rs.Close(); err != nil {
 			logutil.Logger(ctx).Error("run trace close result with error", zap.Error(err))
 		}
 	}
-	logutil.Eventf(ctx, "execute done, modify row: %d", e.ctx.GetSessionVars().StmtCtx.AffectedRows())
+	logutil.Eventf(ctx, "execute done, modify row: %d", e.Ctx().GetSessionVars().StmtCtx.AffectedRows())
 }
 
 func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) {

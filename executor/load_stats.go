@@ -20,17 +20,18 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-var _ Executor = &LoadStatsExec{}
+var _ exec.Executor = &LoadStatsExec{}
 
 // LoadStatsExec represents a load statistic executor.
 type LoadStatsExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	info *LoadStatsInfo
 }
 
@@ -53,16 +54,16 @@ const LoadStatsVarKey loadStatsVarKeyType = 0
 
 // Next implements the Executor Next interface.
 func (e *LoadStatsExec) Next(_ context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.maxChunkSize)
+	req.GrowAndReset(e.MaxChunkSize())
 	if len(e.info.Path) == 0 {
 		return errors.New("Load Stats: file path is empty")
 	}
-	val := e.ctx.Value(LoadStatsVarKey)
+	val := e.Ctx().Value(LoadStatsVarKey)
 	if val != nil {
-		e.ctx.SetValue(LoadStatsVarKey, nil)
+		e.Ctx().SetValue(LoadStatsVarKey, nil)
 		return errors.New("Load Stats: previous load stats option isn't closed normally")
 	}
-	e.ctx.SetValue(LoadStatsVarKey, e.info)
+	e.Ctx().SetValue(LoadStatsVarKey, e.info)
 	return nil
 }
 

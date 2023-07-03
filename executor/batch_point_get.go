@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -41,7 +42,7 @@ import (
 
 // BatchPointGetExec executes a bunch of point select queries.
 type BatchPointGetExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	tblInfo     *model.TableInfo
 	idxInfo     *model.IndexInfo
@@ -82,29 +83,29 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 	if len(e.virtualColumnIndex) > 0 {
 		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
 		for i, idx := range e.virtualColumnIndex {
-			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
+			e.virtualColumnRetFieldTypes[i] = e.Schema().Columns[idx].RetType
 		}
 	}
 }
 
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
-	sessVars := e.ctx.GetSessionVars()
+	sessVars := e.Ctx().GetSessionVars()
 	txnCtx := sessVars.TxnCtx
-	txn, err := e.ctx.Txn(false)
+	txn, err := e.Ctx().Txn(false)
 	if err != nil {
 		return err
 	}
 	e.txn = txn
 
-	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
+	setOptionForTopSQL(e.Ctx().GetSessionVars().StmtCtx, e.snapshot)
 	var batchGetter kv.BatchGetter = e.snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
 		if e.lock {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
-		} else if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) && e.ctx.GetSessionVars().EnablePointGetCache {
-			batchGetter = newCacheBatchGetter(e.ctx, e.tblInfo.ID, e.snapshot)
+		} else if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
+			batchGetter = newCacheBatchGetter(e.Ctx(), e.tblInfo.ID, e.snapshot)
 		} else {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, e.snapshot)
 		}
@@ -157,10 +158,10 @@ func MockNewCacheTableSnapShot(snapshot kv.Snapshot, memBuffer kv.MemBuffer) *ca
 
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
-	if e.runtimeStats != nil {
-		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	if e.RuntimeStats() != nil {
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
-	if e.runtimeStats != nil && e.snapshot != nil {
+	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
 	e.inited = 0
@@ -176,7 +177,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		if e.lock {
-			e.updateDeltaForTableID(e.tblInfo.ID)
+			e.UpdateDeltaForTableID(e.tblInfo.ID)
 		}
 	}
 
@@ -185,14 +186,14 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := DecodeRowValToChunk(e.base().ctx, e.schema, e.tblInfo, handle, val, req, e.rowDecoder)
+		err := DecodeRowValToChunk(e.Base().Ctx(), e.Schema(), e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
 		e.index++
 	}
 
-	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema.Columns, e.columns, e.ctx, req)
+	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), req)
 	if err != nil {
 		return err
 	}
@@ -213,7 +214,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var indexKeys []kv.Key
 	var err error
 	batchGetter := e.batchGetter
-	rc := e.ctx.GetSessionVars().IsPessimisticReadConsistency()
+	rc := e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
 	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
 		dedup := make(map[hack.MutableString]struct{})
@@ -238,7 +239,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if e.singlePart && e.partTblID != physID {
 				continue
 			}
-			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
+			idxKey, err1 := EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}
@@ -302,7 +303,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				pid := tablecodec.DecodeTableID(key)
 				e.physIDs = append(e.physIDs, pid)
 				if e.lock {
-					e.updateDeltaForTableID(pid)
+					e.UpdateDeltaForTableID(pid)
 				}
 			}
 		}
@@ -394,7 +395,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		lockKeys := make([]kv.Key, len(keys)+len(indexKeys))
 		copy(lockKeys, keys)
 		copy(lockKeys[len(keys):], indexKeys)
-		err = LockKeys(ctx, e.ctx, e.waitTime, lockKeys...)
+		err = LockKeys(ctx, e.Ctx(), e.waitTime, lockKeys...)
 		if err != nil {
 			return err
 		}
@@ -414,7 +415,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		val := values[string(key)]
 		if len(val) == 0 {
 			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) &&
-				!e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+				!e.Ctx().GetSessionVars().StmtCtx.WeakConsistency {
 				return (&consistency.Reporter{
 					HandleEncode: func(_ kv.Handle) kv.Key {
 						return key
@@ -424,7 +425,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 					},
 					Tbl:  e.tblInfo,
 					Idx:  e.idxInfo,
-					Sctx: e.ctx,
+					Sctx: e.Ctx(),
 				}).ReportLookupInconsistent(ctx,
 					1, 0,
 					e.handles[i:i+1],
@@ -448,7 +449,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	// Lock exists keys only for Read Committed Isolation.
 	if e.lock && rc {
-		err = LockKeys(ctx, e.ctx, e.waitTime, existKeys...)
+		err = LockKeys(ctx, e.Ctx(), e.waitTime, existKeys...)
 		if err != nil {
 			return err
 		}

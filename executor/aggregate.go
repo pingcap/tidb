@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -157,7 +158,7 @@ type AfFinalResult struct {
       +--------------+          +-+ +-+          +-+
 */
 type HashAggExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	sc               *stmtctx.StatementContext
 	PartialAggFuncs  []aggfuncs.AggFunc
@@ -245,7 +246,7 @@ func (d *HashAggIntermData) getPartialResultBatch(_ *stmtctx.StatementContext, p
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
 	if e.stats != nil {
-		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 	if e.isUnparallelExec {
 		var firstErr error
@@ -259,7 +260,7 @@ func (e *HashAggExec) Close() error {
 			firstErr = e.listInDisk.Close()
 		}
 		e.spillAction, e.tmpChkForSpill = nil, nil
-		if err := e.baseExecutor.Close(); firstErr == nil {
+		if err := e.BaseExecutor.Close(); firstErr == nil {
 			firstErr = err
 		}
 		return firstErr
@@ -289,7 +290,7 @@ func (e *HashAggExec) Close() error {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 	}
-	return e.baseExecutor.Close()
+	return e.BaseExecutor.Close()
 }
 
 // Open implements the Executor Open interface.
@@ -300,7 +301,7 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 		}
 	})
 
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	e.prepared = false
@@ -308,17 +309,17 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	if e.memTracker != nil {
 		e.memTracker.Reset()
 	} else {
-		e.memTracker = memory.NewTracker(e.id, -1)
+		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
-		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	if e.Ctx().GetSessionVars().TrackAggregateMemoryUsage {
+		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	}
 
 	if e.isUnparallelExec {
 		e.initForUnparallelExec()
 		return nil
 	}
-	e.initForParallelExec(e.ctx)
+	e.initForParallelExec(e.Ctx())
 	return nil
 }
 
@@ -330,23 +331,23 @@ func (e *HashAggExec) initForUnparallelExec() {
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<e.bInMap) + setSize)
 	e.groupKeyBuffer = make([][]byte, 0, 8)
-	e.childResult = tryNewCacheChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.Children(0))
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 
 	e.offsetOfSpilledChks, e.numOfSpilledChks = 0, 0
 	e.executed, e.isChildDrained = false, false
-	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
+	e.listInDisk = chunk.NewListInDisk(retTypes(e.Children(0)))
 
-	e.tmpChkForSpill = tryNewCacheChunk(e.children[0])
-	if vars := e.ctx.GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
-		e.diskTracker = disk.NewTracker(e.id, -1)
+	e.tmpChkForSpill = tryNewCacheChunk(e.Children(0))
+	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
+		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
 		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
 		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
 	}
 }
 
-func closeBaseExecutor(b *baseExecutor) {
+func closeBaseExecutor(b *exec.BaseExecutor) {
 	if r := recover(); r != nil {
 		// Release the resource, but throw the panic again and let the top level handle it.
 		terror.Log(b.Close())
@@ -356,7 +357,7 @@ func closeBaseExecutor(b *baseExecutor) {
 }
 
 func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
-	sessionVars := e.ctx.GetSessionVars()
+	sessionVars := e.Ctx().GetSessionVars()
 	finalConcurrency := sessionVars.HashAggFinalConcurrency()
 	partialConcurrency := sessionVars.HashAggPartialConcurrency()
 	e.isChildReturnEmpty = true
@@ -380,14 +381,14 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
 		w := HashAggPartialWorker{
-			baseHashAggWorker: newBaseHashAggWorker(e.ctx, e.finishCh, e.PartialAggFuncs, e.maxChunkSize, e.memTracker),
+			baseHashAggWorker: newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
 			inputCh:           e.partialInputChs[i],
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
 			globalOutputCh:    e.finalOutputCh,
 			partialResultsMap: make(aggPartialResultMapper),
 			groupByItems:      e.GroupByItems,
-			chk:               tryNewCacheChunk(e.children[0]),
+			chk:               tryNewCacheChunk(e.Children(0)),
 			groupKey:          make([][]byte, 0, 8),
 		}
 		// There is a bucket in the empty partialResultsMap.
@@ -400,7 +401,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 		e.memTracker.Consume(w.chk.MemoryUsage())
 		e.partialWorkers[i] = w
 		input := &HashAggInput{
-			chk:        newFirstChunk(e.children[0]),
+			chk:        newFirstChunk(e.Children(0)),
 			giveBackCh: w.inputCh,
 		}
 		e.memTracker.Consume(input.chk.MemoryUsage())
@@ -411,7 +412,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 	for i := 0; i < finalConcurrency; i++ {
 		groupSet, setSize := set.NewStringSetWithMemoryUsage()
 		w := HashAggFinalWorker{
-			baseHashAggWorker:   newBaseHashAggWorker(e.ctx, e.finishCh, e.FinalAggFuncs, e.maxChunkSize, e.memTracker),
+			baseHashAggWorker:   newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
 			partialResultMap:    make(aggPartialResultMapper),
 			groupSet:            groupSet,
 			inputCh:             e.partialOutputChs[i],
@@ -818,7 +819,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 			chk = input.chk
 		}
 		mSize := chk.MemoryUsage()
-		err = Next(ctx, e.children[0], chk)
+		err = Next(ctx, e.Children(0), chk)
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: err}
 			e.memTracker.Consume(-mSize)
@@ -872,7 +873,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
 	partialStart := time.Now()
 	for i := range e.partialWorkers {
-		go e.partialWorkers[i].run(e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
+		go e.partialWorkers[i].run(e.Ctx(), partialWorkerWaitGroup, len(e.finalWorkers))
 	}
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
@@ -884,7 +885,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
 	finalStart := time.Now()
 	for i := range e.finalWorkers {
-		go e.finalWorkers[i].run(e.ctx, finalWorkerWaitGroup)
+		go e.finalWorkers[i].run(e.Ctx(), finalWorkerWaitGroup)
 	}
 	go func() {
 		finalWorkerWaitGroup.Wait()
@@ -945,7 +946,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 	chk.Reset()
 	for {
 		if e.prepared {
-			// Since we return e.maxChunkSize rows every time, so we should not traverse
+			// Since we return e.MaxChunkSize() rows every time, so we should not traverse
 			// `groupSet` because of its randomness.
 			for ; e.cursor4GroupKey < len(e.groupKeys); e.cursor4GroupKey++ {
 				partialResults := e.getPartialResults(e.groupKeys[e.cursor4GroupKey])
@@ -953,7 +954,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 					chk.SetNumVirtualRows(chk.NumRows() + 1)
 				}
 				for i, af := range e.PartialAggFuncs {
-					if err := af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk); err != nil {
+					if err := af.AppendFinalResult2Chunk(e.Ctx(), partialResults[i], chk); err != nil {
 						return err
 					}
 				}
@@ -1024,7 +1025,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		if e.childResult.NumRows() == 0 {
 			return nil
 		}
-		e.groupKeyBuffer, err = getGroupKey(e.ctx, e.childResult, e.groupKeyBuffer, e.GroupByItems)
+		e.groupKeyBuffer, err = getGroupKey(e.Ctx(), e.childResult, e.groupKeyBuffer, e.GroupByItems)
 		if err != nil {
 			return err
 		}
@@ -1045,7 +1046,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
 				tmpBuf[0] = e.childResult.GetRow(j)
-				memDelta, err := af.UpdatePartialResult(e.ctx, tmpBuf[:], partialResults[i])
+				memDelta, err := af.UpdatePartialResult(e.Ctx(), tmpBuf[:], partialResults[i])
 				if err != nil {
 					return err
 				}
@@ -1087,7 +1088,7 @@ func (e *HashAggExec) spillUnprocessedData(isFullChk bool) (err error) {
 func (e *HashAggExec) getNextChunk(ctx context.Context) (err error) {
 	e.childResult.Reset()
 	if !e.isChildDrained {
-		if err := Next(ctx, e.children[0], e.childResult); err != nil {
+		if err := Next(ctx, e.Children(0), e.childResult); err != nil {
 			return err
 		}
 		if e.childResult.NumRows() != 0 {
@@ -1129,10 +1130,10 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 }
 
 func (e *HashAggExec) initRuntimeStats() {
-	if e.runtimeStats != nil {
+	if e.RuntimeStats() != nil {
 		stats := &HashAggRuntimeStats{
-			PartialConcurrency: e.ctx.GetSessionVars().HashAggPartialConcurrency(),
-			FinalConcurrency:   e.ctx.GetSessionVars().HashAggFinalConcurrency(),
+			PartialConcurrency: e.Ctx().GetSessionVars().HashAggPartialConcurrency(),
+			FinalConcurrency:   e.Ctx().GetSessionVars().HashAggFinalConcurrency(),
 		}
 		stats.PartialStats = make([]*AggWorkerStat, 0, stats.PartialConcurrency)
 		stats.FinalStats = make([]*AggWorkerStat, 0, stats.FinalConcurrency)
@@ -1243,7 +1244,7 @@ func (*HashAggRuntimeStats) Tp() int {
 // It assumes all the input data is sorted by group by key.
 // When Next() is called, it will return a result for the same group.
 type StreamAggExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	executed bool
 	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
@@ -1272,13 +1273,13 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 		}
 	})
 
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	// If panic in Open, the children executor should be closed because they are open.
-	defer closeBaseExecutor(&e.baseExecutor)
+	defer closeBaseExecutor(&e.BaseExecutor)
 
-	e.childResult = tryNewCacheChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.Children(0))
 	e.executed = false
 	e.isChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
@@ -1295,10 +1296,10 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 		e.memTracker.Reset()
 	} else {
 		// bytesLimit <= 0 means no limit, for now we just track the memory footprint
-		e.memTracker = memory.NewTracker(e.id, -1)
+		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
-		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	if e.Ctx().GetSessionVars().TrackAggregateMemoryUsage {
+		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(e.childResult.MemoryUsage() + e.memUsageOfInitialPartialResult)
@@ -1312,7 +1313,7 @@ func (e *StreamAggExec) Close() error {
 		e.childResult = nil
 	}
 	e.groupChecker.reset()
-	return e.baseExecutor.Close()
+	return e.BaseExecutor.Close()
 }
 
 // Next implements the Executor Next interface.
@@ -1381,7 +1382,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 
 	allMemDelta := int64(0)
 	for i, aggFunc := range e.aggFuncs {
-		memDelta, err := aggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i])
+		memDelta, err := aggFunc.UpdatePartialResult(e.Ctx(), e.groupRows, e.partialResults[i])
 		if err != nil {
 			return err
 		}
@@ -1401,7 +1402,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 	}
 
 	mSize := e.childResult.MemoryUsage()
-	err = Next(ctx, e.children[0], e.childResult)
+	err = Next(ctx, e.Children(0), e.childResult)
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 	if err != nil {
@@ -1428,7 +1429,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 // result chunk, and reset the evaluation context for each aggregation.
 func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	for i, aggFunc := range e.aggFuncs {
-		err := aggFunc.AppendFinalResult2Chunk(e.ctx, e.partialResults[i], chk)
+		err := aggFunc.AppendFinalResult2Chunk(e.Ctx(), e.partialResults[i], chk)
 		if err != nil {
 			return err
 		}

@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/executor/internal/mpp"
 	"github.com/pingcap/tidb/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/infoschema"
@@ -56,7 +57,7 @@ func getMPPQueryTS(ctx sessionctx.Context) uint64 {
 // MPPGather dispatch MPP tasks and read data from root tasks.
 type MPPGather struct {
 	// following fields are construct needed
-	baseExecutor
+	exec.BaseExecutor
 	is           infoschema.InfoSchema
 	originalPlan plannercore.PhysicalPlan
 	startTS      uint64
@@ -100,11 +101,11 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		if !ok {
 			return errors.Errorf("unexpected plan type, expect: PhysicalExchangeSender, got: %s", e.originalPlan.TP())
 		}
-		_, e.kvRanges, err = plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, e.mppQueryID, sender, e.is)
+		_, e.kvRanges, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, e.mppQueryID, sender, e.is)
 		return err
 	}
 	planIDs := collectPlanIDS(e.originalPlan, nil)
-	e.gatherID = allocMPPGatherID(e.ctx)
+	e.gatherID = allocMPPGatherID(e.Ctx())
 	coord := e.buildCoordinator(planIDs)
 	err = mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID}, coord)
 	if err != nil {
@@ -115,13 +116,13 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.respIter = distsql.GenSelectResultFromResponse(e.ctx, e.retFieldTypes, planIDs, e.id, resp)
+	e.respIter = distsql.GenSelectResultFromResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), resp)
 	return nil
 }
 
 func (e *MPPGather) buildCoordinator(planIDs []int) kv.MppCoordinator {
 	_, serverAddr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
-	coord := mpp.NewLocalMPPCoordinator(e.ctx, e.is, e.originalPlan, planIDs, e.startTS, e.mppQueryID, e.gatherID, serverAddr, e.memTracker)
+	coord := mpp.NewLocalMPPCoordinator(e.Ctx(), e.is, e.originalPlan, planIDs, e.startTS, e.mppQueryID, e.gatherID, serverAddr, e.memTracker)
 	return coord
 }
 
@@ -135,7 +136,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema.Columns, e.columns, e.ctx, chk)
+	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), chk)
 	if err != nil {
 		return err
 	}

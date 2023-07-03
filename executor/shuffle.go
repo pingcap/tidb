@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/channel"
@@ -79,7 +80,7 @@ import (
 //     +---------->  |    fetch data from DataSource   |
 //     +---------------------------------+
 type ShuffleExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	concurrency int
 	workers     []*shuffleWorker
 
@@ -88,7 +89,7 @@ type ShuffleExec struct {
 
 	// each dataSource has a corresponding spliter
 	splitters   []partitionSplitter
-	dataSources []Executor
+	dataSources []exec.Executor
 
 	finishCh chan struct{}
 	outputCh chan *shuffleOutput
@@ -107,7 +108,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 
@@ -179,10 +180,10 @@ func (e *ShuffleExec) Close() error {
 	}
 	e.executed = false
 
-	if e.runtimeStats != nil {
+	if e.RuntimeStats() != nil {
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("ShuffleConcurrency", e.concurrency))
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
+		e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), runtimeStats)
 	}
 
 	// close dataSources
@@ -192,7 +193,7 @@ func (e *ShuffleExec) Close() error {
 		}
 	}
 	// close baseExecutor
-	if err := e.baseExecutor.Close(); err != nil && firstErr == nil {
+	if err := e.BaseExecutor.Close(); err != nil && firstErr == nil {
 		firstErr = err
 	}
 	return errors.Trace(firstErr)
@@ -283,7 +284,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 			break
 		}
 
-		workerIndices, err = e.splitters[dataSourceIndex].split(e.ctx, chk, workerIndices)
+		workerIndices, err = e.splitters[dataSourceIndex].split(e.Ctx(), chk, workerIndices)
 		if err != nil {
 			e.outputCh <- &shuffleOutput{err: err}
 			return
@@ -316,11 +317,11 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 	}
 }
 
-var _ Executor = &shuffleReceiver{}
+var _ exec.Executor = &shuffleReceiver{}
 
 // shuffleReceiver receives chunk from dataSource through inputCh
 type shuffleReceiver struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	finishCh <-chan struct{}
 	executed bool
@@ -331,7 +332,7 @@ type shuffleReceiver struct {
 
 // Open implements the Executor Open interface.
 func (e *shuffleReceiver) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	e.executed = false
@@ -340,7 +341,7 @@ func (e *shuffleReceiver) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *shuffleReceiver) Close() error {
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.Trace(e.BaseExecutor.Close())
 }
 
 // Next implements the Executor Next interface.
@@ -367,7 +368,7 @@ func (e *shuffleReceiver) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // shuffleWorker is the multi-thread worker executing child executors within "partition".
 type shuffleWorker struct {
-	childExec Executor
+	childExec exec.Executor
 
 	finishCh <-chan struct{}
 

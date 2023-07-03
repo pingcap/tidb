@@ -19,6 +19,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -30,11 +31,11 @@ import (
 	"go.uber.org/zap"
 )
 
-var _ Executor = &ChecksumTableExec{}
+var _ exec.Executor = &ChecksumTableExec{}
 
 // ChecksumTableExec represents ChecksumTable executor.
 type ChecksumTableExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	tables map[int64]*checksumContext
 	done   bool
@@ -42,11 +43,11 @@ type ChecksumTableExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ChecksumTableExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 
-	concurrency, err := getChecksumTableConcurrency(e.ctx)
+	concurrency, err := getChecksumTableConcurrency(e.Ctx())
 	if err != nil {
 		return err
 	}
@@ -84,7 +85,7 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ChecksumTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *ChecksumTableExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil
@@ -103,7 +104,7 @@ func (e *ChecksumTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *ChecksumTableExec) buildTasks() ([]*checksumTask, error) {
 	var tasks []*checksumTask
 	for id, t := range e.tables {
-		reqs, err := t.BuildRequests(e.ctx)
+		reqs, err := t.BuildRequests(e.Ctx())
 		if err != nil {
 			return nil, err
 		}
@@ -128,8 +129,8 @@ func (e *ChecksumTableExec) checksumWorker(taskCh <-chan *checksumTask, resultCh
 }
 
 func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.ChecksumResponse, err error) {
-	ctx := distsql.WithSQLKvExecCounterInterceptor(context.TODO(), e.ctx.GetSessionVars().StmtCtx)
-	res, err := distsql.Checksum(ctx, e.ctx.GetClient(), req, e.ctx.GetSessionVars().KVVars)
+	ctx := distsql.WithSQLKvExecCounterInterceptor(context.TODO(), e.Ctx().GetSessionVars().StmtCtx)
+	res, err := distsql.Checksum(ctx, e.Ctx().GetClient(), req, e.Ctx().GetSessionVars().KVVars)
 	if err != nil {
 		return nil, err
 	}
