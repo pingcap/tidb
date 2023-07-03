@@ -153,11 +153,11 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 		logFields = append(logFields, zap.String("database", info.DB))
 	}
 	var tableIDs, indexNames string
-	if len(info.StmtCtx.TableIDs) > 0 {
+	if len(info.TableIDs) > 0 {
 		tableIDs = strings.ReplaceAll(fmt.Sprintf("%v", info.TableIDs), " ", ",")
 		logFields = append(logFields, zap.String("table_ids", tableIDs))
 	}
-	if len(info.StmtCtx.IndexNames) > 0 {
+	if len(info.IndexNames) > 0 {
 		indexNames = strings.ReplaceAll(fmt.Sprintf("%v", info.IndexNames), " ", ",")
 		logFields = append(logFields, zap.String("index_names", indexNames))
 	}
