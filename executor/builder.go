@@ -1361,7 +1361,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), reader)}
 	// Get the handle column index of the below Plan.
-	us.belowHandleCols = v.HandleCols
+	us.handleCols = v.HandleCols
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
 
 	// If the push-downed condition contains virtual column, we may build a selection upon reader
@@ -1385,6 +1385,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	switch x := reader.(type) {
 	case *MPPGather:
 		us.desc = false
+		us.keepOrder = false
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -1392,6 +1393,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *TableReaderExecutor:
 		us.desc = x.desc
+		us.keepOrder = x.keepOrder
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -1399,6 +1401,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexReaderExecutor:
 		us.desc = x.desc
+		us.keepOrder = x.keepOrder
 		for _, ic := range x.index.Columns {
 			for i, col := range x.columns {
 				if col.Name.L == ic.Name.L {
@@ -1413,6 +1416,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
+		us.keepOrder = x.keepOrder
 		for _, ic := range x.index.Columns {
 			for i, col := range x.columns {
 				if col.Name.L == ic.Name.L {
@@ -1427,7 +1431,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexMergeReaderExecutor:
-		// IndexMergeReader doesn't care order for now. So we will not set desc and useIndex.
+		// IndexMergeReader doesn't care order for now. So we will not set desc, useIndex and keepOrder.
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
