@@ -1321,7 +1321,7 @@ const (
 	DefTiDBEnableExternalTSRead                       = false
 	DefTiDBEnableReusechunk                           = true
 	DefTiDBUseAlloc                                   = false
-	DefTiDBEnablePlanReplayerCapture                  = false
+	DefTiDBEnablePlanReplayerCapture                  = true
 	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
 	DefTiDBTTLJobEnable                               = true
 	DefTiDBTTLScanBatchSize                           = 500
