@@ -17,7 +17,6 @@ package copr
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/config"
 	"math"
 	"net"
 	"strconv"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
