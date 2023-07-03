@@ -967,7 +967,7 @@ func TestIssue43852(t *testing.T) {
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
 	tk.MustQuery(`select * from t6 where a in (2015, '8')`).Check(testkit.Rows())
 	tk.MustQuery(`select * from t6 where a in (2009, '2023-01-21')`).Check(testkit.Rows(`2023-01-21 2023-01-05`))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestNonPreparedPlanTypeRandomly(t *testing.T) {
