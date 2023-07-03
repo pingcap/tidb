@@ -31,12 +31,8 @@ import (
 )
 
 // GlobalPDHelper is the global variable for PDHelper.
-var GlobalPDHelper *PDHelper
+var GlobalPDHelper = defaultPDHelper()
 var globalPDHelperOnce sync.Once
-
-func init() {
-	GlobalPDHelper = defaultPDHelper()
-}
 
 // PDHelper is used to get some information from PD.
 type PDHelper struct {
