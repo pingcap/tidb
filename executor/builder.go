@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/executor/internal/builder"
 	"github.com/pingcap/tidb/executor/internal/exec"
-	internalutil "github.com/pingcap/tidb/executor/internal/util"
+	"github.com/pingcap/tidb/executor/internal/pdhelper"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -2787,7 +2787,7 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
-	return internalutil.GetApproximateTableCountFromStorage(b.ctx, tid, task.DBName, task.TableName, task.PartitionName)
+	return pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(b.ctx, tid, task.DBName, task.TableName, task.PartitionName)
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
