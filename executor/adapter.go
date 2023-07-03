@@ -1393,6 +1393,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	sessVars.StmtCtx.MPPQueryInfo.QueryID.Store(0)
 	sessVars.StmtCtx.MPPQueryInfo.QueryTS.Store(0)
 	sessVars.StmtCtx.MPPQueryInfo.AllocatedMPPTaskID.Store(0)
+	sessVars.StmtCtx.MPPQueryInfo.AllocatedMPPGatherID.Store(0)
 
 	if sessVars.StmtCtx.ReadFromTableCache {
 		metrics.ReadFromTableCacheCounter.Inc()
@@ -1622,6 +1623,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			executor_metrics.TotalQueryProcHistogramGeneral.Observe(costTime.Seconds())
 			executor_metrics.TotalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
 			executor_metrics.TotalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+			if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys != 0 {
+				executor_metrics.CopMVCCRatioHistogramGeneral.Observe(float64(execDetail.ScanDetail.TotalKeys) / float64(execDetail.ScanDetail.ProcessedKeys))
+			}
 		}
 		var userString string
 		if sessVars.User != nil {

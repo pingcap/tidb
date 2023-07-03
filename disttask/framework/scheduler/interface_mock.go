@@ -64,7 +64,7 @@ func (t *MockTaskTable) GetSubtaskInStates(instanceID string, taskID int64, stat
 }
 
 // UpdateSubtaskStateAndError implements SubtaskTable.UpdateSubtaskState.
-func (t *MockTaskTable) UpdateSubtaskStateAndError(id int64, state string, _ string) error {
+func (t *MockTaskTable) UpdateSubtaskStateAndError(id int64, state string, _ error) error {
 	args := t.Called(id, state)
 	return args.Error(0)
 }
@@ -79,6 +79,11 @@ func (t *MockTaskTable) FinishSubtask(id int64, meta []byte) error {
 func (t *MockTaskTable) HasSubtasksInStates(instanceID string, taskID int64, states ...interface{}) (bool, error) {
 	args := t.Called(instanceID, taskID, states)
 	return args.Bool(0), args.Error(1)
+}
+
+// UpdateErrorToSubtask implements SubtaskTable.UpdateErrorToSubtask.
+func (*MockTaskTable) UpdateErrorToSubtask(_ string, err error) error {
+	return err
 }
 
 // MockPool is a mock of Pool.

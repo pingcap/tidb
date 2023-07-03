@@ -434,6 +434,11 @@ bazel_ci_prepare:
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
 
+# "-prune" prunes some dependencies that are still needed. So it needs manual steps.
+bazel_prune:
+	bazel run //:gazelle
+	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
+
 bazel_prepare:
 	bazel run //:gazelle
 	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable
