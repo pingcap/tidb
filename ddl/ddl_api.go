@@ -6900,7 +6900,6 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 				return nil, errors.Trace(err)
 			}
 		}
-		idxPart.Expr = nil
 		hiddenCols = append(hiddenCols, colInfo)
 	}
 	return hiddenCols, nil
@@ -7033,6 +7032,14 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return d.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
+	// We need to set `IndexPartSpecification.Expr` because json cannot unmarshal it correctly.
+	indexPartSpecificationsArg := make([]*ast.IndexPartSpecification, len(indexPartSpecifications))
+	for i, spec := range indexPartSpecifications {
+		newSpec := *spec
+		newSpec.Expr = nil
+		indexPartSpecificationsArg[i] = &newSpec
+	}
+
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	chs, coll := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
@@ -7048,7 +7055,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 			WarningsCount: make(map[errors.ErrorID]int64),
 			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
-		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
+		Args:     []interface{}{unique, indexName, indexPartSpecificationsArg, indexOption, hiddenCols, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
 		Charset:  chs,
 		Collate:  coll,

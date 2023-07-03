@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
+	timertable "github.com/pingcap/tidb/timer/tablestore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -651,6 +652,9 @@ const (
 		KEY (status));`
 )
 
+// CreateTimers is a table to store all timers for tidb
+var CreateTimers = timertable.CreateTimerTableSQL("mysql", "tidb_timers")
+
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
 	startTime := time.Now()
@@ -942,11 +946,12 @@ const (
 	version167 = 167
 	version168 = 168
 	version169 = 169
+	version170 = 170
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version169
+var currentBootstrapVersion int64 = version170
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1084,6 +1089,7 @@ var (
 		upgradeToVer167,
 		upgradeToVer168,
 		upgradeToVer169,
+		upgradeToVer170,
 	}
 )
 
@@ -2731,6 +2737,13 @@ func upgradeToVer169(s Session, ver int64) {
 	mustExecute(s, CreateRunawayTable)
 }
 
+func upgradeToVer170(s Session, ver int64) {
+	if ver >= version170 {
+		return
+	}
+	mustExecute(s, CreateTimers)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2851,6 +2864,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateRunawayQuarantineWatchTable)
 	// create runaway_queries
 	mustExecute(s, CreateRunawayTable)
+	// create tidb_timers
+	mustExecute(s, CreateTimers)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
