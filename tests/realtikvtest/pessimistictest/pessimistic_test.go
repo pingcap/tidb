@@ -3305,6 +3305,10 @@ func mustRecv[T interface{}](t *testing.T, ch <-chan T) T {
 }
 
 func TestIssue43243(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("this test doesn't work due to some problem in unistore's implementation")
+	}
+
 	store, domain, clean := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	defer clean()
 
@@ -3362,10 +3366,12 @@ func TestIssue43243(t *testing.T) {
 	tk2.MustExec("update t2 set v = v + 1 where id = 2")
 	ch := make(chan struct{})
 	go func() {
-		tk.MustExec(`
-		with
-			c as (select /*+ MERGE() */ v from t1 where id in (1, 2))
-		update c join t2 on c.v = t2.id set t2.v = t2.v + 10`)
+		// The `MERGE()` hint is not supported in release-6.1 branch. We use an equivalent `join` statement instead.
+		// tk.MustExec(`
+		// with
+		//	c as (select /*+ MERGE() */ v from t1 where id in (1, 2))
+		// update c join t2 on c.v = t2.id set t2.v = t2.v + 10`)
+		tk.MustExec(`update t1 join t2 on t1.v = t2.id set t2.v = t2.v + 10 where t1.id in (1, 2)`)
 		ch <- struct{}{}
 	}()
 	// tk blocked on row 2
