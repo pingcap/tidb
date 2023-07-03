@@ -516,7 +516,7 @@
       "errno/": "errno code",
       "session/": "session code",
       "structure/": "structure code",
-      "statistics/handle/cache": "statistics/handle/cache code",
+      "statistics/": "statistics/ code",
       "telemetry/": "telemetry code",
       "parser/": "parser code",
       "planner/": "planner code",
