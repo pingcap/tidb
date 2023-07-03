@@ -50,7 +50,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 
-	// 1. test partition table ProcessNormalFlow
+	// 1. test partition table ProcessNormalFlow.
 	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
 		require.Equal(t, proto.StepOne, gTask.Step)
 		require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
@@ -61,24 +61,24 @@ func TestBackfillFlowHandle(t *testing.T) {
 		}
 	}, nil)
 
-	// 2. test partition table ProcessNormalFlow after step1 finished
+	// 2. test partition table ProcessNormalFlow after step1 finished.
 	gTask.Step++
 	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
 		require.NoError(t, err)
 		require.Equal(t, 0, len(metas))
 	}, nil)
 
-	// 3. test partition table ProcessErrFlow
-
-	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
-		require.Nil(t, metas)
-	}, []error{errors.New("mockErr")})
-	// check idempotent.
+	// 3. test partition table ProcessErrFlow.
 	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
 		require.Nil(t, metas)
 	}, []error{errors.New("mockErr")})
 
-	// 4. test non-partition-table.
+	// 4. check idempotent.
+	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
+		require.Nil(t, metas)
+	}, []error{errors.New("mockErr")})
+
+	// 5. test non-partition-table.
 	tk.MustExec("create table t1(id int primary key, v int)")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.BackfillTaskType)
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
@@ -86,15 +86,16 @@ func TestBackfillFlowHandle(t *testing.T) {
 	tblInfo = tbl.Meta()
 	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
 		require.Equal(t, proto.StepOne, gTask.Step)
-		// TODO: check meta
+		// TODO: check meta.
 	}, nil)
+
 	gTask.Step++
 	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
 		for _, meta := range metas {
 			var subTask ddl.BackfillSubTaskMeta
 			require.NoError(t, json.Unmarshal(meta, &subTask))
-			require.Equal(t, []uint8([]byte(nil)), subTask.StartKey)
-			require.Equal(t, []uint8([]byte(nil)), subTask.EndKey)
+			require.Equal(t, []byte(nil), subTask.StartKey)
+			require.Equal(t, []byte(nil), subTask.EndKey)
 		}
 	}, nil)
 }
@@ -145,7 +146,6 @@ func processAndCheck(t *testing.T,
 	gTask *proto.Task, tblInfo *model.TableInfo,
 	checkGTaskAndMeta func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo),
 	receiverErr []error) {
-
 	metasChan := make(chan [][]byte)
 	errChan := make(chan error)
 	doneChan := make(chan bool)

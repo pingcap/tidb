@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
-
 	"github.com/stretchr/testify/require"
 )
 

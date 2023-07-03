@@ -319,7 +319,6 @@ func (d *dispatcher) handleDispatchErr(gTask *proto.Task, retryable bool, err er
 				time.Sleep(retrySQLInterval)
 			}
 		} else {
-			// ywq todo consider it,,,fail gen dist plan, then cancel failed, just next step then success.....ops...
 			for i := 0; i < retrySQLTimes; i++ {
 				err = d.taskMgr.CancelGlobalTask(gTask.ID)
 				if err == nil {
@@ -469,7 +468,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (bool, error) {
 		return true, errors.New("no available TiDB node")
 	}
 
-	// 5. dispacth subtasks asynchronously.
+	// 5. dispatch subtasks asynchronously.
 	return d.dispatchSubTasks(gTask, proto.TaskStateRunning, handle, serverNodes, nil, nil, handle.ProcessNormalFlow, nil, generateSubtasks4NormalFlow)
 }
 

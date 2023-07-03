@@ -166,12 +166,11 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 				s.onError(err)
 				break
 			}
-			if task.Flag == proto.TaskSubStateDispatching {
-				// TODO: change time.
-				time.Sleep(500 * time.Millisecond)
-			} else {
+			if task.Flag != proto.TaskSubStateDispatching {
 				break
 			}
+			// TODO: change time.
+			time.Sleep(500 * time.Millisecond)
 		} else {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateRunning, nil)
 			if err := s.getError(); err != nil {
@@ -328,12 +327,11 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 				s.onError(err)
 				break
 			}
-			if task.Flag == proto.TaskSubStateDispatching {
-				// TODO: change time.
-				time.Sleep(500 * time.Millisecond)
-			} else {
+			if task.Flag != proto.TaskSubStateDispatching {
 				break
 			}
+			// TODO: change time.
+			time.Sleep(500 * time.Millisecond)
 		} else {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, nil)
 			if err = s.getError(); err != nil {

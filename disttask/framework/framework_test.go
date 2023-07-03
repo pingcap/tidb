@@ -232,7 +232,6 @@ func TestFrameworkAddDomain(t *testing.T) {
 	distContext.Close()
 	distContext.AddDomain()
 	DispatchTaskAndCheckSuccess("key4", proto.TaskTypeExample, t, &v)
-
 }
 
 func TestFrameworkDeleteDomain(t *testing.T) {

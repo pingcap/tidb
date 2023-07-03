@@ -185,7 +185,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatche
 	doneChan <- true
 }
 
-func (*litBackfillFlowHandle) ProcessErrFlow(ctx context.Context, h dispatcher.TaskHandle, gTask *proto.Task, receiveErr []error, metasChan chan [][]byte, errChan chan error, doneChan chan bool) {
+func (*litBackfillFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, receiveErr []error, _ chan [][]byte, _ chan error, doneChan chan bool) {
 	// We do not need extra meta info when rolling back
 	firstErr := receiveErr[0]
 	gTask.Error = firstErr
