@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "pdhelper",
@@ -13,5 +13,18 @@ go_library(
         "//util/sqlexec",
         "@com_github_jellydator_ttlcache_v3//:ttlcache",
         "@com_github_pingcap_failpoint//:failpoint",
+    ],
+)
+
+go_test(
+    name = "pdhelper_test",
+    timeout = "short",
+    srcs = ["pd_test.go"],
+    embed = [":pdhelper"],
+    flaky = True,
+    deps = [
+        "//sessionctx",
+        "@com_github_jellydator_ttlcache_v3//:ttlcache",
+        "@com_github_stretchr_testify//require",
     ],
 )

@@ -35,33 +35,36 @@ var GlobalPDHelper *PDHelper
 var globalPDHelperOnce sync.Once
 
 func init() {
-	GlobalPDHelper = newPDHelper()
+	GlobalPDHelper = defaultPDHelper()
 }
 
 // PDHelper is used to get some information from PD.
 type PDHelper struct {
 	wg                                       util.WaitGroupWrapper
 	cacheForApproximateTableCountFromStorage *ttlcache.Cache[string, float64]
+
+	getApproximateTableCountFromStorageFunc func(sctx sessionctx.Context, tid int64, dbName, tableName, partitionName string) (float64, bool)
 }
 
-func newPDHelper() *PDHelper {
+func defaultPDHelper() *PDHelper {
 	cache := ttlcache.New[string, float64](
 		ttlcache.WithTTL[string, float64](30*time.Second),
 		ttlcache.WithCapacity[string, float64](1024*1024),
 	)
 	return &PDHelper{
 		cacheForApproximateTableCountFromStorage: cache,
+		getApproximateTableCountFromStorageFunc:  getApproximateTableCountFromStorage,
 	}
 }
 
-// Start starts the PDHelper.
+// Start is used to start the background task of PDHelper. Currently, the background task is used to clean up TTL cache.
 func (p *PDHelper) Start() {
 	globalPDHelperOnce.Do(func() {
 		p.wg.Run(p.cacheForApproximateTableCountFromStorage.Start)
 	})
 }
 
-// Stop stops the PDHelper.
+// Stop stops the background task of PDHelper.
 func (p *PDHelper) Stop() {
 	p.cacheForApproximateTableCountFromStorage.Stop()
 	p.wg.Wait()
@@ -77,6 +80,12 @@ func (p *PDHelper) GetApproximateTableCountFromStorage(sctx sessionctx.Context, 
 	if item := p.cacheForApproximateTableCountFromStorage.Get(key); item != nil {
 		return item.Value(), true
 	}
+	result, hasPD := p.getApproximateTableCountFromStorageFunc(sctx, tid, dbName, tableName, partitionName)
+	p.cacheForApproximateTableCountFromStorage.Set(key, result, ttlcache.DefaultTTL)
+	return result, hasPD
+}
+
+func getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, dbName, tableName, partitionName string) (float64, bool) {
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return 0, false
@@ -98,9 +107,7 @@ func (p *PDHelper) GetApproximateTableCountFromStorage(sctx sessionctx.Context, 
 	// since for a small table, it's possible that it's data is in the same region with part of another large table.
 	// Thus, we use the number of the regions of the table's table KV to decide whether the table is small.
 	if regionStats.Count > 2 {
-		result := float64(regionStats.StorageKeys)
-		p.cacheForApproximateTableCountFromStorage.Set(key, result, ttlcache.DefaultTTL)
-		return result, true
+		return float64(regionStats.StorageKeys), true
 	}
 	// Otherwise, we use count(*) to calc it's size, since it's very small, the table data can be filled in no more than 2 regions.
 	sql := new(strings.Builder)
@@ -117,9 +124,5 @@ func (p *PDHelper) GetApproximateTableCountFromStorage(sctx sessionctx.Context, 
 	if len(rows) == 0 || rows[0].Len() == 0 {
 		return 0, false
 	}
-	result := float64(rows[0].GetInt64(0))
-	p.cacheForApproximateTableCountFromStorage.Set(key, result, ttlcache.DefaultTTL)
-	return result, true
+	return float64(rows[0].GetInt64(0)), true
 }
-
-func

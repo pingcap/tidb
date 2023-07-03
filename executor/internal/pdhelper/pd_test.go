@@ -13,3 +13,55 @@
 // limitations under the License.
 
 package pdhelper
+
+import (
+	"testing"
+	"time"
+
+	"github.com/jellydator/ttlcache/v3"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/stretchr/testify/require"
+)
+
+var globalMockClient mockClient
+
+type mockClient struct {
+	missCnt int
+}
+
+func (m *mockClient) getMissCnt() int {
+	return m.missCnt
+}
+
+func (m *mockClient) getFakeApproximateTableCountFromStorage(_ sessionctx.Context, _ int64, _, _, _ string) (float64, bool) {
+	m.missCnt++
+	return 1.0, true
+}
+
+func TestTTLCache(t *testing.T) {
+	cache := ttlcache.New[string, float64](
+		ttlcache.WithTTL[string, float64](100*time.Millisecond),
+		ttlcache.WithCapacity[string, float64](2),
+	)
+	helper := &PDHelper{
+		cacheForApproximateTableCountFromStorage: cache,
+		getApproximateTableCountFromStorageFunc:  globalMockClient.getFakeApproximateTableCountFromStorage,
+	}
+	helper.GetApproximateTableCountFromStorage(nil, 1, "db", "table", "partition") // Miss
+	require.Equal(t, 1, globalMockClient.getMissCnt())
+	helper.GetApproximateTableCountFromStorage(nil, 1, "db", "table", "partition") // Hit
+	require.Equal(t, 1, globalMockClient.getMissCnt())
+	helper.GetApproximateTableCountFromStorage(nil, 2, "db1", "table1", "partition") // Miss
+	require.Equal(t, 2, globalMockClient.getMissCnt())
+	helper.GetApproximateTableCountFromStorage(nil, 3, "db2", "table2", "partition") // Miss
+	helper.GetApproximateTableCountFromStorage(nil, 1, "db", "table", "partition")   // Miss
+	require.Equal(t, 4, globalMockClient.getMissCnt())
+	helper.GetApproximateTableCountFromStorage(nil, 3, "db2", "table2", "partition") // Hit
+	require.Equal(t, 4, globalMockClient.getMissCnt())
+	time.Sleep(200 * time.Millisecond)
+	// All is miss.
+	helper.GetApproximateTableCountFromStorage(nil, 1, "db", "table", "partition")
+	helper.GetApproximateTableCountFromStorage(nil, 2, "db1", "table1", "partition")
+	helper.GetApproximateTableCountFromStorage(nil, 3, "db2", "table2", "partition")
+	require.Equal(t, 7, globalMockClient.getMissCnt())
+}
