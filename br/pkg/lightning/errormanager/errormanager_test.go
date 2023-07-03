@@ -42,6 +42,7 @@ func TestInit(t *testing.T) {
 	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
 	cfg.App.MaxErrorRecords = 100
 	cfg.App.MaxError.Type.Store(10)
+	cfg.App.MaxError.Conflict.Store(20)
 	cfg.App.TaskInfoSchemaName = "lightning_errors"
 
 	em := New(db, cfg, log.L())
@@ -64,6 +65,7 @@ func TestInit(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	err = em.Init(ctx)
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	em.conflictV2Enabled = true
 	em.remainingError.Type.Store(1)
@@ -77,7 +79,6 @@ func TestInit(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(7, 1))
 	err = em.Init(ctx)
 	require.NoError(t, err)
-
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
