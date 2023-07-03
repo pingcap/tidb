@@ -79,8 +79,10 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 		}
 		fallthrough
 	case model.ActionRemovePartitioning:
-		// We high-jacked the first partition's physical table id for the previous Table ID
 		// Change id for global stats, since the data has not changed!
+		// Note that t.TableInfo is the current (new) table info
+		// and t.PartInfo.NewTableID is actually the old table ID!
+		// (see onReorganizePartition)
 		return h.changeGlobalStatsID(t.PartInfo.NewTableID, t.TableInfo.ID)
 	case model.ActionFlashbackCluster:
 		return h.updateStatsVersion()
