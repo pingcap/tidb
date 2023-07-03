@@ -106,7 +106,7 @@ type jsonColumn struct {
 	Correlation       float64 `json:"correlation"`
 }
 
-func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn *statistics.TopN, FMSketch *statistics.FMSketch, statsVer *int64) *jsonColumn {
+func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) *jsonColumn {
 	jsonCol := &jsonColumn{
 		Histogram:         statistics.HistogramToProto(hist),
 		NullCount:         hist.NullCount,
@@ -115,11 +115,11 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn
 		Correlation:       hist.Correlation,
 		StatsVer:          statsVer,
 	}
-	if CMSketch != nil || topn != nil {
-		jsonCol.CMSketch = statistics.CMSketchToProto(CMSketch, topn)
+	if cmsketch != nil || topn != nil {
+		jsonCol.CMSketch = statistics.CMSketchToProto(cmsketch, topn)
 	}
-	if FMSketch != nil {
-		jsonCol.FMSketch = statistics.FMSketchToProto(FMSketch)
+	if fmsketch != nil {
+		jsonCol.FMSketch = statistics.FMSketchToProto(fmsketch)
 	}
 	return jsonCol
 }

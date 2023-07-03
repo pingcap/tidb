@@ -433,12 +433,12 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 		if otherNDV > 1 {
 			selectivity /= otherNDV
 		}
-		N := float64(totalRows)
+		totalRowsN := float64(totalRows)
 		n := float64(sampleRows)
-		K := N * float64(topns[topNNum-1].Count) / n
+		k := totalRowsN * float64(topns[topNNum-1].Count) / n
 		// Since we are sampling without replacement. The distribution would be a hypergeometric distribution.
 		// Thus the variance is the following formula.
-		variance := n * K * (N - K) * (N - n) / (N * N * (N - 1))
+		variance := n * k * (totalRowsN - k) * (totalRowsN - n) / (totalRowsN * totalRowsN * (totalRowsN - 1))
 		stddev := math.Sqrt(variance)
 		// We choose the bound that plus two stddev of the sample frequency, plus an additional 0.5 for the continuity correction.
 		//   Note:

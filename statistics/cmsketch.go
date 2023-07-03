@@ -379,7 +379,7 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 //	     if `v` appears 5 times in the table, it can appears 5 times in `c` and 3 times in `rc`, then `max` also gives the correct answer.
 //
 // So in fact, if we can know the number of appearances of each value in the first place, it is better to use `max` to construct the CM sketch rather than `sum`.
-func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, numTopN uint32) error {
+func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, _ uint32) error {
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
@@ -514,14 +514,14 @@ func (c *CMSketch) Copy() *CMSketch {
 }
 
 // GetWidthAndDepth returns the width and depth of CM Sketch.
-func (c *CMSketch) GetWidthAndDepth() (int32, int32) {
+func (c *CMSketch) GetWidthAndDepth() (width, depth int32) {
 	return c.width, c.depth
 }
 
 // CalcDefaultValForAnalyze calculate the default value for Analyze.
 // The value of it is count / NDV in CMSketch. This means count and NDV are not include topN.
-func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
-	c.defaultValue = c.count / mathutil.Max(1, NDV)
+func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
+	c.defaultValue = c.count / mathutil.Max(1, ndv)
 }
 
 // TopN stores most-common values, which is used to estimate point queries.

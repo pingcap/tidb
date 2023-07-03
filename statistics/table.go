@@ -388,16 +388,16 @@ func (t *Table) ColumnByName(colName string) *Column {
 }
 
 // GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
-func (t *Table) GetStatsInfo(ID int64, isIndex bool) (*Histogram, *CMSketch, *TopN, *FMSketch, bool) {
+func (t *Table) GetStatsInfo(id int64, isIndex bool) (*Histogram, *CMSketch, *TopN, *FMSketch, bool) {
 	if isIndex {
-		if idxStatsInfo, ok := t.Indices[ID]; ok {
+		if idxStatsInfo, ok := t.Indices[id]; ok {
 			return idxStatsInfo.Histogram.Copy(),
 				idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy(), true
 		}
 		// newly added index which is not analyzed yet
 		return nil, nil, nil, nil, false
 	}
-	if colStatsInfo, ok := t.Columns[ID]; ok {
+	if colStatsInfo, ok := t.Columns[id]; ok {
 		return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(),
 			colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy(), true
 	}
@@ -408,12 +408,12 @@ func (t *Table) GetStatsInfo(ID int64, isIndex bool) (*Histogram, *CMSketch, *To
 // GetColRowCount tries to get the row count of the a column if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (t *Table) GetColRowCount() float64 {
-	IDs := make([]int64, 0, len(t.Columns))
+	ids := make([]int64, 0, len(t.Columns))
 	for id := range t.Columns {
-		IDs = append(IDs, id)
+		ids = append(ids, id)
 	}
-	slices.Sort(IDs)
-	for _, id := range IDs {
+	slices.Sort(ids)
+	for _, id := range ids {
 		col := t.Columns[id]
 		if col != nil && col.IsFullLoad() {
 			return col.TotalRowCount()
@@ -718,13 +718,13 @@ func CETraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ran
 	if expr == "" || expr == "true" || expr == "false" {
 		return
 	}
-	CERecord := tracing.CETraceRecord{
+	ceRecord := tracing.CETraceRecord{
 		TableID:  tableID,
 		Type:     tp,
 		Expr:     expr,
 		RowCount: rowCount,
 	}
-	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &CERecord)
+	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &ceRecord)
 }
 
 func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID int64) (isIndex bool, idx int64) {
