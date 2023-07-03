@@ -53,14 +53,14 @@ var _ Executor = &BaseExecutor{}
 // BaseExecutor holds common information for executors.
 type BaseExecutor struct {
 	ctx           sessionctx.Context
-	id            int
+	AllocPool     chunk.Allocator
 	schema        *expression.Schema // output schema
-	initCap       int
-	maxChunkSize  int
+	runtimeStats  *execdetails.BasicRuntimeStats
 	children      []Executor
 	retFieldTypes []*types.FieldType
-	runtimeStats  *execdetails.BasicRuntimeStats
-	AllocPool     chunk.Allocator
+	id            int
+	initCap       int
+	maxChunkSize  int
 }
 
 // NewBaseExecutor creates a new BaseExecutor instance.
