@@ -56,6 +56,46 @@ func TestIterRawIndexKeysClusteredPK(t *testing.T) {
 	handle, err := tbl.AddRecord(sctx, []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})
 	require.NoError(t, err)
 	paris := sctx.TakeKvPairs()
+	require.Len(t, paris.Pairs, 2)
+	_, rowValue := paris.Pairs[0].Key, paris.Pairs[0].Val
+	idxKey := paris.Pairs[1].Key
+
+	deleteKeys := make([][]byte, 0, 2)
+	err = decoder.IterRawIndexKeys(handle, rowValue, func(bs []byte) error {
+		deleteKeys = append(deleteKeys, bs)
+		return nil
+	})
+	require.NoError(t, err)
+
+	expected := [][]byte{idxKey}
+	require.Equal(t, expected, deleteKeys)
+}
+
+func TestIterRawIndexKeysIntPK(t *testing.T) {
+	p := parser.New()
+	node, _, err := p.ParseSQL("create table t (a int primary key, b int, index idx(b));")
+	require.NoError(t, err)
+	mockSctx := mock.NewContext()
+	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 1)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	require.True(t, info.PKIsHandle)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), info)
+	require.NoError(t, err)
+
+	sessionOpts := &encode.SessionOptions{
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567890,
+	}
+	decoder, err := kv.NewTableKVDecoder(tbl, "`test`.`c1`", sessionOpts, log.L())
+	require.NoError(t, err)
+
+	sctx := kv.NewSession(sessionOpts, log.L())
+	handle, err := tbl.AddRecord(sctx, []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})
+	require.NoError(t, err)
+	paris := sctx.TakeKvPairs()
+	require.Len(t, paris.Pairs, 2)
 	_, rowValue := paris.Pairs[0].Key, paris.Pairs[0].Val
 	idxKey := paris.Pairs[1].Key
 
