@@ -235,7 +235,7 @@ func main() {
 	setupMetrics()
 
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
-
+	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreAndDomain(keyspaceName)
 	svr := createServer(storage, dom)
@@ -251,6 +251,7 @@ func main() {
 		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()
 		resourcemanager.InstanceResourceManager.Stop()
+		executor.Stop()
 		close(exited)
 	})
 	topsql.SetupTopSQL()

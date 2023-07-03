@@ -9,12 +9,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/executor/internal/util",
     visibility = ["//executor:__subpackages__"],
     deps = [
-        "//kv",
-        "//sessionctx",
-        "//store/helper",
-        "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
     ],
 )
