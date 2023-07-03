@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit/testsetup"
@@ -80,5 +79,4 @@ func TestSetGlobalVars(t *testing.T) {
 	if hostname, err := os.Hostname(); err == nil {
 		require.Equal(t, variable.GetSysVar(variable.Hostname).Value, hostname)
 	}
-	executor.Stop()
 }
