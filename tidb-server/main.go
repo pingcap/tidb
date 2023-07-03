@@ -235,7 +235,7 @@ func main() {
 	setupMetrics()
 
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
-
+	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreAndDomain(keyspaceName)
 	svr := createServer(storage, dom)
@@ -763,7 +763,6 @@ func setGlobalVars() {
 	} else {
 		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(cfg.Performance.ServerMemoryQuota))
 	}
-	executor.Start()
 	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 
 	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
