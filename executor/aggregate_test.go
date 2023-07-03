@@ -1629,21 +1629,6 @@ PARTITION p20220624 VALUES LESS THAN ("20220625")
 	tk.MustQuery("SELECT /*+STREAM_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;").Check(testkit.Rows("100 20"))
 	tk.MustQuery("SELECT /*+HASH_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;").Check(testkit.Rows("100 20"))
 }
-<<<<<<< HEAD:executor/aggregate_test.go
-=======
-
-// https://github.com/pingcap/tidb/issues/27751
-func TestIssue27751(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table test.t(nname char(20));")
-	tk.MustExec("insert into test.t values ('2'),(null),('11'),('2'),(null),('2'),(null),('11'),('33');")
-	tk.MustExec("set @@group_concat_max_len=0;")
-	tk.MustQuery("select group_concat(nname order by 1 separator '#' ) from t;").Check(testkit.Rows("11#1"))
-	tk.MustQuery("select group_concat(nname order by 1 desc separator '#' ) from t;").Check(testkit.Rows("33#2"))
-}
 
 func TestIssue44795(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -1692,36 +1677,3 @@ func TestIssue44795(t *testing.T) {
 		"          └─Selection 8000.00 cop[tikv]  not(like(test.orders.o_comment, \"%special%requests%\", 92))",
 		"            └─TableFullScan 10000.00 cop[tikv] table:orders keep order:false, stats:pseudo"))
 }
-
-func TestIssue26885(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`SET sql_mode = 'NO_ENGINE_SUBSTITUTION';`)
-	tk.MustExec(`DROP TABLE IF EXISTS t1;`)
-
-	tk.MustExec("CREATE TABLE t1 (c1 ENUM('a', '', 'b'));")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('a');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES (0);")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("b", "", "a", "", ""))
-	tk.MustQuery("select c1 + 0 from t1").Sort().Check(testkit.Rows("0", "1", "2", "2", "3"))
-	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
-
-	tk.MustExec("alter table t1 add index idx(c1); ")
-	tk.MustQuery("select c1 + 0 from t1").Sort().Check(testkit.Rows("0", "1", "2", "2", "3"))
-	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
-
-	tk.MustExec(`DROP TABLE IF EXISTS t1;`)
-	tk.MustExec("CREATE TABLE t1 (c1 ENUM('a', 'b', 'c'));")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('a');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('c');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES (0);")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("b", "a", "b", "c", ""))
-	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
-}
->>>>>>> 9885d1b2014 (planner: fix agg elimination logic after agg pushed down through a join (#44941)):executor/test/aggregate/aggregate_test.go
