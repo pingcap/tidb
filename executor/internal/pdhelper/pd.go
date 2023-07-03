@@ -121,3 +121,5 @@ func (p *PDHelper) GetApproximateTableCountFromStorage(sctx sessionctx.Context, 
 	p.cacheForApproximateTableCountFromStorage.Set(key, result, ttlcache.DefaultTTL)
 	return result, true
 }
+
+func
