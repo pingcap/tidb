@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/tiancaiamao/sched"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -458,15 +459,15 @@ func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
 	logutil.BgLogger().Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
 }
 
-func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
+func (w *HashAggPartialWorker) run(ctx context.Context, sctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	start := time.Now()
-	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
+	needShuffle, sc := false, sctx.GetSessionVars().StmtCtx
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
 		if needShuffle {
-			w.shuffleIntermData(sc, finalConcurrency)
+			w.shuffleIntermData(ctx, sc, finalConcurrency)
 		}
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		if w.stats != nil {
@@ -474,6 +475,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 		waitGroup.Done()
 	}()
+
 	for {
 		waitStart := time.Now()
 		ok := w.getChildInput()
@@ -484,7 +486,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			return
 		}
 		execStart := time.Now()
-		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.partialResultsMap)); err != nil {
+		if err := w.updatePartialResult(ctx, sctx, sc, w.chk, len(w.partialResultsMap)); err != nil {
 			w.globalOutputCh <- &AfFinalResult{err: err}
 			return
 		}
@@ -507,7 +509,7 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 	return mem
 }
 
-func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, _ int) (err error) {
+func (w *HashAggPartialWorker) updatePartialResult(ctx context.Context, sctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, _ int) (err error) {
 	memSize := getGroupKeyMemUsage(w.groupKey)
 	w.groupKey, err = getGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	failpoint.Inject("ConsumeRandomPanic", nil)
@@ -516,19 +518,20 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 		return err
 	}
 
-	partialResults := w.getPartialResult(sc, w.groupKey, w.partialResultsMap)
+	partialResults := w.getPartialResult(ctx, sc, w.groupKey, w.partialResultsMap)
 	numRows := chk.NumRows()
 	rows := make([]chunk.Row, 1)
 	allMemDelta := int64(0)
 	for i := 0; i < numRows; i++ {
 		for j, af := range w.aggFuncs {
 			rows[0] = chk.GetRow(i)
-			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j])
+			memDelta, err := af.UpdatePartialResult(sctx, rows, partialResults[i][j])
 			if err != nil {
 				return err
 			}
 			allMemDelta += memDelta
 		}
+		sched.CheckPoint(ctx)
 	}
 	w.memTracker.Consume(allMemDelta)
 	return nil
@@ -536,7 +539,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 
 // shuffleIntermData shuffles the intermediate data of partial workers to corresponded final workers.
 // We only support parallel execution for single-machine, so process of encode and decode can be skipped.
-func (w *HashAggPartialWorker) shuffleIntermData(_ *stmtctx.StatementContext, finalConcurrency int) {
+func (w *HashAggPartialWorker) shuffleIntermData(ctx context.Context, _ *stmtctx.StatementContext, finalConcurrency int) {
 	groupKeysSlice := make([][]string, finalConcurrency)
 	for groupKey := range w.partialResultsMap {
 		finalWorkerIdx := int(murmur3.Sum32([]byte(groupKey))) % finalConcurrency
@@ -544,6 +547,7 @@ func (w *HashAggPartialWorker) shuffleIntermData(_ *stmtctx.StatementContext, fi
 			groupKeysSlice[finalWorkerIdx] = make([]string, 0, len(w.partialResultsMap)/finalConcurrency)
 		}
 		groupKeysSlice[finalWorkerIdx] = append(groupKeysSlice[finalWorkerIdx], groupKey)
+		sched.CheckPoint(ctx)
 	}
 
 	for i := range groupKeysSlice {
@@ -609,13 +613,14 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 	return groupKey, nil
 }
 
-func (w *baseHashAggWorker) getPartialResult(_ *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
+func (w *baseHashAggWorker) getPartialResult(ctx context.Context, _ *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
 	n := len(groupKey)
 	partialResults := make([][]aggfuncs.PartialResult, n)
 	allMemDelta := int64(0)
 	partialResultSize := w.getPartialResultSliceLenConsiderByteAlign()
 	for i := 0; i < n; i++ {
 		var ok bool
+		sched.CheckPoint(ctx)
 		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
 			continue
 		}
@@ -659,7 +664,7 @@ func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok boo
 	return
 }
 
-func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err error) {
+func (w *HashAggFinalWorker) consumeIntermData(ctx context.Context, sctx sessionctx.Context) (err error) {
 	var (
 		input            *HashAggIntermData
 		ok               bool
@@ -691,7 +696,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			}
 			failpoint.Inject("ConsumeRandomPanic", nil)
 			w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
-			finalPartialResults := w.getPartialResult(sc, w.groupKeys, w.partialResultMap)
+			finalPartialResults := w.getPartialResult(ctx, sc, w.groupKeys, w.partialResultMap)
 			allMemDelta := int64(0)
 			for i, groupKey := range groupKeys {
 				if !w.groupSet.Exist(groupKey) {
@@ -705,6 +710,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 					}
 					allMemDelta += memDelta
 				}
+				sched.CheckPoint(ctx)
 			}
 			w.memTracker.Consume(allMemDelta)
 		}
@@ -715,7 +721,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 	}
 }
 
-func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
+func (w *HashAggFinalWorker) loadFinalResult(ctx context.Context, sctx sessionctx.Context) {
 	waitStart := time.Now()
 	result, finished := w.receiveFinalResultHolder()
 	if w.stats != nil {
@@ -729,10 +735,11 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	w.groupKeys = w.groupKeys[:0]
 	for groupKey := range w.groupSet.StringSet {
 		w.groupKeys = append(w.groupKeys, []byte(groupKey))
+		sched.CheckPoint(ctx)
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
-	partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, w.groupKeys, w.partialResultMap)
+	partialResults := w.getPartialResult(ctx, sctx.GetSessionVars().StmtCtx, w.groupKeys, w.partialResultMap)
 	for i := 0; i < len(w.groupSet.StringSet); i++ {
 		for j, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i][j], result); err != nil {
@@ -749,6 +756,7 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 				return
 			}
 		}
+		sched.CheckPoint(ctx)
 	}
 	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 	if w.stats != nil {
@@ -765,7 +773,7 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
-func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
+func (w *HashAggFinalWorker) run(ctx context.Context, sctx sessionctx.Context, waitGroup *sync.WaitGroup) {
 	start := time.Now()
 	defer func() {
 		if r := recover(); r != nil {
@@ -776,10 +784,10 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		}
 		waitGroup.Done()
 	}()
-	if err := w.consumeIntermData(ctx); err != nil {
+	if err := w.consumeIntermData(ctx, sctx); err != nil {
 		w.outputCh <- &AfFinalResult{err: err}
 	}
-	w.loadFinalResult(ctx)
+	w.loadFinalResult(ctx, sctx)
 }
 
 // Next implements the Executor Next interface.
@@ -855,7 +863,7 @@ func (e *HashAggExec) waitAllWorkersAndCloseFinalOutputCh(waitGroups ...*sync.Wa
 func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	fetchChildWorkerWaitGroup := &sync.WaitGroup{}
 	fetchChildWorkerWaitGroup.Add(1)
-	go e.fetchChildData(ctx, fetchChildWorkerWaitGroup)
+	go e.fetchChildData(sched.WithSchedInfo(ctx), fetchChildWorkerWaitGroup)
 
 	// We get the pointers here instead of when we are all finished and adding the time because:
 	// (1) If there is Apply in the plan tree, executors may be reused (Open()ed and Close()ed multiple times)
@@ -872,7 +880,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
 	partialStart := time.Now()
 	for i := range e.partialWorkers {
-		go e.partialWorkers[i].run(e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
+		go e.partialWorkers[i].run(sched.WithSchedInfo(ctx), e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
 	}
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
@@ -884,7 +892,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
 	finalStart := time.Now()
 	for i := range e.finalWorkers {
-		go e.finalWorkers[i].run(e.ctx, finalWorkerWaitGroup)
+		go e.finalWorkers[i].run(sched.WithSchedInfo(ctx), e.ctx, finalWorkerWaitGroup)
 	}
 	go func() {
 		finalWorkerWaitGroup.Wait()

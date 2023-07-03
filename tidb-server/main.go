@@ -81,6 +81,7 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
+	"github.com/tiancaiamao/sched"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -233,6 +234,8 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
+
+	go sched.Scheduler()
 
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 

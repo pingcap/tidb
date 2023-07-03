@@ -75,6 +75,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/tracing"
+	"github.com/tiancaiamao/sched"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvutil "github.com/tikv/client-go/v2/util"
@@ -340,7 +341,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		registerSQLAndPlanInExecForTopSQL(sessVars)
 	}
 	err := e.Next(ctx, req)
-
+	sched.CheckPoint(ctx)
 	if err != nil {
 		return err
 	}

@@ -70,6 +70,7 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tiancaiamao/sched"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -79,7 +80,7 @@ import (
 
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
-	SetProcessInfo(string, time.Time, byte, uint64)
+	SetProcessInfo(context.Context, string, time.Time, byte, uint64)
 	UpdateProcessInfo()
 }
 
@@ -343,7 +344,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		sql := a.OriginText()
 		maxExecutionTime := getMaxExecutionTime(sctx)
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+		pi.SetProcessInfo(ctx, sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
 			sctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
@@ -524,8 +525,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	if err != nil {
 		return nil, err
 	}
+	sched.CheckPoint(ctx)
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.observeStmtBeginForTopSQL(ctx)
+	sched.CheckPoint(ctx)
 	if variable.EnableResourceControl.Load() && domain.GetDomain(sctx).RunawayManager() != nil {
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		_, planDigest := GetPlanDigest(stmtCtx)
@@ -556,7 +559,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
 			maxExecutionTime = 0
 		}
-		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+		pi.SetProcessInfo(ctx, sql, time.Now(), cmd, maxExecutionTime)
+		sched.CheckPoint(ctx)
 	}
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic

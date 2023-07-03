@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tiancaiamao/sched"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -703,7 +704,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	tps := e.getRetTpsForIndexReader()
 	idxID := e.getIndexPlanRootID()
 	e.idxWorkerWg.Add(1)
-	go func() {
+	go func(ctx context.Context) {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		worker := &indexWorker{
 			idxLookup:       e,
@@ -754,6 +755,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				worker.syncErr(err)
 				break
 			}
+			sched.CheckPoint(ctx)
 			result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
 			if err != nil {
 				worker.syncErr(err)
@@ -782,7 +784,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
-	}()
+	}(sched.WithSchedInfo(ctx))
 	return nil
 }
 
@@ -803,12 +805,12 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 		}
 		worker.memTracker.AttachTo(e.memTracker)
 		ctx1, cancel := context.WithCancel(ctx)
-		go func() {
+		go func(ctx context.Context) {
 			defer trace.StartRegion(ctx1, "IndexLookUpTableWorker").End()
-			worker.pickAndExecTask(ctx1)
+			worker.pickAndExecTask(ctx)
 			cancel()
 			e.tblWorkerWg.Done()
-		}()
+		}(sched.WithSchedInfo(ctx))
 	}
 }
 
@@ -1050,6 +1052,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			atomic.AddInt64(&w.idxLookup.stats.TaskWait, int64(time.Since(finishBuild)))
 			atomic.AddInt64(&w.idxLookup.stats.FetchHandleTotal, int64(time.Since(startTime)))
 		}
+		sched.CheckPoint(ctx)
 	}
 	return nil
 }
@@ -1504,6 +1507,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			task.rows = append(task.rows, row)
 		}
+		sched.CheckPoint(ctx)
 	}
 
 	defer trace.StartRegion(ctx, "IndexLookUpTableCompute").End()

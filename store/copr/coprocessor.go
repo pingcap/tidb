@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tiancaiamao/sched"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -844,7 +845,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			storeBatchedNum:            &it.storeBatchedNum,
 			storeBatchedFallbackNum:    &it.storeBatchedFallbackNum,
 		}
-		go worker.run(ctx)
+		go worker.run(sched.WithSchedInfo(ctx))
 	}
 	taskSender := &copIteratorTaskSender{
 		taskCh:      taskCh,
@@ -1121,6 +1122,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 		} else {
 			remainTasks = remainTasks[1:]
 		}
+		sched.CheckPoint(ctx)
 	}
 	if worker.store.coprCache != nil && worker.store.coprCache.cache.Metrics != nil {
 		copr_metrics.CoprCacheCounterEvict.Add(float64(worker.store.coprCache.cache.Metrics.KeysEvicted()))

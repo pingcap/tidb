@@ -108,6 +108,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tiancaiamao/sched"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -145,7 +146,7 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
-	SetProcessInfo(string, time.Time, byte, uint64)
+	SetProcessInfo(context.Context, string, time.Time, byte, uint64)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
@@ -1530,13 +1531,14 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 	p.SetSQLMode(sqlMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	tmp, warn, err := p.ParseSQL(sql, params...)
+	sched.CheckPoint(ctx)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
 	res := make([]ast.StmtNode, len(tmp))
 	copy(res, tmp)
 	return res, warn, err
 }
 
-func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+func (s *session) SetProcessInfo(ctx context.Context, sql string, t time.Time, command byte, maxExecutionTime uint64) {
 	// If command == mysql.ComSleep, it means the SQL execution is finished. The processinfo is reset to SLEEP.
 	// If the SQL finished and the session is not in transaction, the current start timestamp need to reset to 0.
 	// Otherwise, it should be set to the transaction start timestamp.
@@ -1582,6 +1584,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ResourceGroupName:     s.sessionVars.ResourceGroupName,
 	}
+	sched.CheckPoint(ctx)
 	oldPi := s.ShowProcess()
 	if p == nil {
 		// Store the last valid plan when the current plan is nil.
@@ -2195,7 +2198,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
 	s.currentPlan = nil // reset current plan
-	s.SetProcessInfo(stmtNode.Text(), time.Now(), cmdByte, 0)
+	s.SetProcessInfo(ctx, stmtNode.Text(), time.Now(), cmdByte, 0)
 	s.txn.onStmtStart(digest.String())
 	defer sessiontxn.GetTxnManager(s).OnStmtEnd()
 	defer s.txn.onStmtEnd()

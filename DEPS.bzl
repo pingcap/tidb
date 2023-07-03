@@ -3866,7 +3866,21 @@ def go_deps():
         sum = "h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=",
         version = "v0.0.0-20221230034425-4025bc8a4d4a",
     )
+    go_repository(
+        name = "com_github_tiancaiamao_sched",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/tiancaiamao/sched",
+        sum = "h1:EI9Xh3tf7zcdiJG5p/d7qT+PG/qemMO5dxXk4ETOGoU=",
+        version = "v0.0.0-20230614032915-025ce6f3aef2",
+    )
 
+    go_repository(
+        name = "com_github_tidwall_gjson",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/tidwall/gjson",
+        sum = "h1:hqzS9wAHMO+KVBBkLxYdkEeeFHuqr95GfClRLKlgK0E=",
+        version = "v1.9.3",
+    )
     go_repository(
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",

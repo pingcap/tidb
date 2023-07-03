@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/tiancaiamao/sched"
 	"go.uber.org/zap"
 )
 
@@ -136,6 +137,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, pre
 	node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
+	sched.CheckPoint(ctx)
 	return errors.Trace(v.err)
 }
 
