@@ -152,10 +152,18 @@ func TestFrameworkRollback(t *testing.T) {
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFail"))
 
-	// // 4. insert revert subtasks fail.
+	// 4. dispatched normal subtasks, update substate to normal failed.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/updateSubstateFail", "1*return(true)"))
+	DispatchTaskAndCheckFail("key4", proto.TaskTypeRollbackExample, t, &v)
+	require.Equal(t, int32(2), rollbackCnt.Load())
+	rollbackCnt.Store(0)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/updateSubstateFail"))
+
+	// 5. insert revert subtasks fail.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe", "1*return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/insertSubtasksFail", "return(true)"))
-	DispatchTaskAndCheckFail("key4", proto.TaskTypeRollbackExample, t, &v)
+	DispatchTaskAndCheckFail("key5", proto.TaskTypeRollbackExample, t, &v)
 	require.Equal(t, int32(2), rollbackCnt.Load())
 	rollbackCnt.Store(0)
 

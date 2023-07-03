@@ -192,12 +192,11 @@ func (d *dispatcher) DispatchTaskLoop() {
 
 						retryable, err := d.processNormalFlow(gTask)
 						logutil.BgLogger().Info("dispatch task loop", zap.Int64("task ID", gTask.ID),
-							zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Error(err))
-						// if processNormalFlow failed, just cancel the global task.
-						if err != nil && !retryable {
-							_ = d.taskMgr.CancelGlobalTask(gTask.ID)
-						}
-						if gTask.IsFinished() {
+							zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency),
+							zap.Int64("step", gTask.Step), zap.Error(err))
+
+						err = d.handleDispatchErr(gTask, retryable, err)
+						if gTask.IsFinished() || err != nil {
 							return
 						}
 						d.setRunningGTask(gTask)
@@ -286,10 +285,7 @@ func (d *dispatcher) detectTask(taskID int64) {
 			}
 
 			retryable, err := d.processFlow(gTask, errs)
-			if err != nil && !retryable {
-				_ = d.taskMgr.CancelGlobalTask(gTask.ID)
-			}
-
+			err = d.handleDispatchErr(gTask, retryable, err)
 			if err == nil && gTask.IsFinished() {
 				logutil.BgLogger().Info("detect task, task is finished",
 					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State))
@@ -302,6 +298,45 @@ func (d *dispatcher) detectTask(taskID int64) {
 			}
 		}
 	}
+}
+
+func (d *dispatcher) handleDispatchErr(gTask *proto.Task, retryable bool, err error) error {
+	if err != nil {
+		if retryable {
+			// Must change the step since every time we called processNormalFlow, the step will increase.
+			prevStep := gTask.Step
+			gTask.Step--
+			for i := 0; i < retrySQLTimes; i++ {
+				err = d.taskMgr.UpdateGlobalTask(gTask)
+				if err == nil {
+					break
+				}
+				if i%10 == 0 {
+					logutil.BgLogger().Warn("updateTask to prevStep failed", zap.Int64("task-id", gTask.ID),
+						zap.Int64("previous step", prevStep), zap.Int64("curr step", gTask.Step),
+						zap.Int("retry times", retrySQLTimes), zap.Error(err))
+				}
+				time.Sleep(retrySQLInterval)
+			}
+		} else {
+			// ywq todo consider it,,,fail gen dist plan, then cancel failed, just next step then success.....ops...
+			for i := 0; i < retrySQLTimes; i++ {
+				err = d.taskMgr.CancelGlobalTask(gTask.ID)
+				if err == nil {
+					break
+				}
+				if i%10 == 0 {
+					logutil.BgLogger().Warn("cancel gTask failed", zap.Int64("task-id", gTask.ID),
+						zap.Int("retry times", retrySQLTimes), zap.Error(err))
+				}
+				time.Sleep(retrySQLInterval)
+			}
+			if err != nil {
+				logutil.BgLogger().Error("cancel global task error", zap.String("task_key", gTask.Key), zap.Error(err))
+			}
+		}
+	}
+	return err
 }
 
 func (d *dispatcher) processFlow(gTask *proto.Task, errs []error) (bool, error) {
@@ -394,6 +429,26 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (bool, error) {
 		gTask.Error = errors.New("unsupported task type")
 		return false, d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
+	// 1. update Step to make handle.ProcessNormalFlow to generate next step's metas.
+	gTask.Step++
+
+	// 2. Adjust the global task's concurrency.
+	if gTask.Concurrency == 0 {
+		gTask.Concurrency = DefaultSubtaskConcurrency
+	}
+	if gTask.Concurrency > MaxSubtaskConcurrency {
+		gTask.Concurrency = MaxSubtaskConcurrency
+	}
+
+	// 3. Special handling for the new tasks.
+	if gTask.State == proto.TaskStatePending {
+		// TODO: Consider using TS.
+		gTask.StartTime = time.Now().UTC()
+	}
+
+	// 4. select all available TiDB nodes for this global tasks.
+	serverNodes, err := handle.GetEligibleInstances(d.ctx, gTask)
+	logutil.BgLogger().Debug("eligible instances", zap.Int("num", len(serverNodes)))
 
 	failpoint.Inject("processNormalFlowErrRetryable", func(val failpoint.Value) {
 		if val.(bool) {
@@ -407,32 +462,12 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (bool, error) {
 		}
 	})
 
-	// 1. Adjust the global task's concurrency.
-	if gTask.Concurrency == 0 {
-		gTask.Concurrency = DefaultSubtaskConcurrency
-	}
-	if gTask.Concurrency > MaxSubtaskConcurrency {
-		gTask.Concurrency = MaxSubtaskConcurrency
-	}
-
-	// 2. Special handling for the new tasks.
-	if gTask.State == proto.TaskStatePending {
-		// TODO: Consider using TS.
-		gTask.StartTime = time.Now().UTC()
-	}
-
-	// 3. select all available TiDB nodes for this global tasks.
-	serverNodes, err := handle.GetEligibleInstances(d.ctx, gTask)
-	logutil.BgLogger().Debug("eligible instances", zap.Int("num", len(serverNodes)))
-
 	if err != nil {
 		return handle.IsRetryableErr(err), err
 	}
 	if len(serverNodes) == 0 {
 		return true, errors.New("no available TiDB node")
 	}
-	// 4. update Step to make handle.ProcessNormalFlow to generate next step's metas.
-	gTask.Step++
 
 	// 5. dispacth subtasks asynchronously.
 	return d.dispatchSubTasks(gTask, proto.TaskStateRunning, handle, serverNodes, nil, nil, handle.ProcessNormalFlow, nil, generateSubtasks4NormalFlow)
@@ -458,12 +493,22 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 		}
 		time.Sleep(retrySQLInterval)
 	}
+	if err != nil {
+		return false, errors.New("update global task to dispatching failed")
+	}
+
 	logutil.BgLogger().Info("updateTask to dispatching status", zap.Int64("task-id", gTask.ID),
 		zap.String("previous state", prevState), zap.String("curr state", gTask.State), zap.Int64("step", gTask.Step))
 
 	failpoint.Inject("dispatchSubTasksFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(false, errors.New("injected error in dispatchSubTasks"))
+		}
+	})
+
+	failpoint.Inject("dispatchSubTasksFailRetryable", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(true, errors.New("injected retryable error in dispatchSubTasks"))
 		}
 	})
 
@@ -512,6 +557,9 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 				}
 				time.Sleep(retrySQLInterval)
 			}
+			if err != nil {
+				return false, errors.New("insert subtasks failed")
+			}
 		case err := <-errChan:
 			logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
 			if handle.IsRetryableErr(err) {
@@ -543,6 +591,12 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 		return true, nil
 	}
 
+	failpoint.Inject("updateSubstateFail", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(false, errors.New("injected error in updateSubstate to normal"))
+		}
+	})
+
 	// 5. update gtask to normal substate.
 	gTask.Flag = proto.TaskSubStateNormal
 	for i := 0; i < retrySQLTimes; i++ {
@@ -558,10 +612,14 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 		time.Sleep(retrySQLInterval)
 	}
 
+	if err != nil {
+		return false, errors.New("update gtask to normal substate failed")
+	}
+
 	logutil.BgLogger().Info("updateTask to normal status", zap.Int64("task-id", gTask.ID),
 		zap.String("previous state", prevState), zap.String("curr state", gTask.State), zap.Int64("step", gTask.Step))
 
-	return false, err
+	return false, nil
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.

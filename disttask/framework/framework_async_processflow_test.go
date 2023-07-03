@@ -117,7 +117,7 @@ func TestFrameworkAsyncRollback(t *testing.T) {
 	var v atomic.Int64
 	RegisterAsyncTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe", "1*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskBeforeProbe", "return(true)"))
 	DispatchTaskAndCheckFail("key1", proto.TaskTypeAsyncExample, t, &v)
 	require.Equal(t, int32(4), rollbackCnt.Load())
 	rollbackCnt.Store(0)

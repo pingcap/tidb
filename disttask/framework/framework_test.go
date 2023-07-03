@@ -285,7 +285,6 @@ func TestFrameworkCancelGTask(t *testing.T) {
 	distContext.Close()
 }
 
-// bug here
 func TestFrameworkSubTaskFailed(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
@@ -295,7 +294,14 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	distContext := testkit.NewDistExecutionContext(t, 1)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "1*return(true)"))
 	DispatchTaskAndCheckFail("key1", proto.TaskTypeExample, t, &v)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "2*return(true)"))
+	DispatchTaskAndCheckFail("key2", proto.TaskTypeExample, t, &v)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr", "5*return(true)"))
+	DispatchTaskAndCheckFail("key3", proto.TaskTypeExample, t, &v)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
 	distContext.Close()
 }
@@ -322,10 +328,8 @@ func TestFrameworkBatchAddSubTasksFailed(t *testing.T) {
 	RegisterTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrRetryable", "1*return(true)"))
-	DispatchTaskAndCheckSuccess("😊", proto.TaskTypeExample, t, &v)
-
+	DispatchTaskAndCheckSuccess("yes", proto.TaskTypeExample, t, &v)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/processNormalFlowErrRetryable"))
-
 	distContext.Close()
 }
 
@@ -341,6 +345,25 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockExecSubtaskInitEnvErr"))
 	}()
-	DispatchTaskAndCheckFail("key1", t, &v)
+	DispatchTaskAndCheckFail("key1", proto.TaskTypeExample, t, &v)
+	distContext.Close()
+}
+
+func TestFrameworkDispatchSubTasksFailedAndRetryable(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+	distContext := testkit.NewDistExecutionContext(t, 3)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable", "1*return(true)"))
+	DispatchTaskAndCheckSuccess("😊", proto.TaskTypeExample, t, &v)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable", "2*return(true)"))
+	DispatchTaskAndCheckSuccess("😁", proto.TaskTypeExample, t, &v)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable", "5*return(true)"))
+	DispatchTaskAndCheckSuccess("🥹", proto.TaskTypeExample, t, &v)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable"))
 	distContext.Close()
 }
