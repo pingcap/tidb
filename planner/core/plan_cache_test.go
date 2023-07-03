@@ -52,6 +52,18 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 	require.NotNil(t, lru)
 }
 
+func TestIssue45086(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL)`)
+	tk.MustExec(`INSERT INTO t VALUES (1, current_date())`)
+
+	tk.MustExec(`PREPARE stmt FROM 'SELECT * FROM t WHERE b=current_date()'`)
+	require.Equal(t, tk.MustQuery(`EXECUTE stmt`).Rows(), 1)
+}
+
 func TestIssue43311(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
