@@ -943,11 +943,12 @@ const (
 	version167 = 167
 	version168 = 168
 	version169 = 169
+	version170 = 170
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version169
+var currentBootstrapVersion int64 = version170
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1085,6 +1086,7 @@ var (
 		upgradeToVer167,
 		upgradeToVer168,
 		upgradeToVer169,
+		upgradeToVer170,
 	}
 )
 
@@ -2730,6 +2732,13 @@ func upgradeToVer169(s Session, ver int64) {
 	}
 	mustExecute(s, CreateRunawayQuarantineWatchTable)
 	mustExecute(s, CreateRunawayTable)
+}
+
+func upgradeToVer170(s Session, ver int64) {
+	if ver >= version170 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `flag` VARCHAR(256)", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {

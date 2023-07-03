@@ -2208,3 +2208,48 @@ func TestTiDBUpgradeToVer145(t *testing.T) {
 	require.Less(t, int64(ver144), ver)
 	dom.Close()
 }
+
+func TestTiDBUpgradeToVer170(t *testing.T) {
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	ver169 := version169
+	resetTo169 := func(s Session) {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		m := meta.NewMeta(txn)
+		err = m.FinishBootstrap(int64(ver169))
+		require.NoError(t, err)
+		mustExec(t, s, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver169))
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+
+		unsetStoreBootstrapped(store.UUID())
+		ver, err := getBootstrapVersion(s)
+		require.NoError(t, err)
+		require.Equal(t, int64(ver169), ver)
+	}
+
+	// drop column flag and then upgrade
+	s := CreateSessionAndSetID(t, store)
+	mustExec(t, s, "alter table mysql.tidb_global_task drop column flag")
+	resetTo169(s)
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err := getBootstrapVersion(s)
+	require.NoError(t, err)
+	require.Less(t, int64(ver169), ver)
+	dom.Close()
+
+	// upgrade with column flag exists
+	s = CreateSessionAndSetID(t, store)
+	resetTo169(s)
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(s)
+	require.NoError(t, err)
+	require.Less(t, int64(ver169), ver)
+	dom.Close()
+}
