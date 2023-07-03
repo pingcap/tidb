@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -209,7 +210,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if e.ctx.GetSessionVars().InRestrictedSQL {
 		return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
 	}
-	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema), handle.WithTableStatsByQuery())
+	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema), cache.WithTableStatsByQuery())
 }
 
 func (e *AnalyzeExec) saveV2AnalyzeOpts() error {

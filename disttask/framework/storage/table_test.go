@@ -81,7 +81,7 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.Equal(t, task, task4[0])
 
 	task.State = proto.TaskStateRunning
-	err = gm.UpdateGlobalTaskAndAddSubTasks(task, nil, false)
+	err = gm.UpdateGlobalTaskAndAddSubTasks(task, nil)
 	require.NoError(t, err)
 
 	task.Flag = proto.TaskSubStateDispatching
@@ -268,7 +268,7 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 			Meta:        []byte("m2"),
 		},
 	}
-	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, false)
+	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks)
 	require.NoError(t, err)
 
 	task.Flag = proto.TaskSubStateDispatching
@@ -321,7 +321,7 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 			Meta:        []byte("m4"),
 		},
 	}
-	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, true)
+	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks)
 	require.NoError(t, err)
 
 	task, err = sm.GetGlobalTaskByID(1)
@@ -351,7 +351,7 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
 	}()
 	task.State = proto.TaskStateFailed
-	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks, true)
+	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks)
 	require.EqualError(t, err, "updateTaskErr")
 
 	task, err = sm.GetGlobalTaskByID(1)
