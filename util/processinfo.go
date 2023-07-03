@@ -58,11 +58,11 @@ type ProcessInfo struct {
 	Port                  string
 	ResourceGroupName     string
 	PlanExplainRows       [][]string
+	TableIDs              []int64
+	IndexNames            []string
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
 	ID                    uint64
 	CurTxnStartTS         uint64
-	TableIDs              []int64
-	IndexNames            []string
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
 	MaxExecutionTime uint64
