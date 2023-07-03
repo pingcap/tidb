@@ -510,6 +510,9 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	}
 
 	processInfo := s.ShowProcess()
+	if processInfo == nil {
+		return nil
+	}
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
@@ -1364,7 +1367,12 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 
 	p := parserPool.Get().(*parser.Parser)
 	defer parserPool.Put(p)
-	p.SetSQLMode(s.sessionVars.SQLMode)
+
+	sqlMode := s.sessionVars.SQLMode
+	if s.isInternal() {
+		sqlMode = mysql.DelSQLMode(sqlMode, mysql.ModeNoBackslashEscapes)
+	}
+	p.SetSQLMode(sqlMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
@@ -1437,6 +1445,16 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		pi.Host = s.sessionVars.User.Hostname
 	}
 	s.processInfo.Store(&pi)
+}
+
+// UpdateProcessInfo updates the session's process info for the running statement.
+func (s *session) UpdateProcessInfo() {
+	pi := s.ShowProcess()
+	if pi == nil || pi.CurTxnStartTS != 0 {
+		return
+	}
+	// Update the current transaction start timestamp.
+	pi.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
 }
 
 func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
@@ -1944,7 +1962,14 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		// Only print log message when this SQL is from the user.
 		// Mute the warning for internal SQLs.
 		if !s.sessionVars.InRestrictedSQL {
-			logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err), zap.String("SQL", stmtNode.Text()))
+			if !variable.ErrUnknownSystemVar.Equal(err) {
+				sql := stmtNode.Text()
+				if s.sessionVars.EnableRedactLog {
+					sql = parser.Normalize(sql)
+				}
+				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
+					zap.String("SQL", sql))
+			}
 		}
 		return nil, err
 	}
@@ -2148,38 +2173,7 @@ func (rs *execStmtResult) Close() error {
 	if err := rs.RecordSet.Close(); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
-	if err := resetCTEStorageMap(se); err != nil {
-		return finishStmt(context.Background(), se, err, rs.sql)
-	}
 	return finishStmt(context.Background(), se, nil, rs.sql)
-}
-
-func resetCTEStorageMap(se *session) error {
-	tmp := se.GetSessionVars().StmtCtx.CTEStorageMap
-	if tmp == nil {
-		// Close() is already called, so no need to reset. Such as TraceExec.
-		return nil
-	}
-	storageMap, ok := tmp.(map[int]*executor.CTEStorages)
-	if !ok {
-		return errors.New("type assertion for CTEStorageMap failed")
-	}
-	for _, v := range storageMap {
-		v.ResTbl.Lock()
-		err1 := v.ResTbl.DerefAndClose()
-		// Make sure we do not hold the lock for longer than necessary.
-		v.ResTbl.Unlock()
-		// No need to lock IterInTbl.
-		err2 := v.IterInTbl.DerefAndClose()
-		if err1 != nil {
-			return err1
-		}
-		if err2 != nil {
-			return err2
-		}
-	}
-	se.GetSessionVars().StmtCtx.CTEStorageMap = nil
-	return nil
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -3166,11 +3160,14 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	}
 
 	txnMode := ast.Optimistic
-	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying ||
-		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+	if !s.sessionVars.IsAutocommit() || config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
 			txnMode = ast.Pessimistic
 		}
+	}
+
+	if s.sessionVars.RetryInfo.Retrying {
+		txnMode = ast.Pessimistic
 	}
 
 	return sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
@@ -3277,13 +3274,10 @@ func GetStartTSFromSession(se interface{}) (uint64, uint64) {
 		logutil.BgLogger().Error("GetStartTSFromSession failed, can't transform to session struct")
 		return 0, 0
 	}
-	processInfo := tmp.ShowProcess()
-	if processInfo != nil {
-		processInfoID = processInfo.ID
-	}
 	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
 		startTS = txnInfo.StartTS
+		processInfoID = txnInfo.ConnectionID
 	}
 
 	logutil.BgLogger().Debug(

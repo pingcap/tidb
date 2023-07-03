@@ -602,10 +602,16 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
-		h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
+		if tblInfo.GetPartitionInfo() == nil || h.statsCacheLen() < 64 {
+			h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
+		}
 		return tbl
 	}
 	return tbl
+}
+
+func (h *Handle) statsCacheLen() int {
+	return h.statsCache.Load().(statsCache).Len()
 }
 
 // updateStatsCache overrides the global statsCache with a new one, it may fail
@@ -752,7 +758,7 @@ func (h *Handle) fmSketchFromStorage(reader *statsReader, tblID int64, isIndex, 
 	return statistics.DecodeFMSketch(rows[0].GetBytes(0))
 }
 
-func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo) error {
+func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -779,9 +785,14 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 			if err != nil {
 				return errors.Trace(err)
 			}
-			fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 1, histID)
-			if err != nil {
-				return errors.Trace(err)
+			var fmSketch *statistics.FMSketch
+			if loadAll {
+				// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
+				// we load all the statistics, i.e., loadAll is true.
+				fmSketch, err = h.fmSketchFromStorage(reader, table.PhysicalID, 1, histID)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fmSketch, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag}
 			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
@@ -942,7 +953,7 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	}
 	for _, row := range rows {
 		if row.GetInt64(1) > 0 {
-			err = h.indexStatsFromStorage(reader, row, table, tableInfo)
+			err = h.indexStatsFromStorage(reader, row, table, tableInfo, loadAll)
 		} else {
 			err = h.columnStatsFromStorage(reader, row, table, tableInfo, loadAll)
 		}

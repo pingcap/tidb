@@ -32,4 +32,6 @@ header:
     - 'tidb-binlog/driver/example'
     - 'tidb-binlog/proto/go-binlog/secondary_binlog.pb.go'
     - '**/*.sql'
+    - "**/OWNERS"
+    - "OWNERS_ALIASES"
   comment: on-failure

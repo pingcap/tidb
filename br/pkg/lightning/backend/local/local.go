@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/coreos/go-semver/semver"
@@ -619,7 +620,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		keyAdapter:         local.keyAdapter,
 	})
 	engine := e.(*Engine)
-	engine.db = db
+	engine.db.Store(unsafe.Pointer(db))
 	engine.sstIngester = dbSSTIngester{e: engine}
 	if err = engine.loadEngineMeta(); err != nil {
 		return errors.Trace(err)
@@ -658,7 +659,6 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 		}
 		engine := &Engine{
 			UUID:               engineUUID,
-			db:                 db,
 			sstMetasChan:       make(chan metaOrFlush),
 			tableInfo:          cfg.TableInfo,
 			keyAdapter:         local.keyAdapter,
@@ -666,6 +666,7 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			duplicateDB:        local.duplicateDB,
 			errorMgr:           local.errorMgr,
 		}
+		engine.db.Store(unsafe.Pointer(db))
 		engine.sstIngester = dbSSTIngester{e: engine}
 		if err = engine.loadEngineMeta(); err != nil {
 			return err
@@ -1023,7 +1024,7 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	}
 
 	logger := log.With(zap.Stringer("engine", engine.UUID))
-	sizeProps, err := getSizeProperties(logger, engine.db, local.keyAdapter)
+	sizeProps, err := getSizeProperties(logger, engine.getDB(), local.keyAdapter)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1587,7 +1588,7 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 	}
 	db, err := local.openEngineDB(engineUUID, false)
 	if err == nil {
-		localEngine.db = db
+		localEngine.db.Store(unsafe.Pointer(db))
 		localEngine.engineMeta = engineMeta{}
 		if !common.IsDirExists(localEngine.sstDir) {
 			if err := os.Mkdir(localEngine.sstDir, 0o750); err != nil {

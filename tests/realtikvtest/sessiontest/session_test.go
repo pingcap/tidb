@@ -3235,7 +3235,7 @@ func TestAutocommit(t *testing.T) {
 
 	// When autocommit is 0, transaction start ts should be the first *valid*
 	// statement, rather than *any* statement.
-	tk.MustExec("create table t (id int)")
+	tk.MustExec("create table t (id int key)")
 	tk.MustExec("set @@autocommit = 0")
 	tk.MustExec("rollback")
 	tk.MustExec("set @@autocommit = 0")
@@ -3245,15 +3245,49 @@ func TestAutocommit(t *testing.T) {
 	tk1.MustExec("insert into t select 1")
 
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t")
 
-	// TODO: MySQL compatibility for setting global variable.
-	// tk.MustExec("begin")
-	// tk.MustExec("insert into t values (42)")
-	// tk.MustExec("set @@global.autocommit = 1")
-	// tk.MustExec("rollback")
-	// tk.MustQuery("select count(*) from t where id = 42").Check(testkit.Rows("0"))
-	// Even the transaction is rollbacked, the set statement succeed.
-	// tk.MustQuery("select @@global.autocommit").Rows("1")
+	// When the transaction is rolled back, the global set statement would succeed.
+	tk.MustExec("set @@global.autocommit = 0")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set @@global.autocommit = 1")
+	tk.MustExec("rollback")
+	tk.MustQuery("select count(*) from t where id = 1").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.autocommit").Check(testkit.Rows("1"))
+
+	// When the transaction is committed because of switching mode, the session set statement shold succeed.
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set autocommit = 1")
+	tk.MustExec("rollback")
+	tk.MustQuery("select count(*) from t where id = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
+
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("set autocommit = 1")
+	tk.MustExec("rollback")
+	tk.MustQuery("select count(*) from t where id = 2").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
+
+	// Set should not take effect if the mode is not changed.
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (3)")
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("rollback")
+	tk.MustQuery("select count(*) from t where id = 3").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@autocommit").Check(testkit.Rows("0"))
+
+	tk.MustExec("set autocommit = 1")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (4)")
+	tk.MustExec("set autocommit = 1")
+	tk.MustExec("rollback")
+	tk.MustQuery("select count(*) from t where id = 4").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
 }
 
 // TestTxnLazyInitialize tests that when autocommit = 0, not all statement starts
@@ -3707,4 +3741,54 @@ func TestBinaryReadOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, session.GetHistory(tk.Session()).Count())
 	tk.MustExec("commit")
+}
+
+func TestRandomBinary(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	ctx := context.Background()
+	allBytes := [][]byte{
+		{4, 0, 0, 0, 0, 0, 0, 4, '2'},
+		{4, 0, 0, 0, 0, 0, 0, 4, '.'},
+		{4, 0, 0, 0, 0, 0, 0, 4, '*'},
+		{4, 0, 0, 0, 0, 0, 0, 4, '('},
+		{4, 0, 0, 0, 0, 0, 0, 4, '\''},
+		{4, 0, 0, 0, 0, 0, 0, 4, '!'},
+		{4, 0, 0, 0, 0, 0, 0, 4, 29},
+		{4, 0, 0, 0, 0, 0, 0, 4, 28},
+		{4, 0, 0, 0, 0, 0, 0, 4, 23},
+		{4, 0, 0, 0, 0, 0, 0, 4, 16},
+	}
+	sql := "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values "
+	var val string
+	for i, bytes := range allBytes {
+		if i == 0 {
+			val += sqlexec.MustEscapeSQL("(874, 0, 1, %?, 3)", bytes)
+		} else {
+			val += sqlexec.MustEscapeSQL(",(874, 0, 1, %?, 3)", bytes)
+		}
+	}
+	sql += val
+	tk.MustExec("set sql_mode = 'NO_BACKSLASH_ESCAPES';")
+	_, err := tk.Session().ExecuteInternal(ctx, sql)
+	require.NoError(t, err)
+}
+
+func TestSQLModeOp(t *testing.T) {
+	s := mysql.ModeNoBackslashEscapes | mysql.ModeOnlyFullGroupBy
+	d := mysql.DelSQLMode(s, mysql.ModeANSIQuotes)
+	require.Equal(t, s, d)
+
+	d = mysql.DelSQLMode(s, mysql.ModeNoBackslashEscapes)
+	require.Equal(t, mysql.ModeOnlyFullGroupBy, d)
+
+	s = mysql.ModeNoBackslashEscapes | mysql.ModeOnlyFullGroupBy
+	a := mysql.SetSQLMode(s, mysql.ModeOnlyFullGroupBy)
+	require.Equal(t, s, a)
+
+	a = mysql.SetSQLMode(s, mysql.ModeAllowInvalidDates)
+	require.Equal(t, mysql.ModeNoBackslashEscapes|mysql.ModeOnlyFullGroupBy|mysql.ModeAllowInvalidDates, a)
 }
