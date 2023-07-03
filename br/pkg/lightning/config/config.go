@@ -1235,7 +1235,7 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 
 	if cfg.App.MaxError.Conflict.Load() == -1 {
 		if cfg.TikvImporter.Backend == BackendTiDB {
-			// in versions before v7.2, tidb backend will treat "duplicate entry"
+			// in versions before v7.3, tidb backend will treat "duplicate entry"
 			// as type error which default is 0. So we set it to 0 to keep compatible.
 			cfg.App.MaxError.Conflict.Store(0)
 		} else {
