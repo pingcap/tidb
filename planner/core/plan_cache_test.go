@@ -61,7 +61,7 @@ func TestIssue45086(t *testing.T) {
 	tk.MustExec(`INSERT INTO t VALUES (1, current_date())`)
 
 	tk.MustExec(`PREPARE stmt FROM 'SELECT * FROM t WHERE b=current_date()'`)
-	require.Equal(t, tk.MustQuery(`EXECUTE stmt`).Rows(), 1)
+	require.Equal(t, len(tk.MustQuery(`EXECUTE stmt`).Rows()), 1)
 }
 
 func TestIssue43311(t *testing.T) {
