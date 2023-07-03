@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	internalutil "github.com/pingcap/tidb/executor/internal/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -1208,7 +1209,7 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 
 // DDLJobsReaderExec executes DDLJobs information retrieving.
 type DDLJobsReaderExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	DDLJobRetriever
 
 	cacheJobs []*model.Job
@@ -1218,12 +1219,12 @@ type DDLJobsReaderExec struct {
 
 // Open implements the Executor Next interface.
 func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	e.DDLJobRetriever.is = e.is
-	e.activeRoles = e.ctx.GetSessionVars().ActiveRoles
-	sess, err := e.getSysSession()
+	e.activeRoles = e.Ctx().GetSessionVars().ActiveRoles
+	sess, err := e.GetSysSession()
 	if err != nil {
 		return err
 	}
@@ -1246,8 +1247,8 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.maxChunkSize)
-	checker := privilege.GetPrivilegeManager(e.ctx)
+	req.GrowAndReset(e.MaxChunkSize())
+	checker := privilege.GetPrivilegeManager(e.Ctx())
 	count := 0
 
 	// Append running DDL jobs.
@@ -1289,8 +1290,8 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *DDLJobsReaderExec) Close() error {
-	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), e.sess)
-	return e.baseExecutor.Close()
+	e.ReleaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), e.sess)
+	return e.BaseExecutor.Close()
 }
 
 func (e *memtableRetriever) setDataFromEngines() {
