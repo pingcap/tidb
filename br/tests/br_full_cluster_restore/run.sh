@@ -3,11 +3,12 @@
 set -eu
 
 # we need to keep backup data after restart service
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 backup_dir=$TEST_DIR/keep_${TEST_NAME}
 incr_backup_dir=${backup_dir}_inc
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 br_log_file=$TEST_DIR/br.log
-source tests/_utils/run_services
+source $CUR/../_utils/run_services
 
 function run_sql_as() {
 	user=$1
@@ -25,7 +26,7 @@ function run_sql_as() {
 restart_services
 
 unset BR_LOG_TO_TERM
-run_sql_file tests/${TEST_NAME}/full_data.sql
+run_sql_file $CUR/full_data.sql
 run_br backup full --log-file $br_log_file -s "local://$backup_dir"
 
 run_sql "SELECT user FROM mysql.user WHERE JSON_EXTRACT(user_attributes, '$.resource_group') != '';"

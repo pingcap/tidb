@@ -15,10 +15,11 @@
 # limitations under the License.
 
 set -eu
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DB="$TEST_NAME"
 TABLE="usertable"
 ROW_COUNT=100
-PATH="tests/$TEST_NAME:bin:$PATH"
+PATH="$CUR:bin:$PATH"
 LOG=/$TEST_DIR/backup.log
 
 echo "load data..."

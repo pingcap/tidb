@@ -16,6 +16,8 @@
 
 set -eu
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 run_sql 'DROP DATABASE IF EXISTS cpts'
 rm -f "$TEST_DIR"/cpts.pb*
 
@@ -37,7 +39,7 @@ run_sql 'DROP DATABASE IF EXISTS `tidb_lightning_checkpoint_timestamp.1234567890
 
 for i in $(seq 5); do
     echo "******** Importing Chunk Now (mysql step $i) ********"
-    run_lightning --enable-checkpoint=1 --config "tests/$TEST_NAME/mysql.toml" 2> /dev/null && break
+    run_lightning --enable-checkpoint=1 --config "$CUR/mysql.toml" 2> /dev/null && break
     sleep 1
 done
 

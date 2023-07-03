@@ -15,6 +15,7 @@
 # limitations under the License.
 
 set -eux
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DB="gcs_test"
 TABLE="tbl"
 
@@ -64,10 +65,10 @@ EOF
 )
 
 # save CREDENTIALS to file
-echo $KEY > "tests/$TEST_NAME/config.json"
+echo $KEY > "$CUR/config.json"
 
 # export test CREDENTIALS for gcs oauth
-export GOOGLE_APPLICATION_CREDENTIALS="tests/$TEST_NAME/config.json"
+export GOOGLE_APPLICATION_CREDENTIALS="$CUR/config.json"
 
 # create gcs bucket
 curl -XPOST http://$GCS_HOST:$GCS_PORT/storage/v1/b -d "{\"name\":\"${BUCKET}\"}"

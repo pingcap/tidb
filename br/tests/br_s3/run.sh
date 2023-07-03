@@ -18,6 +18,7 @@ set -eux
 DB="$TEST_NAME"
 TABLE="usertable"
 DB_COUNT=3
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # start the s3 server
 export MINIO_ACCESS_KEY='KEXI7MANNASOPDLAOIEF'
@@ -63,7 +64,7 @@ bin/mc config --config-dir "$TEST_DIR/$TEST_NAME" \
 # Fill in the database
 for i in $(seq $DB_COUNT); do
     run_sql "CREATE DATABASE $DB${i};"
-    go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
+    go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
 done
 
 bin/mc mb --config-dir "$TEST_DIR/$TEST_NAME" minio/mybucket
