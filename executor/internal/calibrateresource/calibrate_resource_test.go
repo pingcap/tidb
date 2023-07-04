@@ -144,7 +144,7 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetimeBeforeNow(4*time.Minute), 2250.0),
 		types.MakeDatums(datetimeBeforeNow(3*time.Minute), 2330.0),
 		types.MakeDatums(datetimeBeforeNow(2*time.Minute), 2330.0),
-		types.MakeDatums(datetimeBeforeNow(1*time.Minute), 2300.0),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute+2*time.Second), 2300.0),
 		types.MakeDatums(datetimeBeforeNow(2*time.Second), 2280.0),
 	}
 	mockData["resource_manager_resource_unit"] = ru1
@@ -159,7 +159,7 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetimeBeforeNow(4*time.Minute), "tidb-0", "tidb", 1.236),
 		types.MakeDatums(datetimeBeforeNow(3*time.Minute), "tidb-0", "tidb", 1.228),
 		types.MakeDatums(datetimeBeforeNow(2*time.Minute), "tidb-0", "tidb", 1.219),
-		types.MakeDatums(datetimeBeforeNow(1*time.Minute), "tidb-0", "tidb", 1.220),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute+2*time.Second), "tidb-0", "tidb", 1.220),
 		types.MakeDatums(datetimeBeforeNow(2*time.Second), "tidb-0", "tidb", 1.221),
 		types.MakeDatums(datetimeBeforeNow(20*time.Minute), "tikv-1", "tikv", 2.212),
 		types.MakeDatums(datetimeBeforeNow(10*time.Minute), "tikv-1", "tikv", 2.212),
@@ -171,7 +171,7 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetimeBeforeNow(4*time.Minute), "tikv-1", "tikv", 2.236),
 		types.MakeDatums(datetimeBeforeNow(3*time.Minute), "tikv-1", "tikv", 2.228),
 		types.MakeDatums(datetimeBeforeNow(2*time.Minute), "tikv-1", "tikv", 2.219),
-		types.MakeDatums(datetimeBeforeNow(1*time.Minute), "tikv-1", "tikv", 2.220),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute+2*time.Second), "tikv-1", "tikv", 2.220),
 		types.MakeDatums(datetimeBeforeNow(2*time.Second), "tikv-1", "tikv", 2.281),
 		types.MakeDatums(datetimeBeforeNow(20*time.Minute), "tikv-0", "tikv", 2.282),
 		types.MakeDatums(datetimeBeforeNow(10*time.Minute), "tikv-0", "tikv", 2.282),
@@ -183,7 +183,7 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetimeBeforeNow(4*time.Minute), "tikv-0", "tikv", 2.286),
 		types.MakeDatums(datetimeBeforeNow(3*time.Minute), "tikv-0", "tikv", 2.288),
 		types.MakeDatums(datetimeBeforeNow(2*time.Minute), "tikv-0", "tikv", 2.289),
-		types.MakeDatums(datetimeBeforeNow(1*time.Minute), "tikv-0", "tikv", 2.280),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute+2*time.Second), "tikv-0", "tikv", 2.280),
 		types.MakeDatums(datetimeBeforeNow(2*time.Second), "tikv-0", "tikv", 2.281),
 		types.MakeDatums(datetimeBeforeNow(20*time.Minute), "tikv-2", "tikv", 2.112),
 		types.MakeDatums(datetimeBeforeNow(10*time.Minute), "tikv-2", "tikv", 2.112),
@@ -195,7 +195,7 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetimeBeforeNow(4*time.Minute), "tikv-2", "tikv", 2.136),
 		types.MakeDatums(datetimeBeforeNow(3*time.Minute), "tikv-2", "tikv", 2.128),
 		types.MakeDatums(datetimeBeforeNow(2*time.Minute), "tikv-2", "tikv", 2.119),
-		types.MakeDatums(datetimeBeforeNow(1*time.Minute), "tikv-2", "tikv", 2.120),
+		types.MakeDatums(datetimeBeforeNow(1*time.Minute+2*time.Second), "tikv-2", "tikv", 2.120),
 		types.MakeDatums(datetimeBeforeNow(2*time.Second), "tikv-2", "tikv", 2.281),
 	}
 	mockData["process_cpu_usage"] = cpu1
@@ -208,9 +208,10 @@ func TestCalibrateResource(t *testing.T) {
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - interval 11 minute DURATION interval 11 minute").Check(testkit.Rows("8161"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE DURATION interval 11 minute START_TIME now() - interval 11 minute").Check(testkit.Rows("8161"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE END_TIME now() DURATION interval 11 minute").Check(testkit.Rows("8161"))
-	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - interval 21 minute END_TIME now() - interval 1 minute").Check(testkit.Rows("8138"))
-	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE DURATION '20m' START_TIME now() - interval 21 minute").Check(testkit.Rows("8138"))
-	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE DURATION interval 20 minute START_TIME now() - interval 21 minute").Check(testkit.Rows("8138"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - interval 21 minute END_TIME now() - interval 1 minute").Check(testkit.Rows("8160"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE DURATION '20m' START_TIME now() - interval 21 minute").Check(testkit.Rows("8160"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE DURATION '20m' END_TIME now() - interval 1 minute").Check(testkit.Rows("8160"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE DURATION interval 20 minute START_TIME now() - interval 21 minute").Check(testkit.Rows("8160"))
 
 	// construct data for dynamic calibrate
 	ru1 = [][]types.Datum{
