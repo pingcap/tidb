@@ -1642,7 +1642,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
         Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
         user_attributes->>'$.Password_locking.failed_login_attempts',
-        user_attributes->>'$.Password_locking.password_lock_time_days'
+        user_attributes->>'$.Password_locking.password_lock_time_days',
+	max_questions, max_updates, max_connections, max_user_connections
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
@@ -1674,6 +1675,27 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	tokenIssuer := rows[0].GetString(3)
 	if len(tokenIssuer) > 0 {
 		tokenIssuer = " token_issuer " + tokenIssuer
+	}
+
+	maxQuestions := rows[0].GetUint64(10)
+	maxUpdates := rows[0].GetUint64(11)
+	maxConnections := rows[0].GetUint64(12)
+	maxUserConnections := rows[0].GetUint64(13)
+	var resourceStr string
+	if maxQuestions > 0 || maxUpdates > 0 || maxConnections > 0 || maxUserConnections > 0 {
+		resourceStr = "WITH"
+		if maxQuestions > 0 {
+			resourceStr += fmt.Sprintf(" MAX_QUERIES_PER_HOUR %d", maxQuestions)
+		}
+		if maxUpdates > 0 {
+			resourceStr += fmt.Sprintf(" MAX_UPDATES_PER_HOUR %d", maxUpdates)
+		}
+		if maxConnections > 0 {
+			resourceStr += fmt.Sprintf(" MAX_CONNECTIONS_PER_HOUR %d", maxConnections)
+		}
+		if maxUserConnections > 0 {
+			resourceStr += fmt.Sprintf(" MAX_USER_CONNECTIONS %d", maxUserConnections)
+		}
 	}
 
 	var passwordHistory string
@@ -1740,8 +1762,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, resourceStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
