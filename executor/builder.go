@@ -908,7 +908,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			}
 		}
 	case *ast.CalibrateResourceStmt:
-		return &calibrateresource.CalibrateResourceExec{
+		return &calibrateresource.Executor{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), 0),
 			WorkloadType: s.Tp,
 			OptionList:   s.DynamicCalibrateResourceOptionList,
