@@ -181,7 +181,6 @@ func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext 
 		if i != serverNum-1 {
 			dom.SetOnClose(func() { /* don't delete the store in domain map */ })
 		}
-		logutil.BgLogger().Info("ywq test is owner", zap.Bool("isowner", dom.DDL().OwnerManager().IsOwner()))
 		domains = append(domains, dom)
 		domains[i].InfoSyncer().SetSessionManager(&sm)
 		domInfo = append(domInfo, dom.DDL().GetID())

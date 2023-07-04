@@ -16,8 +16,6 @@ package dispatcher
 
 import (
 	"context"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -99,26 +97,26 @@ func (d *dispatcher) delRunningGTask(globalTaskID int64) {
 }
 
 type dispatcher struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	taskMgr      *storage.TaskManager
-	wg           tidbutil.WaitGroupWrapper
-	gPool        *spool.Pool
-	dispatchDone atomic.Bool
+	ctx     context.Context
+	cancel  context.CancelFunc
+	taskMgr *storage.TaskManager
+	wg      tidbutil.WaitGroupWrapper
+	gPool   *spool.Pool
+	id      string
 
 	runningGTasks struct {
 		syncutil.RWMutex
-		taskIDs      map[int64]struct{}
-		dispatchDone sync.Map
+		taskIDs map[int64]struct{}
 	}
 	detectPendingGTaskCh chan *proto.Task
 }
 
 // NewDispatcher creates a dispatcher struct.
-func NewDispatcher(ctx context.Context, taskTable *storage.TaskManager) (Dispatch, error) {
+func NewDispatcher(ctx context.Context, taskTable *storage.TaskManager, id string) (Dispatch, error) {
 	dispatcher := &dispatcher{
 		taskMgr:              taskTable,
 		detectPendingGTaskCh: make(chan *proto.Task, DefaultDispatchConcurrency),
+		id:                   id,
 	}
 	pool, err := spool.NewPool("dispatch_pool", int32(DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
@@ -146,13 +144,13 @@ func (d *dispatcher) Stop() {
 
 // DispatchTaskLoop dispatches the global tasks.
 func (d *dispatcher) DispatchTaskLoop() {
-	logutil.BgLogger().Info("dispatch task loop start")
+	logutil.BgLogger().Info("dispatch task loop start", zap.String("id", d.id))
 	ticker := time.NewTicker(checkTaskRunningInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-d.ctx.Done():
-			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(d.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
+			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(d.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000), zap.String("id", d.id))
 			return
 		case <-ticker.C:
 			cnt := d.getRunningGTaskCnt()
@@ -170,43 +168,51 @@ func (d *dispatcher) DispatchTaskLoop() {
 			if len(gTasks) == 0 {
 				break
 			}
-			var atomicCnt atomic.Int32
-			atomicCnt.Store(int32(cnt))
-			var dispatchWg tidbutil.WaitGroupWrapper
 			for _, gTask := range gTasks {
-				dispatchWg.Add(1)
-				go func(gTask *proto.Task) {
-					defer dispatchWg.Done()
-					// This global task is running, so no need to reprocess it.
-					if d.isRunningGTask(gTask.ID) {
-						return
-					}
-					// The task is not in runningGTasks set when:
-					// owner changed or task is cancelled when status is pending.
-					if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting || gTask.State == proto.TaskStateCancelling {
-						d.setRunningGTask(gTask)
-						atomicCnt.Add(1)
-						return
-					}
-					atomicCnt.Add(1)
-					if d.checkConcurrencyOverflow(int(atomicCnt.Load())) {
-						return
+				// This global task is running, so no need to reprocess it.
+				if d.isRunningGTask(gTask.ID) {
+					continue
+				}
+				// The task is not in runningGTasks set when:
+				// owner changed or task is cancelled when status is pending.
+				if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting || gTask.State == proto.TaskStateCancelling {
+					prevStep := gTask.Step
+					// When owner changed in prev owner dispatching process,
+					// update the gtask to previous step since the previous step didn't dispatched and execute all subtasks.
+					gTask.Step--
+					for i := 0; i < retrySQLTimes; i++ {
+						err = d.taskMgr.UpdateGlobalTask(gTask)
+						if err == nil {
+							break
+						}
+						if i%10 == 0 {
+							logutil.BgLogger().Warn("updateTask to prevStep failed", zap.Int64("task-id", gTask.ID),
+								zap.Int64("previous step", prevStep), zap.Int64("curr step", gTask.Step),
+								zap.Int("retry times", retrySQLTimes), zap.Error(err))
+						}
+						time.Sleep(retrySQLInterval)
 					}
 
-					retryable, err := d.processNormalFlow(gTask)
-					logutil.BgLogger().Info("dispatch task loop", zap.Int64("task ID", gTask.ID),
-						zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency),
-						zap.Int64("step", gTask.Step), zap.Error(err))
-
-					err = d.handleDispatchErr(gTask, retryable, err)
-					if gTask.IsFinished() || err != nil {
-						return
-					}
 					d.setRunningGTask(gTask)
-				}(gTask)
+					cnt++
+					continue
+				}
+				if d.checkConcurrencyOverflow(cnt) {
+					break
+				}
+
+				gTask.Step = proto.StepInit
+				retryable, err := d.processNormalFlow(gTask)
+				logutil.BgLogger().Info("dispatch task loop", zap.Int64("task ID", gTask.ID),
+					zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency),
+					zap.Int64("step", gTask.Step), zap.Error(err), zap.String("id", d.id))
+				err = d.handleDispatchErr(gTask, retryable, err)
+				if gTask.IsFinished() || err != nil {
+					continue
+				}
+				d.setRunningGTask(gTask)
+				cnt++
 			}
-			// // wait all gTasks dispatched in this tick.
-			dispatchWg.Wait()
 		}
 	}
 }
@@ -249,11 +255,11 @@ func (d *dispatcher) probeTask(taskID int64) (gTask *proto.Task, finished bool, 
 
 // DetectTaskLoop monitors the status of the subtasks and processes them.
 func (d *dispatcher) DetectTaskLoop() {
-	logutil.BgLogger().Info("detect task loop start")
+	logutil.BgLogger().Info("detect task loop start", zap.String("id", d.id))
 	for {
 		select {
 		case <-d.ctx.Done():
-			logutil.BgLogger().Info("detect task loop exits", zap.Error(d.ctx.Err()))
+			logutil.BgLogger().Info("detect task loop exits", zap.Error(d.ctx.Err()), zap.String("id", d.id))
 			return
 		case task := <-d.detectPendingGTaskCh:
 			// Using the pool with block, so it wouldn't return an error.
@@ -268,7 +274,7 @@ func (d *dispatcher) detectTask(taskID int64) {
 	for {
 		select {
 		case <-d.ctx.Done():
-			logutil.BgLogger().Info("detect task exits", zap.Int64("task ID", taskID), zap.Error(d.ctx.Err()))
+			logutil.BgLogger().Info("detect task exits", zap.Int64("task ID", taskID), zap.Error(d.ctx.Err()), zap.String("id", d.id))
 			return
 		case <-ticker.C:
 			failpoint.Inject("cancelTaskBeforeProbe", func(val failpoint.Value) {
@@ -292,7 +298,7 @@ func (d *dispatcher) detectTask(taskID int64) {
 			err = d.handleDispatchErr(gTask, retryable, err)
 			if err == nil && gTask.IsFinished() {
 				logutil.BgLogger().Info("detect task, task is finished",
-					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State))
+					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State), zap.String("id", d.id))
 				d.delRunningGTask(gTask.ID)
 				return
 			}
@@ -305,7 +311,8 @@ func (d *dispatcher) detectTask(taskID int64) {
 }
 
 func (d *dispatcher) handleDispatchErr(gTask *proto.Task, retryable bool, err error) error {
-	if err != nil {
+	if err != nil && err != context.Canceled {
+		logutil.BgLogger().Info("ywq test reach here")
 		if retryable {
 			// Must change the step since every time we called processNormalFlow, the step will increase.
 			prevStep := gTask.Step
@@ -355,7 +362,7 @@ func (d *dispatcher) processFlow(gTask *proto.Task, errs []error) (bool, error) 
 		return false, d.updateGlobalTaskState(gTask, proto.TaskStateReverted, retrySQLTimes)
 	}
 	// Finish the normal step.
-	logutil.BgLogger().Info("process flow, process normal", zap.Int64("task-id", gTask.ID))
+	logutil.BgLogger().Info("process flow, process normal", zap.Int64("task-id", gTask.ID), zap.String("id", d.id))
 	return d.processNormalFlow(gTask)
 }
 
@@ -476,6 +483,9 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (bool, error) {
 	return d.dispatchSubTasks(gTask, proto.TaskStateRunning, handle, serverNodes, nil, nil, handle.ProcessNormalFlow, nil, generateSubtasks4NormalFlow)
 }
 
+// MockOwnerChange mock owner change in tests.
+var MockOwnerChange func()
+
 func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handle TaskFlowHandle, serverNodes []*infosync.ServerInfo, instanceIDs []string, receiveErr []error,
 	processNormalFlow func(ctx context.Context, h TaskHandle, gTask *proto.Task, metasChan chan [][]byte, errChan chan error, doneChan chan bool),
 	processErrFlow func(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr []error, metasChan chan [][]byte, errChan chan error, doneChan chan bool),
@@ -503,6 +513,13 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 	logutil.BgLogger().Info("updateTask to dispatching status", zap.Int64("task-id", gTask.ID),
 		zap.String("previous state", prevState), zap.String("curr state", gTask.State), zap.Int64("step", gTask.Step))
 
+	failpoint.Inject("mockOwnerChange", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.BgLogger().Info("mockOwnerChange called")
+			MockOwnerChange()
+			time.Sleep(1 * time.Second)
+		}
+	})
 	failpoint.Inject("dispatchSubTasksFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(false, errors.New("injected error in dispatchSubTasks"))
@@ -534,6 +551,9 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 	doneDispatch := false
 	for !doneDispatch {
 		select {
+		case <-d.ctx.Done():
+			logutil.BgLogger().Info("dispatch subtask loop exits", zap.Error(d.ctx.Err()), zap.String("id", d.id))
+			return true, d.ctx.Err()
 		case metas := <-metasChan:
 			if metas == nil {
 				continue

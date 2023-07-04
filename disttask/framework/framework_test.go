@@ -366,3 +366,22 @@ func TestFrameworkDispatchSubTasksFailedAndRetryable(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable"))
 	distContext.Close()
 }
+
+func TestOwnerChange(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+
+	var v atomic.Int64
+
+	RegisterTaskMeta(&v)
+
+	distContext := testkit.NewDistExecutionContext(t, 3)
+	dispatcher.MockOwnerChange = func() {
+		distContext.SetOwner(0)
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockOwnerChange", "1*return(true)"))
+	DispatchTaskAndCheckSuccess("😊", proto.TaskTypeExample, t, &v)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockOwnerChange"))
+
+	distContext.Close()
+}
