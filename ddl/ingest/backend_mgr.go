@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -121,7 +122,7 @@ func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{
 		DB: nil,
 	}
-	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName)
+	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, resourcegroup.DefaultResourceGroupName)
 	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 }
 

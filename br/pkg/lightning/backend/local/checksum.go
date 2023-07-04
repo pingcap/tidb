@@ -142,6 +142,20 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 		}
 	}
 
+	explicitRequestSourceType, err := common.GetExplicitRequestSourceTypeFromDB(ctx, e.db)
+	if err == nil && explicitRequestSourceType != "lightning" {
+		task.Info("set explicit_request_source_type", zap.String("original", explicitRequestSourceType), zap.String("new", "lightning"))
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%s';", variable.TiDBExplicitRequestSourceType, "lightning")); err != nil {
+			task.Warn("set explicit_request_source_type failed", zap.Error(err))
+		} else {
+			defer func() {
+				if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%s';", variable.TiDBExplicitRequestSourceType, explicitRequestSourceType)); err != nil {
+					task.Warn("recover explicit_request_source_type failed", zap.Error(err))
+				}
+			}()
+		}
+	}
+
 	cs := RemoteChecksum{}
 	err = common.SQLWithRetry{DB: conn, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
 		"ADMIN CHECKSUM TABLE "+tableName, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,
@@ -272,23 +286,26 @@ type TiKVChecksumManager struct {
 	manager                gcTTLManager
 	distSQLScanConcurrency uint
 	backoffWeight          int
+	resourceGroupName      string
 }
 
 var _ ChecksumManager = &TiKVChecksumManager{}
 
 // NewTiKVChecksumManager return a new tikv checksum manager
-func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint, backoffWeight int) *TiKVChecksumManager {
+func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint, backoffWeight int, resourceGroupName string) *TiKVChecksumManager {
 	return &TiKVChecksumManager{
 		client:                 client,
 		manager:                newGCTTLManager(pdClient),
 		distSQLScanConcurrency: distSQLScanConcurrency,
 		backoffWeight:          backoffWeight,
+		resourceGroupName:      resourceGroupName,
 	}
 }
 
 func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, ts uint64) (*RemoteChecksum, error) {
 	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, ts).
 		SetConcurrency(e.distSQLScanConcurrency).
+		SetResourceGroupName(e.resourceGroupName).
 		SetBackoffWeight(e.backoffWeight).
 		Build()
 	if err != nil {

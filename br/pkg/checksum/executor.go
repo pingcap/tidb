@@ -33,6 +33,8 @@ type ExecutorBuilder struct {
 
 	oldKeyspace []byte
 	newKeyspace []byte
+
+	resourceGroupName string
 }
 
 // NewExecutorBuilder returns a new executor builder.
@@ -73,6 +75,11 @@ func (builder *ExecutorBuilder) SetNewKeyspace(keyspace []byte) *ExecutorBuilder
 	return builder
 }
 
+func (builder *ExecutorBuilder) SetResourceGroupName(name string) *ExecutorBuilder {
+	builder.resourceGroupName = name
+	return builder
+}
+
 // Build builds a checksum executor.
 func (builder *ExecutorBuilder) Build() (*Executor, error) {
 	reqs, err := buildChecksumRequest(
@@ -82,6 +89,7 @@ func (builder *ExecutorBuilder) Build() (*Executor, error) {
 		builder.concurrency,
 		builder.oldKeyspace,
 		builder.newKeyspace,
+		builder.resourceGroupName,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -96,6 +104,7 @@ func buildChecksumRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
+	resourceGroupName string,
 ) ([]*kv.Request, error) {
 	var partDefs []model.PartitionDefinition
 	if part := newTable.Partition; part != nil {
@@ -107,7 +116,8 @@ func buildChecksumRequest(
 	if oldTable != nil {
 		oldTableID = oldTable.Info.ID
 	}
-	rs, err := buildRequest(newTable, newTable.ID, oldTable, oldTableID, startTS, concurrency, oldKeyspace, newKeyspace)
+	rs, err := buildRequest(newTable, newTable.ID, oldTable, oldTableID, startTS, concurrency,
+		oldKeyspace, newKeyspace, resourceGroupName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -122,7 +132,8 @@ func buildChecksumRequest(
 				}
 			}
 		}
-		rs, err := buildRequest(newTable, partDef.ID, oldTable, oldPartID, startTS, concurrency, oldKeyspace, newKeyspace)
+		rs, err := buildRequest(newTable, partDef.ID, oldTable, oldPartID, startTS, concurrency,
+			oldKeyspace, newKeyspace, resourceGroupName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -141,9 +152,11 @@ func buildRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
+	resourceGroupName string,
 ) ([]*kv.Request, error) {
 	reqs := make([]*kv.Request, 0)
-	req, err := buildTableRequest(tableInfo, tableID, oldTable, oldTableID, startTS, concurrency, oldKeyspace, newKeyspace)
+	req, err := buildTableRequest(tableInfo, tableID, oldTable, oldTableID, startTS, concurrency,
+		oldKeyspace, newKeyspace, resourceGroupName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -172,7 +185,8 @@ func buildRequest(
 			}
 		}
 		req, err = buildIndexRequest(
-			tableID, indexInfo, oldTableID, oldIndexInfo, startTS, concurrency, oldKeyspace, newKeyspace)
+			tableID, indexInfo, oldTableID, oldIndexInfo, startTS, concurrency,
+			oldKeyspace, newKeyspace, resourceGroupName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -191,6 +205,7 @@ func buildTableRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
+	resourceGroupName string,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldTable != nil {
@@ -220,6 +235,7 @@ func buildTableRequest(
 		SetStartTS(startTS).
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
+		SetResourceGroupName(resourceGroupName).
 		Build()
 }
 
@@ -232,6 +248,7 @@ func buildIndexRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
+	resourceGroupName string,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldIndexInfo != nil {
@@ -257,6 +274,7 @@ func buildIndexRequest(
 		SetStartTS(startTS).
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
+		SetResourceGroupName(resourceGroupName).
 		Build()
 }
 

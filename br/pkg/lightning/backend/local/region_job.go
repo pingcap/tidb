@@ -242,6 +242,11 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			Chunk: &sst.WriteRequest_Meta{
 				Meta: meta,
 			},
+			Context: &kvrpcpb.Context{
+				ResourceControlContext: &kvrpcpb.ResourceControlContext{
+					ResourceGroupName: local.ResourceGroupName,
+					IsBackground:      true,
+				}},
 		}
 		if err = wstream.Send(req); err != nil {
 			return annotateErr(err, peer)
@@ -552,6 +557,10 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			RegionId:    j.region.Region.GetId(),
 			RegionEpoch: j.region.Region.GetRegionEpoch(),
 			Peer:        leader,
+			ResourceControlContext: &kvrpcpb.ResourceControlContext{
+				ResourceGroupName: local.ResourceGroupName,
+				IsBackground:      true,
+			},
 		}
 
 		if supportMultiIngest {

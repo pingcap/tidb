@@ -39,7 +39,7 @@ const (
 	maxWatchRecordChannelSize = 1024
 )
 
-// RunawayMatchType is used to indicates whether qurey was interrupted by runaway identification or quarantine watch.
+// RunawayMatchType is used to indicate whether query was interrupted by runaway identification or quarantine watch.
 type RunawayMatchType uint
 
 const (

@@ -116,6 +116,8 @@ const (
 var (
 	minTiKVVersionForDuplicateResolution = *semver.New("5.2.0")
 	maxTiKVVersionForDuplicateResolution = version.NextMajorVersion()
+	minTiDBCurrentResourceGroupVersion   = *semver.New("6.6.0")
+	maxTiDBCurrentResourceGroupVersion   = version.NextMajorVersion()
 )
 
 // DeliverPauser is a shared pauser to pause progress to (*chunkProcessor).encodeLoop
@@ -229,7 +231,8 @@ type Controller struct {
 	encBuilder          encode.EncodingBuilder
 	tikvModeSwitcher    local.TiKVModeSwitcher
 
-	keyspaceName string
+	keyspaceName      string
+	resourceGroupName string
 }
 
 // LightningStatus provides the finished bytes and total bytes of the current task.
@@ -267,6 +270,8 @@ type ControllerParam struct {
 	DupIndicator *atomic.Bool
 	// Keyspace name
 	KeyspaceName string
+	// ResourceGroup name for current TiDB user
+	ResourceGroupName string
 }
 
 // NewImportController creates a new Controller instance.
@@ -357,7 +362,26 @@ func NewImportControllerWithPauser(
 		regionSizeGetter := &local.TableRegionSizeGetterImpl{
 			DB: db,
 		}
-		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName)
+
+		versionStr, _ := version.FetchVersion(ctx, db)
+		if err := version.CheckTiDBVersion(versionStr, minTiDBCurrentResourceGroupVersion, maxTiDBCurrentResourceGroupVersion); err != nil {
+			if !berrors.Is(err, berrors.ErrVersionMismatch) {
+				return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()
+			}
+			log.FromContext(ctx).Debug("TiDB version doesn't support get current resource group.", zap.Error(err))
+		} else {
+			// get resource group name.
+			exec := common.SQLWithRetry{
+				DB:     db,
+				Logger: log.FromContext(ctx),
+			}
+
+			if err := exec.QueryRow(ctx, "", "select current_resource_group();", &p.ResourceGroupName); err != nil {
+				return nil, err
+			}
+		}
+
+		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, p.ResourceGroupName)
 		backendObj, err = local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
@@ -456,7 +480,8 @@ func NewImportControllerWithPauser(
 		encBuilder:          encodingBuilder,
 		tikvModeSwitcher:    local.NewTiKVModeSwitcher(tls, cfg.TiDB.PdAddr, log.FromContext(ctx).Logger),
 
-		keyspaceName: p.KeyspaceName,
+		keyspaceName:      p.KeyspaceName,
+		resourceGroupName: p.ResourceGroupName,
 	}
 
 	return rc, nil
@@ -1448,7 +1473,7 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 
 func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	// output error summary
-	defer rc.outpuErrorSummary()
+	defer rc.outputErrorSummary()
 
 	if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		subCtx, cancel := context.WithCancel(ctx)
@@ -1805,7 +1830,7 @@ func addExtendDataForCheckpoint(
 	return nil
 }
 
-func (rc *Controller) outpuErrorSummary() {
+func (rc *Controller) outputErrorSummary() {
 	if rc.errorMgr.HasError() {
 		fmt.Println(rc.errorMgr.Output())
 	}
@@ -1835,7 +1860,7 @@ func (rc *Controller) doCompact(ctx context.Context, level int32) error {
 		tls,
 		tikv.StoreStateDisconnected,
 		func(c context.Context, store *tikv.Store) error {
-			return tikv.Compact(c, tls, store.Address, level)
+			return tikv.Compact(c, tls, store.Address, level, rc.resourceGroupName)
 		},
 	)
 }

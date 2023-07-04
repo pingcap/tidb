@@ -616,6 +616,15 @@ func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
 	return strconv.Atoi(val)
 }
 
+// GetExplicitRequestSourceTypeFromDB gets the explicit request source type from database.
+func GetExplicitRequestSourceTypeFromDB(ctx context.Context, db *sql.DB) (string, error) {
+	val, err := getSessionVariable(ctx, db, variable.TiDBExplicitRequestSourceType)
+	if err != nil {
+		return "", err
+	}
+	return val, nil
+}
+
 // copy from dbutil to avoid import cycle
 func getSessionVariable(ctx context.Context, db *sql.DB, variable string) (value string, err error) {
 	query := fmt.Sprintf("SHOW VARIABLES LIKE '%s'", variable)
