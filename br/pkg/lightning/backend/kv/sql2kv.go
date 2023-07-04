@@ -354,6 +354,11 @@ func (kvcodec *tableKVEncoder) Encode(
 	_ string,
 	offset int64,
 ) (Row, error) {
+	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
+	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
+	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf
+	// unable to release. So we truncate the warnings here.
+	defer kvcodec.se.vars.StmtCtx.TruncateWarnings(0)
 	cols := kvcodec.tbl.Cols()
 
 	var value types.Datum
@@ -506,6 +511,14 @@ func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDa
 	case isBadNullValue:
 		err = col.HandleBadNull(&value, kvcodec.se.vars.StmtCtx)
 	default:
+		// copy from the following GetColDefaultValue function, when this is true it will use getColDefaultExprValue
+		if col.DefaultIsExpr {
+			// the expression rewriter requires a non-nil TxnCtx.
+			kvcodec.se.vars.TxnCtx = new(variable.TransactionContext)
+			defer func() {
+				kvcodec.se.vars.TxnCtx = nil
+			}()
+		}
 		value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
 	}
 	return value, err

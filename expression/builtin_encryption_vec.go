@@ -43,6 +43,12 @@ func (b *builtinAesDecryptSig) vectorized() bool {
 
 func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	if n == 0 {
+		// If chunk has 0 rows, just return an empty value. So we can simplify codes below it by ignoring 0 row case.
+		result.Reset(types.ETString)
+		return nil
+	}
+
 	strBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err

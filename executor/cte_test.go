@@ -449,3 +449,39 @@ func TestCTEsInView(t *testing.T) {
 	tk.MustExec("use test1;")
 	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
 }
+
+func TestCTEPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1(c1 int)")
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+
+	fpPathPrefix := "github.com/pingcap/tidb/executor/"
+	fp := "testCTESeedPanic"
+	require.NoError(t, failpoint.Enable(fpPathPrefix+fp, fmt.Sprintf(`panic("%s")`, fp)))
+	err := tk.QueryToErr("with recursive cte1 as (select c1 from t1 union all select c1 + 1 from cte1 where c1 < 5) select t_alias_1.c1 from cte1 as t_alias_1 inner join cte1 as t_alias_2 on t_alias_1.c1 = t_alias_2.c1 order by c1")
+	require.Contains(t, err.Error(), fp)
+	require.NoError(t, failpoint.Disable(fpPathPrefix+fp))
+
+	fp = "testCTERecursivePanic"
+	require.NoError(t, failpoint.Enable(fpPathPrefix+fp, fmt.Sprintf(`panic("%s")`, fp)))
+	err = tk.QueryToErr("with recursive cte1 as (select c1 from t1 union all select c1 + 1 from cte1 where c1 < 5) select t_alias_1.c1 from cte1 as t_alias_1 inner join cte1 as t_alias_2 on t_alias_1.c1 = t_alias_2.c1 order by c1")
+	require.Contains(t, err.Error(), fp)
+	require.NoError(t, failpoint.Disable(fpPathPrefix+fp))
+}
+
+func TestCTEDelSpillFile(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(c1 int, c2 int);")
+	tk.MustExec("create table t2(c1 int);")
+	tk.MustExec("set @@cte_max_recursion_depth = 1000000;")
+	tk.MustExec("set global tidb_mem_oom_action = 'log';")
+	tk.MustExec("set @@tidb_mem_quota_query = 100;")
+	tk.MustExec("insert into t2 values(1);")
+	tk.MustExec("insert into t1 (c1, c2) with recursive cte1 as (select c1 from t2 union select cte1.c1 + 1 from cte1 where cte1.c1 < 100000) select cte1.c1, cte1.c1+1 from cte1;")
+	require.Nil(t, tk.Session().GetSessionVars().StmtCtx.CTEStorageMap)
+}

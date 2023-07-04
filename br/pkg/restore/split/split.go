@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	ScanRegionAttemptTimes = 128
+	ScanRegionAttemptTimes = 150
 )
 
 // Constants for split retry machinery.
@@ -116,40 +116,44 @@ func PaginateScanRegion(
 			return err
 		}
 		return nil
-	}, newScanRegionBackoffer())
+	}, NewScanRegionBackoffer())
 
 	return regions, err
 }
 
 type scanRegionBackoffer struct {
-	attempt int
+	stat utils.RetryState
 }
 
-func newScanRegionBackoffer() utils.Backoffer {
-	attempt := ScanRegionAttemptTimes
-	// only use for test.
-	failpoint.Inject("scanRegionBackoffer", func(val failpoint.Value) {
-		if val.(bool) {
-			attempt = 3
-		}
-	})
+// NewScanRegionBackoffer create a backoff to retry to scan regions.
+func NewScanRegionBackoffer() utils.Backoffer {
 	return &scanRegionBackoffer{
-		attempt: attempt,
+		stat: utils.InitialRetryState(
+			ScanRegionAttemptTimes,
+			time.Millisecond*10,
+			time.Second*2,
+		),
 	}
 }
 
 // NextBackoff returns a duration to wait before retrying again
 func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
 	if berrors.ErrPDBatchScanRegion.Equal(err) {
-		// 1s * 60 could be enough for splitting remain regions in the hole.
-		b.attempt--
-		return time.Second
+		// it needs more time to wait splitting the regions that contains data in PITR.
+		// 2s * 150
+		delayTime := b.stat.ExponentialBackoff()
+		failpoint.Inject("hint-scan-region-backoff", func(val failpoint.Value) {
+			if val.(bool) {
+				delayTime = time.Microsecond
+			}
+		})
+		return delayTime
 	}
-	b.attempt = 0
+	b.stat.StopRetry()
 	return 0
 }
 
 // Attempt returns the remain attempt times
 func (b *scanRegionBackoffer) Attempt() int {
-	return b.attempt
+	return b.stat.Attempt()
 }

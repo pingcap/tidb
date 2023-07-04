@@ -489,3 +489,8 @@ func matchPrefix(row chunk.Row, colIdx int, ad *types.Datum) bool {
 	}
 	return false
 }
+
+// IsAnalyzed indicates whether the index is analyzed.
+func (idx *Index) IsAnalyzed() bool {
+	return idx.StatsVer != Version0
+}

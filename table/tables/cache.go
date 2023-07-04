@@ -183,7 +183,7 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage) (kv.MemBuffer,
 }
 
 func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration) {
-	if h := c.TakeStateRemoteHandle(); h != nil {
+	if h := c.TakeStateRemoteHandleNoWait(); h != nil {
 		go c.updateLockForRead(ctx, h, store, ts, leaseDuration)
 	}
 }

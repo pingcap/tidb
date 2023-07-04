@@ -83,10 +83,14 @@ func (extractHelper) extractColInConsExpr(extractCols map[int64]*types.FieldName
 	results := make([]types.Datum, 0, len(args[1:]))
 	for _, arg := range args[1:] {
 		constant, ok := arg.(*expression.Constant)
-		if !ok || constant.DeferredExpr != nil || constant.ParamMarker != nil {
+		if !ok || constant.DeferredExpr != nil {
 			return "", nil
 		}
-		results = append(results, constant.Value)
+		v := constant.Value
+		if constant.ParamMarker != nil {
+			v = constant.ParamMarker.GetUserVar()
+		}
+		results = append(results, v)
 	}
 	return name.ColName.L, results
 }
@@ -117,10 +121,14 @@ func (extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*types.Fie
 	// SELECT * FROM t1 WHERE c='rhs'
 	// SELECT * FROM t1 WHERE 'lhs'=c
 	constant, ok := args[1-colIdx].(*expression.Constant)
-	if !ok || constant.DeferredExpr != nil || constant.ParamMarker != nil {
+	if !ok || constant.DeferredExpr != nil {
 		return "", nil
 	}
-	return name.ColName.L, []types.Datum{constant.Value}
+	v := constant.Value
+	if constant.ParamMarker != nil {
+		v = constant.ParamMarker.GetUserVar()
+	}
+	return name.ColName.L, []types.Datum{v}
 }
 
 // extract the OR expression, e.g:

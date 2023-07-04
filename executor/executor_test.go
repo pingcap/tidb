@@ -199,13 +199,16 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show create database test_show").Check(testkit.Rows("test_show CREATE DATABASE `test_show` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show privileges").Check(testkit.Rows("Alter Tables To alter the table",
 		"Alter routine Functions,Procedures To alter or drop stored functions/procedures",
+		"Config Server Admin To use SHOW CONFIG and SET CONFIG statements",
 		"Create Databases,Tables,Indexes To create new databases and tables",
 		"Create routine Databases To use CREATE FUNCTION/PROCEDURE",
+		"Create role Server Admin To create new roles",
 		"Create temporary tables Databases To use CREATE TEMPORARY TABLE",
 		"Create view Tables To create new views",
 		"Create user Server Admin To create new users",
 		"Delete Tables To delete existing rows",
 		"Drop Databases,Tables To drop databases, tables, and views",
+		"Drop role Server Admin To drop roles",
 		"Event Server Admin To create, alter, drop and execute events",
 		"Execute Functions,Procedures To execute stored routines",
 		"File File access on server To read and write files on the server",
@@ -3413,6 +3416,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		require.NotNil(t, p)
 
 		// This for loop level traverses the plan tree to get which operators are covered.
+		var hasCTE bool
 		for child := []plannercore.PhysicalPlan{p.(plannercore.PhysicalPlan)}; len(child) != 0; {
 			newChild := make([]plannercore.PhysicalPlan, 0, len(child))
 			for _, ch := range child {
@@ -3429,6 +3433,7 @@ func TestUnreasonablyClose(t *testing.T) {
 				case *plannercore.PhysicalCTE:
 					newChild = append(newChild, x.RecurPlan)
 					newChild = append(newChild, x.SeedPlan)
+					hasCTE = true
 					continue
 				case *plannercore.PhysicalShuffle:
 					newChild = append(newChild, x.DataSources...)
@@ -3440,6 +3445,12 @@ func TestUnreasonablyClose(t *testing.T) {
 			child = newChild
 		}
 
+		if hasCTE {
+			// Normally CTEStorages will be setup in ResetContextOfStmt.
+			// But the following case call e.Close() directly, instead of calling session.ExecStmt(), which calls ResetContextOfStmt.
+			// So need to setup CTEStorages manually.
+			tk.Session().GetSessionVars().StmtCtx.CTEStorageMap = map[int]*executor.CTEStorages{}
+		}
 		e := executorBuilder.Build(p)
 
 		func() {
@@ -6276,4 +6287,21 @@ func TestIssue39211(t *testing.T) {
 	tk.MustExec("set @@tidb_max_chunk_size=32;")
 	tk.MustExec("set @@tidb_enable_null_aware_anti_join=true;")
 	tk.MustQuery("select * from t where (a,b) not in (select a, b from s);").Check(testkit.Rows())
+}
+
+func TestProcessInfoOfSubQuery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int, j int);")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tk.MustQuery("select 1, (select sleep(count(1) + 2) from t);")
+		wg.Done()
+	}()
+	time.Sleep(time.Second)
+	tk2.MustQuery("select 1 from information_schema.processlist where TxnStart != '' and info like 'select%sleep% from t%'").Check(testkit.Rows("1"))
+	wg.Wait()
 }
