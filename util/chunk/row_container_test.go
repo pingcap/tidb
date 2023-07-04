@@ -308,26 +308,18 @@ func TestActionBlocked(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(starttime), 200*time.Millisecond)
 }
 
-func TestRowContainerReaderInDisk(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = t.TempDir()
-	})
-
+func insertBytesRowsIntoRowContainer(t *testing.T, chkCount int, rowPerChk int) (*RowContainer, [][]byte) {
 	longVarCharTyp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlen(4096).Build()
 	fields := []*types.FieldType{&longVarCharTyp}
 
-	// create a row container which stores the data in disk
-	rc := NewRowContainer(fields, 1<<10)
-	rc.SpillToDisk()
+	rc := NewRowContainer(fields, chkCount)
 
 	allRows := [][]byte{}
-	// insert 16 chunks
-	for i := 0; i < 16; i++ {
-		chk := NewChunkWithCapacity(fields, 1<<10)
-		// insert 16 rows for each chunk
-		for j := 0; j < 16; j++ {
+	// insert chunks
+	for i := 0; i < chkCount; i++ {
+		chk := NewChunkWithCapacity(fields, rowPerChk)
+		// insert rows for each chunk
+		for j := 0; j < rowPerChk; j++ {
 			length := rand2.Uint32()
 			randomBytes := make([]byte, length%4096)
 			_, err := rand.Read(randomBytes)
@@ -336,8 +328,21 @@ func TestRowContainerReaderInDisk(t *testing.T) {
 			chk.AppendBytes(0, randomBytes)
 			allRows = append(allRows, randomBytes)
 		}
-		rc.Add(chk)
+		require.NoError(t, rc.Add(chk))
 	}
+
+	return rc, allRows
+}
+
+func TestRowContainerReaderInDisk(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
+
+	rc, allRows := insertBytesRowsIntoRowContainer(t, 16, 16)
+	rc.SpillToDisk()
 
 	reader := NewRowContainerReader(rc)
 	defer reader.Close()
@@ -357,29 +362,8 @@ func TestCloseRowContainerReader(t *testing.T) {
 		conf.TempStoragePath = t.TempDir()
 	})
 
-	longVarCharTyp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlen(4096).Build()
-	fields := []*types.FieldType{&longVarCharTyp}
-
-	// create a row container which stores the data in disk
-	rc := NewRowContainer(fields, 1<<10)
+	rc, allRows := insertBytesRowsIntoRowContainer(t, 16, 16)
 	rc.SpillToDisk()
-
-	allRows := [][]byte{}
-	// insert 16 chunks
-	for i := 0; i < 16; i++ {
-		chk := NewChunkWithCapacity(fields, 1<<10)
-		// insert 16 rows for each chunk
-		for j := 0; j < 16; j++ {
-			length := rand2.Uint32()
-			randomBytes := make([]byte, length%4096)
-			_, err := rand.Read(randomBytes)
-			require.NoError(t, err)
-
-			chk.AppendBytes(0, randomBytes)
-			allRows = append(allRows, randomBytes)
-		}
-		rc.Add(chk)
-	}
 
 	// read 8.5 of these chunks
 	reader := NewRowContainerReader(rc)
@@ -405,27 +389,7 @@ func TestConcurrentSpillWithRowContainerReader(t *testing.T) {
 		conf.TempStoragePath = t.TempDir()
 	})
 
-	longVarCharTyp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlen(4096).Build()
-	fields := []*types.FieldType{&longVarCharTyp}
-
-	// create a row container which stores the data in disk
-	rc := NewRowContainer(fields, 1<<10)
-	allRows := [][]byte{}
-	// insert 16 chunks
-	for i := 0; i < 16; i++ {
-		chk := NewChunkWithCapacity(fields, 1<<10)
-		// insert 1024 rows for each chunk
-		for j := 0; j < 1024; j++ {
-			length := rand2.Uint32()
-			randomBytes := make([]byte, length%4096)
-			_, err := rand.Read(randomBytes)
-			require.NoError(t, err)
-
-			chk.AppendBytes(0, randomBytes)
-			allRows = append(allRows, randomBytes)
-		}
-		rc.Add(chk)
-	}
+	rc, allRows := insertBytesRowsIntoRowContainer(t, 16, 1024)
 
 	var wg sync.WaitGroup
 	// concurrently read and spill to disk
@@ -454,27 +418,7 @@ func TestReadAfterSpillWithRowContainerReader(t *testing.T) {
 		conf.TempStoragePath = t.TempDir()
 	})
 
-	longVarCharTyp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlen(4096).Build()
-	fields := []*types.FieldType{&longVarCharTyp}
-
-	// create a row container which stores the data in disk
-	rc := NewRowContainer(fields, 1<<10)
-	allRows := [][]byte{}
-	// insert 16 chunks
-	for i := 0; i < 16; i++ {
-		chk := NewChunkWithCapacity(fields, 1<<10)
-		// insert 2048 rows for each chunk
-		for j := 0; j < 2048; j++ {
-			length := rand2.Uint32()
-			randomBytes := make([]byte, length%4096)
-			_, err := rand.Read(randomBytes)
-			require.NoError(t, err)
-
-			chk.AppendBytes(0, randomBytes)
-			allRows = append(allRows, randomBytes)
-		}
-		rc.Add(chk)
-	}
+	rc, allRows := insertBytesRowsIntoRowContainer(t, 16, 1024)
 
 	reader := NewRowContainerReader(rc)
 	defer reader.Close()
