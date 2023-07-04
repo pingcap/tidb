@@ -539,7 +539,7 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 	return PartialResult(p), DefPartialResult4GroupConcatOrderDistinctSize + DefTopNRowsSize + setSize
 }
 
-func (e *groupConcatDistinctOrder) ResetPartialResult(pr PartialResult) {
+func (*groupConcatDistinctOrder) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatOrderDistinct)(pr)
 	p.topN.reset()
 	p.valSet, _ = set.NewStringSetWithMemoryUsage()
@@ -605,7 +605,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 	return memDelta, nil
 }
 
-func (e *groupConcatDistinctOrder) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
+func (*groupConcatDistinctOrder) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
 	return 0, plannercore.ErrInternal.GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
