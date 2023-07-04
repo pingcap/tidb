@@ -402,7 +402,7 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	return 0, nil
 }
 
-func (e *avgPartial4Float64) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*avgPartial4Float64) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4AvgFloat64)(src), (*partialResult4AvgFloat64)(dst)
 	p2.sum += p1.sum
 	p2.count += p1.count

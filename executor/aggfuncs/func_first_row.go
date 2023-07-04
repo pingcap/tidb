@@ -125,7 +125,7 @@ func (*firstRow4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowInt)), DefPartialResult4FirstRowIntSize
 }
 
-func (e *firstRow4Int) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowInt)(pr)
 	p.val, p.isNull, p.gotFirstRow = 0, false, false
 }
@@ -217,7 +217,7 @@ func (*firstRow4Float64) AllocPartialResult() (pr PartialResult, memDelta int64)
 	return PartialResult(new(partialResult4FirstRowFloat64)), DefPartialResult4FirstRowFloat64Size
 }
 
-func (e *firstRow4Float64) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowFloat64)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }

@@ -481,7 +481,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 	return memDelta, nil
 }
 
-func (e *groupConcatOrder) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
+func (*groupConcatOrder) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
 	return 0, plannercore.ErrInternal.GenWithStack("groupConcatOrder.MergePartialResult should not be called")

@@ -254,7 +254,7 @@ func (v *firstValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(p), DefPartialResult4FirstValueSize + veMemDelta
 }
 
-func (v *firstValue) ResetPartialResult(pr PartialResult) {
+func (*firstValue) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstValue)(pr)
 	p.gotFirstValue = false
 }
@@ -301,7 +301,7 @@ func (v *lastValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(p), DefPartialResult4LastValueSize + veMemDelta
 }
 
-func (v *lastValue) ResetPartialResult(pr PartialResult) {
+func (*lastValue) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4LastValue)(pr)
 	p.gotLastValue = false
 }
@@ -346,7 +346,7 @@ func (v *nthValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(p), DefPartialResult4NthValueSize + veMemDelta
 }
 
-func (v *nthValue) ResetPartialResult(pr PartialResult) {
+func (*nthValue) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4NthValue)(pr)
 	p.seenRows = 0
 }
