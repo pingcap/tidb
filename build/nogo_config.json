@@ -497,6 +497,7 @@
     "only_files": {
       "autoid_service/": "autoid_service",
       "bindinfo/": "bindinfo",
+      "config/": "config",
       "br/pkg/lightning/": "br/pkg/lightning/",
       "executor/aggregate.go": "executor/aggregate.go",
       "executor/analyze_utils.go": "executor/analyze_utils.go",
