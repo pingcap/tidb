@@ -108,7 +108,7 @@ func (*groupConcat) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(p), DefPartialResult4GroupConcatSize + DefBytesBufferSize
 }
 
-func (e *groupConcat) ResetPartialResult(pr PartialResult) {
+func (*groupConcat) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcat)(pr)
 	p.buffer = nil
 }
@@ -201,7 +201,7 @@ func (*groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta int
 	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize + DefBytesBufferSize + setSize
 }
 
-func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {
+func (*groupConcatDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	p.buffer = nil
 	p.valSet, _ = set.NewStringSetWithMemoryUsage()
@@ -432,7 +432,7 @@ func (e *groupConcatOrder) AllocPartialResult() (pr PartialResult, memDelta int6
 	return PartialResult(p), DefPartialResult4GroupConcatOrderSize + DefTopNRowsSize
 }
 
-func (e *groupConcatOrder) ResetPartialResult(pr PartialResult) {
+func (*groupConcatOrder) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatOrder)(pr)
 	p.topN.reset()
 }
