@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package calibrateresource_test
 
 import (
 	"context"
@@ -80,10 +80,10 @@ func TestCalibrateResource(t *testing.T) {
 	// Mock for metric table data.
 	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
 	require.NoError(t, failpoint.Enable(fpName, "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockMetricsDataFilter", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/internal/calibrateresource/mockMetricsDataFilter", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockMetricsDataFilter"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/internal/calibrateresource/mockMetricsDataFilter"))
 	}()
 
 	datetime := func(s string) types.Time {

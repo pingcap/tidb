@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package calibrateresource
 
 import (
 	"context"
@@ -115,14 +115,14 @@ const (
 	minDuration = time.Minute * 10
 )
 
-type calibrateResourceExec struct {
+type CalibrateResourceExec struct {
 	exec.BaseExecutor
-	optionList   []*ast.DynamicCalibrateResourceOption
-	workloadType ast.CalibrateResourceType
+	OptionList   []*ast.DynamicCalibrateResourceOption
+	WorkloadType ast.CalibrateResourceType
 	done         bool
 }
 
-func (e *calibrateResourceExec) parseTsExpr(ctx context.Context, tsExpr ast.ExprNode) (time.Time, error) {
+func (e *CalibrateResourceExec) parseTsExpr(ctx context.Context, tsExpr ast.ExprNode) (time.Time, error) {
 	ts, err := staleread.CalculateAsOfTsExpr(ctx, e.Ctx(), tsExpr)
 	if err != nil {
 		return time.Time{}, err
@@ -130,11 +130,11 @@ func (e *calibrateResourceExec) parseTsExpr(ctx context.Context, tsExpr ast.Expr
 	return oracle.GetTimeFromTS(ts), nil
 }
 
-func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (startTime time.Time, endTime time.Time, err error) {
+func (e *CalibrateResourceExec) parseCalibrateDuration(ctx context.Context) (startTime time.Time, endTime time.Time, err error) {
 	var dur time.Duration
 	// startTimeExpr is used to calc endTime by FuncCallExpr when duration begin with `interval`.
 	var startTimeExpr ast.ExprNode
-	for _, op := range e.optionList {
+	for _, op := range e.OptionList {
 		switch op.Tp {
 		case ast.CalibrateStartTime:
 			startTimeExpr = op.Ts
@@ -209,7 +209,7 @@ func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (sta
 	return
 }
 
-func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *CalibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil
@@ -218,7 +218,7 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 
 	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	if len(e.optionList) > 0 {
+	if len(e.OptionList) > 0 {
 		return e.dynamicCalibrate(ctx, req, exec)
 	}
 	return e.staticCalibrate(ctx, req, exec)
@@ -229,7 +229,7 @@ var (
 	errNoCPUQuotaMetrics = errors.Normalize("There is no CPU quota metrics, %v")
 )
 
-func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
+func (e *CalibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
 	startTs, endTs, err := e.parseCalibrateDuration(ctx)
 	if err != nil {
 		return err
@@ -334,7 +334,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	return nil
 }
 
-func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
+func (e *CalibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
 	if !variable.EnableResourceControl.Load() {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
@@ -354,12 +354,12 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 	}
 
 	// The default workload to calculate the RU capacity.
-	if e.workloadType == ast.WorkloadNone {
-		e.workloadType = ast.TPCC
+	if e.WorkloadType == ast.WorkloadNone {
+		e.WorkloadType = ast.TPCC
 	}
-	baseCost, ok := workloadBaseRUCostMap[e.workloadType]
+	baseCost, ok := workloadBaseRUCostMap[e.WorkloadType]
 	if !ok {
-		return errors.Errorf("unknown workload '%T'", e.workloadType)
+		return errors.Errorf("unknown workload '%T'", e.WorkloadType)
 	}
 
 	if totalTiDBCPU/baseCost.tidbToKVCPURatio < totalKVCPUQuota {
