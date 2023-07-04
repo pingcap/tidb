@@ -171,7 +171,7 @@ func (*firstRow4Float32) AllocPartialResult() (pr PartialResult, memDelta int64)
 	return PartialResult(new(partialResult4FirstRowFloat32)), DefPartialResult4FirstRowFloat32Size
 }
 
-func (e *firstRow4Float32) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Float32) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowFloat32)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -263,7 +263,7 @@ func (*firstRow4String) AllocPartialResult() (pr PartialResult, memDelta int64) 
 	return PartialResult(new(partialResult4FirstRowString)), DefPartialResult4FirstRowStringSize
 }
 
-func (e *firstRow4String) ResetPartialResult(pr PartialResult) {
+func (*firstRow4String) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowString)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -310,7 +310,7 @@ func (*firstRow4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowTime)), DefPartialResult4FirstRowTimeSize
 }
 
-func (e *firstRow4Time) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Time) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowTime)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -356,7 +356,7 @@ func (*firstRow4Duration) AllocPartialResult() (pr PartialResult, memDelta int64
 	return PartialResult(new(partialResult4FirstRowDuration)), DefPartialResult4FirstRowDurationSize
 }
 
-func (e *firstRow4Duration) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Duration) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowDuration)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -402,7 +402,7 @@ func (*firstRow4JSON) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowJSON)), DefPartialResult4FirstRowJSONSize
 }
 
-func (e *firstRow4JSON) ResetPartialResult(pr PartialResult) {
+func (*firstRow4JSON) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowJSON)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -508,7 +508,7 @@ func (*firstRow4Enum) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowEnum)), DefPartialResult4FirstRowEnumSize
 }
 
-func (e *firstRow4Enum) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Enum) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowEnum)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -555,7 +555,7 @@ func (*firstRow4Set) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowSet)), DefPartialResult4FirstRowSetSize
 }
 
-func (e *firstRow4Set) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Set) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowSet)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }

@@ -56,7 +56,7 @@ func (*baseAvgDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4AvgDecimal{}), DefPartialResult4AvgDecimalSize
 }
 
-func (e *baseAvgDecimal) ResetPartialResult(pr PartialResult) {
+func (*baseAvgDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDecimal)(pr)
 	p.sum = *types.NewDecFromInt(0)
 	p.count = int64(0)
@@ -220,7 +220,7 @@ func (*avgOriginal4DistinctDecimal) AllocPartialResult() (pr PartialResult, memD
 	return PartialResult(p), DefPartialResult4AvgDistinctDecimalSize + setSize
 }
 
-func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
+func (*avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	p.sum = *types.NewDecFromInt(0)
 	p.count = int64(0)
@@ -304,7 +304,7 @@ func (*baseAvgFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return (PartialResult)(&partialResult4AvgFloat64{}), DefPartialResult4AvgFloat64Size
 }
 
-func (e *baseAvgFloat64) ResetPartialResult(pr PartialResult) {
+func (*baseAvgFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgFloat64)(pr)
 	p.sum = 0
 	p.count = 0
@@ -426,7 +426,7 @@ func (*avgOriginal4DistinctFloat64) AllocPartialResult() (pr PartialResult, memD
 	return PartialResult(p), DefPartialResult4AvgDistinctFloat64Size + setSize
 }
 
-func (e *avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
+func (*avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
 	p.sum = float64(0)
 	p.count = int64(0)

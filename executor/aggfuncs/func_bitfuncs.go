@@ -37,7 +37,7 @@ func (*baseBitAggFunc) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4BitFunc)), DefPartialResult4BitFuncSize
 }
 
-func (e *baseBitAggFunc) ResetPartialResult(pr PartialResult) {
+func (*baseBitAggFunc) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4BitFunc)(pr)
 	*p = 0
 }
@@ -135,7 +135,7 @@ func (*bitAndUint64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(p), DefPartialResult4BitFuncSize
 }
 
-func (e *bitAndUint64) ResetPartialResult(pr PartialResult) {
+func (*bitAndUint64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4BitFunc)(pr)
 	*p = math.MaxUint64
 }

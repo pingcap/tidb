@@ -65,7 +65,7 @@ func (*countOriginalWithDistinct4Int) AllocPartialResult() (pr PartialResult, me
 	}), DefPartialResult4CountDistinctIntSize + setSize
 }
 
-func (e *countOriginalWithDistinct4Int) ResetPartialResult(pr PartialResult) {
+func (*countOriginalWithDistinct4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctInt)(pr)
 	p.valSet, _ = set.NewInt64SetWithMemoryUsage()
 }
@@ -111,7 +111,7 @@ func (*countOriginalWithDistinct4Real) AllocPartialResult() (pr PartialResult, m
 	}), DefPartialResult4CountDistinctRealSize + setSize
 }
 
-func (e *countOriginalWithDistinct4Real) ResetPartialResult(pr PartialResult) {
+func (*countOriginalWithDistinct4Real) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctReal)(pr)
 	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
@@ -157,7 +157,7 @@ func (*countOriginalWithDistinct4Decimal) AllocPartialResult() (pr PartialResult
 	}), DefPartialResult4CountDistinctDecimalSize + setSize
 }
 
-func (e *countOriginalWithDistinct4Decimal) ResetPartialResult(pr PartialResult) {
+func (*countOriginalWithDistinct4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctDecimal)(pr)
 	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }

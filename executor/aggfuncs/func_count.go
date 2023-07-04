@@ -36,7 +36,7 @@ func (*baseCount) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4Count)), DefPartialResult4CountSize
 }
 
-func (e *baseCount) ResetPartialResult(pr PartialResult) {
+func (*baseCount) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4Count)(pr)
 	*p = 0
 }
