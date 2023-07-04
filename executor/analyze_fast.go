@@ -385,7 +385,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, er
 	return
 }
 
-func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err error) {
+func (e *AnalyzeFastExec) handleScanTasks(*tikv.Backoffer) (keysSize int, err error) {
 	var snapshot kv.Snapshot
 	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
 		snapshot = e.ctx.GetStore().GetSnapshot(kv.NewVersion(e.snapshot))

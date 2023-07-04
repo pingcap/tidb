@@ -53,13 +53,13 @@ type basePercentile struct {
 	baseAggFunc
 }
 
-func (e *basePercentile) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*basePercentile) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return
 }
 
-func (e *basePercentile) ResetPartialResult(PartialResult) {}
+func (*basePercentile) ResetPartialResult(PartialResult) {}
 
-func (e *basePercentile) UpdatePartialResult(sessionctx.Context, []chunk.Row, PartialResult) (memDelta int64, err error) {
+func (*basePercentile) UpdatePartialResult(sessionctx.Context, []chunk.Row, PartialResult) (memDelta int64, err error) {
 	return
 }
 

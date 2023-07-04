@@ -37,18 +37,18 @@ type partialResult4CumeDist struct {
 	rows     []chunk.Row
 }
 
-func (r *cumeDist) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*cumeDist) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4CumeDist{}), DefPartialResult4CumeDistSize
 }
 
-func (r *cumeDist) ResetPartialResult(pr PartialResult) {
+func (*cumeDist) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CumeDist)(pr)
 	p.curIdx = 0
 	p.lastRank = 0
 	p.rows = p.rows[:0]
 }
 
-func (r *cumeDist) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (*cumeDist) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4CumeDist)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
 	memDelta += int64(len(rowsInGroup)) * DefRowSize
