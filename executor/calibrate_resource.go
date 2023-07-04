@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/duration"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
@@ -120,55 +121,82 @@ type calibrateResourceExec struct {
 	done         bool
 }
 
+func (e *calibrateResourceExec) parseTsExpr(ctx context.Context, tsExpr ast.ExprNode) (time.Time, error) {
+	ts, err := staleread.CalculateAsOfTsExpr(ctx, e.ctx, tsExpr)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return oracle.GetTimeFromTS(ts), nil
+}
+
 func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (startTime time.Time, endTime time.Time, err error) {
 	var dur time.Duration
 	var ts uint64
+	// startTimeExpr is used to calc endTime by FuncCallExpr when duration begin with `interval`.
+	var startTimeExpr ast.ExprNode
 	for _, op := range e.optionList {
 		switch op.Tp {
 		case ast.CalibrateStartTime:
-			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, op.Ts)
+			startTimeExpr = op.Ts
+			startTime, err = e.parseTsExpr(ctx, startTimeExpr)
 			if err != nil {
 				return
-			}
-			startTime = oracle.GetTimeFromTS(ts)
-			if len(op.StrValue) > 0 {
-				dur, err = duration.ParseDuration(op.StrValue)
-				if err != nil {
-					return
-				}
-				startTime = startTime.Add(-dur)
 			}
 		case ast.CalibrateEndTime:
-			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, op.Ts)
+			endTime, err = e.parseTsExpr(ctx, op.Ts)
 			if err != nil {
 				return
 			}
-			endTime = oracle.GetTimeFromTS(ts)
+		case ast.CalibrateDuration:
 			if len(op.StrValue) > 0 {
 				dur, err = duration.ParseDuration(op.StrValue)
 				if err != nil {
 					return
 				}
-				endTime = endTime.Add(-dur)
-			}
-		case ast.CalibrateDuration:
-			dur, err = duration.ParseDuration(op.StrValue)
-			if err != nil {
-				return
+				// If startTime is not set, startTime will be now() - duration.
+				if startTime.IsZero() {
+					startTime = time.Now().Add(-dur)
+				}
+				// If endTime is set, duration will be ignored.
+				if endTime.IsZero() {
+					endTime = startTime.Add(dur)
+				}
+			} else {
+				// If startTime is not set, startTime will be now() - duration.
+				if startTimeExpr == nil {
+					startTimeExpr = &ast.FuncCallExpr{
+						FnName: model.NewCIStr("DATE_SUB"),
+						Args: []ast.ExprNode{&ast.FuncCallExpr{
+							FnName: model.NewCIStr("CURRENT_TIMESTAMP"),
+						}, op.Ts, &ast.TimeUnitExpr{Unit: op.Unit}},
+					}
+					startTime, err = e.parseTsExpr(ctx, startTimeExpr)
+					if err != nil {
+						return
+					}
+				}
+				// If endTime is set, duration will be ignored.
+				if endTime.IsZero() {
+					ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, &ast.FuncCallExpr{
+						FnName: model.NewCIStr("DATE_ADD"),
+						Args:   []ast.ExprNode{startTimeExpr, op.Ts, &ast.TimeUnitExpr{Unit: op.Unit}},
+					})
+					if err != nil {
+						return
+					}
+					endTime = oracle.GetTimeFromTS(ts)
+				}
 			}
 		}
 	}
+
 	if startTime.IsZero() {
 		err = errors.Errorf("start time should not be 0")
 		return
 	}
-	// If endTime is set, duration will be ignored.
+
 	if endTime.IsZero() {
-		if dur != time.Duration(0) {
-			endTime = startTime.Add(dur)
-		} else {
-			endTime = time.Now()
-		}
+		endTime = time.Now()
 	}
 	// check the duration
 	dur = endTime.Sub(startTime)
