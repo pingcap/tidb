@@ -179,18 +179,20 @@ func (d *dispatcher) DispatchTaskLoop() {
 					prevStep := gTask.Step
 					// When owner changed in prev owner dispatching process,
 					// update the gtask to previous step since the previous step didn't dispatched and execute all subtasks.
-					gTask.Step--
-					for i := 0; i < retrySQLTimes; i++ {
-						err = d.taskMgr.UpdateGlobalTask(gTask)
-						if err == nil {
-							break
+					if gTask.Flag == proto.TaskSubStateDispatching {
+						gTask.Step--
+						for i := 0; i < retrySQLTimes; i++ {
+							err = d.taskMgr.UpdateGlobalTask(gTask)
+							if err == nil {
+								break
+							}
+							if i%10 == 0 {
+								logutil.BgLogger().Warn("updateTask to prevStep failed", zap.Int64("task-id", gTask.ID),
+									zap.Int64("previous step", prevStep), zap.Int64("curr step", gTask.Step),
+									zap.Int("retry times", retrySQLTimes), zap.Error(err))
+							}
+							time.Sleep(retrySQLInterval)
 						}
-						if i%10 == 0 {
-							logutil.BgLogger().Warn("updateTask to prevStep failed", zap.Int64("task-id", gTask.ID),
-								zap.Int64("previous step", prevStep), zap.Int64("curr step", gTask.Step),
-								zap.Int("retry times", retrySQLTimes), zap.Error(err))
-						}
-						time.Sleep(retrySQLInterval)
 					}
 
 					d.setRunningGTask(gTask)
@@ -206,6 +208,12 @@ func (d *dispatcher) DispatchTaskLoop() {
 				logutil.BgLogger().Info("dispatch task loop", zap.Int64("task ID", gTask.ID),
 					zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency),
 					zap.Int64("step", gTask.Step), zap.Error(err), zap.String("id", d.id))
+				select {
+				case <-d.ctx.Done():
+					logutil.BgLogger().Info("dispatch task loop exits", zap.Error(d.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000), zap.String("id", d.id))
+					return
+				default:
+				}
 				err = d.handleDispatchErr(gTask, retryable, err)
 				if gTask.IsFinished() || err != nil {
 					continue
@@ -295,7 +303,21 @@ func (d *dispatcher) detectTask(taskID int64) {
 			}
 
 			retryable, err := d.processFlow(gTask, errs)
+			failpoint.Inject("mockOwnerChangeAfterProcessFlow", func(val failpoint.Value) {
+				if val.(bool) {
+					logutil.BgLogger().Info("mockOwnerChangeAfterProcessFlow called")
+					MockOwnerChange()
+					time.Sleep(1 * time.Second)
+				}
+			})
+			select {
+			case <-d.ctx.Done():
+				logutil.BgLogger().Info("detect task exits", zap.Int64("task ID", taskID), zap.Error(d.ctx.Err()), zap.String("id", d.id))
+				return
+			default:
+			}
 			err = d.handleDispatchErr(gTask, retryable, err)
+
 			if err == nil && gTask.IsFinished() {
 				logutil.BgLogger().Info("detect task, task is finished",
 					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State), zap.String("id", d.id))
@@ -312,7 +334,6 @@ func (d *dispatcher) detectTask(taskID int64) {
 
 func (d *dispatcher) handleDispatchErr(gTask *proto.Task, retryable bool, err error) error {
 	if err != nil && err != context.Canceled {
-		logutil.BgLogger().Info("ywq test reach here")
 		if retryable {
 			// Must change the step since every time we called processNormalFlow, the step will increase.
 			prevStep := gTask.Step
