@@ -71,7 +71,7 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 		outputOffset = append(outputOffset, col.Index)
 	}
 	return &memIndexReader{
-		ctx:           us.ctx,
+		ctx:           us.Ctx(),
 		index:         idxReader.index,
 		table:         idxReader.table.Meta(),
 		kvRanges:      kvRanges,
@@ -224,15 +224,15 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 	}
 
 	defVal := func(i int) ([]byte, error) {
-		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(us.ctx, us.columns[i])
+		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(us.Ctx(), us.columns[i])
 		if err != nil {
 			return nil, err
 		}
-		return tablecodec.EncodeValue(us.ctx.GetSessionVars().StmtCtx, nil, d)
+		return tablecodec.EncodeValue(us.Ctx().GetSessionVars().StmtCtx, nil, d)
 	}
-	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, defVal, us.ctx.GetSessionVars().Location())
+	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, defVal, us.Ctx().GetSessionVars().Location())
 	return &memTableReader{
-		ctx:           us.ctx,
+		ctx:           us.Ctx(),
 		table:         us.table.Meta(),
 		columns:       us.columns,
 		kvRanges:      kvRanges,
@@ -576,10 +576,10 @@ func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 		handles = append(handles, handle)
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
+
 	if m.desc {
 		for i, j := 0, len(handles)-1; i < j; i, j = i+1, j-1 {
 			handles[i], handles[j] = handles[j], handles[i]
@@ -615,7 +615,7 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 	kvRanges := idxLookUpReader.kvRanges
 	outputOffset := []int{len(idxLookUpReader.index.Columns)}
 	memIdxReader := &memIndexReader{
-		ctx:           us.ctx,
+		ctx:           us.Ctx(),
 		index:         idxLookUpReader.index,
 		table:         idxLookUpReader.table.Meta(),
 		kvRanges:      kvRanges,
@@ -626,7 +626,7 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 	}
 
 	return &memIndexLookUpReader{
-		ctx:           us.ctx,
+		ctx:           us.Ctx(),
 		index:         idxLookUpReader.index,
 		columns:       idxLookUpReader.columns,
 		table:         idxLookUpReader.table,
@@ -736,9 +736,9 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 	memReaders := make([]memReader, 0, indexCount)
 	for i := 0; i < indexCount; i++ {
 		if indexMergeReader.indexes[i] == nil {
-			colIDs, pkColIDs, rd := getColIDAndPkColIDs(indexMergeReader.ctx, indexMergeReader.table, indexMergeReader.columns)
+			colIDs, pkColIDs, rd := getColIDAndPkColIDs(indexMergeReader.Ctx(), indexMergeReader.table, indexMergeReader.columns)
 			memReaders = append(memReaders, &memTableReader{
-				ctx:           us.ctx,
+				ctx:           us.Ctx(),
 				table:         indexMergeReader.table.Meta(),
 				columns:       indexMergeReader.columns,
 				kvRanges:      nil,
@@ -755,7 +755,7 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 		} else {
 			outputOffset := []int{len(indexMergeReader.indexes[i].Columns)}
 			memReaders = append(memReaders, &memIndexReader{
-				ctx:           us.ctx,
+				ctx:           us.Ctx(),
 				index:         indexMergeReader.indexes[i],
 				table:         indexMergeReader.table.Meta(),
 				kvRanges:      nil,
@@ -767,7 +767,7 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 	}
 
 	return &memIndexMergeReader{
-		ctx:              us.ctx,
+		ctx:              us.Ctx(),
 		table:            indexMergeReader.table,
 		columns:          indexMergeReader.columns,
 		conditions:       us.conditions,
