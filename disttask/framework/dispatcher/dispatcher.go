@@ -180,6 +180,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 					// When owner changed in prev owner dispatching process,
 					// update the gtask to previous step since the previous step didn't dispatched and execute all subtasks.
 					if gTask.Flag == proto.TaskSubStateDispatching {
+						logutil.BgLogger().Info("ywq test step-- in dispacthing")
 						gTask.Step--
 						for i := 0; i < retrySQLTimes; i++ {
 							err = d.taskMgr.UpdateGlobalTask(gTask)
@@ -338,6 +339,7 @@ func (d *dispatcher) handleDispatchErr(gTask *proto.Task, retryable bool, err er
 			// Must change the step since every time we called processNormalFlow, the step will increase.
 			logutil.BgLogger().Info("handle retryable err")
 			prevStep := gTask.Step
+			logutil.BgLogger().Info("ywq test step-- in handle err")
 			gTask.Step--
 			for i := 0; i < retrySQLTimes; i++ {
 				err = d.taskMgr.UpdateGlobalTask(gTask)
