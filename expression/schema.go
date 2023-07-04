@@ -19,6 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/size"
 )
 
@@ -241,10 +242,12 @@ func (s *Schema) MemoryUsage() (sum int64) {
 // GetExtraHandleColumn gets the extra handle column.
 func (s *Schema) GetExtraHandleColumn() *Column {
 	columnLen := len(s.Columns)
-	if columnLen > 0 && s.Columns[columnLen-1].ID == model.ExtraHandleID {
-		return s.Columns[columnLen-1]
-	} else if columnLen > 1 && s.Columns[columnLen-2].ID == model.ExtraHandleID {
-		return s.Columns[columnLen-2]
+	if columnLen > 0 {
+		for i := columnLen - 1; i >= mathutil.Max(0, columnLen-model.CountOfExtraIDs); i-- {
+			if s.Columns[i].ID == model.ExtraHandleID {
+				return s.Columns[i]
+			}
+		}
 	}
 	return nil
 }

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -153,4 +154,23 @@ func TestGetUsedList(t *testing.T) {
 
 	used := GetUsedList(usedCols, schema)
 	require.Equal(t, []bool{false, true, false, true, false}, used)
+}
+
+func TestGetExtraHandleColumn(t *testing.T) {
+	s := &schemaGenerator{}
+	schema := s.generateSchema(0)
+	require.Nil(t, schema.GetExtraHandleColumn())
+
+	col := &Column{
+		UniqueID: 100,
+	}
+	schema.Append(col)
+	require.Nil(t, schema.GetExtraHandleColumn())
+
+	col2 := &Column{
+		UniqueID: 200,
+		ID:       model.ExtraHandleID,
+	}
+	schema.Append(col2)
+	require.Equal(t, col2.ID, schema.GetExtraHandleColumn().ID)
 }
