@@ -47,7 +47,7 @@ func (e *jsonArrayagg) ResetPartialResult(pr PartialResult) {
 	p.entries = p.entries[:0]
 }
 
-func (e *jsonArrayagg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *jsonArrayagg) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4JsonArrayagg)(pr)
 	if len(p.entries) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -62,7 +62,7 @@ func (e *jsonArrayagg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Parti
 	return nil
 }
 
-func (e *jsonArrayagg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *jsonArrayagg) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4JsonArrayagg)(pr)
 	for _, row := range rowsInGroup {
 		item, err := e.args[0].Eval(row)
@@ -86,7 +86,7 @@ func (e *jsonArrayagg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	return memDelta, nil
 }
 
-func (e *jsonArrayagg) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *jsonArrayagg) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4JsonArrayagg)(src), (*partialResult4JsonArrayagg)(dst)
 	p2.entries = append(p2.entries, p1.entries...)
 	return 0, nil

@@ -57,13 +57,13 @@ func (e *basePercentile) AllocPartialResult() (pr PartialResult, memDelta int64)
 	return
 }
 
-func (e *basePercentile) ResetPartialResult(pr PartialResult) {}
+func (e *basePercentile) ResetPartialResult(PartialResult) {}
 
-func (e *basePercentile) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *basePercentile) UpdatePartialResult(sessionctx.Context, []chunk.Row, PartialResult) (memDelta int64, err error) {
 	return
 }
 
-func (e *basePercentile) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *basePercentile) AppendFinalResult2Chunk(_ sessionctx.Context, _ PartialResult, chk *chunk.Chunk) error {
 	chk.AppendNull(e.ordinal)
 	return nil
 }
@@ -157,7 +157,7 @@ func (e *percentileOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, ro
 	return endMem - startMem, nil
 }
 
-func (e *percentileOriginal4Int) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Int) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileInt)(src), (*partialResult4PercentileInt)(dst)
 	mergeBuff := make([]int64, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -167,7 +167,7 @@ func (e *percentileOriginal4Int) MergePartialResult(sctx sessionctx.Context, src
 	return 0, nil
 }
 
-func (e *percentileOriginal4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *percentileOriginal4Int) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileInt)(pr)
 	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -210,7 +210,7 @@ func (e *percentileOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, r
 	return endMem - startMem, nil
 }
 
-func (e *percentileOriginal4Real) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Real) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileReal)(src), (*partialResult4PercentileReal)(dst)
 	mergeBuff := make([]float64, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -220,7 +220,7 @@ func (e *percentileOriginal4Real) MergePartialResult(sctx sessionctx.Context, sr
 	return 0, nil
 }
 
-func (e *percentileOriginal4Real) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *percentileOriginal4Real) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileReal)(pr)
 	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -263,7 +263,7 @@ func (e *percentileOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context
 	return endMem - startMem, nil
 }
 
-func (e *percentileOriginal4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Decimal) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileDecimal)(src), (*partialResult4PercentileDecimal)(dst)
 	mergeBuff := make([]types.MyDecimal, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -273,7 +273,7 @@ func (e *percentileOriginal4Decimal) MergePartialResult(sctx sessionctx.Context,
 	return 0, nil
 }
 
-func (e *percentileOriginal4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *percentileOriginal4Decimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileDecimal)(pr)
 	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -316,7 +316,7 @@ func (e *percentileOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, r
 	return endMem - startMem, nil
 }
 
-func (e *percentileOriginal4Time) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Time) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileTime)(src), (*partialResult4PercentileTime)(dst)
 	mergeBuff := make(partialResult4PercentileTime, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -326,7 +326,7 @@ func (e *percentileOriginal4Time) MergePartialResult(sctx sessionctx.Context, sr
 	return 0, nil
 }
 
-func (e *percentileOriginal4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *percentileOriginal4Time) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileTime)(pr)
 	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -369,7 +369,7 @@ func (e *percentileOriginal4Duration) UpdatePartialResult(sctx sessionctx.Contex
 	return endMem - startMem, nil
 }
 
-func (e *percentileOriginal4Duration) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Duration) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileDuration)(src), (*partialResult4PercentileDuration)(dst)
 	mergeBuff := make(partialResult4PercentileDuration, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -378,7 +378,7 @@ func (e *percentileOriginal4Duration) MergePartialResult(sctx sessionctx.Context
 	*p2 = mergeBuff
 	return 0, nil
 }
-func (e *percentileOriginal4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *percentileOriginal4Duration) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileDuration)(pr)
 	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
