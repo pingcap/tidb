@@ -486,16 +486,7 @@ func (e *Engine) getEngineFileSize() backend.EngineFileSize {
 	var memSize int64
 	e.localWriters.Range(func(k, v interface{}) bool {
 		w := k.(*Writer)
-		w.Lock()
-		defer w.Unlock()
-		if w.writer != nil {
-			memSize += int64(w.writer.writer.EstimatedSize())
-		} else {
-			// if kvs are still in memory, only calculate half of the total size
-			// in our tests, SST file size is about 50% of the raw kv size
-			memSize += w.batchSize / 2
-		}
-
+		memSize += int64(w.EstimatedSize())
 		return true
 	})
 
@@ -1010,6 +1001,7 @@ type Writer struct {
 	// else we must first store them in writeBatch and then batch flush into SST file.
 	isKVSorted bool
 	writer     *sstWriter
+	writerSize atomic.Uint64
 
 	// bytes buffer for writeBatch
 	kvBuffer   *membuf.Buffer
@@ -1059,7 +1051,11 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 		}
 		kvs = newKvs
 	}
-	return w.writer.writeKVs(kvs)
+	if err := w.writer.writeKVs(kvs); err != nil {
+		return err
+	}
+	w.writerSize.Store(w.writer.writer.EstimatedSize())
+	return nil
 }
 
 func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) error {
@@ -1156,6 +1152,13 @@ func (w *Writer) flush(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (w *Writer) EstimatedSize() uint64 {
+	if w.writer != nil {
+		return w.writerSize.Load()
+	}
+	return uint64(w.batchSize) / 2
 }
 
 type flushStatus struct {
