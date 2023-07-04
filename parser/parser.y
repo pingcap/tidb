@@ -1456,7 +1456,6 @@ import (
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
 	ResourceGroupPriorityOption            "Resource group priority option"
 	DynamicCalibrateResourceOption         "Dynamic resource calibrate option"
-	DynamicCalibrateTimeOption             "Dynamic calibrate time option for start time and end time"
 	CalibrateOption                        "Dynamic or static calibrate option"
 	DynamicCalibrateOptionList             "Anomymous or direct dynamic resource calibrate option list"
 	CalibrateResourceWorkloadOption        "Calibrate Resource workload option"
@@ -4161,6 +4160,7 @@ PolicyName:
 
 ResourceGroupName:
 	Identifier
+| 	"DEFAULT"
 
 DatabaseOption:
 	DefaultKwdOpt CharsetKw EqOpt CharsetName
@@ -15711,17 +15711,13 @@ DynamicCalibrateOptionList:
 	}
 
 DynamicCalibrateResourceOption:
-	"START_TIME" EqOpt DynamicCalibrateTimeOption
+	"START_TIME" EqOpt Expression
 	{
-		ret := $3.(*ast.DynamicCalibrateResourceOption)
-		ret.Tp = ast.CalibrateStartTime
-		$$ = ret
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateStartTime, Ts: $3.(ast.ExprNode)}
 	}
-|	"END_TIME" EqOpt DynamicCalibrateTimeOption
+|	"END_TIME" EqOpt Expression
 	{
-		ret := $3.(*ast.DynamicCalibrateResourceOption)
-		ret.Tp = ast.CalibrateEndTime
-		$$ = ret
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateEndTime, Ts: $3.(ast.ExprNode)}
 	}
 |	"DURATION" EqOpt stringLit
 	{
@@ -15732,24 +15728,9 @@ DynamicCalibrateResourceOption:
 		}
 		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateDuration, StrValue: $3}
 	}
-
-DynamicCalibrateTimeOption:
-	NowSymOptionFraction
+|	"DURATION" EqOpt "INTERVAL" Expression TimeUnit
 	{
-		$$ = &ast.DynamicCalibrateResourceOption{Ts: $1}
-	}
-|	stringLit
-	{
-		$$ = &ast.DynamicCalibrateResourceOption{Ts: ast.NewValueExpr($1, "", "")}
-	}
-|	NowSymOptionFraction '-' stringLit
-	{
-		_, err := duration.ParseDuration($3)
-		if err != nil {
-			yylex.AppendError(yylex.Errorf("The DURATION option is not a valid duration: %s", err.Error()))
-			return 1
-		}
-		$$ = &ast.DynamicCalibrateResourceOption{Ts: $1, StrValue: $3}
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateDuration, Ts: $4.(ast.ExprNode), Unit: $5.(ast.TimeUnitType)}
 	}
 
 CalibrateResourceWorkloadOption:

@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/tidb-binlog/node"
 	"github.com/pingcap/tidb/util/chunk"
@@ -27,7 +28,7 @@ import (
 
 // ChangeExec represents a change executor.
 type ChangeExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	*ast.ChangeStmt
 }
 
@@ -35,9 +36,14 @@ type ChangeExec struct {
 func (e *ChangeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	kind := strings.ToLower(e.NodeType)
 	urls := config.GetGlobalConfig().Path
-	registry, err := createRegistry(urls)
+	registry, needToClose, err := getOrCreateBinlogRegistry(urls)
 	if err != nil {
 		return err
+	}
+	if needToClose {
+		defer func() {
+			_ = registry.Close()
+		}()
 	}
 	nodes, _, err := registry.Nodes(ctx, node.NodePrefix[kind])
 	if err != nil {

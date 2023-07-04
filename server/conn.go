@@ -75,6 +75,9 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/conn"
 	"github.com/pingcap/tidb/privilege/privileges/ldap"
+	"github.com/pingcap/tidb/server/internal/column"
+	"github.com/pingcap/tidb/server/internal/dump"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	server_metrics "github.com/pingcap/tidb/server/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -143,19 +146,19 @@ type clientConn struct {
 		sync.RWMutex
 		*TiDBContext // an interface to execute sql statements.
 	}
-	attrs         map[string]string // attributes parsed from client handshake response.
-	serverHost    string            // server host
-	peerHost      string            // peer host
-	peerPort      string            // peer port
-	status        int32             // dispatching/reading/shutdown/waitshutdown
-	lastCode      uint16            // last error code
-	collation     uint8             // collation used by client, may be different from the collation used by database.
-	lastActive    time.Time         // last active time
-	authPlugin    string            // default authentication plugin
-	isUnixSocket  bool              // connection is Unix Socket file
-	rsEncoder     *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
-	inputDecoder  *inputDecoder     // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
-	socketCredUID uint32            // UID from the other end of the Unix Socket
+	attrs         map[string]string     // attributes parsed from client handshake response.
+	serverHost    string                // server host
+	peerHost      string                // peer host
+	peerPort      string                // peer port
+	status        int32                 // dispatching/reading/shutdown/waitshutdown
+	lastCode      uint16                // last error code
+	collation     uint8                 // collation used by client, may be different from the collation used by database.
+	lastActive    time.Time             // last active time
+	authPlugin    string                // default authentication plugin
+	isUnixSocket  bool                  // connection is Unix Socket file
+	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets.
+	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
+	socketCredUID uint32                // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
@@ -291,7 +294,7 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = dumpUint16(data, mysql.ServerStatusAutocommit)
+		data = dump.Uint16(data, mysql.ServerStatusAutocommit)
 		data = append(data, 0, 0)
 	}
 
@@ -376,7 +379,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	}
 	data = append(data, cc.collation)
 	// status
-	data = dumpUint16(data, mysql.ServerStatusAutocommit)
+	data = dump.Uint16(data, mysql.ServerStatusAutocommit)
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
 	data = append(data, byte(cc.server.capability>>16), byte(cc.server.capability>>24))
@@ -501,7 +504,7 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 		if data[offset] == 0x1 { // No auth data
 			offset += 2
 		} else {
-			num, null, off := parseLengthEncodedInt(data[offset:])
+			num, null, off := util2.ParseLengthEncodedInt(data[offset:])
 			offset += off
 			if !null {
 				packet.Auth = data[offset : offset+int(num)]
@@ -542,7 +545,7 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 			// Defend some ill-formated packet, connection attribute is not important and can be ignored.
 			return nil
 		}
-		if num, null, intOff := parseLengthEncodedInt(data[offset:]); !null {
+		if num, null, intOff := util2.ParseLengthEncodedInt(data[offset:]); !null {
 			offset += intOff // Length of variable length encoded integer itself in bytes
 			row := data[offset : offset+int(num)]
 			attrs, err := parseAttrs(row)
@@ -566,12 +569,12 @@ func parseAttrs(data []byte) (map[string]string, error) {
 	attrs := make(map[string]string)
 	pos := 0
 	for pos < len(data) {
-		key, _, off, err := parseLengthEncodedBytes(data[pos:])
+		key, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
 		if err != nil {
 			return attrs, err
 		}
 		pos += off
-		value, _, off, err := parseLengthEncodedBytes(data[pos:])
+		value, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
 		if err != nil {
 			return attrs, err
 		}
@@ -1024,7 +1027,7 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
 	}
-	cc.rsEncoder = newResultEncoder(chs)
+	cc.rsEncoder = column.NewResultEncoder(chs)
 }
 
 func (cc *clientConn) initInputEncoder(ctx context.Context) {
@@ -1033,7 +1036,7 @@ func (cc *clientConn) initInputEncoder(ctx context.Context) {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
 	}
-	cc.inputDecoder = newInputDecoder(chs)
+	cc.inputDecoder = util2.NewInputDecoder(chs)
 }
 
 // initConnect runs the initConnect SQL statement if it has been specified.
@@ -1523,21 +1526,21 @@ func (cc *clientConn) writeOkWith(ctx context.Context, header byte, flush bool, 
 
 	enclen := 0
 	if len(msg) > 0 {
-		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
+		enclen = util2.LengthEncodedIntSize(uint64(len(msg))) + len(msg)
 	}
 
 	data := cc.alloc.AllocWithLen(4, 32+enclen)
 	data = append(data, header)
-	data = dumpLengthEncodedInt(data, affectedRows)
-	data = dumpLengthEncodedInt(data, lastInsertID)
+	data = dump.LengthEncodedInt(data, affectedRows)
+	data = dump.LengthEncodedInt(data, lastInsertID)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = dumpUint16(data, status)
-		data = dumpUint16(data, warnCnt)
+		data = dump.Uint16(data, status)
+		data = dump.Uint16(data, warnCnt)
 	}
 	if enclen > 0 {
 		// although MySQL manual says the info message is string<EOF>(https://dev.mysql.com/doc/internals/en/packet-OK_Packet.html),
 		// it is actually string<lenenc>
-		data = dumpLengthEncodedString(data, []byte(msg))
+		data = dump.LengthEncodedString(data, []byte(msg))
 	}
 
 	err := cc.writePacket(data)
@@ -1605,8 +1608,8 @@ func (cc *clientConn) writeEOF(ctx context.Context, serverStatus uint16) error {
 
 	data = append(data, mysql.EOFHeader)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = dumpUint16(data, cc.ctx.WarningCount())
-		data = dumpUint16(data, serverStatus)
+		data = dump.Uint16(data, cc.ctx.WarningCount())
+		data = dump.Uint16(data, serverStatus)
 	}
 
 	err := cc.writePacket(data)
@@ -2229,7 +2232,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 	}
 	data := cc.alloc.AllocWithLen(4, 1024)
 	cc.initResultEncoder(ctx)
-	defer cc.rsEncoder.clean()
+	defer cc.rsEncoder.Clean()
 	for _, column := range columns {
 		data = data[0:4]
 		data = column.DumpWithDefault(data, cc.rsEncoder)
@@ -2265,7 +2268,7 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs ResultSet, binary b
 		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.Stack("stack"), zap.Any("recover", r))
 	}()
 	cc.initResultEncoder(ctx)
-	defer cc.rsEncoder.clean()
+	defer cc.rsEncoder.Clean()
 	if mysql.HasCursorExistsFlag(serverStatus) {
 		if err := cc.writeChunksWithFetchSize(ctx, rs, serverStatus, fetchSize); err != nil {
 			return false, err
@@ -2279,9 +2282,9 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs ResultSet, binary b
 	return false, cc.flush(ctx)
 }
 
-func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
+func (cc *clientConn) writeColumnInfo(columns []*column.Info) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
-	data = dumpLengthEncodedInt(data, uint64(len(columns)))
+	data = dump.LengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
 		return err
 	}
@@ -2485,7 +2488,7 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 }
 
 func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
-	user, data := parseNullTermString(data)
+	user, data := util2.ParseNullTermString(data)
 	cc.user = string(hack.String(user))
 	if len(data) < 1 {
 		return mysql.ErrMalformPacket
@@ -2497,7 +2500,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	}
 	pass := data[:passLen]
 	data = data[passLen:]
-	dbName, data := parseNullTermString(data)
+	dbName, data := util2.ParseNullTermString(data)
 	cc.dbname = string(hack.String(dbName))
 	pluginName := ""
 	if len(data) > 0 {
@@ -2506,7 +2509,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			data = data[2:]
 		}
 		if cc.capability&mysql.ClientPluginAuth > 0 && len(data) > 0 {
-			pluginNameB, _ := parseNullTermString(data)
+			pluginNameB, _ := util2.ParseNullTermString(data)
 			pluginName = string(hack.String(pluginNameB))
 		}
 	}
