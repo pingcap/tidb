@@ -38,12 +38,12 @@ func (*rowNumber) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4RowNumber{}), DefPartialResult4RowNumberSize
 }
 
-func (rn *rowNumber) ResetPartialResult(pr PartialResult) {
+func (*rowNumber) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4RowNumber)(pr)
 	p.curIdx = 0
 }
 
-func (rn *rowNumber) UpdatePartialResult(_ sessionctx.Context, _ []chunk.Row, _ PartialResult) (memDelta int64, err error) {
+func (*rowNumber) UpdatePartialResult(_ sessionctx.Context, _ []chunk.Row, _ PartialResult) (memDelta int64, err error) {
 	return 0, nil
 }
 
