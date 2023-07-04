@@ -97,7 +97,7 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl, stepForImport bool) (sc
 
 	indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleID)
 	if indexInfo == nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender",
+		logutil.BgLogger().Warn("cannot init cop request sender", zap.String("category", "ddl-ingest"),
 			zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", bgm.EleID))
 		return nil, errors.New("cannot find index info")
 	}
@@ -122,14 +122,14 @@ func (b *backfillSchedulerHandle) UpdateStatLoop() {
 	tk := time.Tick(time.Second * 5)
 	ser, err := infosync.GetServerInfo()
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl] get server info failed", zap.Error(err))
+		logutil.BgLogger().Warn("get server info failed", zap.String("category", "ddl"), zap.Error(err))
 		return
 	}
 	path := fmt.Sprintf("%s/%d/%s:%d", rowCountEtcdPath, b.job.ID, ser.IP, ser.Port)
 	writeToEtcd := func() {
 		err := ddlutil.PutKVToEtcd(context.TODO(), b.d.etcdCli, 3, path, strconv.Itoa(int(b.totalRowCnt)))
 		if err != nil {
-			logutil.BgLogger().Warn("[ddl] update row count for distributed add index failed", zap.Error(err))
+			logutil.BgLogger().Warn("update row count for distributed add index failed", zap.String("category", "ddl"), zap.Error(err))
 		}
 	}
 	for {
@@ -145,12 +145,12 @@ func (b *backfillSchedulerHandle) UpdateStatLoop() {
 
 // InitSubtaskExecEnv implements the Scheduler interface.
 func (b *backfillSchedulerHandle) InitSubtaskExecEnv(ctx context.Context) error {
-	logutil.BgLogger().Info("[ddl] lightning init subtask exec env")
+	logutil.BgLogger().Info("lightning init subtask exec env", zap.String("category", "ddl"))
 	d := b.d
 
 	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, b.index.Unique, b.job.ID, d.etcdCli)
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
+		logutil.BgLogger().Warn("lightning register error", zap.String("category", "ddl"), zap.Error(err))
 		return err
 	}
 	b.bc = bc
@@ -187,7 +187,7 @@ func (b *backfillSchedulerHandle) doFlushAndHandleError(mode ingest.FlushMode) e
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = convertToKeyExistsErr(err, b.index, b.ptbl.Meta())
 		}
-		logutil.BgLogger().Error("[ddl] flush error", zap.Error(err))
+		logutil.BgLogger().Error("flush error", zap.String("category", "ddl"), zap.Error(err))
 		return err
 	}
 	return nil
@@ -195,7 +195,7 @@ func (b *backfillSchedulerHandle) doFlushAndHandleError(mode ingest.FlushMode) e
 
 // SplitSubtask implements the Scheduler interface.
 func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error) {
-	logutil.BgLogger().Info("[ddl] lightning split subtask")
+	logutil.BgLogger().Info("lightning split subtask", zap.String("category", "ddl"))
 
 	if b.stepForImport {
 		return nil, nil
@@ -216,7 +216,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	sm := &BackfillSubTaskMeta{}
 	err := json.Unmarshal(subtask, sm)
 	if err != nil {
-		logutil.BgLogger().Error("[ddl] unmarshal error", zap.Error(err))
+		logutil.BgLogger().Error("unmarshal error", zap.String("category", "ddl"), zap.Error(err))
 		return nil, err
 	}
 
@@ -236,7 +236,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 		parTbl := b.ptbl.(table.PartitionedTable)
 		startKey, endKey, err = getTableRange(b.jc, d.ddlCtx, parTbl.GetPartition(pid), currentVer.Ver, b.job.Priority)
 		if err != nil {
-			logutil.BgLogger().Error("[ddl] get table range error", zap.Error(err))
+			logutil.BgLogger().Error("get table range error", zap.String("category", "ddl"), zap.Error(err))
 			return nil, err
 		}
 		tbl = parTbl.GetPartition(pid)
@@ -256,7 +256,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 
 	err = ingestScheduler.setupWorkers()
 	if err != nil {
-		logutil.BgLogger().Error("[ddl] setup workers error", zap.Error(err))
+		logutil.BgLogger().Error("setup workers error", zap.String("category", "ddl"), zap.Error(err))
 		return nil, err
 	}
 
@@ -270,7 +270,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 			break
 		}
 
-		logutil.BgLogger().Info("[ddl] start backfill workers to reorg record",
+		logutil.BgLogger().Info("start backfill workers to reorg record", zap.String("category", "ddl"),
 			zap.Int("workerCnt", ingestScheduler.currentWorkerSize()),
 			zap.Int("regionCnt", len(kvRanges)),
 			zap.String("startKey", hex.EncodeToString(startKey)),
@@ -311,7 +311,7 @@ func (*backfillSchedulerHandle) OnSubtaskFinished(_ context.Context, meta []byte
 
 // CleanupSubtaskExecEnv implements the Scheduler interface.
 func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
-	logutil.BgLogger().Info("[ddl] lightning cleanup subtask exec env")
+	logutil.BgLogger().Info("lightning cleanup subtask exec env", zap.String("category", "ddl"))
 
 	if b.isPartition || b.stepForImport {
 		ingest.LitBackCtxMgr.Unregister(b.job.ID)
@@ -326,7 +326,7 @@ func (b *backfillSchedulerHandle) CleanupSubtaskExecEnv(context.Context) error {
 
 // Rollback implements the Scheduler interface.
 func (b *backfillSchedulerHandle) Rollback(context.Context) error {
-	logutil.BgLogger().Info("[ddl] rollback backfill add index task", zap.Int64("jobID", b.job.ID))
+	logutil.BgLogger().Info("rollback backfill add index task", zap.String("category", "ddl"), zap.Int64("jobID", b.job.ID))
 	ingest.LitBackCtxMgr.Unregister(b.job.ID)
 	if !b.d.OwnerManager().IsOwner() {
 		// For owner, reorg ctx will be removed after the reorg job is done.

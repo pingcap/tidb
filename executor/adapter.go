@@ -2102,7 +2102,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 	if execStmtAst, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		planCacheStmt, err := plannercore.GetPreparedStmt(execStmtAst, sctx.GetSessionVars())
 		if err != nil {
-			logutil.BgLogger().Warn("[plan-replayer-capture] fail to find prepared ast for dumping plan replayer",
+			logutil.BgLogger().Warn("fail to find prepared ast for dumping plan replayer", zap.String("category", "plan-replayer-capture"),
 				zap.String("sqlDigest", key.SQLDigest),
 				zap.String("planDigest", key.PlanDigest),
 				zap.Error(err))
