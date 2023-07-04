@@ -69,7 +69,7 @@ The query hint usage would be more flexible and safer as the impact is limited t
 ```go
 type StmtHints struct {
 	...
-	kv_read_timeout: Duration
+	KVReadTimeout: Duration
 }
 ```
 - Support `tidb_kv_read_timeout` processing in `ExtractTableHintsFromStmtNode` and `handleStmtHints`, convert
