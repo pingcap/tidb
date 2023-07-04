@@ -113,14 +113,15 @@ const (
 	minDuration = time.Minute * 1
 )
 
-type CalibrateResourceExec struct {
+// Executor is used as executor of calibrate resource.
+type Executor struct {
 	exec.BaseExecutor
 	OptionList   []*ast.DynamicCalibrateResourceOption
 	WorkloadType ast.CalibrateResourceType
 	done         bool
 }
 
-func (e *CalibrateResourceExec) parseTsExpr(ctx context.Context, tsExpr ast.ExprNode) (time.Time, error) {
+func (e *Executor) parseTsExpr(ctx context.Context, tsExpr ast.ExprNode) (time.Time, error) {
 	ts, err := staleread.CalculateAsOfTsExpr(ctx, e.Ctx(), tsExpr)
 	if err != nil {
 		return time.Time{}, err
@@ -128,7 +129,7 @@ func (e *CalibrateResourceExec) parseTsExpr(ctx context.Context, tsExpr ast.Expr
 	return oracle.GetTimeFromTS(ts), nil
 }
 
-func (e *CalibrateResourceExec) parseCalibrateDuration(ctx context.Context) (startTime time.Time, endTime time.Time, err error) {
+func (e *Executor) parseCalibrateDuration(ctx context.Context) (startTime time.Time, endTime time.Time, err error) {
 	var dur time.Duration
 	// startTimeExpr is used to calc endTime by FuncCallExpr when duration begin with `interval`.
 	var startTimeExpr ast.ExprNode
@@ -145,44 +146,53 @@ func (e *CalibrateResourceExec) parseCalibrateDuration(ctx context.Context) (sta
 			if err != nil {
 				return
 			}
-		case ast.CalibrateDuration:
-			if len(op.StrValue) > 0 {
-				dur, err = duration.ParseDuration(op.StrValue)
-				if err != nil {
-					return
-				}
-				// If startTime is not set, startTime will be now() - duration.
-				if startTime.IsZero() {
-					startTime = time.Now().Add(-dur)
-				}
-				// If endTime is set, duration will be ignored.
-				if endTime.IsZero() {
-					endTime = startTime.Add(dur)
-				}
-			} else {
-				// If startTime is not set, startTime will be now() - duration.
-				if startTimeExpr == nil {
-					startTimeExpr = &ast.FuncCallExpr{
-						FnName: model.NewCIStr("DATE_SUB"),
-						Args: []ast.ExprNode{&ast.FuncCallExpr{
-							FnName: model.NewCIStr("CURRENT_TIMESTAMP"),
-						}, op.Ts, &ast.TimeUnitExpr{Unit: op.Unit}},
-					}
-					startTime, err = e.parseTsExpr(ctx, startTimeExpr)
-					if err != nil {
-						return
-					}
-				}
-				// If endTime is set, duration will be ignored.
-				if endTime.IsZero() {
-					endTime, err = e.parseTsExpr(ctx, &ast.FuncCallExpr{
-						FnName: model.NewCIStr("DATE_ADD"),
-						Args:   []ast.ExprNode{startTimeExpr, op.Ts, &ast.TimeUnitExpr{Unit: op.Unit}},
-					})
-					if err != nil {
-						return
-					}
-				}
+		}
+	}
+	for _, op := range e.OptionList {
+		if op.Tp != ast.CalibrateDuration {
+			continue
+		}
+		// string duration
+		if len(op.StrValue) > 0 {
+			dur, err = duration.ParseDuration(op.StrValue)
+			if err != nil {
+				return
+			}
+			// If startTime is not set, startTime will be now() - duration.
+			if startTime.IsZero() {
+				startTime = time.Now().Add(-dur)
+			}
+			// If endTime is set, duration will be ignored.
+			if endTime.IsZero() {
+				endTime = startTime.Add(dur)
+			}
+			continue
+		}
+		// interval duration
+		// If startTime is not set, startTime will be now() - duration.
+		if startTimeExpr == nil {
+			startTimeExpr = &ast.FuncCallExpr{
+				FnName: model.NewCIStr("DATE_SUB"),
+				Args: []ast.ExprNode{
+					&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")},
+					op.Ts,
+					&ast.TimeUnitExpr{Unit: op.Unit}},
+			}
+			startTime, err = e.parseTsExpr(ctx, startTimeExpr)
+			if err != nil {
+				return
+			}
+		}
+		// If endTime is set, duration will be ignored.
+		if endTime.IsZero() {
+			endTime, err = e.parseTsExpr(ctx, &ast.FuncCallExpr{
+				FnName: model.NewCIStr("DATE_ADD"),
+				Args: []ast.ExprNode{startTimeExpr,
+					op.Ts,
+					&ast.TimeUnitExpr{Unit: op.Unit}},
+			})
+			if err != nil {
+				return
 			}
 		}
 	}
@@ -207,7 +217,8 @@ func (e *CalibrateResourceExec) parseCalibrateDuration(ctx context.Context) (sta
 	return
 }
 
-func (e *CalibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) error {
+// Next implements the interface of Executor.
+func (e *Executor) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil
@@ -227,7 +238,7 @@ var (
 	errNoCPUQuotaMetrics = errors.Normalize("There is no CPU quota metrics, %v")
 )
 
-func (e *CalibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
+func (e *Executor) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
 	startTs, endTs, err := e.parseCalibrateDuration(ctx)
 	if err != nil {
 		return err
@@ -329,7 +340,7 @@ func (e *CalibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	return nil
 }
 
-func (e *CalibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
+func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
 	if !variable.EnableResourceControl.Load() {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
@@ -420,12 +431,12 @@ func (t *timeSeriesValues) advance(target time.Time) bool {
 
 func getRUPerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) (*timeSeriesValues, error) {
 	query := fmt.Sprintf("SELECT time, value FROM METRICS_SCHEMA.resource_manager_resource_unit where time >= '%s' and time <= '%s' ORDER BY time asc", startTime, endTime)
-	return getValuesFromMetrics(ctx, sctx, exec, query, "resource_manager_resource_unit")
+	return getValuesFromMetrics(ctx, sctx, exec, query)
 }
 
 func getComponentCPUUsagePerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, component, startTime, endTime string) (*timeSeriesValues, error) {
 	query := fmt.Sprintf("SELECT time, sum(value) FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%%s' GROUP BY time ORDER BY time asc", startTime, endTime, component)
-	return getValuesFromMetrics(ctx, sctx, exec, query, "process_cpu_usage")
+	return getValuesFromMetrics(ctx, sctx, exec, query)
 }
 
 func getNumberFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, query, metrics string) (float64, error) {
@@ -440,7 +451,7 @@ func getNumberFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecuto
 	return rows[0].GetFloat64(0), nil
 }
 
-func getValuesFromMetrics(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, query, metrics string) (*timeSeriesValues, error) {
+func getValuesFromMetrics(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, query string) (*timeSeriesValues, error) {
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
 	if err != nil {
 		return nil, errors.Trace(err)

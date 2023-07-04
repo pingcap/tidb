@@ -213,6 +213,9 @@ func TestCalibrateResource(t *testing.T) {
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - interval 11 minute DURATION interval 11 minute").Check(testkit.Rows("8161"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE DURATION interval 11 minute START_TIME now() - interval 11 minute").Check(testkit.Rows("8161"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE END_TIME now() DURATION interval 11 minute").Check(testkit.Rows("8161"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - interval 21 minute END_TIME now() - interval 1 minute").Check(testkit.Rows("8138"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE DURATION '20m' START_TIME now() - interval 21 minute").Check(testkit.Rows("8138"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE DURATION interval 20 minute START_TIME now() - interval 21 minute").Check(testkit.Rows("8138"))
 
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - interval 21 minute END_TIME now() - interval 20 minute").Check(testkit.Rows("7978"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - interval 4 minute").Check(testkit.Rows("8297"))
