@@ -42,7 +42,7 @@ func (e *baseBitAggFunc) ResetPartialResult(pr PartialResult) {
 	*p = 0
 }
 
-func (e *baseBitAggFunc) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *baseBitAggFunc) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4BitFunc)(pr)
 	chk.AppendUint64(e.ordinal, *p)
 	return nil
@@ -67,7 +67,7 @@ func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	return memDelta, nil
 }
 
-func (*bitOrUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*bitOrUint64) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
 	*p2 |= *p1
 	return memDelta, nil
@@ -119,7 +119,7 @@ func (e *bitXorUint64) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.
 	return nil
 }
 
-func (*bitXorUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*bitXorUint64) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
 	*p2 ^= *p1
 	return memDelta, nil
@@ -156,7 +156,7 @@ func (e *bitAndUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	return memDelta, nil
 }
 
-func (*bitAndUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*bitAndUint64) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
 	*p2 &= *p1
 	return memDelta, nil

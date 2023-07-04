@@ -60,7 +60,7 @@ type baseGroupConcat4String struct {
 	truncated *int32
 }
 
-func (e *baseGroupConcat4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *baseGroupConcat4String) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4GroupConcat)(pr)
 	if p.buffer == nil {
 		chk.AppendNull(e.ordinal)
@@ -376,7 +376,7 @@ func (h *topNRows) reset() {
 	h.currSize = 0
 }
 
-func (h *topNRows) concat(sep string, truncated bool) string {
+func (h *topNRows) concat(sep string, _ bool) string {
 	buffer := new(bytes.Buffer)
 	sort.Sort(sort.Reverse(h))
 	for i, row := range h.rows {
@@ -402,7 +402,7 @@ type groupConcatOrder struct {
 	baseGroupConcat4String
 }
 
-func (e *groupConcatOrder) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *groupConcatOrder) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4GroupConcatOrder)(pr)
 	if p.topN.Len() == 0 {
 		chk.AppendNull(e.ordinal)
@@ -481,7 +481,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 	return memDelta, nil
 }
 
-func (e *groupConcatOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *groupConcatOrder) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
 	return 0, plannercore.ErrInternal.GenWithStack("groupConcatOrder.MergePartialResult should not be called")
@@ -507,7 +507,7 @@ type groupConcatDistinctOrder struct {
 	baseGroupConcat4String
 }
 
-func (e *groupConcatDistinctOrder) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *groupConcatDistinctOrder) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4GroupConcatOrderDistinct)(pr)
 	if p.topN.Len() == 0 {
 		chk.AppendNull(e.ordinal)
@@ -605,7 +605,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 	return memDelta, nil
 }
 
-func (e *groupConcatDistinctOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *groupConcatDistinctOrder) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
 	return 0, plannercore.ErrInternal.GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
