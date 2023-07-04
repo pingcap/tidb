@@ -499,6 +499,8 @@
       "bindinfo/": "bindinfo",
       "br/pkg/lightning/": "br/pkg/lightning/",
       "executor/": "executor/",
+      "types/json_binary_functions.go": "types/json_binary_functions.go",
+      "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/": "ddl",
       "expression/builtin_cast.go": "expression/builtin_cast code",
       "server/conn.go": "server/conn.go",
