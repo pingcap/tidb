@@ -129,13 +129,13 @@ type percentileOriginal4Int struct {
 	basePercentile
 }
 
-func (e *percentileOriginal4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*percentileOriginal4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	// TODO: Preserve appropriate capacity for data
 	pr = PartialResult(&partialResult4PercentileInt{})
 	return pr, DefSliceSize
 }
 
-func (e *percentileOriginal4Int) ResetPartialResult(pr PartialResult) {
+func (*percentileOriginal4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4PercentileInt)(pr)
 	*p = partialResult4PercentileInt{}
 }
@@ -157,7 +157,7 @@ func (e *percentileOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, ro
 	return endMem - startMem, nil
 }
 
-func (e *percentileOriginal4Int) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*percentileOriginal4Int) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileInt)(src), (*partialResult4PercentileInt)(dst)
 	mergeBuff := make([]int64, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -182,13 +182,13 @@ type percentileOriginal4Real struct {
 	basePercentile
 }
 
-func (e *percentileOriginal4Real) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*percentileOriginal4Real) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	// TODO: Preserve appropriate capacity for data
 	pr = PartialResult(&partialResult4PercentileReal{})
 	return pr, DefSliceSize
 }
 
-func (e *percentileOriginal4Real) ResetPartialResult(pr PartialResult) {
+func (*percentileOriginal4Real) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4PercentileReal)(pr)
 	*p = partialResult4PercentileReal{}
 }
@@ -210,7 +210,7 @@ func (e *percentileOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, r
 	return endMem - startMem, nil
 }
 
-func (e *percentileOriginal4Real) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*percentileOriginal4Real) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileReal)(src), (*partialResult4PercentileReal)(dst)
 	mergeBuff := make([]float64, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -369,7 +369,7 @@ func (e *percentileOriginal4Duration) UpdatePartialResult(sctx sessionctx.Contex
 	return endMem - startMem, nil
 }
 
-func (e *percentileOriginal4Duration) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*percentileOriginal4Duration) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileDuration)(src), (*partialResult4PercentileDuration)(dst)
 	mergeBuff := make(partialResult4PercentileDuration, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
