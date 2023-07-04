@@ -311,8 +311,8 @@ func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum
 		}
 	}
 	cmp, err = ce.handleCols.Compare(a, b, ce.collators)
-	if err != nil || cmp > 0 && !ce.desc || cmp < 0 && ce.desc {
+	if cmp > 0 && !ce.desc || cmp < 0 && ce.desc {
 		return false, err
 	}
-	return true, nil
+	return true, err
 }
