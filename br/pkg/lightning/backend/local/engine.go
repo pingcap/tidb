@@ -1155,10 +1155,13 @@ func (w *Writer) flush(ctx context.Context) error {
 	return nil
 }
 
+// EstimatedSize returns the estimated size of the SST file.
 func (w *Writer) EstimatedSize() uint64 {
 	if w.writer != nil {
 		return w.writerSize.Load()
 	}
+	// if kvs are still in memory, only calculate half of the total size
+	// in our tests, SST file size is about 50% of the raw kv size
 	return uint64(w.batchSize) / 2
 }
 
