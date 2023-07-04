@@ -16,13 +16,14 @@
 
 set -euE
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Populate the mydumper source
 DBPATH="$TEST_DIR/cpch.mydump"
 CHUNK_COUNT=5
 ROW_COUNT=1000
 
 do_run_lightning() {
-    run_lightning -d "$DBPATH" --enable-checkpoint=1 --config "tests/$TEST_NAME/$1.toml"
+    run_lightning -d "$DBPATH" --enable-checkpoint=1 --config "$CUR/$1.toml"
 }
 
 verify_checkpoint_noop() {

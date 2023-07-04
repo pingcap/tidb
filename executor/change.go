@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/tidb-binlog/node"
 	"github.com/pingcap/tidb/util/chunk"
@@ -27,7 +28,7 @@ import (
 
 // ChangeExec represents a change executor.
 type ChangeExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	*ast.ChangeStmt
 }
 

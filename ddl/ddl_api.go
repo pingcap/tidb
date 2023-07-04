@@ -2831,7 +2831,7 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 	)
 	val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
+		logutil.BgLogger().Warn("won't scatter region", zap.String("category", "ddl"), zap.Error(err))
 	} else {
 		scatterRegion = variable.TiDBOptOn(val)
 	}
@@ -2848,7 +2848,7 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 }
 
 func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
-	logutil.BgLogger().Info("[ddl] get flashback cluster job", zap.String("flashbackTS", oracle.GetTimeFromTS(flashbackTS).String()))
+	logutil.BgLogger().Info("get flashback cluster job", zap.String("category", "ddl"), zap.String("flashbackTS", oracle.GetTimeFromTS(flashbackTS).String()))
 	nowTS, err := ctx.GetStore().GetOracle().GetTimestamp(d.ctx, &oracle.Option{})
 	if err != nil {
 		return errors.Trace(err)
@@ -7772,7 +7772,8 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStm
 			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " type should be the same")
 		}
 		if newOne.GetFlen() != old.GetFlen() {
-			logutil.BgLogger().Warn("[ddl] admin repair table : Column " + newOne.Name.L + " flen is not equal to the old one")
+			logutil.BgLogger().Warn("admin repair table : Column "+newOne.Name.L+" flen is not equal to the old one",
+				zap.String("category", "ddl"))
 		}
 		newTableInfo.Columns[i].ID = old.ID
 	}

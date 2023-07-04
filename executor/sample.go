@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -32,12 +33,12 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-var _ Executor = &TableSampleExecutor{}
+var _ exec.Executor = &TableSampleExecutor{}
 
 // TableSampleExecutor fetches a few rows through kv.Scan
 // according to the specific sample method.
 type TableSampleExecutor struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	table   table.Table
 	startTS uint64

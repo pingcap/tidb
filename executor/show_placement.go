@@ -106,7 +106,7 @@ func (b *showPlacementLabelsResultBuilder) sortMapKeys(m map[string]interface{})
 }
 
 func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
-	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "SELECT DISTINCT LABEL FROM %n.%n", "INFORMATION_SCHEMA", infoschema.TableTiKVStoreStatus)
 	if err != nil {
 		return errors.Trace(err)
@@ -133,9 +133,9 @@ func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowPlacementForDB(ctx context.Context) (err error) {
-	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil {
-		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, e.DBName.String()) {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.Ctx().GetSessionVars().ActiveRoles, e.DBName.String()) {
 			return e.dbAccessDenied()
 		}
 	}
@@ -262,14 +262,14 @@ func (e *ShowExec) fetchAllPlacementPolicies() error {
 }
 
 func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState) error {
-	checker := privilege.GetPrivilegeManager(e.ctx)
-	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 
 	dbs := e.is.AllSchemas()
 	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool { return i.Name.O < j.Name.O })
 
 	for _, dbInfo := range dbs {
-		if e.ctx.GetSessionVars().User != nil && checker != nil && !checker.DBIsVisible(activeRoles, dbInfo.Name.O) {
+		if e.Ctx().GetSessionVars().User != nil && checker != nil && !checker.DBIsVisible(activeRoles, dbInfo.Name.O) {
 			continue
 		}
 
@@ -296,8 +296,8 @@ type tableRowSet struct {
 }
 
 func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState) error {
-	checker := privilege.GetPrivilegeManager(e.ctx)
-	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 
 	dbs := e.is.AllSchemas()
 	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool { return i.Name.O < j.Name.O })
