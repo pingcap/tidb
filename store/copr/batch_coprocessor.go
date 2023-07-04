@@ -820,7 +820,8 @@ func filterAllStoresAccordingToTiFlashReplicaRead(allStores []uint64, aliveStore
 
 // getAliveStoresAndStoreIDs gets alive TiFlash stores and their IDs.
 // If tiflashReplicaReadPolicy is not all_replicas, it will also return the IDs of the alive TiFlash stores in TiDB zone.
-func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, ttl time.Duration, store *kvStore, tiflashReplicaReadPolicy tiflash.ReplicaRead, tidbZone string, aliveStores *aliveStoresBundle) *aliveStoresBundle {
+func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, ttl time.Duration, store *kvStore, tiflashReplicaReadPolicy tiflash.ReplicaRead, tidbZone string) (aliveStores *aliveStoresBundle) {
+	aliveStores = new(aliveStoresBundle)
 	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 	aliveStores.storesInAllZones = filterAliveStores(ctx, allTiFlashStores, ttl, store)
 
@@ -893,8 +894,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 	if !isTiDBLabelZoneSet {
 		tiflashReplicaReadPolicy = tiflash.AllReplicas
 	}
-	aliveStores = new(aliveStoresBundle)
-	aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, ttl, store, tiflashReplicaReadPolicy, tidbZone, aliveStores)
+	aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, ttl, store, tiflashReplicaReadPolicy, tidbZone)
 	if tiflashReplicaReadPolicy.IsClosestReplicas() {
 		maxRemoteReadCountAllowed = len(aliveStores.storeIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
 	}
