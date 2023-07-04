@@ -227,7 +227,7 @@ func TestCalibrateResource(t *testing.T) {
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME now() - interval 8 minute DURATION interval 4 minute").Check(testkit.Rows("8147"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE DURATION interval 4 minute START_TIME now() - interval 8 minute").Check(testkit.Rows("8147"))
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE DURATION interval 4 minute END_TIME now() - interval 4 minute").Check(testkit.Rows("8147"))
-	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE END_TIME data_sub(now(), interval 4 minute) DURATION '4m'").Check(testkit.Rows("8147"))
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE END_TIME date_sub(now(), interval 4 minute) DURATION '4m'").Check(testkit.Rows("8147"))
 
 	// construct data for dynamic calibrate
 	ru1 = [][]types.Datum{
