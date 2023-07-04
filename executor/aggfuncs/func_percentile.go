@@ -235,13 +235,13 @@ type percentileOriginal4Decimal struct {
 	basePercentile
 }
 
-func (e *percentileOriginal4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*percentileOriginal4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	// TODO: Preserve appropriate capacity for data
 	pr = PartialResult(&partialResult4PercentileDecimal{})
 	return pr, DefSliceSize
 }
 
-func (e *percentileOriginal4Decimal) ResetPartialResult(pr PartialResult) {
+func (*percentileOriginal4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4PercentileDecimal)(pr)
 	*p = partialResult4PercentileDecimal{}
 }
@@ -263,7 +263,7 @@ func (e *percentileOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context
 	return endMem - startMem, nil
 }
 
-func (e *percentileOriginal4Decimal) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*percentileOriginal4Decimal) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileDecimal)(src), (*partialResult4PercentileDecimal)(dst)
 	mergeBuff := make([]types.MyDecimal, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -294,7 +294,7 @@ func (*percentileOriginal4Time) AllocPartialResult() (pr PartialResult, memDelta
 	return pr, DefSliceSize
 }
 
-func (e *percentileOriginal4Time) ResetPartialResult(pr PartialResult) {
+func (*percentileOriginal4Time) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4PercentileTime)(pr)
 	*p = partialResult4PercentileTime{}
 }
@@ -316,7 +316,7 @@ func (e *percentileOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, r
 	return endMem - startMem, nil
 }
 
-func (e *percentileOriginal4Time) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*percentileOriginal4Time) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileTime)(src), (*partialResult4PercentileTime)(dst)
 	mergeBuff := make(partialResult4PercentileTime, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -347,7 +347,7 @@ func (*percentileOriginal4Duration) AllocPartialResult() (pr PartialResult, memD
 	return pr, DefSliceSize
 }
 
-func (e *percentileOriginal4Duration) ResetPartialResult(pr PartialResult) {
+func (*percentileOriginal4Duration) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4PercentileDuration)(pr)
 	*p = partialResult4PercentileDuration{}
 }
