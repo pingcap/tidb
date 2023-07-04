@@ -17,6 +17,7 @@ package owner
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -105,10 +106,10 @@ func (m *mockManager) GetOwnerID(_ context.Context) (string, error) {
 	return "", errors.New("no owner")
 }
 
-var mockOwnerOpValue = OpNone
+var mockOwnerOpValue atomic.Pointer[OpType]
 
 func (*mockManager) SetOwnerOpValue(_ context.Context, op OpType) error {
-	mockOwnerOpValue = op
+	mockOwnerOpValue.Store(&op)
 	return nil
 }
 
