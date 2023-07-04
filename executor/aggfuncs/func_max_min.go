@@ -958,13 +958,13 @@ type maxMin4String struct {
 	retTp *types.FieldType
 }
 
-func (e *maxMin4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinString)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinStringSize
 }
 
-func (e *maxMin4String) ResetPartialResult(pr PartialResult) {
+func (*maxMin4String) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinString)(pr)
 	p.isNull = true
 }
@@ -1107,13 +1107,13 @@ type maxMin4Time struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinTime)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinTimeSize
 }
 
-func (e *maxMin4Time) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Time) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinTime)(pr)
 	p.isNull = true
 }
@@ -1247,13 +1247,13 @@ type maxMin4Duration struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinDuration)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinDurationSize
 }
 
-func (e *maxMin4Duration) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Duration) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinDuration)(pr)
 	p.isNull = true
 }
@@ -1456,13 +1456,13 @@ type maxMin4Enum struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Enum) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Enum) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinEnum)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinEnumSize
 }
 
-func (e *maxMin4Enum) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Enum) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinEnum)(pr)
 	p.isNull = true
 }
@@ -1523,13 +1523,13 @@ type maxMin4Set struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Set) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Set) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinSet)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinSetSize
 }
 
-func (e *maxMin4Set) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Set) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinSet)(pr)
 	p.isNull = true
 }
