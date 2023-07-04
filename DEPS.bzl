@@ -4164,6 +4164,7 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:7JvBwc+e1x4AXHtwXp9IK1X04Iokol+HgrWdukU5iqM=",
         version = "v2.0.8-0.20230605085112-28247160f497",
     )
@@ -4173,6 +4174,10 @@ def go_deps():
         importpath = "github.com/tikv/pd",
         sum = "h1:iY/RztOIZ2nTbINUiLGsSv3SUGoEiub1GN0SKVKHJYg=",
         version = "v1.1.0-beta.0.20230202094356-18df271ce57f",
+=======
+        sum = "h1:GqsAoNiOFxbCJ8U8Lnts8BvdYd6HDWDsIm/oJY1sIMM=",
+        version = "v2.0.8-0.20230704071705-c0cf773917d9",
+>>>>>>> 8588d763578 (txn: Update client-go to fix the issue that GC BatchResolveLcok may miss primary pessimistic locks (#45143))
     )
 
     go_repository(
