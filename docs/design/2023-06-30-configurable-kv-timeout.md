@@ -204,6 +204,18 @@ snapshot read requests. The strategy is:
   4. Continue to process like before.
 - The timeout retry details should be recorded and handled properly in the request tracker, so are the metrics.
 
+## Timeout Task Canceling
+
+- If the timeout value is configured to a small value like hundreds of milliseconds, there could be more
+timeout tasks. When task is spawned to the read pool in TiKV, it could not be canceled immediately for 
+serveral reasons:
+  - When the read task is polled and executed, there's no timeout checking mechanism in the task scheduler
+  by now.
+  - The read operations are synchronous, so if the read task is blocked by slow io the task could not be
+  scheduled or canceled.
+- By now some simple timeout checks could be added in certain places like "after getting snapshot". A complete
+  timeout check or scheduling design is needed in the future.
+
 
 ## Compatibility
 
