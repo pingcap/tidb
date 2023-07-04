@@ -358,20 +358,22 @@ func TestFrameworkDispatchSubTasksFailedAndRetryable(t *testing.T) {
 	dispatcher.MockOwnerChange = func() {
 		distContext.SetOwner(0)
 	}
+	// 1. fail once.
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable", "1*return(true)"))
 	DispatchTaskAndCheckSuccess("🤔", proto.TaskTypeExample, t, &v)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable"))
-
+	// 2. fail and owner change.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockOwnerChangeAfterProcessFlow", "1*return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable", "1*return(true)"))
 	DispatchTaskAndCheckSuccess("😊", proto.TaskTypeExample, t, &v)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockOwnerChangeAfterProcessFlow"))
-
+	// 3. fail twice.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable", "2*return(true)"))
 	DispatchTaskAndCheckSuccess("😁", proto.TaskTypeExample, t, &v)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable"))
+	// 4. fail 5 times.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable", "5*return(true)"))
 	DispatchTaskAndCheckSuccess("🥹", proto.TaskTypeExample, t, &v)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable"))

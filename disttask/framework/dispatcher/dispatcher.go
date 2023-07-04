@@ -210,7 +210,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 					zap.Int64("step", gTask.Step), zap.Error(err), zap.String("id", d.id))
 				select {
 				case <-d.ctx.Done():
-					logutil.BgLogger().Info("dispatch task loop exits", zap.Error(d.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000), zap.String("id", d.id))
+					logutil.BgLogger().Info("dispatch task loop exits before handleDispatchErr", zap.Error(d.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000), zap.String("id", d.id))
 					return
 				default:
 				}
@@ -312,7 +312,7 @@ func (d *dispatcher) detectTask(taskID int64) {
 			})
 			select {
 			case <-d.ctx.Done():
-				logutil.BgLogger().Info("detect task exits", zap.Int64("task ID", taskID), zap.Error(d.ctx.Err()), zap.String("id", d.id))
+				logutil.BgLogger().Info("detect task exits before handleDispatchErr", zap.Int64("task ID", taskID), zap.Error(d.ctx.Err()), zap.String("id", d.id))
 				return
 			default:
 			}
@@ -336,6 +336,7 @@ func (d *dispatcher) handleDispatchErr(gTask *proto.Task, retryable bool, err er
 	if err != nil && err != context.Canceled {
 		if retryable {
 			// Must change the step since every time we called processNormalFlow, the step will increase.
+			logutil.BgLogger().Info("handle retryable err")
 			prevStep := gTask.Step
 			gTask.Step--
 			for i := 0; i < retrySQLTimes; i++ {
