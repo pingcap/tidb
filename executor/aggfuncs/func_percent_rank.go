@@ -26,18 +26,18 @@ type percentRank struct {
 	rowComparer
 }
 
-func (pr *percentRank) AllocPartialResult() (partial PartialResult, memDelta int64) {
+func (*percentRank) AllocPartialResult() (partial PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4Rank{}), DefPartialResult4RankSize
 }
 
-func (pr *percentRank) ResetPartialResult(partial PartialResult) {
+func (*percentRank) ResetPartialResult(partial PartialResult) {
 	p := (*partialResult4Rank)(partial)
 	p.curIdx = 0
 	p.lastRank = 0
 	p.rows = p.rows[:0]
 }
 
-func (pr *percentRank) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, partial PartialResult) (memDelta int64, err error) {
+func (*percentRank) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, partial PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Rank)(partial)
 	p.rows = append(p.rows, rowsInGroup...)
 	memDelta += int64(len(rowsInGroup)) * DefRowSize
