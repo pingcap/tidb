@@ -70,7 +70,7 @@ func (e *countOriginalWithDistinct4Int) ResetPartialResult(pr PartialResult) {
 	p.valSet, _ = set.NewInt64SetWithMemoryUsage()
 }
 
-func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctInt)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
@@ -116,7 +116,7 @@ func (e *countOriginalWithDistinct4Real) ResetPartialResult(pr PartialResult) {
 	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
-func (e *countOriginalWithDistinct4Real) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *countOriginalWithDistinct4Real) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctReal)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
@@ -162,7 +162,7 @@ func (e *countOriginalWithDistinct4Decimal) ResetPartialResult(pr PartialResult)
 	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }
 
-func (e *countOriginalWithDistinct4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *countOriginalWithDistinct4Decimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctDecimal)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
@@ -214,7 +214,7 @@ func (e *countOriginalWithDistinct4Duration) ResetPartialResult(pr PartialResult
 	p.valSet, _ = set.NewInt64SetWithMemoryUsage()
 }
 
-func (e *countOriginalWithDistinct4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *countOriginalWithDistinct4Duration) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctDuration)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
@@ -261,7 +261,7 @@ func (e *countOriginalWithDistinct4String) ResetPartialResult(pr PartialResult) 
 	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }
 
-func (e *countOriginalWithDistinct4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *countOriginalWithDistinct4String) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctString)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
@@ -312,7 +312,7 @@ func (e *countOriginalWithDistinct) ResetPartialResult(pr PartialResult) {
 	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }
 
-func (e *countOriginalWithDistinct) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *countOriginalWithDistinct) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountWithDistinct)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
@@ -462,12 +462,6 @@ func appendDuration(encodedBytes, buf []byte, val types.Duration) []byte {
 	*(*types.Duration)(unsafe.Pointer(&buf[0])) = val
 	buf = buf[:16]
 	encodedBytes = append(encodedBytes, buf...)
-	return encodedBytes
-}
-
-func appendJSON(encodedBytes, _ []byte, val types.BinaryJSON) []byte {
-	encodedBytes = append(encodedBytes, val.TypeCode)
-	encodedBytes = append(encodedBytes, val.Value...)
 	return encodedBytes
 }
 
@@ -754,7 +748,7 @@ func (p *partialResult4ApproxCountDistinct) Serialize() []byte {
 	return res
 }
 
-func (e *baseApproxCountDistinct) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *baseApproxCountDistinct) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4ApproxCountDistinct)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.fixedSize()))
 	return nil
@@ -769,7 +763,7 @@ func (e *baseApproxCountDistinct) ResetPartialResult(pr PartialResult) {
 	p.reset()
 }
 
-func (e *baseApproxCountDistinct) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *baseApproxCountDistinct) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4ApproxCountDistinct)(src), (*partialResult4ApproxCountDistinct)(dst)
 	p2.merge(p1)
 	return 0, nil
@@ -821,7 +815,7 @@ type approxCountDistinctPartial1 struct {
 	approxCountDistinctOriginal
 }
 
-func (e *approxCountDistinctPartial1) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *approxCountDistinctPartial1) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4ApproxCountDistinct)(pr)
 	chk.AppendBytes(e.ordinal, p.Serialize())
 	return nil
