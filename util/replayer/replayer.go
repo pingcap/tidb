@@ -15,14 +15,15 @@
 package replayer
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 )
 
@@ -50,9 +51,17 @@ func GeneratePlanReplayerFile(isCapture, isContinuesCapture, enableHistoricalSta
 	return zf, fileName, err
 }
 
+// GeneratePlanReplayerFileName generates plan replayer capture task name
+func GeneratePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (string, error) {
+	return generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture)
+}
+
 func generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (string, error) {
 	// Generate key and create zip file
 	time := time.Now().UnixNano()
+	failpoint.Inject("InjectPlanReplayerFileNameTimeField", func(val failpoint.Value) {
+		time = int64(val.(int))
+	})
 	b := make([]byte, 16)
 	//nolint: gosec
 	_, err := rand.Read(b)
@@ -60,8 +69,12 @@ func generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistorica
 		return "", err
 	}
 	key := base64.URLEncoding.EncodeToString(b)
+	// "capture_replayer" in filename has special meaning for the /plan_replayer/dump/ HTTP handler
 	if isContinuesCapture || isCapture && enableHistoricalStatsForCapture {
 		return fmt.Sprintf("capture_replayer_%v_%v.zip", key, time), nil
+	}
+	if isCapture && !enableHistoricalStatsForCapture {
+		return fmt.Sprintf("capture_normal_replayer_%v_%v.zip", key, time), nil
 	}
 	return fmt.Sprintf("replayer_%v_%v.zip", key, time), nil
 }

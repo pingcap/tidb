@@ -277,6 +277,12 @@ type LogicalPlan interface {
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan
 
+	// deriveTopN derives an implicit TopN from a filter on row_number window function..
+	deriveTopN(opt *logicalOptimizeOp) LogicalPlan
+
+	// predicateSimplification consolidates different predcicates on a column and its equivalence classes.
+	predicateSimplification(opt *logicalOptimizeOp) LogicalPlan
+
 	// recursiveDeriveStats derives statistic info between plans.
 	recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
 
@@ -368,6 +374,9 @@ type PhysicalPlan interface {
 	// Stats returns the StatsInfo of the plan.
 	Stats() *property.StatsInfo
 
+	// SetStats sets basePlan.stats inside the basePhysicalPlan.
+	SetStats(s *property.StatsInfo)
+
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
 
@@ -423,11 +432,14 @@ func (op *PlanCostOption) WithCostFlag(flag uint64) *PlanCostOption {
 }
 
 // WithOptimizeTracer set tracer
-func (op *PlanCostOption) WithOptimizeTracer(tracer *physicalOptimizeOp) *PlanCostOption {
+func (op *PlanCostOption) WithOptimizeTracer(v *physicalOptimizeOp) *PlanCostOption {
 	if op == nil {
 		return nil
 	}
-	op.tracer = tracer
+	op.tracer = v
+	if v != nil && v.tracer != nil {
+		op.CostFlag |= CostFlagTrace
+	}
 	return op
 }
 
@@ -719,11 +731,10 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 }
 
 func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {
-	ctx.GetSessionVars().PlanID++
-	id := ctx.GetSessionVars().PlanID
+	id := ctx.GetSessionVars().PlanID.Add(1)
 	return basePlan{
 		tp:          tp,
-		id:          id,
+		id:          int(id),
 		ctx:         ctx,
 		blockOffset: offset,
 	}
@@ -815,6 +826,11 @@ func (p *basePlan) Stats() *property.StatsInfo {
 	return p.stats
 }
 
+// SetStats sets basePlan.stats
+func (p *basePlan) SetStats(s *property.StatsInfo) {
+	p.stats = s
+}
+
 // basePlanSize is the size of basePlan.
 const basePlanSize = int64(unsafe.Sizeof(basePlan{}))
 
@@ -883,7 +899,14 @@ func (p *basePlan) SCtx() sessionctx.Context {
 
 // buildPlanTrace implements Plan
 func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.self.TP(), ExplainInfo: p.self.ExplainInfo()}
+	tp := ""
+	info := ""
+	if p.self != nil {
+		tp = p.self.TP()
+		info = p.self.ExplainInfo()
+	}
+
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: tp, ExplainInfo: info}
 	for _, child := range p.Children() {
 		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
 	}

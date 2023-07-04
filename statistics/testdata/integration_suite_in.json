@@ -126,5 +126,32 @@
       "explain format = 'brief' select * from t where e not like '%111%'",
       "explain format = 'brief' select * from t where ifnull(e, '1111') like '%111%'"
     ]
+  },
+  {
+    "name": "TestOrderingIdxSelectivityThreshold",
+    "cases": [
+      "set @@tidb_opt_ordering_index_selectivity_threshold = 0",
+      "explain format = 'brief' select * from t where b >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9950 order by c desc limit 1",
+      "explain format = 'brief' select * from t where b >= 8999 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9000 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9001 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 10001 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 10000 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 9999 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 0 and b <= 100 or c >= 0 and c <= 100 order by c limit 1",
+      "set @@tidb_opt_ordering_index_selectivity_threshold = 0.1",
+      "explain format = 'brief' select * from t where b >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9950 order by c desc limit 1",
+      "explain format = 'brief' select * from t where b >= 8999 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9000 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9001 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 10001 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 10000 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 9999 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 0 and b <= 50 or c >= 0 and c <= 50 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9950 and c >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9950 and c >= 9900 order by c limit 1"
+    ]
   }
 ]

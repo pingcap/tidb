@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 )
 
+// GlobalLightning is the global configuration of lightning.
 type GlobalLightning struct {
 	log.Config
 	StatusAddr        string `toml:"status-addr" json:"status-addr"`
@@ -40,6 +41,7 @@ type GlobalLightning struct {
 	PProfPort int `toml:"pprof-port" json:"-"`
 }
 
+// GlobalTiDB is the global configuration of TiDB.
 type GlobalTiDB struct {
 	Host       string `toml:"host" json:"host"`
 	Port       int    `toml:"port" json:"port"`
@@ -50,6 +52,7 @@ type GlobalTiDB struct {
 	LogLevel   string `toml:"log-level" json:"log-level"`
 }
 
+// GlobalMydumper is the global configuration of mydumper.
 type GlobalMydumper struct {
 	SourceDir string `toml:"data-source-dir" json:"data-source-dir"`
 	// Deprecated
@@ -58,11 +61,13 @@ type GlobalMydumper struct {
 	IgnoreColumns []*IgnoreColumns `toml:"ignore-columns" json:"ignore-columns"`
 }
 
+// GlobalImporter is the global configuration of tikv-importer.
 type GlobalImporter struct {
 	Backend     string `toml:"backend" json:"backend"`
 	SortedKVDir string `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
 }
 
+// GlobalConfig is the global configuration of lightning.
 type GlobalConfig struct {
 	App          GlobalLightning   `toml:"lightning" json:"lightning"`
 	Checkpoint   GlobalCheckpoint  `toml:"checkpoint" json:"checkpoint"`
@@ -75,15 +80,18 @@ type GlobalConfig struct {
 	ConfigFileContent []byte
 }
 
+// GlobalCheckpoint is the global configuration of checkpoint.
 type GlobalCheckpoint struct {
 	Enable bool `toml:"enable" json:"enable"`
 }
 
+// GlobalPostRestore is the global configuration of post-restore.
 type GlobalPostRestore struct {
 	Checksum PostOpLevel `toml:"checksum" json:"checksum"`
 	Analyze  PostOpLevel `toml:"analyze" json:"analyze"`
 }
 
+// NewGlobalConfig creates a new GlobalConfig with default values.
 func NewGlobalConfig() *GlobalConfig {
 	return &GlobalConfig{
 		App: GlobalLightning{

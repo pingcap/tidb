@@ -54,6 +54,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -72,6 +73,12 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/conn"
+	"github.com/pingcap/tidb/privilege/privileges/ldap"
+	"github.com/pingcap/tidb/server/internal/column"
+	"github.com/pingcap/tidb/server/internal/dump"
+	util2 "github.com/pingcap/tidb/server/internal/util"
+	server_metrics "github.com/pingcap/tidb/server/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -82,6 +89,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -97,80 +105,23 @@ import (
 const (
 	connStatusDispatching int32 = iota
 	connStatusReading
-	connStatusShutdown     // Closed by server.
-	connStatusWaitShutdown // Notified by server to close.
-)
-
-var (
-	queryTotalCountOk = [...]prometheus.Counter{
-		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "OK"),
-		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "OK"),
-		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "OK"),
-		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "OK"),
-		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "OK"),
-		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "OK"),
-		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "OK"),
-		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "OK"),
-		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "OK"),
-		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "OK"),
-		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "OK"),
-		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "OK"),
-		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "OK"),
-	}
-	queryTotalCountErr = [...]prometheus.Counter{
-		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "Error"),
-		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "Error"),
-		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "Error"),
-		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "Error"),
-		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "Error"),
-		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "Error"),
-		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "Error"),
-		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "Error"),
-		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "Error"),
-		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "Error"),
-		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "Error"),
-		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "Error"),
-		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error"),
-	}
-
-	queryDurationHistogramUse      = metrics.QueryDurationHistogram.WithLabelValues("Use")
-	queryDurationHistogramShow     = metrics.QueryDurationHistogram.WithLabelValues("Show")
-	queryDurationHistogramBegin    = metrics.QueryDurationHistogram.WithLabelValues("Begin")
-	queryDurationHistogramCommit   = metrics.QueryDurationHistogram.WithLabelValues("Commit")
-	queryDurationHistogramRollback = metrics.QueryDurationHistogram.WithLabelValues("Rollback")
-	queryDurationHistogramInsert   = metrics.QueryDurationHistogram.WithLabelValues("Insert")
-	queryDurationHistogramReplace  = metrics.QueryDurationHistogram.WithLabelValues("Replace")
-	queryDurationHistogramDelete   = metrics.QueryDurationHistogram.WithLabelValues("Delete")
-	queryDurationHistogramUpdate   = metrics.QueryDurationHistogram.WithLabelValues("Update")
-	queryDurationHistogramSelect   = metrics.QueryDurationHistogram.WithLabelValues("Select")
-	queryDurationHistogramExecute  = metrics.QueryDurationHistogram.WithLabelValues("Execute")
-	queryDurationHistogramSet      = metrics.QueryDurationHistogram.WithLabelValues("Set")
-	queryDurationHistogramGeneral  = metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
-
-	disconnectNormal            = metrics.DisconnectionCounter.WithLabelValues(metrics.LblOK)
-	disconnectByClientWithError = metrics.DisconnectionCounter.WithLabelValues(metrics.LblError)
-	disconnectErrorUndetermined = metrics.DisconnectionCounter.WithLabelValues("undetermined")
-
-	connIdleDurationHistogramNotInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("0")
-	connIdleDurationHistogramInTxn    = metrics.ConnIdleDurationHistogram.WithLabelValues("1")
-
-	affectedRowsCounterInsert  = metrics.AffectedRowsCounter.WithLabelValues("Insert")
-	affectedRowsCounterUpdate  = metrics.AffectedRowsCounter.WithLabelValues("Update")
-	affectedRowsCounterDelete  = metrics.AffectedRowsCounter.WithLabelValues("Delete")
-	affectedRowsCounterReplace = metrics.AffectedRowsCounter.WithLabelValues("Replace")
+	connStatusShutdown     = variable.ConnStatusShutdown // Closed by server.
+	connStatusWaitShutdown = 3                           // Notified by server to close.
 )
 
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
 	return &clientConn{
 		server:       s,
-		connectionID: s.globalConnID.NextID(),
+		connectionID: s.dom.NextConnID(),
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 		chunkAlloc:   chunk.NewAllocator(),
 		status:       connStatusDispatching,
 		lastActive:   time.Now(),
 		authPlugin:   mysql.AuthNativePassword,
+		quit:         make(chan struct{}),
+		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
 }
 
@@ -195,25 +146,30 @@ type clientConn struct {
 		sync.RWMutex
 		*TiDBContext // an interface to execute sql statements.
 	}
-	attrs         map[string]string // attributes parsed from client handshake response, not used for now.
-	serverHost    string            // server host
-	peerHost      string            // peer host
-	peerPort      string            // peer port
-	status        int32             // dispatching/reading/shutdown/waitshutdown
-	lastCode      uint16            // last error code
-	collation     uint8             // collation used by client, may be different from the collation used by database.
-	lastActive    time.Time         // last active time
-	authPlugin    string            // default authentication plugin
-	isUnixSocket  bool              // connection is Unix Socket file
-	rsEncoder     *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
-	inputDecoder  *inputDecoder     // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
-	socketCredUID uint32            // UID from the other end of the Unix Socket
+	attrs         map[string]string     // attributes parsed from client handshake response.
+	serverHost    string                // server host
+	peerHost      string                // peer host
+	peerPort      string                // peer port
+	status        int32                 // dispatching/reading/shutdown/waitshutdown
+	lastCode      uint16                // last error code
+	collation     uint8                 // collation used by client, may be different from the collation used by database.
+	lastActive    time.Time             // last active time
+	authPlugin    string                // default authentication plugin
+	isUnixSocket  bool                  // connection is Unix Socket file
+	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets.
+	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
+	socketCredUID uint32                // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
 	}
+	// quit is close once clientConn quit Run().
+	quit       chan struct{}
 	extensions *extension.SessionExtensions
+
+	// Proxy Protocol Enabled
+	ppEnabled bool
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -235,23 +191,50 @@ func (cc *clientConn) String() string {
 	)
 }
 
+func (cc *clientConn) setStatus(status int32) {
+	atomic.StoreInt32(&cc.status, status)
+	if ctx := cc.getCtx(); ctx != nil {
+		atomic.StoreInt32(&ctx.GetSessionVars().ConnectionStatus, status)
+	}
+}
+
+func (cc *clientConn) getStatus() int32 {
+	return atomic.LoadInt32(&cc.status)
+}
+
+func (cc *clientConn) CompareAndSwapStatus(oldStatus, newStatus int32) bool {
+	return atomic.CompareAndSwapInt32(&cc.status, oldStatus, newStatus)
+}
+
 // authSwitchRequest is used by the server to ask the client to switch to a different authentication
 // plugin. MySQL 8.0 libmysqlclient based clients by default always try `caching_sha2_password`, even
 // when the server advertises the its default to be `mysql_native_password`. In addition to this switching
 // may be needed on a per user basis as the authentication method is set per user.
-// https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::AuthSwitchRequest
+// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase_packets_protocol_auth_switch_request.html
 // https://bugs.mysql.com/bug.php?id=93044
 func (cc *clientConn) authSwitchRequest(ctx context.Context, plugin string) ([]byte, error) {
+	clientPlugin := plugin
+	if plugin == mysql.AuthLDAPSASL {
+		clientPlugin += "_client"
+	} else if plugin == mysql.AuthLDAPSimple {
+		clientPlugin = mysql.AuthMySQLClearPassword
+	}
 	failpoint.Inject("FakeAuthSwitch", func() {
-		failpoint.Return([]byte(plugin), nil)
+		failpoint.Return([]byte(clientPlugin), nil)
 	})
-	enclen := 1 + len(plugin) + 1 + len(cc.salt) + 1
+	enclen := 1 + len(clientPlugin) + 1 + len(cc.salt) + 1
 	data := cc.alloc.AllocWithLen(4, enclen)
 	data = append(data, mysql.AuthSwitchRequest) // switch request
-	data = append(data, []byte(plugin)...)
+	data = append(data, []byte(clientPlugin)...)
 	data = append(data, byte(0x00)) // requires null
-	data = append(data, cc.salt...)
-	data = append(data, 0)
+	if plugin == mysql.AuthLDAPSASL {
+		// append sasl auth method name
+		data = append(data, []byte(ldap.LDAPSASLAuthImpl.GetSASLAuthMethod())...)
+		data = append(data, byte(0x00))
+	} else {
+		data = append(data, cc.salt...)
+		data = append(data, 0)
+	}
 	err := cc.writePacket(data)
 	if err != nil {
 		logutil.Logger(ctx).Debug("write response to client failed", zap.Error(err))
@@ -311,7 +294,7 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = dumpUint16(data, mysql.ServerStatusAutocommit)
+		data = dump.Uint16(data, mysql.ServerStatusAutocommit)
 		data = append(data, 0, 0)
 	}
 
@@ -329,6 +312,14 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		logutil.Logger(ctx).Debug("flush response to client failed", zap.Error(err))
 		return err
 	}
+
+	// With mysql --compression-algorithms=zlib,zstd both flags are set, the result is Zlib
+	if cc.capability&mysql.ClientCompress > 0 {
+		cc.pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
+	} else if cc.capability&mysql.ClientZstdCompressionAlgorithm > 0 {
+		cc.pkt.SetCompressionAlgorithm(mysql.CompressionZstd)
+	}
+
 	return err
 }
 
@@ -342,6 +333,7 @@ func (cc *clientConn) Close() error {
 
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
+	cc.server.dom.ReleaseConnID(cc.connectionID)
 	if cc.bufReadConn != nil {
 		err := cc.bufReadConn.Close()
 		if err != nil {
@@ -387,7 +379,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	}
 	data = append(data, cc.collation)
 	// status
-	data = dumpUint16(data, mysql.ServerStatusAutocommit)
+	data = dump.Uint16(data, mysql.ServerStatusAutocommit)
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
 	data = append(data, byte(cc.server.capability>>16), byte(cc.server.capability>>24))
@@ -464,6 +456,7 @@ type handshakeResponse41 struct {
 	Auth       []byte
 	AuthPlugin string
 	Attrs      map[string]string
+	ZstdLevel  zstd.EncoderLevel
 }
 
 // parseHandshakeResponseHeader parses the common header of SSLRequest and HandshakeResponse41.
@@ -511,7 +504,7 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 		if data[offset] == 0x1 { // No auth data
 			offset += 2
 		} else {
-			num, null, off := parseLengthEncodedInt(data[offset:])
+			num, null, off := util2.ParseLengthEncodedInt(data[offset:])
 			offset += off
 			if !null {
 				packet.Auth = data[offset : offset+int(num)]
@@ -552,8 +545,8 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 			// Defend some ill-formated packet, connection attribute is not important and can be ignored.
 			return nil
 		}
-		if num, null, off := parseLengthEncodedInt(data[offset:]); !null {
-			offset += off
+		if num, null, intOff := util2.ParseLengthEncodedInt(data[offset:]); !null {
+			offset += intOff // Length of variable length encoded integer itself in bytes
 			row := data[offset : offset+int(num)]
 			attrs, err := parseAttrs(row)
 			if err != nil {
@@ -561,7 +554,12 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 				return nil
 			}
 			packet.Attrs = attrs
+			offset += int(num) // Length of attributes
 		}
+	}
+
+	if packet.Capability&mysql.ClientZstdCompressionAlgorithm > 0 {
+		packet.ZstdLevel = zstd.EncoderLevelFromZstd(int(data[offset]))
 	}
 
 	return nil
@@ -571,12 +569,12 @@ func parseAttrs(data []byte) (map[string]string, error) {
 	attrs := make(map[string]string)
 	pos := 0
 	for pos < len(data) {
-		key, _, off, err := parseLengthEncodedBytes(data[pos:])
+		key, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
 		if err != nil {
 			return attrs, err
 		}
 		pos += off
-		value, _, off, err := parseLengthEncodedBytes(data[pos:])
+		value, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
 		if err != nil {
 			return attrs, err
 		}
@@ -609,16 +607,29 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	}
 
 	capability := uint32(binary.LittleEndian.Uint16(data[:2]))
-	if capability&mysql.ClientProtocol41 > 0 {
-		pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
-	} else {
+	if capability&mysql.ClientProtocol41 <= 0 {
 		logutil.Logger(ctx).Error("ClientProtocol41 flag is not set, please upgrade client")
 		return errNotSupportedAuthMode
 	}
-
+	pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
 	if err != nil {
 		terror.Log(err)
 		return err
+	}
+
+	// After read packets we should update the client's host and port to grab
+	// real client's IP and port from PROXY Protocol header if PROXY Protocol is enabled.
+	_, _, err = cc.PeerHost("", true)
+	if err != nil {
+		terror.Log(err)
+		return err
+	}
+	// If enable proxy protocol check audit plugins after update real IP
+	if cc.ppEnabled {
+		err = cc.server.checkAuditPlugin(cc)
+		if err != nil {
+			return err
+		}
 	}
 
 	if resp.Capability&mysql.ClientSSL > 0 {
@@ -660,6 +671,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.dbname = resp.DBName
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
+	cc.pkt.zstdLevel = resp.ZstdLevel
 
 	err = cc.handleAuthPlugin(ctx, &resp)
 	if err != nil {
@@ -682,6 +694,8 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	case mysql.AuthTiDBSessionToken:
 	case mysql.AuthTiDBAuthToken:
 	case mysql.AuthMySQLClearPassword:
+	case mysql.AuthLDAPSASL:
+	case mysql.AuthLDAPSimple:
 	default:
 		return errors.New("Unknown auth plugin")
 	}
@@ -711,6 +725,8 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 		case mysql.AuthSocket:
 		case mysql.AuthTiDBSessionToken:
 		case mysql.AuthMySQLClearPassword:
+		case mysql.AuthLDAPSASL:
+		case mysql.AuthLDAPSimple:
 		default:
 			logutil.Logger(ctx).Warn("Unknown Auth Plugin", zap.String("plugin", resp.AuthPlugin))
 		}
@@ -838,7 +854,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, port, err := cc.PeerHost(hasPassword)
+
+	host, port, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return err
 	}
@@ -848,12 +865,12 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	}
 
 	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host, AuthPlugin: authPlugin}
-	if err = cc.ctx.Auth(userIdentity, authData, cc.salt); err != nil {
+	if err = cc.ctx.Auth(userIdentity, authData, cc.salt, cc); err != nil {
 		return err
 	}
 	cc.ctx.SetPort(port)
 	if cc.dbname != "" {
-		err = cc.useDB(context.Background(), cc.dbname)
+		_, err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
 			return err
 		}
@@ -881,7 +898,8 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, _, err := cc.PeerHost(hasPassword)
+
+	host, _, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return nil, err
 	}
@@ -953,9 +971,17 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	return nil, nil
 }
 
-func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error) {
+func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port string, err error) {
+	// already get peer host
 	if len(cc.peerHost) > 0 {
-		return cc.peerHost, cc.peerPort, nil
+		// Proxy protocol enabled and not update
+		if cc.ppEnabled && !update {
+			return cc.peerHost, cc.peerPort, nil
+		}
+		// Proxy protocol not enabled
+		if !cc.ppEnabled {
+			return cc.peerHost, cc.peerPort, nil
+		}
 	}
 	host = variable.DefHostname
 	if cc.isUnixSocket {
@@ -1001,7 +1027,7 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
 	}
-	cc.rsEncoder = newResultEncoder(chs)
+	cc.rsEncoder = column.NewResultEncoder(chs)
 }
 
 func (cc *clientConn) initInputEncoder(ctx context.Context) {
@@ -1010,7 +1036,7 @@ func (cc *clientConn) initInputEncoder(ctx context.Context) {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
 	}
-	cc.inputDecoder = newInputDecoder(chs)
+	cc.inputDecoder = util2.NewInputDecoder(chs)
 }
 
 // initConnect runs the initConnect SQL statement if it has been specified.
@@ -1070,6 +1096,12 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
+		if cc.getStatus() != connStatusShutdown {
+			err := cc.Close()
+			terror.Log(err)
+		}
+
+		close(cc.quit)
 	}()
 
 	// Usually, client connection status changes between [dispatching] <=> [reading].
@@ -1078,15 +1110,25 @@ func (cc *clientConn) Run(ctx context.Context) {
 	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
 	for {
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) ||
+		// Close connection between txn when we are going to shutdown server.
+		// Note the current implementation when shutting down, for an idle connection, the connection may block at readPacket()
+		// consider provider a way to close the connection directly after sometime if we can not read any data.
+		if cc.server.inShutdownMode.Load() {
+			if !cc.ctx.GetSessionVars().InTxn() {
+				return
+			}
+		}
+
+		if !cc.CompareAndSwapStatus(connStatusDispatching, connStatusReading) ||
 			// The judge below will not be hit by all means,
 			// But keep it stayed as a reminder and for the code reference for connStatusWaitShutdown.
-			atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+			cc.getStatus() == connStatusWaitShutdown {
 			return
 		}
 
 		cc.alloc.Reset()
 		// close connection when idle time is more than wait_timeout
+		// default 28800(8h), FIXME: should not block at here when we kill the connection.
 		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
 		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
@@ -1094,7 +1136,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
-					if atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+					if cc.getStatus() == connStatusWaitShutdown {
 						logutil.Logger(ctx).Info("read packet timeout because of killed connection")
 					} else {
 						idleTime := time.Since(start)
@@ -1117,11 +1159,18 @@ func (cc *clientConn) Run(ctx context.Context) {
 					}
 				}
 			}
-			disconnectByClientWithError.Inc()
+			server_metrics.DisconnectByClientWithError.Inc()
 			return
 		}
 
-		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
+		// Should check InTxn() to avoid execute `begin` stmt.
+		if cc.server.inShutdownMode.Load() {
+			if !cc.ctx.GetSessionVars().InTxn() {
+				return
+			}
+		}
+
+		if !cc.CompareAndSwapStatus(connStatusReading, connStatusDispatching) {
 			return
 		}
 
@@ -1133,11 +1182,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
-				disconnectNormal.Inc()
+				server_metrics.DisconnectNormal.Inc()
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
 				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
-				disconnectErrorUndetermined.Inc()
+				server_metrics.DisconnectErrorUndetermined.Inc()
 				return
 			} else if terror.ErrCritical.Equal(err) {
 				metrics.CriticalErrorCounter.Add(1)
@@ -1147,7 +1196,9 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if ctx := cc.getCtx(); ctx != nil {
 				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
 			}
-			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+			for _, dbName := range session.GetDBNames(cc.getCtx().GetSessionVars()) {
+				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName).Inc()
+			}
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
@@ -1170,23 +1221,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
+		cc.pkt.compressedSequence = 0
 	}
-}
-
-// ShutdownOrNotify will Shutdown this client connection, or do its best to notify.
-func (cc *clientConn) ShutdownOrNotify() bool {
-	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
-		return false
-	}
-	// If the client connection status is reading, it's safe to shutdown it.
-	if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusShutdown) {
-		return true
-	}
-	// If the client connection status is dispatching, we can't shutdown it immediately,
-	// so set the status to WaitShutdown as a notification, the loop in clientConn.Run
-	// will detect it and then exit.
-	atomic.StoreInt32(&cc.status, connStatusWaitShutdown)
-	return false
 }
 
 func errStrForLog(err error, enableRedactLog bool) string {
@@ -1212,10 +1248,10 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	}
 
 	var counter prometheus.Counter
-	if err != nil && int(cmd) < len(queryTotalCountErr) {
-		counter = queryTotalCountErr[cmd]
-	} else if err == nil && int(cmd) < len(queryTotalCountOk) {
-		counter = queryTotalCountOk[cmd]
+	if err != nil && int(cmd) < len(server_metrics.QueryTotalCountErr) {
+		counter = server_metrics.QueryTotalCountErr[cmd]
+	} else if err == nil && int(cmd) < len(server_metrics.QueryTotalCountOk) {
+		counter = server_metrics.QueryTotalCountOk[cmd]
 	}
 	if counter != nil {
 		counter.Inc()
@@ -1228,50 +1264,31 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		}
 	}
 
-	stmtType := cc.ctx.GetSessionVars().StmtCtx.StmtType
-	sqlType := metrics.LblGeneral
-	if stmtType != "" {
-		sqlType = stmtType
-	}
-
 	cost := time.Since(startTime)
 	sessionVar := cc.ctx.GetSessionVars()
 	affectedRows := cc.ctx.AffectedRows()
 	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, affectedRows, sessionVar.InTxn())
 
+	stmtType := sessionVar.StmtCtx.StmtType
+	sqlType := metrics.LblGeneral
+	if stmtType != "" {
+		sqlType = stmtType
+	}
+
 	switch sqlType {
-	case "Use":
-		queryDurationHistogramUse.Observe(cost.Seconds())
-	case "Show":
-		queryDurationHistogramShow.Observe(cost.Seconds())
-	case "Begin":
-		queryDurationHistogramBegin.Observe(cost.Seconds())
-	case "Commit":
-		queryDurationHistogramCommit.Observe(cost.Seconds())
-	case "Rollback":
-		queryDurationHistogramRollback.Observe(cost.Seconds())
 	case "Insert":
-		queryDurationHistogramInsert.Observe(cost.Seconds())
-		affectedRowsCounterInsert.Add(float64(affectedRows))
+		server_metrics.AffectedRowsCounterInsert.Add(float64(affectedRows))
 	case "Replace":
-		queryDurationHistogramReplace.Observe(cost.Seconds())
-		affectedRowsCounterReplace.Add(float64(affectedRows))
+		server_metrics.AffectedRowsCounterReplace.Add(float64(affectedRows))
 	case "Delete":
-		queryDurationHistogramDelete.Observe(cost.Seconds())
-		affectedRowsCounterDelete.Add(float64(affectedRows))
+		server_metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
 	case "Update":
-		queryDurationHistogramUpdate.Observe(cost.Seconds())
-		affectedRowsCounterUpdate.Add(float64(affectedRows))
-	case "Select":
-		queryDurationHistogramSelect.Observe(cost.Seconds())
-	case "Execute":
-		queryDurationHistogramExecute.Observe(cost.Seconds())
-	case "Set":
-		queryDurationHistogramSet.Observe(cost.Seconds())
-	case metrics.LblGeneral:
-		queryDurationHistogramGeneral.Observe(cost.Seconds())
-	default:
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(cost.Seconds())
+		server_metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
+	}
+
+	vars := cc.getCtx().GetSessionVars()
+	for _, dbName := range session.GetDBNames(vars) {
+		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.ResourceGroupName).Observe(cost.Seconds())
 	}
 }
 
@@ -1285,9 +1302,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}()
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
-		connIdleDurationHistogramInTxn.Observe(t.Sub(cc.lastActive).Seconds())
+		server_metrics.ConnIdleDurationHistogramInTxn.Observe(t.Sub(cc.lastActive).Seconds())
 	} else {
-		connIdleDurationHistogramNotInTxn.Observe(t.Sub(cc.lastActive).Seconds())
+		server_metrics.ConnIdleDurationHistogramNotInTxn.Observe(t.Sub(cc.lastActive).Seconds())
 	}
 
 	cfg := config.GetGlobalConfig()
@@ -1364,7 +1381,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	case mysql.ComQuit:
 		return io.EOF
 	case mysql.ComInitDB:
-		if err := cc.useDB(ctx, dataStr); err != nil {
+		node, err := cc.useDB(ctx, dataStr)
+		cc.onExtensionStmtEnd(node, false, err)
+		if err != nil {
 			return err
 		}
 		return cc.writeOK(ctx)
@@ -1447,19 +1466,19 @@ func (cc *clientConn) writeStats(ctx context.Context) error {
 	return cc.flush(ctx)
 }
 
-func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
+func (cc *clientConn) useDB(ctx context.Context, db string) (node ast.StmtNode, err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
 	stmts, err := cc.ctx.Parse(ctx, "use `"+db+"`")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
 	if err != nil {
-		return err
+		return stmts[0], err
 	}
 	cc.dbname = db
-	return
+	return stmts[0], err
 }
 
 func (cc *clientConn) flush(ctx context.Context) error {
@@ -1507,21 +1526,21 @@ func (cc *clientConn) writeOkWith(ctx context.Context, header byte, flush bool, 
 
 	enclen := 0
 	if len(msg) > 0 {
-		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
+		enclen = util2.LengthEncodedIntSize(uint64(len(msg))) + len(msg)
 	}
 
 	data := cc.alloc.AllocWithLen(4, 32+enclen)
 	data = append(data, header)
-	data = dumpLengthEncodedInt(data, affectedRows)
-	data = dumpLengthEncodedInt(data, lastInsertID)
+	data = dump.LengthEncodedInt(data, affectedRows)
+	data = dump.LengthEncodedInt(data, lastInsertID)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = dumpUint16(data, status)
-		data = dumpUint16(data, warnCnt)
+		data = dump.Uint16(data, status)
+		data = dump.Uint16(data, warnCnt)
 	}
 	if enclen > 0 {
 		// although MySQL manual says the info message is string<EOF>(https://dev.mysql.com/doc/internals/en/packet-OK_Packet.html),
 		// it is actually string<lenenc>
-		data = dumpLengthEncodedString(data, []byte(msg))
+		data = dump.LengthEncodedString(data, []byte(msg))
 	}
 
 	err := cc.writePacket(data)
@@ -1589,8 +1608,8 @@ func (cc *clientConn) writeEOF(ctx context.Context, serverStatus uint16) error {
 
 	data = append(data, mysql.EOFHeader)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = dumpUint16(data, cc.ctx.WarningCount())
-		data = dumpUint16(data, serverStatus)
+		data = dump.Uint16(data, cc.ctx.WarningCount())
+		data = dump.Uint16(data, serverStatus)
 	}
 
 	err := cc.writePacket(data)
@@ -1612,31 +1631,75 @@ func (cc *clientConn) writeReq(ctx context.Context, filePath string) error {
 
 // handleLoadData does the additional work after processing the 'load data' query.
 // It sends client a file path, then reads the file content from client, inserts data into database.
-func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor.LoadDataInfo) error {
+func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *executor.LoadDataWorker) error {
 	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return errNotAllowedCommand
 	}
-	if loadDataInfo == nil {
+	if loadDataWorker == nil {
 		return errors.New("load data info is empty")
 	}
-
-	err := cc.writeReq(ctx, loadDataInfo.Path)
+	infile := loadDataWorker.GetInfilePath()
+	err := cc.writeReq(ctx, infile)
 	if err != nil {
 		return err
 	}
 
-	err = loadDataInfo.Load(ctx, cc.readPacket)
+	var (
+		// use Pipe to convert cc.readPacket to io.Reader
+		r, w    = io.Pipe()
+		drained bool
+		wg      sync.WaitGroup
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		//nolint: errcheck
+		defer w.Close()
+
+		var (
+			data []byte
+			err2 error
+		)
+		for {
+			if len(data) == 0 {
+				data, err2 = cc.readPacket()
+				if err2 != nil {
+					w.CloseWithError(err2)
+					return
+				}
+				// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
+				if len(data) == 0 {
+					drained = true
+					return
+				}
+			}
+
+			n, err3 := w.Write(data)
+			if err3 != nil {
+				logutil.Logger(ctx).Error("write data meet error", zap.Error(err3))
+				return
+			}
+			data = data[n:]
+		}
+	}()
+
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
+	err = loadDataWorker.LoadLocal(ctx, r)
+	_ = r.Close()
+	wg.Wait()
+
 	if err != nil {
-		if !loadDataInfo.Drained {
+		if !drained {
 			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
 		}
 		// drain the data from client conn util empty packet received, otherwise the connection will be reset
-		for !loadDataInfo.Drained {
+		// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
+		for !drained {
 			// check kill flag again, let the draining loop could quit if empty packet could not be received
-			if atomic.CompareAndSwapUint32(&loadDataInfo.Ctx.GetSessionVars().Killed, 1, 0) {
+			if atomic.CompareAndSwapUint32(&loadDataWorker.UserSctx.GetSessionVars().Killed, 1, 0) {
 				logutil.Logger(ctx).Warn("receiving kill, stop draining data, connection may be reset")
-				return executor.ErrQueryInterrupted
+				return exeerrors.ErrQueryInterrupted
 			}
 			curData, err1 := cc.readPacket()
 			if err1 != nil {
@@ -1644,13 +1707,12 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 				break
 			}
 			if len(curData) == 0 {
-				loadDataInfo.Drained = true
+				drained = true
 				logutil.Logger(ctx).Info("draining finished for error", zap.Error(err))
 				break
 			}
 		}
 	}
-	loadDataInfo.SetMessage()
 	return err
 }
 
@@ -1771,8 +1833,7 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
-// There is a special query `load data` that does not return result, which is handled differently.
-// Query `load stats` does not return result either.
+// Some special queries like `load data` that does not return result, which is handled in handleFileTransInConn.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	sessVars := cc.ctx.GetSessionVars()
@@ -1793,6 +1854,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	parserWarns := warns[len(prevWarns):]
 
 	var pointPlans []plannercore.Plan
+	cc.ctx.GetSessionVars().InMultiStmts = false
 	if len(stmts) > 1 {
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
@@ -1814,6 +1876,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				parserWarns = append(parserWarns, warn)
 			}
 		}
+		cc.ctx.GetSessionVars().InMultiStmts = true
 
 		// Only pre-build point plans for multi-statement query
 		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
@@ -1848,7 +1911,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
-			action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
+			action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
 			if txnErr != nil {
 				err = txnErr
 				break
@@ -1916,6 +1979,55 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	pointPlans := make([]plannercore.Plan, len(stmts))
 	var idxKeys []kv.Key //nolint: prealloc
 	var rowKeys []kv.Key //nolint: prealloc
+
+	handlePlan := func(p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
+		var tableID int64
+		switch v := p.(type) {
+		case *plannercore.PointGetPlan:
+			if v.PartitionInfo != nil {
+				tableID = v.PartitionInfo.ID
+			} else {
+				tableID = v.TblInfo.ID
+			}
+			if v.IndexInfo != nil {
+				resetStmtCtxFn()
+				idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
+				if err1 != nil {
+					return err1
+				}
+				idxKeys = append(idxKeys, idxKey)
+			} else {
+				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
+			}
+		case *plannercore.BatchPointGetPlan:
+			if v.PartitionInfos != nil && len(v.PartitionIDs) == 0 {
+				// skip when PartitionIDs is not initialized.
+				return nil
+			}
+			getPhysID := func(i int) int64 {
+				if v.PartitionInfos == nil {
+					return v.TblInfo.ID
+				}
+				return v.PartitionIDs[i]
+			}
+			if v.IndexInfo != nil {
+				resetStmtCtxFn()
+				for i, idxVals := range v.IndexValues {
+					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, getPhysID(i))
+					if err1 != nil {
+						return err1
+					}
+					idxKeys = append(idxKeys, idxKey)
+				}
+			} else {
+				for i, handle := range v.Handles {
+					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(getPhysID(i), handle))
+				}
+			}
+		}
+		return nil
+	}
+
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
 		if _, ok := stmt.(*ast.UseStmt); ok {
@@ -1925,34 +2037,44 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			return nil, nil
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
-		// TODO: handle the PreprocessorReturn.
 		if err = plannercore.Preprocess(ctx, cc.getCtx(), stmt); err != nil {
-			return nil, err
+			// error might happen, see https://github.com/pingcap/tidb/issues/39664
+			return nil, nil
 		}
 		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
 		pointPlans[i] = p
 		if p == nil {
 			continue
 		}
-		// Only support Update for now.
+		// Only support Update and Delete for now.
 		// TODO: support other point plans.
-		if x, ok := p.(*plannercore.Update); ok {
+		switch x := p.(type) {
+		case *plannercore.Update:
 			//nolint:forcetypeassert
-			updateStmt := stmt.(*ast.UpdateStmt)
-			if pp, ok := x.SelectPlan.(*plannercore.PointGetPlan); ok {
-				if pp.PartitionInfo != nil {
-					continue
-				}
-				if pp.IndexInfo != nil {
-					executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
-					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
-					if err1 != nil {
-						return nil, err1
-					}
-					idxKeys = append(idxKeys, idxKey)
-				} else {
-					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
-				}
+			updateStmt, ok := stmt.(*ast.UpdateStmt)
+			if !ok {
+				logutil.BgLogger().Warn("unexpected statement type for Update plan",
+					zap.String("type", fmt.Sprintf("%T", stmt)))
+				continue
+			}
+			err = handlePlan(x.SelectPlan, func() {
+				executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
+			})
+			if err != nil {
+				return nil, err
+			}
+		case *plannercore.Delete:
+			deleteStmt, ok := stmt.(*ast.DeleteStmt)
+			if !ok {
+				logutil.BgLogger().Warn("unexpected statement type for Delete plan",
+					zap.String("type", fmt.Sprintf("%T", stmt)))
+				continue
+			}
+			err = handlePlan(x.SelectPlan, func() {
+				executor.ResetDeleteStmtCtx(sc, deleteStmt, vars)
+			})
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -1998,12 +2120,20 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	cc.audit(plugin.Starting)
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
-	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
-	// If the rs is nil, the detachment will be done in the `handleNoDelay`.
+	// - If rs is not nil, the statement tracker detachment from session tracker
+	//   is done in the `rs.Close` in most cases.
+	// - If the rs is nil and err is not nil, the detachment will be done in
+	//   the `handleNoDelay`.
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
 	if err != nil {
+		// If error is returned during the planner phase or the executor.Open
+		// phase, the rs will be nil, and StmtCtx.MemTracker StmtCtx.DiskTracker
+		// will not be detached. We need to detach them manually.
+		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
+			sv.StmtCtx.DetachMemDiskTracker()
+		}
 		return true, err
 	}
 
@@ -2015,16 +2145,16 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	}
 
 	if rs != nil {
-		if connStatus := atomic.LoadInt32(&cc.status); connStatus == connStatusShutdown {
-			return false, executor.ErrQueryInterrupted
+		if cc.getStatus() == connStatusShutdown {
+			return false, exeerrors.ErrQueryInterrupted
 		}
-		if retryable, err := cc.writeResultset(ctx, rs, false, status, 0); err != nil {
+		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
 			return retryable, err
 		}
 		return false, nil
 	}
 
-	handled, err := cc.handleQuerySpecial(ctx, status)
+	handled, err := cc.handleFileTransInConn(ctx, status)
 	if handled {
 		if execStmt := cc.ctx.Value(session.ExecStmtVarKey); execStmt != nil {
 			//nolint:forcetypeassert
@@ -2038,14 +2168,14 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	return false, nil
 }
 
-func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bool, error) {
+func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {
 	handled := false
 	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 	if loadDataInfo != nil {
 		handled = true
 		defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
 		//nolint:forcetypeassert
-		if err := cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+		if err := cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataWorker)); err != nil {
 			return handled, err
 		}
 	}
@@ -2102,7 +2232,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 	}
 	data := cc.alloc.AllocWithLen(4, 1024)
 	cc.initResultEncoder(ctx)
-	defer cc.rsEncoder.clean()
+	defer cc.rsEncoder.Clean()
 	for _, column := range columns {
 		data = data[0:4]
 		data = column.DumpWithDefault(data, cc.rsEncoder)
@@ -2116,21 +2246,21 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 	return cc.flush(ctx)
 }
 
-// writeResultset writes data into a resultset and uses rs.Next to get row data back.
+// writeResultSet writes data into a result set and uses rs.Next to get row data back.
 // If binary is true, the data would be encoded in BINARY format.
 // serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
-// retryable indicates whether the call of writeResultset has no side effect and can be retried to correct error. The call
+// retryable indicates whether the call of writeResultSet has no side effect and can be retried to correct error. The call
 // has side effect in cursor mode or once data has been sent to client. Currently retryable is used to fallback to TiKV when
 // TiFlash is down.
-func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (retryable bool, runErr error) {
+func (cc *clientConn) writeResultSet(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (retryable bool, runErr error) {
 	defer func() {
 		// close ResultSet when cursor doesn't exist
 		r := recover()
 		if r == nil {
 			return
 		}
-		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
+		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceedWarnMsg) {
 			panic(r)
 		}
 		// TODO(jianzhang.zj: add metrics here)
@@ -2138,7 +2268,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.Stack("stack"), zap.Any("recover", r))
 	}()
 	cc.initResultEncoder(ctx)
-	defer cc.rsEncoder.clean()
+	defer cc.rsEncoder.Clean()
 	if mysql.HasCursorExistsFlag(serverStatus) {
 		if err := cc.writeChunksWithFetchSize(ctx, rs, serverStatus, fetchSize); err != nil {
 			return false, err
@@ -2152,9 +2282,9 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	return false, cc.flush(ctx)
 }
 
-func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
+func (cc *clientConn) writeColumnInfo(columns []*column.Info) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
-	data = dumpLengthEncodedInt(data, uint64(len(columns)))
+	data = dump.LengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
 		return err
 	}
@@ -2276,34 +2406,12 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
-	// if fetchedRows is not enough, getting data from recordSet.
-	// NOTE: chunk should not be allocated from the allocator
-	// the allocator will reset every statement
-	// but it maybe stored in the result set among statements
-	// ref https://github.com/pingcap/tidb/blob/7fc6ebbda4ddf84c0ba801ca7ebb636b934168cf/server/conn_stmt.go#L233-L239
-	// Here server.tidbResultSet implements Next method.
-	req := rs.NewChunk(nil)
-	for len(fetchedRows) < fetchSize {
-		if err := rs.Next(ctx, req); err != nil {
-			return err
-		}
-		rowCount := req.NumRows()
-		if rowCount == 0 {
-			break
-		}
-		// filling fetchedRows with chunk
-		for i := 0; i < rowCount; i++ {
-			fetchedRows = append(fetchedRows, req.GetRow(i))
-		}
-		req = chunk.Renew(req, cc.ctx.GetSessionVars().MaxChunkSize)
-	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 	// and close ResultSet.
 	if len(fetchedRows) == 0 {
 		serverStatus &^= mysql.ServerStatusCursorExists
 		serverStatus |= mysql.ServerStatusLastRowSend
-		terror.Call(rs.Close)
 		return cc.writeEOF(ctx, serverStatus)
 	}
 
@@ -2380,7 +2488,7 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 }
 
 func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
-	user, data := parseNullTermString(data)
+	user, data := util2.ParseNullTermString(data)
 	cc.user = string(hack.String(user))
 	if len(data) < 1 {
 		return mysql.ErrMalformPacket
@@ -2392,7 +2500,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	}
 	pass := data[:passLen]
 	data = data[passLen:]
-	dbName, data := parseNullTermString(data)
+	dbName, data := util2.ParseNullTermString(data)
 	cc.dbname = string(hack.String(dbName))
 	pluginName := ""
 	if len(data) > 0 {
@@ -2401,7 +2509,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			data = data[2:]
 		}
 		if cc.capability&mysql.ClientPluginAuth > 0 && len(data) > 0 {
-			pluginNameB, _ := parseNullTermString(data)
+			pluginNameB, _ := util2.ParseNullTermString(data)
 			pluginName = string(hack.String(pluginNameB))
 		}
 	}
@@ -2458,7 +2566,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		return errors.New("Could not reset connection")
 	}
 	if cc.dbname != "" { // Restore the current DB
-		err = cc.useDB(context.Background(), cc.dbname)
+		_, err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
 			return err
 		}
@@ -2559,4 +2667,23 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	default:
 		return ""
 	}
+}
+
+var _ conn.AuthConn = &clientConn{}
+
+// WriteAuthMoreData implements `conn.AuthConn` interface
+func (cc *clientConn) WriteAuthMoreData(data []byte) error {
+	// See https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase_packets_protocol_auth_more_data.html
+	// the `AuthMoreData` packet is just an arbitrary binary slice with a byte 0x1 as prefix.
+	return cc.writePacket(append([]byte{0, 0, 0, 0, 1}, data...))
+}
+
+// ReadPacket implements `conn.AuthConn` interface
+func (cc *clientConn) ReadPacket() ([]byte, error) {
+	return cc.readPacket()
+}
+
+// Flush implements `conn.AuthConn` interface
+func (cc *clientConn) Flush(ctx context.Context) error {
+	return cc.flush(ctx)
 }

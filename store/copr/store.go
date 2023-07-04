@@ -17,6 +17,7 @@ package copr
 import (
 	"context"
 	"math/rand"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -31,7 +32,8 @@ import (
 )
 
 type kvStore struct {
-	store *tikv.KVStore
+	store       *tikv.KVStore
+	mppStoreCnt *mppStoreCnt
 }
 
 // GetRegionCache returns the region cache instance.
@@ -76,6 +78,7 @@ type Store struct {
 	*kvStore
 	coprCache       *coprCache
 	replicaReadSeed uint32
+	numcpu          int
 }
 
 // NewStore creates a new store instance.
@@ -87,9 +90,10 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 
 	/* #nosec G404 */
 	return &Store{
-		kvStore:         &kvStore{store: s},
+		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}},
 		coprCache:       coprCache,
 		replicaReadSeed: rand.Uint32(),
+		numcpu:          runtime.GOMAXPROCS(0),
 	}, nil
 }
 

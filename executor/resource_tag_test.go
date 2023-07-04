@@ -57,7 +57,7 @@ func TestResourceGroupTag(t *testing.T) {
 	var sqlDigest, planDigest *parser.Digest
 	var tagLabel tipb.ResourceGroupTagLabel
 	checkFn := func() {}
-	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
+	unistoreRPCClientSendHook := func(req *tikvrpc.Request) {
 		var startKey []byte
 		var ctx *kvrpcpb.Context
 		switch req.Type {
@@ -101,6 +101,7 @@ func TestResourceGroupTag(t *testing.T) {
 		tagLabel = *tag.Label
 		checkFn()
 	}
+	unistore.UnistoreRPCClientSendHook.Store(&unistoreRPCClientSendHook)
 
 	resetVars := func() {
 		sqlDigest = parser.NewDigest(nil)

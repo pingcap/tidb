@@ -20,7 +20,31 @@ import (
 
 // Stats metrics.
 var (
-	AutoAnalyzeHistogram = prometheus.NewHistogram(
+	AutoAnalyzeHistogram       prometheus.Histogram
+	AutoAnalyzeCounter         *prometheus.CounterVec
+	StatsInaccuracyRate        prometheus.Histogram
+	PseudoEstimation           *prometheus.CounterVec
+	DumpFeedbackCounter        *prometheus.CounterVec
+	UpdateStatsCounter         *prometheus.CounterVec
+	StoreQueryFeedbackCounter  *prometheus.CounterVec
+	SignificantFeedbackCounter prometheus.Counter
+	FastAnalyzeHistogram       *prometheus.HistogramVec
+	SyncLoadCounter            prometheus.Counter
+	SyncLoadTimeoutCounter     prometheus.Counter
+	SyncLoadHistogram          prometheus.Histogram
+	ReadStatsHistogram         prometheus.Histogram
+	StatsCacheLRUCounter       *prometheus.CounterVec
+	StatsCacheLRUGauge         *prometheus.GaugeVec
+	StatsHealthyGauge          *prometheus.GaugeVec
+
+	HistoricalStatsCounter        *prometheus.CounterVec
+	PlanReplayerTaskCounter       *prometheus.CounterVec
+	PlanReplayerRegisterTaskGauge prometheus.Gauge
+)
+
+// InitStatsMetrics initializes stats metrics.
+func InitStatsMetrics() {
+	AutoAnalyzeHistogram = NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -29,7 +53,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24), // 10ms ~ 24h
 		})
 
-	AutoAnalyzeCounter = prometheus.NewCounterVec(
+	AutoAnalyzeCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -37,7 +61,7 @@ var (
 			Help:      "Counter of auto analyze.",
 		}, []string{LblType})
 
-	StatsInaccuracyRate = prometheus.NewHistogram(
+	StatsInaccuracyRate = NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -46,7 +70,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 14),
 		})
 
-	PseudoEstimation = prometheus.NewCounterVec(
+	PseudoEstimation = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -54,7 +78,7 @@ var (
 			Help:      "Counter of pseudo estimation caused by outdated stats.",
 		}, []string{LblType})
 
-	DumpFeedbackCounter = prometheus.NewCounterVec(
+	DumpFeedbackCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -62,7 +86,7 @@ var (
 			Help:      "Counter of dumping feedback.",
 		}, []string{LblType})
 
-	UpdateStatsCounter = prometheus.NewCounterVec(
+	UpdateStatsCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -70,7 +94,7 @@ var (
 			Help:      "Counter of updating stats using feedback.",
 		}, []string{LblType})
 
-	StoreQueryFeedbackCounter = prometheus.NewCounterVec(
+	StoreQueryFeedbackCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -78,7 +102,7 @@ var (
 			Help:      "Counter of storing query feedback.",
 		}, []string{LblType})
 
-	SignificantFeedbackCounter = prometheus.NewCounter(
+	SignificantFeedbackCounter = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -86,7 +110,7 @@ var (
 			Help:      "Counter of query feedback whose actual count is much different than calculated by current statistics",
 		})
 
-	FastAnalyzeHistogram = prometheus.NewHistogramVec(
+	FastAnalyzeHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -95,7 +119,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 16),
 		}, []string{LblSQLType, LblType})
 
-	SyncLoadCounter = prometheus.NewCounter(
+	SyncLoadCounter = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -103,7 +127,7 @@ var (
 			Help:      "Counter of sync load.",
 		})
 
-	SyncLoadTimeoutCounter = prometheus.NewCounter(
+	SyncLoadTimeoutCounter = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -111,7 +135,7 @@ var (
 			Help:      "Counter of sync load timeout.",
 		})
 
-	SyncLoadHistogram = prometheus.NewHistogram(
+	SyncLoadHistogram = NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -120,7 +144,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1ms ~ 1h
 		})
 
-	ReadStatsHistogram = prometheus.NewHistogram(
+	ReadStatsHistogram = NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -129,7 +153,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1ms ~ 1h
 		})
 
-	StatsCacheLRUCounter = prometheus.NewCounterVec(
+	StatsCacheLRUCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -137,38 +161,38 @@ var (
 			Help:      "Counter of lru for statsCache operation",
 		}, []string{LblType})
 
-	StatsCacheLRUGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	StatsCacheLRUGauge = NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "statistics",
 		Name:      "stats_cache_lru_val",
 		Help:      "gauge of stats cache lru value",
 	}, []string{LblType})
 
-	StatsHealthyGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	StatsHealthyGauge = NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "statistics",
 		Name:      "stats_healthy",
 		Help:      "Gauge of stats healthy",
 	}, []string{LblType})
 
-	HistoricalStatsCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
+	HistoricalStatsCounter = NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tidb",
 		Subsystem: "statistics",
 		Name:      "historical_stats",
 		Help:      "counter of the historical stats operation",
 	}, []string{LblType, LblResult})
 
-	PlanReplayerTaskCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
+	PlanReplayerTaskCounter = NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tidb",
 		Subsystem: "plan_replayer",
 		Name:      "task",
 		Help:      "counter of plan replayer captured task",
 	}, []string{LblType, LblResult})
 
-	PlanReplayerRegisterTaskGauge = prometheus.NewGauge(prometheus.GaugeOpts{
+	PlanReplayerRegisterTaskGauge = NewGauge(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "plan_replayer",
 		Name:      "register_task",
 		Help:      "gauge of plan replayer registered task",
 	})
-)
+}

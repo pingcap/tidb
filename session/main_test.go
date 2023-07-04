@@ -15,29 +15,20 @@
 package session
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/atomic"
 	"go.uber.org/goleak"
 )
-
-var testDataMap = make(testdata.BookKeeper, 1)
 
 func TestMain(m *testing.M) {
 	testmain.ShortCircuitForBench(m)
@@ -45,7 +36,6 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
-	testDataMap.LoadTestSuiteData("testdata", "clustered_index_suite")
 
 	SetSchemaLease(20 * time.Millisecond)
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -55,7 +45,7 @@ func TestMain(m *testing.M) {
 	tikv.EnableFailpoints()
 	opts := []goleak.Option{
 		// TODO: figure the reason and shorten this list
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/internal/retry.newBackoffFn.func1"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
@@ -72,31 +62,9 @@ func TestMain(m *testing.M) {
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
 		time.Sleep(time.Second)
-		testDataMap.GenerateOutputIfNeeded()
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-
-func GetClusteredIndexSuiteData() testdata.TestData {
-	return testDataMap["clustered_index_suite"]
-}
-
-func createStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	dom, err := BootstrapSession(store)
-	require.NoError(t, err)
-	return store, dom
-}
-
-var sessionKitIDGenerator atomic.Uint64
-
-func createSessionAndSetID(t *testing.T, store kv.Storage) Session {
-	se, err := CreateSession4Test(store)
-	se.SetConnectionID(sessionKitIDGenerator.Inc())
-	require.NoError(t, err)
-	return se
 }
 
 func mustExec(t *testing.T, se Session, sql string, args ...interface{}) {
@@ -111,27 +79,6 @@ func mustExecToRecodeSet(t *testing.T, se Session, sql string, args ...interface
 	rs, err := exec(se, sql, args...)
 	require.NoError(t, err)
 	return rs
-}
-
-func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	ctx := context.Background()
-	if len(args) == 0 {
-		rs, err := se.Execute(ctx, sql)
-		if err == nil && len(rs) > 0 {
-			return rs[0], nil
-		}
-		return nil, err
-	}
-	stmtID, _, _, err := se.PrepareStmt(sql)
-	if err != nil {
-		return nil, err
-	}
-	params := expression.Args2Expressions4Test(args...)
-	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
-	if err != nil {
-		return nil, err
-	}
-	return rs, nil
 }
 
 func match(t *testing.T, row []types.Datum, expected ...interface{}) {

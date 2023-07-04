@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stmtsummary"
+	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	tablefilter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
@@ -179,7 +179,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		}
 
 		if err != nil {
-			logutil.BgLogger().Debug("[sql-bind] failed to generate bind record from data row", zap.Error(err))
+			logutil.BgLogger().Debug("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
 			continue
 		}
 
@@ -199,7 +199,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		// When the memory capacity of bing_cache is not enough,
 		// there will be some memory-related errors in multiple places.
 		// Only needs to be handled once.
-		logutil.BgLogger().Warn("[sql-bind] BindHandle.Update", zap.Error(memExceededErr))
+		logutil.BgLogger().Warn("BindHandle.Update", zap.String("category", "sql-bind"), zap.Error(memExceededErr))
 	}
 	return nil
 }
@@ -597,7 +597,7 @@ func (h *BindHandle) lockBindInfoTable() error {
 }
 
 // LockBindInfoSQL simulates LOCK TABLE by updating a same row in each pessimistic transaction.
-func (h *BindHandle) LockBindInfoSQL() string {
+func (*BindHandle) LockBindInfoSQL() string {
 	sql, err := sqlexec.EscapeSQL("UPDATE mysql.bind_info SET source= %? WHERE original_sql= %?", Builtin, BuiltinPseudoSQL4BindLock)
 	if err != nil {
 		return ""
@@ -622,7 +622,7 @@ func (tmpMap *tmpBindRecordMap) flushToStore() {
 		if bindRecord.updateTime.IsZero() {
 			err := tmpMap.flushFunc(bindRecord.bindRecord)
 			if err != nil {
-				logutil.BgLogger().Debug("[sql-bind] flush bind record failed", zap.Error(err))
+				logutil.BgLogger().Debug("flush bind record failed", zap.String("category", "sql-bind"), zap.Error(err))
 			}
 			bindRecord.updateTime = time.Now()
 			continue
@@ -738,12 +738,12 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 func (h *BindHandle) setBindRecord(hash string, meta *BindRecord) {
 	newCache, err0 := h.bindInfo.Value.Load().(*bindCache).Copy()
 	if err0 != nil {
-		logutil.BgLogger().Warn("[sql-bind] BindHandle.setBindRecord", zap.Error(err0))
+		logutil.BgLogger().Warn("BindHandle.setBindRecord", zap.String("category", "sql-bind"), zap.Error(err0))
 	}
 	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 	err1 := newCache.SetBindRecord(hash, meta)
 	if err1 != nil && err0 == nil {
-		logutil.BgLogger().Warn("[sql-bind] BindHandle.setBindRecord", zap.Error(err1))
+		logutil.BgLogger().Warn("BindHandle.setBindRecord", zap.String("category", "sql-bind"), zap.Error(err1))
 	}
 	h.bindInfo.Value.Store(newCache)
 	updateMetrics(metrics.ScopeGlobal, oldRecord, meta, false)
@@ -754,14 +754,14 @@ func (h *BindHandle) setBindRecord(hash string, meta *BindRecord) {
 func (h *BindHandle) appendBindRecord(hash string, meta *BindRecord) {
 	newCache, err0 := h.bindInfo.Value.Load().(*bindCache).Copy()
 	if err0 != nil {
-		logutil.BgLogger().Warn("[sql-bind] BindHandle.appendBindRecord", zap.Error(err0))
+		logutil.BgLogger().Warn("BindHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err0))
 	}
 	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 	newRecord := merge(oldRecord, meta)
 	err1 := newCache.SetBindRecord(hash, newRecord)
 	if err1 != nil && err0 == nil {
 		// Only need to handle the error once.
-		logutil.BgLogger().Warn("[sql-bind] BindHandle.appendBindRecord", zap.Error(err1))
+		logutil.BgLogger().Warn("BindHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err1))
 	}
 	h.bindInfo.Value.Store(newCache)
 	updateMetrics(metrics.ScopeGlobal, oldRecord, newRecord, false)
@@ -771,7 +771,7 @@ func (h *BindHandle) appendBindRecord(hash string, meta *BindRecord) {
 func (h *BindHandle) removeBindRecord(hash string, meta *BindRecord) {
 	newCache, err := h.bindInfo.Value.Load().(*bindCache).Copy()
 	if err != nil {
-		logutil.BgLogger().Warn("[sql-bind] ", zap.Error(err))
+		logutil.BgLogger().Warn("", zap.String("category", "sql-bind"), zap.Error(err))
 	}
 	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 	newCache.RemoveBindRecord(hash, meta)
@@ -795,8 +795,7 @@ type captureFilter struct {
 }
 
 func (cf *captureFilter) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch x := in.(type) {
-	case *ast.TableName:
+	if x, ok := in.(*ast.TableName); ok {
 		tblEntry := stmtctx.TableEntry{
 			DB:    x.Schema.L,
 			Table: x.Name.L,
@@ -813,7 +812,7 @@ func (cf *captureFilter) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	return in, cf.fail
 }
 
-func (cf *captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
@@ -851,7 +850,7 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 	// uses another background session.
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
 	if err != nil {
-		logutil.BgLogger().Warn("[sql-bind] failed to load mysql.capture_plan_baselines_blacklist", zap.Error(err))
+		logutil.BgLogger().Warn("failed to load mysql.capture_plan_baselines_blacklist", zap.String("category", "sql-bind"), zap.Error(err))
 		return
 	}
 	for _, row := range rows {
@@ -861,7 +860,7 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		case "table":
 			tfilter, valid := ParseCaptureTableFilter(valStr)
 			if !valid {
-				logutil.BgLogger().Warn("[sql-bind] capture table filter is invalid, ignore it", zap.String("filter_value", valStr))
+				logutil.BgLogger().Warn("capture table filter is invalid, ignore it", zap.String("category", "sql-bind"), zap.String("filter_value", valStr))
 				continue
 			}
 			filter.tables = append(filter.tables, tfilter)
@@ -870,18 +869,18 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		case "frequency":
 			f, err := strconv.ParseInt(valStr, 10, 64)
 			if err != nil {
-				logutil.BgLogger().Warn("[sql-bind] failed to parse frequency type value, ignore it", zap.String("filter_value", valStr), zap.Error(err))
+				logutil.BgLogger().Warn("failed to parse frequency type value, ignore it", zap.String("category", "sql-bind"), zap.String("filter_value", valStr), zap.Error(err))
 				continue
 			}
 			if f < 1 {
-				logutil.BgLogger().Warn("[sql-bind] frequency threshold is less than 1, ignore it", zap.Int64("frequency", f))
+				logutil.BgLogger().Warn("frequency threshold is less than 1, ignore it", zap.String("category", "sql-bind"), zap.Int64("frequency", f))
 				continue
 			}
 			if f > filter.frequency {
 				filter.frequency = f
 			}
 		default:
-			logutil.BgLogger().Warn("[sql-bind] unknown capture filter type, ignore it", zap.String("filter_type", filterTp))
+			logutil.BgLogger().Warn("unknown capture filter type, ignore it", zap.String("category", "sql-bind"), zap.String("filter_type", filterTp))
 		}
 	}
 	return
@@ -892,11 +891,11 @@ func (h *BindHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
 	captureFilter := h.extractCaptureFilterFromStorage()
 	emptyCaptureFilter := captureFilter.isEmpty()
-	bindableStmts := stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(captureFilter.frequency)
+	bindableStmts := stmtsummaryv2.GetMoreThanCntBindableStmt(captureFilter.frequency)
 	for _, bindableStmt := range bindableStmts {
 		stmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 		if err != nil {
-			logutil.BgLogger().Debug("[sql-bind] parse SQL failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
+			logutil.BgLogger().Debug("parse SQL failed in baseline capture", zap.String("category", "sql-bind"), zap.String("SQL", bindableStmt.Query), zap.Error(err))
 			continue
 		}
 		if insertStmt, ok := stmt.(*ast.InsertStmt); ok && insertStmt.Select == nil {
@@ -932,7 +931,9 @@ func (h *BindHandle) CaptureBaselines() {
 		if bindSQL == "" {
 			continue
 		}
+		h.sctx.Lock()
 		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
+		h.sctx.Unlock()
 		binding := Binding{
 			BindSQL:   bindSQL,
 			Status:    Enabled,
@@ -944,7 +945,7 @@ func (h *BindHandle) CaptureBaselines() {
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.CreateBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
 		if err != nil {
-			logutil.BgLogger().Debug("[sql-bind] create bind record failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
+			logutil.BgLogger().Debug("create bind record failed in baseline capture", zap.String("category", "sql-bind"), zap.String("SQL", bindableStmt.Query), zap.Error(err))
 		}
 	}
 }
@@ -1020,7 +1021,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
 			restoreCtx.DefaultDB = defaultDB
 			if err := n.With.Restore(restoreCtx); err != nil {
-				logutil.BgLogger().Debug("[sql-bind] restore SQL failed", zap.Error(err))
+				logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
 				return ""
 			}
 			withEnd := withIdx + len(withSb.String())
@@ -1042,7 +1043,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 		bindSQL = bindSQL[insertIdx:]
 		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 	}
-	logutil.Logger(ctx).Debug("[sql-bind] unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
+	logutil.Logger(ctx).Debug("unexpected statement type when generating bind SQL", zap.String("category", "sql-bind"), zap.Any("statement", stmtNode))
 	return ""
 }
 
@@ -1058,15 +1059,15 @@ func (e *paramMarkerChecker) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
-func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
+func (*paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
 // AddEvolvePlanTask adds the evolve plan task into memory cache. It would be flushed to store periodically.
-func (h *BindHandle) AddEvolvePlanTask(originalSQL, DB string, binding Binding) {
+func (h *BindHandle) AddEvolvePlanTask(originalSQL, db string, binding Binding) {
 	br := &BindRecord{
 		OriginalSQL: originalSQL,
-		Db:          DB,
+		Db:          db,
 		Bindings:    []Binding{binding},
 	}
 	h.pendingVerifyBindRecordMap.Add(br)
@@ -1127,7 +1128,7 @@ const (
 	nextVerifyDuration = 7 * 24 * time.Hour
 )
 
-func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
+func (h *BindHandle) getOnePendingVerifyJob() (originalSQL, db string, binding Binding) {
 	cache := h.bindInfo.Value.Load().(*bindCache)
 	for _, bindRecord := range cache.GetAllBindRecords() {
 		for _, bind := range bindRecord.Bindings {
@@ -1151,7 +1152,7 @@ func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
 	return "", "", Binding{}
 }
 
-func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string, maxTime time.Duration) (time.Duration, error) {
+func (*BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string, maxTime time.Duration) (time.Duration, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	if db != "" {
 		_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "use %n", db)
@@ -1174,7 +1175,7 @@ func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string,
 		return time.Since(startTime), nil
 	case <-timer.C:
 		cancelFunc()
-		logutil.BgLogger().Debug("[sql-bind] plan verification timed out", zap.Duration("timeElapsed", time.Since(startTime)), zap.String("query", sql))
+		logutil.BgLogger().Debug("plan verification timed out", zap.String("category", "sql-bind"), zap.Duration("timeElapsed", time.Since(startTime)), zap.String("query", sql))
 	}
 	<-resultChan
 	return -1, nil
@@ -1245,7 +1246,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 	if verifyPlanTime == -1 || (float64(verifyPlanTime)*acceptFactor > float64(currentPlanTime)) {
 		binding.Status = Rejected
 		digestText, _ := parser.NormalizeDigest(binding.BindSQL) // for log desensitization
-		logutil.BgLogger().Debug("[sql-bind] new plan rejected",
+		logutil.BgLogger().Debug("new plan rejected", zap.String("category", "sql-bind"),
 			zap.Duration("currentPlanTime", currentPlanTime),
 			zap.Duration("verifyPlanTime", verifyPlanTime),
 			zap.String("digestText", digestText),

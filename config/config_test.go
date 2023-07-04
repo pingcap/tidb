@@ -414,6 +414,9 @@ metrics-interval = 15
 # Record statements qps by database name if it is enabled.
 record-db-qps = false
 
+# Record database name label if it is enabled.
+record-db-label = false
+
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0
@@ -652,7 +655,8 @@ engines = ["tikv", "tiflash", "tidb"]
 
 	for _, test := range configTest {
 		conf := new(Config)
-		configFile := "config.toml"
+		storeDir := t.TempDir()
+		configFile := filepath.Join(storeDir, "config.toml")
 		f, err := os.Create(configFile)
 		require.NoError(t, err)
 		// Write the sample config file
@@ -687,7 +691,8 @@ func TestConfig(t *testing.T) {
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
 	conf.Instance.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
-	configFile := "config.toml"
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func(configFile string) {
@@ -732,10 +737,14 @@ enable-forwarding = true
 enable-global-kill = true
 tidb-max-reuse-chunk = 10
 tidb-max-reuse-column = 20
+tidb-enable-exit-check = false
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
 enable-load-fmsketch = true
+plan-replayer-dump-worker-concurrency = 1
+lite-init-stats = false
+force-init-stats = false
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -827,6 +836,8 @@ max_connections = 200
 	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
 	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
 	require.True(t, conf.Performance.EnableLoadFMSketch)
+	require.False(t, conf.Performance.LiteInitStats)
+	require.False(t, conf.Performance.ForceInitStats)
 
 	err = f.Truncate(0)
 	require.NoError(t, err)
@@ -858,7 +869,7 @@ history-size=100`)
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.True(t, conf.EnableTelemetry)
+	require.False(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
 enable-table-lock = true
@@ -866,15 +877,15 @@ enable-table-lock = true
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.True(t, conf.EnableTelemetry)
+	require.False(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
-enable-telemetry = false
+enable-telemetry = true
 `)
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.False(t, conf.EnableTelemetry)
+	require.True(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
 [security]
@@ -1012,7 +1023,8 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 func TestConflictInstanceConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)
-	configFile := "config.toml"
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
@@ -1068,7 +1080,8 @@ func TestConflictInstanceConfig(t *testing.T) {
 func TestDeprecatedConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)
-	configFile := "config.toml"
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
@@ -1301,5 +1314,22 @@ func TestGetGlobalKeyspaceName(t *testing.T) {
 
 	UpdateGlobal(func(conf *Config) {
 		conf.KeyspaceName = ""
+	})
+}
+
+func TestAutoScalerConfig(t *testing.T) {
+	conf := NewConfig()
+	require.False(t, conf.UseAutoScaler)
+
+	conf = GetGlobalConfig()
+	require.False(t, conf.UseAutoScaler)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.UseAutoScaler = true
+	})
+	require.True(t, GetGlobalConfig().UseAutoScaler)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.UseAutoScaler = false
 	})
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -36,6 +37,10 @@ import (
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
 func (ds *DataSource) generateIndexMergePath() error {
+	if ds.ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.ctx)
+		defer debugtrace.LeaveContextCommon(ds.ctx)
+	}
 	var warningMsg string
 	stmtCtx := ds.ctx.GetSessionVars().StmtCtx
 	defer func() {
@@ -109,11 +114,28 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 		if !ok || sf.FuncName.L != ast.LogicOr {
 			continue
 		}
+		// shouldKeepCurrentFilter means the partial paths can't cover the current filter completely, so we must add
+		// the current filter into a Selection after partial paths.
+		shouldKeepCurrentFilter := false
 		var partialPaths = make([]*util.AccessPath, 0, usedIndexCount)
 		dnfItems := expression.FlattenDNFConditions(sf)
 		for _, item := range dnfItems {
 			cnfItems := expression.SplitCNFItems(item)
-			itemPaths := ds.accessPathsForConds(cnfItems, usedIndexCount)
+
+			pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
+			for _, cnfItem := range cnfItems {
+				if expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx,
+					[]expression.Expression{cnfItem},
+					ds.ctx.GetClient(),
+					kv.TiKV,
+				) {
+					pushedDownCNFItems = append(pushedDownCNFItems, cnfItem)
+				} else {
+					shouldKeepCurrentFilter = true
+				}
+			}
+
+			itemPaths := ds.accessPathsForConds(pushedDownCNFItems, usedIndexCount)
 			if len(itemPaths) == 0 {
 				partialPaths = nil
 				break
@@ -140,7 +162,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 			continue
 		}
 		if len(partialPaths) > 1 {
-			possiblePath := ds.buildIndexMergeOrPath(filters, partialPaths, i)
+			possiblePath := ds.buildIndexMergeOrPath(filters, partialPaths, i, shouldKeepCurrentFilter)
 			if possiblePath == nil {
 				return nil
 			}
@@ -287,7 +309,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 
 // buildIndexMergePartialPath chooses the best index path from all possible paths.
 // Now we choose the index with minimal estimate row count.
-func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPath) (*util.AccessPath, error) {
+func (*DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPath) (*util.AccessPath, error) {
 	if len(indexAccessPaths) == 1 {
 		return indexAccessPaths[0], nil
 	}
@@ -308,28 +330,46 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.Access
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath.
-func (ds *DataSource) buildIndexMergeOrPath(filters []expression.Expression, partialPaths []*util.AccessPath, current int) *util.AccessPath {
+func (ds *DataSource) buildIndexMergeOrPath(
+	filters []expression.Expression,
+	partialPaths []*util.AccessPath,
+	current int,
+	shouldKeepCurrentFilter bool,
+) *util.AccessPath {
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current+1:]...)
-	var addCurrentFilter bool
+	// If global index exists, index merge is not allowed.
+	// Global index is not compatible with IndexMergeReaderExecutor.
+	for i := range partialPaths {
+		if partialPaths[i].Index != nil && partialPaths[i].Index.Global {
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("global index is not compatible with index merge, so ignore it"))
+			return nil
+		}
+	}
+
 	for _, path := range partialPaths {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(path.TableFilters) > 0 {
-			addCurrentFilter = true
+			shouldKeepCurrentFilter = true
 		}
 		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
 		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, path.IndexFilters, ds.ctx.GetClient(), kv.TiKV) {
-			addCurrentFilter = true
+			shouldKeepCurrentFilter = true
 			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
 			path.IndexFilters = nil
 		}
 		if len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, path.TableFilters, ds.ctx.GetClient(), kv.TiKV) {
-			addCurrentFilter = true
+			shouldKeepCurrentFilter = true
 			path.TableFilters = nil
 		}
 	}
-	if addCurrentFilter {
+
+	// Keep this filter as a part of table filters for safety if it has any parameter.
+	if expression.MaybeOverOptimized4PlanCache(ds.ctx, filters[current:current+1]) {
+		shouldKeepCurrentFilter = true
+	}
+	if shouldKeepCurrentFilter {
 		indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current])
 	}
 	return indexMergePath
@@ -414,6 +454,11 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 			dedupedFinalFilters = append(dedupedFinalFilters, cond)
 			hashCodeSet[hashCode] = struct{}{}
 		}
+	}
+
+	// Keep these partial filters as a part of table filters for safety if there is any parameter.
+	if expression.MaybeOverOptimized4PlanCache(ds.ctx, partialFilters) {
+		dedupedFinalFilters = append(dedupedFinalFilters, partialFilters...)
 	}
 
 	// 3. Estimate the row count after partial paths.
@@ -605,7 +650,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 }
 
 // buildPartialPathUp4MVIndex builds these partial paths up to a complete index merge path.
-func (ds *DataSource) buildPartialPathUp4MVIndex(partialPaths []*util.AccessPath, isIntersection bool, remainingFilters []expression.Expression) *util.AccessPath {
+func (*DataSource) buildPartialPathUp4MVIndex(partialPaths []*util.AccessPath, isIntersection bool, remainingFilters []expression.Expression) *util.AccessPath {
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths, IndexMergeAccessMVIndex: true}
 	indexMergePath.IndexMergeIsIntersection = isIntersection
 	indexMergePath.TableFilters = remainingFilters

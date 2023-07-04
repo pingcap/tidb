@@ -17,15 +17,20 @@ package flashbacktest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
@@ -522,5 +527,73 @@ func TestFlashbackTmpTable(t *testing.T) {
 		tk.MustGetErrCode("select * from t", errno.ErrNoSuchTable)
 
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
+	}
+}
+
+func TestFlashbackInProcessErrorMsg(t *testing.T) {
+	if *realtikvtest.WithRealTiKV {
+		store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+
+		originHook := dom.DDL().GetHook()
+
+		tk := testkit.NewTestKit(t, store)
+		timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+		defer resetGC()
+
+		tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int)")
+
+		time.Sleep(1 * time.Second)
+		ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+
+		// do some ddl and dml
+		tk.MustExec("alter table t add index k(a)")
+		tk.MustExec("insert into t values (1), (2), (3)")
+
+		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+
+		hook := newTestCallBack(t, dom)
+		hook.OnJobRunBeforeExported = func(job *model.Job) {
+			if job.Type == model.ActionFlashbackCluster && job.SchemaState == model.StateWriteReorganization {
+				txn, err := store.Begin()
+				assert.NoError(t, err)
+				_, err = meta.NewMeta(txn).ListDatabases()
+				errorMsg := err.Error()
+				assert.Contains(t, errorMsg, "is in flashback progress, FlashbackStartTS is ")
+				slices := strings.Split(errorMsg, "is in flashback progress, FlashbackStartTS is ")
+				assert.Equal(t, len(slices), 2)
+				assert.NotEqual(t, slices[1], "0")
+				txn.Rollback()
+			}
+		}
+		dom.DDL().SetHook(hook)
+		tk.Exec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		dom.DDL().SetHook(originHook)
+
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
+	}
+}
+
+type testCallback struct {
+	ddl.Callback
+	OnJobRunBeforeExported func(job *model.Job)
+}
+
+func newTestCallBack(t *testing.T, dom *domain.Domain) *testCallback {
+	defHookFactory, err := ddl.GetCustomizedHook("default_hook")
+	require.NoError(t, err)
+	return &testCallback{
+		Callback: defHookFactory(dom),
+	}
+}
+
+func (c *testCallback) OnJobRunBefore(job *model.Job) {
+	if c.OnJobRunBeforeExported != nil {
+		c.OnJobRunBeforeExported(job)
 	}
 }

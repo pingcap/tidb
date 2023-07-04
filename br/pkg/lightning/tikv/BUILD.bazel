@@ -29,6 +29,7 @@ go_test(
     timeout = "short",
     srcs = ["tikv_test.go"],
     flaky = True,
+    shard_count = 4,
     deps = [
         ":tikv",
         "//br/pkg/lightning/common",

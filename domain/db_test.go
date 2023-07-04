@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -73,7 +74,7 @@ func TestNormalSessionPool(t *testing.T) {
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domain.Close()
-	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, true)
+	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, keyspace.CodecV1, true)
 	require.NoError(t, err1)
 	conf := config.GetGlobalConfig()
 	conf.Socket = ""
@@ -82,7 +83,6 @@ func TestNormalSessionPool(t *testing.T) {
 	svr, err := server.NewServer(conf, nil)
 	require.NoError(t, err)
 	svr.SetDomain(domain)
-	svr.InitGlobalConnID(domain.ServerID)
 	info.SetSessionManager(svr)
 
 	pool := domain.SysSessionPool()
@@ -107,7 +107,7 @@ func TestAbnormalSessionPool(t *testing.T) {
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domain.Close()
-	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, true)
+	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, keyspace.CodecV1, true)
 	require.NoError(t, err1)
 	conf := config.GetGlobalConfig()
 	conf.Socket = ""
@@ -116,7 +116,6 @@ func TestAbnormalSessionPool(t *testing.T) {
 	svr, err := server.NewServer(conf, nil)
 	require.NoError(t, err)
 	svr.SetDomain(domain)
-	svr.InitGlobalConnID(domain.ServerID)
 	info.SetSessionManager(svr)
 
 	pool := domain.SysSessionPool()

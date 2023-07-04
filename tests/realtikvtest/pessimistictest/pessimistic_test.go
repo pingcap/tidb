@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
@@ -52,6 +53,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
@@ -203,7 +205,7 @@ func TestDeadlock(t *testing.T) {
 
 	// Use the root user so that the statements can be recorded into statements_summary table, which is necessary
 	// for fetching
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk1.MustExec("drop table if exists deadlock")
 	tk1.MustExec("create table deadlock (k int primary key, v int)")
 	tk1.MustExec("insert into deadlock values (1, 1), (2, 1)")
@@ -212,7 +214,7 @@ func TestDeadlock(t *testing.T) {
 	ts1, err := strconv.ParseUint(tk1.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
 	require.NoError(t, err)
 
-	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk2.MustExec("begin pessimistic")
 	ts2, err := strconv.ParseUint(tk2.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
 	require.NoError(t, err)
@@ -539,7 +541,7 @@ func TestOptimisticConflicts(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	// This SQL use BatchGet and cache data in the txn snapshot.
 	// It can be changed to other SQLs that use BatchGet.
-	tk.MustExec("insert ignore into conflict values (1, 2)")
+	tk.MustExec("select * from conflict where id in (1, 2, 3)")
 
 	tk2.MustExec("update conflict set c = c - 1")
 
@@ -1168,6 +1170,10 @@ func TestPessimisticReadCommitted(t *testing.T) {
 
 	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
 	tk1.MustExec("set tidb_txn_mode = 'pessimistic'")
+
+	// Avoid issue https://github.com/pingcap/tidb/issues/41792
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+	tk1.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 
 	// test SI
 	tk.MustExec("drop table if exists t;")
@@ -2417,60 +2423,37 @@ func TestTransactionIsolationAndForeignKey(t *testing.T) {
 	tk.MustExec("admin check table t2")
 }
 
-func TestChangeLockToPut(t *testing.T) {
+func TestIssue28011(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk2.MustExec("use test")
 
-	tk.MustExec("drop table if exists tk")
-	tk.MustExec("create table t1(c1 varchar(20) key, c2 int, c3 int, unique key k1(c2), key k2(c3))")
-	tk.MustExec(`insert into t1 values ("1", 1, 1), ("2", 2, 2), ("3", 3, 3)`)
-
-	// Test point get change lock to put.
-	for _, mode := range []string{"REPEATABLE-READ", "READ-COMMITTED"} {
-		tk.MustExec(fmt.Sprintf(`set tx_isolation = "%s"`, mode))
-		tk.MustExec("begin pessimistic")
-		tk.MustQuery(`select * from t1 where c1 = "1" for update`).Check(testkit.Rows("1 1 1"))
-		tk.MustExec("commit")
-		tk.MustExec("begin pessimistic")
-		tk.MustQuery(`select * from t1 where c1 = "1" for update`).Check(testkit.Rows("1 1 1"))
-		tk.MustExec("commit")
-		tk.MustExec("admin check table t1")
-		tk2.MustExec("begin")
-		tk2.MustQuery(`select * from t1 use index(k1) where c2 = "1" for update`).Check(testkit.Rows("1 1 1"))
-		tk2.MustQuery(`select * from t1 use index(k1) where c2 = "3" for update`).Check(testkit.Rows("3 3 3"))
-		tk2.MustExec("commit")
-		tk2.MustExec("begin")
-		tk2.MustQuery(`select * from t1 use index(k2) where c3 = 1`).Check(testkit.Rows("1 1 1"))
-		tk2.MustQuery("select * from t1 use index(k2) where c3 > 1").Check(testkit.Rows("2 2 2", "3 3 3"))
-		tk2.MustExec("commit")
+	for _, tt := range []struct {
+		name      string
+		lockQuery string
+		finalRows [][]interface{}
+	}{
+		{"Update", "update t set b = 'x' where a = 'a'", testkit.Rows("a x", "b y", "c z")},
+		{"BatchUpdate", "update t set b = 'x' where a in ('a', 'b', 'c')", testkit.Rows("a x", "b y", "c x")},
+		{"SelectForUpdate", "select a from t where a = 'a' for update", testkit.Rows("a x", "b y", "c z")},
+		{"BatchSelectForUpdate", "select a from t where a in ('a', 'b', 'c') for update", testkit.Rows("a x", "b y", "c z")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("create table t (a varchar(10) primary key nonclustered, b varchar(10))")
+			tk.MustExec("insert into t values ('a', 'x'), ('b', 'x'), ('c', 'z')")
+			tk.MustExec("begin")
+			tk.MustExec(tt.lockQuery)
+			tk.MustQuery("select a from t").Check(testkit.Rows("a", "b", "c"))
+			tk.MustExec("replace into t values ('b', 'y')")
+			tk.MustQuery("select a from t").Check(testkit.Rows("a", "b", "c"))
+			tk.MustQuery("select a, b from t order by a").Check(tt.finalRows)
+			tk.MustExec("commit")
+			tk.MustQuery("select a, b from t order by a").Check(tt.finalRows)
+			tk.MustExec("admin check table t")
+		})
 	}
-
-	// Test batch point get change lock to put.
-	for _, mode := range []string{"REPEATABLE-READ", "READ-COMMITTED"} {
-		tk.MustExec(fmt.Sprintf(`set tx_isolation = "%s"`, mode))
-		tk.MustExec("begin pessimistic")
-		tk.MustQuery(`select * from t1 where c1 in ("1", "5", "3") for update`).Check(testkit.Rows("1 1 1", "3 3 3"))
-		tk.MustExec("commit")
-		tk.MustExec("begin pessimistic")
-		tk.MustQuery(`select * from t1 where c1 in ("1", "2", "8") for update`).Check(testkit.Rows("1 1 1", "2 2 2"))
-		tk.MustExec("commit")
-		tk.MustExec("admin check table t1")
-		tk2.MustExec("begin")
-		tk2.MustQuery(`select * from t1 use index(k1) where c2 in ("1", "2", "3") for update`).Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
-		tk2.MustQuery(`select * from t1 use index(k2) where c2 in ("2") for update`).Check(testkit.Rows("2 2 2"))
-		tk2.MustExec("commit")
-		tk2.MustExec("begin")
-		tk2.MustQuery(`select * from t1 use index(k2) where c3 in (5, 8)`).Check(testkit.Rows())
-		tk2.MustQuery(`select * from t1 use index(k2) where c3 in (1, 8) for update`).Check(testkit.Rows("1 1 1"))
-		tk2.MustQuery(`select * from t1 use index(k2) where c3 > 1`).Check(testkit.Rows("2 2 2", "3 3 3"))
-		tk2.MustExec("commit")
-	}
-
-	tk.MustExec("admin check table t1")
 }
 
 func createTable(part bool, columnNames []string, columnTypes []string) string {
@@ -3069,16 +3052,16 @@ func mustRecv[T interface{}](t *testing.T, ch <-chan T) T {
 	panic("unreachable")
 }
 
-func TestAggressiveLockingBasic(t *testing.T) {
+func TestFairLockingBasic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	// TODO: Check aggressive locking is indeed used and the RPC is avoided when doing pessimistic retry.
+	// TODO: Check fair locking is indeed used and the RPC is avoided when doing pessimistic retry.
 
-	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 1")
 	tk.MustExec("create table t (id int primary key, k int unique, v int)")
 	tk.MustExec("insert into t values (1, 1, 1)")
 
@@ -3118,7 +3101,7 @@ func TestAggressiveLockingBasic(t *testing.T) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 6"))
 
-	// Lock one key (the row key) in aggressive locking mode, and then falls back due to multiple keys needs to be
+	// Lock one key (the row key) in fair locking mode, and then falls back due to multiple keys needs to be
 	// locked then (the unique index keys, one deleted and one added).
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
@@ -3159,14 +3142,14 @@ func TestAggressiveLockingBasic(t *testing.T) {
 	tk.MustExec("commit")
 }
 
-func TestAggressiveLockingInsert(t *testing.T) {
+func TestFairLockingInsert(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 1")
 	tk.MustExec("create table t (id int primary key, v int)")
 
 	tk.MustExec("begin pessimistic")
@@ -3194,7 +3177,7 @@ func TestAggressiveLockingInsert(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 10"))
 }
 
-func TestAggressiveLockingLockWithConflictIdempotency(t *testing.T) {
+func TestFairLockingLockWithConflictIdempotency(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3203,7 +3186,7 @@ func TestAggressiveLockingLockWithConflictIdempotency(t *testing.T) {
 	tk2.Session().SetConnectionID(0)
 	tk2.MustExec("use test")
 
-	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 1")
 	tk.MustExec("create table t (id int primary key, v int)")
 	tk.MustExec("insert into t values (1, 1)")
 
@@ -3221,7 +3204,7 @@ func TestAggressiveLockingLockWithConflictIdempotency(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 12"))
 }
 
-func TestAggressiveLockingRetry(t *testing.T) {
+func TestFairLockingRetry(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3236,7 +3219,7 @@ func TestAggressiveLockingRetry(t *testing.T) {
 		tk.MustExec("rollback")
 	}
 
-	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 1")
 	tk.MustExec("create table t1 (id int primary key, v int)")
 	tk.MustExec("create table t2 (id int primary key, v int)")
 	tk.MustExec("create table t3 (id int primary key, v int, v2 int)")
@@ -3355,4 +3338,207 @@ func TestIssue40114(t *testing.T) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 3"))
+}
+
+func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from t where a = 1 for update")
+	tk.MustExec("commit")
+
+	lockedWithConflictCounter := 0
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	// Test key exist + write conflict, and locking with conflict takes effect.
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (1, 2)")
+	require.NoError(t, failpoint.EnableWith("github.com/pingcap/tidb/store/driver/txn/lockedWithConflictOccurs", "return", func() error {
+		lockedWithConflictCounter++
+		return nil
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/driver/txn/lockedWithConflictOccurs"))
+	}()
+	ch := mustQueryAsync(tk, "select * from t where a = 1 for update")
+	mustTimeout(t, ch, time.Millisecond*100)
+
+	tk2.MustExec("commit")
+	mustRecv(t, ch).Check(testkit.Rows("1 2"))
+	require.Equal(t, lockedWithConflictCounter, 1)
+	tk.MustExec("commit")
+
+	// Test key not exist + write conflict, in which case locking with conflict is disabled.
+	lockedWithConflictCounter = 0
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("delete from t where a = 1")
+	ch = mustQueryAsync(tk, "select * from t where a = 1 for update")
+	mustTimeout(t, ch, time.Millisecond*100)
+
+	tk2.MustExec("commit")
+	mustRecv(t, ch).Check(testkit.Rows())
+	require.Equal(t, lockedWithConflictCounter, 0)
+	tk.MustExec("commit")
+}
+
+func TestIssue43243(t *testing.T) {
+	store, domain := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+
+	if *realtikvtest.WithRealTiKV {
+		// Disable in-memory pessimistic lock since it cannot be scanned in current implementation.
+		// TODO: Remove this after supporting scan lock for in-memory pessimistic lock.
+		tkcfg := testkit.NewTestKit(t, store)
+		res := tkcfg.MustQuery("show config where name = 'pessimistic-txn.in-memory' and type = 'tikv'").Rows()
+		if len(res) > 0 && res[0][3].(string) == "true" {
+			tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"false\"")
+			tkcfg.MustQuery("show warnings").Check(testkit.Rows())
+			defer func() {
+				tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"true\"")
+			}()
+			time.Sleep(time.Second)
+		} else {
+			t.Log("skip disabling in-memory pessimistic lock, current config:", res)
+		}
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key, v int)")
+	tk.MustExec("create table t2 (id int primary key, v int)")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
+	tk.MustExec("set @@tidb_enable_async_commit=0")
+	tk.MustExec("set @@tidb_enable_1pc=0")
+
+	// Split region
+	{
+		tableID, err := strconv.ParseInt(tk.MustQuery(`select tidb_table_id from information_schema.tables where table_schema = "test" and table_name = "t2"`).Rows()[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		key := tablecodec.EncodeTablePrefix(tableID)
+		_, err = domain.GetPDClient().SplitRegions(context.Background(), [][]byte{key})
+		require.NoError(t, err)
+	}
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+
+	require.NoError(t, failpoint.Enable("tikvclient/beforeAsyncPessimisticRollback", `return("skip")`))
+	require.NoError(t, failpoint.Enable("tikvclient/beforeCommitSecondaries", `return("skip")`))
+	require.NoError(t, failpoint.Enable("tikvclient/twoPCRequestBatchSizeLimit", `return`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/beforeAsyncPessimisticRollback"))
+		require.NoError(t, failpoint.Disable("tikvclient/beforeCommitSecondaries"))
+		require.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
+	}()
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t2 set v = v + 1 where id = 2")
+	ch := make(chan struct{})
+	go func() {
+		tk.MustExec(`
+		with
+			c as (select /*+ MERGE() */ v from t1 where id in (1, 2))
+		update c join t2 on c.v = t2.id set t2.v = t2.v + 10`)
+		ch <- struct{}{}
+	}()
+	// tk blocked on row 2
+	mustTimeout(t, ch, time.Millisecond*100)
+	// Change the rows that should be locked by tk.
+	tk3.MustExec("update t1 set v = v + 3")
+	// Release row 2 and resume tk.
+	tk2.MustExec("commit")
+	mustRecv(t, ch)
+
+	// tk should have updated row 4 and row 5, and 4 should be the primary.
+	// At the same time row 1 should be the old primary, row2 points to row 1.
+	// Add another secondary that's smaller than the current primary.
+	tk.MustExec("update t2 set v = v + 10 where id = 3")
+	tk.MustExec("commit")
+
+	// Simulate a later GC that should resolve all stale lock produced in above steps.
+	currentTS, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	_, err = gcworker.RunResolveLocks(context.Background(), store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-issue43243", 1, false)
+	require.NoError(t, err)
+
+	// Check data consistency
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 1", "2 3", "3 13", "4 14", "5 15"))
+}
+
+func TestIssue42937(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_async_commit = 0")
+	tk.MustExec("set @@tidb_enable_1pc = 0")
+	tk2.MustExec("use test")
+	tk2.MustExec("set @@tidb_enable_async_commit = 0")
+	tk2.MustExec("set @@tidb_enable_1pc = 0")
+	tk3.MustExec("use test")
+
+	tk.MustExec("create table t(id int primary key, v int unique)")
+	tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30), (4, 40)")
+	tk.MustExec("create table t2 (id int primary key, v int)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2)")
+
+	require.NoError(t, failpoint.Enable("tikvclient/beforeAsyncPessimisticRollback", `return("skip")`))
+	require.NoError(t, failpoint.Enable("tikvclient/twoPCRequestBatchSizeLimit", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/beforeAsyncPessimisticRollback"))
+		require.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
+	}()
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 1 where id = 2")
+
+	require.NoError(t, failpoint.Enable("tikvclient/twoPCShortLockTTL", "return"))
+	require.NoError(t, failpoint.Enable("tikvclient/shortPessimisticLockTTL", "return"))
+	ch := mustExecAsync(tk, `
+		with
+			c as (select /*+ MERGE() */ v from t2 where id = 1 or id = 2)
+		update c join t on c.v = t.id set t.v = t.v + 1`)
+	mustTimeout(t, ch, time.Millisecond*100)
+
+	tk3.MustExec("update t2 set v = v + 2")
+	tk2.MustExec("commit")
+	<-ch
+
+	tk.MustQuery("select id, v from t order by id").Check(testkit.Rows("1 10", "2 20", "3 31", "4 41"))
+	tk.MustExec("update t set v = 0 where id = 1")
+
+	require.NoError(t, failpoint.Enable("tikvclient/beforeCommit", `1*return("delay(500)")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/beforeCommit"))
+	}()
+
+	ch = mustExecAsync(tk, "commit")
+	mustTimeout(t, ch, time.Millisecond*100)
+
+	require.NoError(t, failpoint.Disable("tikvclient/twoPCShortLockTTL"))
+	require.NoError(t, failpoint.Disable("tikvclient/shortPessimisticLockTTL"))
+
+	tk2.MustExec("insert into t values (5, 11)")
+
+	mustRecv(t, ch)
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows(
+		"1 0",
+		"2 21",
+		"3 31",
+		"4 41",
+		"5 11",
+	))
 }

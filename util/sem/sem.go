@@ -151,6 +151,7 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		variable.TiDBRowFormatVersion,
 		variable.TiDBSlowQueryFile,
 		variable.TiDBSlowLogThreshold,
+		variable.TiDBSlowTxnLogThreshold,
 		variable.TiDBEnableCollectExecutionInfo,
 		variable.TiDBMemoryUsageAlarmRatio,
 		variable.TiDBRedactLog,

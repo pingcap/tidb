@@ -11,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//go:build !race
 
 package server
 
@@ -25,9 +24,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
+	"encoding/binary"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -49,6 +51,8 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/internal/column"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -80,6 +84,16 @@ type tidbTestSuite struct {
 }
 
 func createTidbTestSuite(t *testing.T) *tidbTestSuite {
+	cfg := util2.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 0
+	cfg.Status.RecordDBLabel = true
+	cfg.Performance.TCPKeepAlive = true
+	return createTidbTestSuiteWithCfg(t, cfg)
+}
+
+func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite {
 	ts := &tidbTestSuite{testServerClient: newTestServerClient()}
 
 	// setup tidbTestSuite
@@ -90,11 +104,6 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
-	cfg := newTestConfig()
-	cfg.Port = ts.port
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = ts.statusPort
-	cfg.Performance.TCPKeepAlive = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
@@ -102,7 +111,6 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
 	ts.server.SetDomain(ts.domain)
-	ts.server.InitGlobalConnID(ts.domain.ServerID)
 	ts.domain.InfoSyncer().SetSessionManager(ts.server)
 	go func() {
 		err := ts.server.Run()
@@ -122,7 +130,6 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 		}
 		view.Stop()
 	})
-
 	return ts
 }
 
@@ -235,7 +242,7 @@ func TestStatusAPI(t *testing.T) {
 func TestStatusPort(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -262,7 +269,7 @@ func TestStatusAPIWithTLS(t *testing.T) {
 
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = fileName("ca-cert-2.pem")
@@ -318,7 +325,7 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = caPath
@@ -384,7 +391,7 @@ func TestSocketForwarding(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = cli.port
 	os.Remove(cfg.Socket)
@@ -392,6 +399,7 @@ func TestSocketForwarding(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -413,7 +421,7 @@ func TestSocket(t *testing.T) {
 	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = 0
 	os.Remove(cfg.Socket)
@@ -424,6 +432,7 @@ func TestSocket(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
@@ -449,7 +458,7 @@ func TestSocketAndIp(t *testing.T) {
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
@@ -458,6 +467,7 @@ func TestSocketAndIp(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -613,7 +623,7 @@ func TestOnlySocket(t *testing.T) {
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Host = "" // No network interface listening for mysql traffic
 	cfg.Status.ReportStatus = false
@@ -622,6 +632,7 @@ func TestOnlySocket(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
@@ -868,7 +879,7 @@ func TestSystemTimeZone(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	tk := testkit.NewTestKit(t, ts.store)
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -897,7 +908,6 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 	}
 	// Test an issue that sysSessionPool doesn't call session's Close, cause
 	// asyncGetTSWorker goroutine leak.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockDelayInnerSessionExecute", "return"))
 	var wg util.WaitGroupWrapper
 	for i := 0; i < count; i++ {
 		s := stmts[i]
@@ -906,11 +916,6 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-	time.Sleep(100 * time.Millisecond)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockDelayInnerSessionExecute"))
-
-	lst := ts.domain.InfoSyncer().GetSessionManager().GetInternalSessionStartTSList()
-	require.Equal(t, len(lst), 10)
 
 	wg.Wait()
 }
@@ -1017,7 +1022,7 @@ func TestShowTablesFlen(t *testing.T) {
 	require.Equal(t, 26*tmysql.MaxBytesOfCharacter, int(cols[0].ColumnLength))
 }
 
-func checkColNames(t *testing.T, columns []*ColumnInfo, names ...string) {
+func checkColNames(t *testing.T, columns []*column.Info, names ...string) {
 	for i, name := range names {
 		require.Equal(t, name, columns[i].Name)
 		require.Equal(t, name, columns[i].OrgName)
@@ -1136,7 +1141,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 
@@ -1147,7 +1152,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 
@@ -1162,7 +1167,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 
@@ -1172,7 +1177,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 	{
@@ -1181,7 +1186,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 	{
@@ -1190,7 +1195,7 @@ func TestNullFlag(t *testing.T) {
 		cols := rs.Columns()
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
-		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 		rs.Close()
 	}
 }
@@ -1215,14 +1220,14 @@ func TestNO_DEFAULT_VALUEFlag(t *testing.T) {
 	cols := rs.Columns()
 	require.Len(t, cols, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
-	require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+	require.Equal(t, expectFlag, column.DumpFlag(cols[0].Type, cols[0].Flag))
 }
 
 func TestGracefulShutdown(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.GracefulWaitBeforeShutdown = 2 // wait before shutdown
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
@@ -1620,7 +1625,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		dbt.MustExec("SET tidb_multi_statement_mode='ON'")
 		_, err = db.Exec(multiStatement7)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1146: Table 'topsql.t_not_exist' doesn't exist", err.Error())
+		require.Equal(t, "Error 1146 (42S02): Table 'topsql.t_not_exist' doesn't exist", err.Error())
 	}
 	check = func() {
 		checkFn(cases7[0], "") // the first statement execute success, should have topsql data.
@@ -1671,7 +1676,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		dbt.MustExec("alter table t drop index if exists idx_b")
 		_, err := db.Exec(addIndexStr)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1062: Duplicate entry '1' for key 't.idx_b'", err.Error())
+		require.Equal(t, "Error 1062 (23000): Duplicate entry '1' for key 't.idx_b'", err.Error())
 	}
 	check = func() {
 		checkFn(addIndexStr, "")
@@ -1685,7 +1690,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	execFn = func(db *sql.DB) {
 		_, err = db.Query(execFailedQuery)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1105: mock handleTaskOnce error", err.Error())
+		require.Equal(t, "Error 1105 (HY000): mock handleTaskOnce error", err.Error())
 	}
 	check = func() {
 		checkFn(execFailedQuery, "")
@@ -2067,7 +2072,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 	tagChecker := &resourceTagChecker{
 		sqlDigest2Reqs: make(map[stmtstats.BinaryDigest]map[tikvrpc.CmdType]struct{}),
 	}
-	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
+	unistoreRPCClientSendHook := func(req *tikvrpc.Request) {
 		tag := req.GetResourceGroupTag()
 		if len(tag) == 0 || ddlutil.IsInternalResourceGroupTaggerForTopSQL(tag) {
 			// Ignore for internal background request.
@@ -2085,6 +2090,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		reqMap[req.Type] = struct{}{}
 		tagChecker.sqlDigest2Reqs[stmtstats.BinaryDigest(sqlDigest)] = reqMap
 	}
+	unistore.UnistoreRPCClientSendHook.Store(&unistoreRPCClientSendHook)
 
 	t.Cleanup(func() {
 		stmtstats.UnregisterCollector(mockCollector)
@@ -2179,11 +2185,11 @@ func TestTopSQLStatementStats2(t *testing.T) {
 
 		_, err := db.Exec(multiStatement6)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1146: Table 'stmtstats.t6_not_exist' doesn't exist", err.Error())
+		require.Equal(t, "Error 1146 (42S02): Table 'stmtstats.t6_not_exist' doesn't exist", err.Error())
 
 		_, err = db.Exec(multiStatement7)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1146: Table 'stmtstats.t7_not_exist' doesn't exist", err.Error())
+		require.Equal(t, "Error 1146 (42S02): Table 'stmtstats.t7_not_exist' doesn't exist", err.Error())
 
 		for _, ca := range cases8 {
 			dbt.MustExec(ca)
@@ -2421,8 +2427,8 @@ func TestTopSQLResourceTag(t *testing.T) {
 		// Test for other statements.
 		{"set @@global.tidb_enable_1pc = 1", false, nil},
 		{fmt.Sprintf("load data local infile %q into table t2", loadDataFile.Name()), false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
-		{"admin check table t", false, []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"admin check index t idx", false, []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"admin check table t", false, nil},
+		{"admin check index t idx", false, nil},
 		{"admin recover index t idx", false, []tikvrpc.CmdType{tikvrpc.CmdBatchGet}},
 		{"admin cleanup index t idx", false, []tikvrpc.CmdType{tikvrpc.CmdBatchGet}},
 	}
@@ -2432,6 +2438,10 @@ func TestTopSQLResourceTag(t *testing.T) {
 		reqs []tikvrpc.CmdType
 	}{
 		{"replace into mysql.global_variables (variable_name,variable_value) values ('tidb_enable_1pc', '1')", []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((crc32(md5(concat_ws(0x2, `_tidb_rowid`))) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
 	}
 	executeCaseFn := func(execFn func(db *sql.DB)) {
 		dsn := ts.getDSN(func(config *mysql.Config) {
@@ -2494,7 +2504,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
@@ -2503,6 +2513,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -2970,12 +2981,14 @@ func TestChunkReuseCorruptSysVarString(t *testing.T) {
 
 	rs, err := conn.QueryContext(context.Background(), "show tables in test")
 	ts.Rows(t, rs)
+	require.NoError(t, err)
 
 	_, err = conn.ExecContext(context.Background(), "set @@time_zone=(select 'Asia/Shanghai')")
 	require.NoError(t, err)
 
 	rs, err = conn.QueryContext(context.Background(), "select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='aaaa'")
 	ts.Rows(t, rs)
+	require.NoError(t, err)
 
 	rs, err = conn.QueryContext(context.Background(), "select @@time_zone")
 	require.NoError(t, err)
@@ -2986,4 +2999,225 @@ func TestChunkReuseCorruptSysVarString(t *testing.T) {
 	rows := ts.Rows(t, rs)
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, "Asia/Shanghai", rows[0])
+}
+
+type mockProxyProtocolProxy struct {
+	frontend      string
+	backend       string
+	clientAddr    string
+	backendIsSock bool
+	ln            net.Listener
+	run           atomic.Bool
+}
+
+func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSock bool) *mockProxyProtocolProxy {
+	return &mockProxyProtocolProxy{
+		frontend:      frontend,
+		backend:       backend,
+		clientAddr:    clientAddr,
+		backendIsSock: backendIsSock,
+		ln:            nil,
+	}
+}
+
+func (p *mockProxyProtocolProxy) ListenAddr() net.Addr {
+	return p.ln.Addr()
+}
+
+func (p *mockProxyProtocolProxy) Run() (err error) {
+	p.run.Store(true)
+	p.ln, err = net.Listen("tcp", p.frontend)
+	if err != nil {
+		return err
+	}
+	for p.run.Load() {
+		conn, err := p.ln.Accept()
+		if err != nil {
+			break
+		}
+		go p.onConn(conn)
+	}
+	return nil
+}
+
+func (p *mockProxyProtocolProxy) Close() error {
+	p.run.Store(false)
+	if p.ln != nil {
+		return p.ln.Close()
+	}
+	return nil
+}
+
+func (p *mockProxyProtocolProxy) connectToBackend() (net.Conn, error) {
+	if p.backendIsSock {
+		return net.Dial("unix", p.backend)
+	}
+	return net.Dial("tcp", p.backend)
+}
+
+func (p *mockProxyProtocolProxy) onConn(conn net.Conn) {
+	bconn, err := p.connectToBackend()
+	if err != nil {
+		conn.Close()
+		fmt.Println(err)
+	}
+	defer bconn.Close()
+	ppHeader := p.generateProxyProtocolHeaderV2("tcp4", p.clientAddr, p.frontend)
+	bconn.Write(ppHeader)
+	p.proxyPipe(conn, bconn)
+}
+
+func (p *mockProxyProtocolProxy) proxyPipe(p1, p2 io.ReadWriteCloser) {
+	defer p1.Close()
+	defer p2.Close()
+
+	// start proxy
+	p1die := make(chan struct{})
+	go func() { io.Copy(p1, p2); close(p1die) }()
+
+	p2die := make(chan struct{})
+	go func() { io.Copy(p2, p1); close(p2die) }()
+
+	// wait for proxy termination
+	select {
+	case <-p1die:
+	case <-p2die:
+	}
+}
+
+func (p *mockProxyProtocolProxy) generateProxyProtocolHeaderV2(network, srcAddr, dstAddr string) []byte {
+	var (
+		proxyProtocolV2Sig = []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A}
+		v2CmdPos           = 12
+		v2FamlyPos         = 13
+	)
+	saddr, _ := net.ResolveTCPAddr(network, srcAddr)
+	daddr, _ := net.ResolveTCPAddr(network, dstAddr)
+	buffer := make([]byte, 1024)
+	copy(buffer, proxyProtocolV2Sig)
+	// Command
+	buffer[v2CmdPos] = 0x21
+	// Famly
+	if network == "tcp4" {
+		buffer[v2FamlyPos] = 0x11
+		binary.BigEndian.PutUint16(buffer[14:14+2], 12)
+		copy(buffer[16:16+4], []byte(saddr.IP.To4()))
+		copy(buffer[20:20+4], []byte(daddr.IP.To4()))
+		binary.BigEndian.PutUint16(buffer[24:24+2], uint16(saddr.Port))
+		binary.BigEndian.PutUint16(buffer[26:26+2], uint16(saddr.Port))
+		return buffer[0:28]
+	} else if network == "tcp6" {
+		buffer[v2FamlyPos] = 0x21
+		binary.BigEndian.PutUint16(buffer[14:14+2], 36)
+		copy(buffer[16:16+16], []byte(saddr.IP.To16()))
+		copy(buffer[32:32+16], []byte(daddr.IP.To16()))
+		binary.BigEndian.PutUint16(buffer[48:48+2], uint16(saddr.Port))
+		binary.BigEndian.PutUint16(buffer[50:50+2], uint16(saddr.Port))
+		return buffer[0:52]
+	}
+	return buffer
+}
+
+func TestProxyProtocolWithIpFallbackable(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.Port = 4999
+	cfg.Status.ReportStatus = false
+	// Setup proxy protocol config
+	cfg.ProxyProtocol.Networks = "*"
+	cfg.ProxyProtocol.Fallbackable = true
+
+	ts := createTidbTestSuite(t)
+
+	// Prepare Server
+	server, err := NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.domain)
+	go func() {
+		err := server.Run()
+		require.NoError(t, err)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	defer func() {
+		server.Close()
+	}()
+
+	require.NotNil(t, server.listener)
+	require.Nil(t, server.socket)
+
+	// Prepare Proxy
+	ppProxy := newMockProxyProtocolProxy("127.0.0.1:5000", "127.0.0.1:4999", "192.168.1.2:60055", false)
+	go func() {
+		ppProxy.Run()
+	}()
+	time.Sleep(time.Millisecond * 100)
+	defer func() {
+		ppProxy.Close()
+	}()
+
+	cli := newTestServerClient()
+	cli.port = getPortFromTCPAddr(ppProxy.ListenAddr())
+	cli.waitUntilServerCanConnect()
+
+	cli.runTests(t,
+		func(config *mysql.Config) {
+			config.User = "root"
+		},
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("SHOW PROCESSLIST;")
+			records := cli.Rows(t, rows)
+			require.Contains(t, records[0], "192.168.1.2:60055")
+		},
+	)
+
+	cli2 := newTestServerClient()
+	cli2.port = 4999
+	cli2.runTests(t,
+		func(config *mysql.Config) {
+			config.User = "root"
+		},
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("SHOW PROCESSLIST;")
+			records := cli.Rows(t, rows)
+			require.Contains(t, records[0], "127.0.0.1:")
+		},
+	)
+}
+
+func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.Port = 4000
+	cfg.Status.ReportStatus = false
+	// Setup proxy protocol config
+	cfg.ProxyProtocol.Networks = "*"
+	cfg.ProxyProtocol.Fallbackable = false
+
+	ts := createTidbTestSuite(t)
+
+	// Prepare Server
+	server, err := NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.domain)
+	go func() {
+		err := server.Run()
+		require.NoError(t, err)
+	}()
+	time.Sleep(time.Millisecond * 1000)
+	defer func() {
+		server.Close()
+	}()
+
+	require.NotNil(t, server.listener)
+	require.Nil(t, server.socket)
+
+	cli := newTestServerClient()
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	dsn := cli.getDSN(func(config *mysql.Config) {
+		config.User = "root"
+		config.DBName = "test"
+	})
+	db, err := sql.Open("mysql", dsn)
+	require.Nil(t, err)
+	err = db.Ping()
+	require.NotNil(t, err)
+	db.Close()
 }

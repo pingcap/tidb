@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,23 +28,27 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
 // ExplainExec represents an explain executor.
 type ExplainExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
-	explain     *core.Explain
-	analyzeExec Executor
-	executed    bool
-	rows        [][]string
-	cursor      int
+	explain        *core.Explain
+	analyzeExec    exec.Executor
+	executed       bool
+	ruRuntimeStats *clientutil.RURuntimeStats
+	rows           [][]string
+	cursor         int
 }
 
 // Open implements the Executor Open interface.
@@ -74,7 +79,7 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	req.GrowAndReset(e.maxChunkSize)
+	req.GrowAndReset(e.MaxChunkSize())
 	if e.cursor >= len(e.rows) {
 		return nil
 	}
@@ -101,7 +106,7 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				}
 			}
 		}()
-		if minHeapInUse, alarmRatio := e.ctx.GetSessionVars().MemoryDebugModeMinHeapInUse, e.ctx.GetSessionVars().MemoryDebugModeAlarmRatio; minHeapInUse != 0 && alarmRatio != 0 {
+		if minHeapInUse, alarmRatio := e.Ctx().GetSessionVars().MemoryDebugModeMinHeapInUse, e.Ctx().GetSessionVars().MemoryDebugModeAlarmRatio; minHeapInUse != 0 && alarmRatio != 0 {
 			memoryDebugModeCtx, cancel := context.WithCancel(ctx)
 			waitGroup := sync.WaitGroup{}
 			waitGroup.Add(1)
@@ -115,7 +120,7 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				minHeapInUse: mathutil.Abs(minHeapInUse),
 				alarmRatio:   alarmRatio,
 				autoGC:       minHeapInUse > 0,
-				memTracker:   e.ctx.GetSessionVars().MemTracker,
+				memTracker:   e.Ctx().GetSessionVars().MemTracker,
 				wg:           &waitGroup,
 			}).run()
 		}
@@ -126,6 +131,12 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 			if err != nil || chk.NumRows() == 0 {
 				break
 			}
+		}
+	}
+	// Register the RU runtime stats to the runtime stats collection after the analyze executor has been executed.
+	if e.analyzeExec != nil && e.executed {
+		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil {
+			coll.RegisterStats(e.explain.TargetPlan.ID(), &ruRuntimeStats{e.ruRuntimeStats})
 		}
 	}
 	return err
@@ -146,7 +157,7 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 // function and then commit transaction if needed.
 // Otherwise, in autocommit transaction, the table record change of analyze executor(insert/update/delete...)
 // will not be committed.
-func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() Executor {
+func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() exec.Executor {
 	if e.analyzeExec != nil && !e.executed && e.analyzeExec.Schema().Len() == 0 {
 		e.executed = true
 		return e.analyzeExec
@@ -304,4 +315,47 @@ func getHeapProfile() (fileName string, err error) {
 		return "", err
 	}
 	return fileName, nil
+}
+
+// ruRuntimeStats is a wrapper of clientutil.RURuntimeStats,
+// which implements the RuntimeStats interface.
+type ruRuntimeStats struct {
+	*clientutil.RURuntimeStats
+}
+
+// String implements the RuntimeStats interface.
+func (e *ruRuntimeStats) String() string {
+	if e.RURuntimeStats != nil {
+		return fmt.Sprintf("RU:%f", e.RURuntimeStats.RRU()+e.RURuntimeStats.WRU())
+	}
+	return ""
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *ruRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &ruRuntimeStats{}
+	if e.RURuntimeStats != nil {
+		newRs.RURuntimeStats = e.RURuntimeStats.Clone()
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *ruRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*ruRuntimeStats)
+	if !ok {
+		return
+	}
+	if tmp.RURuntimeStats != nil {
+		if e.RURuntimeStats == nil {
+			e.RURuntimeStats = tmp.RURuntimeStats.Clone()
+			return
+		}
+		e.RURuntimeStats.Merge(tmp.RURuntimeStats)
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *ruRuntimeStats) Tp() int {
+	return execdetails.TpRURuntimeStats
 }

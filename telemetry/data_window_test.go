@@ -34,6 +34,7 @@ func TestBuiltinFunctionsUsage(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=0") // affect this UT
 
 	// Clear builtin functions usage
 	telemetry.GlobalBuiltinFunctionsUsage.Dump()

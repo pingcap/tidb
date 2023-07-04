@@ -2,6 +2,8 @@
 
 set -eu
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 for BACKEND in tidb local; do
   for compress in gzip snappy zstd; do
     if [ "$BACKEND" = 'local' ]; then
@@ -10,20 +12,20 @@ for BACKEND in tidb local; do
 
     # Set minDeliverBytes to a small enough number to only write only 1 row each time
     # Set the failpoint to kill the lightning instance as soon as one row is written
-    PKG="github.com/pingcap/tidb/br/pkg/lightning/restore"
+    PKG="github.com/pingcap/tidb/br/pkg/lightning/importer"
     export GO_FAILPOINTS="$PKG/SlowDownWriteRows=sleep(1000);$PKG/FailAfterWriteRows=panic;$PKG/SetMinDeliverBytes=return(1)"
 
     # Start importing the tables.
     run_sql 'DROP DATABASE IF EXISTS compress'
     run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_test'
     set +e
-    run_lightning --backend $BACKEND -d "tests/$TEST_NAME/data.$compress" --enable-checkpoint=1 2> /dev/null
+    run_lightning --backend $BACKEND -d "$CUR/data.$compress" --enable-checkpoint=1 2> /dev/null
     set -e
 
     # restart lightning from checkpoint, the second line should be written successfully
     export GO_FAILPOINTS=
     set +e
-    run_lightning --backend $BACKEND -d "tests/$TEST_NAME/data.$compress" --enable-checkpoint=1 2> /dev/null
+    run_lightning --backend $BACKEND -d "$CUR/data.$compress" --enable-checkpoint=1 2> /dev/null
     set -e
 
     run_sql 'SELECT count(*), sum(PROCESSLIST_TIME), sum(THREAD_OS_ID), count(PROCESSLIST_STATE) FROM compress.threads'

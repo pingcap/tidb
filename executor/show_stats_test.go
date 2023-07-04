@@ -238,6 +238,14 @@ func TestShowPartitionStats(t *testing.T) {
 
 		result = tk.MustQuery("show stats_healthy")
 		result.Check(testkit.Rows("test t p0 100"))
+		result = tk.MustQuery("show stats_healthy like 'test%'")
+		result.Check(testkit.Rows("test t p0 100"))
+		result = tk.MustQuery("show stats_healthy like 'TEST%'")
+		result.Check(testkit.Rows("test t p0 100"))
+		result = tk.MustQuery("show stats_healthy like 'test'")
+		result.Check(testkit.Rows("test t p0 100"))
+		result = tk.MustQuery("show stats_healthy like 'TEST'")
+		result.Check(testkit.Rows("test t p0 100"))
 	})
 }
 
@@ -270,10 +278,9 @@ func TestShowStatusSnapshot(t *testing.T) {
 
 func TestShowStatsExtended(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-
 	tk := testkit.NewTestKit(t, store)
-	dom.StatsHandle().Clear()
 	tk.MustExec("use test")
+	dom.StatsHandle().Clear()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustExec("insert into t values(1,1,3),(2,2,2),(3,3,1)")
@@ -375,7 +382,7 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	checkTime := func(val interface{}) {
 		str, ok := val.(string)
 		require.True(t, ok)
-		_, err := time.Parse("2006-01-02 15:04:05", str)
+		_, err := time.Parse(time.DateTime, str)
 		require.NoError(t, err)
 	}
 	checkTime(rows[0][5])

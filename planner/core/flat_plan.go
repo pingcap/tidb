@@ -92,7 +92,7 @@ type FlatOperator struct {
 
 	// With ChildrenIdx and ChildrenEndIdx, we can locate every children subtrees of this operator in the FlatPlanTree.
 	// For example, the first children subtree is flatTree[ChildrenIdx[0] : ChildrenIdx[1]], the last children subtree
-	// is flatTree[ChildrenIdx[n-1] : ChildrenEndIdx].
+	// is flatTree[ChildrenIdx[n-1] : ChildrenEndIdx+1].
 
 	// ChildrenIdx is the indexes of the children of this operator in the FlatPlanTree.
 	// It's ordered from small to large.
@@ -200,7 +200,7 @@ func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
 	return res
 }
 
-func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperator {
+func (*FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperator {
 	// Some operators are not initialized and given an ExplainID. So their explain IDs are "_0"
 	// (when in EXPLAIN FORMAT = 'brief' it will be ""), we skip such operators.
 	// Examples: Explain, Execute
@@ -356,7 +356,10 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		// for details) to affect the row count display of the independent CTE plan tree.
 		copiedCTE := *plan
 		copiedCTE.probeParents = nil
-		f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)
+		if info.isRoot {
+			// If it's executed in TiDB, we need to record it since we don't have producer and consumer
+			f.ctesToFlatten = append(f.ctesToFlatten, &copiedCTE)
+		}
 	case *Insert:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
@@ -161,6 +163,29 @@ func (fkc *FKCheckExec) insertRowNeedToCheck(sc *stmtctx.StatementContext, row [
 }
 
 func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
+	newVals, err := fkc.fetchFKValues(newRow)
+	if err != nil {
+		return err
+	}
+	oldVals, err := fkc.fetchFKValues(oldRow)
+	if err != nil {
+		return err
+	}
+	if len(oldVals) == len(newVals) {
+		isSameValue := true
+		for i := range oldVals {
+			cmp, err := oldVals[i].Compare(sc, &newVals[i], collate.GetCollator(oldVals[i].Collation()))
+			if err != nil || cmp != 0 {
+				isSameValue = false
+				break
+			}
+		}
+		if isSameValue {
+			// If the old fk value and the new fk value are the same, no need to check.
+			return nil
+		}
+	}
+
 	if fkc.FK != nil {
 		return fkc.addRowNeedToCheck(sc, newRow)
 	} else if fkc.ReferredFK != nil {
@@ -677,7 +702,7 @@ func (fkc *FKCascadeExec) onUpdateRow(sc *stmtctx.StatementContext, oldRow, newR
 	return nil
 }
 
-func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (Executor, error) {
+func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (exec.Executor, error) {
 	p, err := fkc.buildFKCascadePlan(ctx)
 	if err != nil || p == nil {
 		return nil, err

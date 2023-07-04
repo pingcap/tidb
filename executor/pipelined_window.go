@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
@@ -35,7 +36,7 @@ type dataInfo struct {
 
 // PipelinedWindowExec is the executor for window functions.
 type PipelinedWindowExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	numWindowFuncs     int
 	windowFuncs        []aggfuncs.AggFunc
 	slidingWindowFuncs []aggfuncs.SlidingWindowAggFunc
@@ -78,7 +79,7 @@ type PipelinedWindowExec struct {
 
 // Close implements the Executor Close interface.
 func (e *PipelinedWindowExec) Close() error {
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.Trace(e.BaseExecutor.Close())
 }
 
 // Open implements the Executor Open interface
@@ -96,7 +97,7 @@ func (e *PipelinedWindowExec) Open(ctx context.Context) (err error) {
 		}
 	}
 	e.rows = make([]chunk.Row, 0)
-	return e.baseExecutor.Open(ctx)
+	return e.BaseExecutor.Open(ctx)
 }
 
 func (e *PipelinedWindowExec) firstResultChunkNotReady() bool {
@@ -116,7 +117,7 @@ func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 		// for unbounded frame, it needs consume the whole partition before being able to produce, in this case
 		// e.p.enoughToProduce will be false until so.
 		var enough bool
-		enough, err = e.enoughToProduce(e.ctx)
+		enough, err = e.enoughToProduce(e.Ctx())
 		if err != nil {
 			return
 		}
@@ -130,7 +131,7 @@ func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 			if e.done || e.newPartition {
 				e.finish()
 				// if we continued, the rows will not be consumed, so next time we should consume it instead of calling e.getRowsInPartition
-				enough, err = e.enoughToProduce(e.ctx)
+				enough, err = e.enoughToProduce(e.Ctx())
 				if err != nil {
 					return
 				}
@@ -150,7 +151,7 @@ func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 
 		// e.p is ready to produce data
 		if len(e.data) > e.dataIdx && e.data[e.dataIdx].remaining != 0 {
-			produced, err := e.produce(e.ctx, e.data[e.dataIdx].chk, e.data[e.dataIdx].remaining)
+			produced, err := e.produce(e.Ctx(), e.data[e.dataIdx].chk, e.data[e.dataIdx].remaining)
 			if err != nil {
 				return err
 			}
@@ -205,8 +206,8 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 
 func (e *PipelinedWindowExec) fetchChild(ctx context.Context) (EOF bool, err error) {
 	// TODO: reuse chunks
-	childResult := tryNewCacheChunk(e.children[0])
-	err = Next(ctx, e.children[0], childResult)
+	childResult := tryNewCacheChunk(e.Children(0))
+	err = Next(ctx, e.Children(0), childResult)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -217,7 +218,7 @@ func (e *PipelinedWindowExec) fetchChild(ctx context.Context) (EOF bool, err err
 	}
 
 	// TODO: reuse chunks
-	resultChk := e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.retFieldTypes, 0, numRows, e.AllocPool)
+	resultChk := e.Ctx().GetSessionVars().GetNewChunkWithCapacity(e.RetFieldTypes(), 0, numRows, e.AllocPool)
 	err = e.copyChk(childResult, resultChk)
 	if err != nil {
 		return false, err

@@ -178,6 +178,9 @@ func newListInDiskWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWriteDisk
 
 func (l *listInDiskWriteDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	err = l.flushForTest()
+	if err != nil {
+		return
+	}
 	off, err := l.getOffset(ptr.ChkIdx, ptr.RowIdx)
 	if err != nil {
 		return

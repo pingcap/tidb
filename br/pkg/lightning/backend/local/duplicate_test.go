@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	lkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/atomic"
 )
 
 func TestBuildDupTask(t *testing.T) {
@@ -45,16 +45,16 @@ func TestBuildDupTask(t *testing.T) {
 
 	// Test build duplicate detecting task.
 	testCases := []struct {
-		sessOpt       *lkv.SessionOptions
+		sessOpt       *encode.SessionOptions
 		hasTableRange bool
 	}{
-		{&lkv.SessionOptions{}, true},
-		{&lkv.SessionOptions{IndexID: info.Indices[0].ID}, false},
-		{&lkv.SessionOptions{IndexID: info.Indices[1].ID}, false},
+		{&encode.SessionOptions{}, true},
+		{&encode.SessionOptions{IndexID: info.Indices[0].ID}, false},
+		{&encode.SessionOptions{IndexID: info.Indices[1].ID}, false},
 	}
 	for _, tc := range testCases {
-		dupMgr, err := local.NewDuplicateManager(tbl, "t", nil, nil, keyspace.CodecV1, nil,
-			tc.sessOpt, 4, atomic.NewBool(false), log.FromContext(context.Background()))
+		dupMgr, err := local.NewDupeDetector(tbl, "t", nil, nil, keyspace.CodecV1, nil,
+			tc.sessOpt, 4, log.FromContext(context.Background()))
 		require.NoError(t, err)
 		tasks, err := local.BuildDuplicateTaskForTest(dupMgr)
 		require.NoError(t, err)

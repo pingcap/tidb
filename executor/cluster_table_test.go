@@ -88,12 +88,16 @@ select 6;`
 select 7;`
 	logData := []string{logData0, logData1, logData2, logData3, logData4}
 
-	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
-	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
-	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
-	fileName3 := "tidb-slow-2020-02-17T18-00-05.01.log"
-	fileName4 := "tidb-slow.log"
+	fileName0 := "tidb-slow-query-2020-02-14T19-04-05.01.log"
+	fileName1 := "tidb-slow-query-2020-02-15T19-04-05.01.log"
+	fileName2 := "tidb-slow-query-2020-02-16T19-04-05.01.log"
+	fileName3 := "tidb-slow-query-2020-02-17T18-00-05.01.log"
+	fileName4 := "tidb-slow-query.log"
 	fileNames := []string{fileName0, fileName1, fileName2, fileName3, fileName4}
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = fileName4
+	})
 
 	prepareLogs(t, logData, fileNames)
 	defer func() {
@@ -200,12 +204,16 @@ select 9
 select 10;`
 	logData := []string{logData0, logData1, logData2, logData3, logData4}
 
-	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
-	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
-	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
-	fileName3 := "tidb-slow-2020-02-17T18-00-05.01.log"
-	fileName4 := "tidb-slow.log"
+	fileName0 := "tidb-slow-20236-2020-02-14T19-04-05.01.log"
+	fileName1 := "tidb-slow-20236-2020-02-15T19-04-05.01.log"
+	fileName2 := "tidb-slow-20236-2020-02-16T19-04-05.01.log"
+	fileName3 := "tidb-slow-20236-2020-02-17T18-00-05.01.log"
+	fileName4 := "tidb-slow-20236.log"
 	fileNames := []string{fileName0, fileName1, fileName2, fileName3, fileName4}
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = fileName4
+	})
 	prepareLogs(t, logData, fileNames)
 	defer func() {
 		removeFiles(t, fileNames)
@@ -283,7 +291,7 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("insert into test_sql_digest_text_retriever values (1, 1)")
 
 	insertNormalized, insertDigest := parser.NormalizeDigest("insert into test_sql_digest_text_retriever values (1, 1)")
@@ -307,7 +315,7 @@ func TestFunctionDecodeSQLDigests(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 	tk.MustExec("drop table if exists test_func_decode_sql_digests")
@@ -366,22 +374,52 @@ func TestFunctionDecodeSQLDigestsPrivilege(t *testing.T) {
 	defer srv.Stop()
 
 	dropUserTk := testkit.NewTestKit(t, store)
-	require.NoError(t, dropUserTk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, dropUserTk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("create user 'testuser'@'localhost'")
 	defer dropUserTk.MustExec("drop user 'testuser'@'localhost'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustGetErrMsg("select tidb_decode_sql_digests('[\"aa\"]')", "[expression:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
 	tk = testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("create user 'testuser2'@'localhost'")
 	defer dropUserTk.MustExec("drop user 'testuser2'@'localhost'")
 	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser2", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser2", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec("select tidb_decode_sql_digests('[\"aa\"]')")
+}
+
+func TestFunctionEncodeSQLDigest(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := createRPCServer(t, dom)
+	defer srv.Stop()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("drop table if exists test_func_encode_sql_digest")
+	tk.MustExec("create table test_func_encode_sql_digest(id int primary key, v int)")
+
+	q1 := "begin"
+	digest1 := parser.DigestHash(q1)
+	q2 := "select @@tidb_current_ts"
+	digest2 := parser.DigestHash(q2)
+	q3 := "select id, v from test_func_decode_sql_digests where id = 1 for update"
+	digest3 := parser.DigestHash(q3)
+
+	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q1)).Check(testkit.Rows(digest1.String()))
+	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q2)).Check(testkit.Rows(digest2.String()))
+	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q3)).Check(testkit.Rows(digest3.String()))
+
+	tk.MustQuery("select tidb_encode_sql_digest(null)").Check(testkit.Rows("<nil>"))
+	tk.MustGetErrCode("select tidb_encode_sql_digest()", 1582)
+
+	tk.MustQuery("select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1;')").Check(testkit.Rows("1"))
+	tk.MustQuery("select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1 ;')").Check(testkit.Rows("1"))
+	tk.MustQuery("select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 2 ;')").Check(testkit.Rows("1"))
 }
 
 func prepareLogs(t *testing.T, logData []string, fileNames []string) {

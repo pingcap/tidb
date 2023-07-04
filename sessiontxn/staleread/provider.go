@@ -164,9 +164,15 @@ func (p *StalenessTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.Stm
 	return nil
 }
 
-// OnHandlePessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
+// OnPessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
 // a pessimistic select-for-update statements.
-func (p *StalenessTxnContextProvider) OnHandlePessimisticStmtStart(_ context.Context) error {
+func (p *StalenessTxnContextProvider) OnPessimisticStmtStart(_ context.Context) error {
+	return nil
+}
+
+// OnPessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
+// select-for-update statement.
+func (p *StalenessTxnContextProvider) OnPessimisticStmtEnd(_ context.Context, _ bool) error {
 	return nil
 }
 
@@ -192,7 +198,7 @@ func (p *StalenessTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
-func (p *StalenessTxnContextProvider) OnStmtErrorForNextAction(_ sessiontxn.StmtErrorHandlePoint, _ error) (sessiontxn.StmtErrorAction, error) {
+func (p *StalenessTxnContextProvider) OnStmtErrorForNextAction(ctx context.Context, point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	return sessiontxn.NoIdea()
 }
 

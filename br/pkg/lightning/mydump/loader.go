@@ -69,13 +69,14 @@ func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalSt
 
 // MDTableMeta contains some parsed metadata for a table in the source by MyDumper Loader.
 type MDTableMeta struct {
-	DB           string
-	Name         string
-	SchemaFile   FileInfo
-	DataFiles    []FileInfo
-	charSet      string
-	TotalSize    int64
-	IndexRatio   float64
+	DB         string
+	Name       string
+	SchemaFile FileInfo
+	DataFiles  []FileInfo
+	charSet    string
+	TotalSize  int64
+	IndexRatio float64
+	// default to true, and if we do precheck, this var is updated using data sampling result, so it's not accurate.
 	IsRowOrdered bool
 }
 
@@ -89,6 +90,7 @@ type SourceFileMeta struct {
 	// WARNING: variables below are not persistent
 	ExtendData ExtendColumnData
 	RealSize   int64
+	Rows       int64 // only for parquet
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
@@ -109,7 +111,8 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 		return "", errors.Annotate(err, "check table schema file exists error")
 	}
 	if !fileExists {
-		return "", errors.Errorf("the provided schema file (%s) for the table '%s.%s' doesn't exist", schemaFilePath, m.DB, m.Name)
+		return "", errors.Errorf("the provided schema file (%s) for the table '%s.%s' doesn't exist",
+			schemaFilePath, m.DB, m.Name)
 	}
 	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
@@ -210,7 +213,8 @@ func NewMyDumpLoader(ctx context.Context, cfg *config.Config, opts ...MDLoaderSe
 }
 
 // NewMyDumpLoaderWithStore constructs a MyDumper loader with the provided external storage that scanns the data source and constructs a set of metadatas.
-func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store storage.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
+func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config,
+	store storage.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	var r *regexprrouter.RouteTable
 	var err error
 
@@ -347,11 +351,10 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		return errors.New("file iterator is not defined")
 	}
 	if err := fileIter.IterateFiles(ctx, s.constructFileInfo); err != nil {
-		if s.setupCfg.ReturnPartialResultOnError {
-			gerr = err
-		} else {
+		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
+		gerr = err
 	}
 	if err := s.route(); err != nil {
 		return common.ErrTableRoute.Wrap(err).GenWithStackByArgs()
@@ -453,7 +456,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 		return errors.Annotatef(err, "apply file routing on file '%s' failed", path)
 	}
 	if res == nil {
-		logger.Info("[loader] file is filtered by file router")
+		logger.Info("file is filtered by file router", zap.String("category", "loader"))
 		return nil
 	}
 
@@ -463,7 +466,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 	}
 
 	if s.loader.shouldSkip(&info.TableName) {
-		logger.Debug("[filter] ignoring table file")
+		logger.Debug("ignoring table file", zap.String("category", "filter"))
 
 		return nil
 	}
@@ -479,7 +482,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 		if info.FileMeta.Compression != CompressionNone {
 			compressRatio, err2 := SampleFileCompressRatio(ctx, info.FileMeta, s.loader.GetStore())
 			if err2 != nil {
-				logger.Error("[loader] fail to calculate data file compress ratio",
+				logger.Error("fail to calculate data file compress ratio", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type))
 			} else {
 				info.FileMeta.RealSize = int64(compressRatio * float64(info.FileMeta.FileSize))

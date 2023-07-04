@@ -358,17 +358,24 @@ func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
 
 func TestIndexLookUpStats(t *testing.T) {
 	stats := &executor.IndexLookUpRunTimeStats{
-		FetchHandleTotal: int64(5 * time.Second),
-		FetchHandle:      int64(2 * time.Second),
-		TaskWait:         int64(2 * time.Second),
-		TableRowScan:     int64(2 * time.Second),
-		TableTaskNum:     2,
-		Concurrency:      1,
+		FetchHandleTotal:         int64(5 * time.Second),
+		FetchHandle:              int64(2 * time.Second),
+		TaskWait:                 int64(2 * time.Second),
+		TableRowScan:             int64(2 * time.Second),
+		TableTaskNum:             2,
+		Concurrency:              1,
+		NextWaitIndexScan:        time.Second,
+		NextWaitTableLookUpBuild: 2 * time.Second,
+		NextWaitTableLookUpResp:  3 * time.Second,
 	}
-	require.Equal(t, "index_task: {total_time: 5s, fetch_handle: 2s, build: 1s, wait: 2s}, table_task: {total_time: 2s, num: 2, concurrency: 1}", stats.String())
+	require.Equal(t, "index_task: {total_time: 5s, fetch_handle: 2s, build: 1s, wait: 2s}"+
+		", table_task: {total_time: 2s, num: 2, concurrency: 1}"+
+		", next: {wait_index: 1s, wait_table_lookup_build: 2s, wait_table_lookup_resp: 3s}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
-	require.Equal(t, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}, table_task: {total_time: 4s, num: 4, concurrency: 1}", stats.String())
+	require.Equal(t, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}"+
+		", table_task: {total_time: 4s, num: 4, concurrency: 1}"+
+		", next: {wait_index: 2s, wait_table_lookup_build: 4s, wait_table_lookup_resp: 6s}", stats.String())
 }
 
 func TestIndexLookUpGetResultChunk(t *testing.T) {
@@ -479,6 +486,7 @@ func TestAdaptiveClosestRead(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect this UT
 	tk.MustExec("drop table if exists t")
 	// the avg row size is more accurate in check_rpc mode when unistre is used.
 	// See: https://github.com/pingcap/tidb/issues/31744#issuecomment-1016309883
@@ -690,4 +698,20 @@ func TestCoprocessorBatchByStore(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestIndexLookUpWithSelectForUpdateOnPartitionTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index k(b)) PARTITION BY HASH(a) partitions 4")
+	tk.MustExec("insert into t(a, b) values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8)")
+	tk.HasPlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "UnionScan")
+	tk.HasPlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "IndexLookUp")
+	tk.MustQuery("select b from t use index(k) where b > 2 order by b limit 1 for update").Check(testkit.Rows("3"))
+
+	tk.MustExec("analyze table t")
+	tk.HasPlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "IndexLookUp")
+	tk.MustQuery("select b from t use index(k) where b > 2 order by b limit 1 for update").Check(testkit.Rows("3"))
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -140,6 +141,7 @@ type S3BackendOptions struct {
 	ACL                   string `json:"acl" toml:"acl"`
 	AccessKey             string `json:"access-key" toml:"access-key"`
 	SecretAccessKey       string `json:"secret-access-key" toml:"secret-access-key"`
+	SessionToken          string `json:"session-token" toml:"session-token"`
 	Provider              string `json:"provider" toml:"provider"`
 	ForcePathStyle        bool   `json:"force-path-style" toml:"force-path-style"`
 	UseAccelerateEndpoint bool   `json:"use-accelerate-endpoint" toml:"use-accelerate-endpoint"`
@@ -156,10 +158,10 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 			return errors.Trace(err)
 		}
 		if u.Scheme == "" {
-			return errors.Annotate(berrors.ErrStorageInvalidConfig, "scheme not found in endpoint")
+			return errors.Errorf("scheme not found in endpoint")
 		}
 		if u.Host == "" {
-			return errors.Annotate(berrors.ErrStorageInvalidConfig, "host not found in endpoint")
+			return errors.Errorf("host not found in endpoint")
 		}
 	}
 	// In some cases, we need to set ForcePathStyle to false.
@@ -184,9 +186,11 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	s3.Acl = options.ACL
 	s3.AccessKey = options.AccessKey
 	s3.SecretAccessKey = options.SecretAccessKey
+	s3.SessionToken = options.SessionToken
 	s3.ForcePathStyle = options.ForcePathStyle
 	s3.RoleArn = options.RoleARN
 	s3.ExternalId = options.ExternalID
+	s3.Provider = options.Provider
 	return nil
 }
 
@@ -262,7 +266,7 @@ func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3) *S3Storage {
 // auto access without ak / sk.
 func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
-		return credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, ""), nil
+		return credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, qs.SessionToken), nil
 	}
 	endpoint := qs.Endpoint
 	// if endpoint is empty,return no error and run default(aws) follow.
@@ -287,7 +291,7 @@ func createOssRAMCred() (*credentials.Credentials, error) {
 }
 
 // NewS3Storage initialize a new s3 storage for metadata.
-func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
+func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
 	awsConfig := aws.NewConfig().
 		WithS3ForcePathStyle(qs.ForcePathStyle).
@@ -330,6 +334,7 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		// Clear the credentials if exists so that they will not be sent to TiKV
 		backend.AccessKey = ""
 		backend.SecretAccessKey = ""
+		backend.SessionToken = ""
 	} else if ses.Config.Credentials != nil {
 		if qs.AccessKey == "" || qs.SecretAccessKey == "" {
 			v, cerr := ses.Config.Credentials.Get()
@@ -338,6 +343,7 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 			}
 			backend.AccessKey = v.AccessKeyID
 			backend.SecretAccessKey = v.SecretAccessKey
+			backend.SessionToken = v.SessionToken
 		}
 	}
 
@@ -354,22 +360,30 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		)
 	}
 	c := s3.New(ses, s3CliConfigs...)
-	confCred := ses.Config.Credentials
-	setCredOpt := func(req *request.Request) {
-		// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
-		// we need reassign credential to be compatible with minio authentication.
-		if confCred != nil {
-			req.Config.Credentials = confCred
+
+	var region string
+	if len(qs.Provider) == 0 || qs.Provider == "aws" {
+		confCred := ses.Config.Credentials
+		setCredOpt := func(req *request.Request) {
+			// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
+			// we need reassign credential to be compatible with minio authentication.
+			if confCred != nil {
+				req.Config.Credentials = confCred
+			}
+			// s3manager.GetBucketRegionWithClient use path style addressing default.
+			// we need set S3ForcePathStyle by our config if we set endpoint.
+			if qs.Endpoint != "" {
+				req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
+			}
 		}
-		// s3manager.GetBucketRegionWithClient use path style addressing default.
-		// we need set S3ForcePathStyle by our config if we set endpoint.
-		if qs.Endpoint != "" {
-			req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
+		region, err = s3manager.GetBucketRegionWithClient(ctx, c, qs.Bucket, setCredOpt)
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
 		}
-	}
-	region, err := s3manager.GetBucketRegionWithClient(context.Background(), c, qs.Bucket, setCredOpt)
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
+	} else {
+		// for other s3 compatible provider like ovh storage didn't return the region correctlly
+		// so we cannot automatically get the bucket region. just fallback to manually region setting.
+		region = qs.Region
 	}
 
 	if qs.Region != region {
@@ -943,7 +957,21 @@ func isDeadlineExceedError(err error) bool {
 	return strings.Contains(err.Error(), "context deadline exceeded")
 }
 
+func isConnectionResetError(err error) bool {
+	return strings.Contains(err.Error(), "read: connection reset")
+}
+
 func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
+	// for unit test
+	failpoint.Inject("replace-error-to-connection-reset-by-peer", func(_ failpoint.Value) {
+		log.Info("original error", zap.Error(r.Error))
+		if r.Error != nil {
+			r.Error = errors.New("read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer")
+		}
+	})
+	if isConnectionResetError(r.Error) {
+		return true
+	}
 	if isDeadlineExceedError(r.Error) && r.HTTPRequest.URL.Host == ec2MetaAddress {
 		// fast fail for unreachable linklocal address in EC2 containers.
 		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))

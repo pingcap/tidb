@@ -33,6 +33,7 @@ func initColTypeRowReceiverMap() {
 	dataTypeIntArr := []string{
 		"INTEGER", "BIGINT", "TINYINT", "SMALLINT", "MEDIUMINT",
 		"INT", "INT1", "INT2", "INT3", "INT8",
+		"UNSIGNED INT", "UNSIGNED BIGINT", "UNSIGNED TINYINT", "UNSIGNED SMALLINT", // introduced in https://github.com/go-sql-driver/mysql/pull/1238
 	}
 
 	dataTypeNumArr := append(dataTypeIntArr, []string{

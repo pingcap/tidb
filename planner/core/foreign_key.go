@@ -79,7 +79,7 @@ func (f *FKCheck) AccessObject() AccessObject {
 }
 
 // OperatorInfo implements dataAccesser interface.
-func (f *FKCheck) OperatorInfo(normalized bool) string {
+func (f *FKCheck) OperatorInfo(bool) string {
 	if f.FK != nil {
 		return fmt.Sprintf("foreign_key:%s, check_exist", f.FK.Name)
 	}
@@ -116,7 +116,7 @@ func (f *FKCascade) AccessObject() AccessObject {
 }
 
 // OperatorInfo implements dataAccesser interface.
-func (f *FKCascade) OperatorInfo(normalized bool) string {
+func (f *FKCascade) OperatorInfo(bool) string {
 	switch f.Tp {
 	case FKCascadeOnDelete:
 		return fmt.Sprintf("foreign_key:%s, on_delete:%s", f.FK.Name, model.ReferOptionType(f.FK.OnDelete).String())
@@ -197,7 +197,7 @@ func (p *Insert) buildOnDuplicateUpdateColumns() map[string]struct{} {
 	return m
 }
 
-func (p *Insert) buildOnReplaceReferredFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo) ([]*FKCheck, []*FKCascade, error) {
+func (*Insert) buildOnReplaceReferredFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo) ([]*FKCheck, []*FKCascade, error) {
 	referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
 	fkChecks := make([]*FKCheck, 0, len(referredFKs))
 	fkCascades := make([]*FKCascade, 0, len(referredFKs))

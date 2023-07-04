@@ -147,7 +147,7 @@ func TestCompare(t *testing.T) {
 
 func compareForTest(a, b interface{}) (int, error) {
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	aDatum := NewDatum(a)
 	bDatum := NewDatum(b)
 	return aDatum.Compare(sc, &bDatum, collate.GetBinaryCollator())
@@ -169,7 +169,7 @@ func TestCompareDatum(t *testing.T) {
 		{MinNotNullDatum(), MaxValueDatum(), -1},
 	}
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
+	sc.IgnoreTruncate.Store(true)
 	for i, tt := range cmpTbl {
 		ret, err := tt.lhs.Compare(sc, &tt.rhs, collate.GetBinaryCollator())
 		require.NoError(t, err)

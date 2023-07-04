@@ -220,11 +220,13 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return b.applyTruncateTableOrPartition(m, diff)
 	case model.ActionDropTable, model.ActionDropTablePartition:
-		return b.applyDropTableOrParition(m, diff)
+		return b.applyDropTableOrPartition(m, diff)
 	case model.ActionRecoverTable:
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
 		return b.applyCreateTables(m, diff)
+	case model.ActionReorganizePartition:
+		return b.applyReorganizePartition(m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
 	default:
@@ -260,6 +262,11 @@ func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.Schema
 		return nil, errors.Trace(err)
 	}
 
+	if diff.Type == model.ActionTruncateTable {
+		b.deleteBundle(b.is, diff.OldTableID)
+		b.markTableBundleShouldUpdate(diff.TableID)
+	}
+
 	for _, opt := range diff.AffectedOpts {
 		if diff.Type == model.ActionTruncateTablePartition {
 			// Reduce the impact on DML when executing partition DDL. eg.
@@ -267,22 +274,37 @@ func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.Schema
 			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 			tblIDs = append(tblIDs, opt.OldTableID)
 			b.markPartitionBundleShouldUpdate(opt.TableID)
-		} else {
-			b.markTableBundleShouldUpdate(opt.TableID)
 		}
 		b.deleteBundle(b.is, opt.OldTableID)
 	}
 	return tblIDs, nil
 }
 
-func (b *Builder) applyDropTableOrParition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	b.markTableBundleShouldUpdate(diff.TableID)
 	for _, opt := range diff.AffectedOpts {
 		b.deleteBundle(b.is, opt.OldTableID)
+	}
+	return tblIDs, nil
+}
+
+func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, opt := range diff.AffectedOpts {
+		if opt.OldTableID != 0 {
+			b.deleteBundle(b.is, opt.OldTableID)
+		}
+		if opt.TableID != 0 {
+			b.markTableBundleShouldUpdate(opt.TableID)
+		}
 	}
 	return tblIDs, nil
 }
@@ -696,6 +718,8 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	switch tp {
 	case model.ActionDropTablePartition:
 	case model.ActionTruncateTablePartition:
+	// ReorganizePartition handle the bundles in applyReorganizePartition
+	case model.ActionReorganizePartition:
 	default:
 		pi := tblInfo.GetPartitionInfo()
 		if pi != nil {

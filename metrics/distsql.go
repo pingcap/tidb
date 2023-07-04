@@ -20,7 +20,18 @@ import (
 
 // distsql metrics.
 var (
-	DistSQLQueryHistogram = prometheus.NewHistogramVec(
+	DistSQLQueryHistogram           *prometheus.HistogramVec
+	DistSQLScanKeysPartialHistogram prometheus.Histogram
+	DistSQLScanKeysHistogram        prometheus.Histogram
+	DistSQLPartialCountHistogram    prometheus.Histogram
+	DistSQLCoprCacheCounter         *prometheus.CounterVec
+	DistSQLCoprClosestReadCounter   *prometheus.CounterVec
+	DistSQLCoprRespBodySize         *prometheus.HistogramVec
+)
+
+// InitDistSQLMetrics initializes distsql metrics.
+func InitDistSQLMetrics() {
+	DistSQLQueryHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
@@ -29,7 +40,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblType, LblSQLType, LblCoprType})
 
-	DistSQLScanKeysPartialHistogram = prometheus.NewHistogram(
+	DistSQLScanKeysPartialHistogram = NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
@@ -37,7 +48,8 @@ var (
 			Help:      "number of scanned keys for each partial result.",
 		},
 	)
-	DistSQLScanKeysHistogram = prometheus.NewHistogram(
+
+	DistSQLScanKeysHistogram = NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
@@ -45,7 +57,8 @@ var (
 			Help:      "number of scanned keys for each query.",
 		},
 	)
-	DistSQLPartialCountHistogram = prometheus.NewHistogram(
+
+	DistSQLPartialCountHistogram = NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
@@ -53,21 +66,24 @@ var (
 			Help:      "number of partial results for each query.",
 		},
 	)
-	DistSQLCoprCacheCounter = prometheus.NewCounterVec(
+
+	DistSQLCoprCacheCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
 			Name:      "copr_cache",
 			Help:      "coprocessor cache hit, evict and miss number",
 		}, []string{LblType})
-	DistSQLCoprClosestReadCounter = prometheus.NewCounterVec(
+
+	DistSQLCoprClosestReadCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
 			Name:      "copr_closest_read",
 			Help:      "counter of total copr read local read hit.",
 		}, []string{LblType})
-	DistSQLCoprRespBodySize = prometheus.NewHistogramVec(
+
+	DistSQLCoprRespBodySize = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
@@ -75,4 +91,4 @@ var (
 			Help:      "copr task response data size in bytes.",
 			Buckets:   prometheus.ExponentialBuckets(1024, 2, 20),
 		}, []string{LblStore})
-)
+}

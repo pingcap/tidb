@@ -19,11 +19,14 @@ go_library(
 
 go_test(
     name = "spans_test",
+    timeout = "short",
     srcs = [
         "sorted_test.go",
         "utils_test.go",
         "value_sorted_test.go",
     ],
+    flaky = True,
+    shard_count = 4,
     deps = [
         ":spans",
         "@com_github_stretchr_testify//require",

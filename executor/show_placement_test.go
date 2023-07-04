@@ -18,10 +18,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -151,7 +151,7 @@ func TestShowPlacementPrivilege(t *testing.T) {
 	defer tk.MustExec("drop table if exists db2.t3")
 
 	tk1 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil, nil))
 
 	// before grant
 	tk1.MustQuery("show placement").Check(testkit.Rows(
@@ -308,7 +308,7 @@ func TestShowPlacementForDBPrivilege(t *testing.T) {
 	defer tk.MustExec("drop table db2.t1")
 
 	tk1 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil, nil))
 
 	privs := []string{
 		"all privileges on db2.*",
@@ -323,7 +323,7 @@ func TestShowPlacementForDBPrivilege(t *testing.T) {
 
 	// before grant
 	err := tk1.QueryToErr("show placement for database db2")
-	require.EqualError(t, err, executor.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "db2").Error())
+	require.EqualError(t, err, exeerrors.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "db2").Error())
 
 	tk1.MustQuery("show placement").Check(testkit.Rows(
 		"POLICY p1 PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" NULL",
@@ -345,12 +345,12 @@ func TestShowPlacementForDBPrivilege(t *testing.T) {
 		))
 
 		err = tk1.QueryToErr("show placement for database test")
-		require.EqualError(t, err, executor.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "test").Error())
+		require.EqualError(t, err, exeerrors.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "test").Error())
 
 		// do revoke
 		tk.MustExec(fmt.Sprintf("revoke %s from 'user1'@'%%'", priv))
 		err = tk1.QueryToErr("show placement for database db2")
-		require.EqualError(t, err, executor.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "db2").Error())
+		require.EqualError(t, err, exeerrors.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "db2").Error())
 
 		tk1.MustQuery("show placement").Check(testkit.Rows(
 			"POLICY p1 PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" NULL",
@@ -400,7 +400,7 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 	defer tk.MustExec("drop table if exists db2.t1")
 
 	tk1 := testkit.NewTestKit(t, store)
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "user1", Hostname: "%"}, nil, nil, nil))
 
 	// before grant
 	err := tk1.ExecToErr("show placement for table test.t1")

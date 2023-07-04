@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
@@ -142,7 +143,6 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 		select {
 		case <-ticker.C:
 			minSafeTime = getStoreGlobalMinSafeTS(sctx.GetStore())
-			break
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -208,34 +208,34 @@ func checkSystemSchemaID(t *meta.Meta, schemaID int64, flashbackTSString string)
 	if schemaID <= 0 {
 		return nil
 	}
-	DBInfo, err := t.GetDatabase(schemaID)
-	if err != nil || DBInfo == nil {
+	dbInfo, err := t.GetDatabase(schemaID)
+	if err != nil || dbInfo == nil {
 		return errors.Trace(err)
 	}
-	if filter.IsSystemSchema(DBInfo.Name.L) {
+	if filter.IsSystemSchema(dbInfo.Name.L) {
 		return errors.Errorf("Detected modified system table during [%s, now), can't do flashback", flashbackTSString)
 	}
 	return nil
 }
 
-func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
-	if err = ValidateFlashbackTS(d.ctx, sess, flashbackTS); err != nil {
+func checkAndSetFlashbackClusterInfo(se sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
+	if err = ValidateFlashbackTS(d.ctx, se, flashbackTS); err != nil {
 		return err
 	}
 
-	if err = gcutil.DisableGC(sess); err != nil {
+	if err = gcutil.DisableGC(se); err != nil {
 		return err
 	}
 	if err = closePDSchedule(); err != nil {
 		return err
 	}
-	if err = setTiDBEnableAutoAnalyze(d.ctx, sess, variable.Off); err != nil {
+	if err = setTiDBEnableAutoAnalyze(d.ctx, se, variable.Off); err != nil {
 		return err
 	}
-	if err = setTiDBSuperReadOnly(d.ctx, sess, variable.On); err != nil {
+	if err = setTiDBSuperReadOnly(d.ctx, se, variable.On); err != nil {
 		return err
 	}
-	if err = setTiDBTTLJobEnable(d.ctx, sess, variable.Off); err != nil {
+	if err = setTiDBTTLJobEnable(d.ctx, se, variable.Off); err != nil {
 		return err
 	}
 
@@ -254,12 +254,12 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 
 	// Check if there is an upgrade during [flashbackTS, now)
 	sql := fmt.Sprintf("select VARIABLE_VALUE from mysql.tidb as of timestamp '%s' where VARIABLE_NAME='tidb_server_version'", flashbackTSString)
-	rows, err := newSession(sess).execute(d.ctx, sql, "check_tidb_server_version")
+	rows, err := sess.NewSession(se).Execute(d.ctx, sql, "check_tidb_server_version")
 	if err != nil || len(rows) == 0 {
 		return errors.Errorf("Get history `tidb_server_version` failed, can't do flashback")
 	}
 	sql = fmt.Sprintf("select 1 from mysql.tidb where VARIABLE_NAME='tidb_server_version' and VARIABLE_VALUE=%s", rows[0].GetString(0))
-	rows, err = newSession(sess).execute(d.ctx, sql, "check_tidb_server_version")
+	rows, err = sess.NewSession(se).Execute(d.ctx, sql, "check_tidb_server_version")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -269,7 +269,7 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 
 	// Check is there a DDL task at flashbackTS.
 	sql = fmt.Sprintf("select count(*) from mysql.%s as of timestamp '%s'", JobTable, flashbackTSString)
-	rows, err = newSession(sess).execute(d.ctx, sql, "check_history_job")
+	rows, err = sess.NewSession(se).Execute(d.ctx, sql, "check_history_job")
 	if err != nil || len(rows) == 0 {
 		return errors.Errorf("Get history ddl jobs failed, can't do flashback")
 	}
@@ -295,7 +295,7 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 		}
 	}
 
-	jobs, err := GetAllDDLJobs(sess, t)
+	jobs, err := GetAllDDLJobs(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -443,7 +443,7 @@ func SendPrepareFlashbackToVersionRPC(
 			endKey = rangeEndKey
 		}
 
-		logutil.BgLogger().Info("[ddl] send prepare flashback request", zap.Uint64("region_id", loc.Region.GetID()),
+		logutil.BgLogger().Info("send prepare flashback request", zap.String("category", "ddl"), zap.Uint64("region_id", loc.Region.GetID()),
 			zap.String("start_key", hex.EncodeToString(startKey)), zap.String("end_key", hex.EncodeToString(endKey)))
 
 		req := tikvrpc.NewRequest(tikvrpc.CmdPrepareFlashbackToVersion, &kvrpcpb.PrepareFlashbackToVersionRequest{
@@ -537,7 +537,7 @@ func SendFlashbackToVersionRPC(
 			endKey = rangeEndKey
 		}
 
-		logutil.BgLogger().Info("[ddl] send flashback request", zap.Uint64("region_id", loc.Region.GetID()),
+		logutil.BgLogger().Info("send flashback request", zap.String("category", "ddl"), zap.Uint64("region_id", loc.Region.GetID()),
 			zap.String("start_key", hex.EncodeToString(startKey)), zap.String("end_key", hex.EncodeToString(endKey)))
 
 		req := tikvrpc.NewRequest(tikvrpc.CmdFlashbackToVersion, &kvrpcpb.FlashbackToVersionRequest{
@@ -623,8 +623,8 @@ func splitRegionsByKeyRanges(d *ddlCtx, keyRanges []kv.KeyRange) {
 
 // A Flashback has 4 different stages.
 // 1. before lock flashbackClusterJobID, check clusterJobID and lock it.
-// 2. before flashback start, check timestamp, disable GC and close PD schedule.
-// 3. phase 1, get key ranges, lock all regions.
+// 2. before flashback start, check timestamp, disable GC and close PD schedule, get flashback key ranges.
+// 3. phase 1, lock flashback key ranges.
 // 4. phase 2, send flashback RPC, do flashback jobs.
 func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	inFlashbackTest := false
@@ -652,12 +652,12 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	var totalRegions, completedRegions atomic.Uint64
 	totalRegions.Store(lockedRegions)
 
-	sess, err := w.sessPool.get()
+	sess, err := w.sessPool.Get()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	defer w.sessPool.put(sess)
+	defer w.sessPool.Put(sess)
 
 	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and update job args.
@@ -692,7 +692,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		job.Args[ttlJobEnableOffSet] = &ttlJobEnableValue
 		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
-	// Stage 2, check flashbackTS, close GC and PD schedule.
+	// Stage 2, check flashbackTS, close GC and PD schedule, get flashback key ranges.
 	case model.StateDeleteOnly:
 		if err = checkAndSetFlashbackClusterInfo(sess, d, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
@@ -711,8 +711,8 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 		job.Args[keyRangesOffset] = keyRanges
 		job.SchemaState = model.StateWriteOnly
-		return ver, nil
-	// Stage 3, get key ranges and get locks.
+		return updateSchemaVersion(d, t, job)
+	// Stage 3, lock related key ranges.
 	case model.StateWriteOnly:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
@@ -729,7 +729,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					totalRegions.Add(uint64(stats.CompletedRegions))
 					return stats, err
 				}, r.StartKey, r.EndKey); err != nil {
-				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
+				logutil.BgLogger().Warn("Get error when do flashback", zap.String("category", "ddl"), zap.Error(err))
 				return ver, err
 			}
 		}
@@ -742,7 +742,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 		job.Args[commitTSOffset] = commitTS
 		job.SchemaState = model.StateWriteReorganization
-		return updateSchemaVersion(d, t, job)
+		return ver, nil
 	// Stage 4, get key ranges and send flashback RPC.
 	case model.StateWriteReorganization:
 		// TODO: Support flashback in unistore.
@@ -759,13 +759,13 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					// Use same startTS as prepare phase to simulate 1PC txn.
 					stats, err := SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, commitTS, r)
 					completedRegions.Add(uint64(stats.CompletedRegions))
-					logutil.BgLogger().Info("[ddl] flashback cluster stats",
+					logutil.BgLogger().Info("flashback cluster stats", zap.String("category", "ddl"),
 						zap.Uint64("complete regions", completedRegions.Load()),
 						zap.Uint64("total regions", totalRegions.Load()),
 						zap.Error(err))
 					return stats, err
 				}, r.StartKey, r.EndKey); err != nil {
-				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
+				logutil.BgLogger().Warn("Get error when do flashback", zap.String("category", "ddl"), zap.Error(err))
 				return ver, errors.Trace(err)
 			}
 		}
@@ -792,11 +792,11 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlJobEnableValue); err != nil {
 		return errors.Trace(err)
 	}
-	sess, err := w.sessPool.get()
+	sess, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer w.sessPool.put(sess)
+	defer w.sessPool.Put(sess)
 
 	err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		if err = recoverPDSchedule(pdScheduleValue); err != nil {

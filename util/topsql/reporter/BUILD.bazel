@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "datamodel.go",
         "datasink.go",
-        "metrics.go",
         "pubsub.go",
         "reporter.go",
         "single_target.go",
@@ -14,11 +13,11 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//config",
-        "//metrics",
         "//util",
         "//util/hack",
         "//util/logutil",
         "//util/topsql/collector",
+        "//util/topsql/reporter/metrics",
         "//util/topsql/state",
         "//util/topsql/stmtstats",
         "@com_github_pingcap_errors//:errors",

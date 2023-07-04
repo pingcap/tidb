@@ -32,11 +32,12 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
@@ -63,6 +64,15 @@ const (
 	// and add isImportingAtomic with this value. In other state, we directly store with the state value.
 	// so this must always the last value of this enum.
 	importMutexStateReadLock
+	// we need to lock the engine when it's open as we do when it's close, otherwise GetEngienSize may race with OpenEngine
+	importMutexStateOpen
+)
+
+const (
+	// DupDetectDirSuffix is used by pre-deduplication to store the encoded index KV.
+	DupDetectDirSuffix = ".dupdetect"
+	// DupResultDirSuffix is used by pre-deduplication to store the duplicated row ID.
+	DupResultDirSuffix = ".dupresult"
 )
 
 // engineMeta contains some field that is necessary to continue the engine restore/import process.
@@ -92,10 +102,11 @@ func (r *syncedRanges) reset() {
 	r.Unlock()
 }
 
+// Engine is a local engine.
 type Engine struct {
 	engineMeta
 	closed       atomic.Bool
-	db           *pebble.DB
+	db           atomic.Pointer[pebble.DB]
 	UUID         uuid.UUID
 	localWriters sync.Map
 
@@ -105,14 +116,13 @@ type Engine struct {
 	// flush and ingest sst hold the rlock, other operation hold the wlock.
 	mutex sync.RWMutex
 
-	ctx            context.Context
-	cancel         context.CancelFunc
-	sstDir         string
-	sstMetasChan   chan metaOrFlush
-	ingestErr      common.OnceError
-	wg             sync.WaitGroup
-	sstIngester    sstIngester
-	finishedRanges syncedRanges
+	ctx          context.Context
+	cancel       context.CancelFunc
+	sstDir       string
+	sstMetasChan chan metaOrFlush
+	ingestErr    common.OnceError
+	wg           sync.WaitGroup
+	sstIngester  sstIngester
 
 	// sst seq lock
 	seqLock sync.Mutex
@@ -124,7 +134,7 @@ type Engine struct {
 	config    backend.LocalEngineConfig
 	tableInfo *checkpoints.TidbTableInfo
 
-	dupDetectOpt dupDetectOpt
+	dupDetectOpt DupDetectOpt
 
 	// total size of SST files waiting to be ingested
 	pendingFileSize atomic.Int64
@@ -136,7 +146,6 @@ type Engine struct {
 	keyAdapter         KeyAdapter
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
-	errorMgr           *errormanager.ErrorManager
 
 	logger log.Logger
 }
@@ -148,24 +157,37 @@ func (e *Engine) setError(err error) {
 	}
 }
 
+func (e *Engine) getDB() *pebble.DB {
+	return e.db.Load()
+}
+
+// Close closes the engine and release all resources.
 func (e *Engine) Close() error {
 	e.logger.Debug("closing local engine", zap.Stringer("engine", e.UUID), zap.Stack("stack"))
-	if e.db == nil {
+	db := e.getDB()
+	if db == nil {
 		return nil
 	}
-	err := errors.Trace(e.db.Close())
-	e.db = nil
+	err := errors.Trace(db.Close())
+	e.db.Store(nil)
 	return err
 }
 
-// Cleanup remove meta and db files
+// Cleanup remove meta, db and duplicate detection files
 func (e *Engine) Cleanup(dataDir string) error {
 	if err := os.RemoveAll(e.sstDir); err != nil {
 		return errors.Trace(err)
 	}
+	uuid := e.UUID.String()
+	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupDetectDirSuffix)); err != nil {
+		return errors.Trace(err)
+	}
+	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupResultDirSuffix)); err != nil {
+		return errors.Trace(err)
+	}
 
-	dbPath := filepath.Join(dataDir, e.UUID.String())
-	return os.RemoveAll(dbPath)
+	dbPath := filepath.Join(dataDir, uuid)
+	return errors.Trace(os.RemoveAll(dbPath))
 }
 
 // Exist checks if db folder existing (meta sometimes won't flush before lightning exit)
@@ -238,8 +260,9 @@ func (e *Engine) unlock() {
 	e.mutex.Unlock()
 }
 
+// TotalMemorySize returns the total memory size of the engine.
 func (e *Engine) TotalMemorySize() int64 {
-	var memSize int64 = 0
+	var memSize int64
 	e.localWriters.Range(func(k, v interface{}) bool {
 		w := k.(*Writer)
 		if w.kvBuffer != nil {
@@ -262,6 +285,7 @@ type rangeProperty struct {
 	rangeOffsets
 }
 
+// Less implements btree.Item interface.
 func (r *rangeProperty) Less(than btree.Item) bool {
 	ta := than.(*rangeProperty)
 	return bytes.Compare(r.Key, ta.Key) < 0
@@ -271,6 +295,7 @@ var _ btree.Item = &rangeProperty{}
 
 type rangeProperties []rangeProperty
 
+// Encode encodes the range properties into a byte slice.
 func (r rangeProperties) Encode() []byte {
 	b := make([]byte, 0, 1024)
 	idx := 0
@@ -292,6 +317,7 @@ func (r rangeProperties) Encode() []byte {
 	return b
 }
 
+// RangePropertiesCollector collects range properties for each range.
 type RangePropertiesCollector struct {
 	props               rangeProperties
 	lastOffsets         rangeOffsets
@@ -338,6 +364,7 @@ func (c *RangePropertiesCollector) Add(key pebble.InternalKey, value []byte) err
 	return nil
 }
 
+// Finish implements `pebble.TablePropertyCollector`.
 func (c *RangePropertiesCollector) Finish(userProps map[string]string) error {
 	if c.sizeInLastRange() > 0 || c.keysInLastRange() > 0 {
 		c.insertNewPoint(c.lastKey)
@@ -347,7 +374,8 @@ func (c *RangePropertiesCollector) Finish(userProps map[string]string) error {
 	return nil
 }
 
-func (c *RangePropertiesCollector) Name() string {
+// Name implements `pebble.TablePropertyCollector`.
+func (*RangePropertiesCollector) Name() string {
 	return propRangeIndex
 }
 
@@ -418,6 +446,9 @@ func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties,
 	return r, nil
 }
 
+// getSizePropertiesFn is used to let unit test replace the real function.
+var getSizePropertiesFn = getSizeProperties
+
 func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) (*sizeProperties, error) {
 	sstables, err := db.SSTables(pebble.WithProperties())
 	if err != nil {
@@ -445,9 +476,7 @@ func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) 
 }
 
 func (e *Engine) getEngineFileSize() backend.EngineFileSize {
-	e.mutex.RLock()
-	db := e.db
-	e.mutex.RUnlock()
+	db := e.getDB()
 
 	var total pebble.LevelMetrics
 	if db != nil {
@@ -457,6 +486,8 @@ func (e *Engine) getEngineFileSize() backend.EngineFileSize {
 	var memSize int64
 	e.localWriters.Range(func(k, v interface{}) bool {
 		w := k.(*Writer)
+		w.Lock()
+		defer w.Unlock()
 		if w.writer != nil {
 			memSize += int64(w.writer.writer.EstimatedSize())
 		} else {
@@ -497,22 +528,27 @@ type metaSeqHeap struct {
 	arr []metaSeq
 }
 
+// Len returns the number of items in the priority queue.
 func (h *metaSeqHeap) Len() int {
 	return len(h.arr)
 }
 
+// Less reports whether the item in the priority queue with
 func (h *metaSeqHeap) Less(i, j int) bool {
 	return h.arr[i].flushSeq < h.arr[j].flushSeq
 }
 
+// Swap swaps the items at the passed indices.
 func (h *metaSeqHeap) Swap(i, j int) {
 	h.arr[i], h.arr[j] = h.arr[j], h.arr[i]
 }
 
+// Push pushes the item onto the priority queue.
 func (h *metaSeqHeap) Push(x interface{}) {
 	h.arr = append(h.arr, x.(metaSeq))
 }
 
+// Pop removes the minimum item (according to Less) from the priority queue
 func (h *metaSeqHeap) Pop() interface{} {
 	item := h.arr[len(h.arr)-1]
 	h.arr = h.arr[:len(h.arr)-1]
@@ -591,22 +627,20 @@ func (e *Engine) ingestSSTLoop() {
 						finSeq = metas.seq
 						finMetaSeq := metasMaxSeq
 						for len(inSyncSeqs.arr) > 0 {
-							if inSyncSeqs.arr[0].flushSeq == finSeq+1 {
-								finSeq++
-								finMetaSeq = inSyncSeqs.arr[0].metaSeq
-								heap.Remove(inSyncSeqs, 0)
-							} else {
+							if inSyncSeqs.arr[0].flushSeq != finSeq+1 {
 								break
 							}
+							finSeq++
+							finMetaSeq = inSyncSeqs.arr[0].metaSeq
+							heap.Remove(inSyncSeqs, 0)
 						}
 
 						var flushChans []chan struct{}
 						for _, seq := range flushQueue {
-							if seq.seq <= finSeq {
-								flushChans = append(flushChans, seq.ch)
-							} else {
+							if seq.seq > finSeq {
 								break
 							}
+							flushChans = append(flushChans, seq.ch)
 						}
 						flushQueue = flushQueue[len(flushChans):]
 						finishedSeq.Store(finSeq)
@@ -753,6 +787,7 @@ func (e *Engine) batchIngestSSTs(metas []*sstMeta) error {
 		return bytes.Compare(i.minKey, j.minKey) < 0
 	})
 
+	// non overlapping sst is grouped, and ingested in that order
 	metaLevels := make([][]*sstMeta, 0)
 	for _, meta := range metas {
 		inserted := false
@@ -853,7 +888,7 @@ func (e *Engine) flushEngineWithoutLock(ctx context.Context) error {
 		return err
 	}
 
-	flushFinishedCh, err := e.db.AsyncFlush()
+	flushFinishedCh, err := e.getDB().AsyncFlush()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -881,11 +916,11 @@ func saveEngineMetaToDB(meta *engineMeta, db *pebble.DB) error {
 func (e *Engine) saveEngineMeta() error {
 	e.logger.Debug("save engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
 		zap.Int64("size", e.TotalSize.Load()))
-	return errors.Trace(saveEngineMetaToDB(&e.engineMeta, e.db))
+	return errors.Trace(saveEngineMetaToDB(&e.engineMeta, e.getDB()))
 }
 
 func (e *Engine) loadEngineMeta() error {
-	jsonBytes, closer, err := e.db.Get(engineMetaKey)
+	jsonBytes, closer, err := e.getDB().Get(engineMetaKey)
 	if err != nil {
 		if err == pebble.ErrNotFound {
 			e.logger.Debug("local db missing engine meta", zap.Stringer("uuid", e.UUID), log.ShortError(err))
@@ -905,72 +940,6 @@ func (e *Engine) loadEngineMeta() error {
 	return nil
 }
 
-// sortAndMergeRanges sort the ranges and merge range that overlaps with each other into a single range.
-func sortAndMergeRanges(ranges []Range) []Range {
-	if len(ranges) == 0 {
-		return ranges
-	}
-
-	slices.SortFunc(ranges, func(i, j Range) bool {
-		return bytes.Compare(i.start, j.start) < 0
-	})
-
-	curEnd := ranges[0].end
-	i := 0
-	for j := 1; j < len(ranges); j++ {
-		if bytes.Compare(curEnd, ranges[j].start) >= 0 {
-			if bytes.Compare(curEnd, ranges[j].end) < 0 {
-				curEnd = ranges[j].end
-			}
-		} else {
-			ranges[i].end = curEnd
-			i++
-			ranges[i].start = ranges[j].start
-			curEnd = ranges[j].end
-		}
-	}
-	ranges[i].end = curEnd
-	return ranges[:i+1]
-}
-
-func filterOverlapRange(ranges []Range, finishedRanges []Range) []Range {
-	if len(ranges) == 0 || len(finishedRanges) == 0 {
-		return ranges
-	}
-
-	result := make([]Range, 0)
-	for _, r := range ranges {
-		start := r.start
-		end := r.end
-		for len(finishedRanges) > 0 && bytes.Compare(finishedRanges[0].start, end) < 0 {
-			fr := finishedRanges[0]
-			if bytes.Compare(fr.start, start) > 0 {
-				result = append(result, Range{start: start, end: fr.start})
-			}
-			if bytes.Compare(fr.end, start) > 0 {
-				start = fr.end
-			}
-			if bytes.Compare(fr.end, end) > 0 {
-				break
-			}
-			finishedRanges = finishedRanges[1:]
-		}
-		if bytes.Compare(start, end) < 0 {
-			result = append(result, Range{start: start, end: end})
-		}
-	}
-	return result
-}
-
-func (e *Engine) unfinishedRanges(ranges []Range) []Range {
-	e.finishedRanges.Lock()
-	defer e.finishedRanges.Unlock()
-
-	e.finishedRanges.ranges = sortAndMergeRanges(e.finishedRanges.ranges)
-
-	return filterOverlapRange(ranges, e.finishedRanges.ranges)
-}
-
 func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 	if bytes.Compare(opts.LowerBound, normalIterStartKey) < 0 {
 		newOpts := *opts
@@ -978,16 +947,23 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 		opts = &newOpts
 	}
 	if !e.duplicateDetection {
-		return pebbleIter{Iterator: e.db.NewIter(opts)}
+		return pebbleIter{Iterator: e.getDB().NewIter(opts)}
 	}
 	logger := log.FromContext(ctx).With(
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
-	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
+	return newDupDetectIter(e.getDB(), e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
 }
 
+// getFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
+// in the engine. Empty upperBound means unbounded.
 func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+	if len(upperBound) == 0 {
+		// we use empty slice for unbounded upper bound, but it means max value in pebble
+		// so reset to nil
+		upperBound = nil
+	}
 	opt := &pebble.IterOptions{
 		LowerBound: lowerBound,
 		UpperBound: upperBound,
@@ -1024,6 +1000,7 @@ type sstMeta struct {
 	seq      int32
 }
 
+// Writer is used to write data into a SST file.
 type Writer struct {
 	sync.Mutex
 	engine            *Engine
@@ -1062,7 +1039,7 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 	keyAdapter := w.engine.keyAdapter
 	totalKeySize := 0
 	for i := 0; i < len(kvs); i++ {
-		keySize := keyAdapter.EncodedLen(kvs[i].Key)
+		keySize := keyAdapter.EncodedLen(kvs[i].Key, kvs[i].RowID)
 		w.batchSize += int64(keySize + len(kvs[i].Val))
 		totalKeySize += keySize
 	}
@@ -1099,7 +1076,7 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 		}
 		lastKey = pair.Key
 		w.batchSize += int64(len(pair.Key) + len(pair.Val))
-		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key))
+		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key, pair.RowID))
 		key := keyAdapter.Encode(buf[:0], pair.Key, pair.RowID)
 		val := w.kvBuffer.AddBytes(pair.Val)
 		if cnt < l {
@@ -1120,8 +1097,9 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	return nil
 }
 
-func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows kv.Rows) error {
-	kvs := kv.KvPairsFromRows(rows)
+// AppendRows appends rows to the SST file.
+func (w *Writer) AppendRows(ctx context.Context, columnNames []string, rows encode.Rows) error {
+	kvs := kv.Rows2KvPairs(rows)
 	if len(kvs) == 0 {
 		return nil
 	}
@@ -1185,10 +1163,12 @@ type flushStatus struct {
 	seq   int32
 }
 
+// Flushed implements backend.ChunkFlushStatus.
 func (f flushStatus) Flushed() bool {
 	return f.seq <= f.local.finishedMetaSeq.Load()
 }
 
+// Close implements backend.ChunkFlushStatus.
 func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	defer w.kvBuffer.Destroy()
 	defer w.engine.localWriters.Delete(w)
@@ -1200,6 +1180,7 @@ func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	return flushStatus{local: w.engine, seq: w.lastMetaSeq}, err
 }
 
+// IsSynced implements backend.ChunkFlushStatus.
 func (w *Writer) IsSynced() bool {
 	return w.batchCount == 0 && w.lastMetaSeq <= w.engine.finishedMetaSeq.Load()
 }
@@ -1224,6 +1205,15 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	failpoint.Inject("orphanWriterGoRoutine", func() {
+		_ = common.KillMySelf()
+		// mimic we meet context cancel error when `addSST`
+		<-ctx.Done()
+		time.Sleep(5 * time.Second)
+		failpoint.Return(errors.Trace(ctx.Err()))
+	})
+
 	err = w.addSST(ctx, meta)
 	if err != nil {
 		return errors.Trace(err)
@@ -1329,6 +1319,7 @@ type sstIter struct {
 	valid  bool
 }
 
+// Close implements common.Iterator.
 func (i *sstIter) Close() error {
 	if err := i.iter.Close(); err != nil {
 		return errors.Trace(err)
@@ -1341,28 +1332,34 @@ type sstIterHeap struct {
 	iters []*sstIter
 }
 
+// Len implements heap.Interface.
 func (h *sstIterHeap) Len() int {
 	return len(h.iters)
 }
 
+// Less implements heap.Interface.
 func (h *sstIterHeap) Less(i, j int) bool {
 	return bytes.Compare(h.iters[i].key, h.iters[j].key) < 0
 }
 
+// Swap implements heap.Interface.
 func (h *sstIterHeap) Swap(i, j int) {
 	h.iters[i], h.iters[j] = h.iters[j], h.iters[i]
 }
 
+// Push implements heap.Interface.
 func (h *sstIterHeap) Push(x interface{}) {
 	h.iters = append(h.iters, x.(*sstIter))
 }
 
+// Pop implements heap.Interface.
 func (h *sstIterHeap) Pop() interface{} {
 	item := h.iters[len(h.iters)-1]
 	h.iters = h.iters[:len(h.iters)-1]
 	return item
 }
 
+// Next implements common.Iterator.
 func (h *sstIterHeap) Next() ([]byte, []byte, error) {
 	for {
 		if len(h.iters) == 0 {
@@ -1531,8 +1528,9 @@ func (i dbSSTIngester) ingest(metas []*sstMeta) error {
 	for _, m := range metas {
 		paths = append(paths, m.path)
 	}
-	if i.e.db == nil {
+	db := i.e.getDB()
+	if db == nil {
 		return errorEngineClosed
 	}
-	return i.e.db.Ingest(paths)
+	return db.Ingest(paths)
 }

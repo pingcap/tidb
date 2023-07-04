@@ -13,7 +13,9 @@ go_library(
 
 go_test(
     name = "metrics_test",
+    timeout = "short",
     srcs = ["metrics_test.go"],
     embed = [":metrics"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )

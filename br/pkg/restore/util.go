@@ -808,3 +808,72 @@ func SelectRegionLeader(storeBalanceScore map[uint64]int, peers []*RecoverRegion
 	}
 	return leader
 }
+
+// each 64 items constitute a bitmap unit
+type bitMap map[int]uint64
+
+func newBitMap() bitMap {
+	return make(map[int]uint64)
+}
+
+func (m bitMap) pos(off int) (blockIndex int, bitOffset uint64) {
+	return off >> 6, uint64(1) << (off & 63)
+}
+
+func (m bitMap) Set(off int) {
+	blockIndex, bitOffset := m.pos(off)
+	m[blockIndex] |= bitOffset
+}
+
+func (m bitMap) Hit(off int) bool {
+	blockIndex, bitOffset := m.pos(off)
+	return (m[blockIndex] & bitOffset) > 0
+}
+
+type fileMap struct {
+	// group index -> bitmap of kv files
+	pos map[int]bitMap
+}
+
+func newFileMap() fileMap {
+	return fileMap{
+		pos: make(map[int]bitMap),
+	}
+}
+
+type LogFilesSkipMap struct {
+	// metadata group key -> group map
+	skipMap map[string]fileMap
+}
+
+func NewLogFilesSkipMap() *LogFilesSkipMap {
+	return &LogFilesSkipMap{
+		skipMap: make(map[string]fileMap),
+	}
+}
+
+func (m *LogFilesSkipMap) Insert(metaKey string, groupOff, fileOff int) {
+	mp, exists := m.skipMap[metaKey]
+	if !exists {
+		mp = newFileMap()
+		m.skipMap[metaKey] = mp
+	}
+	gp, exists := mp.pos[groupOff]
+	if !exists {
+		gp = newBitMap()
+		mp.pos[groupOff] = gp
+	}
+	gp.Set(fileOff)
+}
+
+func (m *LogFilesSkipMap) NeedSkip(metaKey string, groupOff, fileOff int) bool {
+	mp, exists := m.skipMap[metaKey]
+	if !exists {
+		return false
+	}
+	gp, exists := mp.pos[groupOff]
+	if !exists {
+		return false
+	}
+	return gp.Hit(fileOff)
+}

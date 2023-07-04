@@ -61,7 +61,7 @@ func TestExternalTimestampRead(t *testing.T) {
 func TestExternalTimestampReadonly(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id INT NOT NULL,PRIMARY KEY (id))")
@@ -88,7 +88,7 @@ func TestExternalTimestampReadonly(t *testing.T) {
 func TestExternalTimestampReadWithTransaction(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id INT NOT NULL,PRIMARY KEY (id))")
@@ -122,7 +122,7 @@ func TestExternalTimestampReadWithTransaction(t *testing.T) {
 func TestExternalTimestampNotAffectPrepare(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id INT NOT NULL,PRIMARY KEY (id))")

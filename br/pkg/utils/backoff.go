@@ -35,9 +35,13 @@ const (
 	resetTSMaxWaitIntervalExt = 300 * time.Second
 
 	// region heartbeat are 10 seconds by default, if some region has 2 heartbeat missing (15 seconds), it appear to be a network issue between PD and TiKV.
-	flashbackRetryTime       = 3
-	flashbackWaitInterval    = 3000 * time.Millisecond
-	flashbackMaxWaitInterval = 15 * time.Second
+	FlashbackRetryTime       = 3
+	FlashbackWaitInterval    = 3 * time.Second
+	FlashbackMaxWaitInterval = 15 * time.Second
+
+	ChecksumRetryTime       = 8
+	ChecksumWaitInterval    = 1 * time.Second
+	ChecksumMaxWaitInterval = 30 * time.Second
 )
 
 // RetryState is the mutable state needed for retrying.
@@ -82,10 +86,25 @@ func (rs *RetryState) RecordRetry() {
 	rs.retryTimes++
 }
 
+// ReduceRetry reduces retry times for 1.
+func (rs *RetryState) ReduceRetry() {
+	rs.retryTimes--
+}
+
+// RetryTimes returns the retry times.
+// usage: unit test.
+func (rs *RetryState) RetryTimes() int {
+	return rs.retryTimes
+}
+
 // Attempt implements the `Backoffer`.
 // TODO: Maybe use this to replace the `exponentialBackoffer` (which is nearly homomorphic to this)?
 func (rs *RetryState) Attempt() int {
 	return rs.maxRetry - rs.retryTimes
+}
+
+func (rs *RetryState) StopRetry() {
+	rs.retryTimes = rs.maxRetry
 }
 
 // NextBackoff implements the `Backoffer`.
@@ -180,11 +199,11 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 	// bo.attempt--
 	e := errors.Cause(err)
 	switch e { // nolint:errorlint
-	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
+	case nil, context.Canceled, context.DeadlineExceeded, sql.ErrNoRows:
 		// Excepted error, finish the operation
 		bo.delayTime = 0
 		bo.attempt = 0
-	case berrors.ErrRestoreTotalKVMismatch:
+	case berrors.ErrRestoreTotalKVMismatch, io.EOF:
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	default:
@@ -207,36 +226,5 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 }
 
 func (bo *pdReqBackoffer) Attempt() int {
-	return bo.attempt
-}
-
-type flashbackBackoffer struct {
-	attempt      int
-	delayTime    time.Duration
-	maxDelayTime time.Duration
-}
-
-// NewBackoffer creates a new controller regulating a truncated exponential backoff.
-func NewFlashBackBackoffer() Backoffer {
-	return &flashbackBackoffer{
-		attempt:      flashbackRetryTime,
-		delayTime:    flashbackWaitInterval,
-		maxDelayTime: flashbackMaxWaitInterval,
-	}
-}
-
-// retry 3 times when prepare flashback failure.
-func (bo *flashbackBackoffer) NextBackoff(err error) time.Duration {
-	bo.delayTime = 2 * bo.delayTime
-	bo.attempt--
-	log.Warn("region may not ready to serve, retry it...", zap.Error(err))
-
-	if bo.delayTime > bo.maxDelayTime {
-		return bo.maxDelayTime
-	}
-	return bo.delayTime
-}
-
-func (bo *flashbackBackoffer) Attempt() int {
 	return bo.attempt
 }

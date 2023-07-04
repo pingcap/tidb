@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 )
@@ -74,41 +75,6 @@ func (s SchemaState) String() string {
 		return "global txn only"
 	default:
 		return "none"
-	}
-}
-
-// BackfillState is the state used by the backfill-merge process.
-type BackfillState byte
-
-const (
-	// BackfillStateInapplicable means the backfill-merge process is not used.
-	BackfillStateInapplicable BackfillState = iota
-	// BackfillStateRunning is the state that the backfill process is running.
-	// In this state, the index's write and delete operations are redirected to a temporary index.
-	BackfillStateRunning
-	// BackfillStateReadyToMerge is the state that the temporary index's records are ready to be merged back
-	// to the origin index.
-	// In this state, the index's write and delete operations are copied to a temporary index.
-	// This state is used to make sure that all the TiDB instances are aware of the copy during the merge(BackfillStateMerging).
-	BackfillStateReadyToMerge
-	// BackfillStateMerging is the state that the temp index is merging back to the origin index.
-	// In this state, the index's write and delete operations are copied to a temporary index.
-	BackfillStateMerging
-)
-
-// String implements fmt.Stringer interface.
-func (s BackfillState) String() string {
-	switch s {
-	case BackfillStateRunning:
-		return "backfill state running"
-	case BackfillStateReadyToMerge:
-		return "backfill state ready to merge"
-	case BackfillStateMerging:
-		return "backfill state merging"
-	case BackfillStateInapplicable:
-		return "backfill state inapplicable"
-	default:
-		return "backfill state unknown"
 	}
 }
 
@@ -420,6 +386,9 @@ const ExtraPidColID = -2
 // Using a dedicated id for this, since in the future ExtraPidColID and ExtraPhysTblID may be used for the same request.
 // Must be after ExtraPidColID!
 const ExtraPhysTblID = -3
+
+// ExtraRowChecksumID is the column ID of column which holds the row checksum info.
+const ExtraRowChecksumID = -4
 
 const (
 	// TableInfoVersion0 means the table info version is 0.
@@ -757,6 +726,9 @@ func (t *TableInfo) Clone() *TableInfo {
 		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
 	}
 
+	if t.Partition != nil {
+		nt.Partition = t.Partition.Clone()
+	}
 	if t.TTLInfo != nil {
 		nt.TTLInfo = t.TTLInfo.Clone()
 	}
@@ -1187,12 +1159,17 @@ type PartitionInfo struct {
 	Enable bool `json:"enable"`
 
 	Definitions []PartitionDefinition `json:"definitions"`
-	// AddingDefinitions is filled when adding a partition that is in the mid state.
+	// AddingDefinitions is filled when adding partitions that is in the mid state.
 	AddingDefinitions []PartitionDefinition `json:"adding_definitions"`
-	// DroppingDefinitions is filled when dropping a partition that is in the mid state.
+	// DroppingDefinitions is filled when dropping/truncating partitions that is in the mid state.
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
-	States              []PartitionState      `json:"states"`
-	Num                 uint64                `json:"num"`
+	// NewPartitionIDs is filled when truncating partitions that is in the mid state.
+	NewPartitionIDs []int64
+
+	States []PartitionState `json:"states"`
+	Num    uint64           `json:"num"`
+	// Only used during ReorganizePartition so far
+	DDLState SchemaState `json:"ddl_state"`
 }
 
 // Clone clones itself.
@@ -1278,6 +1255,16 @@ func (pi *PartitionInfo) GCPartitionStates() {
 	pi.States = newStates
 }
 
+// HasTruncatingPartitionID checks whether the pid is truncating.
+func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
+	for i := range pi.NewPartitionIDs {
+		if pi.NewPartitionIDs[i] == pid {
+			return true
+		}
+	}
+	return false
+}
+
 // PartitionState is the state of the partition.
 type PartitionState struct {
 	ID    int64       `json:"id"`
@@ -1327,15 +1314,26 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 }
 
 // FindPartitionDefinitionByName finds PartitionDefinition by name.
-func (t *TableInfo) FindPartitionDefinitionByName(partitionDefinitionName string) *PartitionDefinition {
+func (pi *PartitionInfo) FindPartitionDefinitionByName(partitionDefinitionName string) int {
 	lowConstrName := strings.ToLower(partitionDefinitionName)
-	definitions := t.Partition.Definitions
+	definitions := pi.Definitions
 	for i := range definitions {
 		if definitions[i].Name.L == lowConstrName {
-			return &t.Partition.Definitions[i]
+			return i
 		}
 	}
-	return nil
+	return -1
+}
+
+// GetPartitionIDByName gets the partition ID by name.
+func (pi *PartitionInfo) GetPartitionIDByName(partitionDefinitionName string) int64 {
+	lowConstrName := strings.ToLower(partitionDefinitionName)
+	for _, definition := range pi.Definitions {
+		if definition.Name.L == lowConstrName {
+			return definition.ID
+		}
+	}
+	return -1
 }
 
 // IndexColumn provides index column info.
@@ -1390,6 +1388,8 @@ func (t IndexType) String() string {
 		return "HASH"
 	case IndexTypeRtree:
 		return "RTREE"
+	case IndexTypeHypo:
+		return "HYPO"
 	default:
 		return ""
 	}
@@ -1401,6 +1401,7 @@ const (
 	IndexTypeBtree
 	IndexTypeHash
 	IndexTypeRtree
+	IndexTypeHypo
 )
 
 // IndexInfo provides meta data describing a DB index.
@@ -1459,6 +1460,11 @@ func (index *IndexInfo) HasColumnInIndexColumns(tblInfo *TableInfo, colID int64)
 func (index *IndexInfo) FindColumnByName(nameL string) *IndexColumn {
 	_, ret := FindIndexColumnByName(index.Columns, nameL)
 	return ret
+}
+
+// IsPublic checks if the index state is public
+func (index *IndexInfo) IsPublic() bool {
+	return index.State == StatePublic
 }
 
 // FindIndexColumnByName finds IndexColumn by name. When IndexColumn is not found, returns (-1, nil).
@@ -1736,6 +1742,7 @@ type PlacementSettings struct {
 	LearnerConstraints  string `json:"learner_constraints"`
 	FollowerConstraints string `json:"follower_constraints"`
 	VoterConstraints    string `json:"voter_constraints"`
+	SurvivalPreferences string `json:"survival_preferences"`
 }
 
 // PolicyInfo is the struct to store the placement policy.
@@ -1753,6 +1760,9 @@ func (p *PolicyInfo) Clone() *PolicyInfo {
 	return &cloned
 }
 
+// DefaultJobInterval sets the default interval between TTL jobs
+const DefaultJobInterval = time.Hour
+
 // TTLInfo records the TTL config
 type TTLInfo struct {
 	ColumnName      CIStr  `json:"column"`
@@ -1761,6 +1771,7 @@ type TTLInfo struct {
 	IntervalTimeUnit int  `json:"interval_time_unit"`
 	Enable           bool `json:"enable"`
 	// JobInterval is the interval between two TTL scan jobs.
+	// It's suggested to get a duration with `(*TTLInfo).GetJobInterval`
 	JobInterval string `json:"job_interval"`
 }
 
@@ -1770,17 +1781,39 @@ func (t *TTLInfo) Clone() *TTLInfo {
 	return &cloned
 }
 
-func writeSettingItemToBuilder(sb *strings.Builder, item string) {
+// GetJobInterval parses the job interval and return
+// if the job interval is an empty string, the "1h" will be returned, to keep compatible with 6.5 (in which
+// TTL_JOB_INTERVAL attribute doesn't exist)
+// Didn't set TTL_JOB_INTERVAL during upgrade and bootstrap because setting default value here is much simpler
+// and could avoid bugs blocking users from upgrading or bootstrapping the cluster.
+func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
+	if len(t.JobInterval) == 0 {
+		return DefaultJobInterval, nil
+	}
+
+	return duration.ParseDuration(t.JobInterval)
+}
+
+func writeSettingItemToBuilder(sb *strings.Builder, item string, separatorFns ...func()) {
 	if sb.Len() != 0 {
-		sb.WriteString(" ")
+		for _, fn := range separatorFns {
+			fn()
+		}
+		if len(separatorFns) == 0 {
+			sb.WriteString(" ")
+		}
 	}
 	sb.WriteString(item)
 }
-func writeSettingStringToBuilder(sb *strings.Builder, item string, value string) {
-	writeSettingItemToBuilder(sb, fmt.Sprintf("%s=\"%s\"", item, strings.ReplaceAll(value, "\"", "\\\"")))
+func writeSettingStringToBuilder(sb *strings.Builder, item string, value string, separatorFns ...func()) {
+	writeSettingItemToBuilder(sb, fmt.Sprintf("%s=\"%s\"", item, strings.ReplaceAll(value, "\"", "\\\"")), separatorFns...)
 }
-func writeSettingIntegerToBuilder(sb *strings.Builder, item string, value uint64) {
-	writeSettingItemToBuilder(sb, fmt.Sprintf("%s=%d", item, value))
+func writeSettingIntegerToBuilder(sb *strings.Builder, item string, value uint64, separatorFns ...func()) {
+	writeSettingItemToBuilder(sb, fmt.Sprintf("%s=%d", item, value), separatorFns...)
+}
+
+func writeSettingDurationToBuilder(sb *strings.Builder, item string, dur time.Duration, separatorFns ...func()) {
+	writeSettingStringToBuilder(sb, item, dur.String(), separatorFns...)
 }
 
 func (p *PlacementSettings) String() string {
@@ -1838,40 +1871,160 @@ func (p *PlacementSettings) Clone() *PlacementSettings {
 	return &cloned
 }
 
+// RunawayActionType is the type of runaway action.
+type RunawayActionType int32
+
+//revive:disable:exported
+const (
+	// Note: RunawayActionNone is only defined in tidb, so take care of converting.
+	RunawayActionNone RunawayActionType = iota
+	RunawayActionDryRun
+	RunawayActionCooldown
+	RunawayActionKill
+)
+
+// RunawayWatchType is the type of runaway watch.
+type RunawayWatchType int32
+
+//revive:disable:exported
+const (
+	WatchExact RunawayWatchType = iota
+	WatchSimilar
+)
+
+func (t RunawayWatchType) String() string {
+	switch t {
+	case WatchExact:
+		return "EXACT"
+	case WatchSimilar:
+		return "SIMILAR"
+	default:
+		return "EXACT"
+	}
+}
+
+// RunawayOptionType is the runaway's option type.
+type RunawayOptionType int
+
+//revive:disable:exported
+const (
+	RunawayRule RunawayOptionType = iota
+	RunawayAction
+	RunawayWatch
+)
+
+func (t RunawayActionType) String() string {
+	switch t {
+	case RunawayActionDryRun:
+		return "DRYRUN"
+	case RunawayActionCooldown:
+		return "COOLDOWN"
+	case RunawayActionKill:
+		return "KILL"
+	default:
+		return "DRYRUN"
+	}
+}
+
 // ResourceGroupRefInfo is the struct to refer the resource group.
 type ResourceGroupRefInfo struct {
 	ID   int64 `json:"id"`
 	Name CIStr `json:"name"`
 }
 
+// ResourceGroupRunawaySettings is the runaway settings of the resource group
+type ResourceGroupRunawaySettings struct {
+	ExecElapsedTimeMs uint64            `json:"exec_elapsed_time_ms"`
+	Action            RunawayActionType `json:"action"`
+	WatchType         RunawayWatchType  `json:"watch_type"`
+	WatchDurationMs   uint64            `json:"watch_duration_ms"`
+}
+
 // ResourceGroupSettings is the settings of the resource group
 type ResourceGroupSettings struct {
-	RURate           uint64 `json:"ru_per_sec"`
-	CPULimiter       string `json:"cpu_limit"`
-	IOReadBandwidth  string `json:"io_read_bandwidth"`
-	IOWriteBandwidth string `json:"io_write_bandwidth"`
-	BurstLimit       int64  `json:"burst_limit"`
+	RURate           uint64                        `json:"ru_per_sec"`
+	Priority         uint64                        `json:"priority"`
+	CPULimiter       string                        `json:"cpu_limit"`
+	IOReadBandwidth  string                        `json:"io_read_bandwidth"`
+	IOWriteBandwidth string                        `json:"io_write_bandwidth"`
+	BurstLimit       int64                         `json:"burst_limit"`
+	Runaway          *ResourceGroupRunawaySettings `json:"runaway"`
 }
+
+// NewResourceGroupSettings creates a new ResourceGroupSettings.
+func NewResourceGroupSettings() *ResourceGroupSettings {
+	return &ResourceGroupSettings{
+		RURate:           0,
+		Priority:         MediumPriorityValue,
+		CPULimiter:       "",
+		IOReadBandwidth:  "",
+		IOWriteBandwidth: "",
+		BurstLimit:       0,
+	}
+}
+
+// PriorityValueToName converts the priority value to corresponding name
+func PriorityValueToName(value uint64) string {
+	switch value {
+	case LowPriorityValue:
+		return "LOW"
+	case MediumPriorityValue:
+		return "MEDIUM"
+	case HighPriorityValue:
+		return "HIGH"
+	default:
+		return "MEDIUM"
+	}
+}
+
+//revive:disable:exported
+const (
+	LowPriorityValue    = 1
+	MediumPriorityValue = 8
+	HighPriorityValue   = 16
+)
 
 func (p *ResourceGroupSettings) String() string {
 	sb := new(strings.Builder)
-	if p.RURate != 0 {
-		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate)
+	separatorFn := func() {
+		sb.WriteString(", ")
 	}
+	if p.RURate != 0 {
+		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate, separatorFn)
+	}
+	writeSettingItemToBuilder(sb, "PRIORITY="+PriorityValueToName(p.Priority), separatorFn)
 	if len(p.CPULimiter) > 0 {
-		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter)
+		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter, separatorFn)
 	}
 	if len(p.IOReadBandwidth) > 0 {
-		writeSettingStringToBuilder(sb, "IO_READ_BANDWIDTH", p.IOReadBandwidth)
+		writeSettingStringToBuilder(sb, "IO_READ_BANDWIDTH", p.IOReadBandwidth, separatorFn)
 	}
 	if len(p.IOWriteBandwidth) > 0 {
-		writeSettingStringToBuilder(sb, "IO_WRITE_BANDWIDTH", p.IOWriteBandwidth)
+		writeSettingStringToBuilder(sb, "IO_WRITE_BANDWIDTH", p.IOWriteBandwidth, separatorFn)
 	}
 	// Once burst limit is negative, meaning allow burst with unlimit.
 	if p.BurstLimit < 0 {
-		writeSettingItemToBuilder(sb, "BURSTABLE")
+		writeSettingItemToBuilder(sb, "BURSTABLE", separatorFn)
 	}
+	if p.Runaway != nil {
+		writeSettingDurationToBuilder(sb, "QUERY_LIMIT=(EXEC_ELAPSED", time.Duration(p.Runaway.ExecElapsedTimeMs)*time.Millisecond, separatorFn)
+		writeSettingItemToBuilder(sb, "ACTION="+p.Runaway.Action.String())
+		if p.Runaway.WatchDurationMs > 0 {
+			writeSettingItemToBuilder(sb, "WATCH="+p.Runaway.WatchType.String())
+			writeSettingDurationToBuilder(sb, "DURATION", time.Duration(p.Runaway.WatchDurationMs)*time.Millisecond)
+		}
+		sb.WriteString(")")
+	}
+
 	return sb.String()
+}
+
+// Adjust adjusts the resource group settings.
+func (p *ResourceGroupSettings) Adjust() {
+	// Curretly we only support ru_per_sec sytanx, so BurstLimit(capicity) is always same as ru_per_sec.
+	if p.BurstLimit == 0 {
+		p.BurstLimit = int64(p.RURate)
+	}
 }
 
 // Clone clones the resource group settings.

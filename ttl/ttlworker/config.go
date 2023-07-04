@@ -61,3 +61,10 @@ func getTaskManagerLoopTickerInterval() time.Duration {
 	})
 	return taskManagerLoopTickerInterval
 }
+
+func getTaskManagerHeartBeatExpireInterval() time.Duration {
+	failpoint.Inject("task-manager-heartbeat-expire-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return 2 * ttlTaskHeartBeatTickerInterval
+}

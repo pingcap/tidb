@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -16,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -28,8 +28,7 @@ var (
 	_ DBExecutor = &sql.DB{}
 	_ DBExecutor = &sql.Conn{}
 
-	LogBackupTaskMutex sync.Mutex
-	logBackupTaskCount int
+	logBackupTaskCount = atomic.NewInt32(0)
 )
 
 // QueryExecutor is a interface for exec query
@@ -60,7 +59,7 @@ func CheckLogBackupEnabled(ctx sessionctx.Context) bool {
 	executor, ok := ctx.(sqlexec.RestrictedSQLExecutor)
 	if !ok {
 		// shouldn't happen
-		log.Error("[backup] unable to translate executor from sessionctx")
+		log.Error("unable to translate executor from sessionctx", zap.String("category", "backup"))
 		return false
 	}
 	enabled, err := IsLogBackupEnabled(executor)
@@ -69,7 +68,7 @@ func CheckLogBackupEnabled(ctx sessionctx.Context) bool {
 		// for GC worker it will scan more locks in one tick.
 		// for Add index it will skip using lightning this time.
 		// for Telemetry it will get a false positive usage count.
-		log.Warn("[backup] check log backup config failed, ignore it", zap.Error(err))
+		log.Warn("check log backup config failed, ignore it", zap.String("category", "backup"), zap.Error(err))
 		return true
 	}
 	return enabled
@@ -187,6 +186,8 @@ func GetGcRatio(ctx sqlexec.RestrictedSQLExecutor) (string, error) {
 	return d.ToString()
 }
 
+const DefaultGcRatioVal = "1.1"
+
 func SetGcRatio(ctx sqlexec.RestrictedSQLExecutor, ratio string) error {
 	_, _, err := ctx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR),
@@ -203,26 +204,24 @@ func SetGcRatio(ctx sqlexec.RestrictedSQLExecutor, ratio string) error {
 
 // LogBackupTaskCountInc increases the count of log backup task.
 func LogBackupTaskCountInc() {
-	LogBackupTaskMutex.Lock()
-	logBackupTaskCount++
-	LogBackupTaskMutex.Unlock()
+	logBackupTaskCount.Inc()
+	log.Info("inc log backup task", zap.Int32("count", logBackupTaskCount.Load()))
 }
 
 // LogBackupTaskCountDec decreases the count of log backup task.
 func LogBackupTaskCountDec() {
-	LogBackupTaskMutex.Lock()
-	logBackupTaskCount--
-	LogBackupTaskMutex.Unlock()
+	logBackupTaskCount.Dec()
+	log.Info("dec log backup task", zap.Int32("count", logBackupTaskCount.Load()))
 }
 
 // CheckLogBackupTaskExist checks that whether log-backup is existed.
 func CheckLogBackupTaskExist() bool {
-	return logBackupTaskCount > 0
+	return logBackupTaskCount.Load() > 0
 }
 
 // IsLogBackupInUse checks the log backup task existed.
 func IsLogBackupInUse(ctx sessionctx.Context) bool {
-	return CheckLogBackupEnabled(ctx) && CheckLogBackupTaskExist()
+	return CheckLogBackupTaskExist()
 }
 
 // GetTidbNewCollationEnabled returns the variable name of NewCollationEnabled.

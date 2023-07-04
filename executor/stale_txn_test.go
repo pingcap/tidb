@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -507,15 +508,15 @@ func TestStalenessTransactionSchemaVer(t *testing.T) {
 
 	// get the specific old schema
 	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	require.Equal(t, schemaVer1, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer1, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 
 	// schema changed back to the newest
 	tk.MustExec("commit")
-	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer2, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 
 	// select does not affect the infoschema
 	tk.MustExec(fmt.Sprintf(`SELECT * from t AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer2, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 }
 
 func TestSetTransactionReadOnlyAsOf(t *testing.T) {
@@ -888,28 +889,28 @@ func TestSetTransactionInfoSchema(t *testing.T) {
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 
-	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
+	schemaVer1 := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion()
 	time1 := time.Now()
 	tk.MustExec("alter table t add c int")
 
 	// confirm schema changed
-	schemaVer2 := tk.Session().GetInfoSchema().SchemaMetaVersion()
+	schemaVer2 := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion()
 	time2 := time.Now()
 	require.Less(t, schemaVer1, schemaVer2)
 	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	require.Equal(t, schemaVer1, tk.Session().GetInfoSchema().SchemaMetaVersion())
 	tk.MustExec("select * from t;")
 	tk.MustExec("alter table t add d int")
-	schemaVer3 := tk.Session().GetInfoSchema().SchemaMetaVersion()
+	schemaVer3 := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion()
 	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	tk.MustExec("begin;")
-	require.Equal(t, schemaVer1, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer1, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 	tk.MustExec("commit")
 	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time2.Format("2006-1-2 15:04:05.000")))
 	tk.MustExec("begin;")
-	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer2, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 	tk.MustExec("commit")
-	require.Equal(t, schemaVer3, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer3, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 }
 
 func TestStaleSelect(t *testing.T) {
@@ -1041,8 +1042,11 @@ func TestStaleReadPrepare(t *testing.T) {
 
 	tk.MustExec("create table t1 (id int, v int)")
 	tk.MustExec("insert into t1 values (1,10)")
-	tk.MustExec("set @a=now(6)")
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(time.Millisecond)
+	tk.MustExec("begin")
+	tk.MustExec("set @a=tidb_parse_tso(@@tidb_current_ts)")
+	tk.MustExec("commit")
+	time.Sleep(3 * time.Millisecond)
 	tk.MustExec("update t1 set v=100 where id=1")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 100"))
 	tk.MustExec("prepare s1 from 'select * from t1 as of timestamp @a where id=1'")
@@ -1368,4 +1372,55 @@ func TestIssue35686(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	// This query should not panic
 	tk.MustQuery("select * from information_schema.ddl_jobs as of timestamp now()")
+}
+
+func TestStalePrepare(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+
+	stmtID, _, _, err := tk.Session().PrepareStmt("select * from t as of timestamp now(3) - interval 1000 microsecond order by id asc")
+	require.Nil(t, err)
+	tk.MustExec("prepare stmt from \"select * from t as of timestamp now(3) - interval 1000 microsecond order by id asc\"")
+
+	var expected [][]interface{}
+	for i := 0; i < 20; i++ {
+		tk.MustExec("insert into t values(?)", i)
+		time.Sleep(2 * time.Millisecond) // sleep 2ms to ensure staleread_ts > commit_ts.
+
+		expected = append(expected, testkit.Rows(fmt.Sprintf("%d", i))...)
+		rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)
+		require.Nil(t, err)
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(expected)
+		rs.Close()
+		tk.MustQuery("execute stmt").Check(expected)
+	}
+}
+
+func TestStaleTSO(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+
+	tk.MustExec("insert into t values(1)")
+
+	asOfExprs := []string{
+		"now(3) - interval 1 second",
+		"current_time() - interval 1 second",
+		"curtime() - interval 1 second",
+	}
+
+	nextTSO := oracle.GoTimeToTS(time.Now().Add(2 * time.Second))
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/staleread/mockStaleReadTSO", fmt.Sprintf("return(%d)", nextTSO)))
+	defer failpoint.Disable("github.com/pingcap/tidb/sessiontxn/staleread/mockStaleReadTSO")
+	for _, expr := range asOfExprs {
+		// Make sure the now() expr is evaluated from the stale ts provider.
+		tk.MustQuery("select * from t as of timestamp " + expr + " order by id asc").Check(testkit.Rows("1"))
+	}
 }

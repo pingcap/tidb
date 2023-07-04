@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -43,9 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
-
-var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
-var planCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("cache_miss")
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
@@ -126,6 +122,20 @@ type ChecksumTable struct {
 
 // CancelDDLJobs represents a cancel DDL jobs plan.
 type CancelDDLJobs struct {
+	baseSchemaProducer
+
+	JobIDs []int64
+}
+
+// PauseDDLJobs indicates a plan to pause the Running DDL Jobs.
+type PauseDDLJobs struct {
+	baseSchemaProducer
+
+	JobIDs []int64
+}
+
+// ResumeDDLJobs indicates a plan to resume the Paused DDL Jobs.
+type ResumeDDLJobs struct {
 	baseSchemaProducer
 
 	JobIDs []int64
@@ -350,7 +360,6 @@ type Insert struct {
 	tableColNames types.NameSlice
 	Columns       []*ast.ColumnName
 	Lists         [][]expression.Expression
-	SetList       []*expression.Assignment
 
 	OnDuplicate        []*expression.Assignment
 	Schema4OnDuplicate *expression.Schema
@@ -380,8 +389,8 @@ func (p *Insert) MemoryUsage() (sum int64) {
 	}
 
 	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*7 + int64(cap(p.tableColNames)+
-		cap(p.Columns)+cap(p.SetList)+cap(p.OnDuplicate)+cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer +
-		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*3 + size.SizeOfInt
+		cap(p.Columns)+cap(p.OnDuplicate)+cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer +
+		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*4 + size.SizeOfInt
 	if p.tableSchema != nil {
 		sum += p.tableSchema.MemoryUsage()
 	}
@@ -400,9 +409,6 @@ func (p *Insert) MemoryUsage() (sum int64) {
 		for _, expr := range exprs {
 			sum += expr.MemoryUsage()
 		}
-	}
-	for _, as := range p.SetList {
-		sum += as.MemoryUsage()
 	}
 	for _, as := range p.OnDuplicate {
 		sum += as.MemoryUsage()
@@ -554,16 +560,40 @@ type LoadData struct {
 	FileLocRef  ast.FileLocRefTp
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
+	Format      *string
 	Table       *ast.TableName
+	Charset     *string
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
-	IgnoreLines uint64
+	IgnoreLines *uint64
 
 	ColumnAssignments  []*ast.Assignment
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	Options            []*LoadDataOpt
 
 	GenCols InsertGeneratedColumns
+}
+
+// LoadDataOpt represents load data option.
+type LoadDataOpt struct {
+	Name  string
+	Value expression.Expression
+}
+
+// ImportInto represents a ingest into plan.
+type ImportInto struct {
+	baseSchemaProducer
+
+	Table              *ast.TableName
+	ColumnAssignments  []*ast.Assignment
+	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	Path               string
+	Format             *string
+	Options            []*LoadDataOpt
+
+	GenCols InsertGeneratedColumns
+	Stmt    string
 }
 
 // LoadStats represents a load stats plan.
@@ -596,6 +626,7 @@ type PlanReplayer struct {
 	File     string
 
 	Capture    bool
+	Remove     bool
 	SQLDigest  string
 	PlanDigest string
 }
@@ -608,7 +639,7 @@ type IndexAdvise struct {
 	Path        string
 	MaxMinutes  uint64
 	MaxIndexNum *ast.MaxIndexNumClause
-	LinesInfo   *ast.LinesClause
+	LineFieldsInfo
 }
 
 // SplitRegion represents a split regions plan.
@@ -654,6 +685,51 @@ type SelectInto struct {
 
 	TargetPlan Plan
 	IntoOpt    *ast.SelectIntoOption
+	LineFieldsInfo
+}
+
+// LineFieldsInfo used in load-data/select-into/index-advise stmt.
+type LineFieldsInfo struct {
+	FieldsTerminatedBy string
+	FieldsEnclosedBy   string // length always <= 1, see parser.y
+	FieldsEscapedBy    string // length always <= 1, see parser.y
+	FieldsOptEnclosed  bool
+	LinesStartingBy    string
+	LinesTerminatedBy  string
+}
+
+// NewLineFieldsInfo new LineFieldsInfo from FIELDS/LINES info.
+func NewLineFieldsInfo(fieldsInfo *ast.FieldsClause, linesInfo *ast.LinesClause) LineFieldsInfo {
+	e := LineFieldsInfo{
+		FieldsTerminatedBy: "\t",
+		FieldsEnclosedBy:   "",
+		FieldsEscapedBy:    "\\",
+		FieldsOptEnclosed:  false,
+		LinesStartingBy:    "",
+		LinesTerminatedBy:  "\n",
+	}
+
+	if fieldsInfo != nil {
+		if fieldsInfo.Terminated != nil {
+			e.FieldsTerminatedBy = *fieldsInfo.Terminated
+		}
+		if fieldsInfo.Enclosed != nil {
+			e.FieldsEnclosedBy = *fieldsInfo.Enclosed
+		}
+		if fieldsInfo.Escaped != nil {
+			e.FieldsEscapedBy = *fieldsInfo.Escaped
+		}
+		e.FieldsOptEnclosed = fieldsInfo.OptEnclosed
+	}
+	if linesInfo != nil {
+		if linesInfo.Starting != nil {
+			e.LinesStartingBy = *linesInfo.Starting
+		}
+		if linesInfo.Terminated != nil {
+			e.LinesTerminatedBy = *linesInfo.Terminated
+		}
+	}
+	return e
 }
 
 // ExplainInfoForEncode store explain info for JSON encode
@@ -734,7 +810,7 @@ func (e *Explain) prepareSchema() error {
 		e.Format = types.ExplainFormatROW
 	}
 	switch {
-	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief) && (!e.Analyze && e.RuntimeStatsColl == nil):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose:
 		if e.Analyze || e.RuntimeStatsColl != nil {
@@ -750,7 +826,7 @@ func (e *Explain) prepareSchema() error {
 		} else {
 			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "task", "access object", "operator info"}
 		}
-	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief) && (e.Analyze || e.RuntimeStatsColl != nil):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
@@ -794,26 +870,28 @@ func (e *Explain) RenderResult() error {
 			if pp.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 				// output cost formula and factor costs through warning under model ver2 and true_card_cost mode for cost calibration.
 				cost, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
-				trace := cost.trace
-				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("cost formula: %v", trace.formula))
-				data, err := json.Marshal(trace.factorCosts)
-				if err != nil {
-					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal factor costs error %v", err))
-				}
-				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor costs: %v", string(data)))
-
-				// output cost factor weights for cost calibration
-				factors := defaultVer2Factors.tolist()
-				weights := make(map[string]float64)
-				for _, factor := range factors {
-					if factorCost, ok := trace.factorCosts[factor.Name]; ok && factor.Value > 0 {
-						weights[factor.Name] = factorCost / factor.Value // cost = [factors] * [weights]
+				if cost.trace != nil {
+					trace := cost.trace
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("cost formula: %v", trace.formula))
+					data, err := json.Marshal(trace.factorCosts)
+					if err != nil {
+						pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal factor costs error %v", err))
 					}
-				}
-				if wstr, err := json.Marshal(weights); err != nil {
-					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal weights error %v", err))
-				} else {
-					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor weights: %v", string(wstr)))
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor costs: %v", string(data)))
+
+					// output cost factor weights for cost calibration
+					factors := defaultVer2Factors.tolist()
+					weights := make(map[string]float64)
+					for _, factor := range factors {
+						if factorCost, ok := trace.factorCosts[factor.Name]; ok && factor.Value > 0 {
+							weights[factor.Name] = factorCost / factor.Value // cost = [factors] * [weights]
+						}
+					}
+					if wstr, err := json.Marshal(weights); err != nil {
+						pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal weights error %v", err))
+					} else {
+						pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor weights: %v", string(wstr)))
+					}
 				}
 			}
 		} else {
@@ -832,7 +910,7 @@ func (e *Explain) RenderResult() error {
 	}
 
 	switch strings.ToLower(e.Format) {
-	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace:
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
 		if e.Rows == nil || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
 			e.explainFlatPlanInRowFormat(flat)
@@ -867,11 +945,11 @@ func (e *Explain) RenderResult() error {
 			tracker := e.SCtx().GetSessionVars().MemTracker
 			encodeRoot.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
 		}
-		if str, err := JSONToString(encodes); err == nil {
-			e.Rows = append(e.Rows, []string{str})
-		} else {
+		str, err := JSONToString(encodes)
+		if err != nil {
 			return err
 		}
+		e.Rows = append(e.Rows, []string{str})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -1046,7 +1124,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p Plan, taskType, id string, 
 	return jsonRow
 }
 
-func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, string, string) {
+func (e *Explain) getOperatorInfo(p Plan, id string) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
 	// For `explain for connection` statement, `e.ExplainRows` will be set.
 	for _, row := range e.ExplainRows {
 		if len(row) < 5 {
@@ -1058,9 +1136,9 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	}
 
 	pp, isPhysicalPlan := p.(PhysicalPlan)
-	estRows := "N/A"
-	estCost := "N/A"
-	costFormula := "N/A"
+	estRows = "N/A"
+	estCost = "N/A"
+	costFormula = "N/A"
 	if isPhysicalPlan {
 		estRows = strconv.FormatFloat(pp.getEstRowCountForDisplay(), 'f', 2, 64)
 		if e.ctx != nil && e.ctx.GetSessionVars().CostModelVersion == modelVer2 {
@@ -1077,7 +1155,6 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 
-	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
 		accessObject = plan.AccessObject().String()
 		operatorInfo = plan.OperatorInfo(false)
@@ -1318,7 +1395,10 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx), nil
 	case *PhysicalTableReader:
-		tableScan := v.TablePlans[0].(*PhysicalTableScan)
+		tableScan, ok := v.TablePlans[0].(*PhysicalTableScan)
+		if !ok {
+			return false, nil
+		}
 		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPointNonNullable(ctx)
 		if !isPointRange {
 			return false, nil
