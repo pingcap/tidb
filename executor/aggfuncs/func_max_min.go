@@ -388,7 +388,7 @@ func (e *maxMin4Uint) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(p), DefPartialResult4MaxMinUintSize
 }
 
-func (e *maxMin4Uint) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Uint) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinUint)(pr)
 	p.val = 0
 	p.isNull = true
@@ -521,7 +521,7 @@ type maxMin4Float32 struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Float32) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Float32) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinFloat32)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinFloat32Size

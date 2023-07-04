@@ -32,7 +32,7 @@ type baseCount struct {
 
 type partialResult4Count = int64
 
-func (e *baseCount) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*baseCount) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4Count)), DefPartialResult4CountSize
 }
 

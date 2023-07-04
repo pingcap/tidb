@@ -129,7 +129,7 @@ type bitAndUint64 struct {
 	baseBitAggFunc
 }
 
-func (e *bitAndUint64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*bitAndUint64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4BitFunc)
 	*p = math.MaxUint64
 	return PartialResult(p), DefPartialResult4BitFuncSize

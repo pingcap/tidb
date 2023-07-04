@@ -58,7 +58,7 @@ type countOriginalWithDistinct4Int struct {
 	baseCount
 }
 
-func (e *countOriginalWithDistinct4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*countOriginalWithDistinct4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	valSet, setSize := set.NewInt64SetWithMemoryUsage()
 	return PartialResult(&partialResult4CountDistinctInt{
 		valSet: valSet,
@@ -104,7 +104,7 @@ type countOriginalWithDistinct4Real struct {
 	baseCount
 }
 
-func (e *countOriginalWithDistinct4Real) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*countOriginalWithDistinct4Real) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	valSet, setSize := set.NewFloat64SetWithMemoryUsage()
 	return PartialResult(&partialResult4CountDistinctReal{
 		valSet: valSet,
@@ -150,7 +150,7 @@ type countOriginalWithDistinct4Decimal struct {
 	baseCount
 }
 
-func (e *countOriginalWithDistinct4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*countOriginalWithDistinct4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	valSet, setSize := set.NewStringSetWithMemoryUsage()
 	return PartialResult(&partialResult4CountDistinctDecimal{
 		valSet: valSet,
@@ -202,7 +202,7 @@ type countOriginalWithDistinct4Duration struct {
 	baseCount
 }
 
-func (e *countOriginalWithDistinct4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*countOriginalWithDistinct4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	valSet, setSize := set.NewInt64SetWithMemoryUsage()
 	return PartialResult(&partialResult4CountDistinctDuration{
 		valSet: valSet,
@@ -249,7 +249,7 @@ type countOriginalWithDistinct4String struct {
 	baseCount
 }
 
-func (e *countOriginalWithDistinct4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*countOriginalWithDistinct4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	valSet, setSize := set.NewStringSetWithMemoryUsage()
 	return PartialResult(&partialResult4CountDistinctString{
 		valSet: valSet,
@@ -300,7 +300,7 @@ type partialResult4CountWithDistinct struct {
 	valSet set.StringSetWithMemoryUsage
 }
 
-func (e *countOriginalWithDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*countOriginalWithDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	valSet, setSize := set.NewStringSetWithMemoryUsage()
 	return PartialResult(&partialResult4CountWithDistinct{
 		valSet: valSet,
@@ -754,7 +754,7 @@ func (e *baseApproxCountDistinct) AppendFinalResult2Chunk(_ sessionctx.Context, 
 	return nil
 }
 
-func (e *baseApproxCountDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*baseApproxCountDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return (PartialResult)(NewPartialResult4ApproxCountDistinct()), DefPartialResult4ApproxCountDistinctSize
 }
 

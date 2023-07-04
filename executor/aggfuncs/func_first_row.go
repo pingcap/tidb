@@ -121,7 +121,7 @@ type firstRow4Int struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowInt)), DefPartialResult4FirstRowIntSize
 }
 
@@ -167,7 +167,7 @@ type firstRow4Float32 struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Float32) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Float32) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowFloat32)), DefPartialResult4FirstRowFloat32Size
 }
 
@@ -213,7 +213,7 @@ type firstRow4Float64 struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowFloat64)), DefPartialResult4FirstRowFloat64Size
 }
 
@@ -259,7 +259,7 @@ type firstRow4String struct {
 	baseAggFunc
 }
 
-func (e *firstRow4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowString)), DefPartialResult4FirstRowStringSize
 }
 
@@ -306,7 +306,7 @@ type firstRow4Time struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowTime)), DefPartialResult4FirstRowTimeSize
 }
 
@@ -352,7 +352,7 @@ type firstRow4Duration struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowDuration)), DefPartialResult4FirstRowDurationSize
 }
 
@@ -398,7 +398,7 @@ type firstRow4JSON struct {
 	baseAggFunc
 }
 
-func (e *firstRow4JSON) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4JSON) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowJSON)), DefPartialResult4FirstRowJSONSize
 }
 
@@ -444,11 +444,11 @@ type firstRow4Decimal struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowDecimal)), DefPartialResult4FirstRowDecimalSize
 }
 
-func (e *firstRow4Decimal) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowDecimal)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -504,7 +504,7 @@ type firstRow4Enum struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Enum) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Enum) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowEnum)), DefPartialResult4FirstRowEnumSize
 }
 
@@ -551,7 +551,7 @@ type firstRow4Set struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Set) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Set) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowSet)), DefPartialResult4FirstRowSetSize
 }
 

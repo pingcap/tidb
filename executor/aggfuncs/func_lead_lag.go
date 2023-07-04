@@ -40,7 +40,7 @@ type partialResult4LeadLag struct {
 	curIdx uint64
 }
 
-func (v *baseLeadLag) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*baseLeadLag) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4LeadLag{}), DefPartialResult4LeadLagSize
 }
 

@@ -41,7 +41,7 @@ type partialResult4JsonObjectAgg struct {
 	bInMap  int // indicate there are 2^bInMap buckets in entries.
 }
 
-func (e *jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonObjectAgg{}
 	p.entries = make(map[string]interface{})
 	p.bInMap = 0

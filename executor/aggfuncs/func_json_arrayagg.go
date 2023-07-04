@@ -36,7 +36,7 @@ type partialResult4JsonArrayagg struct {
 	entries []interface{}
 }
 
-func (e *jsonArrayagg) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*jsonArrayagg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonArrayagg{}
 	p.entries = make([]interface{}, 0)
 	return PartialResult(&p), DefPartialResult4JsonArrayagg + DefSliceSize

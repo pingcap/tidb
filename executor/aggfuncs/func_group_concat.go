@@ -102,7 +102,7 @@ type groupConcat struct {
 	baseGroupConcat4String
 }
 
-func (e *groupConcat) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*groupConcat) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4GroupConcat)
 	p.valsBuf = &bytes.Buffer{}
 	return PartialResult(p), DefPartialResult4GroupConcatSize + DefBytesBufferSize
@@ -193,7 +193,7 @@ type groupConcatDistinct struct {
 	baseGroupConcat4String
 }
 
-func (e *groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
 	setSize := int64(0)
