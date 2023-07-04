@@ -131,8 +131,9 @@ func (e *Executor) parseTsExpr(ctx context.Context, tsExpr ast.ExprNode) (time.T
 
 func (e *Executor) parseCalibrateDuration(ctx context.Context) (startTime time.Time, endTime time.Time, err error) {
 	var dur time.Duration
-	// startTimeExpr is used to calc endTime by FuncCallExpr when duration begin with `interval`.
+	// startTimeExpr and endTimeExpr are used to calc endTime by FuncCallExpr when duration begin with `interval`.
 	var startTimeExpr ast.ExprNode
+	var endTimeExpr ast.ExprNode
 	for _, op := range e.OptionList {
 		switch op.Tp {
 		case ast.CalibrateStartTime:
@@ -142,6 +143,7 @@ func (e *Executor) parseCalibrateDuration(ctx context.Context) (startTime time.T
 				return
 			}
 		case ast.CalibrateEndTime:
+			endTimeExpr = op.Ts
 			endTime, err = e.parseTsExpr(ctx, op.Ts)
 			if err != nil {
 				return
@@ -160,7 +162,11 @@ func (e *Executor) parseCalibrateDuration(ctx context.Context) (startTime time.T
 			}
 			// If startTime is not set, startTime will be now() - duration.
 			if startTime.IsZero() {
-				startTime = time.Now().Add(-dur)
+				toTime := endTime
+				if toTime.IsZero() {
+					toTime = time.Now()
+				}
+				startTime = toTime.Add(-dur)
 			}
 			// If endTime is set, duration will be ignored.
 			if endTime.IsZero() {
@@ -171,10 +177,14 @@ func (e *Executor) parseCalibrateDuration(ctx context.Context) (startTime time.T
 		// interval duration
 		// If startTime is not set, startTime will be now() - duration.
 		if startTimeExpr == nil {
+			toTimeExpr := endTimeExpr
+			if endTime.IsZero() {
+				toTimeExpr = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
+			}
 			startTimeExpr = &ast.FuncCallExpr{
 				FnName: model.NewCIStr("DATE_SUB"),
 				Args: []ast.ExprNode{
-					&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")},
+					toTimeExpr,
 					op.Ts,
 					&ast.TimeUnitExpr{Unit: op.Unit}},
 			}
@@ -201,7 +211,6 @@ func (e *Executor) parseCalibrateDuration(ctx context.Context) (startTime time.T
 		err = errors.Errorf("start time should not be 0")
 		return
 	}
-
 	if endTime.IsZero() {
 		endTime = time.Now()
 	}
