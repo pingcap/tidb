@@ -3064,10 +3064,47 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 
 // markChildrenUsedCols compares each child with the output schema, and mark
 // each column of the child is used by output or not.
-func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expression.Schema) (childrenUsed [][]bool) {
-	for _, child := range childSchema {
+func markChildrenUsedCols(outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]bool) {
+	childrenUsed = make([][]bool, 0, len(childSchemas))
+	markedOffsets := make(map[int]struct{})
+	for _, col := range outputSchema.Columns {
+		markedOffsets[col.Index] = struct{}{}
+	}
+	prefixLen := 0
+	for _, childSchema := range childSchemas {
+		used := make([]bool, len(childSchema.Columns))
+		for i := range childSchema.Columns {
+			if _, ok := markedOffsets[prefixLen+i]; ok {
+				used[i] = true
+			}
+		}
+		childrenUsed = append(childrenUsed, used)
+	}
+	for _, child := range childSchemas {
 		used := expression.GetUsedList(outputSchema.Columns, child)
 		childrenUsed = append(childrenUsed, used)
+	}
+	return
+}
+
+// markChildrenUsedColsTest compares each child with the output schema, and mark
+// each column of the child is used by output or not.
+func markChildrenUsedColsTest(outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]bool) {
+	childrenUsed = make([][]bool, 0, len(childSchemas))
+	markedOffsets := make(map[int]struct{})
+	for _, col := range outputSchema.Columns {
+		markedOffsets[col.Index] = struct{}{}
+	}
+	prefixLen := 0
+	for _, childSchema := range childSchemas {
+		used := make([]bool, len(childSchema.Columns))
+		for i := range childSchema.Columns {
+			if _, ok := markedOffsets[prefixLen+i]; ok {
+				used[i] = true
+			}
+		}
+		childrenUsed = append(childrenUsed, used)
+		prefixLen += childSchema.Len()
 	}
 	return
 }
@@ -3219,7 +3256,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		lastColHelper: v.CompareFilters,
 		finished:      &atomic.Value{},
 	}
-	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
+	childrenUsedSchema := markChildrenUsedColsTest(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
 	e.joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema, false)
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
 	for i := 0; i < len(v.OuterJoinKeys); i++ {

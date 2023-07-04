@@ -245,6 +245,15 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 		}
 		p.OuterHashKeys[i], p.InnerHashKeys[i] = outerKey.(*expression.Column), innerKey.(*expression.Column)
 	}
+
+	for i, col := range p.schema.Columns {
+		newCol, err := col.ResolveIndices(mergedSchema)
+		if err != nil {
+			return err
+		}
+		p.schema.Columns[i] = newCol.(*expression.Column)
+	}
+
 	return
 }
 
