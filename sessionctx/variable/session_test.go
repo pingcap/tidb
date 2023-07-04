@@ -234,7 +234,7 @@ func TestSlowLogFormat(t *testing.T) {
 # DB: test
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
-# Digest: 01d00e6e93b28184beae487ac05841145d2a2f6a7b16de32a763bed27967e83d
+# Digest: e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7
 # Stats: t1:123[1000;0][ID 1:allLoaded,ID 2:allLoaded][ID 2:allEvicted,ID 3:onlyCmsEvicted],t2:pseudo[10000;0]
 # Num_cop_tasks: 10
 # Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3 Cop_proc_addr: 10.6.131.78

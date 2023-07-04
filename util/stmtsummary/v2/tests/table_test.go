@@ -410,7 +410,7 @@ func TestStmtSummaryTableOther(t *testing.T) {
 		Check(testkit.Rows(
 			// digest in cache
 			// "show databases ;"
-			"show databases ; dcd020298c5f79e8dc9d63b3098083601614a04a52db458738347d15ea5712a1",
+			"show databases 0e247706bf6e791fbf4af8c8e7658af5ffc45c63179871202d8f91551ee03161",
 			// digest evicted
 			" <nil>",
 		))
@@ -445,7 +445,7 @@ func TestStmtSummaryHistoryTableOther(t *testing.T) {
 		Check(testkit.Rows(
 			// digest in cache
 			// "show databases ;"
-			"show databases ; dcd020298c5f79e8dc9d63b3098083601614a04a52db458738347d15ea5712a1",
+			"show databases 0e247706bf6e791fbf4af8c8e7658af5ffc45c63179871202d8f91551ee03161",
 			// digest evicted
 			" <nil>",
 		))

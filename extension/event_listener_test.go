@@ -286,7 +286,7 @@ func TestExtensionStmtEvents(t *testing.T) {
 			multiQueryCases: []stmtEventCase{
 				{
 					originalText: "select 1;",
-					redactText:   "select ? ;",
+					redactText:   "select ?",
 				},
 				{
 					originalText: "select * from t1 where a > 1",
