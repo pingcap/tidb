@@ -1,3 +1,5 @@
+// vim: set ts=4:
+//
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -94,7 +96,7 @@ const (
 		Index_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_user_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_slave_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_role_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -104,14 +106,22 @@ const (
 		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Password_reuse_history  smallint unsigned DEFAULT NULL,
-		Password_reuse_time     smallint unsigned DEFAULT NULL,
+		Create_Tablespace_Priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Password_reuse_history	smallint unsigned DEFAULT NULL,
+		Password_reuse_time		smallint unsigned DEFAULT NULL,
 		User_attributes			json,
 		Token_issuer			VARCHAR(255),
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
+		ssl_type 				ENUM('','ANY','X509','SPECIFIED') NOT NULL DEFAULT '',
+		ssl_cipher 				blob,
+		x509_issuer 			blob,
+		x509_subject 			blob,
+		max_questions 			int unsigned NOT NULL DEFAULT '0',
+		max_updates 			int unsigned NOT NULL DEFAULT '0',
+		max_connections 		int unsigned NOT NULL DEFAULT '0',
+		max_user_connections 	int unsigned NOT NULL DEFAULT '0',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -942,11 +952,12 @@ const (
 	version167 = 167
 	version168 = 168
 	version169 = 169
+	version170 = 170
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version169
+var currentBootstrapVersion int64 = version170
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1084,6 +1095,7 @@ var (
 		upgradeToVer167,
 		upgradeToVer168,
 		upgradeToVer169,
+		upgradeToVer170,
 	}
 )
 
@@ -2729,6 +2741,21 @@ func upgradeToVer169(s Session, ver int64) {
 	}
 	mustExecute(s, CreateRunawayQuarantineWatchTable)
 	mustExecute(s, CreateRunawayTable)
+}
+
+func upgradeToVer170(s Session, ver int64) {
+	if ver >= version170 {
+		return
+	}
+	doReentrantDDL(s, `ALTER TABLE mysql.user
+ADD COLUMN ssl_type enum('','ANY','X509','SPECIFIED') NOT NULL DEFAULT '',
+ADD COLUMN ssl_cipher blob NOT NULL,
+ADD COLUMN x509_issuer blob NOT NULL,
+ADD COLUMN x509_subject blob NOT NULL,
+ADD COLUMN max_questions int unsigned NOT NULL DEFAULT '0',
+ADD COLUMN max_updates int unsigned NOT NULL DEFAULT '0',
+ADD COLUMN max_connections int unsigned NOT NULL DEFAULT '0',
+ADD COLUMN max_user_connections int unsigned NOT NULL DEFAULT '0'`, infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {

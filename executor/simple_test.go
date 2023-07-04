@@ -135,6 +135,16 @@ func TestUserAttributes(t *testing.T) {
 	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}, "resource_group": "rg1"}`))
 }
 
+func TestNavicatUser(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	rootTK := testkit.NewTestKit(t, store)
+
+	// Besides the usual columns navicat user management also queries a few more columns.
+	// https://github.com/pingcap/tidb/issues/45154
+	rootTK.MustQuery(`SELECT ssl_type,ssl_cipher,x509_issuer,x509_subject,max_questions,max_updates,` +
+		`max_connections,max_user_connections FROM mysql.user`)
+}
+
 func TestSetResourceGroup(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
