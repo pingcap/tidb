@@ -259,7 +259,7 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation,
 	}
 	tmpSchema := expression.NewSchema(gbyCols...)
 	for _, key := range child.Schema().Keys {
-		if tmpSchema.ColumnsIndices(key) != nil {
+		if tmpSchema.ColumnsIndices(key) != nil { // gby item need to be covered by key.
 			return child, nil
 		}
 	}
@@ -510,9 +510,38 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						resetNotNullFlag(join.schema, 0, lChild.Schema().Len())
 					}
 					buildKeyInfo(join)
+					// count(a) -> ifnull(col#x, 0, 1) in rewriteExpr of agg function, since col#x is already the final
+					// pushed-down aggregation's result, we don't need to take every row as count 1 when they don't have
+					// not-null flag in a.tryToEliminateAggregation(oldAgg, opt), which is not suitable here.
+					oldCheck := a.oldAggEliminationCheck
+					a.oldAggEliminationCheck = true
 					proj := a.tryToEliminateAggregation(agg, opt)
 					if proj != nil {
 						p = proj
+					}
+					a.oldAggEliminationCheck = oldCheck
+
+					// Combine the aggregation elimination logic below since new agg's child key info has changed.
+					// Notice that even if we eliminate new agg below if possible, the agg's schema is inherited by proj.
+					// Therefore, we don't need to set the join's schema again, just build the keyInfo again.
+					changed := false
+					if newAgg, ok1 := lChild.(*LogicalAggregation); ok1 {
+						proj := a.tryToEliminateAggregation(newAgg, opt)
+						if proj != nil {
+							lChild = proj
+							changed = true
+						}
+					}
+					if newAgg, ok2 := rChild.(*LogicalAggregation); ok2 {
+						proj := a.tryToEliminateAggregation(newAgg, opt)
+						if proj != nil {
+							rChild = proj
+							changed = true
+						}
+					}
+					if changed {
+						join.SetChildren(lChild, rChild)
+						buildKeyInfo(join)
 					}
 				}
 			} else if proj, ok1 := child.(*LogicalProjection); ok1 {

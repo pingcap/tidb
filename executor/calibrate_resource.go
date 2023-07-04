@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -115,14 +116,14 @@ const (
 )
 
 type calibrateResourceExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	optionList   []*ast.DynamicCalibrateResourceOption
 	workloadType ast.CalibrateResourceType
 	done         bool
 }
 
 func (e *calibrateResourceExec) parseTsExpr(ctx context.Context, tsExpr ast.ExprNode) (time.Time, error) {
-	ts, err := staleread.CalculateAsOfTsExpr(ctx, e.ctx, tsExpr)
+	ts, err := staleread.CalculateAsOfTsExpr(ctx, e.Ctx(), tsExpr)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -131,7 +132,6 @@ func (e *calibrateResourceExec) parseTsExpr(ctx context.Context, tsExpr ast.Expr
 
 func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (startTime time.Time, endTime time.Time, err error) {
 	var dur time.Duration
-	var ts uint64
 	// startTimeExpr is used to calc endTime by FuncCallExpr when duration begin with `interval`.
 	var startTimeExpr ast.ExprNode
 	for _, op := range e.optionList {
@@ -177,14 +177,13 @@ func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (sta
 				}
 				// If endTime is set, duration will be ignored.
 				if endTime.IsZero() {
-					ts, err = staleread.CalculateAsOfTsExpr(ctx, e.ctx, &ast.FuncCallExpr{
+					endTime, err = e.parseTsExpr(ctx, &ast.FuncCallExpr{
 						FnName: model.NewCIStr("DATE_ADD"),
 						Args:   []ast.ExprNode{startTimeExpr, op.Ts, &ast.TimeUnitExpr{Unit: op.Unit}},
 					})
 					if err != nil {
 						return
 					}
-					endTime = oracle.GetTimeFromTS(ts)
 				}
 			}
 		}
@@ -217,7 +216,7 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	}
 	e.done = true
 
-	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	if len(e.optionList) > 0 {
 		return e.dynamicCalibrate(ctx, req, exec)
@@ -235,8 +234,8 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	if err != nil {
 		return err
 	}
-	startTime := startTs.In(e.ctx.GetSessionVars().Location()).Format(time.DateTime)
-	endTime := endTs.In(e.ctx.GetSessionVars().Location()).Format(time.DateTime)
+	startTime := startTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
+	endTime := endTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
@@ -246,15 +245,15 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 	if err != nil {
 		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
-	rus, err := getRUPerSec(ctx, e.ctx, exec, startTime, endTime)
+	rus, err := getRUPerSec(ctx, e.Ctx(), exec, startTime, endTime)
 	if err != nil {
 		return err
 	}
-	tikvCPUs, err := getComponentCPUUsagePerSec(ctx, e.ctx, exec, "tikv", startTime, endTime)
+	tikvCPUs, err := getComponentCPUUsagePerSec(ctx, e.Ctx(), exec, "tikv", startTime, endTime)
 	if err != nil {
 		return err
 	}
-	tidbCPUs, err := getComponentCPUUsagePerSec(ctx, e.ctx, exec, "tidb", startTime, endTime)
+	tidbCPUs, err := getComponentCPUUsagePerSec(ctx, e.Ctx(), exec, "tidb", startTime, endTime)
 	if err != nil {
 		return err
 	}
@@ -339,7 +338,7 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 	if !variable.EnableResourceControl.Load() {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
-	resourceGroupCtl := domain.GetDomain(e.ctx).ResourceGroupsController()
+	resourceGroupCtl := domain.GetDomain(e.Ctx()).ResourceGroupsController()
 	// first fetch the ru settings config.
 	if resourceGroupCtl == nil {
 		return errors.New("resource group controller is not initialized")
