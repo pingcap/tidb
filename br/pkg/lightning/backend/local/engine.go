@@ -1145,6 +1145,7 @@ func (w *Writer) flush(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 		w.writer = nil
+		w.writerSize.Store(0)
 		w.batchCount = 0
 		if meta != nil && meta.totalSize > 0 {
 			return w.addSST(ctx, meta)
