@@ -181,6 +181,8 @@ func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boun
 				pos, tmp = binaryDateTime(pos, paramValues)
 			case 11:
 				pos, tmp = binaryTimestamp(pos, paramValues)
+			case 13:
+				pos, tmp = binaryTimestampWithTZ(pos, paramValues)
 			default:
 				err = mysql.ErrMalformPacket
 				return
@@ -323,6 +325,18 @@ func binaryTimestamp(pos int, paramValues []byte) (int, string) {
 	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 	pos += 4
 	return pos, fmt.Sprintf("%s.%06d", dateTime, microSecond)
+}
+
+func binaryTimestampWithTZ(pos int, paramValues []byte) (int, string) {
+	pos, timestamp := binaryTimestamp(pos, paramValues)
+	tzShiftInMin := int16(binary.LittleEndian.Uint16(paramValues[pos : pos+2]))
+	tzShiftHour := tzShiftInMin / 60
+	tzShiftAbsMin := tzShiftInMin % 60
+	if tzShiftAbsMin < 0 {
+		tzShiftAbsMin = -tzShiftAbsMin
+	}
+	pos += 2
+	return pos, fmt.Sprintf("%s%+02d:%02d", timestamp, tzShiftHour, tzShiftAbsMin)
 }
 
 func binaryDuration(pos int, paramValues []byte, isNegative uint8) (int, string) {

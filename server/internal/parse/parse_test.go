@@ -124,6 +124,28 @@ func TestParseExecArgs(t *testing.T) {
 				[][]byte{nil},
 				[]byte{0x0},
 				[]byte{7, 0},
+				[]byte{0x0d, 0xdb, 0x07, 0x02, 0x03, 0x04, 0x05, 0x06, 0x40, 0xe2, 0x01, 0x00, 0xf2, 0x02},
+			},
+			nil,
+			"2011-02-03 04:05:06.123456+12:34",
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{7, 0},
+				[]byte{0x0d, 0xdb, 0x07, 0x02, 0x03, 0x04, 0x05, 0x06, 0x40, 0xe2, 0x01, 0x00, 0x0e, 0xfd},
+			},
+			nil,
+			"2011-02-03 04:05:06.123456-12:34",
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{7, 0},
 				[]byte{0x00},
 			},
 			nil,
