@@ -312,6 +312,8 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 		for i := 0; i < subtaskCnt; i++ {
 			metas = append(metas, []byte{'1'})
 		}
+		logutil.BgLogger().Info("progress step one")
+
 		metasChan <- metas
 		doneChan <- true
 	case proto.StepTwo:

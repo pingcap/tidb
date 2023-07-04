@@ -169,11 +169,12 @@ func (d *dispatcher) DispatchTaskLoop() {
 			}
 			var atomicCnt atomic.Int32
 			atomicCnt.Store(int32(cnt))
+			var dispatchWg tidbutil.WaitGroupWrapper
 			for _, gTask := range gTasks {
 				if gTask.Flag != proto.TaskSubStateDispatching {
-					d.wg.Add(1)
+					dispatchWg.Add(1)
 					go func(gTask *proto.Task) {
-						defer d.wg.Done()
+						defer dispatchWg.Done()
 						// This global task is running, so no need to reprocess it.
 						if d.isRunningGTask(gTask.ID) {
 							return
@@ -203,6 +204,8 @@ func (d *dispatcher) DispatchTaskLoop() {
 					}(gTask)
 				}
 			}
+			// wait all gTask in this tick dispatched.
+			dispatchWg.Wait()
 		}
 	}
 }
@@ -431,7 +434,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (bool, error) {
 	// 1. update Step to make handle.ProcessNormalFlow to generate next step's metas.
 	gTask.Step++
 
-	// 2. Adjust the global task's concurrency.
+	// 2. adjust the global task's concurrency.
 	if gTask.Concurrency == 0 {
 		gTask.Concurrency = DefaultSubtaskConcurrency
 	}
@@ -439,9 +442,9 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (bool, error) {
 		gTask.Concurrency = MaxSubtaskConcurrency
 	}
 
-	// 3. Special handling for the new tasks.
+	// 3. special handling for the new tasks.
 	if gTask.State == proto.TaskStatePending {
-		// TODO: Consider using TS.
+		// TODO: consider using TS.
 		gTask.StartTime = time.Now().UTC()
 	}
 
@@ -604,8 +607,7 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 			break
 		}
 		if i%10 == 0 {
-			logutil.BgLogger().Warn("updateTask to normal failed", zap.Int64("task-id", gTask.ID),
-				zap.String("previous state", prevState), zap.String("curr state", gTask.State),
+			logutil.BgLogger().Warn("updateTask to normal failed", zap.Int64("task-id", gTask.ID), zap.String("curr state", gTask.State),
 				zap.Int("retry times", retrySQLTimes), zap.Error(err))
 		}
 		time.Sleep(retrySQLInterval)
