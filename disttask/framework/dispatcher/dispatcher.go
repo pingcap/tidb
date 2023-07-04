@@ -16,6 +16,7 @@ package dispatcher
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -97,16 +98,26 @@ func (d *dispatcher) delRunningGTask(globalTaskID int64) {
 	delete(d.runningGTasks.taskIDs, globalTaskID)
 }
 
+func (d *dispatcher) setRunningGTaskDispatching(globalTaskID int64) {
+	d.runningGTasks.dispatchDone.Store(globalTaskID, false)
+}
+
+func (d *dispatcher) setRunningGTaskDispatched(globalTaskID int64) {
+	d.runningGTasks.dispatchDone.Store(globalTaskID, true)
+}
+
 type dispatcher struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	taskMgr *storage.TaskManager
-	wg      tidbutil.WaitGroupWrapper
-	gPool   *spool.Pool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	taskMgr      *storage.TaskManager
+	wg           tidbutil.WaitGroupWrapper
+	gPool        *spool.Pool
+	dispatchDone atomic.Bool
 
 	runningGTasks struct {
 		syncutil.RWMutex
-		taskIDs map[int64]struct{}
+		taskIDs      map[int64]struct{}
+		dispatchDone sync.Map
 	}
 	detectPendingGTaskCh chan *proto.Task
 }
@@ -124,6 +135,7 @@ func NewDispatcher(ctx context.Context, taskTable *storage.TaskManager) (Dispatc
 	dispatcher.gPool = pool
 	dispatcher.ctx, dispatcher.cancel = context.WithCancel(ctx)
 	dispatcher.runningGTasks.taskIDs = make(map[int64]struct{})
+	dispatcher.dispatchDone.Store(false)
 
 	return dispatcher, nil
 }
@@ -136,6 +148,20 @@ func (d *dispatcher) Start() {
 
 // Stop implements Dispatch.Stop interface.
 func (d *dispatcher) Stop() {
+	// wait all dispatch process done.
+	for d.dispatchDone.Load() {
+		break
+	}
+	for {
+		allDone := true
+		d.runningGTasks.dispatchDone.Range(func(k, v interface{}) bool {
+			allDone = v.(bool)
+			return allDone
+		})
+		if allDone {
+			break
+		}
+	}
 	d.cancel()
 	d.gPool.ReleaseAndWait()
 	d.wg.Wait()
@@ -152,6 +178,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(d.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
 			return
 		case <-ticker.C:
+			d.dispatchDone.Store(false)
 			cnt := d.getRunningGTaskCnt()
 			if d.checkConcurrencyOverflow(cnt) {
 				break
@@ -204,8 +231,9 @@ func (d *dispatcher) DispatchTaskLoop() {
 					}(gTask)
 				}
 			}
-			// wait all gTask in this tick dispatched.
+			// wait all gTasks dispatched in this tick.
 			dispatchWg.Wait()
+			d.dispatchDone.Store(true)
 		}
 	}
 }
@@ -270,6 +298,7 @@ func (d *dispatcher) detectTask(taskID int64) {
 			logutil.BgLogger().Info("detect task exits", zap.Int64("task ID", taskID), zap.Error(d.ctx.Err()))
 			return
 		case <-ticker.C:
+			d.setRunningGTaskDispatching(taskID)
 			failpoint.Inject("cancelTaskBeforeProbe", func(val failpoint.Value) {
 				if val.(bool) {
 					err := d.taskMgr.CancelGlobalTask(taskID)
@@ -289,6 +318,7 @@ func (d *dispatcher) detectTask(taskID int64) {
 
 			retryable, err := d.processFlow(gTask, errs)
 			err = d.handleDispatchErr(gTask, retryable, err)
+			d.setRunningGTaskDispatched(taskID)
 			if err == nil && gTask.IsFinished() {
 				logutil.BgLogger().Info("detect task, task is finished",
 					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State))
@@ -515,6 +545,7 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 	})
 
 	// 2. generate dist-plan asynchronously.
+	var wg tidbutil.WaitGroupWrapper
 	metasChan := make(chan [][]byte)
 	errChan := make(chan error)
 	doneChan := make(chan bool)
@@ -526,7 +557,7 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 			processNormalFlow(d.ctx, d, gTask, metasChan, errChan, doneChan)
 		}
 	}
-	d.wg.Run(processFlow)
+	wg.Run(processFlow)
 
 	// 3. select dist-plan from chan, and dispatch each of them.
 	doneDispatch := false
@@ -578,6 +609,8 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 			}
 		}
 	}
+
+	wg.Wait()
 
 	logutil.BgLogger().Info("dispatched all subtasks", zap.Int64("task ID", gTask.ID),
 		zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Int("subtasks", metaCnt))
