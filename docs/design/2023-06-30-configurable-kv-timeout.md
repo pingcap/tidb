@@ -99,25 +99,15 @@ This change is to be done both in the `client-go` repository and `tidb` reposito
 
 - Call the set interfaces to pass the timeout value from `StmtContext` to the `KVSnapshot` structures, when
 the `PointGet` and `BatchPointGet` executors are built.
-- Change the `kvproto` to pass the read timeout value for the [`GetRequest`](https://github.com/pingcap/kvproto/blob/master/proto/kvrpcpb.proto#L26)
+- Pass the timeout value into the `Context.max_execution_duration_ms` field like
 ```protobuf
-message GetRequest {
-    Context context = 1;
-    bytes key = 2;
-    uint64 version = 3;
-    uint32 read_timeout = 4; // Add this new field.
+message Context {
+  ...
+  uint64 max_execution_duration_ms = 14;
+  ...
 }
 ```
-- Change the `kvproto` to pass the read timeout value ~ the [`BatchGetRequest`](https://github.com/pingcap/kvproto/blob/master/proto/kvrpcpb.proto#L414)
-```protobuf
-message BatchGetRequest {
-    Context context = 1;
-    repeated bytes keys = 2;
-    uint64 version = 3;
-    uint32 read_timeout = 4; // Add this new field.
-}
-```
-These changes need to be done in the `kvproto` repository.
+
 - Support timeout check during the request handling in TiKV. When there's new point get and batch point get 
 requests are created, the `kv_read_timeout` value should be read from the `GetReuqest` and `BatchGetRequest`
 and passed to the `pointGetter`. But by now there's no canceling mechanism when the task is scheduled to the
@@ -170,8 +160,15 @@ type copTask struct {
 	KVReadTimeout: Duration
 }
 ```
-- Add the `kv_read_timeout` field in the [`coprocessor.Request`](https://github.com/pingcap/kvproto/blob/master/proto/coprocessor.proto#L24)
-This change needs to be done in the `kvproto` repository.
+- Pass the timeout value into the `Context.max_execution_duration_ms` field like
+```protobuf
+message Context {
+  ...
+  uint64 max_execution_duration_ms = 14;
+  ...
+}
+```
+
 - Use the `kv_read_timeout` value passed in to calculate the `deadline` result in `parse_and_handle_unary_request`,
 ```rust
 fn parse_request_and_check_memory_locks(
@@ -210,8 +207,7 @@ snapshot read requests. The strategy is:
 
 ## Compatibility
 
-As new fields are added into the structs in the `kvproto` repository. The requests with configurable timeout
-values would take effect on newer versions. These fields are expected not to take effect when down-grading the
+The requests with configurable timeout values would take effect on newer versions. These fields are expected not to take effect when down-grading the
 cluster theoretically.
 
 ## More comprehensive solution
