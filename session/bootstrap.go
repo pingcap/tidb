@@ -2748,14 +2748,29 @@ func upgradeToVer170(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, `ALTER TABLE mysql.user
-ADD COLUMN ssl_type enum('','ANY','X509','SPECIFIED') NOT NULL DEFAULT '',
-ADD COLUMN ssl_cipher blob NOT NULL,
-ADD COLUMN x509_issuer blob NOT NULL,
-ADD COLUMN x509_subject blob NOT NULL,
-ADD COLUMN max_questions int unsigned NOT NULL DEFAULT '0',
-ADD COLUMN max_updates int unsigned NOT NULL DEFAULT '0',
-ADD COLUMN max_connections int unsigned NOT NULL DEFAULT '0',
-ADD COLUMN max_user_connections int unsigned NOT NULL DEFAULT '0'`, infoschema.ErrColumnExists)
+	ADD COLUMN ssl_type enum('','ANY','X509','SPECIFIED') NOT NULL DEFAULT '',
+	ADD COLUMN ssl_cipher blob NOT NULL,
+	ADD COLUMN x509_issuer blob NOT NULL,
+	ADD COLUMN x509_subject blob NOT NULL,
+	ADD COLUMN max_questions int unsigned NOT NULL DEFAULT '0',
+	ADD COLUMN max_updates int unsigned NOT NULL DEFAULT '0',
+	ADD COLUMN max_connections int unsigned NOT NULL DEFAULT '0',
+	ADD COLUMN max_user_connections int unsigned NOT NULL DEFAULT '0'`, infoschema.ErrColumnExists)
+
+	// Update mysql.user table with data from mysql.global_priv
+	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
+	SET u.ssl_type='ANY' WHERE p.Priv->'$.ssl_type'=1`)
+	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
+	SET u.ssl_type='X509' WHERE p.Priv->'$.ssl_type'=2`)
+	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
+	SET u.ssl_type='SPECIFIED' WHERE p.Priv->'$.ssl_type'=3`)
+
+	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
+	SET u.ssl_cipher=p.Priv->>'$.ssl_cipher' WHERE p.Priv->>'$.ssl_cipher' IS NOT NULL`)
+	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
+	SET u.ssl_issuer=p.Priv->>'$.ssl_issuer' WHERE p.Priv->>'$.ssl_issuer' IS NOT NULL`)
+	mustExecute(s, `UPDATE mysql.user u JOIN mysql.global_priv p ON u.Host=p.Host AND u.User=p.User
+	SET u.ssl_subject=p.Priv->>'$.ssl_subject' WHERE p.Priv->>'$.ssl_subject' IS NOT NULL`)
 }
 
 func writeOOMAction(s Session) {

@@ -361,7 +361,7 @@ func (e *GrantExec) grantGlobalPriv(sctx sessionctx.Context, user *ast.UserSpec)
 	if len(e.AuthTokenOrTLSOptions) == 0 {
 		return nil
 	}
-	priv, err := tlsOption2GlobalPriv(e.AuthTokenOrTLSOptions)
+	priv, _, err := tlsOption2GlobalPriv(e.AuthTokenOrTLSOptions)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -369,11 +369,7 @@ func (e *GrantExec) grantGlobalPriv(sctx sessionctx.Context, user *ast.UserSpec)
 	return err
 }
 
-func tlsOption2GlobalPriv(authTokenOrTLSOptions []*ast.AuthTokenOrTLSOption) (priv []byte, err error) {
-	if len(authTokenOrTLSOptions) == 0 {
-		priv = []byte("{}")
-		return
-	}
+func tlsOption2GlobalPrivGp(authTokenOrTLSOptions []*ast.AuthTokenOrTLSOption) (gp privileges.GlobalPrivValue, err error) {
 	dupSet := make(map[ast.AuthTokenOrTLSOptionType]struct{})
 	for _, opt := range authTokenOrTLSOptions {
 		if _, dup := dupSet[opt.Type]; dup {
@@ -394,7 +390,8 @@ func tlsOption2GlobalPriv(authTokenOrTLSOptions []*ast.AuthTokenOrTLSOption) (pr
 		}
 		dupSet[opt.Type] = struct{}{}
 	}
-	gp := privileges.GlobalPrivValue{SSLType: privileges.SslTypeNotSpecified}
+	gp.SSLType = privileges.SslTypeNotSpecified
+
 	for _, opt := range authTokenOrTLSOptions {
 		switch opt.Type {
 		case ast.TlsNone:
@@ -407,7 +404,7 @@ func tlsOption2GlobalPriv(authTokenOrTLSOptions []*ast.AuthTokenOrTLSOption) (pr
 			gp.SSLType = privileges.SslTypeSpecified
 			if len(opt.Value) > 0 {
 				if _, ok := util.SupportCipher[opt.Value]; !ok {
-					err = errors.Errorf("Unsupported cipher suit: %s", opt.Value)
+					err = errors.Errorf("Unsupported cipher suite: %s", opt.Value)
 					return
 				}
 				gp.SSLCipher = opt.Value
@@ -438,6 +435,18 @@ func tlsOption2GlobalPriv(authTokenOrTLSOptions []*ast.AuthTokenOrTLSOption) (pr
 			err = errors.Errorf("Unknown ssl type: %#v", opt.Type)
 			return
 		}
+	}
+	return
+}
+
+func tlsOption2GlobalPriv(authTokenOrTLSOptions []*ast.AuthTokenOrTLSOption) (priv []byte, gp privileges.GlobalPrivValue, err error) {
+	if len(authTokenOrTLSOptions) == 0 {
+		priv = []byte("{}")
+		return
+	}
+	gp, err = tlsOption2GlobalPrivGp(authTokenOrTLSOptions)
+	if err != nil {
+		return
 	}
 	if gp.SSLType == privileges.SslTypeNotSpecified && len(gp.SSLCipher) == 0 &&
 		len(gp.X509Issuer) == 0 && len(gp.X509Subject) == 0 && len(gp.SAN) == 0 {

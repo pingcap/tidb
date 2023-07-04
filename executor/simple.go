@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1032,7 +1033,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 	}
 
-	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
+	privData, gp, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
 	}
@@ -1103,8 +1104,8 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(plOptions)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, max_questions, max_updates, max_connections, max_user_connections, Password_reuse_time, Password_reuse_history) VALUES "
-	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?"
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, max_questions, max_updates, max_connections, max_user_connections, ssl_type, ssl_cipher, x509_issuer, x509_subject, Password_reuse_time, Password_reuse_history) VALUES "
+	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlexec.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
 	if savePasswdHistory {
@@ -1195,9 +1196,19 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			}
 		}
 
+		var sslType string
+		switch gp.SSLType {
+		case privileges.SslTypeAny:
+			sslType = "ANY"
+		case privileges.SslTypeX509:
+			sslType = "x509"
+		case privileges.SslTypeSpecified:
+			sslType = "SPECIFIED"
+		}
+
 		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr,
 			plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime,
-			resQryHour, resUpdHour, resConHour, resUserCon)
+			resQryHour, resUpdHour, resConHour, resUserCon, sslType, gp.SSLCipher, gp.X509Issuer, gp.X509Subject)
 		// add Password_reuse_time value.
 		if plOptions.passwordReuseIntervalChange && (plOptions.passwordReuseInterval != notSpecified) {
 			sqlexec.MustFormatSQL(sql, `, %?`, plOptions.passwordReuseInterval)
@@ -1683,7 +1694,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		return err
 	}
 
-	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
+	privData, _, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
 	}
