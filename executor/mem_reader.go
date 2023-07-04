@@ -622,7 +622,7 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 		retFieldTypes: retTypes(us),
 		outputOffset:  outputOffset,
 		cacheTable:    us.cacheTable,
-		compareExec:   us.compareExec,
+		compareExec:   compareExec{desc: false},
 	}
 
 	return &memIndexLookUpReader{
