@@ -98,14 +98,6 @@ func (d *dispatcher) delRunningGTask(globalTaskID int64) {
 	delete(d.runningGTasks.taskIDs, globalTaskID)
 }
 
-func (d *dispatcher) setRunningGTaskDispatching(globalTaskID int64) {
-	d.runningGTasks.dispatchDone.Store(globalTaskID, false)
-}
-
-func (d *dispatcher) setRunningGTaskDispatched(globalTaskID int64) {
-	d.runningGTasks.dispatchDone.Store(globalTaskID, true)
-}
-
 type dispatcher struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -135,7 +127,6 @@ func NewDispatcher(ctx context.Context, taskTable *storage.TaskManager) (Dispatc
 	dispatcher.gPool = pool
 	dispatcher.ctx, dispatcher.cancel = context.WithCancel(ctx)
 	dispatcher.runningGTasks.taskIDs = make(map[int64]struct{})
-	dispatcher.dispatchDone.Store(false)
 
 	return dispatcher, nil
 }
@@ -148,20 +139,6 @@ func (d *dispatcher) Start() {
 
 // Stop implements Dispatch.Stop interface.
 func (d *dispatcher) Stop() {
-	// wait all dispatch process done.
-	for d.dispatchDone.Load() {
-		break
-	}
-	for {
-		allDone := true
-		d.runningGTasks.dispatchDone.Range(func(k, v interface{}) bool {
-			allDone = v.(bool)
-			return allDone
-		})
-		if allDone {
-			break
-		}
-	}
 	d.cancel()
 	d.gPool.ReleaseAndWait()
 	d.wg.Wait()
@@ -178,7 +155,6 @@ func (d *dispatcher) DispatchTaskLoop() {
 			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(d.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
 			return
 		case <-ticker.C:
-			d.dispatchDone.Store(false)
 			cnt := d.getRunningGTaskCnt()
 			if d.checkConcurrencyOverflow(cnt) {
 				break
@@ -198,42 +174,39 @@ func (d *dispatcher) DispatchTaskLoop() {
 			atomicCnt.Store(int32(cnt))
 			var dispatchWg tidbutil.WaitGroupWrapper
 			for _, gTask := range gTasks {
-				if gTask.Flag != proto.TaskSubStateDispatching {
-					dispatchWg.Add(1)
-					go func(gTask *proto.Task) {
-						defer dispatchWg.Done()
-						// This global task is running, so no need to reprocess it.
-						if d.isRunningGTask(gTask.ID) {
-							return
-						}
-						// The task is not in runningGTasks set when:
-						// owner changed or task is cancelled when status is pending.
-						if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting || gTask.State == proto.TaskStateCancelling {
-							d.setRunningGTask(gTask)
-							atomicCnt.Add(1)
-							return
-						}
-						atomicCnt.Add(1)
-						if d.checkConcurrencyOverflow(int(atomicCnt.Load())) {
-							return
-						}
-
-						retryable, err := d.processNormalFlow(gTask)
-						logutil.BgLogger().Info("dispatch task loop", zap.Int64("task ID", gTask.ID),
-							zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency),
-							zap.Int64("step", gTask.Step), zap.Error(err))
-
-						err = d.handleDispatchErr(gTask, retryable, err)
-						if gTask.IsFinished() || err != nil {
-							return
-						}
+				dispatchWg.Add(1)
+				go func(gTask *proto.Task) {
+					defer dispatchWg.Done()
+					// This global task is running, so no need to reprocess it.
+					if d.isRunningGTask(gTask.ID) {
+						return
+					}
+					// The task is not in runningGTasks set when:
+					// owner changed or task is cancelled when status is pending.
+					if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting || gTask.State == proto.TaskStateCancelling {
 						d.setRunningGTask(gTask)
-					}(gTask)
-				}
+						atomicCnt.Add(1)
+						return
+					}
+					atomicCnt.Add(1)
+					if d.checkConcurrencyOverflow(int(atomicCnt.Load())) {
+						return
+					}
+
+					retryable, err := d.processNormalFlow(gTask)
+					logutil.BgLogger().Info("dispatch task loop", zap.Int64("task ID", gTask.ID),
+						zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency),
+						zap.Int64("step", gTask.Step), zap.Error(err))
+
+					err = d.handleDispatchErr(gTask, retryable, err)
+					if gTask.IsFinished() || err != nil {
+						return
+					}
+					d.setRunningGTask(gTask)
+				}(gTask)
 			}
-			// wait all gTasks dispatched in this tick.
+			// // wait all gTasks dispatched in this tick.
 			dispatchWg.Wait()
-			d.dispatchDone.Store(true)
 		}
 	}
 }
@@ -298,7 +271,6 @@ func (d *dispatcher) detectTask(taskID int64) {
 			logutil.BgLogger().Info("detect task exits", zap.Int64("task ID", taskID), zap.Error(d.ctx.Err()))
 			return
 		case <-ticker.C:
-			d.setRunningGTaskDispatching(taskID)
 			failpoint.Inject("cancelTaskBeforeProbe", func(val failpoint.Value) {
 				if val.(bool) {
 					err := d.taskMgr.CancelGlobalTask(taskID)
@@ -318,7 +290,6 @@ func (d *dispatcher) detectTask(taskID int64) {
 
 			retryable, err := d.processFlow(gTask, errs)
 			err = d.handleDispatchErr(gTask, retryable, err)
-			d.setRunningGTaskDispatched(taskID)
 			if err == nil && gTask.IsFinished() {
 				logutil.BgLogger().Info("detect task, task is finished",
 					zap.Int64("task-id", gTask.ID), zap.String("state", gTask.State))
@@ -563,9 +534,6 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 	doneDispatch := false
 	for !doneDispatch {
 		select {
-		case <-d.ctx.Done():
-			logutil.BgLogger().Info("dispatch subtask loop exists", zap.Error(d.ctx.Err()))
-			return false, d.ctx.Err()
 		case metas := <-metasChan:
 			if metas == nil {
 				continue
@@ -611,7 +579,6 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 	}
 
 	wg.Wait()
-
 	logutil.BgLogger().Info("dispatched all subtasks", zap.Int64("task ID", gTask.ID),
 		zap.String("state", gTask.State), zap.Uint64("concurrency", gTask.Concurrency), zap.Int("subtasks", metaCnt))
 
