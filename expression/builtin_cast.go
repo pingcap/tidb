@@ -292,27 +292,22 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
-<<<<<<< HEAD
 		if bf.tp.Flen == types.UnspecifiedLength {
-			bf.tp.Flen = args[0].GetType().Flen
-=======
-		if bf.tp.GetFlen() == types.UnspecifiedLength {
 			// check https://github.com/pingcap/tidb/issues/44786
 			// set flen from integers may truncate integers, e.g. char(1) can not display -1[int(1)]
-			switch args[0].GetType().GetType() {
+			switch args[0].GetType().Tp {
 			case mysql.TypeTiny:
-				bf.tp.SetFlen(4)
+				bf.tp.Flen = 4
 			case mysql.TypeShort:
-				bf.tp.SetFlen(6)
+				bf.tp.Flen = 6
 			case mysql.TypeInt24:
-				bf.tp.SetFlen(9)
+				bf.tp.Flen = 9
 			case mysql.TypeLong:
 				// set it to 11 as mysql
-				bf.tp.SetFlen(11)
+				bf.tp.Flen = 11
 			default:
-				bf.tp.SetFlen(args[0].GetType().GetFlen())
+				bf.tp.Flen = args[0].GetType().Flen
 			}
->>>>>>> b1b307a2225 (expression: fix cast negint to string (#44787))
 		}
 		sig = &builtinCastIntAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsString)
