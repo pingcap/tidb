@@ -147,44 +147,53 @@ func (e *CalibrateResourceExec) parseCalibrateDuration(ctx context.Context) (sta
 			if err != nil {
 				return
 			}
-		case ast.CalibrateDuration:
-			if len(op.StrValue) > 0 {
-				dur, err = duration.ParseDuration(op.StrValue)
-				if err != nil {
-					return
-				}
-				// If startTime is not set, startTime will be now() - duration.
-				if startTime.IsZero() {
-					startTime = time.Now().Add(-dur)
-				}
-				// If endTime is set, duration will be ignored.
-				if endTime.IsZero() {
-					endTime = startTime.Add(dur)
-				}
-			} else {
-				// If startTime is not set, startTime will be now() - duration.
-				if startTimeExpr == nil {
-					startTimeExpr = &ast.FuncCallExpr{
-						FnName: model.NewCIStr("DATE_SUB"),
-						Args: []ast.ExprNode{&ast.FuncCallExpr{
-							FnName: model.NewCIStr("CURRENT_TIMESTAMP"),
-						}, op.Ts, &ast.TimeUnitExpr{Unit: op.Unit}},
-					}
-					startTime, err = e.parseTsExpr(ctx, startTimeExpr)
-					if err != nil {
-						return
-					}
-				}
-				// If endTime is set, duration will be ignored.
-				if endTime.IsZero() {
-					endTime, err = e.parseTsExpr(ctx, &ast.FuncCallExpr{
-						FnName: model.NewCIStr("DATE_ADD"),
-						Args:   []ast.ExprNode{startTimeExpr, op.Ts, &ast.TimeUnitExpr{Unit: op.Unit}},
-					})
-					if err != nil {
-						return
-					}
-				}
+		}
+	}
+	for _, op := range e.OptionList {
+		if op.Tp != ast.CalibrateDuration {
+			continue
+		}
+		// string duration
+		if len(op.StrValue) > 0 {
+			dur, err = duration.ParseDuration(op.StrValue)
+			if err != nil {
+				return
+			}
+			// If startTime is not set, startTime will be now() - duration.
+			if startTime.IsZero() {
+				startTime = time.Now().Add(-dur)
+			}
+			// If endTime is set, duration will be ignored.
+			if endTime.IsZero() {
+				endTime = startTime.Add(dur)
+			}
+			continue
+		}
+		// interval duration
+		// If startTime is not set, startTime will be now() - duration.
+		if startTimeExpr == nil {
+			startTimeExpr = &ast.FuncCallExpr{
+				FnName: model.NewCIStr("DATE_SUB"),
+				Args: []ast.ExprNode{
+					&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")},
+					op.Ts,
+					&ast.TimeUnitExpr{Unit: op.Unit}},
+			}
+			startTime, err = e.parseTsExpr(ctx, startTimeExpr)
+			if err != nil {
+				return
+			}
+		}
+		// If endTime is set, duration will be ignored.
+		if endTime.IsZero() {
+			endTime, err = e.parseTsExpr(ctx, &ast.FuncCallExpr{
+				FnName: model.NewCIStr("DATE_ADD"),
+				Args: []ast.ExprNode{startTimeExpr,
+					op.Ts,
+					&ast.TimeUnitExpr{Unit: op.Unit}},
+			})
+			if err != nil {
+				return
 			}
 		}
 	}
