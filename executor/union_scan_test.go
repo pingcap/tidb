@@ -34,6 +34,7 @@ func TestDirtyTransaction(t *testing.T) {
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+	tk.MustExec("set @@tidb_partition_prune_mode = dynamic")
 
 	for i := 0; i < 2; i++ {
 		suffix := ""
@@ -43,6 +44,7 @@ func TestDirtyTransaction(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(fmt.Sprintf("create table t (a int primary key, b int, index idx_b (b)) %s;", suffix))
+		tk.MustExec("analyze table t")
 		tk.MustExec("insert t value (2, 3), (4, 8), (6, 8)")
 		tk.MustExec("begin")
 		tk.MustQuery("select * from t order by a").Check(testkit.Rows("2 3", "4 8", "6 8"))
@@ -180,6 +182,8 @@ func TestUnionScanWithCastCondition(t *testing.T) {
 func TestUnionScanForMemBufferReader(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode = dynamic")
+
 	for i := 0; i < 2; i++ {
 		suffix := ""
 		if i == 1 {
@@ -188,6 +192,7 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(fmt.Sprintf("create table t (a int,b int, index idx(b)) %s", suffix))
+		tk.MustExec("analyze table t")
 		tk.MustExec("insert t values (1,1),(2,2)")
 
 		// Test for delete in union scan
@@ -252,6 +257,7 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 		// Test for getMissIndexRowsByHandle return nil.
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(fmt.Sprintf("create table t (a int,b int, index idx(a)) %s", suffix))
+		tk.MustExec("analyze table t")
 		tk.MustExec("insert into t values (1,1),(2,2),(3,3)")
 		tk.MustExec("begin")
 		tk.MustExec("update t set b=0 where a=2")
@@ -263,6 +269,7 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 		// Test index lookup reader corner case.
 		tk.MustExec("drop table if exists tt")
 		tk.MustExec(fmt.Sprintf("create table tt (a bigint, b int,c int,primary key (a,b)) %s;", suffix))
+		tk.MustExec("analyze table tt")
 		tk.MustExec("insert into tt set a=1,b=1;")
 		tk.MustExec("begin;")
 		tk.MustExec("update tt set c=1;")
@@ -273,6 +280,7 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 		// Test index reader corner case.
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec(fmt.Sprintf("create table t1 (a int,b int,primary key(a,b)) %s;", suffix))
+		tk.MustExec("analyze table t1")
 		tk.MustExec("begin;")
 		tk.MustExec("insert into t1 values(1, 1);")
 		tk.MustQuery("select * from t1 use index(primary) where a=1;").Check(testkit.Rows("1 1"))
@@ -282,6 +290,7 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 		// Test index reader with pk handle.
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec(fmt.Sprintf("create table t1 (a int unsigned key,b int,c varchar(10), index idx(b,a,c)) %s;", suffix))
+		tk.MustExec("analyze table t1")
 		tk.MustExec("begin;")
 		tk.MustExec("insert into t1 (a,b) values (0, 0), (1, 1);")
 		tk.MustQuery("select a,b from t1 use index(idx) where b>0;").Check(testkit.Rows("1 1"))
@@ -294,6 +303,7 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 		// Test insert and update with untouched index.
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec(fmt.Sprintf("create table t1 (a int,b int,c int,index idx(b)) %s;", suffix))
+		tk.MustExec("analyze table t1")
 		tk.MustExec("begin;")
 		tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2);")
 		tk.MustExec("update t1 set c=c+1 where a=1;")
@@ -316,6 +326,7 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 		// Test update with 2 index, one untouched, the other index is touched.
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec(fmt.Sprintf("create table t1 (a int,b int,c int,unique index idx1(a), index idx2(b)) %s;", suffix))
+		tk.MustExec("analyze table t1")
 		tk.MustExec("insert into t1 values (1, 1, 1);")
 		tk.MustExec("update t1 set b=b+1 where a=1;")
 		tk.MustQuery("select * from t1 use index(idx2);").Check(testkit.Rows("1 2 1"))
