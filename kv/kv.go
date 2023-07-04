@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/trxevents"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -308,6 +309,8 @@ type ClientSendOption struct {
 	EnabledRateLimitAction     bool
 	EventCb                    trxevents.EventCallback
 	EnableCollectExecutionInfo bool
+	TiFlashReplicaRead         tiflash.ReplicaRead
+	AppendWarning              func(warn error)
 }
 
 // ReqTypes.

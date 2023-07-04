@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikv"
@@ -178,7 +179,7 @@ type DispatchMPPTaskParam struct {
 type MPPClient interface {
 	// ConstructMPPTasks schedules task for a plan fragment.
 	// TODO:: This interface will be refined after we support more executors.
-	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, time.Duration, tiflashcompute.DispatchPolicy) ([]MPPTaskMeta, error)
+	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, time.Duration, tiflashcompute.DispatchPolicy, tiflash.ReplicaRead, func(error)) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTask dispatch mpp task, and returns valid response when retry = false and err is nil.
 	DispatchMPPTask(DispatchMPPTaskParam) (resp *mpp.DispatchTaskResponse, retry bool, err error)

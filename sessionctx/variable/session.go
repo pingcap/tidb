@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -1497,6 +1498,10 @@ type SessionVars struct {
 
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+
+	// TiFlashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
+	TiFlashReplicaRead tiflash.ReplicaRead
+
 	// HypoTiFlashReplicas are for the Index Advisor.
 	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
 
