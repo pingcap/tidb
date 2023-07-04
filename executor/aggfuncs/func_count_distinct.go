@@ -209,7 +209,7 @@ func (*countOriginalWithDistinct4Duration) AllocPartialResult() (pr PartialResul
 	}), DefPartialResult4CountDistinctDurationSize + setSize
 }
 
-func (e *countOriginalWithDistinct4Duration) ResetPartialResult(pr PartialResult) {
+func (*countOriginalWithDistinct4Duration) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctDuration)(pr)
 	p.valSet, _ = set.NewInt64SetWithMemoryUsage()
 }
@@ -256,7 +256,7 @@ func (*countOriginalWithDistinct4String) AllocPartialResult() (pr PartialResult,
 	}), DefPartialResult4CountDistinctStringSize + setSize
 }
 
-func (e *countOriginalWithDistinct4String) ResetPartialResult(pr PartialResult) {
+func (*countOriginalWithDistinct4String) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctString)(pr)
 	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }
@@ -307,7 +307,7 @@ func (*countOriginalWithDistinct) AllocPartialResult() (pr PartialResult, memDel
 	}), DefPartialResult4CountWithDistinctSize + setSize
 }
 
-func (e *countOriginalWithDistinct) ResetPartialResult(pr PartialResult) {
+func (*countOriginalWithDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountWithDistinct)(pr)
 	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }

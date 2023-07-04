@@ -44,7 +44,7 @@ func (*baseLeadLag) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4LeadLag{}), DefPartialResult4LeadLagSize
 }
 
-func (v *baseLeadLag) ResetPartialResult(pr PartialResult) {
+func (*baseLeadLag) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4LeadLag)(pr)
 	p.rows = p.rows[:0]
 	p.curIdx = 0

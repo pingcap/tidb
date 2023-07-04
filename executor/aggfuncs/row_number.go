@@ -56,6 +56,6 @@ func (rn *rowNumber) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialRes
 
 var _ SlidingWindowAggFunc = &rowNumber{}
 
-func (rn *rowNumber) Slide(_ sessionctx.Context, _ func(uint64) chunk.Row, _, _, _, _ uint64, _ PartialResult) error {
+func (*rowNumber) Slide(_ sessionctx.Context, _ func(uint64) chunk.Row, _, _, _, _ uint64, _ PartialResult) error {
 	return nil
 }

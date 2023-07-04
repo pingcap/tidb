@@ -42,7 +42,7 @@ func (*jsonArrayagg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&p), DefPartialResult4JsonArrayagg + DefSliceSize
 }
 
-func (e *jsonArrayagg) ResetPartialResult(pr PartialResult) {
+func (*jsonArrayagg) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4JsonArrayagg)(pr)
 	p.entries = p.entries[:0]
 }
@@ -86,7 +86,7 @@ func (e *jsonArrayagg) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []c
 	return memDelta, nil
 }
 
-func (e *jsonArrayagg) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*jsonArrayagg) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4JsonArrayagg)(src), (*partialResult4JsonArrayagg)(dst)
 	p2.entries = append(p2.entries, p1.entries...)
 	return 0, nil

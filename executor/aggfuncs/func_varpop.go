@@ -48,7 +48,7 @@ func (*varPop4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4VarPopFloat64{}), DefPartialResult4VarPopFloat64Size
 }
 
-func (e *varPop4Float64) ResetPartialResult(pr PartialResult) {
+func (*varPop4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4VarPopFloat64)(pr)
 	p.count = 0
 	p.sum = 0
