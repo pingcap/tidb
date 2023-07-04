@@ -44,7 +44,7 @@ type partialResult4VarPopFloat64 struct {
 	variance float64
 }
 
-func (e *varPop4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*varPop4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4VarPopFloat64{}), DefPartialResult4VarPopFloat64Size
 }
 
@@ -130,7 +130,7 @@ type partialResult4VarPopDistinctFloat64 struct {
 	valSet   set.Float64SetWithMemoryUsage
 }
 
-func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4VarPopDistinctFloat64)
 	p.count = 0
 	p.sum = 0

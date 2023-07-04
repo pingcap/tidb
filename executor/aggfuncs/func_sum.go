@@ -155,7 +155,7 @@ type sum4Decimal struct {
 	baseSumAggFunc
 }
 
-func (e *sum4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*sum4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDecimal)
 	return PartialResult(p), DefPartialResult4SumDecimalSize
 }
@@ -276,7 +276,7 @@ type sum4DistinctFloat64 struct {
 	baseSumAggFunc
 }
 
-func (e *sum4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*sum4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	setSize := int64(0)
 	p := new(partialResult4SumDistinctFloat64)
 	p.isNull = true
@@ -325,7 +325,7 @@ type sum4DistinctDecimal struct {
 	baseSumAggFunc
 }
 
-func (e *sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
 	setSize := int64(0)

@@ -288,7 +288,7 @@ type percentileOriginal4Time struct {
 	basePercentile
 }
 
-func (e *percentileOriginal4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*percentileOriginal4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	// TODO: Preserve appropriate capacity for data
 	pr = PartialResult(&partialResult4PercentileTime{})
 	return pr, DefSliceSize
@@ -341,7 +341,7 @@ type percentileOriginal4Duration struct {
 	basePercentile
 }
 
-func (e *percentileOriginal4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*percentileOriginal4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	// TODO: Preserve appropriate capacity for data
 	pr = PartialResult(&partialResult4PercentileTime{})
 	return pr, DefSliceSize

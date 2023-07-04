@@ -52,7 +52,7 @@ type partialResult4AvgDecimal struct {
 	count int64
 }
 
-func (e *baseAvgDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*baseAvgDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4AvgDecimal{}), DefPartialResult4AvgDecimalSize
 }
 
@@ -212,7 +212,7 @@ type avgOriginal4DistinctDecimal struct {
 	baseAggFunc
 }
 
-func (e *avgOriginal4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*avgOriginal4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	valSet, setSize := set.NewStringSetWithMemoryUsage()
 	p := &partialResult4AvgDistinctDecimal{
 		valSet: valSet,
@@ -300,7 +300,7 @@ type partialResult4AvgFloat64 struct {
 	count int64
 }
 
-func (e *baseAvgFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*baseAvgFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return (PartialResult)(&partialResult4AvgFloat64{}), DefPartialResult4AvgFloat64Size
 }
 
@@ -418,7 +418,7 @@ type avgOriginal4DistinctFloat64 struct {
 	baseAggFunc
 }
 
-func (e *avgOriginal4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*avgOriginal4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	valSet, setSize := set.NewFloat64SetWithMemoryUsage()
 	p := &partialResult4AvgDistinctFloat64{
 		valSet: valSet,

@@ -43,7 +43,7 @@ type partialResult4Ntile struct {
 	numRows     uint64
 }
 
-func (n *ntile) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*ntile) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4Ntile{curGroupIdx: 1}), DefPartialResult4Ntile
 }
 

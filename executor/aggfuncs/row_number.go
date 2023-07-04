@@ -34,7 +34,7 @@ type partialResult4RowNumber struct {
 	curIdx int64
 }
 
-func (rn *rowNumber) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*rowNumber) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4RowNumber{}), DefPartialResult4RowNumberSize
 }
 

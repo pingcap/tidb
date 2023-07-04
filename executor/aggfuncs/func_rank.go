@@ -39,7 +39,7 @@ type partialResult4Rank struct {
 	rows     []chunk.Row
 }
 
-func (r *rank) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*rank) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4Rank{}), DefPartialResult4RankSize
 }
 

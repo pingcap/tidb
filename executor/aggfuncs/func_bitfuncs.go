@@ -33,7 +33,7 @@ type baseBitAggFunc struct {
 
 type partialResult4BitFunc = uint64
 
-func (e *baseBitAggFunc) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*baseBitAggFunc) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4BitFunc)), DefPartialResult4BitFuncSize
 }
 

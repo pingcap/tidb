@@ -340,7 +340,7 @@ type partialResult4NthValue struct {
 	evaluator valueEvaluator
 }
 
-func (v *nthValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*nthValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	ve, veMemDelta := buildValueEvaluator(v.tp)
 	p := &partialResult4FirstValue{evaluator: ve}
 	return PartialResult(p), DefPartialResult4NthValueSize + veMemDelta
