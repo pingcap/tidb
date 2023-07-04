@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	clientkv "github.com/tikv/client-go/v2/kv"
@@ -3539,7 +3540,15 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 			failpoint.Return(nil)
 		}
 	})
-	if useMPPExecution(b.ctx, v) {
+	useMPP := useMPPExecution(b.ctx, v)
+	useTiFlashBatchCop := v.ReadReqType == plannercore.BatchCop
+	useTiFlash := useMPP || useTiFlashBatchCop
+	if useTiFlash {
+		if _, isTiDBZoneLabelSet := config.GetGlobalConfig().Labels[placement.DCLabelKey]; b.ctx.GetSessionVars().TiFlashReplicaRead != tiflash.AllReplicas && !isTiDBZoneLabelSet {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("the variable tiflash_replica_read is ignored, because the entry TiDB[%s] does not set the zone attribute and tiflash_replica_read is '%s'", config.GetGlobalConfig().AdvertiseAddress, tiflash.GetTiFlashReplicaRead(b.ctx.GetSessionVars().TiFlashReplicaRead)))
+		}
+	}
+	if useMPP {
 		return b.buildMPPGather(v)
 	}
 	ts, err := v.GetTableScan()

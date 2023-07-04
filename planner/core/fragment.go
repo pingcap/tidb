@@ -569,7 +569,8 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		dispatchPolicy = e.ctx.GetSessionVars().TiFlashComputeDispatchPolicy
 		ttl = time.Duration(0)
 	}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl, dispatchPolicy)
+	tiflashReplicaRead := e.ctx.GetSessionVars().TiFlashReplicaRead
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl, dispatchPolicy, tiflashReplicaRead, e.ctx.GetSessionVars().StmtCtx.AppendWarning)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
