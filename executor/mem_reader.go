@@ -622,7 +622,6 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 		retFieldTypes: retTypes(us),
 		outputOffset:  outputOffset,
 		cacheTable:    us.cacheTable,
-		compareExec:   compareExec{desc: false},
 	}
 
 	return &memIndexLookUpReader{
@@ -659,8 +658,6 @@ func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum,
 	kvRanges := [][]kv.KeyRange{m.idxReader.kvRanges}
 	tbls := []table.Table{m.table}
 	if m.partitionMode {
-		m.idxReader.desc = false // keep-order if always false for IndexLookUp reading partitions so this parameter makes no sense
-		m.idxReader.keepOrder = false
 		kvRanges = m.partitionKVRanges
 		tbls = tbls[:0]
 		for _, p := range m.partitionTables {
