@@ -160,7 +160,7 @@ func (*sum4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(p), DefPartialResult4SumDecimalSize
 }
 
-func (e *sum4Decimal) ResetPartialResult(pr PartialResult) {
+func (*sum4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDecimal)(pr)
 	p.notNullRowCount = 0
 }
@@ -257,7 +257,7 @@ func (e *sum4Decimal) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.R
 	return nil
 }
 
-func (e *sum4Decimal) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*sum4Decimal) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4SumDecimal)(src), (*partialResult4SumDecimal)(dst)
 	if p1.notNullRowCount == 0 {
 		return 0, nil
