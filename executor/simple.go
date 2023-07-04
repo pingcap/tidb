@@ -1103,8 +1103,8 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(plOptions)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
-	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, max_questions, max_updates, max_connections, max_user_connections, Password_reuse_time, Password_reuse_history) VALUES "
+	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlexec.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
 	if savePasswdHistory {
@@ -1178,7 +1178,26 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime)
+
+		var resQryHour, resUpdHour, resConHour, resUserCon int64 = 0, 0, 0, 0
+		for _, resOpt := range s.ResourceOptions {
+			switch resOpt.Type {
+			case ast.MaxQueriesPerHour:
+				resQryHour = resOpt.Count
+			case ast.MaxUpdatesPerHour:
+				resUpdHour = resOpt.Count
+			case ast.MaxConnectionsPerHour:
+				resConHour = resOpt.Count
+			case ast.MaxUserConnections:
+				resUserCon = resOpt.Count
+			default:
+				return errors.New("Unknown resource option")
+			}
+		}
+
+		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr,
+			plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime,
+			resQryHour, resUpdHour, resConHour, resUserCon)
 		// add Password_reuse_time value.
 		if plOptions.passwordReuseIntervalChange && (plOptions.passwordReuseInterval != notSpecified) {
 			sqlexec.MustFormatSQL(sql, `, %?`, plOptions.passwordReuseInterval)
