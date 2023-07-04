@@ -1714,15 +1714,14 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	path.CountAfterAccess = float64(ds.statisticTable.RealtimeCount)
 	path.TableFilters = conds
 	var pkCol *expression.Column
-	columnLen := len(ds.schema.Columns)
 	isUnsigned := false
 	if ds.tableInfo.PKIsHandle {
 		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
 			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
 		}
-	} else if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
-		pkCol = ds.schema.Columns[columnLen-1]
+	} else {
+		pkCol = ds.schema.GetExtraHandleColumn()
 	}
 	if pkCol == nil {
 		path.Ranges = ranger.FullIntRange(isUnsigned)
