@@ -98,9 +98,6 @@ func (reader *rowContainerReader) Error() error {
 }
 
 func (reader *rowContainerReader) initializeChannel() {
-	reader.rc.m.RLock()
-	defer reader.rc.m.RUnlock()
-
 	if reader.rc.NumChunks() == 0 {
 		reader.rowCh = make(chan Row, 1024)
 	} else {
