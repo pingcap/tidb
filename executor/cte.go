@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -31,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
-var _ Executor = &CTEExec{}
+var _ exec.Executor = &CTEExec{}
 
 // CTEExec implements CTE.
 // Following diagram describes how CTEExec works.
@@ -63,7 +64,7 @@ var _ Executor = &CTEExec{}
                                    +----------+
 */
 type CTEExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	chkIdx   int
 	producer *cteProducer
@@ -76,7 +77,7 @@ type CTEExec struct {
 // Open implements the Executor interface.
 func (e *CTEExec) Open(ctx context.Context) (err error) {
 	e.reset()
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 
@@ -106,7 +107,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return err
 		}
 	}
-	return e.producer.getChunk(ctx, e, req)
+	return e.producer.getChunk(e, req)
 }
 
 // Close implements the Executor interface.
@@ -123,7 +124,7 @@ func (e *CTEExec) Close() (err error) {
 	if err != nil {
 		return err
 	}
-	return e.baseExecutor.Close()
+	return e.BaseExecutor.Close()
 }
 
 func (e *CTEExec) reset() {
@@ -139,8 +140,8 @@ type cteProducer struct {
 
 	ctx sessionctx.Context
 
-	seedExec      Executor
-	recursiveExec Executor
+	seedExec      exec.Executor
+	recursiveExec exec.Executor
 
 	// `resTbl` and `iterInTbl` are shared by all CTEExec which reference to same the CTE.
 	// `iterInTbl` is also shared by CTETableReaderExec.
@@ -180,9 +181,9 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	if p.memTracker != nil {
 		p.memTracker.Reset()
 	} else {
-		p.memTracker = memory.NewTracker(cteExec.id, -1)
+		p.memTracker = memory.NewTracker(cteExec.ID(), -1)
 	}
-	p.diskTracker = disk.NewTracker(cteExec.id, -1)
+	p.diskTracker = disk.NewTracker(cteExec.ID(), -1)
 	p.memTracker.AttachTo(p.ctx.GetSessionVars().StmtCtx.MemTracker)
 	p.diskTracker.AttachTo(p.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
@@ -193,8 +194,8 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 		// For non-recursive CTE, the result will be put into resTbl directly.
 		// So no need to build iterOutTbl.
 		// Construct iterOutTbl in Open() instead of buildCTE(), because its destruct is in Close().
-		recursiveTypes := p.recursiveExec.base().retFieldTypes
-		p.iterOutTbl = cteutil.NewStorageRowContainer(recursiveTypes, cteExec.maxChunkSize)
+		recursiveTypes := p.recursiveExec.Base().RetFieldTypes()
+		p.iterOutTbl = cteutil.NewStorageRowContainer(recursiveTypes, cteExec.MaxChunkSize())
 		if err = p.iterOutTbl.OpenAndRef(); err != nil {
 			return err
 		}
@@ -203,7 +204,7 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	if p.isDistinct {
 		p.hashTbl = newConcurrentMapHashTable()
 		p.hCtx = &hashContext{
-			allTypes: cteExec.base().retFieldTypes,
+			allTypes: cteExec.Base().RetFieldTypes(),
 		}
 		// We use all columns to compute hash.
 		p.hCtx.keyColIdx = make([]int, len(p.hCtx.allTypes))
@@ -235,7 +236,7 @@ func (p *cteProducer) closeProducer() (err error) {
 	return nil
 }
 
-func (p *cteProducer) getChunk(ctx context.Context, cteExec *CTEExec, req *chunk.Chunk) (err error) {
+func (p *cteProducer) getChunk(cteExec *CTEExec, req *chunk.Chunk) (err error) {
 	req.Reset()
 	if p.hasLimit {
 		return p.nextChunkLimit(cteExec, req)
@@ -302,11 +303,11 @@ func (p *cteProducer) produce(ctx context.Context, cteExec *CTEExec) (err error)
 	if p.resTbl.Error() != nil {
 		return p.resTbl.Error()
 	}
-	resAction := setupCTEStorageTracker(p.resTbl, cteExec.ctx, p.memTracker, p.diskTracker)
-	iterInAction := setupCTEStorageTracker(p.iterInTbl, cteExec.ctx, p.memTracker, p.diskTracker)
+	resAction := setupCTEStorageTracker(p.resTbl, cteExec.Ctx(), p.memTracker, p.diskTracker)
+	iterInAction := setupCTEStorageTracker(p.iterInTbl, cteExec.Ctx(), p.memTracker, p.diskTracker)
 	var iterOutAction *chunk.SpillDiskAction
 	if p.iterOutTbl != nil {
-		iterOutAction = setupCTEStorageTracker(p.iterOutTbl, cteExec.ctx, p.memTracker, p.diskTracker)
+		iterOutAction = setupCTEStorageTracker(p.iterOutTbl, cteExec.Ctx(), p.memTracker, p.diskTracker)
 	}
 
 	failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
