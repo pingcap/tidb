@@ -78,7 +78,7 @@ func (e *baseSum4Float64) ResetPartialResult(pr PartialResult) {
 	p.notNullRowCount = 0
 }
 
-func (e *baseSum4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *baseSum4Float64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumFloat64)(pr)
 	if p.notNullRowCount == 0 {
 		chk.AppendNull(e.ordinal)
@@ -104,7 +104,7 @@ func (e *baseSum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 	return 0, nil
 }
 
-func (e *baseSum4Float64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *baseSum4Float64) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4SumFloat64)(src), (*partialResult4SumFloat64)(dst)
 	if p1.notNullRowCount == 0 {
 		return 0, nil
@@ -165,7 +165,7 @@ func (e *sum4Decimal) ResetPartialResult(pr PartialResult) {
 	p.notNullRowCount = 0
 }
 
-func (e *sum4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *sum4Decimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumDecimal)(pr)
 	if p.notNullRowCount == 0 {
 		chk.AppendNull(e.ordinal)
@@ -257,7 +257,7 @@ func (e *sum4Decimal) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.R
 	return nil
 }
 
-func (e *sum4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *sum4Decimal) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4SumDecimal)(src), (*partialResult4SumDecimal)(dst)
 	if p1.notNullRowCount == 0 {
 		return 0, nil
@@ -311,7 +311,7 @@ func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	return memDelta, nil
 }
 
-func (e *sum4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *sum4DistinctFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumDistinctFloat64)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
@@ -373,7 +373,7 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	return memDelta, nil
 }
 
-func (e *sum4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *sum4DistinctDecimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
