@@ -15,6 +15,7 @@
 package chunk
 
 import (
+	"bufio"
 	"io"
 	"os"
 	"strconv"
@@ -172,13 +173,37 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 func (l *ListInDisk) GetChunk(chkIdx int) (*Chunk, error) {
 	chk := NewChunkWithCapacity(l.fieldTypes, l.NumRowsOfChunk(chkIdx))
 	chkSize := l.numRowsOfEachChunk[chkIdx]
-	for rowIdx := 0; rowIdx < chkSize; rowIdx++ {
-		_, _, err := l.GetRowAndAppendToChunk(RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}, chk)
-		if err != nil {
-			return chk, err
-		}
+
+	firstRowOffset, err := l.getOffset(uint32(chkIdx), 0)
+	if err != nil {
+		return nil, err
 	}
-	return chk, nil
+
+	// this channel is big enough and will never be blocked.
+	formatCh := make(chan rowInDisk, chkSize)
+	var formatChErr error
+	go func() {
+		defer close(formatCh)
+
+		// If the row is small, a bufio can significantly improve the performance. As benchmark shows, it's still not bad
+		// for longer rows.
+		r := bufio.NewReader(l.dataFile.getSectionReader(firstRowOffset))
+		format := rowInDisk{numCol: len(l.fieldTypes)}
+		for rowIdx := 0; rowIdx < chkSize; rowIdx++ {
+			_, err = format.ReadFrom(r)
+			if err != nil {
+				formatChErr = err
+				break
+			}
+
+			formatCh <- format
+		}
+	}()
+
+	for format := range formatCh {
+		_, chk = format.toRow(l.fieldTypes, chk)
+	}
+	return chk, formatChErr
 }
 
 // GetRow gets a Row from the ListInDisk by RowPtr.

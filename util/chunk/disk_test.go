@@ -262,6 +262,7 @@ func testListInDisk(t *testing.T, concurrency int) {
 }
 
 func BenchmarkListInDisk_GetChunk(b *testing.B) {
+	b.StopTimer()
 	numChk, numRow := 10, 1000
 	chks, fields := initChunks(numChk, numRow)
 	l := NewListInDisk(fields)
@@ -270,6 +271,7 @@ func BenchmarkListInDisk_GetChunk(b *testing.B) {
 		_ = l.Add(chk)
 	}
 
+	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		v := i % numChk
 		_, _ = l.GetChunk(v)
