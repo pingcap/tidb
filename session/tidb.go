@@ -94,7 +94,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
-			logutil.BgLogger().Error("[ddl] init domain failed",
+			logutil.BgLogger().Error("init domain failed", zap.String("category", "ddl"),
 				zap.Error(err1))
 		}
 		return true, err1

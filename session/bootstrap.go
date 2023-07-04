@@ -1238,7 +1238,7 @@ func syncUpgradeState(s Session) {
 			logutil.BgLogger().Fatal("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
 		}
 		if i%10 == 0 {
-			logutil.BgLogger().Warn("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
+			logutil.BgLogger().Warn("get owner op failed", zap.String("category", "upgrading"), zap.Stringer("state", op), zap.Error(err))
 		}
 		time.Sleep(interval)
 	}
@@ -1264,10 +1264,10 @@ func syncUpgradeState(s Session) {
 		if i == retryTimes-1 {
 			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
 		}
-		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
+		logutil.BgLogger().Warn("pause all jobs failed", zap.String("category", "upgrading"), zap.Strings("errs", jobErrStrs), zap.Error(err))
 		time.Sleep(interval)
 	}
-	logutil.BgLogger().Info("[upgrading] update global state to upgrading", zap.String("state", syncer.StateUpgrading))
+	logutil.BgLogger().Info("update global state to upgrading", zap.String("category", "upgrading"), zap.String("state", syncer.StateUpgrading))
 }
 
 func syncNormalRunning(s Session) {
@@ -1282,10 +1282,10 @@ func syncNormalRunning(s Session) {
 
 	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
 	if err != nil {
-		logutil.BgLogger().Warn("[upgrading] resume all paused jobs failed", zap.Error(err))
+		logutil.BgLogger().Warn("resume all paused jobs failed", zap.String("category", "upgrading"), zap.Error(err))
 	}
 	for _, e := range jobErrs {
-		logutil.BgLogger().Warn("[upgrading] resume the job failed ", zap.Error(e))
+		logutil.BgLogger().Warn("resume the job failed ", zap.String("category", "upgrading"), zap.Error(e))
 	}
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1295,7 +1295,7 @@ func syncNormalRunning(s Session) {
 	if err != nil {
 		logutil.BgLogger().Fatal("[upgrading] update global state to normal failed", zap.Error(err))
 	}
-	logutil.BgLogger().Info("[upgrading] update global state to normal running finished")
+	logutil.BgLogger().Info("update global state to normal running finished", zap.String("category", "upgrading"))
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.

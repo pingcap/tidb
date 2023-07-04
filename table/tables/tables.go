@@ -553,7 +553,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
 		if sctx.GetSessionVars().ConnectionID != 0 {
-			logutil.BgLogger().Info("[failpoint] force asserting not exist on UpdateRecord", zap.Uint64("startTS", txn.StartTS()))
+			logutil.BgLogger().Info("force asserting not exist on UpdateRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
@@ -1034,7 +1034,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
 		if sctx.GetSessionVars().ConnectionID != 0 {
-			logutil.BgLogger().Info("[failpoint] force asserting exist on AddRecord", zap.Uint64("startTS", txn.StartTS()))
+			logutil.BgLogger().Info("force asserting exist on AddRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
 				failpoint.Return(nil, err)
 			}
@@ -1464,7 +1464,7 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
 		if ctx.GetSessionVars().ConnectionID != 0 {
-			logutil.BgLogger().Info("[failpoint] force asserting not exist on RemoveRecord", zap.Uint64("startTS", txn.StartTS()))
+			logutil.BgLogger().Info("force asserting not exist on RemoveRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
 				failpoint.Return(err)
 			}

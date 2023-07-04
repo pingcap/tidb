@@ -64,7 +64,7 @@ func StartMockAgentServer() (*mockAgentServer, error) {
 	go func() {
 		err := server.Serve(lis)
 		if err != nil {
-			logutil.BgLogger().Warn("[top-sql] mock agent server serve failed", zap.Error(err))
+			logutil.BgLogger().Warn("mock agent server serve failed", zap.String("category", "top-sql"), zap.Error(err))
 		}
 	}()
 

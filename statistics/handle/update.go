@@ -874,9 +874,9 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		idx, ok := tbl.Indices[histID]
 		statsVer = idx.StatsVer
 		if statsVer >= 2 {
-			logutil.BgLogger().Warn("[stats] Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
+			logutil.BgLogger().Warn("Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
 				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
-				zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
+				zap.String("category", "stats"), zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
 			return err
 		}
 		if ok && idx.Histogram.Len() > 0 {
@@ -889,9 +889,9 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	} else {
 		col, ok := tbl.Columns[histID]
 		if ok && col.StatsVer >= 2 {
-			logutil.BgLogger().Warn("[stats] Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
+			logutil.BgLogger().Warn("Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
 				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
-				zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
+				zap.String("category", "stats"), zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
 			return err
 		}
 		if ok && col.Histogram.Len() > 0 {
@@ -1101,7 +1101,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	}()
 	err := h.UpdateSessionVar()
 	if err != nil {
-		logutil.BgLogger().Error("[stats] update analyze version for auto analyze session failed", zap.Error(err))
+		logutil.BgLogger().Error("update analyze version for auto analyze session failed", zap.String("category", "stats"), zap.Error(err))
 		return false
 	}
 	dbs := is.AllSchemaNames()
@@ -1109,7 +1109,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
 	if err != nil {
-		logutil.BgLogger().Error("[stats] parse auto analyze period failed", zap.Error(err))
+		logutil.BgLogger().Error("parse auto analyze period failed", zap.String("category", "stats"), zap.Error(err))
 		return false
 	}
 	if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
@@ -1118,7 +1118,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	pruneMode := h.CurrentPruneMode()
 	analyzeSnapshot, err := h.getAnalyzeSnapshot()
 	if err != nil {
-		logutil.BgLogger().Error("[stats] load tidb_enable_analyze_snapshot for auto analyze session failed", zap.Error(err))
+		logutil.BgLogger().Error("load tidb_enable_analyze_snapshot for auto analyze session failed", zap.String("category", "stats"), zap.Error(err))
 		return false
 	}
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
@@ -1187,7 +1187,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 		if err != nil {
 			return false
 		}
-		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", escaped), zap.String("reason", reason))
+		logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"), zap.String("sql", escaped), zap.String("reason", reason))
 		tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 		h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
@@ -1201,7 +1201,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 			if err != nil {
 				return false
 			}
-			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", escaped))
+			logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"), zap.String("sql", escaped))
 			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 			h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sqlWithIdx, paramsWithIdx...)
@@ -1240,7 +1240,7 @@ func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo
 		return sqlBuilder.String()
 	}
 	if len(partitionNames) > 0 {
-		logutil.BgLogger().Info("[stats] start to auto analyze",
+		logutil.BgLogger().Info("start to auto analyze", zap.String("category", "stats"),
 			zap.String("table", tblInfo.Name.String()),
 			zap.Any("partitions", partitionNames),
 			zap.Int("analyze partition batch size", analyzePartitionBatchSize))
@@ -1254,7 +1254,7 @@ func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo
 			}
 			sql := getSQL("analyze table %n.%n partition", "", end-start)
 			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
-			logutil.BgLogger().Info("[stats] auto analyze triggered",
+			logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"),
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", partitionNames[start:end]))
 			h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
@@ -1284,7 +1284,7 @@ func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo
 				sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
 				params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
 				params = append(params, idx.Name.O)
-				logutil.BgLogger().Info("[stats] auto analyze for unanalyzed",
+				logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"),
 					zap.String("table", tblInfo.Name.String()),
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", partitionNames[start:end]))
@@ -1313,7 +1313,7 @@ func (h *Handle) execAutoAnalyze(statsVer int, analyzeSnapshot bool, sql string,
 		if err1 != nil {
 			escaped = ""
 		}
-		logutil.BgLogger().Error("[stats] auto analyze failed", zap.String("sql", escaped), zap.Duration("cost_time", dur), zap.Error(err))
+		logutil.BgLogger().Error("auto analyze failed", zap.String("category", "stats"), zap.String("sql", escaped), zap.Duration("cost_time", dur), zap.Error(err))
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
 		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()

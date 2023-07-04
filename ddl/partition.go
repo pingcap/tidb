@@ -422,11 +422,11 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 				continue
 			}
 			needWait = true
-			logutil.BgLogger().Info("[ddl] partition replicas check failed in replica-only DDL state", zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Meta.Id), zap.Bool("tiflash peer at least one", tiflashPeerAtLeastOne), zap.Time("check time", time.Now()))
+			logutil.BgLogger().Info("partition replicas check failed in replica-only DDL state", zap.String("category", "ddl"), zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Meta.Id), zap.Bool("tiflash peer at least one", tiflashPeerAtLeastOne), zap.Time("check time", time.Now()))
 			return needWait, nil
 		}
 	}
-	logutil.BgLogger().Info("[ddl] partition replicas check ok in replica-only DDL state")
+	logutil.BgLogger().Info("partition replicas check ok in replica-only DDL state", zap.String("category", "ddl"))
 	return needWait, nil
 }
 
@@ -2845,10 +2845,10 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 			return false, ver, errors.Trace(err)
 		}
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-			logutil.BgLogger().Warn("[ddl] reorg partition job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
+			logutil.BgLogger().Warn("reorg partition job failed, RemoveDDLReorgHandle failed, can't convert job to rollback", zap.String("category", "ddl"),
 				zap.String("job", job.String()), zap.Error(err1))
 		}
-		logutil.BgLogger().Warn("[ddl] reorg partition job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+		logutil.BgLogger().Warn("reorg partition job failed, convert job to rollback", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
 		ver, err = convertAddTablePartitionJob2RollbackJob(d, t, job, err, tbl.Meta())
 		return false, ver, errors.Trace(err)
 	}
@@ -3021,7 +3021,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 		taskDone = true
 	}
 
-	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
+	logutil.BgLogger().Debug("txn fetches handle info", zap.String("category", "ddl"), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
 	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 
@@ -3118,7 +3118,7 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
 		err = reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
-		logutil.BgLogger().Info("[ddl] update column and indexes",
+		logutil.BgLogger().Info("update column and indexes", zap.String("category", "ddl"),
 			zap.Int64("jobID", reorgInfo.Job.ID),
 			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
 			zap.Int64("elementID", reorgInfo.currElement.ID),

@@ -506,7 +506,7 @@ func (m *DupeDetector) saveIndexHandles(ctx context.Context, handles pendingInde
 			rawRows[i] = rawValue
 			handles.dataConflictInfos[i].Row = m.decoder.DecodeRawRowDataAsStr(handles.handles[i], rawValue)
 		} else {
-			m.logger.Warn("[detect-dupe] can not found row data corresponding to the handle",
+			m.logger.Warn("can not found row data corresponding to the handle", zap.String("category", "detect-dupe"),
 				logutil.Key("rawHandle", rawHandle))
 		}
 	}
@@ -697,7 +697,7 @@ func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 		return errors.Trace(err)
 	}
 	logger := m.logger
-	logger.Info("[detect-dupe] collect duplicate rows from local duplicate db", zap.Int("tasks", len(tasks)))
+	logger.Info("collect duplicate rows from local duplicate db", zap.String("category", "detect-dupe"), zap.Int("tasks", len(tasks)))
 
 	pool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from duplicate db")
 	g, gCtx := errgroup.WithContext(ctx)
@@ -828,13 +828,13 @@ func (m *DupeDetector) processRemoteDupTaskOnce(
 			}()
 			if err != nil {
 				if regionErr, ok := errors.Cause(err).(regionError); ok {
-					logger.Debug("[detect-dupe] collect duplicate rows from region failed due to region error", zap.Error(regionErr))
+					logger.Debug("collect duplicate rows from region failed due to region error", zap.String("category", "detect-dupe"), zap.Error(regionErr))
 				} else {
-					logger.Warn("[detect-dupe] collect duplicate rows from region failed", log.ShortError(err))
+					logger.Warn("collect duplicate rows from region failed", zap.String("category", "detect-dupe"), log.ShortError(err))
 				}
 				metErr.Set(err)
 			} else {
-				logger.Debug("[detect-dupe] collect duplicate rows from region completed")
+				logger.Debug("collect duplicate rows from region completed", zap.String("category", "detect-dupe"))
 				remainKeyRanges.finish(kr)
 				atomicMadeProgress.Store(true)
 			}
@@ -875,7 +875,7 @@ func (m *DupeDetector) processRemoteDupTask(
 			if isRegionErr && regionErrRetryAttempts > 0 {
 				regionErrRetryAttempts--
 				if regionErrRetryAttempts%10 == 0 {
-					logger.Warn("[detect-dupe] process remote dupTask encounters region error, retrying",
+					logger.Warn("process remote dupTask encounters region error, retrying", zap.String("category", "detect-dupe"),
 						log.ShortError(err), zap.Int("remainRegionErrAttempts", regionErrRetryAttempts))
 				}
 				continue
@@ -883,11 +883,11 @@ func (m *DupeDetector) processRemoteDupTask(
 
 			remainAttempts--
 			if remainAttempts <= 0 {
-				logger.Error("[detect-dupe] all attempts to process the remote dupTask have failed", log.ShortError(err))
+				logger.Error("all attempts to process the remote dupTask have failed", zap.String("category", "detect-dupe"), log.ShortError(err))
 				return errors.Trace(err)
 			}
 		}
-		logger.Warn("[detect-dupe] process remote dupTask encounters error, retrying",
+		logger.Warn("process remote dupTask encounters error, retrying", zap.String("category", "detect-dupe"),
 			log.ShortError(err), zap.Int("remainAttempts", remainAttempts))
 	}
 }
@@ -899,7 +899,7 @@ func (m *DupeDetector) CollectDuplicateRowsFromTiKV(ctx context.Context, importC
 		return errors.Trace(err)
 	}
 	logger := m.logger
-	logger.Info("[detect-dupe] collect duplicate rows from tikv", zap.Int("tasks", len(tasks)))
+	logger.Info("collect duplicate rows from tikv", zap.String("category", "detect-dupe"), zap.Int("tasks", len(tasks)))
 
 	taskPool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv")
 	regionPool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv by region")
@@ -987,7 +987,7 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 
 	switch algorithm {
 	case config.DupeResAlgRecord, config.DupeResAlgNone:
-		logger.Warn("[resolve-dupe] skipping resolution due to selected algorithm. this table will become inconsistent!", zap.Stringer("algorithm", algorithm))
+		logger.Warn("skipping resolution due to selected algorithm. this table will become inconsistent!", zap.String("category", "resolve-dupe"), zap.Stringer("algorithm", algorithm))
 		return nil
 	case config.DupeResAlgRemove:
 	default:
@@ -1059,7 +1059,7 @@ func (local *DupeController) deleteDuplicateRows(
 	}()
 
 	deleteKey := func(key []byte) error {
-		logger.Debug("[resolve-dupe] will delete key", logutil.Key("key", key))
+		logger.Debug("will delete key", zap.String("category", "resolve-dupe"), logutil.Key("key", key))
 		return txn.Delete(key)
 	}
 
@@ -1073,7 +1073,7 @@ func (local *DupeController) deleteDuplicateRows(
 		if !keyInTable(handleRow[0]) {
 			continue
 		}
-		logger.Debug("[resolve-dupe] found row to resolve",
+		logger.Debug("found row to resolve", zap.String("category", "resolve-dupe"),
 			logutil.Key("handle", handleRow[0]),
 			logutil.Key("row", handleRow[1]))
 
@@ -1092,6 +1092,6 @@ func (local *DupeController) deleteDuplicateRows(
 		}
 	}
 
-	logger.Debug("[resolve-dupe] number of KV pairs to be deleted", zap.Int("count", txn.Len()))
+	logger.Debug("number of KV pairs to be deleted", zap.String("category", "resolve-dupe"), zap.Int("count", txn.Len()))
 	return nil
 }

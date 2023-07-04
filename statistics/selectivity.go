@@ -671,7 +671,7 @@ func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64, cached
 func CETraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr expression.Expression, rowCount float64) {
 	exprStr, err := ExprToString(expr)
 	if err != nil {
-		logutil.BgLogger().Debug("[OptimizerTrace] Failed to trace CE of an expression",
+		logutil.BgLogger().Debug("Failed to trace CE of an expression", zap.String("category", "OptimizerTrace"),
 			zap.Any("expression", expr))
 		return
 	}

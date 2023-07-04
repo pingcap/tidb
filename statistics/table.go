@@ -712,7 +712,7 @@ func CETraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ran
 	}
 	expr, err := ranger.RangesToString(sc, ranges, colNames)
 	if err != nil {
-		logutil.BgLogger().Debug("[OptimizerTrace] Failed to trace CE of ranges", zap.Error(err))
+		logutil.BgLogger().Debug("Failed to trace CE of ranges", zap.String("category", "OptimizerTrace"), zap.Error(err))
 	}
 	// We don't need to record meaningless expressions.
 	if expr == "" || expr == "true" || expr == "false" {

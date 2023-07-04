@@ -102,13 +102,13 @@ func (dr *delRange) addDelRangeJob(ctx context.Context, job *model.Job) error {
 		err = insertJobIntoDeleteRangeTable(ctx, sctx, job, &elementIDAlloc{})
 	}
 	if err != nil {
-		logutil.BgLogger().Error("[ddl] add job into delete-range table failed", zap.Int64("jobID", job.ID), zap.String("jobType", job.Type.String()), zap.Error(err))
+		logutil.BgLogger().Error("add job into delete-range table failed", zap.String("category", "ddl"), zap.Int64("jobID", job.ID), zap.String("jobType", job.Type.String()), zap.Error(err))
 		return errors.Trace(err)
 	}
 	if !dr.storeSupport {
 		dr.emulatorCh <- struct{}{}
 	}
-	logutil.BgLogger().Info("[ddl] add job into delete-range table", zap.Int64("jobID", job.ID), zap.String("jobType", job.Type.String()))
+	logutil.BgLogger().Info("add job into delete-range table", zap.String("category", "ddl"), zap.Int64("jobID", job.ID), zap.String("jobType", job.Type.String()))
 	return nil
 }
 
@@ -147,7 +147,7 @@ func (dr *delRange) start() {
 
 // clear implements delRangeManager interface.
 func (dr *delRange) clear() {
-	logutil.BgLogger().Info("[ddl] closing delRange")
+	logutil.BgLogger().Info("closing delRange", zap.String("category", "ddl"))
 	close(dr.quitCh)
 	dr.wait.Wait()
 }
@@ -157,7 +157,7 @@ func (dr *delRange) clear() {
 // deletes all keys in each DelRangeTask.
 func (dr *delRange) startEmulator() {
 	defer dr.wait.Done()
-	logutil.BgLogger().Info("[ddl] start delRange emulator")
+	logutil.BgLogger().Info("start delRange emulator", zap.String("category", "ddl"))
 	for {
 		select {
 		case <-dr.emulatorCh:
@@ -174,7 +174,7 @@ func (dr *delRange) startEmulator() {
 func (dr *delRange) doDelRangeWork() error {
 	sctx, err := dr.sessPool.Get()
 	if err != nil {
-		logutil.BgLogger().Error("[ddl] delRange emulator get session failed", zap.Error(err))
+		logutil.BgLogger().Error("delRange emulator get session failed", zap.String("category", "ddl"), zap.Error(err))
 		return errors.Trace(err)
 	}
 	defer dr.sessPool.Put(sctx)
@@ -182,13 +182,13 @@ func (dr *delRange) doDelRangeWork() error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	ranges, err := util.LoadDeleteRanges(ctx, sctx, math.MaxInt64)
 	if err != nil {
-		logutil.BgLogger().Error("[ddl] delRange emulator load tasks failed", zap.Error(err))
+		logutil.BgLogger().Error("delRange emulator load tasks failed", zap.String("category", "ddl"), zap.Error(err))
 		return errors.Trace(err)
 	}
 
 	for _, r := range ranges {
 		if err := dr.doTask(sctx, r); err != nil {
-			logutil.BgLogger().Error("[ddl] delRange emulator do task failed", zap.Error(err))
+			logutil.BgLogger().Error("delRange emulator do task failed", zap.String("category", "ddl"), zap.Error(err))
 			return errors.Trace(err)
 		}
 	}
@@ -240,11 +240,11 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 		}
 		if finish {
 			if err := util.CompleteDeleteRange(sctx, r, true); err != nil {
-				logutil.BgLogger().Error("[ddl] delRange emulator complete task failed", zap.Error(err))
+				logutil.BgLogger().Error("delRange emulator complete task failed", zap.String("category", "ddl"), zap.Error(err))
 				return errors.Trace(err)
 			}
 			startKey, endKey := r.Range()
-			logutil.BgLogger().Info("[ddl] delRange emulator complete task",
+			logutil.BgLogger().Info("delRange emulator complete task", zap.String("category", "ddl"),
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),
 				zap.Stringer("startKey", startKey),
@@ -252,7 +252,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 			break
 		}
 		if err := util.UpdateDeleteRange(sctx, r, newStartKey, oldStartKey); err != nil {
-			logutil.BgLogger().Error("[ddl] delRange emulator update task failed", zap.Error(err))
+			logutil.BgLogger().Error("delRange emulator update task failed", zap.String("category", "ddl"), zap.Error(err))
 		}
 		oldStartKey = newStartKey
 	}
@@ -431,7 +431,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 }
 
 func doBatchDeleteIndiceRange(ctx context.Context, s sqlexec.SQLExecutor, jobID, tableID int64, indexIDs []int64, ts uint64, ea *elementIDAlloc) error {
-	logutil.BgLogger().Info("[ddl] batch insert into delete-range indices", zap.Int64("jobID", jobID), zap.Int64("tableID", tableID), zap.Int64s("indexIDs", indexIDs))
+	logutil.BgLogger().Info("batch insert into delete-range indices", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64("tableID", tableID), zap.Int64s("indexIDs", indexIDs))
 	paramsList := make([]interface{}, 0, len(indexIDs)*5)
 	var buf strings.Builder
 	buf.WriteString(insertDeleteRangeSQLPrefix)
@@ -452,7 +452,7 @@ func doBatchDeleteIndiceRange(ctx context.Context, s sqlexec.SQLExecutor, jobID,
 }
 
 func doInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID, elementID int64, startKey, endKey kv.Key, ts uint64, comment string) error {
-	logutil.BgLogger().Info("[ddl] insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64("elementID", elementID), zap.String("comment", comment))
+	logutil.BgLogger().Info("insert into delete-range table", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64("elementID", elementID), zap.String("comment", comment))
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
 	// set session disk full opt
@@ -465,7 +465,7 @@ func doInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID, elementID int64
 }
 
 func doBatchInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID int64, tableIDs []int64, ts uint64, ea *elementIDAlloc) error {
-	logutil.BgLogger().Info("[ddl] batch insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64s("tableIDs", tableIDs))
+	logutil.BgLogger().Info("batch insert into delete-range table", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64s("tableIDs", tableIDs))
 	var buf strings.Builder
 	buf.WriteString(insertDeleteRangeSQLPrefix)
 	paramsList := make([]interface{}, 0, len(tableIDs)*5)

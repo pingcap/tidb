@@ -133,7 +133,7 @@ func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
 	ctx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &sb)
 	ctx.DefaultDB = defaultDB
 	if err := node.Restore(ctx); err != nil {
-		logutil.BgLogger().Debug("[sql-bind] restore SQL failed", zap.Error(err))
+		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
 		return ""
 	}
 	return sb.String()
