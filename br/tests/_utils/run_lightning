@@ -16,8 +16,6 @@
 
 set -eux
 
-env
-
 echo "[$(date)] <<<<<< RUNNING TEST FOR: tests/$TEST_NAME $@ >>>>>>" >> "$TEST_DIR/lightning.log"
 bin/tidb-lightning.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.$$.out" DEVEL \
     --ca "$TEST_DIR/certs/ca.pem" \
