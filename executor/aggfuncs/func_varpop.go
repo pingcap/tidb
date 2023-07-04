@@ -100,7 +100,7 @@ func calculateMerge(srcCount, dstCount int64, srcSum, dstSum, srcVariance, dstVa
 	return dstVariance
 }
 
-func (e *varPop4Float64) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*varPop4Float64) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4VarPopFloat64)(src), (*partialResult4VarPopFloat64)(dst)
 	if p1.count == 0 {
 		return 0, nil
@@ -140,7 +140,7 @@ func (*varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta 
 	return PartialResult(p), DefPartialResult4VarPopDistinctFloat64Size + setSize
 }
 
-func (e *varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
+func (*varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	p.count = 0
 	p.sum = 0

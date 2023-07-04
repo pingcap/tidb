@@ -48,7 +48,7 @@ func (*jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&p), DefPartialResult4JsonObjectAgg + (1<<p.bInMap)*hack.DefBucketMemoryUsageForMapStringToAny
 }
 
-func (e *jsonObjectAgg) ResetPartialResult(pr PartialResult) {
+func (*jsonObjectAgg) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	p.entries = make(map[string]interface{})
 	p.bInMap = 0
