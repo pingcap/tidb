@@ -44,7 +44,9 @@ const (
 	syntaxErrorTableName = "syntax_error_v1"
 	typeErrorTableName   = "type_error_v1"
 	// ConflictErrorTableName is the table name for duplicate detection.
-	ConflictErrorTableName   = "conflict_error_v1"
+	ConflictErrorTableName = "conflict_error_v1"
+	// conflictErrorV2TableName is the table name to record duplicate data in tidb
+	// backend and pre-deduplication of local backend.
 	conflictErrorV2TableName = "conflict_error_v2"
 
 	createSyntaxErrorTable = `
@@ -139,13 +141,12 @@ const (
 
 // ErrorManager records errors during the import process.
 type ErrorManager struct {
-	db             *sql.DB
-	taskID         int64
-	schemaEscaped  string
-	configError    *config.MaxError
-	remainingError config.MaxError
-	maxErrRecords  *atomic.Int64
-	// conflictV1Enabled and conflictV2Enabled are mutually exclusive.
+	db                *sql.DB
+	taskID            int64
+	schemaEscaped     string
+	configError       *config.MaxError
+	remainingError    config.MaxError
+	maxErrRecords     *atomic.Int64
 	conflictV1Enabled bool
 	conflictV2Enabled bool
 	logger            log.Logger
@@ -154,6 +155,11 @@ type ErrorManager struct {
 // TypeErrorsRemain returns the number of type errors that can be recorded.
 func (em *ErrorManager) TypeErrorsRemain() int64 {
 	return em.remainingError.Type.Load()
+}
+
+// ConflictErrorsRemain returns the number of conflict errors that can be recorded.
+func (em *ErrorManager) ConflictErrorsRemain() int64 {
+	return em.remainingError.Conflict.Load()
 }
 
 // RemainRecord returns the number of errors that need be recorded.
@@ -170,10 +176,16 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 		configError:       &cfg.App.MaxError,
 		remainingError:    cfg.App.MaxError,
 		conflictV1Enabled: cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		// Currently, we only support local backend recording conflict errors.
-		conflictV2Enabled: cfg.TikvImporter.OnDuplicate != "" && cfg.TikvImporter.Backend == config.BackendLocal,
 		maxErrRecords:     maxErrRecords,
 		logger:            logger,
+	}
+	switch cfg.TikvImporter.Backend {
+	case config.BackendLocal:
+		if cfg.TikvImporter.OnDuplicate != "" {
+			em.conflictV2Enabled = true
+		}
+	case config.BackendTiDB:
+		em.conflictV2Enabled = true
 	}
 	if len(cfg.App.TaskInfoSchemaName) != 0 {
 		em.db = db
@@ -482,7 +494,7 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 	return errors.Trace(g.Wait())
 }
 
-// RecordConflictErrorV2 records a conflict error detected by the new conflict detector.
+// RecordConflictErrorV2 records a conflict error detected by the new conflict detector or tidb backend.
 func (em *ErrorManager) RecordConflictErrorV2(
 	ctx context.Context,
 	logger log.Logger,

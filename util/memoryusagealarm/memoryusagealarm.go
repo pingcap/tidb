@@ -37,7 +37,7 @@ import (
 // Handle is the handler for expensive query.
 type Handle struct {
 	exitCh chan struct{}
-	sm     atomic.Value
+	sm     atomic.Pointer[util.SessionManager]
 }
 
 // NewMemoryUsageAlarmHandle builds a memory usage alarm handler.
@@ -48,7 +48,7 @@ func NewMemoryUsageAlarmHandle(exitCh chan struct{}) *Handle {
 // SetSessionManager sets the SessionManager which is used to fetching the info
 // of all active sessions.
 func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
-	eqh.sm.Store(sm)
+	eqh.sm.Store(&sm)
 	return eqh
 }
 
@@ -58,12 +58,12 @@ func (eqh *Handle) Run() {
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
-	sm := eqh.sm.Load().(util.SessionManager)
+	sm := eqh.sm.Load()
 	record := &memoryUsageAlarm{}
 	for {
 		select {
 		case <-ticker.C:
-			record.alarm4ExcessiveMemUsage(sm)
+			record.alarm4ExcessiveMemUsage(*sm)
 		case <-eqh.exitCh:
 			return
 		}

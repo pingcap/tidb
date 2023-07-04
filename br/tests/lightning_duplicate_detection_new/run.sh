@@ -19,6 +19,8 @@ exit 0
 
 set -eux
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 LOG_FILE="$TEST_DIR/lightning-duplicate-detection-new.log"
 
 cleanup() {
@@ -29,12 +31,12 @@ cleanup() {
 
 # 1. Test replace strategy.
 cleanup
-run_lightning --backend tidb --config "tests/$TEST_NAME/tidb-replace.toml" --log-file "$LOG_FILE"
+run_lightning --backend tidb --config "$CUR/tidb-replace.toml" --log-file "$LOG_FILE"
 expected_rows=$(run_sql "SELECT count(*) AS total_count FROM test.dup_detect" | grep "total_count" | awk '{print $2}')
 expected_pks=$(run_sql "SELECT group_concat(col1 ORDER BY col1) AS pks FROM test.dup_detect" | grep "pks" | awk '{print $2}')
 
 cleanup
-run_lightning --backend local --config "tests/$TEST_NAME/local-replace.toml" --log-file "$LOG_FILE"
+run_lightning --backend local --config "$CUR/local-replace.toml" --log-file "$LOG_FILE"
 actual_rows=$(run_sql "SELECT count(*) AS total_count FROM test.dup_detect" | grep "total_count" | awk '{print $2}')
 actual_pks=$(run_sql "SELECT group_concat(col1 ORDER BY col1) AS pks FROM test.dup_detect" | grep "pks" | awk '{print $2}')
 if [ "$expected_rows" != "$actual_rows" ] || [ "$expected_pks" != "$actual_pks" ]; then
@@ -54,12 +56,12 @@ check_contains "[kv:1062]Duplicate entry '0-177543185' for key 'dup_detect.uniq_
 
 # 2. Test ignore strategy.
 cleanup
-run_lightning --backend tidb --config "tests/$TEST_NAME/tidb-ignore.toml" --log-file "$LOG_FILE"
+run_lightning --backend tidb --config "$CUR/tidb-ignore.toml" --log-file "$LOG_FILE"
 expected_rows=$(run_sql "SELECT count(*) AS total_count FROM test.dup_detect" | grep "total_count" | awk '{print $2}')
 expected_pks=$(run_sql "SELECT group_concat(col1 ORDER BY col1) AS pks FROM test.dup_detect" | grep "pks" | awk '{print $2}')
 
 cleanup
-run_lightning --backend local --config "tests/$TEST_NAME/local-ignore.toml" --log-file "$LOG_FILE"
+run_lightning --backend local --config "$CUR/local-ignore.toml" --log-file "$LOG_FILE"
 actual_rows=$(run_sql "SELECT count(*) AS total_count FROM test.dup_detect" | grep "total_count" | awk '{print $2}')
 actual_pks=$(run_sql "SELECT group_concat(col1 ORDER BY col1) AS pks FROM test.dup_detect" | grep "pks" | awk '{print $2}')
 if [ "$expected_rows" != "$actual_rows" ] || [ "$expected_pks" != "$actual_pks" ]; then
@@ -71,10 +73,10 @@ check_contains "count(*): 228"
 
 # 3. Test error strategy.
 cleanup
-run_lightning --backend local --config "tests/$TEST_NAME/local-error.toml" --log-file "$LOG_FILE" 2>&1 | grep -q "duplicate key in table \`test\`.\`dup_detect\` caused by index .*, you can turn on checkpoint and re-run to see the conflicting rows"
-run_lightning --backend local --config "tests/$TEST_NAME/local-error.toml" --log-file "$LOG_FILE" --enable-checkpoint=1 2>&1 | grep -q "duplicate entry for key 'uniq_col6_col7', a pair of conflicting rows are (row 1 counting from offset 0 in file test.dup_detect.1.sql, row 101 counting from offset 0 in file test.dup_detect.4.sql)"
+run_lightning --backend local --config "$CUR/local-error.toml" --log-file "$LOG_FILE" 2>&1 | grep -q "duplicate key in table \`test\`.\`dup_detect\` caused by index .*, you can turn on checkpoint and re-run to see the conflicting rows"
+run_lightning --backend local --config "$CUR/local-error.toml" --log-file "$LOG_FILE" --enable-checkpoint=1 2>&1 | grep -q "duplicate entry for key 'uniq_col6_col7', a pair of conflicting rows are (row 1 counting from offset 0 in file test.dup_detect.1.sql, row 101 counting from offset 0 in file test.dup_detect.4.sql)"
 check_contains "restore table \`test\`.\`dup_detect\` failed: duplicate entry for key 'uniq_col6_col7', a pair of conflicting rows are (row 1 counting from offset 0 in file test.dup_detect.1.sql, row 101 counting from offset 0 in file test.dup_detect.4.sql)" "$LOG_FILE"
-run_lightning_ctl --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/local-error.toml" --checkpoint-error-destroy="\`test\`.\`dup_detect\`"
+run_lightning_ctl --enable-checkpoint=1 --backend local --config "$CUR/local-error.toml" --checkpoint-error-destroy="\`test\`.\`dup_detect\`"
 files_left=$(ls "$TEST_DIR/$TEST_NAME.sorted" | wc -l)
 if [ "$files_left" -ne "0" ];then
     echo "checkpoint-error-destroy has left some files"
@@ -85,7 +87,7 @@ rm -rf "$TEST_DIR/$TEST_NAME.sorted"
 
 # 4. Test limit error records.
 cleanup
-run_lightning --backend local --config "tests/$TEST_NAME/local-limit-error-records.toml" --log-file "$LOG_FILE"
+run_lightning --backend local --config "$CUR/local-limit-error-records.toml" --log-file "$LOG_FILE"
 run_sql "SELECT count(*) FROM test.dup_detect"
 check_contains "count(*): 174"
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
@@ -99,12 +101,12 @@ check_contains "count(*): 1"
 cleanup
 
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/FailAfterDuplicateDetection=return()"
-run_lightning --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/local-replace.toml" --log-file "$LOG_FILE" || true
+run_lightning --enable-checkpoint=1 --backend local --config "$CUR/local-replace.toml" --log-file "$LOG_FILE" || true
 
 unset GO_FAILPOINTS
 rm -f "$LOG_FILE"
-run_lightning_ctl --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/local-replace.toml" --checkpoint-error-ignore="\`test\`.\`dup_detect\`"
-run_lightning --enable-checkpoint=1 --backend local --config "tests/$TEST_NAME/local-replace.toml" --log-file "$LOG_FILE"
+run_lightning_ctl --enable-checkpoint=1 --backend local --config "$CUR/local-replace.toml" --checkpoint-error-ignore="\`test\`.\`dup_detect\`"
+run_lightning --enable-checkpoint=1 --backend local --config "$CUR/local-replace.toml" --log-file "$LOG_FILE"
 run_sql "SELECT count(*) FROM test.dup_detect"
 check_contains "count(*): 174"
 run_sql "SELECT count(*) FROM lightning_task_info.conflict_error_v2"
