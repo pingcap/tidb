@@ -241,13 +241,13 @@ type maxMin4Int struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinInt)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinIntSize
 }
 
-func (e *maxMin4Int) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinInt)(pr)
 	p.val = 0
 	p.isNull = true
@@ -382,7 +382,7 @@ type maxMin4Uint struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Uint) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Uint) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinUint)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinUintSize
@@ -527,7 +527,7 @@ func (*maxMin4Float32) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(p), DefPartialResult4MaxMinFloat32Size
 }
 
-func (e *maxMin4Float32) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Float32) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinFloat32)(pr)
 	p.val = 0
 	p.isNull = true
@@ -659,13 +659,13 @@ type maxMin4Float64 struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinFloat64)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinFloat64Size
 }
 
-func (e *maxMin4Float64) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinFloat64)(pr)
 	p.val = 0
 	p.isNull = true
@@ -796,13 +796,13 @@ type maxMin4Decimal struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinDecimal)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinDecimalSize
 }
 
-func (e *maxMin4Decimal) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinDecimal)(pr)
 	p.isNull = true
 }
@@ -1387,13 +1387,13 @@ type maxMin4JSON struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4JSON) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4JSON) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinJSON)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinJSONSize
 }
 
-func (e *maxMin4JSON) ResetPartialResult(pr PartialResult) {
+func (*maxMin4JSON) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinJSON)(pr)
 	p.isNull = true
 }

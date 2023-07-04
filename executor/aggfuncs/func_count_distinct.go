@@ -638,7 +638,7 @@ func (p *partialResult4ApproxCountDistinct) good(hash approxCountDistinctHashVal
 func (p *partialResult4ApproxCountDistinct) insertImpl(x approxCountDistinctHashValue) {
 	if x == 0 {
 		if !p.hasZero {
-			p.size += 1
+			p.size++
 		}
 		p.hasZero = true
 		return
@@ -758,12 +758,12 @@ func (*baseApproxCountDistinct) AllocPartialResult() (pr PartialResult, memDelta
 	return (PartialResult)(NewPartialResult4ApproxCountDistinct()), DefPartialResult4ApproxCountDistinctSize
 }
 
-func (e *baseApproxCountDistinct) ResetPartialResult(pr PartialResult) {
+func (*baseApproxCountDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4ApproxCountDistinct)(pr)
 	p.reset()
 }
 
-func (e *baseApproxCountDistinct) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*baseApproxCountDistinct) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4ApproxCountDistinct)(src), (*partialResult4ApproxCountDistinct)(dst)
 	p2.merge(p1)
 	return 0, nil
