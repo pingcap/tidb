@@ -190,7 +190,7 @@ func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 
 	record := en.GetOrCreateRecord()
 	for i, col := range en.Columns {
-		var theDatum *types.Datum = nil
+		var theDatum *types.Datum
 		if hasValue[i] {
 			theDatum = &row[i]
 		}

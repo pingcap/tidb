@@ -51,8 +51,8 @@ type Job struct {
 }
 
 // NewJob returns new Job.
-func NewJob(ID int64, conn sqlexec.SQLExecutor, user string) *Job {
-	return &Job{ID: ID, Conn: conn, User: user}
+func NewJob(id int64, conn sqlexec.SQLExecutor, user string) *Job {
+	return &Job{ID: id, Conn: conn, User: user}
 }
 
 // CreateLoadDataJob creates a load data job by insert a record to system table.

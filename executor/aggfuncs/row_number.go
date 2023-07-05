@@ -34,20 +34,20 @@ type partialResult4RowNumber struct {
 	curIdx int64
 }
 
-func (rn *rowNumber) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*rowNumber) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4RowNumber{}), DefPartialResult4RowNumberSize
 }
 
-func (rn *rowNumber) ResetPartialResult(pr PartialResult) {
+func (*rowNumber) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4RowNumber)(pr)
 	p.curIdx = 0
 }
 
-func (rn *rowNumber) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (*rowNumber) UpdatePartialResult(_ sessionctx.Context, _ []chunk.Row, _ PartialResult) (memDelta int64, err error) {
 	return 0, nil
 }
 
-func (rn *rowNumber) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (rn *rowNumber) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4RowNumber)(pr)
 	p.curIdx++
 	chk.AppendInt64(rn.ordinal, p.curIdx)
@@ -56,6 +56,6 @@ func (rn *rowNumber) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partial
 
 var _ SlidingWindowAggFunc = &rowNumber{}
 
-func (rn *rowNumber) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+func (*rowNumber) Slide(_ sessionctx.Context, _ func(uint64) chunk.Row, _, _, _, _ uint64, _ PartialResult) error {
 	return nil
 }

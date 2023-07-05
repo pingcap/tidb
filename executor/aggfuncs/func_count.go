@@ -32,16 +32,16 @@ type baseCount struct {
 
 type partialResult4Count = int64
 
-func (e *baseCount) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*baseCount) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4Count)), DefPartialResult4CountSize
 }
 
-func (e *baseCount) ResetPartialResult(pr PartialResult) {
+func (*baseCount) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4Count)(pr)
 	*p = 0
 }
 
-func (e *baseCount) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *baseCount) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4Count)(pr)
 	chk.AppendInt64(e.ordinal, *p)
 	return nil
@@ -410,7 +410,7 @@ func (e *countPartial) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	return 0, nil
 }
 
-func (*countPartial) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*countPartial) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4Count)(src), (*partialResult4Count)(dst)
 	*p2 += *p1
 	return 0, nil
