@@ -60,7 +60,7 @@ type Plan interface {
 
 	SCtx() sessionctx.Context
 
-	// property.StatsInfo will return the property.StatsInfo for this plan.
+	// statsInfo will return the property.StatsInfo for this plan.
 	statsInfo() *property.StatsInfo
 
 	// OutputNames returns the outputting names of each column.
