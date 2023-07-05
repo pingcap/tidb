@@ -2452,10 +2452,16 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs cursorRes
 		serverStatus |= mysql.ServerStatusLastRowSend
 	}
 
+	// don't include the time consumed by `cl.OnFetchReturned()` in the `WriteSQLRespDuration`
+	if stmtDetail != nil {
+		stmtDetail.WriteSQLRespDuration += time.Since(start)
+	}
+
 	if cl, ok := rs.(fetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
 
+	start = time.Now()
 	err = cc.writeEOF(ctx, serverStatus)
 	if stmtDetail != nil {
 		stmtDetail.WriteSQLRespDuration += time.Since(start)
