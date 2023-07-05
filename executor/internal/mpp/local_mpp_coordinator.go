@@ -302,6 +302,8 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 		children = append(children, exec.Sort.Child)
 	case tipb.ExecType_TypeExpand:
 		children = append(children, exec.Expand.Child)
+	case tipb.ExecType_TypeExpand2:
+		children = append(children, exec.Expand2.Child)
 	default:
 		return errors.Errorf("unknown new tipb protocol %d", exec.Tp)
 	}

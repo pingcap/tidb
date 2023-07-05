@@ -523,6 +523,9 @@ func TestExprPushDownToFlash(t *testing.T) {
 	float32Column := genColumn(mysql.TypeFloat, 9)
 	enumColumn := genColumn(mysql.TypeEnum, 10)
 	durationColumn := genColumn(mysql.TypeDuration, 11)
+	// uint64 col
+	uintColumn := genColumn(mysql.TypeLonglong, 12)
+	uintColumn.RetType.AddFlag(mysql.UnsignedFlag)
 
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)
@@ -1272,6 +1275,17 @@ func TestExprPushDownToFlash(t *testing.T) {
 	function, err = NewFunction(mock.NewContext(), ast.IsIPv6, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
+
+	// Grouping
+	function, err = NewFunction(mock.NewContext(), ast.Grouping, types.NewFieldType(mysql.TypeLonglong), uintColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	if scalarFunc, ok := function.(*ScalarFunction); ok {
+		if scalarFunc.FuncName.L == ast.Grouping {
+			scalarFunc.Function.(*BuiltinGroupingImplSig).
+				SetMetadata(tipb.GroupingMode_ModeBitAnd, []map[uint64]struct{}{})
+		}
+	}
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	require.Len(t, pushed, len(exprs))

@@ -2206,8 +2206,11 @@ func TestRollupExpand(t *testing.T) {
 	// after logical optimization, the current select block's expand will generate its level-projections.
 	require.Equal(t, builder.currentBlockExpand.LevelExprs != nil, true)
 	require.Equal(t, len(builder.currentBlockExpand.LevelExprs), 3)
+	// for grouping set {}: gid = '00' = 0
 	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[0], expand.schema), "test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")
+	// for grouping set {a}: gid = '01' = 1
 	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[1], expand.schema), "test.t.a, Column#13, <nil>->Column#14, 1->gid")
+	// for grouping set {a,b}: gid = '11' = 3
 	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[2], expand.schema), "test.t.a, Column#13, Column#14, 3->gid")
 
 	require.Equal(t, expand.Schema().Len(), 4)
@@ -2222,4 +2225,29 @@ func TestRollupExpand(t *testing.T) {
 	// the gid col
 	require.Equal(t, expand.Schema().Columns[3].RetType.GetFlag()&mysql.NotNullFlag, uint(1))
 	require.Equal(t, expand.names[3].String(), "gid")
+
+	// Test grouping marks generation.
+	// Expand.schema.columns[0] is normal source column.
+	// Expand.schema.columns[1] is normal grouping set column a.
+	// Expand.schema.columns[2] is normal grouping set column b.
+	// Expand.schema.columns[2] is normal grouping gen column gid.
+	// mock grouping(a)
+	gm := expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[1]})
+	require.NotNil(t, gm)
+	require.Equal(t, len(gm), 1)
+
+	// mock grouping(b)
+	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[2]})
+	require.NotNil(t, gm)
+	require.Equal(t, len(gm), 1)
+
+	// mock grouping(a,b)
+	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[1], expand.schema.Columns[2]})
+	require.NotNil(t, gm)
+	require.Equal(t, len(gm), 2)
+
+	// mock grouping(b,a)
+	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[2], expand.schema.Columns[1]})
+	require.NotNil(t, gm)
+	require.Equal(t, len(gm), 2)
 }
