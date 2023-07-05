@@ -386,7 +386,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBUseAlloc, Value: BoolToOnOff(DefTiDBUseAlloc), Type: TypeBool, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(s.preUseChunkAlloc), nil
 	}},
-	{Scope: ScopeSession, Name: TiDBExplicitRequestSourceType, Value: "", Type: TypeEnum, PossibleValues: tikvcliutil.ExplictTypeList, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: TiDBExplicitRequestSourceType, Value: "", Type: TypeEnum, PossibleValues: tikvcliutil.ExplicitTypeList, GetSession: func(s *SessionVars) (string, error) {
 		return s.ExplicitRequestSourceType, nil
 	}, SetSession: func(s *SessionVars, val string) error {
 		s.ExplicitRequestSourceType = val
