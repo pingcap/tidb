@@ -141,6 +141,10 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, p.schema.Len())
+	copy(shallowColSlice, p.schema.Columns)
+	p.schema = expression.NewSchema(shallowColSlice...)
 	for i := 0; i < colsNeedResolving; i++ {
 		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
 		if err != nil {
@@ -210,6 +214,10 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, p.schema.Len())
+	copy(shallowColSlice, p.schema.Columns)
+	p.schema = expression.NewSchema(shallowColSlice...)
 	for i := 0; i < colsNeedResolving; i++ {
 		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
 		if err != nil {
@@ -289,6 +297,10 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, p.schema.Len())
+	copy(shallowColSlice, p.schema.Columns)
+	p.schema = expression.NewSchema(shallowColSlice...)
 	for i := 0; i < colsNeedResolving; i++ {
 		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
 		if err != nil {
@@ -670,6 +682,10 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 		}
 		p.PartitionBy[i].Col = newCol.(*expression.Column)
 	}
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, p.schema.Len())
+	copy(shallowColSlice, p.schema.Columns)
+	p.schema = expression.NewSchema(shallowColSlice...)
 	for i, col := range p.schema.Columns {
 		newCol, err := col.ResolveIndices(p.children[0].Schema())
 		if err != nil {
