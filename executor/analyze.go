@@ -19,12 +19,9 @@ import (
 	"context"
 	"fmt"
 	"math"
-<<<<<<< HEAD
 	"math/rand"
-	"sort"
-=======
 	"net"
->>>>>>> db381848680 (statistic: improve ipv6 for analyze job meta (#45177))
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
