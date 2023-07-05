@@ -226,15 +226,7 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		}
 		return tablecodec.EncodeValue(us.Ctx().GetSessionVars().StmtCtx, nil, d)
 	}
-	def := func(i int, chk *chunk.Chunk) error {
-		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(us.Ctx(), us.columns[i])
-		if err != nil {
-			return err
-		}
-		chk.AppendDatum(i, &d)
-		return nil
-	}
-	cd := rowcodec.NewChunkDecoder(colInfo, pkColIDs, def, us.Ctx().GetSessionVars().Location())
+	cd := NewRowDecoder(us.Ctx(), us.Schema(), us.table.Meta())
 	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, defVal, us.Ctx().GetSessionVars().Location())
 	return &memTableReader{
 		ctx:           us.Ctx(),
