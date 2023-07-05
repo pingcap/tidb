@@ -356,7 +356,8 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 					defer actionSpill.WaitForTest()
 				}
 			})
-			vars.MemTracker.FallbackOldAndSetNewAction(rowContainer.ActionSpill())
+			action := memory.NewActionWithPriority(rowContainer.ActionSpill(), memory.DefCursorFetchSpillPriority)
+			vars.MemTracker.FallbackOldAndSetNewAction(action)
 		}
 		defer func() {
 			if err != nil {
