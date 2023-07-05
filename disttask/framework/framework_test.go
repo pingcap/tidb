@@ -41,7 +41,7 @@ func (*testFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
 
 func (f *testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, metasChan chan [][]byte, errChan chan error, doneChan chan bool) {
 	switch gTask.Step {
-	case proto.StepOne:
+	case proto.StepInit:
 		metasChan <- [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
@@ -351,7 +351,6 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 func TestFrameworkDispatchSubTasksFailedAndRetryable(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
-
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 3)
@@ -359,7 +358,6 @@ func TestFrameworkDispatchSubTasksFailedAndRetryable(t *testing.T) {
 		distContext.SetOwner(0)
 	}
 	// 1. fail once.
-
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable", "1*return(true)"))
 	DispatchTaskAndCheckSuccess("🤔", proto.TaskTypeExample, t, &v)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFailRetryable"))
@@ -383,9 +381,7 @@ func TestFrameworkDispatchSubTasksFailedAndRetryable(t *testing.T) {
 func TestOwnerChange(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
-
 	var v atomic.Int64
-
 	RegisterTaskMeta(&v)
 
 	distContext := testkit.NewDistExecutionContext(t, 3)
@@ -395,6 +391,5 @@ func TestOwnerChange(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockOwnerChange", "1*return(true)"))
 	DispatchTaskAndCheckSuccess("😊", proto.TaskTypeExample, t, &v)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockOwnerChange"))
-
 	distContext.Close()
 }

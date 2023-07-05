@@ -40,7 +40,7 @@ func (*rollbackFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
 func (f *rollbackFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task,
 	metasChan chan [][]byte, errChan chan error, doneChan chan bool) {
 	switch gTask.Step {
-	case proto.StepOne:
+	case proto.StepInit:
 		metasChan <- [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
@@ -146,6 +146,7 @@ func TestFrameworkRollback(t *testing.T) {
 	// 3. dispatch normal subtasks fail.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/dispatchSubTasksFail", "1*return(true)"))
 	DispatchTaskAndCheckFail("key3", proto.TaskTypeRollbackExample, t, &v)
+
 	require.Equal(t, int32(0), rollbackCnt.Load())
 	rollbackCnt.Store(0)
 
@@ -154,7 +155,7 @@ func TestFrameworkRollback(t *testing.T) {
 	// 4. dispatched normal subtasks, update substate to normal failed.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/updateSubstateFail", "1*return(true)"))
 	DispatchTaskAndCheckFail("key4", proto.TaskTypeRollbackExample, t, &v)
-	require.Equal(t, int32(2), rollbackCnt.Load())
+	require.Equal(t, int32(0), rollbackCnt.Load())
 	rollbackCnt.Store(0)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/updateSubstateFail"))

@@ -306,7 +306,7 @@ func (NumberExampleHandle) OnTicker(_ context.Context, _ *proto.Task) {
 
 func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, metasChan chan [][]byte, errChan chan error, doneChan chan bool) {
 	switch gTask.Step {
-	case proto.StepOne:
+	case proto.StepInit:
 		var metas [][]byte
 		logutil.BgLogger().Info("progress step one")
 		for i := 0; i < subtaskCnt; i++ {
@@ -316,7 +316,7 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 
 		metasChan <- metas
 		doneChan <- true
-	case proto.StepTwo:
+	case proto.StepOne:
 		logutil.BgLogger().Info("progress step two")
 		doneChan <- true
 	default:

@@ -40,7 +40,7 @@ func (*asyncFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
 func (f *asyncFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task,
 	metasChan chan [][]byte, errChan chan error, doneChan chan bool) {
 	switch gTask.Step {
-	case proto.StepOne:
+	case proto.StepInit:
 		metasChan <- [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
@@ -53,7 +53,7 @@ func (f *asyncFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.Task
 			[]byte("task6"),
 		}
 		doneChan <- true
-	case proto.StepTwo:
+	case proto.StepOne:
 		metasChan <- [][]byte{
 			[]byte("task7"),
 			[]byte("task8"),

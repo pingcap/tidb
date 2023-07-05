@@ -52,7 +52,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 
 	// 1. test partition table ProcessNormalFlow.
 	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
-		require.Equal(t, proto.StepOne, gTask.Step)
+		require.Equal(t, proto.StepInit, gTask.Step)
 		require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
 		for i, par := range tblInfo.Partition.Definitions {
 			var subTask ddl.BackfillSubTaskMeta
@@ -85,7 +85,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	processAndCheck(t, handler, gTask, tblInfo, func(t *testing.T, metas [][]byte, gTask *proto.Task, tblInfo *model.TableInfo) {
-		require.Equal(t, proto.StepOne, gTask.Step)
+		require.Equal(t, proto.StepInit, gTask.Step)
 		// TODO: check meta.
 	}, nil)
 
@@ -131,7 +131,7 @@ func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName 
 	gTask := &proto.Task{
 		ID:              time.Now().UnixMicro(),
 		Type:            taskType,
-		Step:            proto.StepOne,
+		Step:            proto.StepInit,
 		State:           proto.TaskStateRunning,
 		Meta:            gTaskMetaBytes,
 		StartTime:       time.Now(),
