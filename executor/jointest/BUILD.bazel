@@ -9,7 +9,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD:executor/jointest/BUILD.bazel
     shard_count = 50,
+=======
+    shard_count = 30,
+>>>>>>> af04707eda7 (*: fix data race in ProcessInfo (#45127)):executor/test/indexmergereadtest/BUILD.bazel
     deps = [
         "//config",
         "//meta/autoid",
