@@ -12,33 +12,44 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package pausetest
+package multivaluedindex
 
 import (
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
+	testmain.ShortCircuitForBench(m)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Experimental.AllowsExpressionIndex = true
 	})
+	tikv.EnableFailpoints()
 
-	ddl.SetWaitTimeWhenErrorOccurred(time.Microsecond)
+	// Some test depends on the values of timeutil.SystemLocation()
+	// If we don't SetSystemTZ() here, the value would change unpredictable.
+	// Affected by the order whether a testsuite runs before or after integration test.
+	// Note, SetSystemTZ() is a sync.Once operation.
+	timeutil.SetSystemTZ("system")
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/ttl/ttlworker.(*ttlScanWorker).loop"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/ttl/client.(*mockClient).WatchCommand.func1"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/ttl/ttlworker.(*JobManager).jobLoop"),
 	}
 
 	goleak.VerifyTestMain(m, opts...)

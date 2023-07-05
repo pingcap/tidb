@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/disttask/importinto"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -54,7 +55,7 @@ const unknownImportedRowCount = -1
 
 // ImportIntoExec represents a IMPORT INTO executor.
 type ImportIntoExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	userSctx   sessionctx.Context
 	importPlan *importer.Plan
 	controller *importer.LoadDataController
@@ -64,10 +65,10 @@ type ImportIntoExec struct {
 }
 
 var (
-	_ Executor = (*ImportIntoExec)(nil)
+	_ exec.Executor = (*ImportIntoExec)(nil)
 )
 
-func newImportIntoExec(b baseExecutor, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (
+func newImportIntoExec(b exec.BaseExecutor, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (
 	*ImportIntoExec, error) {
 	importPlan, err := importer.NewImportPlan(userSctx, plan, tbl)
 	if err != nil {
@@ -79,7 +80,7 @@ func newImportIntoExec(b baseExecutor, userSctx sessionctx.Context, plan *planne
 		return nil, err
 	}
 	return &ImportIntoExec{
-		baseExecutor: b,
+		BaseExecutor: b,
 		userSctx:     userSctx,
 		importPlan:   importPlan,
 		controller:   controller,
@@ -89,7 +90,7 @@ func newImportIntoExec(b baseExecutor, userSctx sessionctx.Context, plan *planne
 
 // Next implements the Executor Next interface.
 func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
-	req.GrowAndReset(e.maxChunkSize)
+	req.GrowAndReset(e.MaxChunkSize())
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalImportInto)
 	if e.dataFilled {
 		// need to return an empty req to indicate all results have been written
@@ -176,7 +177,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
 		sqlExec := se.(sqlexec.SQLExecutor)
 		var err2 error
-		info, err2 = importer.GetJob(ctx, sqlExec, jobID, e.ctx.GetSessionVars().User.String(), false)
+		info, err2 = importer.GetJob(ctx, sqlExec, jobID, e.Ctx().GetSessionVars().User.String(), false)
 		return err2
 	}); err != nil {
 		return err
@@ -228,13 +229,13 @@ func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, di
 
 // ImportIntoActionExec represents a import into action executor.
 type ImportIntoActionExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	tp    ast.ImportIntoActionTp
 	jobID int64
 }
 
 var (
-	_ Executor = (*ImportIntoActionExec)(nil)
+	_ exec.Executor = (*ImportIntoActionExec)(nil)
 )
 
 // Next implements the Executor Next interface.
@@ -242,8 +243,8 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalImportInto)
 
 	var hasSuperPriv bool
-	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
-		hasSuperPriv = pm.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
+	if pm := privilege.GetPrivilegeManager(e.Ctx()); pm != nil {
+		hasSuperPriv = pm.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have enough privileges.
 	globalTaskManager, err := fstorage.GetTaskManager()
@@ -263,7 +264,7 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 	if err := manager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		var err2 error
-		info, err2 = importer.GetJob(ctx, exec, e.jobID, e.ctx.GetSessionVars().User.String(), hasSuperPriv)
+		info, err2 = importer.GetJob(ctx, exec, e.jobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
 		return err2
 	}); err != nil {
 		return err

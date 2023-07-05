@@ -3,11 +3,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "lru",
     srcs = ["lru_cache.go"],
-    importpath = "github.com/pingcap/tidb/statistics/handle/internal/cache/lru",
+    importpath = "github.com/pingcap/tidb/statistics/handle/cache/internal/lru",
     visibility = ["//statistics/handle:__subpackages__"],
     deps = [
         "//statistics",
-        "//statistics/handle/internal/cache",
+        "//statistics/handle/cache/internal",
         "//statistics/handle/metrics",
     ],
 )

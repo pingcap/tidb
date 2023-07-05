@@ -23,6 +23,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
@@ -32,7 +33,7 @@ import (
 
 // SelectIntoExec represents a SelectInto executor.
 type SelectIntoExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	intoOpt *ast.SelectIntoOption
 	core.LineFieldsInfo
 
@@ -62,17 +63,17 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 	s.started = true
 	s.dstFile = f
 	s.writer = bufio.NewWriter(s.dstFile)
-	s.chk = tryNewCacheChunk(s.children[0])
+	s.chk = tryNewCacheChunk(s.Children(0))
 	s.lineBuf = make([]byte, 0, 1024)
 	s.fieldBuf = make([]byte, 0, 64)
 	s.escapeBuf = make([]byte, 0, 64)
-	return s.baseExecutor.Open(ctx)
+	return s.BaseExecutor.Open(ctx)
 }
 
 // Next implements the Executor Next interface.
 func (s *SelectIntoExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for {
-		if err := Next(ctx, s.children[0], s.chk); err != nil {
+		if err := Next(ctx, s.Children(0), s.chk); err != nil {
 			return err
 		}
 		if s.chk.NumRows() == 0 {
@@ -136,7 +137,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 		nullTerm = []byte("NULL")
 	}
 
-	cols := s.children[0].Schema().Columns
+	cols := s.Children(0).Schema().Columns
 	for i := 0; i < s.chk.NumRows(); i++ {
 		row := s.chk.GetRow(i)
 		s.lineBuf = s.lineBuf[:0]
@@ -206,7 +207,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 			return errors.Trace(err)
 		}
 	}
-	s.ctx.GetSessionVars().StmtCtx.AddAffectedRows(uint64(s.chk.NumRows()))
+	s.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(uint64(s.chk.NumRows()))
 	return nil
 }
 
@@ -217,7 +218,7 @@ func (s *SelectIntoExec) Close() error {
 	}
 	err1 := s.writer.Flush()
 	err2 := s.dstFile.Close()
-	err3 := s.baseExecutor.Close()
+	err3 := s.BaseExecutor.Close()
 	if err1 != nil {
 		return errors.Trace(err1)
 	} else if err2 != nil {

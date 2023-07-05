@@ -56,7 +56,7 @@ func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 	LitDiskRoot.UpdateUsage()
 	err := LitDiskRoot.StartupCheck()
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl-ingest] ingest backfill may not be available", zap.Error(err))
+		logutil.BgLogger().Warn("ingest backfill may not be available", zap.String("category", "ddl-ingest"), zap.Error(err))
 	}
 	return mgr
 }
@@ -66,12 +66,12 @@ func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
 	activeJobIDs := m.Keys()
 	if len(activeJobIDs) > 0 {
-		logutil.BgLogger().Info("[ddl-ingest] ingest backfill is already in use by another DDL job",
+		logutil.BgLogger().Info("ingest backfill is already in use by another DDL job", zap.String("category", "ddl-ingest"),
 			zap.Int64("job ID", activeJobIDs[0]))
 		return false, nil
 	}
 	if err := m.diskRoot.PreCheckUsage(); err != nil {
-		logutil.BgLogger().Info("[ddl-ingest] ingest backfill is not available", zap.Error(err))
+		logutil.BgLogger().Info("ingest backfill is not available", zap.String("category", "ddl-ingest"), zap.Error(err))
 		return false, err
 	}
 	return true, nil
@@ -117,7 +117,7 @@ func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error
 		return nil, err
 	}
 
-	logutil.BgLogger().Info("[ddl-ingest] create local backend for adding index", zap.String("keyspaceName", cfg.KeyspaceName))
+	logutil.BgLogger().Info("create local backend for adding index", zap.String("category", "ddl-ingest"), zap.String("keyspaceName", cfg.KeyspaceName))
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{
 		DB: nil,
 	}
