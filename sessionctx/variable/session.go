@@ -1323,8 +1323,8 @@ type SessionVars struct {
 
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
-	// ExplicitRequestSoureType is the type of origin external request.
-	ExplicitRequestSoureType string
+	// ExplicitRequestSourceType is the type of origin external request.
+	ExplicitRequestSourceType string
 
 	// MemoryDebugModeMinHeapInUse indicated the minimum heapInUse threshold that triggers the memoryDebugMode.
 	MemoryDebugModeMinHeapInUse int64

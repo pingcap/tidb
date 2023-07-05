@@ -498,13 +498,13 @@ func TestSessionCtx(t *testing.T) {
 		{
 			// check reqest source
 			setFunc: func(tk *testkit.TestKit) any {
-				tk.MustExec(`set @@tidb_reqest_source="BR"`)
-				require.Equal(t, "BR", tk.Session().GetSessionVars().RequestSourceType)
+				tk.MustExec(`set @@tidb_request_source_type="lightning"`)
+				require.Equal(t, "lightning", tk.Session().GetSessionVars().ExplicitRequestSourceType)
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				tk.MustExec(`select count(*) from test.t1`)
-				tk.MustQuery(`select @@tidb_reqest_source`).Check(testkit.Rows("BR"))
+				tk.MustQuery(`select @@tidb_request_source_type`).Check(testkit.Rows("lightning"))
 			},
 		},
 	}

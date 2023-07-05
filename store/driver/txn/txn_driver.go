@@ -270,7 +270,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetRequestSourceInternal(val.(bool))
 	case kv.RequestSourceType:
 		txn.KVTxn.SetRequestSourceType(val.(string))
-	case kv.ExplicitRequestSoureType:
+	case kv.ExplicitRequestSourceType:
 		txn.KVTxn.SetExplicitRequestSourceType(val.(string))
 	case kv.ReplicaReadAdjuster:
 		txn.KVTxn.GetSnapshot().SetReplicaReadAdjuster(val.(txnkv.ReplicaReadAdjuster))

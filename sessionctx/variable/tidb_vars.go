@@ -275,7 +275,8 @@ const (
 	// TiDBUseAlloc indicates whether the last statement used chunk alloc
 	TiDBUseAlloc = "last_sql_use_alloc"
 
-	// TiDBExplicitRequestSourceType indicates the source of the request, which can be ["lightning", "br", "dumping", "tispark", "background"].
+	// TiDBExplicitRequestSourceType indicates the source of the request, it's a complement of RequestSourceType.
+	// The value maybe "lightning", "br", "dumpling" etc.
 	TiDBExplicitRequestSourceType = "tidb_request_source_type"
 )
 

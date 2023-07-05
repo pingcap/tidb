@@ -92,8 +92,8 @@ const (
 	RequestSourceInternal
 	// RequestSourceType set request source type of the current statement.
 	RequestSourceType
-	// ExplicitRequestSoureType is a complement of RequestSourceType, it may specified by the client or users.
-	ExplicitRequestSoureType
+	// ExplicitRequestSourceType is a complement of RequestSourceType, it may specified by the client or users.
+	ExplicitRequestSourceType
 	// ReplicaReadAdjuster set the adjust function of cop requsts.
 	ReplicaReadAdjuster
 	// ScanBatchSize set the iter scan batch size.
