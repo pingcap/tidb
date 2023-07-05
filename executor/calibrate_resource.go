@@ -195,11 +195,6 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	return e.staticCalibrate(ctx, req, exec)
 }
 
-var (
-	errLowUsage          = errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
-	errNoCPUQuotaMetrics = errors.Normalize("There is no CPU quota metrics, %v")
-)
-
 func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
 	startTs, endTs, err := e.parseCalibrateDuration()
 	if err != nil {
@@ -210,11 +205,11 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
+		return err
 	}
 	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
+		return err
 	}
 	rus, err := getRUPerSec(ctx, exec, startTime, endTime)
 	if err != nil {
@@ -246,9 +241,8 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		}
 	}
 	if len(quotas) < 5 {
-		return errLowUsage
+		return errors.Errorf("There are too few metrics points available in selected time window")
 	}
-<<<<<<< HEAD
 	if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
 		sort.Slice(quotas, func(i, j int) bool {
 			return quotas[i] > quotas[j]
@@ -263,10 +257,6 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		req.AppendUint64(0, uint64(quota))
 	} else {
 		return errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
-=======
-	if float64(len(quotas))/float64(len(quotas)+lowCount) <= percentOfPass {
-		return errLowUsage
->>>>>>> 841aed8d95a (calibrate: refactor metrics error (#44451))
 	}
 	return nil
 }
@@ -282,11 +272,11 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
+		return err
 	}
 	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
+		return err
 	}
 
 	// The default workload to calculate the RU capacity.
@@ -349,14 +339,10 @@ func getValuesFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecuto
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-<<<<<<< HEAD
 	if len(rows) == 0 {
 		return nil, errors.Errorf("metrics '%s' is empty", metrics)
 	}
 	ret := make([]float64, 0, len(rows))
-=======
-	ret := make([]*timePointValue, 0, len(rows))
->>>>>>> 841aed8d95a (calibrate: refactor metrics error (#44451))
 	for _, row := range rows {
 		ret = append(ret, row.GetFloat64(0))
 	}
