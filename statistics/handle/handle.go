@@ -1056,8 +1056,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 }
 
 func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col model.TableItemID, loadFMSketch bool) (err error) {
-	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.Get(col.TableID)
+	tbl, ok := h.statsCache.Get(col.TableID)
 	if !ok {
 		return nil
 	}
@@ -1105,7 +1104,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
-	oldCache = h.statsCache.Load()
+	oldCache := h.statsCache.Load()
 	tbl, ok = oldCache.Get(col.TableID)
 	if !ok {
 		return nil
@@ -1119,8 +1118,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 }
 
 func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx model.TableItemID, loadFMSketch bool) (err error) {
-	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.Get(idx.TableID)
+	tbl, ok := h.statsCache.Get(idx.TableID)
 	if !ok {
 		return nil
 	}
@@ -1158,7 +1156,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
 	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
-	oldCache = h.statsCache.Load()
+	oldCache := h.statsCache.Load()
 	tbl, ok = oldCache.Get(idx.TableID)
 	if !ok {
 		return nil
