@@ -1202,7 +1202,7 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			err = err1
 		}
 	}()
-	statsTbl, ok := h.statsCache.Load().Get(physicalID)
+	statsTbl, ok := h.statsCache.Get(physicalID)
 	if !ok {
 		statsTbl = nil
 	}
