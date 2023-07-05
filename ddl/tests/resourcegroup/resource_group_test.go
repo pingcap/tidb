@@ -216,7 +216,6 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustContainErrMsg("create resource group bg ru_per_sec = 1000 background = (task_names = 'abc')", "unsupported operation")
 	tk.MustContainErrMsg("alter resource group x background=(task_names='')", "unsupported operation")
-
 }
 
 func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {
