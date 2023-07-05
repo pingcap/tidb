@@ -308,16 +308,14 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 	switch gTask.Step {
 	case proto.StepInit:
 		var metas [][]byte
-		logutil.BgLogger().Info("progress step one")
+		logutil.BgLogger().Info("progress step init")
 		for i := 0; i < subtaskCnt; i++ {
 			metas = append(metas, []byte{'1'})
 		}
-		logutil.BgLogger().Info("progress step one")
-
 		metasChan <- metas
 		doneChan <- true
 	case proto.StepOne:
-		logutil.BgLogger().Info("progress step two")
+		logutil.BgLogger().Info("progress step one")
 		doneChan <- true
 	default:
 		doneChan <- true

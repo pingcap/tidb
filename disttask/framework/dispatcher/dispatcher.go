@@ -176,27 +176,6 @@ func (d *dispatcher) DispatchTaskLoop() {
 				// The task is not in runningGTasks set when:
 				// owner changed or task is cancelled when status is pending.
 				if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting || gTask.State == proto.TaskStateCancelling {
-					// prevStep := gTask.Step
-					// // When owner changed in prev owner dispatching process,
-					// // update the gtask to previous step since the previous step didn't dispatched and execute all subtasks.
-					// if gTask.Flag == proto.TaskSubStateDispatching {
-					// 	gTask.Step--
-					// 	logutil.BgLogger().Info("ywq test step-- in dispacthing", zap.Int64("step", gTask.Step))
-
-					// 	for i := 0; i < retrySQLTimes; i++ {
-					// 		err = d.taskMgr.UpdateGlobalTask(gTask)
-					// 		if err == nil {
-					// 			break
-					// 		}
-					// 		if i%10 == 0 {
-					// 			logutil.BgLogger().Warn("updateTask to prevStep failed", zap.Int64("task-id", gTask.ID),
-					// 				zap.Int64("previous step", prevStep), zap.Int64("curr step", gTask.Step),
-					// 				zap.Int("retry times", retrySQLTimes), zap.Error(err))
-					// 		}
-					// 		time.Sleep(retrySQLInterval)
-					// 	}
-					// }
-
 					d.setRunningGTask(gTask)
 					cnt++
 					continue
@@ -709,7 +688,7 @@ func (d *dispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Conte
 }
 
 func (*dispatcher) checkConcurrencyOverflow(cnt int) bool {
-	if cnt > DefaultDispatchConcurrency {
+	if cnt >= DefaultDispatchConcurrency {
 		logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency",
 			zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
 		return true
