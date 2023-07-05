@@ -1402,6 +1402,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		p = explain.TargetPlan
 	}
 	pi := util.ProcessInfo{
+<<<<<<< HEAD
 		ID:                s.sessionVars.ConnectionID,
 		Port:              s.sessionVars.Port,
 		DB:                s.sessionVars.CurrentDB,
@@ -1418,6 +1419,31 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		StatsInfo:         plannercore.GetStatsInfo,
 		MaxExecutionTime:  maxExecutionTime,
 		RedactSQL:         s.sessionVars.EnableRedactLog,
+=======
+		ID:                    s.sessionVars.ConnectionID,
+		Port:                  s.sessionVars.Port,
+		DB:                    s.sessionVars.CurrentDB,
+		Command:               command,
+		Plan:                  p,
+		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
+		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
+		Time:                  t,
+		State:                 s.Status(),
+		Info:                  sql,
+		CurTxnStartTS:         curTxnStartTS,
+		CurTxnCreateTime:      curTxnCreateTime,
+		StmtCtx:               s.sessionVars.StmtCtx,
+		RefCountOfStmtCtx:     &s.sessionVars.RefCountOfStmtCtx,
+		MemTracker:            s.sessionVars.MemTracker,
+		DiskTracker:           s.sessionVars.DiskTracker,
+		StatsInfo:             plannercore.GetStatsInfo,
+		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
+		TableIDs:              s.sessionVars.StmtCtx.TableIDs,
+		IndexNames:            s.sessionVars.StmtCtx.IndexNames,
+		MaxExecutionTime:      maxExecutionTime,
+		RedactSQL:             s.sessionVars.EnableRedactLog,
+		ResourceGroupName:     s.sessionVars.ResourceGroupName,
+>>>>>>> af04707eda7 (*: fix data race in ProcessInfo (#45127))
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
