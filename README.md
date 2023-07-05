@@ -24,8 +24,6 @@
 ---
 
 <div>
-    <a href="https://twitter.com/PingCAP"><img src="https://img.shields.io/badge/- @PingCAP -424549?style=social&logo=twitter" height=25></a>
-    &nbsp;
     <a href="https://twitter.com/tidb_developer"><img src="https://img.shields.io/badge/- @TiDB__Developer -424549?style=social&logo=twitter" height=25></a>
     &nbsp;
     <a href="https://ask.pingcap.com/"><img src="https://img.shields.io/badge/- Forum -red?style=social&logo=discourse" height=25></a>
