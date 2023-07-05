@@ -48,7 +48,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 	if !needGlobalStats {
 		return nil
 	}
-	globalStatsTableIDs := make(map[int64]struct{}, len(globalStatsMap))
+	globalStatsTableIDs := make(map[int64]struct{})
 	for globalStatsID := range globalStatsMap {
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
