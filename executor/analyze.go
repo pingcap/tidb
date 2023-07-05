@@ -19,9 +19,13 @@ import (
 	"context"
 	"fmt"
 	"math"
+<<<<<<< HEAD
 	"math/rand"
 	"runtime"
 	"sort"
+=======
+	"net"
+>>>>>>> db381848680 (statistic: improve ipv6 for analyze job meta (#45177))
 	"strconv"
 	"strings"
 	"sync"
@@ -440,7 +444,11 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	if e.isCommonHandle && e.idxInfo.Primary {
 		kvReqBuilder = builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, true, ranges, nil)
 	} else {
+<<<<<<< HEAD
 		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, e.idxInfo.ID, ranges)
+=======
+		instance = net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
+>>>>>>> db381848680 (statistic: improve ipv6 for analyze job meta (#45177))
 	}
 	kvReqBuilder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx)
 	kvReq, err := kvReqBuilder.
