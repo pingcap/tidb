@@ -214,8 +214,8 @@ func TestResourceGroupBasic(t *testing.T) {
 	g = testResourceGroupNameFromIS(t, tk.Session(), "default")
 	require.EqualValues(t, g.Background.JobTypes, []string{"a", "b", "c"})
 
-	tk.MustContainErrMsg("create resource group bg ru_per_sec = 1000 background = (task_names = 'abc')", "Unsupported operation")
-	tk.MustContainErrMsg("alter resource group x background=(task_names='')", "Unsupported operation")
+	tk.MustContainErrMsg("create resource group bg ru_per_sec = 1000 background = (task_names = 'abc')", "unsupported operation")
+	tk.MustContainErrMsg("alter resource group x background=(task_names='')", "unsupported operation")
 
 }
 

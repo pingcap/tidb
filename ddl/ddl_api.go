@@ -3201,7 +3201,7 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 	case ast.ResourceGroupBackground:
 		if groupInfo.Name.L != rg.DefaultResourceGroupName {
 			// FIX: this is a temporary restriction, so we don't add a error-code for it.
-			return errors.New("Unsupported operation. Currently, only the default resource group support change background settings.")
+			return errors.New("unsupported operation. Currently, only the default resource group support change background settings")
 		}
 		if len(opt.BackgroundOptions) == 0 {
 			resourceGroupSettings.Background = nil
