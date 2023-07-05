@@ -498,6 +498,9 @@ func convertColumnInfo(fld *ast.ResultField) (ci *column.Info) {
 		DefaultValue: fld.Column.GetDefaultValue(),
 	}
 
+	if fld.EmptyOrgName {
+		ci.OrgName = ""
+	}
 	if fld.Table != nil {
 		ci.OrgTable = fld.Table.Name.O
 	}

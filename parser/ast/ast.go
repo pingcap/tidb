@@ -125,18 +125,14 @@ type DMLNode interface {
 type ResultField struct {
 	Column       *model.ColumnInfo
 	ColumnAsName model.CIStr
-	Table        *model.TableInfo
-	TableAsName  model.CIStr
-	DBName       model.CIStr
+	// EmptyOrgName indicates whether this field has an empty org_name. A field has an empty org name, if it's an
+	// expression. It's not sure whether it's safe to use empty string in `.Column.Name`, so a new field is added to
+	// indicate whether it's empty.
+	EmptyOrgName bool
 
-	// Expr represents the expression for the result field. If it is generated from a select field, it would
-	// be the expression of that select field, otherwise the type would be ValueExpr and value
-	// will be set for every retrieved row.
-	Expr      ExprNode
-	TableName *TableName
-	// Referenced indicates the result field has been referenced or not.
-	// If not, we don't need to get the values.
-	Referenced bool
+	Table       *model.TableInfo
+	TableAsName model.CIStr
+	DBName      model.CIStr
 }
 
 // ResultSetNode interface has a ResultFields property, represents a Node that returns result set.
