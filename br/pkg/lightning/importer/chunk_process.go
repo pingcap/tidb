@@ -435,7 +435,7 @@ func (cr *chunkProcessor) encodeLoop(
 						logger,
 					)
 					rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
-					err = rc.errorMgr.RecordConflictErrorV2(
+					err = rc.errorMgr.RecordDuplicate(
 						ctx,
 						logger,
 						t.tableName,

@@ -964,7 +964,14 @@ func (lp *ForListPruning) locateListPartitionByRow(ctx sessionctx.Context, r []t
 	if isNull {
 		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("NULL")
 	}
-	return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(strconv.FormatInt(value, 10))
+	var valueMsg string
+	if mysql.HasUnsignedFlag(lp.LocateExpr.GetType().GetFlag()) {
+		// Handle unsigned value
+		valueMsg = fmt.Sprintf("%d", uint64(value))
+	} else {
+		valueMsg = fmt.Sprintf("%d", value)
+	}
+	return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 }
 
 func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context, r []types.Datum) (int, error) {
@@ -1365,7 +1372,11 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, partitio
 			if err == nil {
 				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 				if err == nil {
-					valueMsg = fmt.Sprintf("%d", val)
+					if unsigned {
+						valueMsg = fmt.Sprintf("%d", uint64(val))
+					} else {
+						valueMsg = fmt.Sprintf("%d", val)
+					}
 				}
 			}
 		} else {
@@ -1491,6 +1502,9 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 			return nil, errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
+	if t.Meta().Partition.HasTruncatingPartitionID(pid) {
+		return nil, errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
+	}
 	tbl := t.GetPartition(pid)
 	recordID, err = tbl.AddRecord(ctx, r, opts...)
 	if err != nil {
@@ -1612,6 +1626,9 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 		if _, ok := partitionSelection[from]; !ok {
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
+	}
+	if t.Meta().Partition.HasTruncatingPartitionID(to) {
+		return errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
 	}
 
 	// The old and new data locate in different partitions.

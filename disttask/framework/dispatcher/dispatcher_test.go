@@ -16,7 +16,6 @@ package dispatcher_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -35,12 +34,36 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
+type testFlowHandle struct{}
+
+func (*testFlowHandle) OnTicker(_ context.Context, _ *proto.Task) {
+}
+
+func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+	return nil, nil
+}
+
+func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+	return nil, nil
+}
+
+var mockedAllServerInfos = []*infosync.ServerInfo{}
+
+func (*testFlowHandle) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+	return mockedAllServerInfos, nil
+}
+
+func (*testFlowHandle) IsRetryableErr(error) bool {
+	return true
+}
+
 func MockDispatcher(t *testing.T, pool *pools.ResourcePool) (dispatcher.Dispatch, *storage.TaskManager) {
 	ctx := context.Background()
 	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
 	storage.SetTaskManager(mgr)
 	dsp, err := dispatcher.NewDispatcher(util.WithInternalSourceType(ctx, "dispatcher"), mgr)
 	require.NoError(t, err)
+	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &testFlowHandle{})
 	return dsp, mgr
 }
 
@@ -60,18 +83,10 @@ func TestGetInstance(t *testing.T) {
 
 	dsp, mgr := MockDispatcher(t, pool)
 
-	makeFailpointRes := func(v interface{}) string {
-		bytes, err := json.Marshal(v)
-		require.NoError(t, err)
-		return fmt.Sprintf("return(`%s`)", string(bytes))
-	}
-
 	// test no server
-	mockedAllServerInfos := map[string]*infosync.ServerInfo{}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	_, err := dispatcher.GenerateSchedulerNodes(ctx)
-	require.EqualError(t, err, "not found instance")
-	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, 1)
+	gTask := &proto.Task{ID: 1}
+	handle := dispatcher.GetTaskFlowHandle(proto.TaskTypeExample)
+	instanceIDs, err := dsp.GetAllSchedulerIDs(ctx, handle, gTask)
 	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs when there's no subtask")
 	require.NoError(t, err)
 
@@ -80,51 +95,48 @@ func TestGetInstance(t *testing.T) {
 	// subtask instance ids: nil
 	uuids := []string{"ddl_id_1", "ddl_id_2"}
 	serverIDs := []string{"10.123.124.10:32457", "[ABCD:EF01:2345:6789:ABCD:EF01:2345:6789]:65535"}
-	mockedAllServerInfos = map[string]*infosync.ServerInfo{
-		uuids[0]: {
+
+	mockedAllServerInfos = []*infosync.ServerInfo{
+		{
 			ID:   uuids[0],
 			IP:   "10.123.124.10",
 			Port: 32457,
 		},
-		uuids[1]: {
+		{
 			ID:   uuids[1],
 			IP:   "ABCD:EF01:2345:6789:ABCD:EF01:2345:6789",
 			Port: 65535,
 		},
 	}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, 1)
+	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, handle, gTask)
 	require.Lenf(t, instanceIDs, 0, "GetAllSchedulerIDs")
 	require.NoError(t, err)
 
 	// server ids: uuid0, uuid1
 	// subtask instance ids: uuid1
-	gTaskID := int64(1)
 	subtask := &proto.Subtask{
 		Type:        proto.TaskTypeExample,
-		TaskID:      gTaskID,
+		TaskID:      gTask.ID,
 		SchedulerID: serverIDs[1],
 	}
-	err = mgr.AddNewSubTask(gTaskID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(gTask.ID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
-	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
+	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, handle, gTask)
 	require.NoError(t, err)
 	require.Equal(t, []string{serverIDs[1]}, instanceIDs)
 	// server ids: uuid0, uuid1
 	// subtask instance ids: uuid0, uuid1
 	subtask = &proto.Subtask{
 		Type:        proto.TaskTypeExample,
-		TaskID:      gTaskID,
+		TaskID:      gTask.ID,
 		SchedulerID: serverIDs[0],
 	}
-	err = mgr.AddNewSubTask(gTaskID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
+	err = mgr.AddNewSubTask(gTask.ID, proto.StepInit, subtask.SchedulerID, nil, subtask.Type, true)
 	require.NoError(t, err)
-	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, gTaskID)
+	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, handle, gTask)
 	require.NoError(t, err)
 	require.Len(t, instanceIDs, len(serverIDs))
 	require.ElementsMatch(t, instanceIDs, serverIDs)
-
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo"))
 }
 
 const (
@@ -220,7 +232,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	if isSucc {
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, "")
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, nil)
 			require.NoError(t, err)
 		}
 		checkGetGTaskState(proto.TaskStateSucceed)
@@ -242,7 +254,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		}()
 		// Mock a subtask fails.
 		for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, "")
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, nil)
 			require.NoError(t, err)
 		}
 	}
@@ -252,7 +264,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	// Mock all subtask reverted.
 	start := subtaskCnt * taskCnt
 	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateReverted, "")
+		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateReverted, nil)
 		require.NoError(t, err)
 	}
 	checkGetGTaskState(proto.TaskStateReverted)
@@ -313,7 +325,7 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.T
 	return metas, nil
 }
 
-func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
+func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
 }

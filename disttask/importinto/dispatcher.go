@@ -148,7 +148,9 @@ func (h *flowHandle) OnTicker(ctx context.Context, task *proto.Task) {
 
 func (h *flowHandle) switchTiKVMode(ctx context.Context, task *proto.Task) {
 	h.updateCurrentTask(task)
-	if h.disableTiKVImportMode.Load() {
+	// only import step need to switch to IMPORT mode,
+	// If TiKV is in IMPORT mode during checksum, coprocessor will time out.
+	if h.disableTiKVImportMode.Load() || task.Step != StepImport {
 		return
 	}
 
@@ -204,7 +206,7 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		taskFinished := err == nil && len(resSubtaskMeta) == 0
 		if taskFinished {
 			// todo: we're not running in a transaction with task update
-			if err2 := h.finishJob(ctx, handle, gTask, taskMeta, logger); err2 != nil {
+			if err2 := h.finishJob(ctx, handle, gTask, taskMeta); err2 != nil {
 				err = err2
 			}
 		} else if err != nil && !h.IsRetryableErr(err) {
@@ -240,6 +242,10 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 		gTask.Step = StepImport
 		return metaBytes, nil
 	case StepImport:
+		h.switchTiKV2NormalMode(ctx, gTask, logger)
+		failpoint.Inject("clearLastSwitchTime", func() {
+			h.lastSwitchTime.Store(time.Time{})
+		})
 		stepMeta, err2 := toPostProcessStep(handle, gTask, taskMeta)
 		if err2 != nil {
 			return nil, err2
@@ -265,29 +271,29 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	}
 }
 
-func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
+func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
 		zap.String("step", stepStr(gTask.Step)),
 	)
-	logger.Info("process error flow", zap.ByteStrings("error-message", receiveErr))
+	logger.Info("process error flow", zap.Errors("errors", receiveErrs))
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
 		return nil, err
 	}
-	errStrs := make([]string, 0, len(receiveErr))
-	for _, errStr := range receiveErr {
-		errStrs = append(errStrs, string(errStr))
+	errStrs := make([]string, 0, len(receiveErrs))
+	for _, receiveErr := range receiveErrs {
+		errStrs = append(errStrs, receiveErr.Error())
 	}
 	if err = h.failJob(ctx, handle, gTask, taskMeta, logger, strings.Join(errStrs, "; ")); err != nil {
 		return nil, err
 	}
 
-	gTask.Error = receiveErr[0]
+	gTask.Error = receiveErrs[0]
 
-	errStr := string(receiveErr[0])
+	errStr := receiveErrs[0].Error()
 	// do nothing if the error is resumable
 	if isResumableErr(errStr) {
 		return nil, nil
@@ -297,7 +303,7 @@ func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskH
 		err = rollback(ctx, handle, gTask, logger)
 		if err != nil {
 			// TODO: add error code according to spec.
-			gTask.Error = []byte(errStr + ", " + err.Error())
+			gTask.Error = errors.New(errStr + ", " + err.Error())
 		}
 	}
 	return nil, err
@@ -357,43 +363,6 @@ func preProcess(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, t
 	// 	return err
 	// }
 	return updateMeta(gTask, taskMeta)
-}
-
-// postProcess does the post-processing for the task.
-func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
-	failpoint.Inject("syncBeforePostProcess", func() {
-		TestSyncChan <- struct{}{}
-		<-TestSyncChan
-	})
-	// TODO: create table indexes depends on the option.
-	// globalTaskManager, err := storage.GetTaskManager()
-	// if err != nil {
-	// 	return err
-	// }
-	// create table indexes even if the post process is failed.
-	// defer func() {
-	// 	err2 := createTableIndexes(ctx, globalTaskManager, taskMeta, logger)
-	// 	err = multierr.Append(err, err2)
-	// }()
-
-	controller, err := buildController(taskMeta)
-	if err != nil {
-		return err
-	}
-	// no need and should not call controller.InitDataFiles, files might not exist on this instance.
-
-	logger.Info("post process")
-
-	return verifyChecksum(ctx, controller, subtaskMeta.Checksum, logger)
-}
-
-func verifyChecksum(ctx context.Context, controller *importer.LoadDataController, checksum Checksum, logger *zap.Logger) error {
-	if controller.Checksum == config.OpLevelOff {
-		return nil
-	}
-	localChecksum := verify.MakeKVChecksum(checksum.Size, checksum.KVs, checksum.Sum)
-	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
-	return controller.VerifyChecksum(ctx, localChecksum)
 }
 
 // nolint:deadcode
@@ -603,9 +572,7 @@ func job2Step(ctx context.Context, taskMeta *TaskMeta, step string) error {
 	})
 }
 
-func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task,
-	taskMeta *TaskMeta, logger *zap.Logger) error {
-	h.switchTiKV2NormalMode(ctx, gTask, logger)
+func (h *flowHandle) finishJob(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
 	h.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}

@@ -394,7 +394,7 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 		"syntax":   0,
 		"charset":  math.MaxInt64,
 		"type":     0,
-		"conflict": math.MaxInt64,
+		"conflict": -1,
 	}
 	// set default value first
 	cfg.Syntax.Store(defaultValMap["syntax"])
@@ -599,6 +599,7 @@ type PostRestore struct {
 	Level1Compact     bool        `toml:"level-1-compact" json:"level-1-compact"`
 	PostProcessAtLast bool        `toml:"post-process-at-last" json:"post-process-at-last"`
 	Compact           bool        `toml:"compact" json:"compact"`
+	ChecksumViaSQL    bool        `toml:"checksum-via-sql" json:"checksum-via-sql"`
 }
 
 // StringOrStringSlice can unmarshal a TOML string as string slice with one element.
@@ -915,7 +916,7 @@ func NewConfig() *Config {
 			IOConcurrency:     5,
 			CheckRequirements: true,
 			MaxError: MaxError{
-				Conflict: *atomic.NewInt64(math.MaxInt64),
+				Conflict: *atomic.NewInt64(-1),
 			},
 			TaskInfoSchemaName: defaultTaskInfoSchemaName,
 		},
@@ -974,6 +975,7 @@ func NewConfig() *Config {
 			Checksum:          OpLevelRequired,
 			Analyze:           OpLevelOptional,
 			PostProcessAtLast: true,
+			ChecksumViaSQL:    true,
 		},
 	}
 }
@@ -1203,8 +1205,6 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 		}
 		cfg.TikvImporter.DuplicateResolution = DupeResAlgNone
 	case BackendLocal:
-		// force turn off pre-dedup for local backend
-		cfg.TikvImporter.OnDuplicate = ""
 		if cfg.TikvImporter.RegionSplitBatchSize <= 0 {
 			return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack("`tikv-importer.region-split-batch-size` got %d, should be larger than 0", cfg.TikvImporter.RegionSplitBatchSize)
 		}
@@ -1232,6 +1232,16 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 			cfg.App.MaxErrorRecords = maxAccepted
 		} else {
 			cfg.App.MaxErrorRecords = defaultMaxErrorRecords
+		}
+	}
+
+	if cfg.App.MaxError.Conflict.Load() == -1 {
+		if cfg.TikvImporter.Backend == BackendTiDB {
+			// in versions before v7.3, tidb backend will treat "duplicate entry"
+			// as type error which default is 0. So we set it to 0 to keep compatible.
+			cfg.App.MaxError.Conflict.Store(0)
+		} else {
+			cfg.App.MaxError.Conflict.Store(math.MaxInt64)
 		}
 	}
 

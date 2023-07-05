@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"go.uber.org/atomic"
 )
@@ -372,6 +373,11 @@ const (
 	// Default value is `true`, means to be determined by the optimizer.
 	// Value set to `false` means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
+
+	// TiDBAllowTiFlashCop means we only use MPP mode to query data.
+	// Default value is `true`, means to be determined by the optimizer.
+	// Value set to `false` means we may fall back to TiFlash cop plan if possible.
+	TiDBAllowTiFlashCop = "tidb_allow_tiflash_cop"
 
 	// TiDBHashExchangeWithNewCollation means if hash exchange is supported when new collation is on.
 	// Default value is `true`, means support hash exchange when new collation is on.
@@ -876,6 +882,22 @@ const (
 	TiDBOptEnableMPPSharedCTEExecution = "tidb_opt_enable_mpp_shared_cte_execution"
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
+
+	// TiFlashReplicaRead is used to set the policy of TiFlash replica read when the query needs the TiFlash engine.
+	TiFlashReplicaRead = "tiflash_replica_read"
+
+	// TiDBLockUnchangedKeys indicates whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
+	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
+	TiDBLockUnchangedKeys = "tidb_lock_unchanged_keys"
+
+	// TiDBFastCheckTable enables fast check table.
+	TiDBFastCheckTable = "tidb_enable_fast_table_check"
+
+	// TiDBAnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	TiDBAnalyzeSkipColumnTypes = "tidb_analyze_skip_column_types"
+
+	// TiDBEnableCheckConstraint indicates whether to enable check constraint feature.
+	TiDBEnableCheckConstraint = "tidb_enable_check_constraint"
 )
 
 // TiDB vars that have only global scope
@@ -1131,6 +1153,7 @@ const (
 	DefTiDBEnableNAAJ                              = true
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
+	DefTiDBAllowTiFlashCop                         = false
 	DefTiDBHashExchangeWithNewCollation            = true
 	DefTiDBEnforceMPPExecution                     = false
 	DefTiFlashMaxThreads                           = -1
@@ -1302,7 +1325,7 @@ const (
 	DefTiDBEnableExternalTSRead                       = false
 	DefTiDBEnableReusechunk                           = true
 	DefTiDBUseAlloc                                   = false
-	DefTiDBEnablePlanReplayerCapture                  = false
+	DefTiDBEnablePlanReplayerCapture                  = true
 	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
 	DefTiDBTTLJobEnable                               = true
 	DefTiDBTTLScanBatchSize                           = 500
@@ -1346,8 +1369,12 @@ const (
 	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
 	DefAuthenticationLDAPSimpleInitPoolSize           = 10
 	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
+	DefTiFlashReplicaRead                             = tiflash.AllReplicaStr
+	DefTiDBEnableFastCheckTable                       = true
 	DefRuntimeFilterType                              = "IN"
 	DefRuntimeFilterMode                              = "OFF"
+	DefTiDBLockUnchangedKeys                          = true
+	DefTiDBEnableCheckConstraint                      = false
 )
 
 // Process global variables.
@@ -1417,20 +1444,31 @@ var (
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
-	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
-	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
-	TTLScanWorkerCount                 = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
-	TTLDeleteWorkerCount               = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
-	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
-	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
-	IsSandBoxModeEnabled               = atomic.NewBool(false)
-	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
-	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
-	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
-	TTLRunningTasks                    = atomic.NewInt32(DefTiDBTTLRunningTasks)
+	TTLJobScheduleWindowStartTime      = atomic.NewTime(
+		mustParseTime(
+			FullDayTimeFormat,
+			DefTiDBTTLJobScheduleWindowStartTime,
+		),
+	)
+	TTLJobScheduleWindowEndTime = atomic.NewTime(
+		mustParseTime(
+			FullDayTimeFormat,
+			DefTiDBTTLJobScheduleWindowEndTime,
+		),
+	)
+	TTLScanWorkerCount              = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
+	TTLDeleteWorkerCount            = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
+	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
+	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
+	IsSandBoxModeEnabled            = atomic.NewBool(false)
+	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
+	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
+	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
+	TTLRunningTasks                 = atomic.NewInt32(DefTiDBTTLRunningTasks)
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
 	EnableResourceControl = atomic.NewBool(false)
+	EnableCheckConstraint = atomic.NewBool(DefTiDBEnableCheckConstraint)
 )
 
 var (

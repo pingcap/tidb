@@ -377,7 +377,7 @@ func refineCETrace(sctx sessionctx.Context) {
 			rec.TableName = tbl.Meta().Name.O
 			continue
 		}
-		logutil.BgLogger().Warn("[OptimizerTrace] Failed to find table in infoschema",
+		logutil.BgLogger().Warn("Failed to find table in infoschema", zap.String("category", "OptimizerTrace"),
 			zap.Int64("table id", rec.TableID))
 	}
 }
@@ -1169,11 +1169,15 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizeTrace {
 		tracer := &tracing.PhysicalOptimizeTracer{
-			PhysicalPlanCostDetails: make(map[int]*tracing.PhysicalPlanCostDetail),
+			PhysicalPlanCostDetails: make(map[string]*tracing.PhysicalPlanCostDetail),
 			Candidates:              make(map[int]*tracing.CandidatePlanTrace),
 		}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
+			r := recover()
+			if r != nil {
+				panic(r) /* pass panic to upper function to handle */
+			}
 			if err == nil {
 				tracer.RecordFinalPlanTrace(plan.buildPlanTrace())
 				stmtCtx.OptimizeTracer.Physical = tracer

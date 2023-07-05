@@ -627,7 +627,7 @@ func TestMaxErrorUnmarshal(t *testing.T) {
 				"syntax":   0,
 				"charset":  math.MaxInt64,
 				"type":     123,
-				"conflict": math.MaxInt64,
+				"conflict": -1,
 			},
 			CaseName: "Normal_Int",
 		},
@@ -637,7 +637,7 @@ func TestMaxErrorUnmarshal(t *testing.T) {
 				"syntax":   0,
 				"charset":  math.MaxInt64,
 				"type":     0,
-				"conflict": math.MaxInt64,
+				"conflict": -1,
 			},
 			CaseName: "Abnormal_Negative_Int",
 		},
@@ -1006,18 +1006,18 @@ func TestAdjustOnDuplicate(t *testing.T) {
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
 	require.NoError(t, cfg.Adjust(ctx))
-	require.Equal(t, "", cfg.TikvImporter.OnDuplicate)
+	require.Equal(t, config.ReplaceOnDup, cfg.TikvImporter.OnDuplicate)
 
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
 	cfg.TikvImporter.IncrementalImport = true
-	require.NoError(t, cfg.Adjust(ctx))
+	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.incremental-import")
 
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
 	cfg.TikvImporter.IncrementalImport = false
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRemove
-	require.NoError(t, cfg.Adjust(ctx))
+	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution")
 }
 
 func TestAdjustMaxErrorRecords(t *testing.T) {

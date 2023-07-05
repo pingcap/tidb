@@ -31,7 +31,7 @@ func GenerateExecID(ip string, port uint) string {
 }
 
 // MatchServerInfo will check if the schedulerID matched in all serverInfos.
-func MatchServerInfo(serverInfos map[string]*infosync.ServerInfo, schedulerID string) bool {
+func MatchServerInfo(serverInfos []*infosync.ServerInfo, schedulerID string) bool {
 	for _, serverInfo := range serverInfos {
 		serverID := GenerateExecID(serverInfo.IP, serverInfo.Port)
 		if serverID == schedulerID {
