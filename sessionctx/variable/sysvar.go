@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/tls"
@@ -2542,6 +2543,15 @@ var defaultSysVars = []*SysVar{
 		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashReplicaRead, Value: DefTiFlashReplicaRead, Type: TypeEnum, PossibleValues: []string{DefTiFlashReplicaRead, tiflash.ClosestAdaptiveStr, tiflash.ClosestReplicasStr},
+		SetSession: func(s *SessionVars, val string) error {
+			s.TiFlashReplicaRead = tiflash.GetTiFlashReplicaReadByStr(val)
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return tiflash.GetTiFlashReplicaRead(s.TiFlashReplicaRead), nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBFastCheckTable, Value: BoolToOnOff(DefTiDBEnableFastCheckTable), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.FastCheckTable = TiDBOptOn(val)
 		return nil

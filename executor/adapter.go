@@ -109,12 +109,15 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 			dbName = defaultDBCIStr
 		}
 		origColName := names[i].OrigColName
+		emptyOrgName := false
 		if origColName.L == "" {
 			origColName = names[i].ColName
+			emptyOrgName = true
 		}
 		rf := &ast.ResultField{
 			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType},
 			ColumnAsName: names[i].ColName,
+			EmptyOrgName: emptyOrgName,
 			Table:        &model.TableInfo{Name: names[i].OrigTblName},
 			TableAsName:  names[i].TblName,
 			DBName:       dbName,
@@ -2102,7 +2105,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 	if execStmtAst, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		planCacheStmt, err := plannercore.GetPreparedStmt(execStmtAst, sctx.GetSessionVars())
 		if err != nil {
-			logutil.BgLogger().Warn("[plan-replayer-capture] fail to find prepared ast for dumping plan replayer",
+			logutil.BgLogger().Warn("fail to find prepared ast for dumping plan replayer", zap.String("category", "plan-replayer-capture"),
 				zap.String("sqlDigest", key.SQLDigest),
 				zap.String("planDigest", key.PlanDigest),
 				zap.Error(err))
