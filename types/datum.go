@@ -830,7 +830,7 @@ func (d *Datum) compareMysqlEnum(sc *stmtctx.StatementContext, enum Enum, compar
 		return -1, nil
 	case KindMaxValue:
 		return 1, nil
-	case KindString, KindBytes, KindMysqlEnum, KindMysqlSet:
+	case KindString, KindBytes, KindMysqlSet:
 		return comparer.Compare(d.GetString(), enum.String()), nil
 	default:
 		return d.compareFloat64(sc, enum.ToNumber())
@@ -863,7 +863,7 @@ func (d *Datum) compareMysqlSet(sc *stmtctx.StatementContext, set Set, comparer 
 		return -1, nil
 	case KindMaxValue:
 		return 1, nil
-	case KindString, KindBytes, KindMysqlEnum, KindMysqlSet:
+	case KindString, KindBytes, KindMysqlEnum:
 		return comparer.Compare(d.GetString(), set.String()), nil
 	default:
 		return d.compareFloat64(sc, set.ToNumber())
