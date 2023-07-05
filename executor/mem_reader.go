@@ -197,24 +197,17 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 		colIDs[col.ID] = i
 	}
 
-	var pkColIDs []int64
 	colInfo := make([]rowcodec.ColInfo, 0, len(us.columns))
 	for i := range us.columns {
 		col := us.columns[i]
-		tmp := rowcodec.ColInfo{
+		colInfo = append(colInfo, rowcodec.ColInfo{
 			ID:         col.ID,
 			IsPKHandle: us.table.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
 			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		}
-		colInfo = append(colInfo, tmp)
-		if tmp.IsPKHandle {
-			pkColIDs = append(pkColIDs, tmp.ID)
-		}
+		})
 	}
 
-	if len(pkColIDs) == 0 {
-		pkColIDs = tables.TryGetCommonPkColumnIds(us.table.Meta())
-	}
+	pkColIDs := tables.TryGetCommonPkColumnIds(us.table.Meta())
 	if len(pkColIDs) == 0 {
 		pkColIDs = []int64{-1}
 	}
