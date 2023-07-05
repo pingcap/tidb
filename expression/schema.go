@@ -286,14 +286,14 @@ func CleanExtraColumnInfos(originCols []*model.ColumnInfo) []*model.ColumnInfo {
 
 func cleanExtraHandle(columnLen int, getIDByIdx func(i int) int64) int {
 	for idx := columnLen - 1; idx >= mathutil.Max(0, columnLen-len(model.ExtraIDs)); idx-- {
-		if !IsExtraColumn(getIDByIdx(idx)) {
+		if !isExtraColumn(getIDByIdx(idx)) {
 			return idx + 1
 		}
 	}
 	return 0
 }
 
-func IsExtraColumn(colID int64) bool {
+func isExtraColumn(colID int64) bool {
 	for _, extraID := range model.ExtraIDs {
 		if colID == extraID {
 			return true
