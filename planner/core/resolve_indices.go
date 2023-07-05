@@ -16,10 +16,10 @@ package core
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/bazel-tidb/util/logutil"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/util/disjointset"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -139,7 +139,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	colsNeedResolving := p.schema.Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
-		colsNeedResolving -= 1
+		colsNeedResolving--
 	}
 	for i := 0; i < colsNeedResolving; i++ {
 		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
@@ -208,7 +208,7 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 	colsNeedResolving := p.schema.Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
-		colsNeedResolving -= 1
+		colsNeedResolving--
 	}
 	for i := 0; i < colsNeedResolving; i++ {
 		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
@@ -287,7 +287,7 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 	colsNeedResolving := p.schema.Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
-		colsNeedResolving -= 1
+		colsNeedResolving--
 	}
 	for i := 0; i < colsNeedResolving; i++ {
 		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
