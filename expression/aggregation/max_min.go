@@ -46,10 +46,29 @@ func (mmf *maxMinFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.State
 	}
 	if evalCtx.Value.IsNull() {
 		value.Copy(&evalCtx.Value)
+		return nil
 	}
 	if value.IsNull() {
 		return nil
 	}
+
+	if value.Kind() == types.KindMysqlEnum && evalCtx.Value.Kind() == types.KindMysqlEnum {
+		v := value.GetMysqlEnum()
+		v1 := evalCtx.Value.GetMysqlEnum()
+		if mmf.isMax && v.Name > v1.Name || !mmf.isMax && v.Name < v1.Name {
+			value.Copy(&evalCtx.Value)
+		}
+		return nil
+	}
+	if value.Kind() == types.KindMysqlSet && evalCtx.Value.Kind() == types.KindMysqlSet {
+		v := value.GetMysqlSet()
+		v1 := evalCtx.Value.GetMysqlSet()
+		if mmf.isMax && v.Name > v1.Name || !mmf.isMax && v.Name < v1.Name {
+			value.Copy(&evalCtx.Value)
+		}
+		return nil
+	}
+
 	var c int
 	c, err = evalCtx.Value.Compare(sc, &value, mmf.ctor)
 	if err != nil {
