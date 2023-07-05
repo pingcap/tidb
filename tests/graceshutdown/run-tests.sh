@@ -17,3 +17,5 @@ set -eu
 trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
 
 go test
+
+# change here to test ci conditional trigger
