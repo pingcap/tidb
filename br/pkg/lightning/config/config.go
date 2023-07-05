@@ -1205,8 +1205,6 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 		}
 		cfg.TikvImporter.DuplicateResolution = DupeResAlgNone
 	case BackendLocal:
-		// force turn off pre-dedup for local backend
-		cfg.TikvImporter.OnDuplicate = ""
 		if cfg.TikvImporter.RegionSplitBatchSize <= 0 {
 			return mustHaveInternalConnections, common.ErrInvalidConfig.GenWithStack("`tikv-importer.region-split-batch-size` got %d, should be larger than 0", cfg.TikvImporter.RegionSplitBatchSize)
 		}
