@@ -19,8 +19,12 @@ import (
 	"context"
 	"fmt"
 	"math"
+<<<<<<< HEAD
 	"math/rand"
 	"sort"
+=======
+	"net"
+>>>>>>> db381848680 (statistic: improve ipv6 for analyze job meta (#45177))
 	"strconv"
 	"strings"
 	"sync"
@@ -2489,7 +2493,7 @@ func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 		logutil.BgLogger().Error("failed to get server info", zap.Error(err))
 		instance = "unknown"
 	} else {
-		instance = fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+		instance = net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
 	}
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	err = statsHandle.InsertAnalyzeJob(job, instance, ctx.GetSessionVars().ConnectionID)
