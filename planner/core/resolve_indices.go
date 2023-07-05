@@ -16,9 +16,11 @@ package core
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/bazel-tidb/util/logutil"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/util/disjointset"
+	"go.uber.org/zap"
 )
 
 // ResolveIndicesItself resolve indices for PhysicalPlan itself
@@ -121,12 +123,32 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 			return err
 		}
 	}
+
+	mergedSchema := expression.MergeSchema(lSchema, rSchema)
+
 	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], err = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
+		p.OtherConditions[i], err = expr.ResolveIndices(mergedSchema)
 		if err != nil {
 			return err
 		}
 	}
+
+	if !p.ctx.GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Warn("resolving col index for hash join", zap.String("output cols", p.schema.String()))
+	}
+	colsNeedResolving := p.schema.Len()
+	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
+	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		colsNeedResolving -= 1
+	}
+	for i := 0; i < colsNeedResolving; i++ {
+		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
+		if err != nil {
+			return err
+		}
+		p.schema.Columns[i] = newCol.(*expression.Column)
+	}
+
 	return
 }
 
@@ -173,11 +195,27 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 			return err
 		}
 	}
+
+	mergedSchema := expression.MergeSchema(lSchema, rSchema)
+
 	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], err = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
+		p.OtherConditions[i], err = expr.ResolveIndices(mergedSchema)
 		if err != nil {
 			return err
 		}
+	}
+
+	colsNeedResolving := p.schema.Len()
+	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
+	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		colsNeedResolving -= 1
+	}
+	for i := 0; i < colsNeedResolving; i++ {
+		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
+		if err != nil {
+			return err
+		}
+		p.schema.Columns[i] = newCol.(*expression.Column)
 	}
 	return
 }
@@ -246,8 +284,13 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 		p.OuterHashKeys[i], p.InnerHashKeys[i] = outerKey.(*expression.Column), innerKey.(*expression.Column)
 	}
 
-	for i, col := range p.schema.Columns {
-		newCol, err := col.ResolveIndices(mergedSchema)
+	colsNeedResolving := p.schema.Len()
+	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
+	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		colsNeedResolving -= 1
+	}
+	for i := 0; i < colsNeedResolving; i++ {
+		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
 		if err != nil {
 			return err
 		}
@@ -626,6 +669,13 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 			return err
 		}
 		p.PartitionBy[i].Col = newCol.(*expression.Column)
+	}
+	for i, col := range p.schema.Columns {
+		newCol, err := col.ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.schema.Columns[i] = newCol.(*expression.Column)
 	}
 	return
 }
