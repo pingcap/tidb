@@ -52,9 +52,6 @@ func (b *PBPlanBuilder) Build(executors []*tipb.Executor) (p PhysicalPlan, err e
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if src != nil {
-			curr.SetChildren(src)
-		}
 		src = curr
 	}
 	_, src = b.predicatePushDown(src, nil)

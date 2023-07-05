@@ -19,8 +19,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/util/disjointset"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // ResolveIndicesItself resolve indices for PhysicalPlan itself
@@ -133,9 +131,6 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 		}
 	}
 
-	if !p.ctx.GetSessionVars().InRestrictedSQL {
-		logutil.BgLogger().Warn("resolving col index for hash join", zap.String("output cols", p.schema.String()))
-	}
 	colsNeedResolving := p.schema.Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
