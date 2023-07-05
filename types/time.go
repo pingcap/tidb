@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"
+	"go.uber.org/zap"
 )
 
 // Time format without fractional seconds precision.
@@ -438,7 +439,7 @@ func (t Time) FillNumber(dec *MyDecimal) {
 
 	s, err := t.DateFormat(tfStr)
 	if err != nil {
-		logutil.BgLogger().Error("[fatal] never happen because we've control the format!")
+		logutil.BgLogger().Error("never happen because we've control the format!", zap.String("category", "fatal"))
 	}
 
 	fsp := t.Fsp()
