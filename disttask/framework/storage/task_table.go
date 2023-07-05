@@ -449,6 +449,15 @@ func (stm *TaskManager) DeleteSubtasksByTaskID(taskID int64) error {
 	return nil
 }
 
+// DeleteSubtasksByTaskIDAndStep deletes the subtask of the given global task ID and task step.
+func (stm *TaskManager) DeleteSubtasksByTaskIDAndStep(taskID int64, step int64) error {
+	_, err := stm.executeSQLWithNewSession(stm.ctx, "delete from mysql.tidb_background_subtask where task_key = %? and step = %?", taskID, step)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // GetSchedulerIDsByTaskID gets the scheduler IDs of the given global task ID.
 func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select distinct(exec_id) from mysql.tidb_background_subtask where task_key = %?", taskID)

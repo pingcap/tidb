@@ -176,6 +176,14 @@ func (d *dispatcher) DispatchTaskLoop() {
 				// The task is not in runningGTasks set when:
 				// owner changed or task is cancelled when status is pending.
 				if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting || gTask.State == proto.TaskStateCancelling {
+					// When in dispatching state, previous owner dispatched some subtasks, need to delete all of them.
+					if gTask.Flag == proto.TaskSubStateDispatching {
+						err = d.taskMgr.DeleteSubtasksByTaskIDAndStep(gTask.ID, gTask.Step)
+						if err != nil {
+							logutil.BgLogger().Warn("delete subtasks by task id and step failed", zap.Error(err))
+							break
+						}
+					}
 					d.setRunningGTask(gTask)
 					cnt++
 					continue
@@ -598,6 +606,18 @@ func (d *dispatcher) dispatchSubTasks(gTask *proto.Task, nextState string, handl
 			failpoint.Return(false, errors.New("injected error in updateSubstate to normal"))
 		}
 	})
+
+	failpoint.Inject("mockOwnerChangeBeforeUpdateState2Normal", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.BgLogger().Info("mockOwnerChangeBeforeUpdateState2Normal called")
+			MockOwnerChange()
+			time.Sleep(1 * time.Second)
+		}
+	})
+
+	if d.ctx.Err() != nil {
+		return false, d.ctx.Err()
+	}
 
 	// 5. update gtask to normal substate.
 	gTask.Flag = proto.TaskSubStateNormal
