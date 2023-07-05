@@ -390,8 +390,8 @@ const ExtraPhysTblID = -3
 // ExtraRowChecksumID is the column ID of column which holds the row checksum info.
 const ExtraRowChecksumID = -4
 
-// CountOfExtraIDs is the total count of ExtraIDs.
-const CountOfExtraIDs = 4
+// ExtraIDs is the set of all ExtraID.
+var ExtraIDs = []int64{ExtraHandleID, ExtraPidColID, ExtraPhysTblID, ExtraRowChecksumID}
 
 const (
 	// TableInfoVersion0 means the table info version is 0.
