@@ -188,7 +188,9 @@ const (
 	// Do not classify different tools by now.
 	InternalTxnTools = "tools"
 	// InternalTxnBR is the type of BR usage.
-	InternalTxnBR = InternalTxnTools
+	InternalTxnBR = "br"
+	// InternalTxnLightning is the type of Lightning usage.
+	InternalTxnLightning = "lightning"
 	// InternalTxnTrace handles the trace statement.
 	InternalTxnTrace = "Trace"
 	// InternalTxnTTL is the type of TTL usage
