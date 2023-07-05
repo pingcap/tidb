@@ -114,7 +114,7 @@ func (s *InternalSchedulerImpl) run(ctx context.Context, task *proto.Task) error
 	s.registerCancelFunc(runCancel)
 
 	s.resetError()
-	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
+	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency), zap.Any("state", task.State), zap.Any("flag", task.Flag))
 	scheduler, err := createScheduler(task)
 	if err != nil {
 		s.onError(err)

@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	tidbutil "github.com/pingcap/tidb/util"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
@@ -144,18 +146,21 @@ func (m *Manager) Stop() {
 // fetchAndHandleRunnableTasks fetches the runnable tasks from the global task table and handles them.
 func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
 	ticker := time.NewTicker(checkTime)
+	var wg tidbutil.WaitGroupWrapper
 	for {
 		select {
 		case <-ctx.Done():
 			logutil.Logger(m.logCtx).Info("fetchAndHandleRunnableTasks done")
 			return
 		case <-ticker.C:
+			wg.Wait()
+			wg.Add(1)
 			tasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStateRunning, proto.TaskStateReverting)
 			if err != nil {
 				m.onError(err)
 				continue
 			}
-			m.onRunnableTasks(ctx, tasks)
+			m.onRunnableTasks(ctx, tasks, &wg)
 		}
 	}
 }
@@ -181,7 +186,7 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 }
 
 // onRunnableTasks handles runnable tasks.
-func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
+func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task, wg *tidbutil.WaitGroupWrapper) {
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
 		if task.Flag != proto.TaskSubStateDispatching {
@@ -213,6 +218,7 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 			}
 		}
 	}
+	wg.Done()
 }
 
 // onCanceledTasks cancels the running tasks.
