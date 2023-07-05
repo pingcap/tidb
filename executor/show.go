@@ -1696,6 +1696,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		if maxUserConnections > 0 {
 			resourceStr += fmt.Sprintf(" MAX_USER_CONNECTIONS %d", maxUserConnections)
 		}
+		resourceStr += " "
 	}
 
 	var passwordHistory string
@@ -1762,7 +1763,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s%s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
 		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, resourceStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]interface{}{showStr})
 	return nil
