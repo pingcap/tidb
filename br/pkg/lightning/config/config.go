@@ -1586,3 +1586,13 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	}
 	return cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App)
 }
+
+// AdjustForDDL acts like Adjust, but DDL will not use some functionalities so
+// those members are skipped in adjusting.
+func (cfg *Config) AdjustForDDL() error {
+	if err := cfg.TikvImporter.adjust(); err != nil {
+		return err
+	}
+	cfg.App.adjust(&cfg.TikvImporter)
+	return nil
+}
