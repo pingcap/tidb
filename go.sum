@@ -742,8 +742,8 @@ github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef/go.mod h1:7WjlapSfwQyo
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e/go.mod h1:zD1mROLANZcx1PVRCS0qkT7pwLkGfwJo4zjcN/Tysno=
 github.com/nishanths/predeclared v0.2.2 h1:V2EPdZPliZymNAn79T8RkNApBjMmVKh5XRpLm/w98Vk=
 github.com/nishanths/predeclared v0.2.2/go.mod h1:RROzoN6TnGQupbC+lqggsOlcgysk3LMK/HI84Mp280c=
-github.com/nolouch/client-go/v2 v2.0.0-alpha.0.20230705095409-b2b79e4bb084 h1:w/mBUmzzBY9VTs1/neggfXFD5AVWG2q5BsoCBZC87wk=
-github.com/nolouch/client-go/v2 v2.0.0-alpha.0.20230705095409-b2b79e4bb084/go.mod h1:4KkKqjJgKlvvWMyNqdnAlYFfV4QjEj1fEb5Hb/FoT88=
+github.com/nolouch/client-go/v2 v2.0.0-alpha.0.20230706044458-6992649dba54 h1:6CD6dYHog0PIXq8/wrLASWm78DXjcoc6+OMQtBXOqYE=
+github.com/nolouch/client-go/v2 v2.0.0-alpha.0.20230706044458-6992649dba54/go.mod h1:4KkKqjJgKlvvWMyNqdnAlYFfV4QjEj1fEb5Hb/FoT88=
 github.com/nxadm/tail v1.4.4/go.mod h1:kenIhsEOeOJmVchQTgglprH7qJGnHDVpk1VPCcaMI8A=
 github.com/nxadm/tail v1.4.8 h1:nPr65rt6Y5JFSKQO7qToXr7pePgD6Gwiw05lkbyAQTE=
 github.com/oklog/run v1.0.0/go.mod h1:dlhp/R75TPv97u0XWUtDeV/lRKWPKSdTuV0TZvrmrQA=
