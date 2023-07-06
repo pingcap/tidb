@@ -65,7 +65,7 @@ Delete	N/A	root		N/A
     └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
-Projection	9990.00	root		Column#7
+Projection	9990.00	root		Column#8
 └─HashJoin	9990.00	root		inner join, equal:[eq(test.t1.c1, test.t2.c2)]
   ├─HashAgg(Build)	7992.00	root		group by:test.t2.c2, funcs:count(Column#9)->Column#8, funcs:firstrow(test.t2.c2)->test.t2.c2
   │ └─TableReader	7992.00	root		data:HashAgg
@@ -171,18 +171,20 @@ TableReader	10000.00	root		data:TableFullScan
 explain format = 'brief' select c1 from t2 union select c1 from t2 union all select c1 from t2;
 id	estRows	task	access object	operator info
 Union	26000.00	root		
-├─HashAgg	16000.00	root		group by:Column#10, funcs:firstrow(Column#12)->Column#10
-│ └─Union	16000.00	root		
-│   ├─StreamAgg	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#12, funcs:firstrow(test.t2.c1)->Column#10
-│   │ └─IndexReader	8000.00	root		index:StreamAgg
-│   │   └─StreamAgg	8000.00	cop[tikv]		group by:test.t2.c1, 
-│   │     └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
-│   └─StreamAgg	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#12, funcs:firstrow(test.t2.c1)->Column#10
-│     └─IndexReader	8000.00	root		index:StreamAgg
-│       └─StreamAgg	8000.00	cop[tikv]		group by:test.t2.c1, 
-│         └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
-└─IndexReader	10000.00	root		index:IndexFullScan
-  └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+├─Projection	16000.00	root		Column#10
+│ └─HashAgg	16000.00	root		group by:Column#10, funcs:firstrow(Column#12)->Column#10
+│   └─Union	16000.00	root		
+│     ├─StreamAgg	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#12, funcs:firstrow(test.t2.c1)->Column#10
+│     │ └─IndexReader	8000.00	root		index:StreamAgg
+│     │   └─StreamAgg	8000.00	cop[tikv]		group by:test.t2.c1, 
+│     │     └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
+│     └─StreamAgg	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#12, funcs:firstrow(test.t2.c1)->Column#10
+│       └─IndexReader	8000.00	root		index:StreamAgg
+│         └─StreamAgg	8000.00	cop[tikv]		group by:test.t2.c1, 
+│           └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
+└─Projection	10000.00	root		test.t2.c1
+  └─IndexReader	10000.00	root		index:IndexFullScan
+    └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 explain format = 'brief' select c1 from t2 union all select c1 from t2 union select c1 from t2;
 id	estRows	task	access object	operator info
 HashAgg	24000.00	root		group by:Column#10, funcs:firstrow(Column#11)->Column#10
@@ -834,13 +836,14 @@ Projection	1.00	root		Column#7
       └─TableDual(Probe)	1.00	root		rows:1
 explain format = 'brief' select count(a) from t group by b order by (select count(a));
 id	estRows	task	access object	operator info
-Sort	8000.00	root		Column#5
-└─HashJoin	8000.00	root		CARTESIAN left outer join
-  ├─TableDual(Build)	1.00	root		rows:1
-  └─HashAgg(Probe)	8000.00	root		group by:test.t.b, funcs:count(Column#9)->Column#5
-    └─TableReader	8000.00	root		data:HashAgg
-      └─HashAgg	8000.00	cop[tikv]		group by:test.t.b, funcs:count(test.t.a)->Column#9
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	8000.00	root		Column#5
+└─Sort	8000.00	root		Column#5
+  └─HashJoin	8000.00	root		CARTESIAN left outer join
+    ├─TableDual(Build)	1.00	root		rows:1
+    └─HashAgg(Probe)	8000.00	root		group by:test.t.b, funcs:count(Column#9)->Column#5
+      └─TableReader	8000.00	root		data:HashAgg
+        └─HashAgg	8000.00	cop[tikv]		group by:test.t.b, funcs:count(test.t.a)->Column#9
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select (select sum(count(a))) from t;
 id	estRows	task	access object	operator info
 Projection	1.00	root		Column#5

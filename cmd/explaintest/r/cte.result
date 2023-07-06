@@ -795,9 +795,12 @@ HashAgg_24	3.00	root		group by:Column#9, funcs:firstrow(Column#9)->Column#9
 └─Union_25	3.00	root		
   ├─Projection_26	1.00	root		1->Column#9
   │ └─TableDual_27	1.00	root		rows:1
-  └─Union_29	2.00	root		
-    ├─CTEFullScan_31	1.00	root	CTE:cte2	data:CTE_2
-    └─CTEFullScan_33	1.00	root	CTE:cte2	data:CTE_2
+  └─Projection_28	2.00	root		Column#8
+    └─Union_29	2.00	root		
+      ├─Projection_30	1.00	root		Column#6
+      │ └─CTEFullScan_31	1.00	root	CTE:cte2	data:CTE_2
+      └─Projection_32	1.00	root		Column#7
+        └─CTEFullScan_33	1.00	root	CTE:cte2	data:CTE_2
 CTE_2	1.00	root		Non-Recursive CTE
 └─Projection_22(Seed Part)	1.00	root		3->Column#5
   └─TableDual_23	1.00	root		rows:1
