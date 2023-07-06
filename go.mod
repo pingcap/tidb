@@ -195,12 +195,8 @@ require (
 	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/huandu/xstrings v1.3.1 // indirect
 	github.com/imdario/mergo v0.3.11 // indirect
-<<<<<<< HEAD
-	github.com/inconshreveable/mousetrap v1.0.1 // indirect
-=======
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/influxdata/tdigest v0.0.1
->>>>>>> 6f54a29444a (*: use approximately algorithm to calculate p90 in slowlog. (#44269))
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/gofork v1.0.0 // indirect
