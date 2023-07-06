@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -1497,6 +1498,10 @@ type SessionVars struct {
 
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+
+	// TiFlashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
+	TiFlashReplicaRead tiflash.ReplicaRead
+
 	// HypoTiFlashReplicas are for the Index Advisor.
 	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
 
@@ -1515,27 +1520,9 @@ type SessionVars struct {
 	AnalyzeSkipColumnTypes map[string]struct{}
 }
 
-var (
-	// variables below are for the optimizer fix control.
-
-	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
-	TiDBOptFixControl44262 uint64 = 44262
-	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
-	TiDBOptFixControl44389 uint64 = 44389
-	// TiDBOptFixControl44830 controls whether to allow to cache Batch/PointGet from some complex scenarios.
-	// See #44830 for more details.
-	TiDBOptFixControl44830 uint64 = 44830
-	// TiDBOptFixControl44823 controls the maximum number of parameters for a query that can be cached in the Plan Cache.
-	TiDBOptFixControl44823 uint64 = 44823
-)
-
-// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
-func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
-	if s.OptimizerFixControl == nil {
-		return "", false
-	}
-	value, exist = s.OptimizerFixControl[key]
-	return
+// GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlMap() map[uint64]string {
+	return s.OptimizerFixControl
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session

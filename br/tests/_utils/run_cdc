@@ -16,7 +16,7 @@
 
 set -eux
 
-bin/cdc \
+cdc \
     --ca "$TEST_DIR/certs/ca.pem" \
     --cert "$TEST_DIR/certs/ticdc.pem" \
     --key "$TEST_DIR/certs/ticdc.key" \

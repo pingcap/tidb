@@ -279,7 +279,7 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 		if err == nil {
 			return nil
 		}
-		logutil.BgLogger().Warn("[ddl] etcd-cli delete key failed", zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
+		logutil.BgLogger().Warn("etcd-cli delete key failed", zap.String("category", "ddl"), zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
 	}
 	return errors.Trace(err)
 }
@@ -302,7 +302,7 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 		if err == nil {
 			return nil
 		}
-		logutil.BgLogger().Warn("[ddl] etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+		logutil.BgLogger().Warn("etcd-cli put kv failed", zap.String("category", "ddl"), zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(KeyOpRetryInterval)
 	}
 	return errors.Trace(err)

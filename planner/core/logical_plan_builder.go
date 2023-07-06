@@ -45,11 +45,12 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/planner/util/debugtrace"
+	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -2760,8 +2761,9 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 					if colName != nil {
 						columnNameExpr := &ast.ColumnNameExpr{Name: colName}
 						for _, field := range sel.Fields.Fields {
-							if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && colMatch(c.Name, columnNameExpr.Name) {
+							if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && colMatch(c.Name, columnNameExpr.Name) && field.AsName.L == "" {
 								// deduplicate select fields: don't append it once it already has one.
+								// TODO: we add the field if it has alias, but actually they are the same column. We should not have two duplicate one.
 								columnNameExpr = nil
 								break
 							}
@@ -4577,10 +4579,10 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo, handle.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetTableStats(tblInfo, cache.WithTableStatsByQuery())
 	} else {
 		usePartitionStats = true
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, handle.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, cache.WithTableStatsByQuery())
 	}
 
 	// 2. table row count from statistics is zero.
@@ -4795,11 +4797,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				tblStats := h.GetTableStats(tableInfo)
 				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
 				globalStatsReady := tblStats.IsInitialized()
-				allowDynamicWithoutStats := false
-				fixValue, ok := b.ctx.GetSessionVars().GetOptimizerFixControlValue(variable.TiDBOptFixControl44262)
-				if ok && variable.TiDBOptOn(fixValue) {
-					allowDynamicWithoutStats = true
-				}
+				allowDynamicWithoutStats := fixcontrol.GetBoolWithDefault(b.ctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44262, false)
 
 				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
 				usePartitionProcessor := !isDynamicEnabled || (!globalStatsReady && !allowDynamicWithoutStats)

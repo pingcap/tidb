@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
@@ -60,7 +61,7 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 	}
 
 	chk := tryNewCacheChunk(e)
-	tps := e.base().retFieldTypes
+	tps := e.Base().RetFieldTypes()
 	var totalChunks, partChunks []tipb.Chunk
 	memTracker := h.sctx.GetSessionVars().StmtCtx.MemTracker
 	for {
@@ -100,7 +101,7 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 	}
 
 	chk := tryNewCacheChunk(e)
-	tps := e.base().retFieldTypes
+	tps := e.Base().RetFieldTypes()
 	for {
 		chk.Reset()
 		if err = Next(ctx, e, chk); err != nil {
@@ -130,7 +131,7 @@ func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, t
 	return nil
 }
 
-func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Executor, error) {
+func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec.Executor, error) {
 	if req.GetTp() != kv.ReqTypeDAG {
 		return nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}

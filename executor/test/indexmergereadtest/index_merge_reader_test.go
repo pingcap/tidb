@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1131,4 +1132,35 @@ func TestOrderByWithLimit(t *testing.T) {
 			require.Equal(t, expectValue, resPKHash[i][2])
 		}
 	}
+}
+
+func TestProcessInfoRaceWithIndexScan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int, c3 int, c4 int, c5 int, key(c1), key(c2), key(c3), key(c4),key(c5));")
+	insertStr := "insert into t1 values(0, 0, 0, 0 , 0)"
+	for i := 1; i < 100; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d, %d, %d, %d)", i, i, i, i, i)
+	}
+	tk.MustExec(insertStr)
+
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
+	})
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i <= 100; i++ {
+			ps := tk.Session().ShowProcess()
+			util.GenLogFields(233, ps, true)
+		}
+	}()
+	for i := 0; i <= 100; i++ {
+		tk.MustQuery("select /*+ use_index(t1, c1) */ c1 from t1 where c1 = 0 union all select /*+ use_index(t1, c2) */ c2 from t1 where c2 = 0 union all select /*+ use_index(t1, c3) */ c3 from t1 where c3 = 0 ")
+	}
+	wg.Wait()
 }

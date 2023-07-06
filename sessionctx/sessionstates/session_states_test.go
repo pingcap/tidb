@@ -444,7 +444,7 @@ func TestSessionCtx(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
-					`TableReader_12 10000.00 root  MppVersion: 1, data:ExchangeSender_11`,
+					`TableReader_12 10000.00 root  MppVersion: 2, data:ExchangeSender_11`,
 					`└─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
 					`  └─TableFullScan_10 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo`))
 			},
@@ -483,7 +483,7 @@ func TestSessionCtx(t *testing.T) {
 			// check empty HypoIndexes
 			setFunc: func(tk *testkit.TestKit) any {
 				tk.MustExec(`create index hypo_id type hypo on test.t1(id)`)
-				tk.MustExec(`drop index hypo_id on test.t1`)
+				tk.MustExec(`drop hypo index hypo_id on test.t1`)
 				require.Empty(t, tk.Session().GetSessionVars().HypoIndexes["test"]["t1"])
 				return nil
 			},

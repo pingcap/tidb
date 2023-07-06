@@ -132,7 +132,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	}
 	if columnInfo == nil {
 		columnInfo = InitAndAddColumnToTable(tblInfo, colFromArgs)
-		logutil.BgLogger().Info("[ddl] run add column job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo))
+		logutil.BgLogger().Info("run add column job", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo))
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -490,12 +490,12 @@ func GetOriginDefaultValueForModifyColumn(sessCtx sessionctx.Context, changingCo
 	if originDefVal != nil {
 		odv, err := table.CastValue(sessCtx, types.NewDatum(originDefVal), changingCol, false, false)
 		if err != nil {
-			logutil.BgLogger().Info("[ddl] cast origin default value failed", zap.Error(err))
+			logutil.BgLogger().Info("cast origin default value failed", zap.String("category", "ddl"), zap.Error(err))
 		}
 		if !odv.IsNull() {
 			if originDefVal, err = odv.ToString(); err != nil {
 				originDefVal = nil
-				logutil.BgLogger().Info("[ddl] convert default value to string failed", zap.Error(err))
+				logutil.BgLogger().Info("convert default value to string failed", zap.String("category", "ddl"), zap.Error(err))
 			}
 		}
 	}
@@ -605,7 +605,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	} else {
 		changingCol = model.FindColumnInfoByID(tblInfo.Columns, modifyInfo.changingCol.ID)
 		if changingCol == nil {
-			logutil.BgLogger().Error("[ddl] the changing column has been removed", zap.Error(err))
+			logutil.BgLogger().Error("the changing column has been removed", zap.String("category", "ddl"), zap.Error(err))
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
 		}
@@ -859,10 +859,10 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 			return false, ver, errors.Trace(err)
 		}
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-			logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
+			logutil.BgLogger().Warn("run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback", zap.String("category", "ddl"),
 				zap.String("job", job.String()), zap.Error(err1))
 		}
-		logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+		logutil.BgLogger().Warn("run modify column job failed, convert job to rollback", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
 		job.State = model.JobStateRollingback
 		return false, ver, errors.Trace(err)
 	}
@@ -1060,7 +1060,7 @@ func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInf
 }
 
 func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) error {
-	logutil.BgLogger().Info("[ddl] start to update table row", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
+	logutil.BgLogger().Info("start to update table row", zap.String("category", "ddl"), zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		done := false
 		for !done {
@@ -1160,7 +1160,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
 		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
-		logutil.BgLogger().Info("[ddl] update column and indexes",
+		logutil.BgLogger().Info("update column and indexes", zap.String("category", "ddl"),
 			zap.Int64("job ID", reorgInfo.Job.ID),
 			zap.Stringer("element", reorgInfo.currElement),
 			zap.String("start key", hex.EncodeToString(reorgInfo.StartKey)),
@@ -1304,7 +1304,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 		taskDone = true
 	}
 
-	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
+	logutil.BgLogger().Debug("txn fetches handle info", zap.String("category", "ddl"), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
 	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 

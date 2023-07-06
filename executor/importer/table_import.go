@@ -54,7 +54,7 @@ var NewTiKVModeSwitcher = local.NewTiKVModeSwitcher
 var (
 	// CheckDiskQuotaInterval is the default time interval to check disk quota.
 	// TODO: make it dynamically adjusting according to the speed of import and the disk size.
-	CheckDiskQuotaInterval = time.Minute
+	CheckDiskQuotaInterval = 10 * time.Second
 )
 
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
