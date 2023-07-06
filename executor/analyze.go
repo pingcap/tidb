@@ -251,7 +251,7 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 		if idx < len(toSaveMap)-1 {
 			sqlexec.MustFormatSQL(sql, ",")
 		}
-		idx += 1
+		idx++
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
