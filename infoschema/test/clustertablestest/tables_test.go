@@ -782,7 +782,7 @@ func TestFormatVersion(t *testing.T) {
 		"5.7.25-TiDB-v4.0.0-beta-446-g5268094af",
 		"5.7.25-TiDB-",
 		"5.7.25-TiDB-v4.0.0-TiDB-446"}
-	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta", "", "4.0.0-TiDB"}
+	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta-446-g5268094af", "", "4.0.0-TiDB-446"}
 	for i, v := range defaultVersions {
 		version := infoschema.FormatTiDBVersion(v, true)
 		require.Equal(t, defaultRes[i], version)
