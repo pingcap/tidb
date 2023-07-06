@@ -17,6 +17,19 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
+	"math"
+	"math/bits"
+	"net/url"
+	"os"
+	"os/user"
+	path2 "path"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
+
 	"github.com/akolb1/gometastore/hmsclient"
 	file2 "github.com/apache/arrow/go/v12/parquet/file"
 	"github.com/apache/arrow/go/v12/parquet/metadata"
@@ -24,17 +37,6 @@ import (
 	"github.com/colinmarc/hdfs/v2"
 	"github.com/colinmarc/hdfs/v2/hadoopconf"
 	"go.uber.org/zap"
-	"log"
-	"math"
-	"math/bits"
-	"net/url"
-	"os"
-	"os/user"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
-	"unicode"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -4477,17 +4479,51 @@ const (
 )
 
 func getParquetFiles(client *hdfs.Client, path string) ([]string, error) {
+	var allfiles []string
 	var files []string
 	walkFunc := func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() && strings.HasSuffix(info.Name(), ".parquet") {
-			files = append(files, path)
+			allfiles = append(allfiles, path)
 		}
 		return nil
 	}
 	err := client.Walk(path, walkFunc)
+
+	var m1 map[string]map[string]uint64 = make(map[string]map[string]uint64)
+	var m2 map[string]map[string]string = make(map[string]map[string]string)
+	for _, key := range allfiles {
+		dir, file := path2.Split(key)
+		if err != nil {
+			return nil, err
+		}
+		file = strings.TrimSuffix(file, path2.Ext(file))
+		fileParts := strings.Split(file, "_")
+		partition := dir
+		fileId := fileParts[0]
+		timeStamp, err := strconv.ParseUint(fileParts[2], 10, 64)
+		if err != nil {
+			return nil, err
+		}
+
+		if m1[partition] == nil {
+			m1[partition] = make(map[string]uint64)
+			m2[partition] = make(map[string]string)
+		}
+
+		if m1[partition][fileId] < timeStamp {
+			m1[partition][fileId] = timeStamp
+			m2[partition][fileId] = key
+		}
+	}
+
+	for _, a := range m2 {
+		for _, b := range a {
+			files = append(files, b)
+		}
+	}
 	return files, err
 }
 
@@ -4570,6 +4606,7 @@ func FetchColumnInfoFromExternalTable(tbl *model.TableInfo) (columns []*table.Co
 		logutil.BgLogger().Error("getTableLocation failed")
 		return nil, nil, err
 	}
+
 	logutil.BgLogger().Error("tableLocation", zap.String("tableLocation", tableLocation))
 	u, err := url.Parse(tableLocation)
 	if err != nil {
