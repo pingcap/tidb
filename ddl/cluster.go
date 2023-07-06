@@ -143,7 +143,6 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 		select {
 		case <-ticker.C:
 			minSafeTime = getStoreGlobalMinSafeTS(sctx.GetStore())
-			break
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -209,11 +208,11 @@ func checkSystemSchemaID(t *meta.Meta, schemaID int64, flashbackTSString string)
 	if schemaID <= 0 {
 		return nil
 	}
-	DBInfo, err := t.GetDatabase(schemaID)
-	if err != nil || DBInfo == nil {
+	dbInfo, err := t.GetDatabase(schemaID)
+	if err != nil || dbInfo == nil {
 		return errors.Trace(err)
 	}
-	if filter.IsSystemSchema(DBInfo.Name.L) {
+	if filter.IsSystemSchema(dbInfo.Name.L) {
 		return errors.Errorf("Detected modified system table during [%s, now), can't do flashback", flashbackTSString)
 	}
 	return nil
@@ -296,7 +295,7 @@ func checkAndSetFlashbackClusterInfo(se sessionctx.Context, d *ddlCtx, t *meta.M
 		}
 	}
 
-	jobs, err := GetAllDDLJobs(se, t)
+	jobs, err := GetAllDDLJobs(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -444,7 +443,7 @@ func SendPrepareFlashbackToVersionRPC(
 			endKey = rangeEndKey
 		}
 
-		logutil.BgLogger().Info("[ddl] send prepare flashback request", zap.Uint64("region_id", loc.Region.GetID()),
+		logutil.BgLogger().Info("send prepare flashback request", zap.String("category", "ddl"), zap.Uint64("region_id", loc.Region.GetID()),
 			zap.String("start_key", hex.EncodeToString(startKey)), zap.String("end_key", hex.EncodeToString(endKey)))
 
 		req := tikvrpc.NewRequest(tikvrpc.CmdPrepareFlashbackToVersion, &kvrpcpb.PrepareFlashbackToVersionRequest{
@@ -538,7 +537,7 @@ func SendFlashbackToVersionRPC(
 			endKey = rangeEndKey
 		}
 
-		logutil.BgLogger().Info("[ddl] send flashback request", zap.Uint64("region_id", loc.Region.GetID()),
+		logutil.BgLogger().Info("send flashback request", zap.String("category", "ddl"), zap.Uint64("region_id", loc.Region.GetID()),
 			zap.String("start_key", hex.EncodeToString(startKey)), zap.String("end_key", hex.EncodeToString(endKey)))
 
 		req := tikvrpc.NewRequest(tikvrpc.CmdFlashbackToVersion, &kvrpcpb.FlashbackToVersionRequest{
@@ -730,7 +729,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					totalRegions.Add(uint64(stats.CompletedRegions))
 					return stats, err
 				}, r.StartKey, r.EndKey); err != nil {
-				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
+				logutil.BgLogger().Warn("Get error when do flashback", zap.String("category", "ddl"), zap.Error(err))
 				return ver, err
 			}
 		}
@@ -760,13 +759,13 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					// Use same startTS as prepare phase to simulate 1PC txn.
 					stats, err := SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, commitTS, r)
 					completedRegions.Add(uint64(stats.CompletedRegions))
-					logutil.BgLogger().Info("[ddl] flashback cluster stats",
+					logutil.BgLogger().Info("flashback cluster stats", zap.String("category", "ddl"),
 						zap.Uint64("complete regions", completedRegions.Load()),
 						zap.Uint64("total regions", totalRegions.Load()),
 						zap.Error(err))
 					return stats, err
 				}, r.StartKey, r.EndKey); err != nil {
-				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
+				logutil.BgLogger().Warn("Get error when do flashback", zap.String("category", "ddl"), zap.Error(err))
 				return ver, errors.Trace(err)
 			}
 		}

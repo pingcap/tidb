@@ -30,7 +30,8 @@ import (
 var (
 	schedulerPoolSize       int32 = 4
 	subtaskExecutorPoolSize int32 = 10
-	checkTime                     = time.Second
+	// same as dispatcher
+	checkTime = 300 * time.Millisecond
 )
 
 // ManagerBuilder is used to build a Manager.
@@ -64,6 +65,7 @@ type Manager struct {
 	taskTable     TaskTable
 	schedulerPool Pool
 	// taskType -> subtaskExecutorPool
+	// shared by subtasks of all task steps
 	subtaskExecutorPools map[string]Pool
 	mu                   struct {
 		sync.RWMutex
@@ -93,18 +95,18 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelFunc)
 
-	schedulerPool, err := m.newPool("scheduler_pool", schedulerPoolSize, util.DDL)
+	schedulerPool, err := m.newPool("scheduler_pool", schedulerPoolSize, util.DistTask)
 	if err != nil {
 		return nil, err
 	}
 	m.schedulerPool = schedulerPool
 
-	for taskType := range subtaskExecutorConstructors {
+	for taskType, opt := range taskTypes {
 		poolSize := subtaskExecutorPoolSize
-		if opt, ok := subtaskExecutorOptions[taskType]; ok && opt.PoolSize > 0 {
+		if opt.PoolSize > 0 {
 			poolSize = opt.PoolSize
 		}
-		subtaskExecutorPool, err := m.newPool(taskType+"_pool", poolSize, util.DDL)
+		subtaskExecutorPool, err := m.newPool(taskType+"_pool", poolSize, util.DistTask)
 		if err != nil {
 			return nil, err
 		}
@@ -115,6 +117,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 
 // Start starts the Manager.
 func (m *Manager) Start() {
+	logutil.Logger(m.logCtx).Debug("manager start")
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()

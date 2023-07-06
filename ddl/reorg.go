@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"strconv"
@@ -49,9 +50,12 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
+
+const rowCountEtcdPath = "distAddIndex"
 
 // reorgCtx is for reorganization.
 type reorgCtx struct {
@@ -134,6 +138,48 @@ func (rc *reorgCtx) getRowCount() int64 {
 	return row
 }
 
+func getAndSetJobRowCnt(ctx context.Context, reorgInfo *reorgInfo, rc *reorgCtx, job *model.Job, client *clientv3.Client) int64 {
+	rowCount := int64(0)
+	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
+		path := fmt.Sprintf("%s/%d", rowCountEtcdPath, job.ID)
+		resp, err := client.Get(ctx, path, clientv3.WithPrefix())
+		if err != nil {
+			logutil.BgLogger().Warn("get row count from ETCD failed", zap.String("category", "ddl"), zap.Error(err))
+			return 0
+		}
+		if len(resp.Kvs) == 0 {
+			return 0
+		}
+		for _, kv := range resp.Kvs {
+			cnt, err := strconv.Atoi(string(kv.Value))
+			if err != nil {
+				logutil.BgLogger().Error("parse row count from ETCD failed", zap.String("category", "ddl"), zap.Error(err))
+				continue
+			}
+			rowCount += int64(cnt)
+		}
+		job.SetRowCount(rowCount)
+	} else {
+		rowCount = rc.getRowCount()
+		job.SetRowCount(rowCount)
+	}
+	return rowCount
+}
+
+func deleteETCDRowCntStatIfNecessary(ctx context.Context, reorgInfo *reorgInfo, job *model.Job, client *clientv3.Client) {
+	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
+		path := fmt.Sprintf("%s/%d", rowCountEtcdPath, job.ID)
+		const retryCnt = 3
+		for i := 0; i < retryCnt; i++ {
+			_, err := client.Delete(ctx, path, clientv3.WithPrefix())
+			if err == nil {
+				return
+			}
+			logutil.BgLogger().Warn("delete row count from ETCD failed", zap.String("category", "ddl"), zap.Error(err))
+		}
+	}
+}
+
 // runReorgJob is used as a portal to do the reorganization work.
 // eg:
 // 1: add index
@@ -169,7 +215,7 @@ func (rc *reorgCtx) getRowCount() int64 {
 // the additional ddl round.
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
-func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
+func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 	lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
 	d := reorgInfo.d
@@ -225,20 +271,18 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			d.removeReorgCtx(job.ID)
 			return dbterror.ErrCancelledDDLJob
 		}
-
-		rowCount := rc.getRowCount()
+		rowCount := getAndSetJobRowCnt(w.ctx, reorgInfo, rc, job, d.etcdCli)
 		if err != nil {
-			logutil.BgLogger().Warn("[ddl] run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+			logutil.BgLogger().Warn("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount), zap.Error(err))
 		} else {
-			logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
+			logutil.BgLogger().Info("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount))
 		}
 
-		job.SetRowCount(rowCount)
+		deleteETCDRowCntStatIfNecessary(w.ctx, reorgInfo, job, d.etcdCli)
 
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
 
-		// TODO: should we do this if dbterror.ErrPausedDDLJob ???
 		d.removeReorgCtx(job.ID)
 
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
@@ -249,13 +293,12 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			return errors.Trace(err)
 		}
 	case <-w.ctx.Done():
-		logutil.BgLogger().Info("[ddl] run reorg job quit")
+		logutil.BgLogger().Info("run reorg job quit", zap.String("category", "ddl"))
 		d.removeReorgCtx(job.ID)
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		rowCount := rc.getRowCount()
-		job.SetRowCount(rowCount)
+		rowCount := getAndSetJobRowCnt(w.ctx, reorgInfo, rc, job, d.etcdCli)
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
 		// Update a job's warnings.
@@ -263,11 +306,51 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 
 		rc.resetWarnings()
 
-		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
+		logutil.BgLogger().Info("run reorg job wait timeout", zap.String("category", "ddl"),
 			zap.Duration("wait time", waitTimeout),
 			zap.Int64("total added row count", rowCount))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return dbterror.ErrWaitReorgTimeout
+	}
+	return nil
+}
+
+func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *model.Job, reorgInfo *reorgInfo) error {
+	if job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge {
+		// Only used for the ingest mode job.
+		return nil
+	}
+	if reorgInfo.mergingTmpIdx {
+		// Merging the temporary index uses txn mode, so we don't need to consider the checkpoint.
+		return nil
+	}
+	if job.ReorgMeta.IsDistReorg {
+		// The global checkpoint is not used in distributed tasks.
+		return nil
+	}
+	if w.getReorgCtx(job.ID) != nil {
+		// We only overwrite from checkpoint when the job runs for the first time on this TiDB instance.
+		return nil
+	}
+	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
+	if ok {
+		// We create the checkpoint manager here because we need to wait for the reorg meta to be initialized.
+		if bc.GetCheckpointManager() == nil {
+			mgr, err := ingest.NewCheckpointManager(w.ctx, bc, w.sessPool, job.ID, reorgInfo.currElement.ID)
+			if err != nil {
+				logutil.BgLogger().Warn("create checkpoint manager failed", zap.String("category", "ddl-ingest"), zap.Error(err))
+			}
+			bc.AttachCheckpointManager(mgr)
+		}
+	}
+	start, end, pid, err := getCheckpointReorgHandle(sess, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if pid > 0 {
+		reorgInfo.StartKey = start
+		reorgInfo.EndKey = end
+		reorgInfo.PhysicalTableID = pid
 	}
 	return nil
 }
@@ -294,12 +377,12 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if totalCount > 0 {
 			progress = float64(addedRowCount) / float64(totalCount)
 		} else {
-			progress = 1
+			progress = 0
 		}
 		if progress > 1 {
 			progress = 1
 		}
-		logutil.BgLogger().Debug("[ddl] update progress",
+		logutil.BgLogger().Debug("update progress", zap.String("category", "ddl"),
 			zap.Float64("progress", progress),
 			zap.Int64("addedRowCount", addedRowCount),
 			zap.Int64("totalCount", totalCount))
@@ -375,8 +458,8 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 	}
 
 	if dc.isReorgPaused(jobID) {
-		logutil.BgLogger().Warn("[ddl] job paused by user", zap.String("ID", dc.uuid))
-		return dbterror.ErrPausedDDLJob
+		logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.String("ID", dc.uuid))
+		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(jobID)
 	}
 
 	// If isDistReorg is true, we needn't check if it is owner.
@@ -385,7 +468,7 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 	}
 	if !dc.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
-		logutil.BgLogger().Info("[ddl] DDL is not the DDL owner", zap.String("ID", dc.uuid))
+		logutil.BgLogger().Info("DDL is not the DDL owner", zap.String("category", "ddl"), zap.String("ID", dc.uuid))
 		return errors.Trace(dbterror.ErrNotOwner)
 	}
 	return nil
@@ -586,7 +669,7 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle)
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
-		logutil.BgLogger().Info("[ddl] get noop table range",
+		logutil.BgLogger().Info("get noop table range", zap.String("category", "ddl"),
 			zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
 			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startHandleKey)),
@@ -655,7 +738,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 				return nil, errors.Trace(err)
 			}
 		}
-		logutil.BgLogger().Info("[ddl] job get table range",
+		logutil.BgLogger().Info("job get table range", zap.String("category", "ddl"),
 			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
 			zap.String("startKey", hex.EncodeToString(start)),
 			zap.String("endKey", hex.EncodeToString(end)))
@@ -690,7 +773,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			// We'll try to remove it in the next major TiDB version.
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
-				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()))
+				logutil.BgLogger().Warn("get reorg info, the element does not exist", zap.String("category", "ddl"), zap.String("job", job.String()))
 				if job.IsCancelling() {
 					return nil, nil
 				}
@@ -735,7 +818,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		logutil.BgLogger().Info("[ddl] job get table range",
+		logutil.BgLogger().Info("job get table range", zap.String("category", "ddl"),
 			zap.Int64("job ID", job.ID), zap.Int64("physical table ID", pid),
 			zap.String("start key", hex.EncodeToString(start)),
 			zap.String("end key", hex.EncodeToString(end)))
@@ -756,7 +839,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 			// We'll try to remove it in the next major TiDB version.
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
-				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()))
+				logutil.BgLogger().Warn("get reorg info, the element does not exist", zap.String("category", "ddl"), zap.String("job", job.String()))
 			}
 			return &info, errors.Trace(err)
 		}

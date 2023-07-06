@@ -28,7 +28,7 @@ import (
 type pushDownTopNOptimizer struct {
 }
 
-func (s *pushDownTopNOptimizer) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (*pushDownTopNOptimizer) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	return p.pushDownTopN(nil, opt), nil
 }
 
@@ -37,6 +37,13 @@ func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp
 	for i, child := range p.Children() {
 		p.Children()[i] = child.pushDownTopN(nil, opt)
 	}
+	if topN != nil {
+		return topN.setChild(p, opt)
+	}
+	return p
+}
+
+func (p *LogicalCTE) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan {
 	if topN != nil {
 		return topN.setChild(p, opt)
 	}
@@ -264,7 +271,7 @@ func appendSortPassByItemsTraceStep(sort *LogicalSort, topN *LogicalTopN, opt *l
 			}
 			buffer.WriteString(item.String())
 		}
-		buffer.WriteString(fmt.Sprintf("] to %v_%v", topN.TP(), topN.ID()))
+		fmt.Fprintf(buffer, "] to %v_%v", topN.TP(), topN.ID())
 		return buffer.String()
 	}
 	reason := func() string {

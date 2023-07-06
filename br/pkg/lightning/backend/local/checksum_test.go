@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/errs"
 	"go.uber.org/atomic"
 )
 
@@ -47,6 +48,7 @@ func TestDoChecksum(t *testing.T) {
 	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
 		WithArgs("10m").
 		WillReturnResult(sqlmock.NewResult(2, 1))
+	mock.ExpectClose()
 	mock.ExpectClose()
 
 	manager := NewTiDBChecksumExecutor(db)
@@ -197,6 +199,18 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		require.Zero(t, checksumExec.manager.currentTS)
 		require.Equal(t, 0, len(checksumExec.manager.tableGCSafeTS))
 	}
+
+	// test PD leader change error
+	backup := retryGetTSInterval
+	retryGetTSInterval = time.Millisecond
+	t.Cleanup(func() {
+		retryGetTSInterval = backup
+	})
+	pdClient.leaderChanging = true
+	kvClient.maxErrCount = 0
+	checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
+	_, err := checksumExec.Checksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
+	require.NoError(t, err)
 }
 
 func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
@@ -214,6 +228,7 @@ func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
 	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
 		WithArgs("300h").
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectClose()
 	mock.ExpectClose()
 
 	manager := NewTiDBChecksumExecutor(db)
@@ -264,6 +279,7 @@ type testPDClient struct {
 	count            atomic.Int32
 	gcSafePoint      []safePointTTL
 	logicalTSCounter atomic.Uint64
+	leaderChanging   bool
 }
 
 func (c *testPDClient) currentSafePoint() uint64 {
@@ -280,6 +296,9 @@ func (c *testPDClient) currentSafePoint() uint64 {
 
 func (c *testPDClient) GetTS(ctx context.Context) (int64, int64, error) {
 	physicalTS := time.Now().UnixMilli()
+	if c.leaderChanging && physicalTS%2 == 0 {
+		return 0, 0, errors.WithStack(errs.ErrClientTSOStreamClosed)
+	}
 	logicalTS := oracle.ExtractLogical(c.logicalTSCounter.Inc())
 	return physicalTS, logicalTS, nil
 }

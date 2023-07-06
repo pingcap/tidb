@@ -107,20 +107,14 @@ type PhysicalTable struct {
 	TimeColumn *model.ColumnInfo
 }
 
-// NewPhysicalTable create a new PhysicalTable
-func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.CIStr) (*PhysicalTable, error) {
+// NewBasePhysicalTable create a new PhysicalTable with specific timeColunm.
+func NewBasePhysicalTable(schema model.CIStr,
+	tbl *model.TableInfo,
+	partition model.CIStr,
+	timeColumn *model.ColumnInfo,
+) (*PhysicalTable, error) {
 	if tbl.State != model.StatePublic {
 		return nil, errors.Errorf("table '%s.%s' is not a public table", schema, tbl.Name)
-	}
-
-	ttlInfo := tbl.TTLInfo
-	if ttlInfo == nil {
-		return nil, errors.Errorf("table '%s.%s' is not a ttl table", schema, tbl.Name)
-	}
-
-	timeColumn := tbl.FindPublicColumnByName(ttlInfo.ColumnName.L)
-	if timeColumn == nil {
-		return nil, errors.Errorf("time column '%s' is not public in ttl table '%s.%s'", ttlInfo.ColumnName, schema, tbl.Name)
 	}
 
 	keyColumns, keyColumTypes, err := getTableKeyColumns(tbl)
@@ -164,6 +158,21 @@ func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.
 		KeyColumnTypes: keyColumTypes,
 		TimeColumn:     timeColumn,
 	}, nil
+}
+
+// NewPhysicalTable create a new PhysicalTable
+func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.CIStr) (*PhysicalTable, error) {
+	ttlInfo := tbl.TTLInfo
+	if ttlInfo == nil {
+		return nil, errors.Errorf("table '%s.%s' is not a ttl table", schema, tbl.Name)
+	}
+
+	timeColumn := tbl.FindPublicColumnByName(ttlInfo.ColumnName.L)
+	if timeColumn == nil {
+		return nil, errors.Errorf("time column '%s' is not public in ttl table '%s.%s'", ttlInfo.ColumnName, schema, tbl.Name)
+	}
+
+	return NewBasePhysicalTable(schema, tbl, partition, timeColumn)
 }
 
 // ValidateKeyPrefix validates a key prefix

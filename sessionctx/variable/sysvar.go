@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/tls"
@@ -104,12 +106,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: ErrorCount, Value: "0", ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.Itoa(int(s.SysErrorCount)), nil
 	}},
-	{Scope: ScopeSession, Name: LastInsertID, Value: "0", Type: TypeInt, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxInt64, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: LastInsertID, Value: "0", Type: TypeUnsigned, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxUint64, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(s.StmtCtx.PrevLastInsertID, 10), nil
 	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
 		return "", false, nil
 	}},
-	{Scope: ScopeSession, Name: Identity, Value: "0", Type: TypeInt, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxInt64, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: Identity, Value: "0", Type: TypeUnsigned, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxUint64, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(s.StmtCtx.PrevLastInsertID, 10), nil
 	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
 		return "", false, nil
@@ -144,7 +146,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBReadStaleness, Value: strconv.Itoa(DefTiDBReadStaleness), Type: TypeInt, MinValue: math.MinInt32, MaxValue: 0, AllowEmpty: true, Hidden: false, SetSession: func(s *SessionVars, val string) error {
 		return setReadStaleness(s, val)
 	}},
-	{Scope: ScopeSession, Name: TiDBEnforceMPPExecution, Type: TypeBool, Value: BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnforceMPPExecution, Type: TypeBool, Value: BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if TiDBOptOn(normalizedValue) && !vars.allowMPPExecution {
 			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs("tidb_enforce_mpp", "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.")
 		}
@@ -167,6 +169,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxBytesBeforeTiFlashExternalSort, Type: TypeInt, Value: strconv.Itoa(DefTiFlashMaxBytesBeforeExternalSort), MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.TiFlashMaxBytesBeforeExternalSort = TidbOptInt64(val, DefTiFlashMaxBytesBeforeExternalSort)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashPipelineMode, Type: TypeBool, Value: BoolToOnOff(DefTiDBEnableTiFlashPipelineMode), SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashEnablePipelineMode = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBSnapshot, Value: "", skipInit: true, SetSession: func(s *SessionVars, val string) error {
@@ -286,7 +292,8 @@ var defaultSysVars = []*SysVar{
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBIsolationReadEngines, Value: strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ","), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	// todo changed
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIsolationReadEngines, Value: strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ","), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		engines := strings.Split(normalizedValue, ",")
 		var formatVal string
 		for i, engine := range engines {
@@ -463,6 +470,12 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatUint(atomic.LoadUint64(&ExpensiveQueryTimeThreshold), 10), nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBExpensiveTxnTimeThreshold, Value: strconv.Itoa(DefTiDBExpensiveTxnTimeThreshold), Type: TypeUnsigned, MinValue: int64(MinExpensiveTxnTimeThreshold), MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		atomic.StoreUint64(&ExpensiveTxnTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveTxnTimeThreshold)))
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatUint(atomic.LoadUint64(&ExpensiveTxnTimeThreshold), 10), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBEnableCollectExecutionInfo, Value: BoolToOnOff(DefTiDBEnableCollectExecutionInfo), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		oldConfig := config.GetGlobalConfig()
@@ -952,11 +965,10 @@ var defaultSysVars = []*SysVar{
 			intVal, err := strconv.ParseUint(normalizedValue, 10, 64)
 			if err != nil {
 				bt, str := parseByteSize(normalizedValue)
-				if str != "" {
-					intVal = bt
-				} else {
+				if str == "" {
 					return "", err
 				}
+				intVal = bt
 			}
 			if intVal > 0 && intVal < 128 { // 128 Bytes
 				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitSessMinSize, originalValue))
@@ -981,11 +993,10 @@ var defaultSysVars = []*SysVar{
 			floatValue, err := strconv.ParseFloat(normalizedValue, 64)
 			if err != nil {
 				perc, str := parsePercentage(normalizedValue)
-				if len(str) != 0 {
-					floatValue = float64(perc) / 100
-				} else {
+				if len(str) == 0 {
 					return "", err
 				}
+				floatValue = float64(perc) / 100
 			}
 			gogcTunerThreshold := GOGCTunerThreshold.Load()
 			if floatValue < 0.51 || floatValue > 1 { // 51% ~ 100%
@@ -1284,7 +1295,7 @@ var defaultSysVars = []*SysVar{
 			return s, nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(true), Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(DefTiDBEnablePlanReplayerCapture), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnablePlanReplayerCapture = TiDBOptOn(val)
 			return nil
@@ -1523,6 +1534,10 @@ var defaultSysVars = []*SysVar{
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution), SetSession: func(s *SessionVars, val string) error {
 		s.allowMPPExecution = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowTiFlashCop, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowTiFlashCop), SetSession: func(s *SessionVars, val string) error {
+		s.allowTiFlashCop = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashFastScan, Type: TypeBool, Value: BoolToOnOff(DefTiFlashFastScan), SetSession: func(s *SessionVars, val string) error {
@@ -2272,7 +2287,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return strconv.Itoa(int(ts)), err
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableExternalTSRead, Value: BoolToOnOff(false), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableExternalTSRead, Value: BoolToOnOff(DefTiDBEnableExternalTSRead), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableExternalTSRead = TiDBOptOn(val)
 		return nil
 	}},
@@ -2488,35 +2503,57 @@ var defaultSysVars = []*SysVar{
 			s.OptOrderingIdxSelThresh = tidbOptFloat64(val, DefTiDBOptOrderingIdxSelThresh)
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableMPPSharedCTEExecution, Value: BoolToOnOff(DefTiDBOptEnableMPPSharedCTEExecution), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableMPPSharedCTEExecution = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptFixControl, Value: "", Type: TypeStr, IsHintUpdatable: true,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			// validation logic for setting global
+			// we don't put this in Validation to avoid repeating the checking logic for setting session.
+			_, warnings, err := fixcontrol.ParseToMap(val)
+			if err != nil {
+				return err
+			}
+			for _, warning := range warnings {
+				vars.StmtCtx.AppendWarning(errors.New(warning))
+			}
+			return nil
+		},
 		SetSession: func(s *SessionVars, val string) error {
-			newMap := make(map[uint64]string)
-			for _, singleFixCtrl := range strings.Split(val, ",") {
-				if len(singleFixCtrl) == 0 {
-					continue
-				}
-				colonIdx := strings.Index(singleFixCtrl, ":")
-				if colonIdx < 0 {
-					return errors.New("invalid fix control: colon not found")
-				}
-				k := strings.TrimSpace(singleFixCtrl[0:colonIdx])
-				v := strings.TrimSpace(singleFixCtrl[colonIdx+1:])
-				num, err := strconv.ParseUint(k, 10, 64)
-				if err != nil {
-					return err
-				}
-				originalV, ok := newMap[num]
-				if ok {
-					s.StmtCtx.AppendWarning(
-						errors.Errorf("found repeated fix control: %d:%s is overwritten with %s", num, originalV, v))
-				}
-				newMap[num] = v
+			newMap, warnings, err := fixcontrol.ParseToMap(val)
+			if err != nil {
+				return err
+			}
+			for _, warning := range warnings {
+				s.StmtCtx.AppendWarning(errors.New(warning))
 			}
 			s.OptimizerFixControl = newMap
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeSkipColumnTypes, Value: "json,blob,mediumblob,longblob", Type: TypeStr,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			return ValidAnalyzeSkipColumnTypes(normalizedValue)
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.AnalyzeSkipColumnTypes = ParseAnalyzeSkipColumnTypes(val)
+			return nil
+		}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPlanCacheInvalidationOnFreshStats, Value: BoolToOnOff(DefTiDBPlanCacheInvalidationOnFreshStats), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashReplicaRead, Value: DefTiFlashReplicaRead, Type: TypeEnum, PossibleValues: []string{DefTiFlashReplicaRead, tiflash.ClosestAdaptiveStr, tiflash.ClosestReplicasStr},
+		SetSession: func(s *SessionVars, val string) error {
+			s.TiFlashReplicaRead = tiflash.GetTiFlashReplicaReadByStr(val)
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return tiflash.GetTiFlashReplicaRead(s.TiFlashReplicaRead), nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBFastCheckTable, Value: BoolToOnOff(DefTiDBEnableFastCheckTable), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.FastCheckTable = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLAuthMethodName, Value: DefAuthenticationLDAPSASLAuthMethodName, Type: TypeEnum, PossibleValues: []string{ldap.SASLAuthMethodSCRAMSHA1, ldap.SASLAuthMethodSCRAMSHA256, ldap.SASLAuthMethodGSSAPI}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
@@ -2572,7 +2609,7 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return ldap.LDAPSASLAuthImpl.GetBindRootDN(), nil
 	}},
-	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLBindRootPW, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSASLBindRootPWD, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		ldap.LDAPSASLAuthImpl.SetBindRootPW(s)
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
@@ -2654,7 +2691,7 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return ldap.LDAPSimpleAuthImpl.GetBindRootDN(), nil
 	}},
-	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleBindRootPW, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+	{Scope: ScopeGlobal, Name: AuthenticationLDAPSimpleBindRootPWD, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		ldap.LDAPSimpleAuthImpl.SetBindRootPW(s)
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
@@ -2680,6 +2717,53 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return strconv.Itoa(ldap.LDAPSimpleAuthImpl.GetMaxCapacity()), nil
+	}},
+	// runtime filter variables group
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRuntimeFilterTypeName, Value: DefRuntimeFilterType, Type: TypeStr,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, ok := ToRuntimeFilterType(normalizedValue)
+			if ok {
+				return normalizedValue, nil
+			}
+			errMsg := fmt.Sprintf("incorrect value: %s. %s should be sepreated by , such as %s, also we only support IN and MIN_MAX now. ",
+				originalValue, TiDBRuntimeFilterTypeName, DefRuntimeFilterType)
+			return normalizedValue, errors.New(errMsg)
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.runtimeFilterTypes, _ = ToRuntimeFilterType(val)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRuntimeFilterModeName, Value: DefRuntimeFilterMode, Type: TypeStr,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, ok := RuntimeFilterModeStringToMode(normalizedValue)
+			if ok {
+				return normalizedValue, nil
+			}
+			errMsg := fmt.Sprintf("incorrect value: %s. %s options: %s ",
+				originalValue, TiDBRuntimeFilterModeName, DefRuntimeFilterMode)
+			return normalizedValue, errors.New(errMsg)
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.runtimeFilterMode, _ = RuntimeFilterModeStringToMode(val)
+			return nil
+		},
+	},
+	{
+		Scope: ScopeGlobal | ScopeSession,
+		Name:  TiDBLockUnchangedKeys,
+		Value: BoolToOnOff(DefTiDBLockUnchangedKeys),
+		Type:  TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.LockUnchangedKeys = TiDBOptOn(s)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBEnableCheckConstraint, Value: BoolToOnOff(DefTiDBEnableCheckConstraint), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EnableCheckConstraint.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableCheckConstraint.Load()), nil
 	}},
 }
 

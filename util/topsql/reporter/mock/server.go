@@ -30,8 +30,8 @@ import (
 
 type mockAgentServer struct {
 	hang struct {
-		beginTime atomic.Value // time.Time
-		endTime   atomic.Value // time.Time
+		beginTime atomic.Pointer[time.Time]
+		endTime   atomic.Pointer[time.Time]
 	}
 	grpcServer *grpc.Server
 	sqlMetas   map[string]tipb.SQLMeta
@@ -55,14 +55,16 @@ func StartMockAgentServer() (*mockAgentServer, error) {
 		sqlMetas:   make(map[string]tipb.SQLMeta, 5000),
 		planMetas:  make(map[string]string, 5000),
 	}
-	agentServer.hang.beginTime.Store(time.Now())
-	agentServer.hang.endTime.Store(time.Now())
+	beginTime := time.Now()
+	endTime := time.Now()
+	agentServer.hang.beginTime.Store(&beginTime)
+	agentServer.hang.endTime.Store(&endTime)
 	tipb.RegisterTopSQLAgentServer(server, agentServer)
 
 	go func() {
 		err := server.Serve(lis)
 		if err != nil {
-			logutil.BgLogger().Warn("[top-sql] mock agent server serve failed", zap.Error(err))
+			logutil.BgLogger().Warn("mock agent server serve failed", zap.String("category", "top-sql"), zap.Error(err))
 		}
 	}()
 
@@ -71,16 +73,17 @@ func StartMockAgentServer() (*mockAgentServer, error) {
 
 func (svr *mockAgentServer) HangFromNow(duration time.Duration) {
 	now := time.Now()
-	svr.hang.beginTime.Store(now)
-	svr.hang.endTime.Store(now.Add(duration))
+	svr.hang.beginTime.Store(&now)
+	endTime := now.Add(duration)
+	svr.hang.endTime.Store(&endTime)
 }
 
 // mayHang will check the hanging period, and ensure to sleep through it
 func (svr *mockAgentServer) mayHang() {
 	now := time.Now()
-	beginTime := svr.hang.beginTime.Load().(time.Time)
-	endTime := svr.hang.endTime.Load().(time.Time)
-	if now.Before(endTime) && now.After(beginTime) {
+	beginTime := svr.hang.beginTime.Load()
+	endTime := svr.hang.endTime.Load()
+	if now.Before(*endTime) && now.After(*beginTime) {
 		time.Sleep(endTime.Sub(now))
 	}
 }

@@ -10,6 +10,7 @@ go_library(
         "//br/pkg/storage",
         "@com_github_masterminds_semver//:semver",
         "@com_github_pingcap_errors//:errors",
+        "@io_k8s_api//core/v1:core",
     ],
 )
 

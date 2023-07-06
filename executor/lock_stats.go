@@ -19,16 +19,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-var _ Executor = &LockStatsExec{}
-var _ Executor = &UnlockStatsExec{}
+var _ exec.Executor = &LockStatsExec{}
+var _ exec.Executor = &UnlockStatsExec{}
 
 // LockStatsExec represents a lock statistic executor.
 type LockStatsExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	Tables []*ast.TableName
 }
 
@@ -45,7 +46,7 @@ const LockStatsVarKey lockStatsVarKeyType = 0
 
 // Next implements the Executor Next interface.
 func (e *LockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Ctx())
 	is := do.InfoSchema()
 	h := do.StatsHandle()
 	if h == nil {
@@ -76,7 +77,7 @@ func (e *LockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
 	}
 	msg, err := h.AddLockedTables(tids, pids, e.Tables)
 	if msg != "" {
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
 	}
 	return err
 }
@@ -93,7 +94,7 @@ func (e *LockStatsExec) Open(_ context.Context) error {
 
 // UnlockStatsExec represents a unlock statistic executor.
 type UnlockStatsExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	Tables []*ast.TableName
 }
 
@@ -110,7 +111,7 @@ const UnlockStatsVarKey unlockStatsVarKeyType = 0
 
 // Next implements the Executor Next interface.
 func (e *UnlockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Ctx())
 	is := do.InfoSchema()
 	h := do.StatsHandle()
 	if h == nil {
@@ -141,7 +142,7 @@ func (e *UnlockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
 	}
 	msg, err := h.RemoveLockedTables(tids, pids, e.Tables)
 	if msg != "" {
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
 	}
 	return err
 }

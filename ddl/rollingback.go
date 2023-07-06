@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -75,12 +76,21 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 		return ver, errors.Trace(err1)
 	}
 	job.State = model.JobStateRollingback
+	err = completeErr(err, indexInfo)
+	if ingest.LitBackCtxMgr != nil {
+		ingest.LitBackCtxMgr.Unregister(job.ID)
+	}
 	return ver, errors.Trace(err)
 }
 
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotReorgAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
+	defer func() {
+		if ingest.LitBackCtxMgr != nil {
+			ingest.LitBackCtxMgr.Unregister(job.ID)
+		}
+	}()
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -114,7 +124,7 @@ func convertNotReorgAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Jo
 func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	if needNotifyAndStopReorgWorker(job) {
 		// column type change workers are started. we have to ask them to exit.
-		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
+		logutil.Logger(w.logCtx).Info("run the cancelling DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
 		d.notifyReorgWorkerJobStateChange(job)
 		// Give the this kind of ddl one more round to run, the dbterror.ErrCancelledDDLJob should be fetched from the bottom up.
 		return w.onModifyColumn(d, t, job)
@@ -230,7 +240,7 @@ func rollingbackDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	if needNotifyAndStopReorgWorker(job) {
 		// add index workers are started. need to ask them to exit.
-		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
+		logutil.Logger(w.logCtx).Info("run the cancelling DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
 		d.notifyReorgWorkerJobStateChange(job)
 		ver, err = w.onCreateIndex(d, t, job, isPK)
 	} else {
@@ -371,14 +381,12 @@ func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 }
 
 func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
-	job.State = model.JobStatePaused
-
 	if needNotifyAndStopReorgWorker(job) {
-		logutil.Logger(w.logCtx).Info("[DDL] pausing the DDL job", zap.String("job", job.String()))
+		logutil.Logger(w.logCtx).Info("pausing the DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
 		d.notifyReorgWorkerJobStateChange(job)
 	}
 
-	return dbterror.ErrPausedDDLJob
+	return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
 }
 
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -409,18 +417,22 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackTruncateTable(t, job)
 	case model.ActionModifyColumn:
 		ver, err = rollingbackModifyColumn(w, d, t, job)
-	case model.ActionDropForeignKey:
+	case model.ActionDropForeignKey, model.ActionTruncateTablePartition:
 		ver, err = cancelOnlyNotHandledJob(job, model.StatePublic)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
 		model.ActionRenameTable, model.ActionRenameTables,
-		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
+		model.ActionModifyTableCharsetAndCollate,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
 		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement,
-		model.ActionRecoverSchema:
+		model.ActionRecoverSchema, model.ActionAlterCheckConstraint:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionMultiSchemaChange:
 		err = rollingBackMultiSchemaChange(job)
+	case model.ActionAddCheckConstraint:
+		ver, err = rollingBackAddConstraint(d, t, job)
+	case model.ActionDropCheckConstraint:
+		ver, err = rollingBackDropConstraint(t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
@@ -445,24 +457,65 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 			// job state and args may not be correctly overwritten. The job will be fetched to run with the cancelling
 			// state again. So we should check the error count here.
 			if err1 := loadDDLVars(w); err1 != nil {
-				logutil.Logger(w.logCtx).Error("[ddl] load DDL global variable failed", zap.Error(err1))
+				logutil.Logger(w.logCtx).Error("load DDL global variable failed", zap.String("category", "ddl"), zap.Error(err1))
 			}
 			errorCount := variable.GetDDLErrorCountLimit()
 			if job.ErrorCount > errorCount {
-				logutil.Logger(w.logCtx).Warn("[ddl] rollback DDL job error count exceed the limit, cancelled it now", zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", errorCount))
+				logutil.Logger(w.logCtx).Warn("rollback DDL job error count exceed the limit, cancelled it now", zap.String("category", "ddl"), zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", errorCount))
 				job.Error = toTError(errors.Errorf("rollback DDL job error count exceed the limit %d, cancelled it now", errorCount))
 				job.State = model.JobStateCancelled
 			}
 		}
 
-		if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled {
-			logutil.Logger(w.logCtx).Error("[ddl] run DDL job failed", zap.String("job", job.String()), zap.Error(err))
-		} else {
-			logutil.Logger(w.logCtx).Info("[ddl] the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
+		if !(job.State != model.JobStateRollingback && job.State != model.JobStateCancelled) {
+			logutil.Logger(w.logCtx).Info("the DDL job is cancelled normally", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
 			// If job is cancelled, we shouldn't return an error.
 			return ver, nil
 		}
+		logutil.Logger(w.logCtx).Error("run DDL job failed", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
 	}
 
 	return
+}
+
+func rollingBackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	job.State = model.JobStateRollingback
+	_, tblInfo, constrInfoInMeta, _, err := checkAddCheckConstraint(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if constrInfoInMeta == nil {
+		// Add constraint hasn't stored constraint info into meta, so we can cancel the job
+		// directly without further rollback action.
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	// Add constraint has stored constraint info into meta, that means the job has at least
+	// arrived write only state.
+	originalState := constrInfoInMeta.State
+	constrInfoInMeta.State = model.StateWriteOnly
+	job.SchemaState = model.StateWriteOnly
+
+	job.Args = []interface{}{constrInfoInMeta.Name}
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != constrInfoInMeta.State)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return ver, dbterror.ErrCancelledDDLJob
+}
+
+func rollingBackDropConstraint(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, constrInfoInMeta, err := checkDropCheckConstraint(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// StatePublic means when the job is not running yet.
+	if constrInfoInMeta.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	// Can not rollback like drop other element, so just continue to drop constraint.
+	job.State = model.JobStateRunning
+	return ver, nil
 }

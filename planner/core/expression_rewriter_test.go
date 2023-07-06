@@ -462,3 +462,16 @@ func TestSplitNormalForm(t *testing.T) {
 		}
 	}
 }
+
+func TestColResolutionSubqueryWithUnionAll(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("DROP TABLE if exists t1;")
+	tk.MustExec("DROP TABLE if exists t2;")
+	tk.MustExec("DROP TABLE if exists t;")
+	tk.MustExec("create table t1(a int);")
+	tk.MustExec("create table t2(a int);")
+	tk.MustExec("create table t(a int);")
+	tk.MustQuery("select * from t where  exists ( select a from ( select a from t1 union all select a from t2) u where t.a=u.a);").Check(testkit.Rows())
+}

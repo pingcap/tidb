@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -225,7 +226,7 @@ type StatementContext struct {
 		extraWarnings []SQLWarn
 
 		execDetails    execdetails.ExecDetails
-		allExecDetails []*execdetails.DetailsNeedP90
+		detailsSummary execdetails.P90Summary
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
@@ -245,6 +246,7 @@ type StatementContext struct {
 	NotFillCache     bool
 	MemTracker       *memory.Tracker
 	DiskTracker      *disk.Tracker
+	RunawayChecker   *resourcegroup.RunawayChecker
 	IsTiFlash        atomic2.Bool
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
@@ -392,9 +394,10 @@ type StatementContext struct {
 
 	// MPPQueryInfo stores some id and timestamp of current MPP query statement.
 	MPPQueryInfo struct {
-		QueryID            atomic2.Uint64
-		QueryTS            atomic2.Uint64
-		AllocatedMPPTaskID atomic2.Int64
+		QueryID              atomic2.Uint64
+		QueryTS              atomic2.Uint64
+		AllocatedMPPTaskID   atomic2.Int64
+		AllocatedMPPGatherID atomic2.Uint64
 	}
 
 	// TableStats stores the visited runtime table stats by table id during query
@@ -405,6 +408,12 @@ type StatementContext struct {
 	TiFlashEngineRemovedDueToStrictSQLMode bool
 	// CanonicalHashCode try to get the canonical hash code from expression.
 	CanonicalHashCode bool
+	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
+	StaleTSOProvider struct {
+		sync.Mutex
+		value *uint64
+		eval  func() (uint64, error)
+	}
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -973,7 +982,7 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.message = ""
 	sc.mu.warnings = nil
 	sc.mu.execDetails = execdetails.ExecDetails{}
-	sc.mu.allExecDetails = make([]*execdetails.DetailsNeedP90, 0, 4)
+	sc.mu.detailsSummary.Reset()
 }
 
 // ResetForRetry resets the changed states during execution.
@@ -997,13 +1006,13 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.RequestCount++
 		sc.MergeScanDetail(details.ScanDetail)
 		sc.MergeTimeDetail(details.TimeDetail)
-		sc.mu.allExecDetails = append(sc.mu.allExecDetails,
-			&execdetails.DetailsNeedP90{
-				BackoffSleep:  details.BackoffSleep,
-				BackoffTimes:  details.BackoffTimes,
-				CalleeAddress: details.CalleeAddress,
-				TimeDetail:    details.TimeDetail,
-			})
+		detail := &execdetails.DetailsNeedP90{
+			BackoffSleep:  details.BackoffSleep,
+			BackoffTimes:  details.BackoffTimes,
+			CalleeAddress: details.CalleeAddress,
+			TimeDetail:    details.TimeDetail,
+		}
+		sc.mu.detailsSummary.Merge(detail)
 	}
 	if commitDetails != nil {
 		if sc.mu.execDetails.CommitDetail == nil {
@@ -1106,7 +1115,7 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	n := len(sc.mu.allExecDetails)
+	n := sc.mu.detailsSummary.NumCopTasks
 	d := &CopTasksDetails{
 		NumCopTasks:       n,
 		MaxBackoffTime:    make(map[string]time.Duration),
@@ -1122,57 +1131,26 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
 	d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
 
-	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.DetailsNeedP90) bool {
-		return i.TimeDetail.ProcessTime < j.TimeDetail.ProcessTime
-	})
-	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].TimeDetail.ProcessTime
-	d.MaxProcessTime = sc.mu.allExecDetails[n-1].TimeDetail.ProcessTime
-	d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
+	d.P90ProcessTime = time.Duration((sc.mu.detailsSummary.ProcessTimePercentile.GetPercentile(0.9)))
+	d.MaxProcessTime = sc.mu.detailsSummary.ProcessTimePercentile.GetMax().D
+	d.MaxProcessAddress = sc.mu.detailsSummary.ProcessTimePercentile.GetMax().Addr
 
-	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.DetailsNeedP90) bool {
-		return i.TimeDetail.WaitTime < j.TimeDetail.WaitTime
-	})
-	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].TimeDetail.WaitTime
-	d.MaxWaitTime = sc.mu.allExecDetails[n-1].TimeDetail.WaitTime
-	d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
+	d.P90WaitTime = time.Duration((sc.mu.detailsSummary.WaitTimePercentile.GetPercentile(0.9)))
+	d.MaxWaitTime = sc.mu.detailsSummary.WaitTimePercentile.GetMax().D
+	d.MaxWaitAddress = sc.mu.detailsSummary.WaitTimePercentile.GetMax().Addr
 
-	// calculate backoff details
-	type backoffItem struct {
-		callee    string
-		sleepTime time.Duration
-		times     int
-	}
-	backoffInfo := make(map[string][]backoffItem)
-	for _, ed := range sc.mu.allExecDetails {
-		for backoff := range ed.BackoffTimes {
-			backoffInfo[backoff] = append(backoffInfo[backoff], backoffItem{
-				callee:    ed.CalleeAddress,
-				sleepTime: ed.BackoffSleep[backoff],
-				times:     ed.BackoffTimes[backoff],
-			})
-		}
-	}
-	for backoff, items := range backoffInfo {
-		if len(items) == 0 {
+	for backoff, items := range sc.mu.detailsSummary.BackoffInfo {
+		if items == nil {
 			continue
 		}
-		slices.SortFunc(items, func(i, j backoffItem) bool {
-			return i.sleepTime < j.sleepTime
-		})
-		n := len(items)
-		d.MaxBackoffAddress[backoff] = items[n-1].callee
-		d.MaxBackoffTime[backoff] = items[n-1].sleepTime
-		d.P90BackoffTime[backoff] = items[n*9/10].sleepTime
+		n := items.ReqTimes
+		d.MaxBackoffAddress[backoff] = items.BackoffPercentile.GetMax().Addr
+		d.MaxBackoffTime[backoff] = items.BackoffPercentile.GetMax().D
+		d.P90BackoffTime[backoff] = time.Duration(items.BackoffPercentile.GetPercentile(0.9))
 
-		var totalTime time.Duration
-		totalTimes := 0
-		for _, it := range items {
-			totalTime += it.sleepTime
-			totalTimes += it.times
-		}
-		d.AvgBackoffTime[backoff] = totalTime / time.Duration(n)
-		d.TotBackoffTime[backoff] = totalTime
-		d.TotBackoffTimes[backoff] = totalTimes
+		d.AvgBackoffTime[backoff] = items.TotBackoffTime / time.Duration(n)
+		d.TotBackoffTime[backoff] = items.TotBackoffTime
+		d.TotBackoffTimes[backoff] = items.TotBackoffTimes
 	}
 	return d
 }
@@ -1227,6 +1205,32 @@ func (sc *StatementContext) DetachMemDiskTracker() {
 	if sc.DiskTracker != nil {
 		sc.DiskTracker.Detach()
 	}
+}
+
+// SetStaleTSOProvider sets the stale TSO provider.
+func (sc *StatementContext) SetStaleTSOProvider(eval func() (uint64, error)) {
+	sc.StaleTSOProvider.Lock()
+	defer sc.StaleTSOProvider.Unlock()
+	sc.StaleTSOProvider.value = nil
+	sc.StaleTSOProvider.eval = eval
+}
+
+// GetStaleTSO returns the TSO for stale-read usage which calculate from PD's last response.
+func (sc *StatementContext) GetStaleTSO() (uint64, error) {
+	sc.StaleTSOProvider.Lock()
+	defer sc.StaleTSOProvider.Unlock()
+	if sc.StaleTSOProvider.value != nil {
+		return *sc.StaleTSOProvider.value, nil
+	}
+	if sc.StaleTSOProvider.eval == nil {
+		return 0, nil
+	}
+	tso, err := sc.StaleTSOProvider.eval()
+	if err != nil {
+		return 0, err
+	}
+	sc.StaleTSOProvider.value = &tso
+	return tso, nil
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.

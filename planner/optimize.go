@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/topsql"
@@ -96,12 +97,15 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		return nil, nil, false, nil
 	}
 
-	paramSQL, params, err := core.GetParamSQLFromAST(ctx, sctx, stmt)
+	paramSQL, paramsVals, err := core.GetParamSQLFromAST(sctx, stmt)
 	if err != nil {
 		return nil, nil, false, err
 	}
+	if intest.InTest && ctx.Value(core.PlanCacheKeyTestIssue43667) != nil { // update the AST in the middle of the process
+		ctx.Value(core.PlanCacheKeyTestIssue43667).(func(stmt ast.StmtNode))(stmt)
+	}
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
-	paramExprs := core.Params2Expressions(params)
+	paramExprs := core.Params2Expressions(paramsVals)
 
 	if val == nil {
 		// Create a new AST upon this parameterized SQL instead of using the original AST.
@@ -134,7 +138,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, error) {
+func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plan core.Plan, slice types.NameSlice, retErr error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -172,6 +176,25 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	for _, warn := range warns {
 		sessVars.StmtCtx.AppendWarning(warn)
 	}
+
+	defer func() {
+		// Override the resource group if necessary
+		// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
+		if retErr == nil && sessVars.StmtCtx.StmtHints.HasResourceGroup {
+			if variable.EnableResourceControl.Load() {
+				sessVars.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
+				// if we are in a txn, should update the txn resource name to let the txn
+				// commit with the hint resource group.
+				if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
+					kv.SetTxnResourceGroup(txn, sessVars.ResourceGroupName)
+				}
+			} else {
+				err := infoschema.ErrResourceGroupSupportDisabled
+				sessVars.StmtCtx.AppendWarning(err)
+			}
+		}
+	}()
+
 	warns = warns[:0]
 	for name, val := range originStmtHints.SetVars {
 		err := sessVars.SetStmtVar(name, val)
@@ -303,17 +326,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 		// Restore the hint to avoid changing the stmt node.
 		hint.BindHint(stmtNode, originHints)
-	}
-
-	// Override the resource group if necessary
-	// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
-	if sessVars.StmtCtx.StmtHints.HasResourceGroup {
-		if variable.EnableResourceControl.Load() {
-			sessVars.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
-		} else {
-			err := infoschema.ErrResourceGroupSupportDisabled
-			sessVars.StmtCtx.AppendWarning(err)
-		}
 	}
 
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -45,11 +46,13 @@ import (
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -333,9 +336,9 @@ func (rc *Client) InitCheckpoint(
 	return checkpointSetWithTableID, checkpointClusterConfig, errors.Trace(err)
 }
 
-func (rc *Client) WaitForFinishCheckpoint(ctx context.Context) {
+func (rc *Client) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 	if rc.checkpointRunner != nil {
-		rc.checkpointRunner.WaitForFinish(ctx)
+		rc.checkpointRunner.WaitForFinish(ctx, flush)
 	}
 }
 
@@ -938,19 +941,17 @@ func (rc *Client) GoCreateTables(
 
 	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
 		err = rc.createTablesInWorkerPool(ctx, dom, tables, newTS, outCh)
-
 		if err == nil {
 			defer log.Debug("all tables are created")
 			close(outCh)
 			return outCh
-		} else if utils.FallBack2CreateTable(err) {
-			// fall back to old create table (sequential create table)
-			log.Info("fall back to the sequential create table")
-		} else {
+		} else if !utils.FallBack2CreateTable(err) {
 			errCh <- err
 			close(outCh)
 			return outCh
 		}
+		// fall back to old create table (sequential create table)
+		log.Info("fall back to the sequential create table")
 	}
 
 	createOneTable := func(c context.Context, db *DB, t *metautil.Table) error {
@@ -1326,11 +1327,14 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 
 func (rc *Client) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}, taskName string) (*LogFilesSkipMap, error) {
 	skipMap := NewLogFilesSkipMap()
-	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueType) {
-		// filter out the checkpoint data of dropped table
-		_, exists := downstreamIdset[off.TableID]
-		if exists {
-			skipMap.Insert(groupKey, off.Goff, off.Foff)
+	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
+		for tableID, foffs := range off.Foffs {
+			// filter out the checkpoint data of dropped table
+			if _, exists := downstreamIdset[tableID]; exists {
+				for _, foff := range foffs {
+					skipMap.Insert(groupKey, off.Goff, foff)
+				}
+			}
 		}
 	})
 	if err != nil {
@@ -1601,77 +1605,83 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 	return nil
 }
 
+func concurrentHandleTablesCh(
+	ctx context.Context,
+	inCh <-chan *CreatedTable,
+	outCh chan<- *CreatedTable,
+	errCh chan<- error,
+	workers *utils.WorkerPool,
+	processFun func(context.Context, *CreatedTable) error,
+	deferFun func()) {
+	eg, ectx := errgroup.WithContext(ctx)
+	defer func() {
+		if err := eg.Wait(); err != nil {
+			errCh <- err
+		}
+		close(outCh)
+		deferFun()
+	}()
+
+	for {
+		select {
+		// if we use ectx here, maybe canceled will mask real error.
+		case <-ctx.Done():
+			errCh <- ctx.Err()
+		case tbl, ok := <-inCh:
+			if !ok {
+				return
+			}
+			cloneTable := tbl
+			worker := workers.ApplyWorker()
+			eg.Go(func() error {
+				defer workers.RecycleWorker(worker)
+				err := processFun(ectx, cloneTable)
+				if err != nil {
+					return err
+				}
+				outCh <- cloneTable
+				return nil
+			})
+		}
+	}
+}
+
 // GoValidateChecksum forks a goroutine to validate checksum after restore.
 // it returns a channel fires a struct{} when all things get done.
 func (rc *Client) GoValidateChecksum(
 	ctx context.Context,
-	tableStream <-chan CreatedTable,
+	inCh <-chan *CreatedTable,
 	kvClient kv.Client,
 	errCh chan<- error,
 	updateCh glue.Progress,
 	concurrency uint,
-) <-chan struct{} {
+) <-chan *CreatedTable {
 	log.Info("Start to validate checksum")
-	outCh := make(chan struct{}, 1)
-	wg := new(sync.WaitGroup)
-	wg.Add(2)
-	loadStatCh := make(chan *CreatedTable, 1024)
-	// run the stat loader
-	go func() {
-		defer wg.Done()
-		rc.updateMetaAndLoadStats(ctx, loadStatCh)
-	}()
+	outCh := DefaultOutputTableChan()
 	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
-	go func() {
-		eg, ectx := errgroup.WithContext(ctx)
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+		start := time.Now()
 		defer func() {
-			if err := eg.Wait(); err != nil {
-				errCh <- err
-			}
-			close(loadStatCh)
-			wg.Done()
+			elapsed := time.Since(start)
+			summary.CollectSuccessUnit("table checksum", 1, elapsed)
 		}()
-
-		for {
-			select {
-			// if we use ectx here, maybe canceled will mask real error.
-			case <-ctx.Done():
-				errCh <- ctx.Err()
-			case tbl, ok := <-tableStream:
-				if !ok {
-					return
-				}
-
-				workers.ApplyOnErrorGroup(eg, func() error {
-					start := time.Now()
-					defer func() {
-						elapsed := time.Since(start)
-						summary.CollectSuccessUnit("table checksum", 1, elapsed)
-					}()
-					err := rc.execChecksum(ectx, tbl, kvClient, concurrency, loadStatCh)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					updateCh.Inc()
-					return nil
-				})
-			}
+		err := rc.execChecksum(c, tbl, kvClient, concurrency)
+		if err != nil {
+			return errors.Trace(err)
 		}
-	}()
-	go func() {
-		wg.Wait()
+		updateCh.Inc()
+		return nil
+	}, func() {
 		log.Info("all checksum ended")
-		close(outCh)
-	}()
+	})
 	return outCh
 }
 
 func (rc *Client) execChecksum(
 	ctx context.Context,
-	tbl CreatedTable,
+	tbl *CreatedTable,
 	kvClient kv.Client,
 	concurrency uint,
-	loadStatCh chan<- *CreatedTable,
 ) error {
 	logger := log.L().With(
 		zap.String("db", tbl.OldTable.DB.Name.O),
@@ -1738,48 +1748,108 @@ func (rc *Client) execChecksum(
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
 	logger.Info("success in validate checksum")
-	loadStatCh <- &tbl
 	return nil
 }
 
-func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *CreatedTable) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case tbl, ok := <-input:
-			if !ok {
-				return
-			}
-
-			// Not need to return err when failed because of update analysis-meta
-			restoreTS, err := rc.GetTSWithRetry(ctx)
+func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) chan *CreatedTable {
+	log.Info("Start to update meta then load stats")
+	outCh := DefaultOutputTableChan()
+	workers := utils.NewWorkerPool(1, "UpdateStats")
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+		oldTable := tbl.OldTable
+		// Not need to return err when failed because of update analysis-meta
+		restoreTS, err := rc.GetTSWithRetry(ctx)
+		if err != nil {
+			log.Error("getTS failed", zap.Error(err))
+		} else {
+			log.Info("start update metas",
+				zap.Stringer("table", oldTable.Info.Name),
+				zap.Stringer("db", oldTable.DB.Name))
+			err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, oldTable.TotalKvs)
 			if err != nil {
-				log.Error("getTS failed", zap.Error(err))
-			} else {
-				err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, tbl.OldTable.TotalKvs)
-				if err != nil {
-					log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
-				}
+				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
 			}
+		}
 
-			table := tbl.OldTable
-			if table.Stats != nil {
-				log.Info("start loads analyze after validate checksum",
-					zap.Int64("old id", tbl.OldTable.Info.ID),
-					zap.Int64("new id", tbl.Table.ID),
-				)
-				start := time.Now()
-				if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), table.Stats); err != nil {
-					log.Error("analyze table failed", zap.Any("table", table.Stats), zap.Error(err))
-				}
-				log.Info("restore stat done",
-					zap.String("table", table.Info.Name.L),
-					zap.String("db", table.DB.Name.L),
-					zap.Duration("cost", time.Since(start)))
+		if oldTable.Stats != nil {
+			log.Info("start loads analyze after validate checksum",
+				zap.Int64("old id", oldTable.Info.ID),
+				zap.Int64("new id", tbl.Table.ID),
+			)
+			start := time.Now()
+			if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), oldTable.Stats); err != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(err))
+			}
+			log.Info("restore stat done",
+				zap.Stringer("table", oldTable.Info.Name),
+				zap.Stringer("db", oldTable.DB.Name),
+				zap.Duration("cost", time.Since(start)))
+		}
+		return nil
+	}, func() {
+		log.Info("all stats updated")
+	})
+	return outCh
+}
+
+func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTable, updateCh glue.Progress, errCh chan<- error) chan *CreatedTable {
+	log.Info("Start to wait tiflash replica sync")
+	outCh := DefaultOutputTableChan()
+	workers := utils.NewWorkerPool(4, "WaitForTiflashReady")
+	// TODO support tiflash store changes
+	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
+	if err != nil {
+		errCh <- err
+	}
+	tiFlashStores := make(map[int64]helper.StoreStat)
+	for _, store := range tikvStats.Stores {
+		for _, l := range store.Store.Labels {
+			if l.Key == "engine" && l.Value == "tiflash" {
+				tiFlashStores[store.Store.ID] = store
 			}
 		}
 	}
+	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+		if tbl.Table != nil && tbl.Table.TiFlashReplica == nil {
+			log.Info("table has no tiflash replica",
+				zap.Stringer("table", tbl.OldTable.Info.Name),
+				zap.Stringer("db", tbl.OldTable.DB.Name))
+			updateCh.Inc()
+			return nil
+		}
+		if rc.dom != nil {
+			log.Info("table has tiflash replica, start sync..",
+				zap.Stringer("table", tbl.OldTable.Info.Name),
+				zap.Stringer("db", tbl.OldTable.DB.Name))
+			for {
+				progress, err := infosync.CalculateTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, tiFlashStores)
+				if err != nil {
+					log.Warn("failed to get tiflash replica progress, wait for next retry", zap.Error(err))
+					time.Sleep(time.Second)
+					continue
+				}
+				// check until progress is 1
+				if progress == 1 {
+					log.Info("tiflash replica synced",
+						zap.Stringer("table", tbl.OldTable.Info.Name),
+						zap.Stringer("db", tbl.OldTable.DB.Name))
+					break
+				}
+				// just wait for next check
+				// tiflash check the progress every 2s
+				// we can wait 2.5x times
+				time.Sleep(5 * time.Second)
+			}
+		} else {
+			// unreachable, current we have initial domain in mgr.
+			log.Fatal("unreachable, domain is nil")
+		}
+		updateCh.Inc()
+		return nil
+	}, func() {
+		log.Info("all tiflash replica synced")
+	})
+	return outCh
 }
 
 // called by failpoint, only used for test
@@ -2117,6 +2187,10 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 	}
 	for _, table := range tables {
 		if table.Info.TiFlashReplica != nil {
+			// we should not set available to true. because we cannot guarantee the raft log lag of tiflash when restore finished.
+			// just let tiflash ticker set it by checking lag of all related regions.
+			table.Info.TiFlashReplica.Available = false
+			table.Info.TiFlashReplica.AvailablePartitionIDs = nil
 			if recorder != nil {
 				recorder.AddTable(table.Info.ID, *table.Info.TiFlashReplica)
 				log.Info("record tiflash replica for table, to reset it by ddl later",
@@ -3160,34 +3234,46 @@ const (
 	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
 )
 
-// RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
-func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, storage kv.Storage) error {
-	dom, err := g.GetDomain(storage)
-	if err != nil {
-		return errors.Trace(err)
+func (rc *Client) generateRepairIngestIndexSQLs(
+	ctx context.Context,
+	ingestRecorder *ingestrec.IngestRecorder,
+	allSchema []*model.DBInfo,
+	taskName string,
+) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
+	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
+	if rc.useCheckpoint {
+		exists, err := checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, rc.storage, taskName)
+		if err != nil {
+			return sqls, false, errors.Trace(err)
+		}
+		if exists {
+			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.storage, taskName)
+			if err != nil {
+				return sqls, false, errors.Trace(err)
+			}
+			sqls = checkpointSQLs.SQLs
+			log.Info("load ingest index repair sqls from checkpoint", zap.String("category", "ingest"), zap.Reflect("sqls", sqls))
+			return sqls, true, nil
+		}
 	}
-	info := dom.InfoSchema()
-	allSchema := info.AllSchemas()
+
 	ingestRecorder.UpdateIndexInfo(allSchema)
-	console := glue.GetConsole(g)
-	err = ingestRecorder.Iterate(func(_, _ int64, info *ingestrec.IngestIndexInfo) error {
+	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
-			addSQL        strings.Builder
-			addArgs       []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
-			progressTitle string        = fmt.Sprintf("repair ingest index %s for table %s.%s", info.IndexInfo.Name.O, info.SchemaName, info.TableName)
+			addSQL  strings.Builder
+			addArgs []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
 		)
-		w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
 		if info.IsPrimary {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
-			addArgs = append(addArgs, info.SchemaName, info.TableName)
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		} else if info.IndexInfo.Unique {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddUniqueIndexFormat, info.ColumnList))
-			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		} else {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
-			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		}
 		// USING BTREE/HASH/RTREE
@@ -3209,20 +3295,112 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 			addSQL.WriteString(" VISIBLE")
 		}
 
-		if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, info.SchemaName, info.TableName, info.IndexInfo.Name.O); err != nil {
-			return errors.Trace(err)
-		}
-		if err := rc.db.se.ExecuteInternal(ctx, addSQL.String(), addArgs...); err != nil {
-			return errors.Trace(err)
-		}
-		w.Inc()
-		if err := w.Wait(ctx); err != nil {
-			return errors.Trace(err)
-		}
-		w.Close()
+		sqls = append(sqls, checkpoint.CheckpointIngestIndexRepairSQL{
+			IndexID:    indexID,
+			SchemaName: info.SchemaName,
+			TableName:  info.TableName,
+			IndexName:  info.IndexInfo.Name.O,
+			AddSQL:     addSQL.String(),
+			AddArgs:    addArgs,
+		})
+
 		return nil
-	})
-	return errors.Trace(err)
+	}); err != nil {
+		return sqls, false, errors.Trace(err)
+	}
+
+	if rc.useCheckpoint && len(sqls) > 0 {
+		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.storage, &checkpoint.CheckpointIngestIndexRepairSQLs{
+			SQLs: sqls,
+		}, taskName); err != nil {
+			return sqls, false, errors.Trace(err)
+		}
+	}
+	return sqls, false, nil
+}
+
+// RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
+func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, storage kv.Storage, taskName string) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+
+	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, info.AllSchemas(), taskName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	console := glue.GetConsole(g)
+NEXTSQL:
+	for _, sql := range sqls {
+		progressTitle := fmt.Sprintf("repair ingest index %s for table %s.%s", sql.IndexName, sql.SchemaName, sql.TableName)
+
+		tableInfo, err := info.TableByName(sql.SchemaName, sql.TableName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		oldIndexIDFound := false
+		if fromCheckpoint {
+			for _, idx := range tableInfo.Indices() {
+				indexInfo := idx.Meta()
+				if indexInfo.ID == sql.IndexID {
+					// the original index id is not dropped
+					oldIndexIDFound = true
+					break
+				}
+				// what if index's state is not public?
+				if indexInfo.Name.O == sql.IndexName {
+					// find the same name index, but not the same index id,
+					// which means the repaired index id is created
+					if _, err := fmt.Fprintf(console.Out(), "%s ... %s\n", progressTitle, color.HiGreenString("SKIPPED DUE TO CHECKPOINT MODE")); err != nil {
+						return errors.Trace(err)
+					}
+					continue NEXTSQL
+				}
+			}
+		}
+
+		if err := func(sql checkpoint.CheckpointIngestIndexRepairSQL) error {
+			w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
+			defer w.Close()
+
+			// TODO: When the TiDB supports the DROP and CREATE the same name index in one SQL,
+			//   the checkpoint for ingest recorder can be removed and directly use the SQL:
+			//      ALTER TABLE db.tbl DROP INDEX `i_1`, ADD IDNEX `i_1` ...
+			//
+			// This SQL is compatible with checkpoint: If one ingest index has been recreated by
+			// the SQL, the index's id would be another one. In the next retry execution, BR can
+			// not find the ingest index's dropped id so that BR regards it as a dropped index by
+			// restored metakv and then skips repairing it.
+
+			// only when first execution or old index id is not dropped
+			if !fromCheckpoint || oldIndexIDFound {
+				if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			failpoint.Inject("failed-before-create-ingest-index", func(v failpoint.Value) {
+				if v != nil && v.(bool) {
+					failpoint.Return(errors.New("failed before create ingest index"))
+				}
+			})
+			// create the repaired index when first execution or not found it
+			if err := rc.db.se.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
+				return errors.Trace(err)
+			}
+			w.Inc()
+			if err := w.Wait(ctx); err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}(sql); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
 }
 
 const (

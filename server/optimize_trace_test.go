@@ -27,6 +27,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
@@ -41,7 +42,7 @@ func TestDumpOptimizeTraceAPI(t *testing.T) {
 
 	driver := NewTiDBDriver(store)
 	client := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true
@@ -49,6 +50,10 @@ func TestDumpOptimizeTraceAPI(t *testing.T) {
 	server, err := NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
+
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
 
 	client.port = getPortFromTCPAddr(server.listener.Addr())
 	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
@@ -58,8 +63,6 @@ func TestDumpOptimizeTraceAPI(t *testing.T) {
 	}()
 	client.waitUntilServerOnline()
 
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
 	statsHandler := &StatsHandler{dom}
 
 	otHandler := &OptimizeTraceHandler{}
@@ -109,7 +112,7 @@ func TestOptimizerDebugTrace(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)

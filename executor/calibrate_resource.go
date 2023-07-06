@@ -23,6 +23,8 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -34,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 var (
@@ -44,59 +45,46 @@ var (
 	// the workload.
 	workloadBaseRUCostMap = map[ast.CalibrateResourceType]*baseResourceCost{
 		ast.TPCC: {
-			tidbCPU:       0.6,
-			kvCPU:         0.15,
-			readBytes:     units.MiB / 2,
-			writeBytes:    units.MiB,
-			readReqCount:  300,
-			writeReqCount: 1750,
+			tidbToKVCPURatio: 0.6,
+			kvCPU:            0.15,
+			readBytes:        units.MiB / 2,
+			writeBytes:       units.MiB,
+			readReqCount:     300,
+			writeReqCount:    1750,
 		},
 		ast.OLTPREADWRITE: {
-			tidbCPU:       1.25,
-			kvCPU:         0.35,
-			readBytes:     units.MiB * 4.25,
-			writeBytes:    units.MiB / 3,
-			readReqCount:  1600,
-			writeReqCount: 1400,
+			tidbToKVCPURatio: 1.25,
+			kvCPU:            0.35,
+			readBytes:        units.MiB * 4.25,
+			writeBytes:       units.MiB / 3,
+			readReqCount:     1600,
+			writeReqCount:    1400,
 		},
 		ast.OLTPREADONLY: {
-			tidbCPU:       2,
-			kvCPU:         0.52,
-			readBytes:     units.MiB * 28,
-			writeBytes:    0,
-			readReqCount:  4500,
-			writeReqCount: 0,
+			tidbToKVCPURatio: 2,
+			kvCPU:            0.52,
+			readBytes:        units.MiB * 28,
+			writeBytes:       0,
+			readReqCount:     4500,
+			writeReqCount:    0,
 		},
 		ast.OLTPWRITEONLY: {
-			tidbCPU:       1,
-			kvCPU:         0,
-			readBytes:     0,
-			writeBytes:    units.MiB,
-			readReqCount:  0,
-			writeReqCount: 3550,
+			tidbToKVCPURatio: 1,
+			kvCPU:            0,
+			readBytes:        0,
+			writeBytes:       units.MiB,
+			readReqCount:     0,
+			writeReqCount:    3550,
 		},
 	}
-
-	// resourceGroupCtl is the ResourceGroupController in pd client
-	resourceGroupCtl *rmclient.ResourceGroupsController
 )
-
-// SetResourceGroupController set a inited ResourceGroupsController for calibrate usage.
-func SetResourceGroupController(rc *rmclient.ResourceGroupsController) {
-	resourceGroupCtl = rc
-}
-
-// GetResourceGroupController returns the ResourceGroupsController.
-func GetResourceGroupController() *rmclient.ResourceGroupsController {
-	return resourceGroupCtl
-}
 
 // the resource cost rate of a specified workload per 1 tikv cpu.
 type baseResourceCost struct {
-	// the average tikv cpu time, this is used to calculate whether tikv cpu
+	// represents the average ratio of TiDB CPU time to TiKV CPU time, this is used to calculate whether tikv cpu
 	// or tidb cpu is the performance bottle neck.
-	tidbCPU float64
-	// the kv CPU time for calculate RU, it's smaller than the actual cpu usage.
+	tidbToKVCPURatio float64
+	// the kv CPU time for calculate RU, it's smaller than the actual cpu usage. The unit is seconds.
 	kvCPU float64
 	// the read bytes rate per 1 tikv cpu.
 	readBytes uint64
@@ -126,25 +114,25 @@ const (
 )
 
 type calibrateResourceExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	optionList   []*ast.DynamicCalibrateResourceOption
 	workloadType ast.CalibrateResourceType
 	done         bool
 }
 
-func (e *calibrateResourceExec) parseCalibrateDuration() (startTime time.Time, endTime time.Time, err error) {
+func (e *calibrateResourceExec) parseCalibrateDuration(ctx context.Context) (startTime time.Time, endTime time.Time, err error) {
 	var dur time.Duration
 	var ts uint64
 	for _, op := range e.optionList {
 		switch op.Tp {
 		case ast.CalibrateStartTime:
-			ts, err = staleread.CalculateAsOfTsExpr(e.ctx, op.Ts)
+			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.Ctx(), op.Ts)
 			if err != nil {
 				return
 			}
 			startTime = oracle.GetTimeFromTS(ts)
 		case ast.CalibrateEndTime:
-			ts, err = staleread.CalculateAsOfTsExpr(e.ctx, op.Ts)
+			ts, err = staleread.CalculateAsOfTsExpr(ctx, e.Ctx(), op.Ts)
 			if err != nil {
 				return
 			}
@@ -188,7 +176,7 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	}
 	e.done = true
 
-	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	if len(e.optionList) > 0 {
 		return e.dynamicCalibrate(ctx, req, exec)
@@ -196,31 +184,36 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	return e.staticCalibrate(ctx, req, exec)
 }
 
+var (
+	errLowUsage          = errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
+	errNoCPUQuotaMetrics = errors.Normalize("There is no CPU quota metrics, %v")
+)
+
 func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
-	startTs, endTs, err := e.parseCalibrateDuration()
+	startTs, endTs, err := e.parseCalibrateDuration(ctx)
 	if err != nil {
 		return err
 	}
-	startTime := startTs.In(e.ctx.GetSessionVars().Location()).Format(time.DateTime)
-	endTime := endTs.In(e.ctx.GetSessionVars().Location()).Format(time.DateTime)
+	startTime := startTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
+	endTime := endTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
-	rus, err := getRUPerSec(ctx, e.ctx, exec, startTime, endTime)
+	rus, err := getRUPerSec(ctx, e.Ctx(), exec, startTime, endTime)
 	if err != nil {
 		return err
 	}
-	tikvCPUs, err := getComponentCPUUsagePerSec(ctx, e.ctx, exec, "tikv", startTime, endTime)
+	tikvCPUs, err := getComponentCPUUsagePerSec(ctx, e.Ctx(), exec, "tikv", startTime, endTime)
 	if err != nil {
 		return err
 	}
-	tidbCPUs, err := getComponentCPUUsagePerSec(ctx, e.ctx, exec, "tidb", startTime, endTime)
+	tidbCPUs, err := getComponentCPUUsagePerSec(ctx, e.Ctx(), exec, "tidb", startTime, endTime)
 	if err != nil {
 		return err
 	}
@@ -243,7 +236,7 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		}
 		tikvQuota, tidbQuota := tikvCPUs.getValue()/totalKVCPUQuota, tidbCPUs.getValue()/totalTiDBCPU
 		// If one of the two cpu usage is greater than the `valuableUsageThreshold`, we can accept it.
-		// And if both are greater than the `lowUsageThreshold`, we can also accpet it.
+		// And if both are greater than the `lowUsageThreshold`, we can also accept it.
 		if tikvQuota > valuableUsageThreshold || tidbQuota > valuableUsageThreshold {
 			quotas = append(quotas, rus.getValue()/mathutil.Max(tikvQuota, tidbQuota))
 		} else if tikvQuota < lowUsageThreshold || tidbQuota < lowUsageThreshold {
@@ -256,23 +249,22 @@ func (e *calibrateResourceExec) dynamicCalibrate(ctx context.Context, req *chunk
 		tikvCPUs.next()
 	}
 	if len(quotas) < 5 {
-		return errors.Errorf("There are too few metrics points available in selected time window")
+		return errLowUsage
 	}
-	if float64(len(quotas))/float64(len(quotas)+lowCount) > percentOfPass {
-		sort.Slice(quotas, func(i, j int) bool {
-			return quotas[i] > quotas[j]
-		})
-		lowerBound := int(math.Round(float64(len(quotas)) * float64(discardRate)))
-		upperBound := len(quotas) - lowerBound
-		sum := 0.
-		for i := lowerBound; i < upperBound; i++ {
-			sum += quotas[i]
-		}
-		quota := sum / float64(upperBound-lowerBound)
-		req.AppendUint64(0, uint64(quota))
-	} else {
-		return errors.Errorf("The workload in selected time window is too low, with which TiDB is unable to reach a capacity estimation; please select another time window with higher workload, or calibrate resource by hardware instead")
+	if float64(len(quotas))/float64(len(quotas)+lowCount) <= percentOfPass {
+		return errLowUsage
 	}
+	sort.Slice(quotas, func(i, j int) bool {
+		return quotas[i] > quotas[j]
+	})
+	lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
+	upperBound := len(quotas) - lowerBound
+	sum := 0.
+	for i := lowerBound; i < upperBound; i++ {
+		sum += quotas[i]
+	}
+	quota := sum / float64(upperBound-lowerBound)
+	req.AppendUint64(0, uint64(quota))
 	return nil
 }
 
@@ -280,6 +272,7 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 	if !variable.EnableResourceControl.Load() {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
+	resourceGroupCtl := domain.GetDomain(e.Ctx()).ResourceGroupsController()
 	// first fetch the ru settings config.
 	if resourceGroupCtl == nil {
 		return errors.New("resource group controller is not initialized")
@@ -287,11 +280,11 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return err
+		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 
 	// The default workload to calculate the RU capacity.
@@ -303,12 +296,12 @@ func (e *calibrateResourceExec) staticCalibrate(ctx context.Context, req *chunk.
 		return errors.Errorf("unknown workload '%T'", e.workloadType)
 	}
 
-	if totalTiDBCPU/baseCost.tidbCPU < totalKVCPUQuota {
-		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbCPU
+	if totalTiDBCPU/baseCost.tidbToKVCPURatio < totalKVCPUQuota {
+		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbToKVCPURatio
 	}
 	ruCfg := resourceGroupCtl.GetConfig()
 	ruPerKVCPU := float64(ruCfg.ReadBaseCost)*float64(baseCost.readReqCount) +
-		float64(ruCfg.CPUMsCost)*baseCost.kvCPU +
+		float64(ruCfg.CPUMsCost)*baseCost.kvCPU*1000 + // convert to ms
 		float64(ruCfg.ReadBytesCost)*float64(baseCost.readBytes) +
 		float64(ruCfg.WriteBaseCost)*float64(baseCost.writeReqCount) +
 		float64(ruCfg.WriteBytesCost)*float64(baseCost.writeBytes)
@@ -390,9 +383,6 @@ func getValuesFromMetrics(ctx context.Context, sctx sessionctx.Context, exec sql
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return nil, errors.Errorf("metrics '%s' is empty", metrics)
 	}
 	ret := make([]*timePointValue, 0, len(rows))
 	for _, row := range rows {

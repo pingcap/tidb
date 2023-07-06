@@ -71,6 +71,8 @@ var (
 	ErrWindowRangeBoundNotConstant           = dbterror.ClassOptimizer.NewStd(mysql.ErrWindowRangeBoundNotConstant)
 	ErrWindowRowsIntervalUse                 = dbterror.ClassOptimizer.NewStd(mysql.ErrWindowRowsIntervalUse)
 	ErrWindowFunctionIgnoresFrame            = dbterror.ClassOptimizer.NewStd(mysql.ErrWindowFunctionIgnoresFrame)
+	ErrInvalidNumberOfArgs                   = dbterror.ClassOptimizer.NewStd(mysql.ErrInvalidNumberOfArgs)
+	ErrFieldInGroupingNotGroupBy             = dbterror.ClassOptimizer.NewStd(mysql.ErrFieldInGroupingNotGroupBy)
 	ErrUnsupportedOnGeneratedColumn          = dbterror.ClassOptimizer.NewStd(mysql.ErrUnsupportedOnGeneratedColumn)
 	ErrPrivilegeCheckFail                    = dbterror.ClassOptimizer.NewStd(mysql.ErrPrivilegeCheckFail)
 	ErrInvalidWildCard                       = dbterror.ClassOptimizer.NewStd(mysql.ErrInvalidWildCard)

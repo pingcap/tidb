@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -553,9 +553,11 @@ func TestRenameTableIntermediateState(t *testing.T) {
 		hook := &callback.TestDDLCallback{Do: dom}
 		runInsert := false
 		fn := func(job *model.Job) {
-			if job.SchemaState == model.StatePublic && !runInsert && !t.Failed() {
+			if job.Type == model.ActionRenameTable &&
+				job.SchemaState == model.StatePublic && !runInsert && !t.Failed() {
 				_, err := tk2.Exec(tc.insertSQL)
 				if len(tc.errMsg) > 0 {
+					assert.NotNil(t, err)
 					assert.Equal(t, tc.errMsg, err.Error())
 				} else {
 					assert.NoError(t, err)

@@ -31,8 +31,12 @@ const (
 
 // WalkOption is the option of storage.WalkDir.
 type WalkOption struct {
-	// walk on SubDir of specify directory
+	// walk on SubDir of base directory, i.e. if the base dir is '/path/to/base'
+	// then we're walking '/path/to/base/<SubDir>'
 	SubDir string
+	// whether subdirectory under the walk dir is skipped, only works for LOCAL storage now.
+	// default is false, i.e. we walk recursively.
+	SkipSubDir bool
 	// ObjPrefix used fo prefix search in storage. Note that only part of storage
 	// support it.
 	// It can save lots of time when we want find specify prefix objects in storage.
