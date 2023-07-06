@@ -45,6 +45,7 @@ func genConfig(memRoot MemRoot, jobID int64, unique bool) (*Config, error) {
 	if ImporterRangeConcurrencyForTest != nil {
 		cfg.TikvImporter.RangeConcurrency = int(ImporterRangeConcurrencyForTest.Load())
 	}
+	nooooo
 	_, err := cfg.AdjustCommon()
 	if err != nil {
 		logutil.BgLogger().Warn(LitWarnConfigError, zap.Error(err))
