@@ -231,6 +231,7 @@ func (d *DBStore) adjust(
 	return nil
 }
 
+// Routes is a alias of []*router.TableRule. It's used to attach method to []*router.TableRule.
 type Routes []*router.TableRule
 
 func (r *Routes) adjust(m *MydumperRuntime) error {
