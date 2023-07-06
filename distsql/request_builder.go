@@ -359,6 +359,12 @@ func (builder *RequestBuilder) SetResourceGroupName(name string) *RequestBuilder
 	return builder
 }
 
+// SetExplicitRequestSourceType sets the request source type.
+func (builder *RequestBuilder) SetExplicitRequestSourceType(sourceType string) *RequestBuilder {
+	builder.RequestSource.RequestSourceType = sourceType
+	return builder
+}
+
 func (builder *RequestBuilder) verifyTxnScope() error {
 	txnScope := builder.TxnScope
 	if txnScope == "" || txnScope == kv.GlobalReplicaScope || builder.is == nil {
