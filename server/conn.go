@@ -2270,7 +2270,12 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs ResultSet, binary b
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.Clean()
 	if mysql.HasCursorExistsFlag(serverStatus) {
-		if err := cc.writeChunksWithFetchSize(ctx, rs, serverStatus, fetchSize); err != nil {
+		crs, ok := rs.(cursorResultSet)
+		if !ok {
+			// this branch is actually unreachable
+			return false, errors.New("this cursor is not a resultSet")
+		}
+		if err := cc.writeChunksWithFetchSize(ctx, crs, serverStatus, fetchSize); err != nil {
 			return false, err
 		}
 		return false, cc.flush(ctx)
@@ -2404,43 +2409,27 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // binary specifies the way to dump data. It throws any error while dumping data.
 // serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
-func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
-	fetchedRows := rs.GetFetchedRows()
-
-	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
-	// and close ResultSet.
-	if len(fetchedRows) == 0 {
-		serverStatus &^= mysql.ServerStatusCursorExists
-		serverStatus |= mysql.ServerStatusLastRowSend
-		return cc.writeEOF(ctx, serverStatus)
-	}
-
-	// construct the rows sent to the client according to fetchSize.
-	var curRows []chunk.Row
-	if fetchSize < len(fetchedRows) {
-		curRows = fetchedRows[:fetchSize]
-		fetchedRows = fetchedRows[fetchSize:]
-	} else {
-		curRows = fetchedRows
-		fetchedRows = fetchedRows[:0]
-	}
-	rs.StoreFetchedRows(fetchedRows)
-
+func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs cursorResultSet, serverStatus uint16, fetchSize int) error {
+	var (
+		stmtDetail *execdetails.StmtExecDetails
+		err        error
+		start      time.Time
+	)
 	data := cc.alloc.AllocWithLen(4, 1024)
-	var stmtDetail *execdetails.StmtExecDetails
 	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
 		//nolint:forcetypeassert
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
-	var (
-		err   error
-		start time.Time
-	)
 	if stmtDetail != nil {
 		start = time.Now()
 	}
-	for _, row := range curRows {
+
+	iter := rs.GetRowContainerReader()
+	// send the rows to the client according to fetchSize.
+	for i := 0; i < fetchSize && iter.Current() != iter.End(); i++ {
+		row := iter.Current()
+
 		data = data[0:4]
 		data, err = dumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
 		if err != nil {
@@ -2449,16 +2438,30 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		if err = cc.writePacket(data); err != nil {
 			return err
 		}
+
+		iter.Next()
 	}
+	if iter.Error() != nil {
+		return iter.Error()
+	}
+
+	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
+	// and close ResultSet.
+	if iter.Current() == iter.End() {
+		serverStatus &^= mysql.ServerStatusCursorExists
+		serverStatus |= mysql.ServerStatusLastRowSend
+	}
+
+	// don't include the time consumed by `cl.OnFetchReturned()` in the `WriteSQLRespDuration`
 	if stmtDetail != nil {
 		stmtDetail.WriteSQLRespDuration += time.Since(start)
 	}
+
 	if cl, ok := rs.(fetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
-	if stmtDetail != nil {
-		start = time.Now()
-	}
+
+	start = time.Now()
 	err = cc.writeEOF(ctx, serverStatus)
 	if stmtDetail != nil {
 		stmtDetail.WriteSQLRespDuration += time.Since(start)
