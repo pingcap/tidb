@@ -20,18 +20,14 @@ import (
 	"runtime/trace"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"go.uber.org/zap"
 )
 
 // ReplaceExec represents a replace executor.
@@ -43,6 +39,9 @@ type ReplaceExec struct {
 // Close implements the Executor Close interface.
 func (e *ReplaceExec) Close() error {
 	e.setMessage()
+	if e.RuntimeStats() != nil && e.stats != nil {
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+	}
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
 	}
@@ -51,8 +50,8 @@ func (e *ReplaceExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *ReplaceExec) Open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, -1)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker = memory.NewTracker(e.ID(), -1)
+	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)
@@ -61,58 +60,9 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// removeRow removes the duplicate row and cleanup its keys in the key-value map,
-// but if the to-be-removed row equals to the to-be-added row, no remove or add things to do.
-func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle kv.Handle, r toBeCheckedRow) (bool, error) {
-	newRow := r.row
-	oldRow, err := getOldRow(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
-	if err != nil {
-		logutil.BgLogger().Error("get old row failed when replace",
-			zap.String("handle", handle.String()),
-			zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
-		if kv.IsErrNotFound(err) {
-			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
-		}
-		return false, err
-	}
-
-	rowUnchanged, err := e.EqualDatumsAsBinary(e.ctx.GetSessionVars().StmtCtx, oldRow, newRow)
-	if err != nil {
-		return false, err
-	}
-	if rowUnchanged {
-		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-		return true, nil
-	}
-
-	err = r.t.RemoveRecord(e.ctx, handle, oldRow)
-	if err != nil {
-		return false, err
-	}
-	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-	return false, nil
-}
-
-// EqualDatumsAsBinary compare if a and b contains the same datum values in binary collation.
-func (e *ReplaceExec) EqualDatumsAsBinary(sc *stmtctx.StatementContext, a []types.Datum, b []types.Datum) (bool, error) {
-	if len(a) != len(b) {
-		return false, nil
-	}
-	for i, ai := range a {
-		v, err := ai.Compare(sc, &b[i], collate.GetBinaryCollator())
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if v != 0 {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
 // replaceRow removes all duplicate rows for one row, then inserts it.
 func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
 	}
@@ -124,7 +74,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 		}
 
 		if _, err := txn.Get(ctx, r.handleKey.newKey); err == nil {
-			rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
+			rowUnchanged, err := e.removeRow(ctx, txn, handle, r, true)
 			if err != nil {
 				return err
 			}
@@ -169,18 +119,14 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 //  3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (bool, bool, error) {
 	for _, uk := range r.uniqueKeys {
-		val, err := txn.Get(ctx, uk.newKey)
+		_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
 		if err != nil {
-			if kv.IsErrNotFound(err) {
-				continue
-			}
 			return false, false, err
 		}
-		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
-		if err != nil {
-			return false, true, err
+		if handle == nil {
+			continue
 		}
-		rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
+		rowUnchanged, err := e.removeRow(ctx, txn, handle, r, true)
 		if err != nil {
 			return false, true, err
 		}
@@ -205,12 +151,12 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 
 	defer trace.StartRegion(ctx, "ReplaceExec").End()
 	// Get keys need to be checked.
-	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, newRows)
+	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.Ctx(), e.Table, newRows)
 	if err != nil {
 		return err
 	}
 
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
 	}
@@ -222,7 +168,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
-	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, txn)
+	setOptionForTopSQL(e.Ctx().GetSessionVars().StmtCtx, txn)
 	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
@@ -233,7 +179,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	if e.stats != nil {
 		e.stats.Prefetch = time.Since(prefetchStart)
 	}
-	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(newRows)))
+	e.Ctx().GetSessionVars().StmtCtx.AddRecordRows(uint64(len(newRows)))
 	for _, r := range toBeCheckedRows {
 		err = e.replaceRow(ctx, r)
 		if err != nil {
@@ -251,7 +197,7 @@ func (e *ReplaceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		ctx = context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)
 	}
 
-	if len(e.children) > 0 && e.children[0] != nil {
+	if !e.EmptyChildren() && e.Children(0) != nil {
 		return insertRowsFromSelect(ctx, e)
 	}
 	return insertRows(ctx, e)
@@ -259,7 +205,7 @@ func (e *ReplaceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // setMessage sets info message(ERR_INSERT_INFO) generated by REPLACE statement
 func (e *ReplaceExec) setMessage() {
-	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+	stmtCtx := e.Ctx().GetSessionVars().StmtCtx
 	numRecords := stmtCtx.RecordRows()
 	if e.SelectExec != nil || numRecords > 1 {
 		numWarnings := stmtCtx.WarningCount()
@@ -267,4 +213,19 @@ func (e *ReplaceExec) setMessage() {
 		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
 		stmtCtx.SetMessage(msg)
 	}
+}
+
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) GetFKChecks() []*FKCheckExec {
+	return e.fkChecks
+}
+
+// GetFKCascades implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) GetFKCascades() []*FKCascadeExec {
+	return e.fkCascades
+}
+
+// HasFKCascades implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) HasFKCascades() bool {
+	return len(e.fkCascades) > 0
 }

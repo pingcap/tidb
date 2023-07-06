@@ -23,172 +23,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/stretchr/testify/require"
 )
-
-func TestListPartitionPushDown(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database list_push_down")
-	tk.MustExec("use list_push_down")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
-	tk.MustExec(`create table tlist (a int) partition by list (a) (
-    partition p0 values in (0, 1, 2),
-    partition p1 values in (3, 4, 5))`)
-	tk.MustExec(`create table tcollist (a int) partition by list columns(a) (
-    partition p0 values in (0, 1, 2),
-    partition p1 values in (3, 4, 5))`)
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
-	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func TestListColVariousTypes(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database list_col_partition_types")
-	tk.MustExec("use list_col_partition_types")
-	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
-
-	tk.MustExec(`create table tint (a int) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`)
-	tk.MustExec(`create table tdate (a date) partition by list columns(a) (partition p0 values in ('2000-01-01', '2000-01-02'), partition p1 values in ('2000-01-03', '2000-01-04'))`)
-	tk.MustExec(`create table tstring (a varchar(32)) partition by list columns(a) (partition p0 values in ('a', 'b'), partition p1 values in ('c', 'd'))`)
-
-	err := tk.ExecToErr(`create table tdouble (a double) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not allowed")
-
-	err = tk.ExecToErr(`create table tdecimal (a decimal(30, 10)) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not allowed")
-
-	tk.MustExec(`insert into tint values (0), (1), (2), (3)`)
-	tk.MustExec(`insert into tdate values ('2000-01-01'), ('2000-01-02'), ('2000-01-03'), ('2000-01-04')`)
-	tk.MustExec(`insert into tstring values ('a'), ('b'), ('c'), ('d')`)
-	tk.MustExec(`analyze table tint`)
-	tk.MustExec(`analyze table tdate`)
-	tk.MustExec(`analyze table tstring`)
-
-	var input []string
-	var output []struct {
-		SQL     string
-		Results []string
-	}
-	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
-	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Results = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Results...))
-	}
-}
-
-func TestListPartitionPruning(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database list_partition_pruning")
-	tk.MustExec("use list_partition_pruning")
-	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
-	tk.MustExec(`create table tlist (a int) partition by list (a) (
-    partition p0 values in (0, 1, 2),
-    partition p1 values in (3, 4, 5),
-    partition p2 values in (6, 7, 8),
-    partition p3 values in (9, 10, 11))`)
-	tk.MustExec(`create table tcollist (a int) partition by list columns(a) (
-    partition p0 values in (0, 1, 2),
-    partition p1 values in (3, 4, 5),
-    partition p2 values in (6, 7, 8),
-    partition p3 values in (9, 10, 11))`)
-	tk.MustExec(`analyze table tlist`)
-	tk.MustExec(`analyze table tcollist`)
-
-	var input []string
-	var output []struct {
-		SQL         string
-		DynamicPlan []string
-		StaticPlan  []string
-	}
-	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
-	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-			output[i].DynamicPlan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-			output[i].StaticPlan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].DynamicPlan...))
-		tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].StaticPlan...))
-	}
-}
-
-func TestListPartitionFunctions(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database list_partition_pruning")
-	tk.MustExec("use list_partition_pruning")
-	tk.MustExec("set tidb_enable_list_partition = 1")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-
-	var input []string
-	var output []struct {
-		SQL     string
-		Results []string
-	}
-	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
-	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Results = nil
-			if strings.Contains(tt, "select") {
-				output[i].Results = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-			}
-		})
-
-		if strings.Contains(tt, "select") {
-			tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Results...))
-		} else {
-			tk.MustExec(tt)
-		}
-	}
-}
 
 func TestListPartitionOrderLimit(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -574,7 +415,7 @@ func TestListPartitionPrivilege(t *testing.T) {
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.SetSession(se)
 	tk.MustExec("create database list_partition_pri")
 	tk.MustExec("use list_partition_pri")
@@ -588,7 +429,7 @@ func TestListPartitionPrivilege(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	se, err = session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "priv_test", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "priv_test", Hostname: "%"}, nil, nil, nil))
 	tk1.SetSession(se)
 	tk1.MustExec(`use list_partition_pri`)
 	err = tk1.ExecToErr(`alter table tlist truncate partition p0`)
@@ -719,12 +560,10 @@ func TestListPartitionAutoIncre(t *testing.T) {
 	tk.MustExec("drop table if exists tlist")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
-	err := tk.ExecToErr(`create table tlist (a int, b int AUTO_INCREMENT) partition by list (a) (
+	tk.MustExec(`create table tlist1 (a int, b int AUTO_INCREMENT) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
     partition p2 values in (10, 11, 12, 13, 14))`)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "it must be defined as a key")
 
 	tk.MustExec(`create table tlist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
@@ -736,12 +575,10 @@ func TestListPartitionAutoIncre(t *testing.T) {
 	tk.MustExec(`insert into tlist (a) values (10)`)
 	tk.MustExec(`insert into tlist (a) values (1)`)
 
-	err = tk.ExecToErr(`create table tcollist (a int, b int AUTO_INCREMENT) partition by list columns (a) (
+	tk.MustExec(`create table tcollist1 (a int, b int AUTO_INCREMENT) partition by list columns (a) (
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
     partition p2 values in (10, 11, 12, 13, 14))`)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "it must be defined as a key")
 
 	tk.MustExec(`create table tcollist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
@@ -1458,12 +1295,12 @@ func TestRangeColumnsExpr(t *testing.T) {
 		"TableReader 1.14 root partition:p5,p12 data:Selection",
 		"└─Selection 1.14 cop[tikv]  in(rce.t.a, 4, 14), in(rce.t.b, NULL, 10)",
 		"  └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
-	tk.MustQuery(`select * from tref where a in (4,14) and b in (null,10)`).Check(testkit.Rows(
-		"4 10 3",
-		"14 10 4"))
-	tk.MustQuery(`select * from t where a in (4,14) and b in (null,10)`).Check(testkit.Rows(
-		"4 10 3",
-		"14 10 4"))
+	tk.MustQuery(`select * from tref where a in (4,14) and b in (null,10)`).Sort().Check(testkit.Rows(
+		"14 10 4",
+		"4 10 3"))
+	tk.MustQuery(`select * from t where a in (4,14) and b in (null,10)`).Sort().Check(testkit.Rows(
+		"14 10 4",
+		"4 10 3"))
 	tk.MustQuery(`explain format = 'brief' select * from t where a in (4,14) and (b in (11,10) OR b is null)`).Check(testkit.Rows(
 		"TableReader 3.43 root partition:p1,p5,p6,p11,p12 data:Selection",
 		"└─Selection 3.43 cop[tikv]  in(rce.t.a, 4, 14), or(in(rce.t.b, 11, 10), isnull(rce.t.b))",
@@ -1618,4 +1455,58 @@ func TestPartitionRangeColumnPruning(t *testing.T) {
 		`  └─TableFullScan 1.00 cop[tikv] table:t1 keep order:false`))
 	tk.MustQuery(`select * from t1 where a = 'a' AND c = 'd'`).Check(testkit.Rows("a <nil> d"))
 	tk.MustExec(`drop table t1`)
+}
+
+func TestPartitionProcessorWithUninitializedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(" create table q1(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));")
+	tk.MustExec(" create table q2(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));")
+
+	rows := [][]interface{}{
+		{"HashJoin"},
+		{"├─PartitionUnion(Build)"},
+		{"│ ├─TableReader"},
+		{"│ │ └─TableFullScan"},
+		{"│ └─TableReader"},
+		{"│   └─TableFullScan"},
+		{"└─PartitionUnion(Probe)"},
+		{"  ├─TableReader"},
+		{"  │ └─TableFullScan"},
+		{"  └─TableReader"},
+		{"    └─TableFullScan"},
+	}
+	tk.MustQuery("explain format=brief select * from q1,q2").CheckAt([]int{0}, rows)
+
+	tk.MustExec("analyze table q1")
+	tk.MustQuery("explain format=brief select * from q1,q2").CheckAt([]int{0}, rows)
+
+	tk.MustExec("analyze table q2")
+	rows = [][]interface{}{
+		{"HashJoin"},
+		{"├─TableReader(Build)"},
+		{"│ └─TableFullScan"},
+		{"└─TableReader(Probe)"},
+		{"  └─TableFullScan"},
+	}
+	tk.MustQuery("explain format=brief select * from q1,q2").CheckAt([]int{0}, rows)
+}
+
+func TestIssue42323(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database issue42323")
+	defer tk.MustExec("drop database issue42323")
+
+	tk.MustExec("use issue42323")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec(`CREATE TABLE t(col1 int(11) NOT NULL DEFAULT '0' ) PARTITION BY RANGE (FLOOR(col1))(
+			PARTITION p2021 VALUES LESS THAN (202200),
+			PARTITION p2022 VALUES LESS THAN (202300),
+			PARTITION p2023 VALUES LESS THAN (202400))`)
+	tk.MustExec("insert into t values(202303)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery(`select * from t where col1 = 202303`).Check(testkit.Rows("202303"))
+	tk.MustQuery(`select * from t where col1 = floor(202303)`).Check(testkit.Rows("202303"))
 }

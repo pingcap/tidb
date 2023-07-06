@@ -113,8 +113,17 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
-		buffer.WriteString(", stats:pseudo")
+	if !normalized {
+		if p.usedStatsInfo != nil {
+			str := p.usedStatsInfo.FormatForExplain()
+			if len(str) > 0 {
+				buffer.WriteString(", ")
+				buffer.WriteString(str)
+			}
+		} else if p.stats.StatsVersion == statistics.PseudoVersion {
+			// This branch is not needed in fact, we add this to prevent test result changes under planner/cascades/
+			buffer.WriteString(", stats:pseudo")
+		}
 	}
 	return buffer.String()
 }
@@ -204,16 +213,47 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			}
 		}
 	}
+	if p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
+		buffer.WriteString("pushed down filter:")
+		if len(p.lateMaterializationFilterCondition) > 0 {
+			if normalized {
+				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.lateMaterializationFilterCondition))
+			} else {
+				buffer.Write(expression.SortedExplainExpressionList(p.lateMaterializationFilterCondition))
+			}
+		} else {
+			buffer.WriteString("empty")
+		}
+		buffer.WriteString(", ")
+	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
-		buffer.WriteString(", stats:pseudo")
+	if !normalized {
+		if p.usedStatsInfo != nil {
+			str := p.usedStatsInfo.FormatForExplain()
+			if len(str) > 0 {
+				buffer.WriteString(", ")
+				buffer.WriteString(str)
+			}
+		} else if p.stats.StatsVersion == statistics.PseudoVersion {
+			// This branch is not needed in fact, we add this to prevent test result changes under planner/cascades/
+			buffer.WriteString(", stats:pseudo")
+		}
 	}
 	if p.StoreType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		buffer.WriteString(", PartitionTableScan:true")
+	}
+	if len(p.runtimeFilterList) > 0 {
+		buffer.WriteString(", runtime filter:")
+		for i, runtimeFilter := range p.runtimeFilterList {
+			if i != 0 {
+				buffer.WriteString(", ")
+			}
+			buffer.WriteString(runtimeFilter.ExplainInfo(false))
+		}
 	}
 	return buffer.String()
 }
@@ -247,7 +287,13 @@ func (p *PhysicalTableScan) isFullScan() bool {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTableReader) ExplainInfo() string {
-	return "data:" + p.tablePlan.ExplainID().String()
+	tablePlanInfo := "data:" + p.tablePlan.ExplainID().String()
+
+	if p.ReadReqType == MPP {
+		return fmt.Sprintf("MppVersion: %d, %s", p.ctx.GetSessionVars().ChooseMppVersion(), tablePlanInfo)
+	}
+
+	return tablePlanInfo
 }
 
 // ExplainNormalizedInfo implements Plan interface.
@@ -285,8 +331,21 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (*PhysicalIndexMergeReader) ExplainInfo() string {
-	return ""
+func (p *PhysicalIndexMergeReader) ExplainInfo() string {
+	var str strings.Builder
+	if p.IsIntersectionType {
+		str.WriteString("type: intersection")
+	} else {
+		str.WriteString("type: union")
+	}
+	if p.PushedLimit != nil {
+		str.WriteString(", limit embedded(offset:")
+		str.WriteString(strconv.FormatUint(p.PushedLimit.Offset, 10))
+		str.WriteString(", count:")
+		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
+		str.WriteString(")")
+	}
+	return str.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -317,6 +376,30 @@ func (p *PhysicalProjection) ExplainInfo() string {
 	return exprStr
 }
 
+func (p *PhysicalExpand) explainInfoV2() string {
+	sb := strings.Builder{}
+	for i, oneL := range p.LevelExprs {
+		if i == 0 {
+			sb.WriteString("level-projection:")
+			sb.WriteString("[")
+			sb.WriteString(expression.ExplainExpressionList(oneL, p.schema))
+			sb.WriteString("]")
+		} else {
+			sb.WriteString(",[")
+			sb.WriteString(expression.ExplainExpressionList(oneL, p.schema))
+			sb.WriteString("]")
+		}
+	}
+	sb.WriteString("; schema: [")
+	colStrs := make([]string, 0, len(p.schema.Columns))
+	for _, col := range p.schema.Columns {
+		colStrs = append(colStrs, col.String())
+	}
+	sb.WriteString(strings.Join(colStrs, ","))
+	sb.WriteString("]")
+	return sb.String()
+}
+
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainNormalizedInfo() string {
 	return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
@@ -335,18 +418,35 @@ func (p *PhysicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	buffer = explainByItems(buffer, p.ByItems)
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLimit) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	if len(p.GetPartitionBy()) > 0 {
+		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
+		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	} else {
+		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *PhysicalExpand) ExplainInfo() string {
+	if len(p.LevelExprs) > 0 {
+		return p.explainInfoV2()
+	}
 	var str strings.Builder
-	str.WriteString("offset:")
-	str.WriteString(strconv.FormatUint(p.Offset, 10))
-	str.WriteString(", count:")
-	str.WriteString(strconv.FormatUint(p.Count, 10))
+	str.WriteString("group set num:")
+	str.WriteString(strconv.FormatInt(int64(len(p.GroupingSets)), 10))
+	str.WriteString(", groupingID:")
+	str.WriteString(p.GroupingIDCol.String())
+	str.WriteString(", ")
+	str.WriteString(p.GroupingSets.String())
 	return str.String()
 }
 
@@ -381,6 +481,9 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 		if i+1 < len(p.AggFuncs) {
 			builder.WriteString(", ")
 		}
+	}
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		fmt.Fprintf(builder, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 	return builder.String()
 }
@@ -540,6 +643,20 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 		buffer.WriteString(", other cond:")
 		buffer.Write(sortedExplainExpressionList(p.OtherConditions))
 	}
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
+	}
+
+	// for runtime filter
+	if len(p.runtimeFilterList) > 0 {
+		buffer.WriteString(", runtime filter:")
+		for i, runtimeFilter := range p.runtimeFilterList {
+			if i != 0 {
+				buffer.WriteString(", ")
+			}
+			buffer.WriteString(runtimeFilter.ExplainInfo(true))
+		}
+	}
 	return buffer.String()
 }
 
@@ -586,10 +703,39 @@ func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
 }
 
+// explainPartitionBy: produce text for p.PartitionBy. Common for window functions and TopN.
+func explainPartitionBy(buffer *bytes.Buffer, partitionBy []property.SortItem, normalized bool) *bytes.Buffer {
+	if len(partitionBy) > 0 {
+		buffer.WriteString("partition by ")
+		for i, item := range partitionBy {
+			if normalized {
+				fmt.Fprintf(buffer, "%s", item.Col.ExplainNormalizedInfo())
+			} else {
+				fmt.Fprintf(buffer, "%s", item.Col.ExplainInfo())
+			}
+			if i+1 < len(partitionBy) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	return buffer
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	buffer = explainByItems(buffer, p.ByItems)
+	if len(p.GetPartitionBy()) > 0 {
+		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
+		buffer.WriteString(" ")
+	}
+	if len(p.ByItems) > 0 {
+		// Add order by text to separate partition by. Otherwise, do not add order by to
+		// avoid breaking existing TopN tests.
+		if len(p.GetPartitionBy()) > 0 {
+			buffer.WriteString("order by ")
+		}
+		buffer = explainByItems(buffer, p.ByItems)
+	}
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	return buffer.String()
 }
@@ -597,7 +743,18 @@ func (p *PhysicalTopN) ExplainInfo() string {
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	buffer := bytes.NewBufferString("")
-	buffer = explainNormalizedByItems(buffer, p.ByItems)
+	if len(p.GetPartitionBy()) > 0 {
+		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), true)
+		buffer.WriteString(" ")
+	}
+	if len(p.ByItems) > 0 {
+		// Add order by text to separate partition by. Otherwise, do not add order by to
+		// avoid breaking existing TopN tests.
+		if len(p.GetPartitionBy()) > 0 {
+			buffer.WriteString("order by ")
+		}
+		buffer = explainNormalizedByItems(buffer, p.ByItems)
+	}
 	return buffer.String()
 }
 
@@ -634,14 +791,8 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	formatWindowFuncDescs(buffer, p.WindowFuncDescs, p.schema)
 	buffer.WriteString(" over(")
 	isFirst := true
+	buffer = explainPartitionBy(buffer, p.PartitionBy, false)
 	if len(p.PartitionBy) > 0 {
-		buffer.WriteString("partition by ")
-		for i, item := range p.PartitionBy {
-			fmt.Fprintf(buffer, "%s", item.Col.ExplainInfo())
-			if i+1 < len(p.PartitionBy) {
-				buffer.WriteString(", ")
-			}
-		}
 		isFirst = false
 	}
 	if len(p.OrderBy) > 0 {
@@ -678,7 +829,7 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	}
 	buffer.WriteString(")")
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 	return buffer.String()
 }
@@ -796,6 +947,11 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		fmt.Fprintf(buffer, "Broadcast")
 	case tipb.ExchangeType_Hash:
 		fmt.Fprintf(buffer, "HashPartition")
+	}
+	if p.CompressionMode != kv.ExchangeCompressionModeNONE {
+		fmt.Fprintf(buffer, ", Compression: %s", p.CompressionMode.Name())
+	}
+	if p.ExchangeType == tipb.ExchangeType_Hash {
 		fmt.Fprintf(buffer, ", Hash Cols: %s", property.ExplainColumnList(p.HashCols))
 	}
 	if len(p.Tasks) > 0 {
@@ -809,7 +965,7 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		fmt.Fprintf(buffer, "]")
 	}
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 	return buffer.String()
 }
@@ -870,6 +1026,10 @@ func (p *LogicalSort) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (lt *LogicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
+	buffer = explainPartitionBy(buffer, lt.GetPartitionBy(), false)
+	if len(lt.GetPartitionBy()) > 0 && len(lt.ByItems) > 0 {
+		buffer.WriteString("order by ")
+	}
 	buffer = explainByItems(buffer, lt.ByItems)
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", lt.Offset, lt.Count)
 	return buffer.String()
@@ -877,12 +1037,14 @@ func (lt *LogicalTopN) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalLimit) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("offset:")
-	str.WriteString(strconv.FormatUint(p.Offset, 10))
-	str.WriteString(", count:")
-	str.WriteString(strconv.FormatUint(p.Count, 10))
-	return str.String()
+	buffer := bytes.NewBufferString("")
+	if len(p.GetPartitionBy()) > 0 {
+		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
+		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	} else {
+		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
+	}
+	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.

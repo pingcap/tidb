@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strconv"
@@ -466,7 +467,7 @@ func parseTSFromNumberOrTime(s *SessionVars, sVal string) (uint64, error) {
 		return tso, nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -481,7 +482,7 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 		return nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return err
 	}
@@ -531,6 +532,15 @@ func collectAllowFuncName4ExpressionIndex() string {
 	return strings.Join(str, ", ")
 }
 
+func updatePasswordValidationLength(s *SessionVars, length int32) error {
+	err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(context.Background(), ValidatePasswordLength, strconv.FormatInt(int64(length), 10), false)
+	if err != nil {
+		return err
+	}
+	PasswordValidationLength.Store(length)
+	return nil
+}
+
 // GAFunction4ExpressionIndex stores functions GA for expression index.
 var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.Lower:      {},
@@ -563,4 +573,42 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.JSONDepth:         {},
 	ast.JSONKeys:          {},
 	ast.JSONLength:        {},
+}
+
+var analyzeSkipAllowedTypes = map[string]struct{}{
+	"json":       {},
+	"text":       {},
+	"mediumtext": {},
+	"longtext":   {},
+	"blob":       {},
+	"mediumblob": {},
+	"longblob":   {},
+}
+
+// ValidAnalyzeSkipColumnTypes makes validation for tidb_analyze_skip_column_types.
+func ValidAnalyzeSkipColumnTypes(val string) (string, error) {
+	if val == "" {
+		return "", nil
+	}
+	items := strings.Split(strings.ToLower(val), ",")
+	columnTypes := make([]string, 0, len(items))
+	for _, item := range items {
+		columnType := strings.TrimSpace(item)
+		if _, ok := analyzeSkipAllowedTypes[columnType]; !ok {
+			return val, ErrWrongValueForVar.GenWithStackByArgs(TiDBAnalyzeSkipColumnTypes, val)
+		}
+		columnTypes = append(columnTypes, columnType)
+	}
+	return strings.Join(columnTypes, ","), nil
+}
+
+// ParseAnalyzeSkipColumnTypes converts tidb_analyze_skip_column_types to the map form.
+func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
+	skipTypes := make(map[string]struct{})
+	for _, columnType := range strings.Split(strings.ToLower(val), ",") {
+		if _, ok := analyzeSkipAllowedTypes[columnType]; ok {
+			skipTypes[columnType] = struct{}{}
+		}
+	}
+	return skipTypes
 }

@@ -20,14 +20,20 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -47,9 +53,14 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/sem"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -190,6 +201,8 @@ const (
 	TableMemoryUsage = "MEMORY_USAGE"
 	// TableMemoryUsageOpsHistory is the memory control operators history.
 	TableMemoryUsageOpsHistory = "MEMORY_USAGE_OPS_HISTORY"
+	// TableResourceGroups is the metadata of resource groups.
+	TableResourceGroups = "RESOURCE_GROUPS"
 )
 
 const (
@@ -296,6 +309,7 @@ var tableIDMap = map[string]int64{
 	TableMemoryUsageOpsHistory:           autoid.InformationSchemaDBID + 85,
 	ClusterTableMemoryUsage:              autoid.InformationSchemaDBID + 86,
 	ClusterTableMemoryUsageOpsHistory:    autoid.InformationSchemaDBID + 87,
+	TableResourceGroups:                  autoid.InformationSchemaDBID + 88,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -812,6 +826,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
+	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -890,6 +905,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogBackoffTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogWriteSQLRespTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogResultRows, tp: mysql.TypeLonglong, size: 22},
+	{name: variable.SlowLogWarnings, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogBackoffDetail, tp: mysql.TypeVarchar, size: 4096},
 	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
@@ -982,6 +998,9 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "FAIL_REASON", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 512},
 	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "REMAINING_SECONDS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22, decimal: 6},
+	{name: "ESTIMATED_TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 }
 
 // TableTiKVRegionStatusCols is TiKV region status mem table columns.
@@ -1213,7 +1232,7 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "END_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
-	{name: "QUERY", tp: mysql.TypeVarchar, size: 64},
+	{name: "QUERY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
 var tableSequencesCols = []columnInfo{
@@ -1323,6 +1342,9 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.PlanDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
 	{name: stmtsummary.PlanStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled execution plan"},
 	{name: stmtsummary.BinaryPlan, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled binary plan"},
+	{name: stmtsummary.Charset, tp: mysql.TypeVarchar, size: 64, comment: "Sampled charset"},
+	{name: stmtsummary.Collation, tp: mysql.TypeVarchar, size: 64, comment: "Sampled collation"},
+	{name: stmtsummary.PlanHint, tp: mysql.TypeVarchar, size: 64, comment: "Sampled plan hint"},
 }
 
 var tableStorageStatsCols = []columnInfo{
@@ -1472,6 +1494,7 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: txninfo.DBStr, tp: mysql.TypeVarchar, size: 64, comment: "The schema this transaction works on"},
 	{name: txninfo.AllSQLDigestsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
 	{name: txninfo.RelatedTableIDsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the table IDs that the transaction has accessed"},
+	{name: txninfo.WaitingTimeStr, tp: mysql.TypeDouble, size: 22, comment: "Current lock waiting time"},
 }
 
 var tableDeadlocksCols = []columnInfo{
@@ -1574,6 +1597,14 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 	{name: "SQL_TEXT", tp: mysql.TypeVarchar, size: 256},
 }
 
+var tableResourceGroupsCols = []columnInfo{
+	{name: "NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
+	{name: "RU_PER_SEC", tp: mysql.TypeVarchar, size: 21},
+	{name: "PRIORITY", tp: mysql.TypeVarchar, size: 6},
+	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 3},
+	{name: "QUERY_LIMIT", tp: mysql.TypeVarchar, size: 256},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1615,6 +1646,11 @@ const (
 	ForeignKeyType = "FOREIGN KEY"
 )
 
+const (
+	// TiFlashWrite is the TiFlash write node in disaggregated mode.
+	TiFlashWrite = "tiflash_write"
+)
+
 // ServerInfo represents the basic server information of single cluster component
 type ServerInfo struct {
 	ServerType     string
@@ -1624,6 +1660,7 @@ type ServerInfo struct {
 	GitHash        string
 	StartTimestamp int64
 	ServerID       uint64
+	EngineRole     string
 }
 
 func (s *ServerInfo) isLoopBackOrUnspecifiedAddr(addr string) bool {
@@ -1711,8 +1748,8 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
 			ServerType:     "tidb",
-			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
-			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
+			Address:        net.JoinHostPort(node.IP, strconv.Itoa(int(node.Port))),
+			StatusAddr:     net.JoinHostPort(node.IP, strconv.Itoa(int(node.StatusPort))),
 			Version:        FormatTiDBVersion(node.Version, isDefaultVersion),
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
@@ -1826,6 +1863,24 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
+func isTiFlashStore(store *metapb.Store) bool {
+	for _, label := range store.Labels {
+		if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
+			return true
+		}
+	}
+	return false
+}
+
+func isTiFlashWriteNode(store *metapb.Store) bool {
+	for _, label := range store.Labels {
+		if label.GetKey() == placement.EngineRoleLabelKey && label.GetValue() == placement.EngineRoleLabelWrite {
+			return true
+		}
+	}
+	return false
+}
+
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
 func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	failpoint.Inject("mockStoreServerInfo", func(val failpoint.Value) {
@@ -1845,16 +1900,6 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			failpoint.Return(servers, nil)
 		}
 	})
-
-	isTiFlashStore := func(store *metapb.Store) bool {
-		isTiFlash := false
-		for _, label := range store.Labels {
-			if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
-				isTiFlash = true
-			}
-		}
-		return isTiFlash
-	}
 
 	store := ctx.GetStore()
 	// Get TiKV servers info.
@@ -1887,7 +1932,10 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		} else {
 			tp = tikv.GetStoreTypeByMeta(store).Name()
 		}
-
+		var engineRole string
+		if isTiFlashWriteNode(store) {
+			engineRole = placement.EngineRoleLabelWrite
+		}
 		servers = append(servers, ServerInfo{
 			ServerType:     tp,
 			Address:        store.Address,
@@ -1895,6 +1943,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			Version:        FormatStoreServerVersion(store.Version),
 			GitHash:        store.GitHash,
 			StartTimestamp: store.StartTimestamp,
+			EngineRole:     engineRole,
 		})
 	}
 	return servers, nil
@@ -1956,6 +2005,37 @@ func GetDataFromSessionVariables(ctx context.Context, sctx sessionctx.Context) (
 		}
 		row := types.MakeDatums(v.Name, value)
 		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// GetDataFromSessionConnectAttrs produces the rows for the session_connect_attrs table.
+func GetDataFromSessionConnectAttrs(sctx sessionctx.Context) ([][]types.Datum, error) {
+	sm := sctx.GetSessionManager()
+	if sm == nil {
+		return nil, nil
+	}
+	allAttrs := sm.GetConAttrs()
+	rows := make([][]types.Datum, 0, len(allAttrs)*10) // 10 Attributes per connection
+	for pid, attrs := range allAttrs {                 // Note: PID is not ordered.
+		// Sorts the attributes by key and gives ORDINAL_POSITION based on this. This is needed as we didn't store the
+		// ORDINAL_POSITION and a map doesn't have a guaranteed sort order. This is needed to keep the ORDINAL_POSITION
+		// stable over multiple queries.
+		attrnames := make([]string, 0, len(attrs))
+		for attrname := range attrs {
+			attrnames = append(attrnames, attrname)
+		}
+		sort.Strings(attrnames)
+
+		for ord, attrkey := range attrnames {
+			row := types.MakeDatums(
+				pid,
+				attrkey,
+				attrs[attrkey],
+				ord,
+			)
+			rows = append(rows, row)
+		}
 	}
 	return rows, nil
 }
@@ -2036,6 +2116,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableUserAttributes:                     tableUserAttributesCols,
 	TableMemoryUsage:                        tableMemoryUsageCols,
 	TableMemoryUsageOpsHistory:              tableMemoryUsageOpsHistoryCols,
+	TableResourceGroups:                     tableResourceGroupsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2123,7 +2204,7 @@ func (it *infoschemaTable) UpdateRecord(gctx context.Context, ctx sessionctx.Con
 
 // Allocators implements table.Table Allocators interface.
 func (it *infoschemaTable) Allocators(_ sessionctx.Context) autoid.Allocators {
-	return nil
+	return autoid.Allocators{}
 }
 
 // Meta implements table.Table Meta interface.
@@ -2139,6 +2220,11 @@ func (it *infoschemaTable) GetPhysicalID() int64 {
 // Type implements table.Table Type interface.
 func (it *infoschemaTable) Type() table.Type {
 	return it.tp
+}
+
+// GetPartitionedTable implements table.Table GetPartitionedTable interface.
+func (it *infoschemaTable) GetPartitionedTable() table.PartitionedTable {
+	return nil
 }
 
 // VirtualTable is a dummy table.Table implementation.
@@ -2206,7 +2292,7 @@ func (vt *VirtualTable) UpdateRecord(ctx context.Context, sctx sessionctx.Contex
 
 // Allocators implements table.Table Allocators interface.
 func (vt *VirtualTable) Allocators(_ sessionctx.Context) autoid.Allocators {
-	return nil
+	return autoid.Allocators{}
 }
 
 // Meta implements table.Table Meta interface.
@@ -2222,4 +2308,143 @@ func (vt *VirtualTable) GetPhysicalID() int64 {
 // Type implements table.Table Type interface.
 func (vt *VirtualTable) Type() table.Type {
 	return table.VirtualTable
+}
+
+// GetTiFlashServerInfo returns all TiFlash server infos
+func GetTiFlashServerInfo(sctx sessionctx.Context) ([]ServerInfo, error) {
+	if config.GetGlobalConfig().DisaggregatedTiFlash {
+		return nil, table.ErrUnsupportedOp
+	}
+	serversInfo, err := GetStoreServerInfo(sctx)
+	if err != nil {
+		return nil, err
+	}
+	serversInfo = FilterClusterServerInfo(serversInfo, set.NewStringSet(kv.TiFlash.Name()), set.NewStringSet())
+	return serversInfo, nil
+}
+
+// FetchClusterServerInfoWithoutPrivilegeCheck fetches cluster server information
+func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessionctx.Context, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) ([][]types.Datum, error) {
+	type result struct {
+		idx  int
+		rows [][]types.Datum
+		err  error
+	}
+	wg := sync.WaitGroup{}
+	ch := make(chan result, len(serversInfo))
+	infoTp := serverInfoType
+	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
+	for i, srv := range serversInfo {
+		address := srv.Address
+		remote := address
+		if srv.ServerType == "tidb" {
+			remote = srv.StatusAddr
+		}
+		wg.Add(1)
+		go func(index int, remote, address, serverTP string) {
+			util.WithRecovery(func() {
+				defer wg.Done()
+				items, err := getServerInfoByGRPC(ctx, remote, infoTp)
+				if err != nil {
+					ch <- result{idx: index, err: err}
+					return
+				}
+				partRows := serverInfoItemToRows(items, serverTP, address)
+				ch <- result{idx: index, rows: partRows}
+			}, nil)
+		}(i, remote, address, srv.ServerType)
+	}
+	wg.Wait()
+	close(ch)
+	// Keep the original order to make the result more stable
+	var results []result //nolint: prealloc
+	for result := range ch {
+		if result.err != nil {
+			if recordWarningInStmtCtx {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+			} else {
+				log.Warn(result.err.Error())
+			}
+			continue
+		}
+		results = append(results, result)
+	}
+	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
+	for _, result := range results {
+		finalRows = append(finalRows, result.rows...)
+	}
+	return finalRows, nil
+}
+
+func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {
+	rows := make([][]types.Datum, 0, len(items))
+	for _, v := range items {
+		for _, item := range v.Pairs {
+			row := types.MakeDatums(
+				tp,
+				addr,
+				v.Tp,
+				v.Name,
+				item.Key,
+				item.Value,
+			)
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
+	security := config.GetGlobalConfig().Security
+	if len(security.ClusterSSLCA) != 0 {
+		clusterSecurity := security.ClusterSecurity()
+		tlsConfig, err := clusterSecurity.ToTLSConfig()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
+	}
+	conn, err := grpc.Dial(address, opt)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			log.Error("close grpc connection error", zap.Error(err))
+		}
+	}()
+
+	cli := diagnosticspb.NewDiagnosticsClient(conn)
+	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
+	defer cancel()
+	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
+	if err != nil {
+		return nil, err
+	}
+	return r.Items, nil
+}
+
+// FilterClusterServerInfo filters serversInfo by nodeTypes and addresses
+func FilterClusterServerInfo(serversInfo []ServerInfo, nodeTypes, addresses set.StringSet) []ServerInfo {
+	if len(nodeTypes) == 0 && len(addresses) == 0 {
+		return serversInfo
+	}
+
+	filterServers := make([]ServerInfo, 0, len(serversInfo))
+	for _, srv := range serversInfo {
+		// Skip some node type which has been filtered in WHERE clause
+		// e.g: SELECT * FROM cluster_config WHERE type='tikv'
+		if len(nodeTypes) > 0 && !nodeTypes.Exist(srv.ServerType) {
+			continue
+		}
+		// Skip some node address which has been filtered in WHERE clause
+		// e.g: SELECT * FROM cluster_config WHERE address='192.16.8.12:2379'
+		if len(addresses) > 0 && !addresses.Exist(srv.Address) {
+			continue
+		}
+		filterServers = append(filterServers, srv)
+	}
+	return filterServers
 }

@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit/testenv"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,6 +56,8 @@ type TestKit struct {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
+	require.True(t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
+	testenv.SetGOMAXPROCSForTest()
 	tk := &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
@@ -69,10 +73,10 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		mockSm, ok := sm.(*MockSessionManager)
 		if ok {
 			mockSm.mu.Lock()
-			if mockSm.conn == nil {
-				mockSm.conn = make(map[uint64]session.Session)
+			if mockSm.Conn == nil {
+				mockSm.Conn = make(map[uint64]session.Session)
 			}
-			mockSm.conn[tk.session.GetSessionVars().ConnectionID] = tk.session
+			mockSm.Conn[tk.session.GetSessionVars().ConnectionID] = tk.session
 			mockSm.mu.Unlock()
 		}
 		tk.session.SetSessionManager(sm)
@@ -119,7 +123,8 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 			tk.alloc.Reset()
 		}
 	}()
-	tk.MustExecWithContext(context.Background(), sql, args...)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	tk.MustExecWithContext(ctx, sql, args...)
 }
 
 // MustExecWithContext executes a sql statement and asserts nil error.
@@ -142,6 +147,22 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 		}
 	}()
 	return tk.MustQueryWithContext(context.Background(), sql, args...)
+}
+
+// EventuallyMustQueryAndCheck query the statements and assert that
+// result rows.lt will equal the expected results in waitFor time, periodically checking equality each tick.
+// Note: retry can't ignore error of the statements. If statements returns error, it will break out.
+func (tk *TestKit) EventuallyMustQueryAndCheck(sql string, args []interface{},
+	expected [][]interface{}, waitFor time.Duration, tick time.Duration) {
+	defer func() {
+		if tk.alloc != nil {
+			tk.alloc.Reset()
+		}
+	}()
+	tk.require.Eventually(func() bool {
+		res := tk.MustQueryWithContext(context.Background(), sql, args...)
+		return res.Equal(expected)
+	}, waitFor, tick)
 }
 
 // MustQueryWithContext query the statements and returns result rows.
@@ -231,6 +252,29 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+// HasTiFlashPlan checks if the result execution plan contains TiFlash plan.
+func (tk *TestKit) HasTiFlashPlan(sql string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][2], "tiflash") {
+			return true
+		}
+	}
+	return false
+}
+
+// HasPlanForLastExecution checks if the execution plan of the last execution contains specific plan.
+func (tk *TestKit) HasPlanForLastExecution(plan string) bool {
+	connID := tk.session.GetSessionVars().ConnectionID
+	rs := tk.MustQuery(fmt.Sprintf("explain for connection %d", connID))
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], plan) {
+			return true
+		}
+	}
+	return false
+}
+
 // HasKeywordInOperatorInfo checks if the result execution plan contains specific keyword in the operator info.
 func (tk *TestKit) HasKeywordInOperatorInfo(sql string, keyword string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
@@ -265,7 +309,8 @@ func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
 
 // Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	return tk.ExecWithContext(context.Background(), sql, args...)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	return tk.ExecWithContext(ctx, sql, args...)
 }
 
 // ExecWithContext executes a sql statement using the prepared stmt API

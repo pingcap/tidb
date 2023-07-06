@@ -62,8 +62,7 @@ func TestCreateSequence(t *testing.T) {
 	// test unsupported table option in sequence.
 	tk.MustGetErrCode("create sequence seq CHARSET=utf8", mysql.ErrSequenceUnsupportedTableOption)
 
-	_, err := tk.Exec("create sequence seq comment=\"test\"")
-	require.NoError(t, err)
+	tk.MustExec("create sequence seq comment=\"test\"")
 
 	sequenceTable := external.GetTableByName(t, tk, "test", "seq")
 
@@ -83,7 +82,7 @@ func TestCreateSequence(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil, nil))
 	tk1.SetSession(se)
 
 	// grant the myuser the access to database test.
@@ -163,7 +162,7 @@ func TestDropSequence(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil, nil))
 	tk1.SetSession(se)
 
 	// grant the myuser the access to database test.
@@ -197,7 +196,7 @@ func TestShowCreateSequence(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil, nil))
 	tk1.SetSession(se)
 
 	// Grant the myuser the access to table t in database test, but sequence seq.
@@ -910,7 +909,7 @@ func TestSequenceFunctionPrivilege(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil, nil))
 	tk1.SetSession(se)
 
 	// grant the myuser the create access to the sequence.
@@ -1103,7 +1102,7 @@ func TestAlterSequencePrivilege(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil, nil))
 	tk1.SetSession(se)
 
 	// grant the myuser the access to database test.

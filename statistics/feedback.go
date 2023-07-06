@@ -575,7 +575,7 @@ func (b *BucketFeedback) splitBucket(newNumBkts int, totalCount float64, originB
 
 // getOverlapFraction gets the overlap fraction of feedback and bucket range. In order to get the bucket count, it also
 // returns the ratio between bucket fraction and feedback fraction.
-func getOverlapFraction(fb Feedback, bkt bucket) (float64, float64) {
+func getOverlapFraction(fb Feedback, bkt bucket) (overlap, ratio float64) {
 	datums := make([]types.Datum, 0, 4)
 	datums = append(datums, *fb.Lower, *fb.Upper)
 	datums = append(datums, *bkt.Lower, *bkt.Upper)
@@ -588,7 +588,7 @@ func getOverlapFraction(fb Feedback, bkt bucket) (float64, float64) {
 	fbUpper := calcFraction4Datums(minValue, maxValue, fb.Upper)
 	bktLower := calcFraction4Datums(minValue, maxValue, bkt.Lower)
 	bktUpper := calcFraction4Datums(minValue, maxValue, bkt.Upper)
-	ratio := (bktUpper - bktLower) / (fbUpper - fbLower)
+	ratio = (bktUpper - bktLower) / (fbUpper - fbLower)
 	// full overlap
 	if fbLower <= bktLower && bktUpper <= fbUpper {
 		return bktUpper - bktLower, ratio
@@ -597,12 +597,13 @@ func getOverlapFraction(fb Feedback, bkt bucket) (float64, float64) {
 		return fbUpper - fbLower, ratio
 	}
 	// partial overlap
-	overlap := math.Min(bktUpper-fbLower, fbUpper-bktLower)
+	overlap = math.Min(bktUpper-fbLower, fbUpper-bktLower)
 	return overlap, ratio
 }
 
 // mergeFullyContainedFeedback merges the max fraction of non-overlapped feedbacks that are fully contained in the bucket.
-func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContext, bkt bucket) (float64, float64, int64, bool) {
+func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContext, bkt bucket) (
+	sumFraction, sumCount float64, ndv int64, ok bool) {
 	feedbacks := make([]Feedback, 0, len(b.feedback))
 	// Get all the fully contained feedbacks.
 	for _, fb := range b.feedback {
@@ -623,10 +624,6 @@ func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContex
 	if !ok {
 		return 0, 0, 0, false
 	}
-	var (
-		sumFraction, sumCount float64
-		ndv                   int64
-	)
 	for _, fb := range sortedFBs {
 		fraction, _ := getOverlapFraction(fb, bkt)
 		sumFraction += fraction
@@ -1040,21 +1037,6 @@ func SplitFeedbackByQueryType(feedbacks []Feedback) ([]Feedback, []Feedback) {
 		}
 	}
 	return eqFB, ranFB
-}
-
-// CleanRangeFeedbackByTopN will not update the part containing the TopN.
-func CleanRangeFeedbackByTopN(feedbacks []Feedback, topN *TopN) []Feedback {
-	for i := len(feedbacks) - 1; i >= 0; i-- {
-		lIdx, lMatch := topN.LowerBound(feedbacks[i].Lower.GetBytes())
-		rIdx, _ := topN.LowerBound(feedbacks[i].Upper.GetBytes())
-		// If the LowerBound return the same result for the range's upper bound and lower bound and the lower one isn't matched,
-		// we can indicate that no top-n overlaps the feedback's ranges.
-		if lIdx == rIdx && !lMatch {
-			continue
-		}
-		feedbacks = append(feedbacks[:i], feedbacks[i+1:]...)
-	}
-	return feedbacks
 }
 
 // setNextValue sets the next value for the given datum. For types like float,

@@ -30,6 +30,7 @@ go_test(
     ],
     flaky = True,
     importpath = "github.com/pingcap/tidb/br/pkg/lightning/log_test",
+    shard_count = 4,
     deps = [
         ":log",
         "@com_github_stretchr_testify//require",

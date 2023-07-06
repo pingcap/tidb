@@ -114,26 +114,25 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 	for i := 0; i < l-1; i += 2 {
 		expr.GetArgs()[i], isDeferred = foldConstant(args[i])
 		isDeferredConst = isDeferredConst || isDeferred
-		if _, isConst := expr.GetArgs()[i].(*Constant); isConst {
-			// If the condition is const and true, and the previous conditions
-			// has no expr, then the folded execution body is returned, otherwise
-			// the arguments of the casewhen are folded and replaced.
-			val, isNull, err := args[i].EvalInt(expr.GetCtx(), chunk.Row{})
-			if err != nil {
-				return expr, false
-			}
-			if val != 0 && !isNull {
-				foldedExpr, isDeferred := foldConstant(args[i+1])
-				isDeferredConst = isDeferredConst || isDeferred
-				if _, isConst := foldedExpr.(*Constant); isConst {
-					foldedExpr.GetType().SetDecimal(expr.GetType().GetDecimal())
-					return foldedExpr, isDeferredConst
-				}
-				return foldedExpr, isDeferredConst
-			}
-		} else {
+		if _, isConst := expr.GetArgs()[i].(*Constant); !isConst {
 			// for no-const, here should return directly, because the following branches are unknown to be run or not
 			return expr, false
+		}
+		// If the condition is const and true, and the previous conditions
+		// has no expr, then the folded execution body is returned, otherwise
+		// the arguments of the casewhen are folded and replaced.
+		val, isNull, err := args[i].EvalInt(expr.GetCtx(), chunk.Row{})
+		if err != nil {
+			return expr, false
+		}
+		if val != 0 && !isNull {
+			foldedExpr, isDeferred := foldConstant(args[i+1])
+			isDeferredConst = isDeferredConst || isDeferred
+			if _, isConst := foldedExpr.(*Constant); isConst {
+				foldedExpr.GetType().SetDecimal(expr.GetType().GetDecimal())
+				return foldedExpr, isDeferredConst
+			}
+			return foldedExpr, isDeferredConst
 		}
 	}
 	// If the number of arguments in casewhen is odd, and the previous conditions
@@ -178,7 +177,12 @@ func foldConstant(expr Expression) (Expression, bool) {
 			}
 		}
 		if !allConstArg {
-			if !hasNullArg || !sc.InNullRejectCheck || x.FuncName.L == ast.NullEQ {
+			// try to optimize on the situation when not all arguments are const
+			// for most functions, if one of the arguments are NULL, the result can be a constant (NULL or something else)
+			//
+			// NullEQ and ConcatWS are excluded, because they could have different value when the non-constant value is
+			// 1 or NULL. For example, concat_ws(NULL, NULL) gives NULL, but concat_ws(1, NULL) gives ''
+			if !hasNullArg || !sc.InNullRejectCheck || x.FuncName.L == ast.NullEQ || x.FuncName.L == ast.ConcatWS {
 				return expr, isDeferredConst
 			}
 			constArgs := make([]Expression, len(args))

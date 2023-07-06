@@ -63,6 +63,16 @@ func TestConfigureRestoreClient(t *testing.T) {
 	require.True(t, client.IsOnline())
 }
 
+func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {
+	restoreCfg := RestoreConfig{}
+
+	restoreCfg.adjustRestoreConfigForStreamRestore()
+	require.Equal(t, restoreCfg.PitrBatchCount, uint32(defaultPiTRBatchCount))
+	require.Equal(t, restoreCfg.PitrBatchSize, uint32(defaultPiTRBatchSize))
+	require.Equal(t, restoreCfg.PitrConcurrency, uint32(defaultPiTRConcurrency))
+	require.Equal(t, restoreCfg.Concurrency, restoreCfg.PitrConcurrency)
+}
+
 func TestCheckRestoreDBAndTable(t *testing.T) {
 	cases := []struct {
 		cfgSchemas map[string]struct{}

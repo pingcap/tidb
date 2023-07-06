@@ -20,8 +20,9 @@ import (
 	"go.uber.org/zap"
 )
 
-type Rlim_t = int64
+// RlimT is the type of rlimit values.
+type RlimT = int64
 
-func zapRlim_t(key string, val Rlim_t) zap.Field {
+func zapRlimT(key string, val RlimT) zap.Field {
 	return zap.Int64(key, val)
 }

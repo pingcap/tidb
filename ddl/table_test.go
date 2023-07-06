@@ -21,15 +21,19 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -158,7 +162,7 @@ func testGetTableWithError(store kv.Storage, schemaID, tableID int64) (table.Tab
 		return nil, errors.New("table not found")
 	}
 	alloc := autoid.NewAllocator(store, schemaID, tblInfo.ID, false, autoid.RowIDAllocType)
-	tbl, err := table.TableFromMeta(autoid.NewAllocators(alloc), tblInfo)
+	tbl, err := table.TableFromMeta(autoid.NewAllocators(false, alloc), tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -233,6 +237,79 @@ func TestTable(t *testing.T) {
 	checkTableNoCacheTest(t, store, dbInfo1, tblInfo)
 
 	testDropSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
+}
+
+func TestCreateView(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+
+	d := domain.DDL()
+	dbInfo, err := testSchemaInfo(store, "test_table")
+	require.NoError(t, err)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), domain.DDL(), dbInfo)
+
+	ctx := testkit.NewTestKit(t, store).Session()
+
+	tblInfo, err := testTableInfo(store, "t", 3)
+	require.NoError(t, err)
+	job := testCreateTable(t, ctx, d, dbInfo, tblInfo)
+	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
+	testCheckJobDone(t, store, job.ID, true)
+
+	// Create a view
+	newTblInfo0, err := testTableInfo(store, "v", 3)
+	require.NoError(t, err)
+	job = &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateView,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newTblInfo0},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = d.DoDDLJob(ctx, job)
+	require.NoError(t, err)
+
+	v := getSchemaVer(t, ctx)
+	tblInfo.State = model.StatePublic
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: newTblInfo0})
+	tblInfo.State = model.StateNone
+	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
+	testCheckJobDone(t, store, job.ID, true)
+
+	// Replace a view
+	newTblInfo1, err := testTableInfo(store, "v", 3)
+	require.NoError(t, err)
+	job = &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateView,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newTblInfo1, true, newTblInfo0.ID},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = d.DoDDLJob(ctx, job)
+	require.NoError(t, err)
+
+	v = getSchemaVer(t, ctx)
+	tblInfo.State = model.StatePublic
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: newTblInfo1})
+	tblInfo.State = model.StateNone
+	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
+	testCheckJobDone(t, store, job.ID, true)
+
+	// Replace a view with a non-existing table id
+	newTblInfo2, err := testTableInfo(store, "v", 3)
+	require.NoError(t, err)
+	job = &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateView,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newTblInfo2, true, newTblInfo0.ID},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = d.DoDDLJob(ctx, job)
+	require.Error(t, err)
 }
 
 func checkTableCacheTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
@@ -370,4 +447,134 @@ func TestCreateTables(t *testing.T) {
 	testGetTable(t, domain, genIDs[0])
 	testGetTable(t, domain, genIDs[1])
 	testGetTable(t, domain, genIDs[2])
+}
+
+func TestAlterTTL(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+
+	d := domain.DDL()
+
+	dbInfo, err := testSchemaInfo(store, "test_table")
+	require.NoError(t, err)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
+
+	ctx := testkit.NewTestKit(t, store).Session()
+
+	// initialize a table with ttlInfo
+	tableName := "t"
+	tblInfo, err := testTableInfo(store, tableName, 2)
+	require.NoError(t, err)
+	tblInfo.Columns[0].FieldType = *types.NewFieldType(mysql.TypeDatetime)
+	tblInfo.Columns[1].FieldType = *types.NewFieldType(mysql.TypeDatetime)
+	tblInfo.TTLInfo = &model.TTLInfo{
+		ColumnName:       tblInfo.Columns[0].Name,
+		IntervalExprStr:  "5",
+		IntervalTimeUnit: int(ast.TimeUnitDay),
+	}
+
+	// create table
+	job := testCreateTable(t, ctx, d, dbInfo, tblInfo)
+	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
+	testCheckJobDone(t, store, job.ID, true)
+
+	// submit ddl job to modify ttlInfo
+	tableInfoAfterAlterTTLInfo := tblInfo.Clone()
+	require.NoError(t, err)
+	tableInfoAfterAlterTTLInfo.TTLInfo = &model.TTLInfo{
+		ColumnName:       tblInfo.Columns[1].Name,
+		IntervalExprStr:  "1",
+		IntervalTimeUnit: int(ast.TimeUnitYear),
+	}
+
+	job = &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAlterTTLInfo,
+		BinlogInfo: &model.HistoryInfo{},
+		Args: []interface{}{&model.TTLInfo{
+			ColumnName:       tblInfo.Columns[1].Name,
+			IntervalExprStr:  "1",
+			IntervalTimeUnit: int(ast.TimeUnitYear),
+		}},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.DoDDLJob(ctx, job))
+
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
+
+	// assert the ddlInfo as expected
+	historyJob, err := ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
+	require.NoError(t, err)
+	require.Equal(t, tableInfoAfterAlterTTLInfo.TTLInfo, historyJob.BinlogInfo.TableInfo.TTLInfo)
+
+	// submit a ddl job to modify ttlEnabled
+	job = &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAlterTTLRemove,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{true},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.DoDDLJob(ctx, job))
+
+	v = getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
+
+	// assert the ddlInfo as expected
+	historyJob, err = ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
+	require.NoError(t, err)
+	require.Empty(t, historyJob.BinlogInfo.TableInfo.TTLInfo)
+}
+
+func TestRenameTableIntermediateState(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	originHook := dom.DDL().GetHook()
+	tk.MustExec("create database db1;")
+	tk.MustExec("create database db2;")
+	tk.MustExec("create table db1.t(a int);")
+
+	testCases := []struct {
+		renameSQL string
+		insertSQL string
+		errMsg    string
+		finalDB   string
+	}{
+		{"rename table db1.t to db1.t1;", "insert into db1.t values(1);", "[schema:1146]Table 'db1.t' doesn't exist", "db1.t1"},
+		{"rename table db1.t1 to db1.t;", "insert into db1.t values(1);", "", "db1.t"},
+		{"rename table db1.t to db2.t;", "insert into db1.t values(1);", "[schema:1146]Table 'db1.t' doesn't exist", "db2.t"},
+		{"rename table db2.t to db1.t;", "insert into db1.t values(1);", "", "db1.t"},
+	}
+
+	for _, tc := range testCases {
+		hook := &callback.TestDDLCallback{Do: dom}
+		runInsert := false
+		fn := func(job *model.Job) {
+			if job.Type == model.ActionRenameTable &&
+				job.SchemaState == model.StatePublic && !runInsert && !t.Failed() {
+				_, err := tk2.Exec(tc.insertSQL)
+				if len(tc.errMsg) > 0 {
+					assert.NotNil(t, err)
+					assert.Equal(t, tc.errMsg, err.Error())
+				} else {
+					assert.NoError(t, err)
+				}
+				runInsert = true
+			}
+		}
+		hook.OnJobUpdatedExported.Store(&fn)
+		dom.DDL().SetHook(hook)
+		tk.MustExec(tc.renameSQL)
+		result := tk.MustQuery(fmt.Sprintf("select * from %s;", tc.finalDB))
+		if len(tc.errMsg) > 0 {
+			result.Check(testkit.Rows())
+		} else {
+			result.Check(testkit.Rows("1"))
+		}
+		tk.MustExec(fmt.Sprintf("delete from %s;", tc.finalDB))
+	}
+	dom.DDL().SetHook(originHook)
 }

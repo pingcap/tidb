@@ -16,9 +16,13 @@ package domain_test
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/stretchr/testify/require"
 )
 
@@ -89,8 +93,10 @@ func TestPlanReplayerHandleDumpTask(t *testing.T) {
 	tk.MustQuery("select * from t;")
 	task := prHandle.DrainTask()
 	require.NotNil(t, task)
-	success := prHandle.HandlePlanReplayerDumpTask(task)
+	worker := prHandle.GetWorker()
+	success := worker.HandleTask(task)
 	require.True(t, success)
+	require.Equal(t, prHandle.GetTaskStatus().GetRunningTaskStatusLen(), 0)
 	// assert memory task consumed
 	require.Len(t, prHandle.GetTasks(), 0)
 
@@ -98,4 +104,46 @@ func TestPlanReplayerHandleDumpTask(t *testing.T) {
 	err = prHandle.CollectPlanReplayerTask()
 	require.NoError(t, err)
 	require.Len(t, prHandle.GetTasks(), 0)
+
+	// clean the task and register task
+	prHandle.GetTaskStatus().CleanFinishedTaskStatus()
+	tk.MustExec("delete from mysql.plan_replayer_task")
+	tk.MustExec("delete from mysql.plan_replayer_status")
+	tk.MustExec(fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%v','%v');", sqlDigest, "*"))
+	err = prHandle.CollectPlanReplayerTask()
+	require.NoError(t, err)
+	require.Len(t, prHandle.GetTasks(), 1)
+	tk.MustQuery("select * from t;")
+	task = prHandle.DrainTask()
+	require.NotNil(t, task)
+	worker = prHandle.GetWorker()
+	success = worker.HandleTask(task)
+	require.True(t, success)
+	require.Equal(t, prHandle.GetTaskStatus().GetRunningTaskStatusLen(), 0)
+	// assert capture * task still remained
+	require.Len(t, prHandle.GetTasks(), 1)
+}
+
+func TestPlanReplayerGC(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	handler := dom.GetDumpFileGCChecker()
+
+	startTime := time.Now()
+	time := startTime.UnixNano()
+	fileName := fmt.Sprintf("replayer_single_xxxxxx_%v.zip", time)
+	err := os.MkdirAll(replayer.GetPlanReplayerDirName(), os.ModePerm)
+	require.NoError(t, err)
+	tk.MustExec("insert into mysql.plan_replayer_status(sql_digest, plan_digest, token, instance) values" +
+		"('123','123','" + fileName + "','123')")
+	path := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
+	zf, err := os.Create(path)
+	require.NoError(t, err)
+	zf.Close()
+	handler.GCDumpFiles(0, 0)
+	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("0"))
+
+	_, err = os.Stat(path)
+	require.NotNil(t, err)
+	require.True(t, os.IsNotExist(err))
 }

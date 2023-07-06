@@ -12,6 +12,7 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_pd_client//:client",
         "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
         "@org_uber_go_zap//:zap",
     ],
 )

@@ -21,24 +21,24 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/internal/column"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
-func createColumnByTypeAndLen(tp byte, cl uint32) *ColumnInfo {
-	return &ColumnInfo{
-		Schema:             "test",
-		Table:              "dual",
-		OrgTable:           "",
-		Name:               "a",
-		OrgName:            "a",
-		ColumnLength:       cl,
-		Charset:            uint16(mysql.CharsetNameToID(charset.CharsetUTF8)),
-		Flag:               uint16(mysql.UnsignedFlag),
-		Decimal:            uint8(0),
-		Type:               tp,
-		DefaultValueLength: uint64(0),
-		DefaultValue:       nil,
+func createColumnByTypeAndLen(tp byte, cl uint32) *column.Info {
+	return &column.Info{
+		Schema:       "test",
+		Table:        "dual",
+		OrgTable:     "",
+		Name:         "a",
+		OrgName:      "a",
+		ColumnLength: cl,
+		Charset:      uint16(mysql.CharsetNameToID(charset.CharsetUTF8)),
+		Flag:         uint16(mysql.UnsignedFlag),
+		Decimal:      uint8(0),
+		Type:         tp,
+		DefaultValue: nil,
 	}
 }
 func TestConvertColumnInfo(t *testing.T) {

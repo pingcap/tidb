@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
+	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
 
@@ -683,7 +685,7 @@ func TestRuntimeHintsInEvolveTasks(t *testing.T) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 2)
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
 }
 
 func TestDefaultSessionVars(t *testing.T) {
@@ -760,11 +762,11 @@ func TestPrivileges(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	tk.MustExec("create user test@'%'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 }
@@ -1240,4 +1242,149 @@ func TestGCBindRecord(t *testing.T) {
 	require.NoError(t, h.GCBindRecord())
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
+}
+
+func TestBindSQLDigest(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key, a int, b int, key(a), key(b))")
+
+	cases := []struct {
+		origin string
+		hint   string
+	}{
+		// agg hints
+		{"select count(1) from t", "select /*+ hash_agg() */ count(1) from t"},
+		{"select count(1) from t", "select /*+ stream_agg() */ count(1) from t"},
+		// join hints
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ tidb_smj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ tidb_hj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ tidb_inlj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ inl_hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		// index hints
+		{"select * from t", "select * from t use index(primary)"},
+		{"select * from t", "select /*+ use_index(primary) */ * from t"},
+		{"select * from t", "select * from t use index(a)"},
+		{"select * from t", "select /*+ use_index(a) */ * from t use index(a)"},
+		{"select * from t", "select * from t use index(b)"},
+		{"select * from t", "select /*+ use_index(b) */ * from t use index(b)"},
+		{"select a, b from t where a=1 or b=1", "select /*+ use_index_merge(t, a, b) */ a, b from t where a=1 or b=1"},
+		{"select * from t where a=1", "select /*+ ignore_index(t, a) */ * from t where a=1"},
+		// push-down hints
+		{"select * from t limit 10", "select /*+ limit_to_cop() */ * from t limit 10"},
+		{"select a, count(*) from t group by a", "select /*+ agg_to_cop() */ a, count(*) from t group by a"},
+		// index-merge hints
+		{"select a, b from t where a>1 or b>1", "select /*+ no_index_merge() */ a, b from t where a>1 or b>1"},
+		{"select a, b from t where a>1 or b>1", "select /*+ use_index_merge(t, a, b) */ a, b from t where a>1 or b>1"},
+		// runtime hints
+		{"select * from t", "select /*+ memory_quota(1024 MB) */ * from t"},
+		{"select * from t", "select /*+ max_execution_time(1000) */ * from t"},
+		// storage hints
+		{"select * from t", "select /*+ read_from_storage(tikv[t]) */ * from t"},
+		// others
+		{"select t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)", "select /*+ use_toja(true) */ t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)"},
+	}
+	for _, c := range cases {
+		stmtsummary.StmtSummaryByDigestMap.Clear()
+		utilCleanBindingEnv(tk, dom)
+		sql := "create global binding for " + c.origin + " using " + c.hint
+		tk.MustExec(sql)
+		res := tk.MustQuery(`show global bindings`).Rows()
+		require.Equal(t, len(res[0]), 11)
+
+		parser4binding := parser.New()
+		originNode, err := parser4binding.ParseOneStmt(c.origin, "utf8mb4", "utf8mb4_general_ci")
+		require.NoError(t, err)
+		_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, "test", c.origin))
+		require.Equal(t, res[0][9], sqlDigestWithDB.String())
+	}
+}
+
+func TestDropBindBySQLDigest(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key, a int, b int, key(a), key(b))")
+
+	cases := []struct {
+		origin string
+		hint   string
+	}{
+		// agg hints
+		{"select count(1) from t", "select /*+ hash_agg() */ count(1) from t"},
+		{"select count(1) from t", "select /*+ stream_agg() */ count(1) from t"},
+		// join hints
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ tidb_smj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ tidb_hj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ tidb_inlj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		{"select * from t t1, t t2 where t1.a=t2.a", "select /*+ inl_hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"},
+		// index hints
+		{"select * from t", "select * from t use index(primary)"},
+		{"select * from t", "select /*+ use_index(primary) */ * from t"},
+		{"select * from t", "select * from t use index(a)"},
+		{"select * from t", "select /*+ use_index(a) */ * from t use index(a)"},
+		{"select * from t", "select * from t use index(b)"},
+		{"select * from t", "select /*+ use_index(b) */ * from t use index(b)"},
+		{"select a, b from t where a=1 or b=1", "select /*+ use_index_merge(t, a, b) */ a, b from t where a=1 or b=1"},
+		{"select * from t where a=1", "select /*+ ignore_index(t, a) */ * from t where a=1"},
+		// push-down hints
+		{"select * from t limit 10", "select /*+ limit_to_cop() */ * from t limit 10"},
+		{"select a, count(*) from t group by a", "select /*+ agg_to_cop() */ a, count(*) from t group by a"},
+		// index-merge hints
+		{"select a, b from t where a>1 or b>1", "select /*+ no_index_merge() */ a, b from t where a>1 or b>1"},
+		{"select a, b from t where a>1 or b>1", "select /*+ use_index_merge(t, a, b) */ a, b from t where a>1 or b>1"},
+		// runtime hints
+		{"select * from t", "select /*+ memory_quota(1024 MB) */ * from t"},
+		{"select * from t", "select /*+ max_execution_time(1000) */ * from t"},
+		// storage hints
+		{"select * from t", "select /*+ read_from_storage(tikv[t]) */ * from t"},
+		// others
+		{"select t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)", "select /*+ use_toja(true) */ t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)"},
+	}
+
+	h := dom.BindHandle()
+	// global scope
+	for _, c := range cases {
+		utilCleanBindingEnv(tk, dom)
+		sql := "create global binding for " + c.origin + " using " + c.hint
+		tk.MustExec(sql)
+		h.ReloadBindings()
+		res := tk.MustQuery(`show global bindings`).Rows()
+
+		require.Equal(t, len(res), 1)
+		require.Equal(t, len(res[0]), 11)
+		drop := fmt.Sprintf("drop global binding for sql digest '%s'", res[0][9])
+		tk.MustExec(drop)
+		require.NoError(t, h.GCBindRecord())
+		h.ReloadBindings()
+		tk.MustQuery("show global bindings").Check(testkit.Rows())
+	}
+
+	// session scope
+	for _, c := range cases {
+		utilCleanBindingEnv(tk, dom)
+		sql := "create binding for " + c.origin + " using " + c.hint
+		tk.MustExec(sql)
+		res := tk.MustQuery(`show bindings`).Rows()
+
+		require.Equal(t, len(res), 1)
+		require.Equal(t, len(res[0]), 11)
+		drop := fmt.Sprintf("drop binding for sql digest '%s'", res[0][9])
+		tk.MustExec(drop)
+		require.NoError(t, h.GCBindRecord())
+		tk.MustQuery("show bindings").Check(testkit.Rows())
+	}
+
+	// exception cases
+	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", "1"), "can't find any binding for '1'")
+	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", ""), "sql digest is empty")
 }

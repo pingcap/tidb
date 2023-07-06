@@ -31,10 +31,15 @@ const (
 
 // WalkOption is the option of storage.WalkDir.
 type WalkOption struct {
-	// walk on SubDir of specify directory
+	// walk on SubDir of base directory, i.e. if the base dir is '/path/to/base'
+	// then we're walking '/path/to/base/<SubDir>'
 	SubDir string
-	// ObjPrefix used fo prefix search in storage.
-	// it can save lots of time when we want find specify prefix objects in storage.
+	// whether subdirectory under the walk dir is skipped, only works for LOCAL storage now.
+	// default is false, i.e. we walk recursively.
+	SkipSubDir bool
+	// ObjPrefix used fo prefix search in storage. Note that only part of storage
+	// support it.
+	// It can save lots of time when we want find specify prefix objects in storage.
 	// For example. we have 10000 <Hash>.sst files and 10 backupmeta.(\d+) files.
 	// we can use ObjPrefix = "backupmeta" to retrieve all meta files quickly.
 	ObjPrefix string
@@ -106,8 +111,7 @@ type ExternalStorage interface {
 
 // ExternalFileReader represents the streaming external file reader.
 type ExternalFileReader interface {
-	io.ReadCloser
-	io.Seeker
+	io.ReadSeekCloser
 }
 
 // ExternalFileWriter represents the streaming external file writer.
@@ -158,6 +162,9 @@ func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds boo
 
 // New creates an ExternalStorage with options.
 func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalStorageOptions) (ExternalStorage, error) {
+	if opts == nil {
+		opts = &ExternalStorageOptions{}
+	}
 	switch backend := backend.Backend.(type) {
 	case *backuppb.StorageBackend_Local:
 		if backend.Local == nil {
@@ -173,7 +180,7 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		if backend.S3 == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "s3 config not found")
 		}
-		return NewS3Storage(backend.S3, opts)
+		return NewS3Storage(ctx, backend.S3, opts)
 	case *backuppb.StorageBackend_Noop:
 		return newNoopStorage(), nil
 	case *backuppb.StorageBackend_Gcs:

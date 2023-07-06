@@ -292,35 +292,35 @@ func TestTimeValidation(t *testing.T) {
 func TestGetNativeValType(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: Off, Type: TypeBool}
 
-	nativeVal, nativeType, unsignedFlag := sv.GetNativeValType("ON")
-	require.Equal(t, mysql.TypeLong, nativeType)
-	require.Equal(t, uint(0), unsignedFlag)
+	nativeVal, nativeType, flag := sv.GetNativeValType("ON")
+	require.Equal(t, mysql.TypeLonglong, nativeType)
+	require.Equal(t, mysql.BinaryFlag, flag)
 	require.Equal(t, types.NewIntDatum(1), nativeVal)
 
-	nativeVal, nativeType, unsignedFlag = sv.GetNativeValType("OFF")
-	require.Equal(t, mysql.TypeLong, nativeType)
-	require.Equal(t, uint(0), unsignedFlag)
+	nativeVal, nativeType, flag = sv.GetNativeValType("OFF")
+	require.Equal(t, mysql.TypeLonglong, nativeType)
+	require.Equal(t, mysql.BinaryFlag, flag)
 	require.Equal(t, types.NewIntDatum(0), nativeVal)
 
-	nativeVal, nativeType, unsignedFlag = sv.GetNativeValType("bogus")
-	require.Equal(t, mysql.TypeLong, nativeType)
-	require.Equal(t, uint(0), unsignedFlag)
+	nativeVal, nativeType, flag = sv.GetNativeValType("bogus")
+	require.Equal(t, mysql.TypeLonglong, nativeType)
+	require.Equal(t, mysql.BinaryFlag, flag)
 	require.Equal(t, types.NewIntDatum(0), nativeVal)
 
 	sv = SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: Off, Type: TypeUnsigned}
-	nativeVal, nativeType, unsignedFlag = sv.GetNativeValType("1234")
+	nativeVal, nativeType, flag = sv.GetNativeValType("1234")
 	require.Equal(t, mysql.TypeLonglong, nativeType)
-	require.Equal(t, mysql.UnsignedFlag, unsignedFlag)
+	require.Equal(t, mysql.UnsignedFlag|mysql.BinaryFlag, flag)
 	require.Equal(t, types.NewUintDatum(1234), nativeVal)
-	nativeVal, nativeType, unsignedFlag = sv.GetNativeValType("bogus")
+	nativeVal, nativeType, flag = sv.GetNativeValType("bogus")
 	require.Equal(t, mysql.TypeLonglong, nativeType)
-	require.Equal(t, mysql.UnsignedFlag, unsignedFlag)
+	require.Equal(t, mysql.UnsignedFlag|mysql.BinaryFlag, flag)
 	require.Equal(t, types.NewUintDatum(0), nativeVal) // converts to zero
 
 	sv = SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "abc"}
-	nativeVal, nativeType, unsignedFlag = sv.GetNativeValType("1234")
+	nativeVal, nativeType, flag = sv.GetNativeValType("1234")
 	require.Equal(t, mysql.TypeVarString, nativeType)
-	require.Equal(t, uint(0), unsignedFlag)
+	require.Equal(t, uint(0), flag)
 	require.Equal(t, types.NewStringDatum("1234"), nativeVal)
 }
 
@@ -668,4 +668,22 @@ func TestSkipSysvarCache(t *testing.T) {
 	require.True(t, GetSysVar(TiDBGCConcurrency).SkipSysvarCache())
 	require.True(t, GetSysVar(TiDBGCScanLockMode).SkipSysvarCache())
 	require.False(t, GetSysVar(TiDBEnableAsyncCommit).SkipSysvarCache())
+}
+
+func TestTimeValidationWithTimezone(t *testing.T) {
+	sv := SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: "23:59 +0000", Type: TypeTime}
+	vars := NewSessionVars(nil)
+
+	// In timezone UTC
+	vars.TimeZone = time.UTC
+	val, err := sv.Validate(vars, "23:59", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "23:59 +0000", val)
+
+	// In timezone Asia/Shanghai
+	vars.TimeZone, err = time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	val, err = sv.Validate(vars, "23:59", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "23:59 +0800", val)
 }

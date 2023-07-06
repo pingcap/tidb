@@ -78,6 +78,7 @@ type Storage interface {
 	Closed() <-chan struct{}
 	GetMinSafeTS(txnScope string) uint64
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
+	GetCodec() tikv.Codec
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
@@ -653,11 +654,11 @@ func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWit
 
 // NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index, it is exported only for test.
 func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
-	return newIndexWithKeyRange(db, table, index)
+	return newIndexWithKeyRange(db, table, index, table.ID)
 }
 
-func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
-	sk, ek := tablecodec.GetTableIndexKeyRange(table.ID, index.ID)
+func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo, physicalID int64) TableInfoWithKeyRange {
+	sk, ek := tablecodec.GetTableIndexKeyRange(physicalID, index.ID)
 	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
 	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
 	return TableInfoWithKeyRange{
@@ -727,7 +728,13 @@ func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWit
 				tables = append(tables, newTableWithKeyRange(db, table))
 			}
 			for _, index := range table.Indices {
-				tables = append(tables, newIndexWithKeyRange(db, table, index))
+				if table.Partition == nil || index.Global {
+					tables = append(tables, newIndexWithKeyRange(db, table, index, table.ID))
+					continue
+				}
+				for _, partition := range table.Partition.Definitions {
+					tables = append(tables, newIndexWithKeyRange(db, table, index, partition.ID))
+				}
 			}
 		}
 	}
@@ -1205,10 +1212,16 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 
 // CollectTiFlashStatus query sync status of one table from TiFlash store.
 // `regionReplica` is a map from RegionID to count of TiFlash Replicas in this region.
-func CollectTiFlashStatus(statusAddress string, tableID int64, regionReplica *map[int64]int) error {
-	statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/%d",
+func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
+	// The new query schema is like: http://<host>/tiflash/sync-status/keyspace/<keyspaceID>/table/<tableID>.
+	// For TiDB forward compatibility, we define the Nullspace as the "keyspace" of the old table.
+	// The query URL is like: http://<host>/sync-status/keyspace/<NullspaceID>/table/<tableID>
+	// The old query schema is like: http://<host>/sync-status/<tableID>
+	// This API is preserved in TiFlash for compatibility with old versions of TiDB.
+	statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/keyspace/%d/table/%d",
 		util.InternalHTTPSchema(),
 		statusAddress,
+		keyspaceID,
 		tableID,
 	)
 	resp, err := util.InternalHTTPClient().Get(statURL)

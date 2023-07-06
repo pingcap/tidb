@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/spkg/bom"
 	"go.uber.org/zap"
+	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
@@ -62,6 +64,19 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 			return nil, errInvalidSchemaEncoding
 		}
 		data = decoded
+	case "latin1":
+		// use Windows1252 (not ISO 8859-1) to decode Latin1
+		// https://dev.mysql.com/doc/refman/8.0/en/charset-we-sets.html
+		decoded, err := charmap.Windows1252.NewDecoder().Bytes(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// > Each byte that cannot be transcoded will be represented in the
+		// > output by the UTF-8 encoding of '\uFFFD'
+		if bytes.ContainsRune(decoded, '\ufffd') {
+			return nil, errInvalidSchemaEncoding
+		}
+		data = decoded
 	default:
 		return nil, errors.Errorf("Unsupported encoding %s", characterSet)
 	}
@@ -69,14 +84,22 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 }
 
 // ExportStatement exports the SQL statement in the schema file.
-func ExportStatement(ctx context.Context, store storage.ExternalStorage, sqlFile FileInfo, characterSet string) ([]byte, error) {
+func ExportStatement(ctx context.Context, store storage.ExternalStorage,
+	sqlFile FileInfo, characterSet string) ([]byte, error) {
+	if sqlFile.FileMeta.Compression != CompressionNone {
+		compressType, err := ToStorageCompressType(sqlFile.FileMeta.Compression)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		store = storage.WithCompression(store, compressType)
+	}
 	fd, err := store.Open(ctx, sqlFile.FileMeta.Path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer fd.Close()
 
-	br := bufio.NewReader(fd)
+	br := bufio.NewReader(bom.NewReader(fd))
 
 	data := make([]byte, 0, sqlFile.FileMeta.FileSize+1)
 	buffer := make([]byte, 0, sqlFile.FileMeta.FileSize+1)
@@ -155,15 +178,19 @@ func MakePooledReader(reader ReadSeekCloser, ioWorkers *worker.Pool) PooledReade
 
 // Read implements io.Reader
 func (pr PooledReader) Read(p []byte) (n int, err error) {
-	w := pr.ioWorkers.Apply()
-	defer pr.ioWorkers.Recycle(w)
+	if pr.ioWorkers != nil {
+		w := pr.ioWorkers.Apply()
+		defer pr.ioWorkers.Recycle(w)
+	}
 	return pr.reader.Read(p)
 }
 
 // Seek implements io.Seeker
 func (pr PooledReader) Seek(offset int64, whence int) (int64, error) {
-	w := pr.ioWorkers.Apply()
-	defer pr.ioWorkers.Recycle(w)
+	if pr.ioWorkers != nil {
+		w := pr.ioWorkers.Apply()
+		defer pr.ioWorkers.Recycle(w)
+	}
 	return pr.reader.Seek(offset, whence)
 }
 
@@ -174,7 +201,9 @@ func (pr PooledReader) Close() error {
 
 // ReadFull is same as `io.ReadFull(pr)` with less worker recycling
 func (pr PooledReader) ReadFull(buf []byte) (n int, err error) {
-	w := pr.ioWorkers.Apply()
-	defer pr.ioWorkers.Recycle(w)
+	if pr.ioWorkers != nil {
+		w := pr.ioWorkers.Apply()
+		defer pr.ioWorkers.Recycle(w)
+	}
 	return io.ReadFull(pr.reader, buf)
 }

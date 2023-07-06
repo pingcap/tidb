@@ -152,12 +152,12 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 	tk.MustExec("set @@tx_read_ts=''")
 
 	// `@@tidb_read_staleness`
-	tk.MustExec("set @@tidb_read_staleness=-5")
+	tk.MustExec("set @@tidb_read_staleness=-100")
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnSelectTable(tn)
 	require.True(t, processor.IsStaleness())
 	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
-	expectedTS, err := staleread.CalculateTsWithReadStaleness(tk.Session(), -5*time.Second)
+	expectedTS, err := staleread.CalculateTsWithReadStaleness(tk.Session(), -100*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
 	evaluator := processor.GetStalenessTSEvaluatorForPrepare()
@@ -169,12 +169,12 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 	tk.MustExec("do sleep(0.01)")
 	evaluatorTS, err = evaluator(tk.Session())
 	require.NoError(t, err)
-	expectedTS2, err := staleread.CalculateTsWithReadStaleness(tk.Session(), -5*time.Second)
+	expectedTS2, err := staleread.CalculateTsWithReadStaleness(tk.Session(), -100*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, expectedTS2, evaluatorTS)
 
 	// `@@tidb_read_staleness` will be ignored when `as of` or `@@tx_read_ts`
-	tk.MustExec("set @@tidb_read_staleness=-5")
+	tk.MustExec("set @@tidb_read_staleness=-100")
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnSelectTable(p1.tn)
 	require.NoError(t, err)
@@ -280,18 +280,18 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	tk.MustExec("set @@tx_read_ts=''")
 
 	// `@@tidb_read_staleness`
-	tk.MustExec("set @@tidb_read_staleness=-5")
+	tk.MustExec("set @@tidb_read_staleness=-100")
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnExecutePreparedStmt(nil)
 	require.True(t, processor.IsStaleness())
 	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
-	expectedTS, err := staleread.CalculateTsWithReadStaleness(tk.Session(), -5*time.Second)
+	expectedTS, err := staleread.CalculateTsWithReadStaleness(tk.Session(), -100*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
 	tk.MustExec("set @@tidb_read_staleness=''")
 
 	// `@@tidb_read_staleness` will be ignored when `as of` or `@@tx_read_ts`
-	tk.MustExec("set @@tidb_read_staleness=-5")
+	tk.MustExec("set @@tidb_read_staleness=-100")
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnExecutePreparedStmt(func(sctx sessionctx.Context) (uint64, error) {
 		return p1.ts, nil

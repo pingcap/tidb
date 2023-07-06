@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	ttlcient "github.com/pingcap/tidb/ttl/client"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
@@ -88,6 +89,18 @@ const (
 	pSnapshot           = "snapshot"
 	pFileName           = "filename"
 	pDumpPartitionStats = "dumpPartitionStats"
+	pBegin              = "begin"
+	pEnd                = "end"
+)
+
+// For extract task handler
+const (
+	pType   = "type"
+	pIsDump = "isDump"
+
+	// For extract plan task handler
+	pIsSkipStats   = "isSkipStats"
+	pIsHistoryView = "isHistoryView"
 )
 
 // For query string
@@ -206,7 +219,7 @@ func (t *tikvHandlerTool) getHandle(tb table.PhysicalTable, params map[string]st
 	return handle, nil
 }
 
-func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handle kv.Handle) (*helper.MvccKV, error) {
+func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handle kv.Handle) ([]*helper.MvccKV, error) {
 	sc := new(stmtctx.StatementContext)
 	// HTTP request is not a database session, set timezone to UTC directly here.
 	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
@@ -227,7 +240,18 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 	if err != nil {
 		return nil, err
 	}
-	return &helper.MvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), RegionID: regionID, Value: data}, err
+	idxData := &helper.MvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), RegionID: regionID, Value: data}
+	tablecodec.IndexKey2TempIndexKey(encodedKey)
+	data, err = t.GetMvccByEncodedKey(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	regionID, err = t.getRegionIDByKey(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	tempIdxData := &helper.MvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), RegionID: regionID, Value: data}
+	return append([]*helper.MvccKV{}, idxData, tempIdxData), err
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
@@ -2207,4 +2231,39 @@ func (h labelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	writeData(w, config.GetGlobalConfig().Labels)
+}
+
+// ttlJobTriggerHandler is used to trigger a TTL job manually
+type ttlJobTriggerHandler struct {
+	store kv.Storage
+}
+
+// ServeHTTP handles request of triger a ttl job
+func (h ttlJobTriggerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+
+	params := mux.Vars(req)
+	dbName := strings.ToLower(params["db"])
+	tableName := strings.ToLower(params["table"])
+
+	ctx := req.Context()
+	dom, err := session.GetDomain(h.store)
+	if err != nil {
+		log.Error("failed to get session domain", zap.Error(err))
+		writeError(w, err)
+		return
+	}
+
+	cli := dom.TTLJobManager().GetCommandCli()
+	resp, err := ttlcient.TriggerNewTTLJob(ctx, cli, dbName, tableName)
+	if err != nil {
+		log.Error("failed to trigger new TTL job", zap.Error(err))
+		writeError(w, err)
+		return
+	}
+	writeData(w, resp)
+	logutil.Logger(ctx).Info("trigger TTL job manually successfully", zap.String("dbName", dbName), zap.String("tableName", tableName), zap.Any("response", resp))
 }

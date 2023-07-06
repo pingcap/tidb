@@ -12,9 +12,9 @@ go_library(
         "//parser/model",
         "//sessionctx/sessionstates",
         "//sessionctx/variable",
-        "//types",
         "//util",
         "//util/kvcache",
+        "//util/plancache",
         "//util/sli",
         "//util/topsql/stmtstats",
         "@com_github_pingcap_errors//:errors",
@@ -33,6 +33,7 @@ go_test(
     ],
     embed = [":sessionctx"],
     flaky = True,
+    race = "on",
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

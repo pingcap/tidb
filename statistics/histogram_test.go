@@ -31,9 +31,9 @@ import (
 
 func TestNewHistogramBySelectivity(t *testing.T) {
 	coll := &HistColl{
-		Count:   330,
-		Columns: make(map[int64]*Column),
-		Indices: make(map[int64]*Index),
+		RealtimeCount: 330,
+		Columns:       make(map[int64]*Column),
+		Indices:       make(map[int64]*Index),
 	}
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
@@ -485,7 +485,7 @@ func TestIndexQueryBytes(t *testing.T) {
 	idx.PreCalculateScalar()
 	idx.CMSketch = nil
 	// Count / NDV
-	require.Equal(t, idx.QueryBytes(low), uint64(1))
+	require.Equal(t, idx.QueryBytes(nil, low), uint64(1))
 	// Repeat
-	require.Equal(t, idx.QueryBytes(high), uint64(10))
+	require.Equal(t, idx.QueryBytes(nil, high), uint64(10))
 }

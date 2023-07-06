@@ -14,8 +14,37 @@
 
 package manual
 
-type Allocator struct{}
+import (
+	"fmt"
 
-func (Allocator) Alloc(n int) []byte { return New(n) }
+	"go.uber.org/atomic"
+)
 
-func (Allocator) Free(b []byte) { Free(b) }
+// Allocator is a manual allocator for memory.
+type Allocator struct {
+	RefCnt *atomic.Int64
+}
+
+// Alloc allocates a new byte slice with the given size.
+func (a Allocator) Alloc(n int) []byte {
+	if a.RefCnt != nil {
+		a.RefCnt.Add(1)
+	}
+	return New(n)
+}
+
+// Free frees the byte slice.
+func (a Allocator) Free(b []byte) {
+	if a.RefCnt != nil {
+		a.RefCnt.Add(-1)
+	}
+	Free(b)
+}
+
+// CheckRefCnt checks whether there is memory leak.
+func (a Allocator) CheckRefCnt() error {
+	if a.RefCnt != nil && a.RefCnt.Load() != 0 {
+		return fmt.Errorf("memory leak detected, refCnt: %d", a.RefCnt.Load())
+	}
+	return nil
+}

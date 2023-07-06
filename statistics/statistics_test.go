@@ -200,7 +200,7 @@ func TestPseudoTable(t *testing.T) {
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti)
 	require.Len(t, tbl.Columns, 1)
-	require.Greater(t, tbl.Count, int64(0))
+	require.Greater(t, tbl.RealtimeCount, int64(0))
 	sctx := mock.NewContext()
 	count := tbl.ColumnLessRowCount(sctx, types.NewIntDatum(100), colInfo.ID)
 	require.Equal(t, 3333, int(count))
@@ -257,8 +257,8 @@ func SubTestColumnRange() func(*testing.T) {
 		}
 		tbl := &Table{
 			HistColl: HistColl{
-				Count:   int64(col.TotalRowCount()),
-				Columns: make(map[int64]*Column),
+				RealtimeCount: int64(col.TotalRowCount()),
+				Columns:       make(map[int64]*Column),
 			},
 		}
 		ran := []*ranger.Range{{
@@ -329,8 +329,8 @@ func SubTestIntColumnRanges() func(*testing.T) {
 		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}, StatsLoadedStatus: NewStatsFullLoadStatus()}
 		tbl := &Table{
 			HistColl: HistColl{
-				Count:   int64(col.TotalRowCount()),
-				Columns: make(map[int64]*Column),
+				RealtimeCount: int64(col.TotalRowCount()),
+				Columns:       make(map[int64]*Column),
 			},
 		}
 		ran := []*ranger.Range{{
@@ -403,7 +403,7 @@ func SubTestIntColumnRanges() func(*testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
 
-		tbl.Count *= 10
+		tbl.RealtimeCount *= 10
 		count, err = tbl.GetRowCountByIntColumnRanges(ctx, 0, ran)
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
@@ -425,8 +425,8 @@ func SubTestIndexRanges() func(*testing.T) {
 		idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 		tbl := &Table{
 			HistColl: HistColl{
-				Count:   int64(idx.TotalRowCount()),
-				Indices: make(map[int64]*Index),
+				RealtimeCount: int64(idx.TotalRowCount()),
+				Indices:       make(map[int64]*Index),
 			},
 		}
 		ran := []*ranger.Range{{
@@ -548,23 +548,23 @@ func SubTestBuild() func(*testing.T) {
 		checkRepeats(t, col)
 		col.PreCalculateScalar()
 		require.Equal(t, 226, col.Len())
-		count, _ := col.equalRowCount(types.NewIntDatum(1000), false)
+		count, _ := col.equalRowCount(nil, types.NewIntDatum(1000), false)
 		require.Equal(t, 0, int(count))
-		count = col.lessRowCount(types.NewIntDatum(1000))
+		count = col.lessRowCount(nil, types.NewIntDatum(1000))
 		require.Equal(t, 10000, int(count))
-		count = col.lessRowCount(types.NewIntDatum(2000))
+		count = col.lessRowCount(nil, types.NewIntDatum(2000))
 		require.Equal(t, 19999, int(count))
 		count = col.greaterRowCount(types.NewIntDatum(2000))
 		require.Equal(t, 80000, int(count))
-		count = col.lessRowCount(types.NewIntDatum(200000000))
+		count = col.lessRowCount(nil, types.NewIntDatum(200000000))
 		require.Equal(t, 100000, int(count))
 		count = col.greaterRowCount(types.NewIntDatum(200000000))
 		require.Equal(t, 0.0, count)
-		count, _ = col.equalRowCount(types.NewIntDatum(200000000), false)
+		count, _ = col.equalRowCount(nil, types.NewIntDatum(200000000), false)
 		require.Equal(t, 0.0, count)
-		count = col.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
+		count = col.BetweenRowCount(nil, types.NewIntDatum(3000), types.NewIntDatum(3500))
 		require.Equal(t, 4994, int(count))
-		count = col.lessRowCount(types.NewIntDatum(1))
+		count = col.lessRowCount(nil, types.NewIntDatum(1))
 		require.Equal(t, 5, int(count))
 
 		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true, nil)
@@ -578,19 +578,19 @@ func SubTestBuild() func(*testing.T) {
 			require.Equal(t, expectedTopNCount[i], meta.Count)
 		}
 		require.Equal(t, 251, colv2.Len())
-		count = colv2.lessRowCount(types.NewIntDatum(1000))
+		count = colv2.lessRowCount(nil, types.NewIntDatum(1000))
 		require.Equal(t, 328, int(count))
-		count = colv2.lessRowCount(types.NewIntDatum(2000))
+		count = colv2.lessRowCount(nil, types.NewIntDatum(2000))
 		require.Equal(t, 10007, int(count))
 		count = colv2.greaterRowCount(types.NewIntDatum(2000))
 		require.Equal(t, 80001, int(count))
-		count = colv2.lessRowCount(types.NewIntDatum(200000000))
+		count = colv2.lessRowCount(nil, types.NewIntDatum(200000000))
 		require.Equal(t, 90010, int(count))
 		count = colv2.greaterRowCount(types.NewIntDatum(200000000))
 		require.Equal(t, 0.0, count)
-		count = colv2.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
+		count = colv2.BetweenRowCount(nil, types.NewIntDatum(3000), types.NewIntDatum(3500))
 		require.Equal(t, 5001, int(count))
-		count = colv2.lessRowCount(types.NewIntDatum(1))
+		count = colv2.lessRowCount(nil, types.NewIntDatum(1))
 		require.Equal(t, 0, int(count))
 
 		builder := SampleBuilder{
@@ -616,15 +616,15 @@ func SubTestBuild() func(*testing.T) {
 		checkRepeats(t, col)
 		col.PreCalculateScalar()
 		require.Equal(t, 100000, int(tblCount))
-		count, _ = col.equalRowCount(encodeKey(types.NewIntDatum(10000)), false)
+		count, _ = col.equalRowCount(nil, encodeKey(types.NewIntDatum(10000)), false)
 		require.Equal(t, 1, int(count))
-		count = col.lessRowCount(encodeKey(types.NewIntDatum(20000)))
+		count = col.lessRowCount(nil, encodeKey(types.NewIntDatum(20000)))
 		require.Equal(t, 19999, int(count))
-		count = col.BetweenRowCount(encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
+		count = col.BetweenRowCount(nil, encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
 		require.Equal(t, 4999, int(count))
-		count = col.BetweenRowCount(encodeKey(types.MinNotNullDatum()), encodeKey(types.NewIntDatum(0)))
+		count = col.BetweenRowCount(nil, encodeKey(types.MinNotNullDatum()), encodeKey(types.NewIntDatum(0)))
 		require.Equal(t, 0, int(count))
-		count = col.lessRowCount(encodeKey(types.NewIntDatum(0)))
+		count = col.lessRowCount(nil, encodeKey(types.NewIntDatum(0)))
 		require.Equal(t, 0, int(count))
 
 		s.pk.(*recordSet).cursor = 0
@@ -633,15 +633,15 @@ func SubTestBuild() func(*testing.T) {
 		checkRepeats(t, col)
 		col.PreCalculateScalar()
 		require.Equal(t, 100000, int(tblCount))
-		count, _ = col.equalRowCount(types.NewIntDatum(10000), false)
+		count, _ = col.equalRowCount(nil, types.NewIntDatum(10000), false)
 		require.Equal(t, 1, int(count))
-		count = col.lessRowCount(types.NewIntDatum(20000))
+		count = col.lessRowCount(nil, types.NewIntDatum(20000))
 		require.Equal(t, 20000, int(count))
-		count = col.BetweenRowCount(types.NewIntDatum(30000), types.NewIntDatum(35000))
+		count = col.BetweenRowCount(nil, types.NewIntDatum(30000), types.NewIntDatum(35000))
 		require.Equal(t, 5000, int(count))
 		count = col.greaterRowCount(types.NewIntDatum(1001))
 		require.Equal(t, 98998, int(count))
-		count = col.lessRowCount(types.NewIntDatum(99999))
+		count = col.lessRowCount(nil, types.NewIntDatum(99999))
 		require.Equal(t, 99999, int(count))
 
 		datum := types.Datum{}

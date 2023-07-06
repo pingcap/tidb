@@ -2400,7 +2400,7 @@ func (b *builtinReplaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 			result.AppendString(str)
 			continue
 		}
-		str = strings.Replace(str, oldStr, newStr, -1)
+		str = strings.ReplaceAll(str, oldStr, newStr)
 		result.AppendString(str)
 	}
 	return nil
@@ -2911,8 +2911,8 @@ func (b *builtinFromBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			continue
 		}
 
-		str = strings.Replace(str, "\t", "", -1)
-		str = strings.Replace(str, " ", "", -1)
+		str = strings.ReplaceAll(str, "\t", "")
+		str = strings.ReplaceAll(str, " ", "")
 		newStr, err := base64.StdEncoding.DecodeString(str)
 		if err != nil {
 			// When error happens, take `from_base64("asc")` as an example, we should return NULL.
@@ -3066,16 +3066,15 @@ func (b *builtinTranslateBinarySig) vecEvalString(input *chunk.Chunk, result *ch
 	_, isFromConst := b.args[1].(*Constant)
 	_, isToConst := b.args[2].(*Constant)
 	if isFromConst && isToConst {
-		if ExprNotNull(b.args[1]) && ExprNotNull(b.args[2]) {
-			useCommonMap = true
-			fromBytes, toBytes := []byte(buf1.GetString(0)), []byte(buf2.GetString(0))
-			mp = buildTranslateMap4Binary(fromBytes, toBytes)
-		} else {
+		if !(ExprNotNull(b.args[1]) && ExprNotNull(b.args[2])) {
 			for i := 0; i < n; i++ {
 				result.AppendNull()
 			}
 			return nil
 		}
+		useCommonMap = true
+		fromBytes, toBytes := []byte(buf1.GetString(0)), []byte(buf2.GetString(0))
+		mp = buildTranslateMap4Binary(fromBytes, toBytes)
 	}
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
@@ -3140,16 +3139,15 @@ func (b *builtinTranslateUTF8Sig) vecEvalString(input *chunk.Chunk, result *chun
 	_, isFromConst := b.args[1].(*Constant)
 	_, isToConst := b.args[2].(*Constant)
 	if isFromConst && isToConst {
-		if ExprNotNull(b.args[1]) && ExprNotNull(b.args[2]) {
-			useCommonMap = true
-			fromRunes, toRunes := []rune(buf1.GetString(0)), []rune(buf2.GetString(0))
-			mp = buildTranslateMap4UTF8(fromRunes, toRunes)
-		} else {
+		if !(ExprNotNull(b.args[1]) && ExprNotNull(b.args[2])) {
 			for i := 0; i < n; i++ {
 				result.AppendNull()
 			}
 			return nil
 		}
+		useCommonMap = true
+		fromRunes, toRunes := []rune(buf1.GetString(0)), []rune(buf2.GetString(0))
+		mp = buildTranslateMap4UTF8(fromRunes, toRunes)
 	}
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {

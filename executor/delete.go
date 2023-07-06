@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -35,7 +37,7 @@ import (
 // DeleteExec represents a delete executor.
 // See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	IsMultiTable bool
 	tblID2Table  map[int64]table.Table
@@ -68,7 +70,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols plannercore.Handle
 	if err != nil {
 		return err
 	}
-	err = e.removeRow(e.ctx, tbl, handle, row[:end])
+	err = e.removeRow(e.Ctx(), tbl, handle, row[:end])
 	if err != nil {
 		return err
 	}
@@ -90,13 +92,13 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		}
 	}
 
-	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
+	batchDMLSize := e.Ctx().GetSessionVars().DMLBatchSize
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
-	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn() &&
+	batchDelete := e.Ctx().GetSessionVars().BatchDelete && !e.Ctx().GetSessionVars().InTxn() &&
 		variable.EnableBatchDML.Load() && batchDMLSize > 0
-	fields := retTypes(e.children[0])
-	chk := tryNewCacheChunk(e.children[0])
-	columns := e.children[0].Schema().Columns
+	fields := retTypes(e.Children(0))
+	chk := tryNewCacheChunk(e.Children(0))
+	columns := e.Children(0).Schema().Columns
 	if len(columns) != len(fields) {
 		logutil.BgLogger().Error("schema columns and fields mismatch",
 			zap.Int("len(columns)", len(columns)),
@@ -108,7 +110,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
 		iter := chunk.NewIterator4Chunk(chk)
-		err := Next(ctx, e.children[0], chk)
+		err := Next(ctx, e.Children(0), chk)
 		if err != nil {
 			return err
 		}
@@ -141,22 +143,22 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			}
 			rowCount++
 		}
-		chk = chunk.Renew(chk, e.maxChunkSize)
+		chk = chunk.Renew(chk, e.MaxChunkSize())
 	}
 
 	return nil
 }
 
 func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
-	txn, err := e.ctx.Txn(false)
+	txn, err := e.Ctx().Txn(false)
 	if err != nil {
-		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
-	e.ctx.StmtCommit()
-	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
+	e.Ctx().StmtCommit(ctx)
+	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
 		// We should return a special error for batch insert.
-		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
 	return nil
 }
@@ -175,8 +177,14 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 			return err
 		}
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
-		_, exist := tblRowMap[info.TblID].Get(handle)
-		memDelta := tblRowMap[info.TblID].Set(handle, joinedRow[info.Start:info.End])
+		row, exist := tblRowMap[info.TblID].Get(handle)
+		if !exist {
+			row = make([]types.Datum, info.End-info.Start)
+		}
+		for i, d := range joinedRow[info.Start:info.End] {
+			d.Copy(&row[i])
+		}
+		memDelta := tblRowMap[info.TblID].Set(handle, row)
 		if !exist {
 			memDelta += types.EstimatedMemUsage(joinedRow, 1)
 			memDelta += int64(handle.ExtraMemSize())
@@ -189,13 +197,14 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	colPosInfos := e.tblColPosInfos
 	tblRowMap := make(tableRowMapType)
-	fields := retTypes(e.children[0])
-	chk := tryNewCacheChunk(e.children[0])
+	fields := retTypes(e.Children(0))
+	chk := tryNewCacheChunk(e.Children(0))
 	memUsageOfChk := int64(0)
+	joinedDatumRowBuffer := make([]types.Datum, len(fields))
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
 		iter := chunk.NewIterator4Chunk(chk)
-		err := Next(ctx, e.children[0], chk)
+		err := Next(ctx, e.Children(0), chk)
 		if err != nil {
 			return err
 		}
@@ -206,13 +215,13 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 		e.memTracker.Consume(memUsageOfChk)
 
 		for joinedChunkRow := iter.Begin(); joinedChunkRow != iter.End(); joinedChunkRow = iter.Next() {
-			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
-			err := e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
+			joinedDatumRowBuffer = joinedChunkRow.GetDatumRowWithBuffer(fields, joinedDatumRowBuffer)
+			err := e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRowBuffer)
 			if err != nil {
 				return err
 			}
 		}
-		chk = chunk.Renew(chk, e.maxChunkSize)
+		chk = tryNewCacheChunk(e.Children(0))
 	}
 
 	return e.removeRowsInTblRowMap(tblRowMap)
@@ -221,8 +230,8 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	for id, rowMap := range tblRowMap {
 		var err error
-		rowMap.Range(func(h kv.Handle, val interface{}) bool {
-			err = e.removeRow(e.ctx, e.tblID2Table[id], h, val.([]types.Datum))
+		rowMap.Range(func(h kv.Handle, val []types.Datum) bool {
+			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val)
 			return err == nil
 		})
 		if err != nil {
@@ -234,26 +243,20 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 }
 
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
-	txnState, err := e.ctx.Txn(false)
+	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
 		return err
 	}
-	memUsageOfTxnState := txnState.Size()
-	err = t.RemoveRecord(ctx, h, data)
+	tid := t.Meta().ID
+	err = onRemoveRowForFK(ctx, data, e.fkChecks[tid], e.fkCascades[tid])
 	if err != nil {
 		return err
 	}
-	err = e.onRemoveRowForFK(ctx, t, data)
-	if err != nil {
-		return err
-	}
-	e.memTracker.Consume(int64(txnState.Size() - memUsageOfTxnState))
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
 }
 
-func (e *DeleteExec) onRemoveRowForFK(ctx sessionctx.Context, t table.Table, data []types.Datum) error {
-	fkChecks := e.fkChecks[t.Meta().ID]
+func onRemoveRowForFK(ctx sessionctx.Context, data []types.Datum, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, fkc := range fkChecks {
 		err := fkc.deleteRowNeedToCheck(sc, data)
@@ -261,7 +264,6 @@ func (e *DeleteExec) onRemoveRowForFK(ctx sessionctx.Context, t table.Table, dat
 			return err
 		}
 	}
-	fkCascades := e.fkCascades[t.Meta().ID]
 	for _, fkc := range fkCascades {
 		err := fkc.onDeleteRow(sc, data)
 		if err != nil {
@@ -274,15 +276,15 @@ func (e *DeleteExec) onRemoveRowForFK(ctx sessionctx.Context, t table.Table, dat
 // Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
 	defer e.memTracker.ReplaceBytesUsed(0)
-	return e.children[0].Close()
+	return e.Children(0).Close()
 }
 
 // Open implements the Executor Open interface.
 func (e *DeleteExec) Open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, -1)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker = memory.NewTracker(e.ID(), -1)
+	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	return e.children[0].Open(ctx)
+	return e.Children(0).Open(ctx)
 }
 
 // GetFKChecks implements WithForeignKeyTrigger interface.

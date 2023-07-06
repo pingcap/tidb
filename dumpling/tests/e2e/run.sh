@@ -37,4 +37,24 @@ run_lightning $cur/conf/lightning.toml
 # check mysql and tidb data
 check_sync_diff $cur/conf/diff_config.toml
 
+# test e2e with compress option again
+
+# drop database on tidb
+export DUMPLING_TEST_PORT=4000
+run_sql "drop database if exists $DB_NAME;"
+
+export DUMPLING_TEST_PORT=3306
+
+# dumping
+export DUMPLING_TEST_DATABASE=$DB_NAME
+rm -rf $DUMPLING_OUTPUT_DIR
+run_dumpling --compress "snappy"
+
+cat "$cur/conf/lightning.toml"
+# use lightning import data to tidb
+run_lightning $cur/conf/lightning.toml
+
+# check mysql and tidb data
+check_sync_diff $cur/conf/diff_config.toml
+
 

@@ -182,7 +182,7 @@ func newTemporaryTableFromTableInfo(sctx sessionctx.Context, tbInfo *model.Table
 	if alloc != nil {
 		allocs = append(allocs, alloc)
 	}
-	return tables.TableFromMeta(allocs, tbInfo)
+	return tables.TableFromMeta(autoid.NewAllocators(false, allocs...), tbInfo)
 }
 
 // GetTemporaryTableDDL gets the temptable.TemporaryTableDDL from session context

@@ -15,8 +15,10 @@
 package staleread_test
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -59,7 +61,7 @@ func TestExternalTimestampRead(t *testing.T) {
 func TestExternalTimestampReadonly(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id INT NOT NULL,PRIMARY KEY (id))")
@@ -67,18 +69,26 @@ func TestExternalTimestampReadonly(t *testing.T) {
 	tk.MustQuery("select @@tidb_external_ts").Check(testkit.Rows("0"))
 	tk.MustExec("start transaction;set global tidb_external_ts=@@tidb_current_ts;commit;")
 
+	// with tidb_enable_external_ts_read enabled, this session will be readonly
 	tk.MustExec("set tidb_enable_external_ts_read=ON")
 	_, err := tk.Exec("insert into t values (0)")
 	require.Error(t, err)
 
 	tk.MustExec("set tidb_enable_external_ts_read=OFF")
 	tk.MustExec("insert into t values (0)")
+
+	// even when tidb_enable_external_ts_read is enabled, internal SQL will not be affected
+	tk.MustExec("set tidb_enable_external_ts_read=ON")
+	tk.Session().GetSessionVars().InRestrictedSQL = true
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	tk.MustExecWithContext(ctx, "insert into t values (1)")
+	tk.Session().GetSessionVars().InRestrictedSQL = false
 }
 
 func TestExternalTimestampReadWithTransaction(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id INT NOT NULL,PRIMARY KEY (id))")
@@ -112,7 +122,7 @@ func TestExternalTimestampReadWithTransaction(t *testing.T) {
 func TestExternalTimestampNotAffectPrepare(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id INT NOT NULL,PRIMARY KEY (id))")

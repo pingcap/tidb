@@ -17,9 +17,12 @@ package addindextest
 import (
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -99,4 +102,93 @@ func TestCreateMultiColsIndex(t *testing.T) {
 	}
 	ctx := initTest(t)
 	testTwoColsFrame(ctx, coliIDs, coljIDs, addIndexMultiCols)
+}
+
+func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists fk_index;")
+	tk.MustExec("create database fk_index;")
+	tk.MustExec("use fk_index;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	tk.MustExec("create table employee (id bigint auto_increment key, pid bigint)")
+	tk.MustExec("insert into employee (id) values (1),(2),(3),(4),(5),(6),(7),(8)")
+	for i := 0; i < 14; i++ {
+		tk.MustExec("insert into employee (pid) select pid from employee")
+	}
+	tk.MustExec("update employee set pid=id-1 where id>1")
+	tk.MustQuery("select count(*) from employee").Check(testkit.Rows("131072"))
+	tk.MustExec("alter table employee add foreign key fk_1(pid) references employee(id)")
+	tk.MustExec("alter table employee drop foreign key fk_1")
+	tk.MustExec("alter table employee drop index fk_1")
+	tk.MustExec("update employee set pid=0 where id=1")
+	tk.MustGetErrMsg("alter table employee add foreign key fk_1(pid) references employee(id)",
+		"[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`fk_index`.`employee`, CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `employee` (`id`))")
+	tk.MustExec("update employee set pid=null where id=1")
+	tk.MustExec("insert into employee (pid) select pid from employee")
+	tk.MustExec("update employee set pid=id-1 where id>1 and pid is null")
+	tk.MustExec("alter table employee add foreign key fk_1(pid) references employee(id)")
+}
+
+func TestAddIndexDistBasic(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	if store.Name() != "TiKV" {
+		t.Skip("TiKV store only")
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test;")
+	tk.MustExec("create database test;")
+	tk.MustExec("use test;")
+	tk.MustExec(`set global tidb_enable_dist_task=1;`)
+
+	tk.MustExec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 8;")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("split table t between (3) and (8646911284551352360) regions 50;")
+	tk.MustExec("alter table t add index idx(a);")
+	tk.MustExec("admin check index t idx;")
+	tk.MustExec(`set global tidb_enable_dist_task=0;`)
+}
+
+func TestAddIndexDistCancel(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	if store.Name() != "TiKV" {
+		t.Skip("TiKV store only")
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test;")
+	tk.MustExec("create database test;")
+	tk.MustExec("use test;")
+	tk.MustExec(`set global tidb_enable_dist_task=1;`)
+
+	tk.MustExec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 8;")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("split table t between (3) and (8646911284551352360) regions 50;")
+
+	ddl.MockDMLExecutionAddIndexSubTaskFinish = func() {
+		row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+		require.Equal(t, 1, len(row))
+		jobID := row[0][0].(string)
+		tk1.MustExec("admin cancel ddl jobs " + jobID)
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionAddIndexSubTaskFinish", "1*return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
+	}()
+
+	require.Error(t, tk.ExecToErr("alter table t add index idx(a);"))
+	tk.MustExec("admin check table t;")
+	tk.MustExec("alter table t add index idx2(a);")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -74,6 +75,16 @@ func prepareBenchData(se Session, colType string, valueFormat string, valueCount
 	mustExecute(se, "commit")
 }
 
+func prepareNonclusteredBenchData(se Session, colType string, valueFormat string, valueCount int) {
+	mustExecute(se, "drop table if exists t")
+	mustExecute(se, fmt.Sprintf("create table t (pk int primary key /*T![clustered_index] NONCLUSTERED */ auto_increment, col %s, index idx (col))", colType))
+	mustExecute(se, "begin")
+	for i := 0; i < valueCount; i++ {
+		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, i)+")")
+	}
+	mustExecute(se, "commit")
+}
+
 func prepareSortBenchData(se Session, colType string, valueFormat string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s)", colType))
@@ -112,6 +123,26 @@ func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
 		count -= req.NumRows()
 	}
 	rs.Close()
+}
+
+func hasPlan(ctx context.Context, b *testing.B, se Session, plan string) {
+	find := false
+	rs, err := se.Execute(ctx, "explain select * from t where col = 'hello 64'")
+	if err != nil {
+		b.Fatal(err)
+	}
+	rows, err := ResultSetToStringSlice(ctx, se, rs[0])
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i := range rows {
+		if strings.Contains(rows[i][0], plan) {
+			find = true
+		}
+	}
+	if !find {
+		b.Fatal(fmt.Printf("plan not contain `%s`", plan))
+	}
 }
 
 func BenchmarkBasic(b *testing.B) {
@@ -347,7 +378,9 @@ func BenchmarkStringIndexLookup(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-	prepareBenchData(se, "varchar(255)", "'hello %d'", smallCount)
+	prepareNonclusteredBenchData(se, "varchar(255)", "'hello %d'", smallCount)
+	hasPlan(ctx, b, se, "IndexLookUp")
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where col = 'hello 64'")
@@ -387,7 +420,9 @@ func BenchmarkIntegerIndexLookup(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-	prepareBenchData(se, "int", "%v", smallCount)
+	prepareNonclusteredBenchData(se, "int", "%v", smallCount)
+	hasPlan(ctx, b, se, "IndexLookUp")
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where col = 64")
@@ -427,7 +462,9 @@ func BenchmarkDecimalIndexLookup(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-	prepareBenchData(se, "decimal(32,6)", "%v.1234", smallCount)
+	prepareNonclusteredBenchData(se, "decimal(32,6)", "%v.1234", smallCount)
+	hasPlan(ctx, b, se, "IndexLookUp")
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where col = 64.1234")
@@ -1623,7 +1660,7 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 	start := time.Date(2020, 5, 15, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < 1023; i++ {
 		start = start.Add(24 * time.Hour)
-		fmt.Fprintf(&build, "partition p%d values less than ('%s'),\n", i, start.Format("2006-01-02"))
+		fmt.Fprintf(&build, "partition p%d values less than ('%s'),\n", i, start.Format(time.DateOnly))
 	}
 	build.WriteString("partition p1023 values less than maxvalue)")
 	mustExecute(se, build.String())
@@ -1855,6 +1892,22 @@ func BenchmarkCompileStmt(b *testing.B) {
 	b.StopTimer()
 }
 
+func BenchmarkAutoIncrement(b *testing.B) {
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table auto_inc (id int unsigned key nonclustered auto_increment) shard_row_id_bits=4 auto_id_cache 1;")
+	mustExecute(se, "set @@tidb_enable_mutation_checker = false")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mustExecute(se, "insert into auto_inc values ()")
+	}
+	b.StopTimer()
+}
+
 // TestBenchDaily collects the daily benchmark test result and generates a json output file.
 // The format of the json output is described by the BenchOutput.
 // Used by this command in the Makefile
@@ -1887,5 +1940,6 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkHashPartitionPruningMultiSelect,
 		BenchmarkInsertIntoSelect,
 		BenchmarkCompileStmt,
+		BenchmarkAutoIncrement,
 	)
 }

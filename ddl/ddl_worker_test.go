@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
@@ -97,7 +97,7 @@ func TestParallelDDL(t *testing.T) {
 
 	// set hook to execute jobs after all jobs are in queue.
 	jobCnt := 11
-	tc := &ddl.TestDDLCallback{Do: dom}
+	tc := &callback.TestDDLCallback{Do: dom}
 	once := sync.Once{}
 	var checkErr error
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
@@ -106,9 +106,7 @@ func TestParallelDDL(t *testing.T) {
 			for {
 				tk1 := testkit.NewTestKit(t, store)
 				tk1.MustExec("begin")
-				txn, err := tk1.Session().Txn(true)
-				require.NoError(t, err)
-				jobs, err := ddl.GetAllDDLJobs(tk1.Session(), meta.NewMeta(txn))
+				jobs, err := ddl.GetAllDDLJobs(tk1.Session())
 				require.NoError(t, err)
 				tk1.MustExec("rollback")
 				var qLen1, qLen2 int
@@ -139,9 +137,7 @@ func TestParallelDDL(t *testing.T) {
 			for {
 				tk := testkit.NewTestKit(t, store)
 				tk.MustExec("begin")
-				txn, err := tk.Session().Txn(true)
-				require.NoError(t, err)
-				jobs, err := ddl.GetAllDDLJobs(tk.Session(), meta.NewMeta(txn))
+				jobs, err := ddl.GetAllDDLJobs(tk.Session())
 				require.NoError(t, err)
 				tk.MustExec("rollback")
 				if len(jobs) == jobCnt {
@@ -307,4 +303,28 @@ func TestJobNeedGC(t *testing.T) {
 			{Type: model.ActionRebaseAutoID, State: model.JobStateCancelled},
 		}}}
 	require.True(t, ddl.JobNeedGCForTest(job))
+}
+
+func TestUsingReorgCtx(t *testing.T) {
+	_, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	d := domain.DDL()
+
+	wg := util.WaitGroupWrapper{}
+	wg.Run(func() {
+		jobID := int64(1)
+		for i := 0; i < 500; i++ {
+			d.(ddl.DDLForTest).NewReorgCtx(jobID, 0)
+			d.(ddl.DDLForTest).GetReorgCtx(jobID).IsReorgCanceled()
+			d.(ddl.DDLForTest).RemoveReorgCtx(jobID)
+		}
+	})
+	wg.Run(func() {
+		jobID := int64(1)
+		for i := 0; i < 500; i++ {
+			d.(ddl.DDLForTest).NewReorgCtx(jobID, 0)
+			d.(ddl.DDLForTest).GetReorgCtx(jobID).IsReorgCanceled()
+			d.(ddl.DDLForTest).RemoveReorgCtx(jobID)
+		}
+	})
+	wg.Wait()
 }

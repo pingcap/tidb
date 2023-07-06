@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"regexp"
 	"strconv"
@@ -34,12 +35,13 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"
+	"go.uber.org/zap"
 )
 
 // Time format without fractional seconds precision.
 const (
-	DateFormat = "2006-01-02"
-	TimeFormat = "2006-01-02 15:04:05"
+	DateFormat = gotime.DateOnly
+	TimeFormat = gotime.DateTime
 	// TimeFSPFormat is time format with fractional seconds precision.
 	TimeFSPFormat = "2006-01-02 15:04:05.000000"
 	// UTCTimeFormat is used to parse and format gotime.
@@ -437,7 +439,7 @@ func (t Time) FillNumber(dec *MyDecimal) {
 
 	s, err := t.DateFormat(tfStr)
 	if err != nil {
-		logutil.BgLogger().Error("[fatal] never happen because we've control the format!")
+		logutil.BgLogger().Error("never happen because we've control the format!", zap.String("category", "fatal"))
 	}
 
 	fsp := t.Fsp()
@@ -459,7 +461,7 @@ func (t Time) Convert(sc *stmtctx.StatementContext, tp uint8) (Time, error) {
 	}
 
 	t1.SetType(tp)
-	err := t1.check(sc)
+	err := t1.check(sc, nil)
 	return t1, errors.Trace(err)
 }
 
@@ -490,7 +492,7 @@ func (t Time) Compare(o Time) int {
 // but parses string to Time then compares.
 func (t Time) CompareString(sc *stmtctx.StatementContext, str string) (int, error) {
 	// use MaxFsp to parse the string
-	o, err := ParseTime(sc, str, t.Type(), MaxFsp)
+	o, err := ParseTime(sc, str, t.Type(), MaxFsp, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -672,7 +674,7 @@ func (t *Time) FromPackedUint(packed uint64) error {
 // check whether t matches valid Time format.
 // If allowZeroInDate is false, it returns ErrZeroDate when month or day is zero.
 // FIXME: See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sqlmode_no_zero_in_date
-func (t Time) check(sc *stmtctx.StatementContext) error {
+func (t Time) check(sc *stmtctx.StatementContext, explicitTz *gotime.Location) error {
 	allowZeroInDate := false
 	allowInvalidDate := false
 	// We should avoid passing sc as nil here as far as possible.
@@ -683,7 +685,7 @@ func (t Time) check(sc *stmtctx.StatementContext) error {
 	var err error
 	switch t.Type() {
 	case mysql.TypeTimestamp:
-		err = checkTimestampType(sc, t.coreTime)
+		err = checkTimestampType(sc, t.coreTime, explicitTz)
 	case mysql.TypeDatetime, mysql.TypeDate:
 		err = checkDatetimeType(t.coreTime, allowZeroInDate, allowInvalidDate)
 	}
@@ -692,7 +694,7 @@ func (t Time) check(sc *stmtctx.StatementContext) error {
 
 // Check if 't' is valid
 func (t *Time) Check(sc *stmtctx.StatementContext) error {
-	return t.check(sc)
+	return t.check(sc, nil)
 }
 
 // Sub subtracts t1 from t, returns a duration value.
@@ -770,7 +772,7 @@ func ParseDateFormat(format string) []string {
 
 	start := 0
 	// Initialize `seps` with capacity of 6. The input `format` is typically
-	// a date time of the form "2006-01-02 15:04:05", which has 6 numeric parts
+	// a date time of the form time.DateTime, which has 6 numeric parts
 	// (the fractional second part is usually removed by `splitDateTime`).
 	// Setting `seps`'s capacity to 6 avoids reallocation in this common case.
 	seps := make([]string, 0, 6)
@@ -951,7 +953,7 @@ func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tz
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bool) (Time, error) {
+func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bool, explicitTz *gotime.Location) (Time, error) {
 	var (
 		year, month, day, hour, minute, second, deltaHour, deltaMinute int
 		fracStr                                                        string
@@ -1155,6 +1157,9 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		hhmmss = true
 	}
 	if err != nil {
+		if err == io.EOF {
+			return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+		}
 		return ZeroDatetime, errors.Trace(err)
 	}
 
@@ -1185,7 +1190,12 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 	}
 	if overflow {
 		// Convert to Go time and add 1 second, to handle input like 2017-01-05 08:40:59.575601
-		t1, err := tmp.GoTime(sc.TimeZone)
+		var t1 gotime.Time
+		if explicitTz != nil {
+			t1, err = tmp.GoTime(explicitTz)
+		} else {
+			t1, err = tmp.GoTime(sc.TimeZone)
+		}
 		if err != nil {
 			return ZeroDatetime, errors.Trace(err)
 		}
@@ -1218,7 +1228,11 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		if err != nil {
 			return ZeroDatetime, errors.Trace(err)
 		}
-		t1 = t1.In(sc.TimeZone)
+		if explicitTz != nil {
+			t1 = t1.In(explicitTz)
+		} else {
+			t1 = t1.In(sc.TimeZone)
+		}
 		tmp = FromGoTime(t1)
 	}
 
@@ -1632,19 +1646,19 @@ func matchHHMMSSDelimited(str string, requireColon bool) ([3]int, string, error)
 	hhmmss[0] = hour
 
 	for i := 1; i < 3; i++ {
-		if remain, err := matchColon(rest); err == nil {
-			num, remain, err := parser.Number(remain)
-			if err != nil {
-				return [3]int{}, str, err
-			}
-			hhmmss[i] = num
-			rest = remain
-		} else {
+		remain, err := matchColon(rest)
+		if err != nil {
 			if i == 1 && requireColon {
 				return [3]int{}, str, err
 			}
 			break
 		}
+		num, remain, err := parser.Number(remain)
+		if err != nil {
+			return [3]int{}, str, err
+		}
+		hhmmss[i] = num
+		rest = remain
 	}
 
 	return hhmmss, rest, nil
@@ -1874,7 +1888,7 @@ func getTime(sc *stmtctx.StatementContext, num, originNum int64, tp byte) (Time,
 		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, numStr))
 	}
 	t := NewTime(ct, tp, DefaultFsp)
-	err := t.check(sc)
+	err := t.check(sc, nil)
 	return t, errors.Trace(err)
 }
 
@@ -1966,8 +1980,9 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 // The valid datetime range is from '1000-01-01 00:00:00.000000' to '9999-12-31 23:59:59.999999'.
 // The valid timestamp range is from '1970-01-01 00:00:01.000000' to '2038-01-19 03:14:07.999999'.
 // The valid date range is from '1000-01-01' to '9999-12-31'
-func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int) (Time, error) {
-	return parseTime(sc, str, tp, fsp, false)
+// explicitTz is used to handle a data race of timeZone, refer to https://github.com/pingcap/tidb/issues/40710. It only works for timestamp now, be careful to use it!
+func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, explicitTz *gotime.Location) (Time, error) {
+	return parseTime(sc, str, tp, fsp, false, explicitTz)
 }
 
 // ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
@@ -1976,22 +1991,22 @@ func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte,
 	if len(str) >= 3 && str[:3] == "0.0" {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), nil
 	}
-	return parseTime(sc, str, tp, fsp, true)
+	return parseTime(sc, str, tp, fsp, true, nil)
 }
 
-func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFloat bool) (Time, error) {
+func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFloat bool, explicitTz *gotime.Location) (Time, error) {
 	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 
-	t, err := parseDatetime(sc, str, fsp, isFloat)
+	t, err := parseDatetime(sc, str, fsp, isFloat, explicitTz)
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 
 	t.SetType(tp)
-	if err = t.check(sc); err != nil {
+	if err = t.check(sc, explicitTz); err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 	return t, nil
@@ -1999,18 +2014,18 @@ func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFlo
 
 // ParseDatetime is a helper function wrapping ParseTime with datetime type and default fsp.
 func ParseDatetime(sc *stmtctx.StatementContext, str string) (Time, error) {
-	return ParseTime(sc, str, mysql.TypeDatetime, GetFsp(str))
+	return ParseTime(sc, str, mysql.TypeDatetime, GetFsp(str), nil)
 }
 
 // ParseTimestamp is a helper function wrapping ParseTime with timestamp type and default fsp.
 func ParseTimestamp(sc *stmtctx.StatementContext, str string) (Time, error) {
-	return ParseTime(sc, str, mysql.TypeTimestamp, GetFsp(str))
+	return ParseTime(sc, str, mysql.TypeTimestamp, GetFsp(str), nil)
 }
 
 // ParseDate is a helper function wrapping ParseTime with date type.
 func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 	// date has no fractional seconds precision
-	return ParseTime(sc, str, mysql.TypeDate, MinFsp)
+	return ParseTime(sc, str, mysql.TypeDate, MinFsp, nil)
 }
 
 // ParseTimeFromYear parse a `YYYY` formed year to corresponded Datetime type.
@@ -2054,7 +2069,7 @@ func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int)
 
 	t.SetType(tp)
 	t.SetFsp(fsp)
-	if err := t.check(sc); err != nil {
+	if err := t.check(sc, nil); err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 	return t, nil
@@ -2143,7 +2158,7 @@ func checkMonthDay(year, month, day int, allowInvalidDate bool) error {
 	return nil
 }
 
-func checkTimestampType(sc *stmtctx.StatementContext, t CoreTime) error {
+func checkTimestampType(sc *stmtctx.StatementContext, t CoreTime, explicitTz *gotime.Location) error {
 	if compareTime(t, ZeroCoreTime) == 0 {
 		return nil
 	}
@@ -2153,9 +2168,13 @@ func checkTimestampType(sc *stmtctx.StatementContext, t CoreTime) error {
 	}
 
 	var checkTime CoreTime
-	if sc.TimeZone != BoundTimezone {
+	tz := sc.TimeZone
+	if explicitTz != nil {
+		tz = explicitTz
+	}
+	if tz != BoundTimezone {
 		convertTime := NewTime(t, mysql.TypeTimestamp, DefaultFsp)
-		err := convertTime.ConvertTimeZone(sc.TimeZone, BoundTimezone)
+		err := convertTime.ConvertTimeZone(tz, BoundTimezone)
 		if err != nil {
 			return err
 		}
@@ -2167,7 +2186,7 @@ func checkTimestampType(sc *stmtctx.StatementContext, t CoreTime) error {
 		return errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, t))
 	}
 
-	if _, err := t.GoTime(sc.TimeZone); err != nil {
+	if _, err := t.GoTime(tz); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -2891,7 +2910,7 @@ func (t *Time) StrToDate(sc *stmtctx.StatementContext, date, format string) bool
 
 	t.SetCoreTime(tm)
 	t.SetType(mysql.TypeDatetime)
-	if t.check(sc) != nil {
+	if t.check(sc, nil) != nil {
 		return false
 	}
 	if warning {
@@ -3463,11 +3482,10 @@ func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 func skipAllNums(_ *CoreTime, input string, _ map[string]int) (string, bool) {
 	retIdx := 0
 	for i, ch := range input {
-		if unicode.IsNumber(ch) {
-			retIdx = i + 1
-		} else {
+		if !unicode.IsNumber(ch) {
 			break
 		}
+		retIdx = i + 1
 	}
 	return input[retIdx:], true
 }
@@ -3475,11 +3493,10 @@ func skipAllNums(_ *CoreTime, input string, _ map[string]int) (string, bool) {
 func skipAllPunct(_ *CoreTime, input string, _ map[string]int) (string, bool) {
 	retIdx := 0
 	for i, ch := range input {
-		if unicode.IsPunct(ch) {
-			retIdx = i + 1
-		} else {
+		if !unicode.IsPunct(ch) {
 			break
 		}
+		retIdx = i + 1
 	}
 	return input[retIdx:], true
 }
@@ -3487,11 +3504,10 @@ func skipAllPunct(_ *CoreTime, input string, _ map[string]int) (string, bool) {
 func skipAllAlpha(_ *CoreTime, input string, _ map[string]int) (string, bool) {
 	retIdx := 0
 	for i, ch := range input {
-		if unicode.IsLetter(ch) {
-			retIdx = i + 1
-		} else {
+		if !unicode.IsLetter(ch) {
 			break
 		}
+		retIdx = i + 1
 	}
 	return input[retIdx:], true
 }

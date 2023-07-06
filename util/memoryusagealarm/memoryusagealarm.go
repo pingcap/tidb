@@ -37,7 +37,7 @@ import (
 // Handle is the handler for expensive query.
 type Handle struct {
 	exitCh chan struct{}
-	sm     atomic.Value
+	sm     atomic.Pointer[util.SessionManager]
 }
 
 // NewMemoryUsageAlarmHandle builds a memory usage alarm handler.
@@ -48,7 +48,7 @@ func NewMemoryUsageAlarmHandle(exitCh chan struct{}) *Handle {
 // SetSessionManager sets the SessionManager which is used to fetching the info
 // of all active sessions.
 func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
-	eqh.sm.Store(sm)
+	eqh.sm.Store(&sm)
 	return eqh
 }
 
@@ -58,12 +58,12 @@ func (eqh *Handle) Run() {
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
-	sm := eqh.sm.Load().(util.SessionManager)
+	sm := eqh.sm.Load()
 	record := &memoryUsageAlarm{}
 	for {
 		select {
 		case <-ticker.C:
-			record.alarm4ExcessiveMemUsage(sm)
+			record.alarm4ExcessiveMemUsage(*sm)
 		case <-eqh.exitCh:
 			return
 		}
@@ -266,15 +266,16 @@ func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*util.ProcessInfo, f *
 func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo) bool, pinfo []*util.ProcessInfo) strings.Builder {
 	slices.SortFunc(pinfo, cmp)
 	list := pinfo
-	if len(list) > 10 {
-		list = list[:10]
-	}
 	var buf strings.Builder
 	oomAction := variable.OOMAction.Load()
 	serverMemoryLimit := memory.ServerMemoryLimit.Load()
-	for i, info := range list {
+	for i, totalCnt := 0, 10; i < len(list) && totalCnt > 0; i++ {
+		info := list[i]
 		buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
 		fields := util.GenLogFields(record.lastCheckTime.Sub(info.Time), info, false)
+		if fields == nil {
+			continue
+		}
 		fields = append(fields, zap.String("tidb_mem_oom_action", oomAction))
 		fields = append(fields, zap.Uint64("tidb_server_memory_limit", serverMemoryLimit))
 		fields = append(fields, zap.Int64("tidb_mem_quota_query", info.OOMAlarmVariablesInfo.SessionMemQuotaQuery))
@@ -284,16 +285,17 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 		for _, field := range fields {
 			switch field.Type {
 			case zapcore.StringType:
-				buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.String))
+				fmt.Fprintf(&buf, "%v: %v", field.Key, field.String)
 			case zapcore.Uint8Type, zapcore.Uint16Type, zapcore.Uint32Type, zapcore.Uint64Type:
-				buf.WriteString(fmt.Sprintf("%v: %v", field.Key, uint64(field.Integer)))
+				fmt.Fprintf(&buf, "%v: %v", field.Key, uint64(field.Integer))
 			case zapcore.Int8Type, zapcore.Int16Type, zapcore.Int32Type, zapcore.Int64Type:
-				buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.Integer))
+				fmt.Fprintf(&buf, "%v: %v", field.Key, field.Integer)
 			case zapcore.BoolType:
-				buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.Integer == 1))
+				fmt.Fprintf(&buf, "%v: %v", field.Key, field.Integer == 1)
 			}
 			buf.WriteString("\n")
 		}
+		totalCnt--
 	}
 	buf.WriteString("\n")
 	return buf

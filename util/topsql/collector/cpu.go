@@ -104,11 +104,11 @@ func (sp *SQLCPUCollector) collectSQLCPULoop() {
 	profileConsumer := make(cpuprofile.ProfileConsumer, 1)
 	ticker := time.NewTicker(defCollectTickerInterval)
 	defer func() {
-		util.Recover("top-sql", "startAnalyzeProfileWorker", nil, false)
 		sp.wg.Done()
 		sp.doUnregister(profileConsumer)
 		ticker.Stop()
 	}()
+	defer util.Recover("top-sql", "startAnalyzeProfileWorker", nil, false)
 
 	for {
 		if topsqlstate.TopSQLEnabled() {

@@ -15,6 +15,7 @@
 package addindextest_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -22,11 +23,17 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/ddl/util/callback"
+	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,6 +44,8 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	local.RunInTest = true
 
 	tk.MustExec("create table t (a int, b int, c int);")
 	var sb strings.Builder
@@ -55,6 +64,7 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 	tk.MustExec("alter table t add unique index idx1(b);")
 	tk.MustExec("admin check table t;")
 	require.Equal(t, int64(0), ingest.LitMemRoot.CurrentUsage())
+	require.NoError(t, local.LastAlloc.CheckRefCnt())
 }
 
 func TestAddIndexIngestLimitOneBackend(t *testing.T) {
@@ -74,7 +84,8 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	tk2.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3);")
 
 	// Mock there is a running ingest job.
-	ingest.LitBackCtxMgr.Store(65535, &ingest.BackendContext{})
+	_, err := ingest.LitBackCtxMgr.Register(context.Background(), false, 65535, nil)
+	require.NoError(t, err)
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
@@ -94,7 +105,7 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	require.Equal(t, rows[1][7].(string) /* row_count */, "3")
 
 	// Remove the running ingest job.
-	ingest.LitBackCtxMgr.Delete(65535)
+	ingest.LitBackCtxMgr.Unregister(65535)
 	tk.MustExec("alter table t add index idx_a(a);")
 	rows = tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
@@ -127,7 +138,58 @@ func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
+func TestIngestMVIndexOnPartitionTable(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	cases := []string{
+		"alter table t add index idx((cast(a as signed array)));",
+		"alter table t add unique index idx(pk, (cast(a as signed array)));",
+	}
+	for _, c := range cases {
+		tk.MustExec("drop database if exists addindexlit;")
+		tk.MustExec("create database addindexlit;")
+		tk.MustExec("use addindexlit;")
+		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+		var sb strings.Builder
+
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (pk int primary key, a json) partition by hash(pk) partitions 4;")
+		tk.MustExec(sb.String())
+		var wg sync.WaitGroup
+		wg.Add(1)
+		var addIndexDone atomic.Bool
+		go func() {
+			n := 10240
+			internalTK := testkit.NewTestKit(t, store)
+			internalTK.MustExec("use addindexlit;")
+
+			for i := 0; i < 1024; i++ {
+				internalTK.MustExec(fmt.Sprintf("insert into t values (%d, '[%d, %d, %d]')", n, n, n+1, n+2))
+				internalTK.MustExec(fmt.Sprintf("delete from t where pk = %d", n-10))
+				internalTK.MustExec(fmt.Sprintf("update t set a = '[%d, %d, %d]' where pk = %d", n-3, n-2, n+1000, n-5))
+				n++
+				if i > 256 && addIndexDone.Load() {
+					break
+				}
+			}
+			wg.Done()
+		}()
+		tk.MustExec(c)
+		rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+		require.Len(t, rows, 1)
+		jobTp := rows[0][3].(string)
+		require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+		addIndexDone.Store(true)
+		wg.Wait()
+		tk.MustExec("admin check table t")
+	}
+}
+
 func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
+	if variable.EnableDistTask.Load() {
+		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -149,9 +211,8 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`))
 	done := make(chan error, 1)
-	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, 1)
+	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, 2)
 	testutil.SessionExecInGoroutine(store, "addindexlit", "alter table t add index idx(a);", done)
-	checkNum := 0
 
 	running := true
 	cnt := [3]int{1, 2, 4}
@@ -164,13 +225,11 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 		case wg := <-ddl.TestCheckWorkerNumCh:
 			offset = (offset + 1) % 3
 			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", cnt[offset]))
-			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, int32(cnt[offset])/2+1)
-			checkNum++
+			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, int32(cnt[offset]/2+2))
 			wg.Done()
 		}
 	}
 
-	require.Greater(t, checkNum, 5)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
 	tk.MustExec("admin check table t;")
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
@@ -187,9 +246,11 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
 	ingest.ImporterRangeConcurrencyForTest = &atomic.Int32{}
 	ingest.ImporterRangeConcurrencyForTest.Store(2)
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 20;")
+
 	tk.MustExec("create table t (a int primary key);")
 	var sb strings.Builder
 	sb.WriteString("insert into t values ")
@@ -210,49 +271,209 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 	ingest.ImporterRangeConcurrencyForTest = nil
 }
 
-func TestAddIndexIngestGeneratedColumns(t *testing.T) {
+func TestAddIndexIngestEmptyTable(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("alter table t add index idx(a);")
+
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobTp := rows[0][3].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+}
+
+func TestAddIndexIngestRestoredData(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-	assertLastNDDLUseIngest := func(n int) {
-		tk.MustExec("admin check table t;")
-		rows := tk.MustQuery(fmt.Sprintf("admin show ddl jobs %d;", n)).Rows()
-		require.Len(t, rows, n)
-		for i := 0; i < n; i++ {
-			jobTp := rows[i][3].(string)
-			require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+
+	tk.MustExec(`
+		CREATE TABLE tbl_5 (
+		  col_21 time DEFAULT '04:48:17',
+		  col_22 varchar(403) COLLATE utf8_unicode_ci DEFAULT NULL,
+		  col_23 year(4) NOT NULL,
+		  col_24 char(182) CHARACTER SET gbk COLLATE gbk_chinese_ci NOT NULL,
+		  col_25 set('Alice','Bob','Charlie','David') COLLATE utf8_unicode_ci DEFAULT NULL,
+		  PRIMARY KEY (col_24(3)) /*T![clustered_index] CLUSTERED */,
+		  KEY idx_10 (col_22)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+	`)
+	tk.MustExec("INSERT INTO tbl_5 VALUES ('15:33:15','&U+x1',2007,'','Bob');")
+	tk.MustExec("alter table tbl_5 add unique key idx_13 ( col_23 );")
+	tk.MustExec("admin check table tbl_5;")
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobTp := rows[0][3].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+}
+
+func TestAddIndexIngestUniqueKey(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	tk.MustExec("insert into t values (1, 1), (10000, 1);")
+	tk.MustExec("split table t by (5000);")
+	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a varchar(255) primary key, b int);")
+	tk.MustExec("insert into t values ('a', 1), ('z', 1);")
+	tk.MustExec("split table t by ('m');")
+	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a varchar(255) primary key, b int, c char(5));")
+	tk.MustExec("insert into t values ('a', 1, 'c1'), ('d', 2, 'c1'), ('x', 1, 'c2'), ('z', 1, 'c1');")
+	tk.MustExec("split table t by ('m');")
+	tk.MustGetErrMsg("alter table t add unique index idx(b, c);", "[kv:1062]Duplicate entry '1-c1' for key 't.idx'")
+}
+
+func TestAddIndexSplitTableRanges(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 8; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	tk.MustQuery("split table t between (0) and (80000) regions 7;").Check(testkit.Rows("6 1"))
+
+	ddl.SetBackfillTaskChanSizeForTest(4)
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+	ddl.SetBackfillTaskChanSizeForTest(7)
+	tk.MustExec("alter table t add index idx_2(b);")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 8; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	tk.MustQuery("split table t by (10000),(20000),(30000),(40000),(50000),(60000);").Check(testkit.Rows("6 1"))
+	ddl.SetBackfillTaskChanSizeForTest(4)
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
+	ddl.SetBackfillTaskChanSizeForTest(1024)
+}
+
+func TestAddIndexFinishImportError(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 4; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/ingest/mockFinishImportErr", "1*return"))
+	tk.MustExec("alter table t add index idx(a);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/ingest/mockFinishImportErr"))
+	tk.MustExec("admin check table t;")
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	//nolint: forcetypeassert
+	jobTp := rows[0][3].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+}
+
+func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt=1;")
+
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+	tk.MustQuery("split table t by (30000);").Check(testkit.Rows("1 1"))
+	tk.MustExec("insert into t values(1, 1, 1);")
+	tk.MustExec("insert into t values(100000, 1, 1);")
+
+	ingest.ForceSyncFlagForTest = true
+	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
+	ingest.ForceSyncFlagForTest = false
+
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt=4;")
+}
+
+func TestAddIndexBackfillLostUpdate(t *testing.T) {
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use addindexlit;")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{}
+	var runDML bool
+	callback.OnJobRunAfterExported = func(job *model.Job) {
+		if t.Failed() || runDML {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			_, err := tk1.Exec("insert into t values (1, 1, 1);")
+			assert.NoError(t, err)
+			// row: [h1 -> 1]
+			// idx: []
+			// tmp: [1 -> h1]
+			runDML = true
 		}
 	}
-	tk.MustExec("create table t (a int, b int, c int as (b+10), d int as (b+c), primary key (a) clustered);")
-	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3);")
-	tk.MustExec("alter table t add index idx(c);")
-	tk.MustExec("alter table t add index idx1(c, a);")
-	tk.MustExec("alter table t add index idx2(a);")
-	tk.MustExec("alter table t add index idx3(d);")
-	tk.MustExec("alter table t add index idx4(d, c);")
-	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 11 12", "2 2 12 14", "3 3 13 16"))
-	assertLastNDDLUseIngest(5)
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int, b char(10), c char(10) as (concat(b, 'x')), d int, e char(20) as (c));")
-	tk.MustExec("insert into t (a, b, d) values (1, '1', 1), (2, '2', 2), (3, '3', 3);")
-	tk.MustExec("alter table t add index idx(c);")
-	tk.MustExec("alter table t add index idx1(a, c);")
-	tk.MustExec("alter table t add index idx2(c(7));")
-	tk.MustExec("alter table t add index idx3(e(5));")
-	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 1x 1 1x", "2 2 2x 2 2x", "3 3 3x 3 3x"))
-	assertLastNDDLUseIngest(4)
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int, b char(10), c tinyint, d int as (a + c), e bigint as (d - a), primary key(b, a) clustered);")
-	tk.MustExec("insert into t (a, b, c) values (1, '1', 1), (2, '2', 2), (3, '3', 3);")
-	tk.MustExec("alter table t add index idx(d);")
-	tk.MustExec("alter table t add index idx1(b(2), d);")
-	tk.MustExec("alter table t add index idx2(d, c);")
-	tk.MustExec("alter table t add index idx3(e);")
-	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 1 2 1", "2 2 2 4 2", "3 3 3 6 3"))
-	assertLastNDDLUseIngest(4)
+	ddl.MockDMLExecutionStateBeforeImport = func() {
+		_, err := tk1.Exec("update t set b = 2 where id = 1;")
+		assert.NoError(t, err)
+		// row: [h1 -> 2]
+		// idx: [1 -> h1]
+		// tmp: [1 -> (h1,h1d), 2 -> h1]
+		_, err = tk1.Exec("begin;")
+		assert.NoError(t, err)
+		_, err = tk1.Exec("insert into t values (2, 1, 2);")
+		assert.NoError(t, err)
+		// row: [h1 -> 2, h2 -> 1]
+		// idx: [1 -> h1]
+		// tmp: [1 -> (h1,h1d,h2), 2 -> h1]
+		_, err = tk1.Exec("delete from t where id = 2;")
+		assert.NoError(t, err)
+		// row: [h1 -> 2]
+		// idx: [1 -> h1]
+		// tmp: [1 -> (h1,h1d,h2,h2d), 2 -> h1]
+		_, err = tk1.Exec("commit;")
+		assert.NoError(t, err)
+	}
+	d.SetHook(callback)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateBeforeImport", "1*return"))
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 1"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateBeforeImport"))
 }

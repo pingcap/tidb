@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strconv"
 	"testing"
@@ -410,6 +409,9 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set @@tidb_expensive_query_time_threshold=70")
 	tk.MustQuery("select @@tidb_expensive_query_time_threshold;").Check(testkit.Rows("70"))
 
+	tk.MustExec("set @@tidb_expensive_txn_time_threshold=120")
+	tk.MustQuery("select @@tidb_expensive_txn_time_threshold;").Check(testkit.Rows("120"))
+
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@global.tidb_store_limit = 100")
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
@@ -646,7 +648,7 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("0"))
 	require.Error(t, tk.ExecToErr("set tidb_enable_tso_follower_proxy = 1"))
 
-	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_historical_stats = 0")
@@ -685,12 +687,12 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_enable_new_cost_interface").Check(testkit.Rows("1"))
 
 	// test for tidb_remove_orderby_in_subquery
-	tk.MustQuery("select @@session.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0")) // default value is 0
-	tk.MustExec("set session tidb_remove_orderby_in_subquery=1")
-	tk.MustQuery("select @@session.tidb_remove_orderby_in_subquery").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0")) // default value is 0
-	tk.MustExec("set global tidb_remove_orderby_in_subquery=1")
-	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.tidb_remove_orderby_in_subquery").Check(testkit.Rows("1")) // default value is 1
+	tk.MustExec("set session tidb_remove_orderby_in_subquery=0")
+	tk.MustQuery("select @@session.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("1")) // default value is 1
+	tk.MustExec("set global tidb_remove_orderby_in_subquery=0")
+	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0"))
 
 	// test for tidb_opt_skew_distinct_agg
 	tk.MustQuery("select @@session.tidb_opt_skew_distinct_agg").Check(testkit.Rows("0")) // default value is 0
@@ -767,51 +769,31 @@ func TestSetVar(t *testing.T) {
 	tk.MustGetErrCode("set global init_connect = 'invalidstring'", mysql.ErrWrongTypeForVar)
 	tk.MustExec("set global init_connect = 'select now(); select timestamp()'")
 
-	// test variable 'tidb_enable_general_plan_cache'
+	// test variable 'tidb_session_plan_cache_size'
 	// global scope
-	tk.MustQuery("select @@global.tidb_enable_general_plan_cache").Check(testkit.Rows("0")) // default value
-	tk.MustExec("set global tidb_enable_general_plan_cache = 1")
-	tk.MustQuery("select @@global.tidb_enable_general_plan_cache").Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_enable_general_plan_cache = 0")
-	tk.MustQuery("select @@global.tidb_enable_general_plan_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_session_plan_cache_size").Check(testkit.Rows("100")) // default value
+	tk.MustExec("set global tidb_session_plan_cache_size = 1")
+	tk.MustQuery("select @@global.tidb_session_plan_cache_size").Check(testkit.Rows("1"))
 	// session scope
-	tk.MustQuery("select @@session.tidb_enable_general_plan_cache").Check(testkit.Rows("0")) // default value
-	tk.MustExec("set session tidb_enable_general_plan_cache = 1")
-	tk.MustQuery("select @@session.tidb_enable_general_plan_cache").Check(testkit.Rows("1"))
-	tk.MustExec("set session tidb_enable_general_plan_cache = 0")
-	tk.MustQuery("select @@session.tidb_enable_general_plan_cache").Check(testkit.Rows("0"))
-
-	// test variable 'tidb_general_plan_cache-size'
-	// global scope
-	tk.MustQuery("select @@global.tidb_general_plan_cache_size").Check(testkit.Rows("100")) // default value
-	tk.MustExec("set global tidb_general_plan_cache_size = 200")
-	tk.MustQuery("select @@global.tidb_general_plan_cache_size").Check(testkit.Rows("200"))
-	tk.MustExec("set global tidb_general_plan_cache_size = 200000000") // overflow
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_general_plan_cache_size value: '200000000'"))
-	tk.MustQuery("select @@global.tidb_general_plan_cache_size").Check(testkit.Rows("100000"))
-	// session scope
-	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("100")) // default value
-	tk.MustExec("set session tidb_general_plan_cache_size = 300")
-	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("300"))
-	tk.MustExec("set session tidb_general_plan_cache_size = -1") // underflow
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_general_plan_cache_size value: '-1'"))
-	tk.MustQuery("select @@session.tidb_general_plan_cache_size").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.tidb_session_plan_cache_size").Check(testkit.Rows("100")) // default value
+	tk.MustExec("set session tidb_session_plan_cache_size = 1")
+	tk.MustQuery("select @@session.tidb_session_plan_cache_size").Check(testkit.Rows("1"))
 
 	// test variable 'foreign_key_checks'
 	// global scope
-	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("0")) // default value
-	tk.MustExec("set global foreign_key_checks = 1")
-	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set global foreign_key_checks = 0")
+	tk.MustQuery("select @@global.foreign_key_checks").Check(testkit.Rows("0"))
 	// session scope
-	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("0")) // default value
-	tk.MustExec("set session foreign_key_checks = 1")
-	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set session foreign_key_checks = 0")
+	tk.MustQuery("select @@session.foreign_key_checks").Check(testkit.Rows("0"))
 
-	// test variable 'foreign_key_checks'
+	// test variable 'tidb_enable_foreign_key'
 	// global scope
-	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("0")) // default value
-	tk.MustExec("set global tidb_enable_foreign_key = 1")
-	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set global tidb_enable_foreign_key = 0")
+	tk.MustQuery("select @@global.tidb_enable_foreign_key").Check(testkit.Rows("0"))
 
 	// test variable 'tidb_opt_force_inline_cte'
 	tk.MustQuery("select @@session.tidb_opt_force_inline_cte").Check(testkit.Rows("0")) // default value is 0
@@ -861,6 +843,29 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("4"))
 	tk.MustExec("SET GLOBAL validate_password.mixed_case_count = 2")
 	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("6"))
+
+	// test tidb_cdc_write_source
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
+	tk.MustQuery("select @@tidb_cdc_write_source").Check(testkit.Rows("0"))
+	tk.MustExec("set @@session.tidb_cdc_write_source = 2")
+	tk.MustQuery("select @@tidb_cdc_write_source").Check(testkit.Rows("2"))
+	require.Equal(t, uint64(2), tk.Session().GetSessionVars().CDCWriteSource)
+	tk.MustExec("set @@session.tidb_cdc_write_source = 0")
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
+
+	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob"))
+	tk.MustExec("set @@session.tidb_analyze_skip_column_types = 'json, text, blob'")
+	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows("json,text,blob"))
+	tk.MustExec("set @@session.tidb_analyze_skip_column_types = ''")
+	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows(""))
+	tk.MustGetErrMsg("set @@session.tidb_analyze_skip_column_types = 'int,json'", "[variable:1231]Variable 'tidb_analyze_skip_column_types' can't be set to the value of 'int,json'")
+
+	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob"))
+	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json, text, blob'")
+	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows("json,text,blob"))
+	tk.MustExec("set @@global.tidb_analyze_skip_column_types = ''")
+	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows(""))
+	tk.MustGetErrMsg("set @@global.tidb_analyze_skip_column_types = 'int,json'", "[variable:1231]Variable 'tidb_analyze_skip_column_types' can't be set to the value of 'int,json'")
 }
 
 func TestGetSetNoopVars(t *testing.T) {
@@ -1793,7 +1798,7 @@ func TestSetClusterConfig(t *testing.T) {
 	httpCnt = 0
 	tk.Session().SetValue(executor.TestSetConfigHTTPHandlerKey, func(req *http.Request) (*http.Response, error) {
 		httpCnt++
-		body, err := ioutil.ReadAll(req.Body)
+		body, err := io.ReadAll(req.Body)
 		require.NoError(t, err)
 		// The `raftstore.` prefix is stripped.
 		require.JSONEq(t, `{"server.snap-max-write-bytes-per-sec":"500MB"}`, string(body))
@@ -1904,21 +1909,21 @@ func TestPreparePlanCacheValid(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// global scope
-	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("100")) // default value
-	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_size = 0")
+	tk.MustQuery("select @@global.tidb_session_plan_cache_size").Check(testkit.Rows("100")) // default value
+	tk.MustExec("SET GLOBAL tidb_session_plan_cache_size = 0")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1292 Truncated incorrect tidb_prepared_plan_cache_size value: '0'"))
-	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("1"))
-	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_size = 2")
-	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("2"))
+		"Warning 1292 Truncated incorrect tidb_session_plan_cache_size value: '0'"))
+	tk.MustQuery("select @@global.tidb_session_plan_cache_size").Check(testkit.Rows("1"))
+	tk.MustExec("SET GLOBAL tidb_session_plan_cache_size = 2")
+	tk.MustQuery("select @@global.tidb_session_plan_cache_size").Check(testkit.Rows("2"))
 	// session scope
-	tk.MustQuery("select @@session.tidb_prepared_plan_cache_size").Check(testkit.Rows("100")) // default value
-	tk.MustExec("SET SESSION tidb_prepared_plan_cache_size = 0")
+	tk.MustQuery("select @@session.tidb_session_plan_cache_size").Check(testkit.Rows("100")) // default value
+	tk.MustExec("SET SESSION tidb_session_plan_cache_size = 0")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1292 Truncated incorrect tidb_prepared_plan_cache_size value: '0'"))
-	tk.MustQuery("select @@session.tidb_prepared_plan_cache_size").Check(testkit.Rows("1"))
-	tk.MustExec("SET SESSION tidb_prepared_plan_cache_size = 2")
-	tk.MustQuery("select @@session.tidb_prepared_plan_cache_size").Check(testkit.Rows("2"))
+		"Warning 1292 Truncated incorrect tidb_session_plan_cache_size value: '0'"))
+	tk.MustQuery("select @@session.tidb_session_plan_cache_size").Check(testkit.Rows("1"))
+	tk.MustExec("SET SESSION tidb_session_plan_cache_size = 2")
+	tk.MustQuery("select @@session.tidb_session_plan_cache_size").Check(testkit.Rows("2"))
 
 	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = -0.1")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
@@ -2062,4 +2067,62 @@ func TestSetChunkReuseVariable(t *testing.T) {
 
 	// error value
 	tk.MustGetErrCode("set @@tidb_enable_reuse_chunk=s;", errno.ErrWrongValueForVar)
+}
+
+func TestSetMppVersionVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("UNSPECIFIED"))
+	tk.MustExec("SET SESSION mpp_version = -1")
+	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("-1"))
+	tk.MustExec("SET SESSION mpp_version = 0")
+	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("0"))
+	tk.MustExec("SET SESSION mpp_version = 1")
+	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("1"))
+	tk.MustExec("SET SESSION mpp_version = 2")
+	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("2"))
+	tk.MustExec("SET SESSION mpp_version = unspecified")
+	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("unspecified"))
+	{
+		tk.MustGetErrMsg("SET SESSION mpp_version = 3", "incorrect value: 3. mpp_version options: -1 (unspecified), 0, 1, 2")
+	}
+	{
+		tk.MustExec("SET GLOBAL mpp_version = 1")
+		tk.MustQuery("select @@global.mpp_version").Check(testkit.Rows("1"))
+		tk.MustExec("SET GLOBAL mpp_version = -1")
+		tk.MustQuery("select @@global.mpp_version").Check(testkit.Rows("-1"))
+	}
+}
+
+func TestSetMppExchangeCompressionModeVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustGetErrMsg(
+		"SET SESSION mpp_exchange_compression_mode = 123",
+		"incorrect value: `123`. mpp_exchange_compression_mode options: NONE, FAST, HIGH_COMPRESSION, UNSPECIFIED")
+	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("UNSPECIFIED"))
+
+	tk.MustExec("SET SESSION mpp_exchange_compression_mode = none")
+	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("none"))
+	tk.MustExec("SET SESSION mpp_exchange_compression_mode = fast")
+	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("fast"))
+	tk.MustExec("SET SESSION mpp_exchange_compression_mode = HIGH_COMPRESSION")
+	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("HIGH_COMPRESSION"))
+
+	{
+		tk.MustExec("SET GLOBAL mpp_exchange_compression_mode = none")
+		tk.MustQuery("select @@global.mpp_exchange_compression_mode").Check(testkit.Rows("none"))
+	}
+	{
+		tk.MustExec("SET mpp_version = 0")
+		tk.MustExec("SET mpp_exchange_compression_mode = unspecified")
+		require.Equal(t, len(tk.Session().GetSessionVars().StmtCtx.GetWarnings()), 0)
+	}
+	{
+		tk.MustExec("SET mpp_version = 0")
+		tk.MustExec("SET mpp_exchange_compression_mode = HIGH_COMPRESSION")
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+		require.Equal(t, len(warnings), 1)
+		require.Equal(t, warnings[0].Err.Error(), "mpp exchange compression won't work under current mpp version 0")
+	}
 }

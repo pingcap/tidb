@@ -233,7 +233,7 @@ The following features of the general collation algorithm will be supported:
   * Tertiary Weight i.e. case
   * PAD / NOPAD
 
-All of them are supported by `text/collate` package of Go, so it is possible to map Go collations to some of UCA-based collations in MySQL like `utf8mb4_unicode_ci`/`utf8mb4_0900_ai_ci`, if we ignore the differences between UCA versions: current `text/collate` uses UCA version `6.2.0` and it is not changable. However, the collations in MySQL are with different UCA versions marked in the names, for example, `utf8mb4_0900_ai_ci` uses version `9.0`.
+All of them are supported by `text/collate` package of Go, so it is possible to map Go collations to some of UCA-based collations in MySQL like `utf8mb4_unicode_ci`/`utf8mb4_0900_ai_ci`, if we ignore the differences between UCA versions: current `text/collate` uses UCA version `6.2.0` and it is not changeable. However, the collations in MySQL are with different UCA versions marked in the names, for example, `utf8mb4_0900_ai_ci` uses version `9.0`.
 
 For non-standard UCA implementations in MySQL, i.e. the `utf8mb4_general_ci`. The implementation depends on our choice to the [Compatibility with MySQL](#compatibility-with-mysql) chapter, if a 100% compatibility of `utf8mb4_general_ci` is chosen, we need to implement it by our hands.
 

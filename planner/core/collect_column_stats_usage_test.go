@@ -331,6 +331,11 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		if len(tt.pruneMode) > 0 {
 			s.ctx.GetSessionVars().PartitionPruneMode.Store(tt.pruneMode)
 		}
+		if s.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+			s.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = true
+		} else {
+			s.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
+		}
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))

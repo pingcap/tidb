@@ -29,7 +29,7 @@ func TestValidateDictionaryPassword(t *testing.T) {
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
 
-	err := mock.SetGlobalSysVar(context.Background(), variable.ValidatePasswordDictionary, "1234;5678;HIJK")
+	err := mock.SetGlobalSysVar(context.Background(), variable.ValidatePasswordDictionary, "abc;123;1234;5678;HIJK;中文测试;。，；！")
 	require.NoError(t, err)
 	testcases := []struct {
 		pwd    string
@@ -41,6 +41,8 @@ func TestValidateDictionaryPassword(t *testing.T) {
 		{"abcd12345efg", false},
 		{"abcd123efghij", true},
 		{"abcd123efghijk", false},
+		{"abcd123efghij中文测试", false},
+		{"abcd123。，；！", false},
 	}
 	for _, testcase := range testcases {
 		ok, err := ValidateDictionaryPassword(testcase.pwd, &vars.GlobalVarsAccessor)
@@ -134,4 +136,40 @@ func TestValidatePasswordMediumPolicy(t *testing.T) {
 	warn, err = ValidatePasswordMediumPolicy("!@Aa123", &sessionVars.GlobalVarsAccessor)
 	require.NoError(t, err)
 	require.Equal(t, "", warn)
+}
+
+func TestValidatePassword(t *testing.T) {
+	sessionVars := variable.NewSessionVars(nil)
+	sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+	sessionVars.GlobalVarsAccessor.(*variable.MockGlobalAccessor).SessionVars = sessionVars
+	sessionVars.User = &auth.UserIdentity{Username: "user", AuthUsername: "authuser"}
+
+	err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordPolicy, "LOW")
+	require.NoError(t, err)
+	err = ValidatePassword(sessionVars, "1234")
+	require.Error(t, err)
+	err = ValidatePassword(sessionVars, "user1234")
+	require.Error(t, err)
+	err = ValidatePassword(sessionVars, "authuser1234")
+	require.Error(t, err)
+	err = ValidatePassword(sessionVars, "User1234")
+	require.NoError(t, err)
+
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordPolicy, "MEDIUM")
+	require.NoError(t, err)
+	err = ValidatePassword(sessionVars, "User1234")
+	require.Error(t, err)
+	err = ValidatePassword(sessionVars, "!User1234")
+	require.NoError(t, err)
+	err = ValidatePassword(sessionVars, "！User1234")
+	require.NoError(t, err)
+
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordPolicy, "STRONG")
+	require.NoError(t, err)
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordDictionary, "User")
+	require.NoError(t, err)
+	err = ValidatePassword(sessionVars, "!User1234")
+	require.Error(t, err)
+	err = ValidatePassword(sessionVars, "!ABcd1234")
+	require.NoError(t, err)
 }

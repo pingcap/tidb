@@ -18,7 +18,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"flag"
 	"math/rand"
 	"testing"
 
@@ -27,8 +26,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -80,7 +81,7 @@ func (mc *mockConn) ID() uint64 {
 func CreateMockServer(t *testing.T, store kv.Storage) *Server {
 	if !RunInGoTest {
 		// If CreateMockServer is called in another package, RunInGoTest is not initialized.
-		RunInGoTest = flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
+		RunInGoTest = intest.InTest
 	}
 	tidbdrv := NewTiDBDriver(store)
 	cfg := config.NewConfig()
@@ -90,6 +91,9 @@ func CreateMockServer(t *testing.T, store kv.Storage) *Server {
 	cfg.Security.AutoTLS = false
 	server, err := NewServer(cfg, tidbdrv)
 	require.NoError(t, err)
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
 	return server
 }
 
@@ -120,7 +124,7 @@ func CreateMockConn(t *testing.T, server *Server) MockConn {
 	cc.server.rwlock.Unlock()
 	tc.Session.SetSessionManager(server)
 	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
-	err = tc.Session.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil)
+	err = tc.Session.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
 	return &mockConn{
 		clientConn: cc,

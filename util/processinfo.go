@@ -16,10 +16,9 @@ package util
 
 import (
 	"crypto/tls"
-	"errors"
 	"fmt"
+	"net"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/parser/mysql"
@@ -41,8 +40,12 @@ type OOMAlarmVariablesInfo struct {
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
 	Time                  time.Time
+	ExpensiveLogTime      time.Time
+	ExpensiveTxnLogTime   time.Time
+	CurTxnCreateTime      time.Time
 	Plan                  interface{}
 	StmtCtx               *stmtctx.StatementContext
+	RefCountOfStmtCtx     *stmtctx.ReferenceCount
 	MemTracker            *memory.Tracker
 	DiskTracker           *disk.Tracker
 	StatsInfo             func(interface{}) map[string]uint64
@@ -53,17 +56,19 @@ type ProcessInfo struct {
 	User                  string
 	Info                  string
 	Port                  string
+	ResourceGroupName     string
 	PlanExplainRows       [][]string
+	TableIDs              []int64
+	IndexNames            []string
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
 	ID                    uint64
 	CurTxnStartTS         uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
-	MaxExecutionTime          uint64
-	State                     uint16
-	Command                   byte
-	ExceedExpensiveTimeThresh bool
-	RedactSQL                 bool
+	MaxExecutionTime uint64
+	State            uint16
+	Command          byte
+	RedactSQL        bool
 }
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
@@ -83,7 +88,7 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	}
 	var host string
 	if pi.Port != "" {
-		host = fmt.Sprintf("%s:%s", pi.Host, pi.Port)
+		host = net.JoinHostPort(pi.Host, pi.Port)
 	} else {
 		host = pi.Host
 	}
@@ -125,7 +130,7 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 			diskConsumed = pi.DiskTracker.BytesConsumed()
 		}
 	}
-	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz))
+	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz), pi.ResourceGroupName)
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.
@@ -182,10 +187,12 @@ type SessionManager interface {
 	ShowProcessList() map[uint64]*ProcessInfo
 	ShowTxnList() []*txninfo.TxnInfo
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
-	Kill(connectionID uint64, query bool)
+	Kill(connectionID uint64, query bool, maxExecutionTime bool)
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
+	// GetAutoAnalyzeProcID returns processID for auto analyze
+	GetAutoAnalyzeProcID() uint64
 	// StoreInternalSession puts the internal session pointer to the map in the SessionManager.
 	StoreInternalSession(se interface{})
 	// DeleteInternalSession deletes the internal session pointer from the map in the SessionManager.
@@ -196,110 +203,6 @@ type SessionManager interface {
 	CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string)
 	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
 	KillNonFlashbackClusterConn()
-}
-
-// GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
-// 64 bits version:
-/*
-  63 62                 41 40                                   1   0
- +--+---------------------+--------------------------------------+------+
- |  |      serverId       |             local connId             |markup|
- |=0|       (22b)         |                 (40b)                |  =1  |
- +--+---------------------+--------------------------------------+------+
- 32 bits version(coming soon):
-  31                          1   0
- +-----------------------------+------+
- |             ???             |markup|
- |             ???             |  =0  |
- +-----------------------------+------+
-*/
-type GlobalConnID struct {
-	ServerIDGetter func() uint64
-	ServerID       uint64
-	LocalConnID    uint64
-	Is64bits       bool
-}
-
-// NewGlobalConnID creates GlobalConnID with serverID
-func NewGlobalConnID(serverID uint64, is64Bits bool) GlobalConnID {
-	return GlobalConnID{ServerID: serverID, Is64bits: is64Bits, LocalConnID: reservedLocalConns}
-}
-
-// NewGlobalConnIDWithGetter creates GlobalConnID with serverIDGetter
-func NewGlobalConnIDWithGetter(serverIDGetter func() uint64, is64Bits bool) GlobalConnID {
-	return GlobalConnID{ServerIDGetter: serverIDGetter, Is64bits: is64Bits, LocalConnID: reservedLocalConns}
-}
-
-const (
-	// MaxServerID is maximum serverID.
-	MaxServerID = 1<<22 - 1
-)
-
-func (g *GlobalConnID) makeID(localConnID uint64) uint64 {
-	var (
-		id       uint64
-		serverID uint64
-	)
-	if g.ServerIDGetter != nil {
-		serverID = g.ServerIDGetter()
-	} else {
-		serverID = g.ServerID
-	}
-	if g.Is64bits {
-		id |= 0x1
-		id |= localConnID & 0xff_ffff_ffff << 1 // 40 bits local connID.
-		id |= serverID & MaxServerID << 41      // 22 bits serverID.
-	} else {
-		// TODO: update after new design for 32 bits version.
-		id |= localConnID & 0x7fff_ffff << 1 // 31 bits local connID.
-	}
-	return id
-}
-
-// ID returns the connection id
-func (g *GlobalConnID) ID() uint64 {
-	return g.makeID(g.LocalConnID)
-}
-
-// NextID returns next connection id
-func (g *GlobalConnID) NextID() uint64 {
-	localConnID := atomic.AddUint64(&g.LocalConnID, 1)
-	return g.makeID(localConnID)
-}
-
-// ParseGlobalConnID parses an uint64 to GlobalConnID.
-//
-//	`isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
-func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) {
-	if id&0x80000000_00000000 > 0 {
-		return GlobalConnID{}, false, errors.New("Unexpected connectionID excceeds int64")
-	}
-	if id&0x1 > 0 {
-		if id&0xffffffff_00000000 == 0 {
-			return GlobalConnID{}, true, nil
-		}
-		return GlobalConnID{
-			Is64bits:    true,
-			LocalConnID: (id >> 1) & 0xff_ffff_ffff,
-			ServerID:    (id >> 41) & MaxServerID,
-		}, false, nil
-	}
-	// TODO: update after new design for 32 bits version.
-	return GlobalConnID{
-		Is64bits:    false,
-		LocalConnID: (id >> 1) & 0x7fff_ffff,
-		ServerID:    0,
-	}, false, nil
-}
-
-const (
-	reservedLocalConns  = 200
-	reservedConnAnalyze = 1
-)
-
-// GetAutoAnalyzeProcID returns processID for auto analyze
-// TODO support IDs for concurrent auto-analyze
-func GetAutoAnalyzeProcID(serverIDGetter func() uint64) uint64 {
-	globalConnID := NewGlobalConnIDWithGetter(serverIDGetter, true)
-	return globalConnID.makeID(reservedConnAnalyze)
+	// GetConAttrs gets the connection attributes
+	GetConAttrs() map[uint64]map[string]string
 }

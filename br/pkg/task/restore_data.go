@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	tidbconfig "github.com/pingcap/tidb/config"
 	"go.uber.org/zap"
 )
 
@@ -71,6 +72,11 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	defer mgr.Close()
 
 	keepaliveCfg.PermitWithoutStream = true
+	tc := tidbconfig.GetGlobalConfig()
+	tc.SkipRegisterToDashboard = true
+	tc.EnableGlobalKill = false
+	tidbconfig.StoreGlobalConfig(tc)
+
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
 
 	restoreTS, err := client.GetTS(ctx)
@@ -133,9 +139,9 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	}
 
 	log.Debug("total tikv", zap.Int("total", numBackupStore), zap.String("progress file", cfg.ProgressFile))
-	// progress = read meta + send recovery + iterate tikv + flashback.
-	progress := g.StartProgress(ctx, cmdName, int64(numBackupStore*4), !cfg.LogProgress)
-	go progressFileWriterRoutine(ctx, progress, int64(numBackupStore*4), cfg.ProgressFile)
+	// progress = read meta + send recovery + iterate tikv + (1 * prepareflashback + 1 * flashback)
+	progress := g.StartProgress(ctx, cmdName, int64(numBackupStore*3+2), !cfg.LogProgress)
+	go progressFileWriterRoutine(ctx, progress, int64(numBackupStore*3+2), cfg.ProgressFile)
 
 	// restore tikv data from a snapshot volume
 	var totalRegions int
@@ -153,7 +159,23 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 
 	//TODO: restore volume type into origin type
 	//ModifyVolume(*ec2.ModifyVolumeInput) (*ec2.ModifyVolumeOutput, error) by backupmeta
+	// this is used for cloud restoration
+	err = client.Init(g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer client.Close()
+	log.Info("start to clear system user for cloud")
+	err = client.ClearSystemUsers(ctx, cfg.ResetSysUsers)
 
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// since we cannot reset tiflash automaticlly. so we should start it manually
+	if err = client.ResetTiFlashReplicas(ctx, g, mgr.GetStorage()); err != nil {
+		return errors.Trace(err)
+	}
 	progress.Close()
 	summary.CollectDuration("restore duration", time.Since(startAll))
 	summary.SetSuccessStatus(true)

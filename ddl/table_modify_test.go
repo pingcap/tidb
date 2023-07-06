@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
@@ -117,7 +117,6 @@ func TestLockTableReadOnly(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t1,t2")
 	defer func() {
@@ -162,18 +161,6 @@ func TestLockTableReadOnly(t *testing.T) {
 	require.True(t, terror.ErrorEqual(tk2.ExecToErr("lock tables t1 write local"), infoschema.ErrTableLocked))
 	tk1.MustExec("admin cleanup table lock t1")
 	tk2.MustExec("insert into t1 set a=1, b=2")
-
-	tk1.MustExec("set global tidb_ddl_enable_fast_reorg = 0")
-	tk1.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
-	tk1.MustExec("begin pessimistic")
-	tk1.MustQuery("select * from t1 where a = 1").Check(testkit.Rows("1 2"))
-	tk2.MustExec("update t1 set b = 3")
-	tk2.MustExec("alter table t1 read only")
-	tk2.MustQuery("select * from t1 where a = 1").Check(testkit.Rows("1 3"))
-	tk1.MustQuery("select * from t1 where a = 1").Check(testkit.Rows("1 2"))
-	tk1.MustExec("update t1 set b = 4")
-	require.True(t, terror.ErrorEqual(tk1.ExecToErr("commit"), domain.ErrInfoSchemaChanged))
-	tk2.MustExec("alter table t1 read write")
 }
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
@@ -218,7 +205,7 @@ func TestConcurrentLockTables(t *testing.T) {
 }
 
 func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql1, sql2 string, se1, se2 session.Session, f func(t *testing.T, err1, err2 error)) {
-	callback := &ddl.TestDDLCallback{}
+	callback := &callback.TestDDLCallback{}
 	times := 0
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if times != 0 {
@@ -229,9 +216,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 			sess := testkit.NewTestKit(t, store).Session()
 			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
-			txn, err := sess.Txn(true)
-			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
+			jobs, err := ddl.GetAllDDLJobs(sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 2 {
@@ -257,9 +242,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 			sess := testkit.NewTestKit(t, store).Session()
 			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
-			txn, err := sess.Txn(true)
-			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
+			jobs, err := ddl.GetAllDDLJobs(sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 1 {

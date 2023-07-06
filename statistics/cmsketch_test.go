@@ -19,11 +19,9 @@ import (
 	"math"
 	"math/rand"
 	"testing"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -88,10 +86,9 @@ func buildCMSketchTopNAndMap(d, w, n, sample int32, seed int64, total, imax uint
 }
 
 func averageAbsoluteError(cms *CMSketch, topN *TopN, mp map[int64]uint32) (uint64, error) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	var total uint64
 	for num, count := range mp {
-		estimate, err := queryValue(sc, cms, topN, types.NewIntDatum(num))
+		estimate, err := queryValue(nil, cms, topN, types.NewIntDatum(num))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

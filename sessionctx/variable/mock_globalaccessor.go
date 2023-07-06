@@ -87,7 +87,7 @@ func (m *MockGlobalAccessor) SetGlobalSysVar(ctx context.Context, name string, v
 }
 
 // SetGlobalSysVarOnly implements GlobalVarAccessor.SetGlobalSysVarOnly interface.
-func (m *MockGlobalAccessor) SetGlobalSysVarOnly(ctx context.Context, name string, value string) error {
+func (m *MockGlobalAccessor) SetGlobalSysVarOnly(ctx context.Context, name string, value string, _ bool) error {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)

@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
@@ -29,7 +30,7 @@ import (
 
 // WindowExec is the executor for window functions.
 type WindowExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	groupChecker *vecGroupChecker
 	// childResult stores the child chunk
@@ -47,7 +48,7 @@ type WindowExec struct {
 
 // Close implements the Executor Close interface.
 func (e *WindowExec) Close() error {
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.Trace(e.BaseExecutor.Close())
 }
 
 // Next implements the Executor Next interface.
@@ -134,11 +135,11 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 		// TODO: Combine these three methods.
 		// The old implementation needs the processor has these three methods
 		// but now it does not have to.
-		groupRows, err = e.processor.consumeGroupRows(e.ctx, groupRows)
+		groupRows, err = e.processor.consumeGroupRows(e.Ctx(), groupRows)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		_, err = e.processor.appendResult2Chunk(e.ctx, groupRows, e.resultChunks[i], remained)
+		_, err = e.processor.appendResult2Chunk(e.Ctx(), groupRows, e.resultChunks[i], remained)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -151,8 +152,8 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 }
 
 func (e *WindowExec) fetchChild(ctx context.Context) (EOF bool, err error) {
-	childResult := tryNewCacheChunk(e.children[0])
-	err = Next(ctx, e.children[0], childResult)
+	childResult := tryNewCacheChunk(e.Children(0))
+	err = Next(ctx, e.Children(0), childResult)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -162,7 +163,7 @@ func (e *WindowExec) fetchChild(ctx context.Context) (EOF bool, err error) {
 		return true, nil
 	}
 
-	resultChk := e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.retFieldTypes, 0, numRows, e.AllocPool)
+	resultChk := e.Ctx().GetSessionVars().GetNewChunkWithCapacity(e.RetFieldTypes(), 0, numRows, e.AllocPool)
 	err = e.copyChk(childResult, resultChk)
 	if err != nil {
 		return false, err
@@ -287,7 +288,7 @@ func (p *rowFrameWindowProcessor) getEndOffset(numRows uint64) uint64 {
 	return 0
 }
 
-func (p *rowFrameWindowProcessor) consumeGroupRows(ctx sessionctx.Context, rows []chunk.Row) ([]chunk.Row, error) {
+func (p *rowFrameWindowProcessor) consumeGroupRows(_ sessionctx.Context, rows []chunk.Row) ([]chunk.Row, error) {
 	return rows, nil
 }
 
@@ -522,7 +523,7 @@ func (p *rangeFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, r
 	return rows, nil
 }
 
-func (p *rangeFrameWindowProcessor) consumeGroupRows(ctx sessionctx.Context, rows []chunk.Row) ([]chunk.Row, error) {
+func (p *rangeFrameWindowProcessor) consumeGroupRows(_ sessionctx.Context, rows []chunk.Row) ([]chunk.Row, error) {
 	return rows, nil
 }
 

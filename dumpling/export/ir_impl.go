@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"go.uber.org/zap"
 )
@@ -209,7 +210,6 @@ func (td *tableData) Start(tctx *tcontext.Context, conn *sql.Conn) error {
 	if err = rows.Err(); err != nil {
 		return errors.Annotatef(err, "sql: %s", td.query)
 	}
-	td.SQLRowIter = nil
 	td.rows = rows
 	if td.needColTypes {
 		ns, err := rows.Columns()
@@ -226,14 +226,12 @@ func (td *tableData) Start(tctx *tcontext.Context, conn *sql.Conn) error {
 			td.colTypes = append(td.colTypes, c.DatabaseTypeName())
 		}
 	}
+	td.SQLRowIter = newRowIter(rows, td.colLen)
 
 	return nil
 }
 
 func (td *tableData) Rows() SQLRowIter {
-	if td.SQLRowIter == nil {
-		td.SQLRowIter = newRowIter(td.rows, td.colLen)
-	}
 	return td.SQLRowIter
 }
 
@@ -353,13 +351,11 @@ func newMultiQueriesChunk(queries []string, colLength int) *multiQueriesChunk {
 func (td *multiQueriesChunk) Start(tctx *tcontext.Context, conn *sql.Conn) error {
 	td.tctx = tctx
 	td.conn = conn
+	td.SQLRowIter = newMultiQueryChunkIter(td.tctx, td.conn, td.queries, td.colLen)
 	return nil
 }
 
 func (td *multiQueriesChunk) Rows() SQLRowIter {
-	if td.SQLRowIter == nil {
-		td.SQLRowIter = newMultiQueryChunkIter(td.tctx, td.conn, td.queries, td.colLen)
-	}
 	return td.SQLRowIter
 }
 
@@ -369,4 +365,23 @@ func (td *multiQueriesChunk) Close() error {
 
 func (*multiQueriesChunk) RawRows() *sql.Rows {
 	return nil
+}
+
+var serverSpecialComments = map[version.ServerType][]string{
+	version.ServerTypeMySQL: {
+		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
+		"/*!40101 SET NAMES binary*/;",
+	},
+	version.ServerTypeTiDB: {
+		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
+		"/*!40101 SET NAMES binary*/;",
+	},
+	version.ServerTypeMariaDB: {
+		"/*!40101 SET NAMES binary*/;",
+		"SET FOREIGN_KEY_CHECKS=0;",
+	},
+}
+
+func getSpecialComments(serverType version.ServerType) []string {
+	return serverSpecialComments[serverType]
 }

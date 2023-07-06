@@ -177,6 +177,31 @@ func ExtractEquivalenceColumns(result [][]Expression, exprs []Expression) [][]Ex
 	return result
 }
 
+// FindUpperBound looks for column < constant or column <= constant and returns both the column
+// and constant. It return nil, 0 if the expression is not of this form.
+// It is used by derived Top N pattern and it is put here since it looks like
+// a general purpose routine. Similar routines can be added to find lower bound as well.
+func FindUpperBound(expr Expression) (*Column, int64) {
+	scalarFunction, scalarFunctionOk := expr.(*ScalarFunction)
+	if scalarFunctionOk {
+		args := scalarFunction.GetArgs()
+		if len(args) == 2 {
+			col, colOk := args[0].(*Column)
+			constant, constantOk := args[1].(*Constant)
+			if colOk && constantOk && (scalarFunction.FuncName.L == ast.LT || scalarFunction.FuncName.L == ast.LE) {
+				value, valueOk := constant.Value.GetValue().(int64)
+				if valueOk {
+					if scalarFunction.FuncName.L == ast.LT {
+						return col, value - 1
+					}
+					return col, value
+				}
+			}
+		}
+	}
+	return nil, 0
+}
+
 func extractEquivalenceColumns(result [][]Expression, expr Expression) [][]Expression {
 	switch v := expr.(type) {
 	case *ScalarFunction:
@@ -415,7 +440,6 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		if v.InOperand {
 			newExpr = SetExprColumnInOperand(newExpr)
 		}
-		newExpr.SetCoercibility(v.Coercibility())
 		return true, false, newExpr
 	case *ScalarFunction:
 		substituted := false
@@ -427,8 +451,10 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 				return substituted, hasFail, v
 			}
 			if substituted {
+				flag := v.RetType.GetFlag()
 				e := BuildCastFunction(v.GetCtx(), newArg, v.RetType)
 				e.SetCoercibility(v.Coercibility())
+				e.GetType().SetFlag(flag)
 				return true, false, e
 			}
 			return false, false, v
@@ -436,7 +462,11 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
-		_, coll := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
+		oldCollEt, err := CheckAndDeriveCollationFromExprs(v.GetCtx(), v.FuncName.L, v.RetType.EvalType(), v.GetArgs()...)
+		if err != nil {
+			logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
+			return false, false, v
+		}
 		var tmpArgForCollCheck []Expression
 		if collate.NewCollationEnabled() {
 			tmpArgForCollCheck = make([]Expression, len(v.GetArgs()))
@@ -452,9 +482,18 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 				changed = false
 				copy(tmpArgForCollCheck, refExprArr.Result())
 				tmpArgForCollCheck[idx] = newFuncExpr
-				_, newColl := DeriveCollationFromExprs(v.GetCtx(), tmpArgForCollCheck...)
-				if coll == newColl {
-					changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
+				newCollEt, err := CheckAndDeriveCollationFromExprs(v.GetCtx(), v.FuncName.L, v.RetType.EvalType(), tmpArgForCollCheck...)
+				if err != nil {
+					logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
+					return false, failed, v
+				}
+				if oldCollEt.Collation == newCollEt.Collation {
+					if newFuncExpr.GetType().GetCollate() == arg.GetType().GetCollate() && newFuncExpr.Coercibility() == arg.Coercibility() {
+						// It's safe to use the new expression, otherwise some cases in projection push-down will be wrong.
+						changed = true
+					} else {
+						changed = checkCollationStrictness(oldCollEt.Collation, newFuncExpr.GetType().GetCollate())
+					}
 				}
 			}
 			hasFail = hasFail || failed || oldChanged != changed
@@ -519,11 +558,10 @@ Loop:
 		switch {
 		case unicode.IsDigit(c) || unicode.IsLower(c) || unicode.IsUpper(c):
 			c = unicode.ToUpper(c)
-			if c < upper {
-				validLen = i + 1
-			} else {
+			if c >= upper {
 				break Loop
 			}
+			validLen = i + 1
 		case c == '+' || c == '-':
 			if i != 0 {
 				break Loop
@@ -963,7 +1001,7 @@ func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, ne
 	useCache := ctx.GetSessionVars().StmtCtx.UseCache
 	isPointExec := ctx.GetSessionVars().StmtCtx.PointExec
 	tp := types.NewFieldType(mysql.TypeUnspecified)
-	types.DefaultParamTypeForValue(v.GetValue(), tp)
+	types.InferParamTypeFromDatum(&v.Datum, tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
 	if useCache || isPointExec || needParam {
 		value.ParamMarker = &ParamMarker{
@@ -1143,6 +1181,33 @@ func IsMutableEffectsExpr(expr Expression) bool {
 	return false
 }
 
+// IsInmutableExpr checks whether this expression only consists of foldable functions and inmutable constants.
+// This expression can be evaluated by using `expr.Eval(chunk.Row{})` directly if it's inmutable.
+func IsInmutableExpr(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
+			return false
+		}
+		if _, ok := mutableEffectsFunctions[x.FuncName.L]; ok {
+			return false
+		}
+		for _, arg := range x.GetArgs() {
+			if !IsInmutableExpr(arg) {
+				return false
+			}
+		}
+		return true
+	case *Constant:
+		if x.DeferredExpr != nil || x.ParamMarker != nil {
+			return false
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 // RemoveDupExprs removes identical exprs. Not that if expr contains functions which
 // are mutable or have side effects, we cannot remove it even if it has duplicates;
 // if the plan is going to be cached, we cannot remove expressions containing `?` neither.
@@ -1239,7 +1304,7 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // TODO: Do more careful check here.
 func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
-	if !ctx.GetSessionVars().StmtCtx.UseCache || ctx.GetSessionVars().StmtCtx.SkipPlanCache {
+	if !ctx.GetSessionVars().StmtCtx.UseCache {
 		return false
 	}
 	return containMutableConst(ctx, exprs)
@@ -1541,4 +1606,23 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx sessio
 
 	r.updateDigestInfo(queryResult)
 	return nil
+}
+
+// ExprsToStringsForDisplay convert a slice of Expression to a slice of string using Expression.String(), and
+// to make it better for display and debug, it also escapes the string to corresponding golang string literal,
+// which means using \t, \n, \x??, \u????, ... to represent newline, control character, non-printable character,
+// invalid utf-8 bytes and so on.
+func ExprsToStringsForDisplay(exprs []Expression) []string {
+	strs := make([]string, len(exprs))
+	for i, cond := range exprs {
+		quote := `"`
+		// We only need the escape functionality of strconv.Quote, the quoting is not needed,
+		// so we trim the \" prefix and suffix here.
+		strs[i] = strings.TrimSuffix(
+			strings.TrimPrefix(
+				strconv.Quote(cond.String()),
+				quote),
+			quote)
+	}
+	return strs
 }

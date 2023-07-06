@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -74,7 +75,7 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
 		logutil.BgLogger().Info("new store", zap.String("path", path))
 		s, err = d.Open(path)
-		return kv.IsTxnRetryableError(err), err
+		return isNewStoreRetryableError(err), err
 	})
 
 	if err == nil {
@@ -90,4 +91,33 @@ func loadDriver(name string) (kv.Driver, bool) {
 	defer storesLock.RUnlock()
 	d, ok := stores[name]
 	return d, ok
+}
+
+// isOpenRetryableError check if the new store operation should be retried under given error
+// currently, it should be retried if:
+//
+//	Transaction conflict and is retryable (kv.IsTxnRetryableError)
+//	PD is not bootstrapped at the time of request
+//	Keyspace requested does not exist (request prior to PD keyspace pre-split)
+func isNewStoreRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return kv.IsTxnRetryableError(err) || IsNotBootstrappedError(err) || IsKeyspaceNotExistError(err)
+}
+
+// IsNotBootstrappedError returns true if the error is pd not bootstrapped error.
+func IsNotBootstrappedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), pdpb.ErrorType_NOT_BOOTSTRAPPED.String())
+}
+
+// IsKeyspaceNotExistError returns true the error is caused by keyspace not exists.
+func IsKeyspaceNotExistError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), pdpb.ErrorType_ENTRY_NOT_FOUND.String())
 }

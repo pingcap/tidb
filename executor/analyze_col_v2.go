@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -72,10 +73,10 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.A
 	} else {
 		statsTbl = statsHandle.GetPartitionStats(e.tableInfo, tid)
 	}
-	if statsTbl == nil || statsTbl.Count <= 0 {
+	if statsTbl == nil || statsTbl.RealtimeCount <= 0 {
 		return analyzeResult
 	}
-	newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.Count))
+	newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.RealtimeCount))
 	if newSampleRate >= *e.analyzePB.ColReq.SampleRate {
 		return analyzeResult
 	}
@@ -143,7 +144,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeRes
 	// stats for _tidb_rowid, it must be at the end of the column stats.
 	// Virtual column has no histogram yet. So we check nil here.
 	if hists[cLen-1] != nil && hists[cLen-1].ID == -1 {
-		cLen -= 1
+		cLen--
 	}
 	colResult := &statistics.AnalyzeResult{
 		Hist:  hists[:cLen],
@@ -595,6 +596,13 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	failpoint.Inject("mockAnalyzeSamplingMergeWorkerPanic", func() {
 		panic("failpoint triggered")
 	})
+	failpoint.Inject("mockAnalyzeMergeWorkerSlowConsume", func(val failpoint.Value) {
+		times := val.(int)
+		for i := 0; i < times; i++ {
+			e.memTracker.Consume(5 << 20)
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
 	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for i := 0; i < l; i++ {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
@@ -809,10 +817,10 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 	for {
 		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
 			dom := domain.GetDomain(ctx)
-			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
+			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 		})
 		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
-			return errors.Trace(ErrQueryInterrupted)
+			return errors.Trace(exeerrors.ErrQueryInterrupted)
 		}
 		failpoint.Inject("mockSlowAnalyzeV2", func() {
 			time.Sleep(1000 * time.Second)

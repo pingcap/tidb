@@ -74,6 +74,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefExecutorConcurrency, vars.HashAggPartialConcurrency())
 	require.Equal(t, DefExecutorConcurrency, vars.HashAggFinalConcurrency())
 	require.Equal(t, DefExecutorConcurrency, vars.WindowConcurrency())
+	require.Equal(t, DefExecutorConcurrency, vars.IndexMergeIntersectionConcurrency())
 	require.Equal(t, DefTiDBMergeJoinConcurrency, vars.MergeJoinConcurrency())
 	require.Equal(t, DefTiDBStreamAggConcurrency, vars.StreamAggConcurrency())
 	require.Equal(t, DefDistSQLScanConcurrency, vars.DistSQLScanConcurrency())
@@ -535,9 +536,6 @@ func TestValidate(t *testing.T) {
 		{TiDBShardAllocateStep, "ad", true},
 		{TiDBShardAllocateStep, "-123", false},
 		{TiDBShardAllocateStep, "128", false},
-		{TiDBEnableAmendPessimisticTxn, "0", false},
-		{TiDBEnableAmendPessimisticTxn, "1", false},
-		{TiDBEnableAmendPessimisticTxn, "256", true},
 		{TiDBAllowFallbackToTiKV, "", false},
 		{TiDBAllowFallbackToTiKV, "tiflash", false},
 		{TiDBAllowFallbackToTiKV, "  tiflash  ", false},

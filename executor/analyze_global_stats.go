@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -52,16 +53,22 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 	for globalStatsID := range globalStatsMap {
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	tableIDs := map[int64]struct{}{}
 	for tableID := range globalStatsTableIDs {
+		tableIDs[tableID] = struct{}{}
 		tableAllPartitionStats := make(map[int64]*statistics.Table)
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
 				continue
 			}
 			job := e.newAnalyzeHandleGlobalStatsJob(globalStatsID)
-			AddNewAnalyzeJob(e.ctx, job)
-			StartAnalyzeJob(e.ctx, job)
+			if job == nil {
+				logutil.BgLogger().Warn("cannot find the partitioned table, skip merging global stats", zap.Int64("tableID", globalStatsID.tableID))
+				continue
+			}
+			AddNewAnalyzeJob(e.Ctx(), job)
+			StartAnalyzeJob(e.Ctx(), job)
 			mergeStatsErr := func() error {
 				globalOpts := e.opts
 				if e.OptionsMap != nil {
@@ -69,15 +76,15 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 						globalOpts = v2Options.FilledOpts
 					}
 				}
-				globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema),
+				globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.Ctx(), globalOpts, e.Ctx().GetInfoSchema().(infoschema.InfoSchema),
 					globalStatsID.tableID, info.isIndex, info.histIDs,
 					tableAllPartitionStats)
 				if err != nil {
-					logutil.BgLogger().Error("merge global stats failed",
+					logutil.BgLogger().Warn("merge global stats failed",
 						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
 					if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 						// When we find some partition-level stats are missing, we need to report warning.
-						e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 					}
 					return err
 				}
@@ -94,29 +101,38 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 						info.statsVersion,
 						1,
 						true,
+						handle.StatsMetaHistorySourceAnalyze,
 					)
 					if err != nil {
 						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.String("info", job.JobInfo),
 							zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", tableID))
 					}
-					// Dump stats to historical storage.
-					if err1 := recordHistoricalStats(e.ctx, globalStatsID.tableID); err1 != nil {
-						logutil.BgLogger().Error("record historical stats failed", zap.String("info", job.JobInfo), zap.Int64("histID", hg.ID), zap.Error(err1))
-					}
 				}
 				return err
 			}()
-			FinishAnalyzeMergeJob(e.ctx, job, mergeStatsErr)
+			FinishAnalyzeMergeJob(e.Ctx(), job, mergeStatsErr)
+		}
+	}
+	for tableID := range tableIDs {
+		// Dump stats to historical storage.
+		if err := recordHistoricalStats(e.Ctx(), tableID); err != nil {
+			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 		}
 	}
 	return nil
 }
 
 func (e *AnalyzeExec) newAnalyzeHandleGlobalStatsJob(key globalStatsKey) *statistics.AnalyzeJob {
-	dom := domain.GetDomain(e.ctx)
+	dom := domain.GetDomain(e.Ctx())
 	is := dom.InfoSchema()
-	table, _ := is.TableByID(key.tableID)
-	db, _ := is.SchemaByTable(table.Meta())
+	table, ok := is.TableByID(key.tableID)
+	if !ok {
+		return nil
+	}
+	db, ok := is.SchemaByTable(table.Meta())
+	if !ok {
+		return nil
+	}
 	dbName := db.Name.String()
 	tableName := table.Meta().Name.String()
 	jobInfo := fmt.Sprintf("merge global stats for %v.%v columns", dbName, tableName)

@@ -159,4 +159,4 @@ func (recorder *TrxHistoryRecorder) ResizeSummaries(capacity uint) {
 }
 
 // Recorder is the recorder instance.
-var Recorder TrxHistoryRecorder = newTrxHistoryRecorder(0)
+var Recorder = newTrxHistoryRecorder(0)

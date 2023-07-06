@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -448,7 +449,7 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	require.NoError(t, err)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Store = "tikv"
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
@@ -459,6 +460,7 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	ts.port = getPortFromTCPAddr(server.listener.Addr())
 	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
+	ts.server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
@@ -539,16 +541,16 @@ partition by range (a)
 
 func decodeKeyMvcc(closer io.ReadCloser, t *testing.T, valid bool) {
 	decoder := json.NewDecoder(closer)
-	var data helper.MvccKV
+	var data []helper.MvccKV
 	err := decoder.Decode(&data)
 	require.NoError(t, err)
 	if valid {
-		require.NotNil(t, data.Value.Info)
-		require.Greater(t, len(data.Value.Info.Writes), 0)
+		require.NotNil(t, data[0].Value.Info)
+		require.Greater(t, len(data[0].Value.Info.Writes), 0)
 	} else {
-		require.Nil(t, data.Value.Info.Lock)
-		require.Nil(t, data.Value.Info.Writes)
-		require.Nil(t, data.Value.Info.Values)
+		require.Nil(t, data[0].Value.Info.Lock)
+		require.Nil(t, data[0].Value.Info.Writes)
+		require.Nil(t, data[0].Value.Info.Values)
 	}
 }
 

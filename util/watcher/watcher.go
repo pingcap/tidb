@@ -15,7 +15,6 @@
 package watcher
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -63,7 +62,7 @@ func NewWatcher() *Watcher {
 
 // Start starts the watching
 func (w *Watcher) Start(d time.Duration) error {
-	if !w.running.CAS(0, 1) {
+	if !w.running.CompareAndSwap(0, 1) {
 		return ErrWatcherStarted
 	}
 
@@ -83,7 +82,7 @@ func (w *Watcher) Start(d time.Duration) error {
 
 // Close stops the watching
 func (w *Watcher) Close() {
-	if !w.running.CAS(1, 0) {
+	if !w.running.CompareAndSwap(1, 0) {
 		return
 	}
 
@@ -317,12 +316,16 @@ func listForName(name string) (map[string]os.FileInfo, error) {
 		return list, nil
 	}
 
-	fInfoList, err := ioutil.ReadDir(name)
+	entries, err := os.ReadDir(name)
 	if err != nil {
 		return nil, errors.Annotatef(err, "directory %s", name)
 	}
 
-	for _, fi := range fInfoList {
+	for _, entry := range entries {
+		fi, err := entry.Info()
+		if err != nil {
+			return nil, errors.Annotatef(err, "directory %s", name)
+		}
 		fp := filepath.Join(name, fi.Name())
 		list[fp] = fi
 	}

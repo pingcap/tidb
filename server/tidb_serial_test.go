@@ -11,12 +11,12 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//go:build !race
 
 package server
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"os"
 	"path/filepath"
@@ -26,13 +26,35 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
+
+// isTLSExpiredError checks error is caused by TLS expired.
+func isTLSExpiredError(err error) bool {
+	err = errors.Cause(err)
+	switch inval := err.(type) {
+	case x509.CertificateInvalidError:
+		if inval.Reason != x509.Expired {
+			return false
+		}
+	case *tls.CertificateVerificationError:
+		invalid, ok := inval.Err.(x509.CertificateInvalidError)
+		if !ok || invalid.Reason != x509.Expired {
+			return false
+		}
+		return true
+	default:
+		return false
+	}
+	return true
+}
 
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
@@ -57,6 +79,12 @@ func TestConfigDefaultValue(t *testing.T) {
 // Fix issue#22540. Change tidb_dml_batch_size,
 // then check if load data into table with auto random column works properly.
 func TestLoadDataAutoRandom(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/executor/BeforeCommitWork", "sleep(1000)")
+	require.NoError(t, err)
+	defer func() {
+		//nolint:errcheck
+		_ = failpoint.Disable("github.com/pingcap/tidb/executor/BeforeCommitWork")
+	}()
 	ts := createTidbTestSuite(t)
 
 	ts.runTestLoadDataAutoRandom(t)
@@ -75,9 +103,21 @@ func TestExplainFor(t *testing.T) {
 }
 
 func TestStmtCount(t *testing.T) {
-	ts := createTidbTestSuite(t)
+	cfg := util2.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 0
+	cfg.Status.RecordDBLabel = false
+	cfg.Performance.TCPKeepAlive = true
+	ts := createTidbTestSuiteWithCfg(t, cfg)
 
 	ts.runTestStmtCount(t)
+}
+
+func TestDBStmtCount(t *testing.T) {
+	ts := createTidbTestSuite(t)
+
+	ts.runTestDBStmtCount(t)
 }
 
 func TestLoadDataListPartition(t *testing.T) {
@@ -92,7 +132,7 @@ func TestLoadDataListPartition(t *testing.T) {
 func TestInvalidTLS(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	cfg.Security = config.Security{
@@ -112,7 +152,7 @@ func TestTLSAuto(t *testing.T) {
 		config.TLSConfig = "skip-verify"
 	}
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
@@ -121,6 +161,7 @@ func TestTLSAuto(t *testing.T) {
 	require.NoError(t, err)
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -157,7 +198,7 @@ func TestTLSBasic(t *testing.T) {
 		config.TLSConfig = "skip-verify"
 	}
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -166,6 +207,7 @@ func TestTLSBasic(t *testing.T) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -218,7 +260,7 @@ func TestTLSVerify(t *testing.T) {
 
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Socket = dir + "/tidbtest.sock"
 	cfg.Status.ReportStatus = false
@@ -229,6 +271,7 @@ func TestTLSVerify(t *testing.T) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	defer server.Close()
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
@@ -251,9 +294,9 @@ func TestTLSVerify(t *testing.T) {
 	require.NoError(t, err)
 	cli.runTestRegression(t, connOverrider, "TLSRegression")
 
-	require.False(t, util.IsTLSExpiredError(errors.New("unknown test")))
-	require.False(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}))
-	require.True(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}))
+	require.False(t, isTLSExpiredError(errors.New("unknown test")))
+	require.False(t, isTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}))
+	require.True(t, isTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}))
 
 	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true, 528)
 	require.Error(t, err)
@@ -313,7 +356,7 @@ func TestErrorNoRollback(t *testing.T) {
 	}()
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
@@ -333,6 +376,7 @@ func TestErrorNoRollback(t *testing.T) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -467,7 +511,7 @@ func TestReloadTLS(t *testing.T) {
 
 	// try old cert used in startup configuration.
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -477,6 +521,7 @@ func TestReloadTLS(t *testing.T) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -541,6 +586,6 @@ func TestReloadTLS(t *testing.T) {
 	}
 	err = cli.runTestTLSConnection(t, connOverrider)
 	require.NotNil(t, err)
-	require.Truef(t, util.IsTLSExpiredError(err), "real error is %+v", err)
+	require.Truef(t, isTLSExpiredError(err), "real error is %+v", err)
 	server.Close()
 }

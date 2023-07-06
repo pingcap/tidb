@@ -4,6 +4,7 @@ package logutil
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -61,6 +62,11 @@ func (file zapFileMarshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 }
 
 type zapFilesMarshaler []*backuppb.File
+
+// MarshalLogObjectForFiles is an internal util function to zap something having `Files` field.
+func MarshalLogObjectForFiles(files []*backuppb.File, encoder zapcore.ObjectEncoder) error {
+	return zapFilesMarshaler(files).MarshalLogObject(encoder)
+}
 
 func (fs zapFilesMarshaler) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
 	total := len(fs)
@@ -305,4 +311,32 @@ func (rng StringifyRange) String() string {
 	sb.WriteString(redact.String(endKey))
 	sb.WriteString(")")
 	return sb.String()
+}
+
+// StringifyMany returns an array marshaler for a slice of stringers.
+func StringifyMany[T fmt.Stringer](items []T) zapcore.ArrayMarshaler {
+	return zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
+		for _, item := range items {
+			ae.AppendString(item.String())
+		}
+		return nil
+	})
+}
+
+// HexBytes is a wrapper which make a byte sequence printed by the hex format.
+type HexBytes []byte
+
+var (
+	_ fmt.Stringer   = HexBytes{}
+	_ json.Marshaler = HexBytes{}
+)
+
+// String implements fmt.Stringer.
+func (b HexBytes) String() string {
+	return hex.EncodeToString(b)
+}
+
+// MarshalJSON implements json.Marshaler.
+func (b HexBytes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(hex.EncodeToString(b))
 }

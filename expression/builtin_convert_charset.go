@@ -287,7 +287,7 @@ var convertActionMap = map[funcProp][]string{
 		ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.If, ast.Ifnull, ast.In,
 		ast.Case, ast.Cast,
 		/* string comparing */
-		ast.Like, ast.Strcmp,
+		ast.Like, ast.Ilike, ast.Strcmp,
 		/* regex */
 		ast.Regexp, ast.RegexpLike, ast.RegexpInStr, ast.RegexpSubstr, ast.RegexpReplace,
 		/* math */

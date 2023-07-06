@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 
 	"github.com/gogo/protobuf/proto"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/util/zeropool"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -59,7 +59,7 @@ var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, e
 // RewriteAstExpr rewrites ast expression directly.
 // Note: initialized in planner/core
 // import expression and planner/core together to use EvalAstExpr
-var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice) (Expression, error)
+var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice, allowCastArray bool) (Expression, error)
 
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
@@ -97,6 +97,11 @@ type ReverseExpr interface {
 	ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
 }
 
+// TraverseAction define the interface for action when traversing down an expression.
+type TraverseAction interface {
+	Transform(Expression) Expression
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
@@ -104,6 +109,8 @@ type Expression interface {
 	VecExpr
 	ReverseExpr
 	CollationInfo
+
+	Traverse(TraverseAction) Expression
 
 	// Eval evaluates an expression through a row.
 	Eval(row chunk.Row) (types.Datum, error)
@@ -285,23 +292,19 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 
 var (
 	defaultChunkSize = 1024
-	selPool          = sync.Pool{
-		New: func() interface{} {
-			return make([]int, defaultChunkSize)
-		},
-	}
-	zeroPool = sync.Pool{
-		New: func() interface{} {
-			return make([]int8, defaultChunkSize)
-		},
-	}
+	selPool          = zeropool.New[[]int](func() []int {
+		return make([]int, defaultChunkSize)
+	})
+	zeroPool = zeropool.New[[]int8](func() []int8 {
+		return make([]int8, defaultChunkSize)
+	})
 )
 
 func allocSelSlice(n int) []int {
 	if n > defaultChunkSize {
 		return make([]int, n)
 	}
-	return selPool.Get().([]int)
+	return selPool.Get()
 }
 
 func deallocateSelSlice(sel []int) {
@@ -314,7 +317,7 @@ func allocZeroSlice(n int) []int8 {
 	if n > defaultChunkSize {
 		return make([]int8, n)
 	}
-	return zeroPool.Get().([]int8)
+	return zeroPool.Get()
 }
 
 func deallocateZeroSlice(isZero []int8) {
@@ -816,7 +819,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		return expr
+		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("%v affects null check"))
 	}
 	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
@@ -983,11 +986,11 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	// Resolve virtual generated column.
 	mockSchema := NewSchema(columns...)
 	// Ignore redundant warning here.
-	save := ctx.GetSessionVars().StmtCtx.IgnoreTruncate
+	save := ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Load()
 	defer func() {
-		ctx.GetSessionVars().StmtCtx.IgnoreTruncate = save
+		ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(save)
 	}()
-	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
 	for i, col := range colInfos {
 		if col.IsGenerated() && !col.GeneratedStored {
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
@@ -998,7 +1001,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			e, err := RewriteAstExpr(ctx, expr, mockSchema, names)
+			e, err := RewriteAstExpr(ctx, expr, mockSchema, names, true)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -1139,7 +1142,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case
 		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or, ast.RightShift, ast.LeftShift,
-		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Strcmp,
+		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Ilike, ast.Strcmp,
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
 		ast.If, ast.Ifnull, ast.Case,
 		ast.Concat, ast.ConcatWS,
@@ -1150,7 +1153,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
-		ast.JSONLength, ast.Repeat,
+		ast.JSONLength, ast.JSONExtract, ast.JSONUnquote, ast.Repeat,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad,
@@ -1163,9 +1166,15 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_IfDuration,
 			tipb.ScalarFuncSig_CaseWhenDuration:
 			return false
+		case tipb.ScalarFuncSig_JsonUnquoteSig:
+			// TiFlash json_unquote now only supports json string generated by cast(json as string)
+			if childFunc, ok := function.GetArgs()[0].(*ScalarFunction); ok {
+				return childFunc.Function.PbCode() == tipb.ScalarFuncSig_CastJsonAsString
+			}
+			return false
 		}
 		return true
-	case ast.Regexp, ast.RegexpLike:
+	case ast.Regexp, ast.RegexpLike, ast.RegexpInStr, ast.RegexpSubstr, ast.RegexpReplace:
 		funcCharset, funcCollation := function.Function.CharsetAndCollation()
 		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
 			return false
@@ -1200,7 +1209,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
 			return function.RetType.IsDecimalValid()
 		case tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastTimeAsString,
-			tipb.ScalarFuncSig_CastStringAsString /*, tipb.ScalarFuncSig_CastDurationAsString, tipb.ScalarFuncSig_CastJsonAsString*/ :
+			tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastJsonAsString /*, tipb.ScalarFuncSig_CastDurationAsString*/ :
 			return true
 		case tipb.ScalarFuncSig_CastDecimalAsTime, tipb.ScalarFuncSig_CastIntAsTime, tipb.ScalarFuncSig_CastRealAsTime, tipb.ScalarFuncSig_CastTimeAsTime,
 			tipb.ScalarFuncSig_CastStringAsTime /*, tipb.ScalarFuncSig_CastDurationAsTime, tipb.ScalarFuncSig_CastJsonAsTime*/ :
@@ -1256,14 +1265,18 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.Least, ast.Greatest:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_GreatestInt, tipb.ScalarFuncSig_GreatestReal,
-			tipb.ScalarFuncSig_LeastInt, tipb.ScalarFuncSig_LeastReal:
+			tipb.ScalarFuncSig_LeastInt, tipb.ScalarFuncSig_LeastReal, tipb.ScalarFuncSig_LeastString, tipb.ScalarFuncSig_GreatestString:
 			return true
 		}
 	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
 		return true
-	case ast.Hex, ast.Bin:
+	case ast.Hex, ast.Unhex, ast.Bin:
 		return true
 	case ast.GetFormat:
+		return true
+	case ast.IsIPv4, ast.IsIPv6:
+		return true
+	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}
 	return false
@@ -1338,9 +1351,14 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 // DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
 var DefaultExprPushDownBlacklist *atomic.Value
 
+// ExprPushDownBlackListReloadTimeStamp is used to record the last time when the push-down black list is reloaded.
+// This is for plan cache, when the push-down black list is updated, we invalid all cached plans to avoid error.
+var ExprPushDownBlackListReloadTimeStamp *atomic.Int64
+
 func init() {
 	DefaultExprPushDownBlacklist = new(atomic.Value)
 	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
+	ExprPushDownBlackListReloadTimeStamp = new(atomic.Int64)
 }
 
 func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
@@ -1352,12 +1370,15 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 				panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
 			})
 		}
+		storageName := storeType.Name()
+		if storeType == kv.UnSpecified {
+			storageName = "storage layer"
+		}
+		warnErr := errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
 		if pc.sc.InExplainStmt {
-			storageName := storeType.Name()
-			if storeType == kv.UnSpecified {
-				storageName = "storage layer"
-			}
-			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now."))
+			pc.sc.AppendWarning(warnErr)
+		} else {
+			pc.sc.AppendExtraWarning(warnErr)
 		}
 		return false
 	}
@@ -1387,14 +1408,20 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
+			warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
 			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'."))
+				pc.sc.AppendWarning(warnErr)
+			} else {
+				pc.sc.AppendExtraWarning(warnErr)
 			}
 			return false
 		case mysql.TypeNewDecimal:
 			if !expr.GetType().IsDecimalValid() {
+				warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
 				if pc.sc.InExplainStmt {
-					pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "')."))
+					pc.sc.AppendWarning(warnErr)
+				} else {
+					pc.sc.AppendExtraWarning(warnErr)
 				}
 				return false
 			}
@@ -1559,6 +1586,10 @@ func Args2Expressions4Test(args ...interface{}) []Expression {
 			ft = types.NewFieldType(mysql.TypeDouble)
 		case types.KindString:
 			ft = types.NewFieldType(mysql.TypeVarString)
+		case types.KindMysqlTime:
+			ft = types.NewFieldType(mysql.TypeTimestamp)
+		case types.KindBytes:
+			ft = types.NewFieldType(mysql.TypeBlob)
 		default:
 			exprs[i] = nil
 			continue

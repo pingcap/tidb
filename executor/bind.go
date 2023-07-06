@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/parser/ast"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
@@ -27,7 +28,7 @@ import (
 
 // SQLBindExec represents a bind executor.
 type SQLBindExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	sqlBindOp    plannercore.SQLBindOpType
 	normdOrigSQL string
@@ -38,6 +39,9 @@ type SQLBindExec struct {
 	isGlobal     bool
 	bindAst      ast.StmtNode
 	newStatus    string
+	source       string // by manual or from history, only in create stmt
+	sqlDigest    string
+	planDigest   string
 }
 
 // Next implements the Executor Next interface.
@@ -48,6 +52,8 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.createSQLBind()
 	case plannercore.OpSQLBindDrop:
 		return e.dropSQLBind()
+	case plannercore.OpSQLBindDropByDigest:
+		return e.dropSQLBindByDigest()
 	case plannercore.OpFlushBindings:
 		return e.flushBindings()
 	case plannercore.OpCaptureBindings:
@@ -58,6 +64,8 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.reloadBindings()
 	case plannercore.OpSetBindingStatus:
 		return e.setBindingStatus()
+	case plannercore.OpSetBindingStatusByDigest:
+		return e.setBindingStatusByDigest()
 	default:
 		return errors.Errorf("unsupported SQL bind operation: %v", e.sqlBindOp)
 	}
@@ -74,12 +82,26 @@ func (e *SQLBindExec) dropSQLBind() error {
 		}
 	}
 	if !e.isGlobal {
-		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 		err := handle.DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
 		return err
 	}
-	affectedRows, err := domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
-	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
+	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+	e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
+	return err
+}
+
+func (e *SQLBindExec) dropSQLBindByDigest() error {
+	if e.sqlDigest == "" {
+		return errors.New("sql digest is empty")
+	}
+	if !e.isGlobal {
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		err := handle.DropBindRecordByDigest(e.sqlDigest)
+		return err
+	}
+	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropBindRecordByDigest(e.sqlDigest)
+	e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
 	return err
 }
 
@@ -92,10 +114,19 @@ func (e *SQLBindExec) setBindingStatus() error {
 			Collation: e.collation,
 		}
 	}
-	ok, err := domain.GetDomain(e.ctx).BindHandle().SetBindRecordStatus(e.normdOrigSQL, bindInfo, e.newStatus)
+	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetBindRecordStatus(e.normdOrigSQL, bindInfo, e.newStatus)
 	if err == nil && !ok {
 		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(warningMess)
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(warningMess)
+	}
+	return err
+}
+
+func (e *SQLBindExec) setBindingStatusByDigest() error {
+	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetBindRecordStatusByDigest(e.newStatus, e.sqlDigest)
+	if err == nil && !ok {
+		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(warningMess)
 	}
 	return err
 }
@@ -103,17 +134,19 @@ func (e *SQLBindExec) setBindingStatus() error {
 func (e *SQLBindExec) createSQLBind() error {
 	// For audit log, SQLBindExec execute "explain" statement internally, save and recover stmtctx
 	// is necessary to avoid 'create binding' been recorded as 'explain'.
-	saveStmtCtx := e.ctx.GetSessionVars().StmtCtx
+	saveStmtCtx := e.Ctx().GetSessionVars().StmtCtx
 	defer func() {
-		e.ctx.GetSessionVars().StmtCtx = saveStmtCtx
+		e.Ctx().GetSessionVars().StmtCtx = saveStmtCtx
 	}()
 
 	bindInfo := bindinfo.Binding{
-		BindSQL:   e.bindSQL,
-		Charset:   e.charset,
-		Collation: e.collation,
-		Status:    bindinfo.Enabled,
-		Source:    bindinfo.Manual,
+		BindSQL:    e.bindSQL,
+		Charset:    e.charset,
+		Collation:  e.collation,
+		Status:     bindinfo.Enabled,
+		Source:     e.source,
+		SQLDigest:  e.sqlDigest,
+		PlanDigest: e.planDigest,
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
@@ -121,24 +154,24 @@ func (e *SQLBindExec) createSQLBind() error {
 		Bindings:    []bindinfo.Binding{bindInfo},
 	}
 	if !e.isGlobal {
-		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		return handle.CreateBindRecord(e.ctx, record)
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		return handle.CreateBindRecord(e.Ctx(), record)
 	}
-	return domain.GetDomain(e.ctx).BindHandle().CreateBindRecord(e.ctx, record)
+	return domain.GetDomain(e.Ctx()).BindHandle().CreateBindRecord(e.Ctx(), record)
 }
 
 func (e *SQLBindExec) flushBindings() error {
-	return domain.GetDomain(e.ctx).BindHandle().FlushBindings()
+	return domain.GetDomain(e.Ctx()).BindHandle().FlushBindings()
 }
 
 func (e *SQLBindExec) captureBindings() {
-	domain.GetDomain(e.ctx).BindHandle().CaptureBaselines()
+	domain.GetDomain(e.Ctx()).BindHandle().CaptureBaselines()
 }
 
 func (e *SQLBindExec) evolveBindings() error {
-	return domain.GetDomain(e.ctx).BindHandle().HandleEvolvePlanTask(e.ctx, true)
+	return domain.GetDomain(e.Ctx()).BindHandle().HandleEvolvePlanTask(e.Ctx(), true)
 }
 
 func (e *SQLBindExec) reloadBindings() error {
-	return domain.GetDomain(e.ctx).BindHandle().ReloadBindings()
+	return domain.GetDomain(e.Ctx()).BindHandle().ReloadBindings()
 }

@@ -34,6 +34,7 @@ type panickingAllocator struct {
 func NewPanickingAllocators(base int64) autoid.Allocators {
 	sharedBase := &base
 	return autoid.NewAllocators(
+		false,
 		&panickingAllocator{base: sharedBase, ty: autoid.RowIDAllocType},
 		&panickingAllocator{base: sharedBase, ty: autoid.AutoIncrementType},
 		&panickingAllocator{base: sharedBase, ty: autoid.AutoRandomType},
@@ -41,7 +42,7 @@ func NewPanickingAllocators(base int64) autoid.Allocators {
 }
 
 // Rebase implements the autoid.Allocator interface
-func (alloc *panickingAllocator) Rebase(ctx context.Context, newBase int64, allocIDs bool) error {
+func (alloc *panickingAllocator) Rebase(_ context.Context, newBase int64, _ bool) error {
 	// CAS
 	for {
 		oldBase := atomic.LoadInt64(alloc.base)

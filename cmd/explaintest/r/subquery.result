@@ -56,13 +56,11 @@ insert into exam values(1, 'math', 100);
 set names utf8 collate utf8_general_ci;
 explain format = 'brief' select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
 id	estRows	task	access object	operator info
-Apply	10000.00	root		CARTESIAN anti semi join, other cond:eq(test.stu.name, Column#8)
+HashJoin	8000.00	root		anti semi join, equal:[eq(test.stu.id, test.exam.stu_id)], other cond:eq(test.stu.name, "guo")
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:stu	keep order:false, stats:pseudo
-└─Projection(Probe)	100000.00	root		guo->Column#8
-  └─TableReader	100000.00	root		data:Selection
-    └─Selection	100000.00	cop[tikv]		eq(test.exam.stu_id, test.stu.id)
-      └─TableFullScan	100000000.00	cop[tikv]	table:exam	keep order:false, stats:pseudo
+│ └─TableFullScan	10000.00	cop[tikv]	table:exam	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:stu	keep order:false, stats:pseudo
 select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
 id	name
 set names utf8mb4;
