@@ -9,6 +9,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 // Range represents a backup response.
@@ -70,7 +71,9 @@ func (rg *Range) Contains(key []byte) bool {
 func (rg *Range) Less(than btree.Item) bool {
 	// rg.StartKey < than.StartKey
 	ta := than.(*Range)
-	return bytes.Compare(rg.StartKey, ta.StartKey) < 0
+	this := codec.EncodeBytes(nil, rg.StartKey)
+	other := codec.EncodeBytes(nil, ta.StartKey)
+	return bytes.Compare(this, other) < 0
 }
 
 var _ btree.Item = &Range{}
