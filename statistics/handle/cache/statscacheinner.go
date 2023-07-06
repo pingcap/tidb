@@ -72,17 +72,6 @@ func NewStatsCacheWrapper() *StatsCacheWrapper {
 // StatsCacheWrapper caches the tables in memory for Handle.
 type StatsCacheWrapper struct {
 	internal.StatsCacheInner
-	// version is the latest version of cache. It is bumped when new records of `mysql.stats_meta` are loaded into cache.
-	version uint64
-	// minorVersion is to differentiate the cache when the version is unchanged while the cache contents are
-	// modified indeed. This can happen when we load extra column histograms into cache, or when we modify the cache with
-	// statistics feedbacks, etc. We cannot bump the version then because no new changes of `mysql.stats_meta` are loaded,
-	// while the override of StatsCacheWrapper is in a copy-on-write way, to make sure the StatsCacheWrapper is unchanged by others during the
-	// the interval of 'copy' and 'write', every 'write' should bump / check this minorVersion if the version keeps
-	// unchanged.
-	// This bump / check logic is encapsulated in `StatsCacheWrapper.update` and `updateStatsCache`, callers don't need to care
-	// about this minorVersion actually.
-	minorVersion uint64
 }
 
 // Len returns the number of tables in the cache.
@@ -92,22 +81,19 @@ func (sc *StatsCacheWrapper) Len() int {
 
 // Copy copies the cache.
 func (sc *StatsCacheWrapper) Copy() StatsCacheWrapper {
-	newCache := StatsCacheWrapper{
-		version:      sc.version,
-		minorVersion: sc.minorVersion,
-	}
+	newCache := StatsCacheWrapper{}
 	newCache.StatsCacheInner = sc.StatsCacheInner.Copy()
 	return newCache
 }
 
-// SetVersion sets the version of the cache.
-func (sc *StatsCacheWrapper) SetVersion(version uint64) {
-	sc.version = version
-}
-
 // Version returns the version of the cache.
-func (sc *StatsCacheWrapper) Version() uint64 {
-	return sc.version
+func (sc *StatsCacheWrapper) Version() (v uint64) {
+	for _, t := range sc.Values() {
+		if t.Version > v {
+			v = t.Version
+		}
+	}
+	return v
 }
 
 // Update updates the statistics table cache using Copy on write.
@@ -117,12 +103,6 @@ func (sc *StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int
 		opt(option)
 	}
 	newCache := sc.Copy()
-	if newVersion == newCache.version {
-		newCache.minorVersion += uint64(1)
-	} else {
-		newCache.version = newVersion
-		newCache.minorVersion = uint64(0)
-	}
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
 		if option.byQuery {
