@@ -3628,7 +3628,6 @@ func TestRequestSource(t *testing.T) {
 		})
 	}
 	ctx := context.Background()
-
 	tk.MustExecWithContext(ctx, "use test")
 	tk.MustExecWithContext(ctx, "create table t(a int primary key, b int)")
 	tk.MustExecWithContext(ctx, "set @@tidb_request_source_type = 'lightning'")
