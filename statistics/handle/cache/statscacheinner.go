@@ -74,18 +74,6 @@ type StatsCacheWrapper struct {
 	internal.StatsCacheInner
 }
 
-// Len returns the number of tables in the cache.
-func (sc *StatsCacheWrapper) Len() int {
-	return sc.StatsCacheInner.Len()
-}
-
-// Copy copies the cache.
-func (sc *StatsCacheWrapper) Copy() StatsCacheWrapper {
-	newCache := StatsCacheWrapper{}
-	newCache.StatsCacheInner = sc.StatsCacheInner.Copy()
-	return newCache
-}
-
 // Version returns the version of the cache.
 func (sc *StatsCacheWrapper) Version() (v uint64) {
 	return maximumTableVersionInCache(sc.StatsCacheInner)
@@ -97,7 +85,8 @@ func (sc *StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int
 	for _, opt := range opts {
 		opt(option)
 	}
-	newCache := sc.Copy()
+	newCache := StatsCacheWrapper{}
+	newCache.StatsCacheInner = sc.StatsCacheInner.Copy()
 	batchUpdateStatsCache(newCache.StatsCacheInner, tables, deletedIDs, option.byQuery)
 	return newCache
 }
