@@ -1,0 +1,14 @@
+aliases:
+  sig-critical-approvers-tidb-server:
+    - yudongusa
+    - bb7133
+    - XuHuaiyu
+    - xurui
+    - morgo
+  sig-critical-approvers-tidb-lightning:
+    - niubell
+    - D3Hunter
+    - frank945946
+  sig-critical-approvers-parser:
+    - kennytm
+    - tangenta
