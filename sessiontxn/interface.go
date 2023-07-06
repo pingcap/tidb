@@ -117,8 +117,6 @@ type TxnContextProvider interface {
 	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
-	// SetTxnInfoSchema sets the information schema used by txn.
-	SetTxnInfoSchema(is infoschema.InfoSchema)
 	// GetTxnScope returns the current txn scope
 	GetTxnScope() string
 	// GetReadReplicaScope returns the read replica scope
