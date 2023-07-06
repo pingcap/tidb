@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -39,7 +40,7 @@ import (
 
 // SetConfigExec executes 'SET CONFIG' statement.
 type SetConfigExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	p        *core.SetConfig
 	jsonBody string
 }
@@ -48,7 +49,7 @@ type SetConfigExec struct {
 func (s *SetConfigExec) Open(ctx context.Context) error {
 	if s.p.Type != "" {
 		s.p.Type = strings.ToLower(s.p.Type)
-		if s.p.Type != "tikv" && s.p.Type != "tidb" && s.p.Type != "pd" {
+		if s.p.Type != "tikv" && s.p.Type != "tidb" && s.p.Type != "pd" && s.p.Type != "tiflash" {
 			return errors.Errorf("unknown type %v", s.p.Type)
 		}
 		if s.p.Type == "tidb" {
@@ -63,7 +64,15 @@ func (s *SetConfigExec) Open(ctx context.Context) error {
 	}
 	s.p.Name = strings.ToLower(s.p.Name)
 
-	body, err := ConvertConfigItem2JSON(s.ctx, s.p.Name, s.p.Value)
+	if s.p.Type == "tiflash" {
+		if !strings.HasPrefix(s.p.Name, "raftstore-proxy.") {
+			errorBody := "This command can only change config items begin with 'raftstore-proxy'. For other TiFlash config items, please update the config file directly. Your change to the config file will take effect immediately without a restart."
+			return errors.Errorf(errorBody)
+		}
+		s.p.Name = strings.TrimPrefix(s.p.Name, "raftstore-proxy.")
+	}
+
+	body, err := ConvertConfigItem2JSON(s.Ctx(), s.p.Name, s.p.Value)
 	s.jsonBody = body
 	return err
 }
@@ -78,11 +87,11 @@ var TestSetConfigHTTPHandlerKey stringutil.StringerStr = "TestSetConfigHTTPHandl
 func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	getServerFunc := infoschema.GetClusterServerInfo
-	if v := s.ctx.Value(TestSetConfigServerInfoKey); v != nil {
+	if v := s.Ctx().Value(TestSetConfigServerInfoKey); v != nil {
 		getServerFunc = v.(func(sessionctx.Context) ([]infoschema.ServerInfo, error))
 	}
 
-	serversInfo, err := getServerFunc(s.ctx)
+	serversInfo, err := getServerFunc(s.Ctx())
 	if err != nil {
 		return err
 	}
@@ -94,7 +103,7 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if s.p.Instance != "" {
 		nodeAddrs.Insert(s.p.Instance)
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
+	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
 	if s.p.Instance != "" && len(serversInfo) == 0 {
 		return errors.Errorf("instance %v is not found in this cluster", s.p.Instance)
 	}
@@ -106,13 +115,15 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), serverInfo.StatusAddr, pdapi.Config)
 		case "tikv":
 			url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), serverInfo.StatusAddr)
+		case "tiflash":
+			url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), serverInfo.StatusAddr)
 		case "tidb":
 			return errors.Errorf("TiDB doesn't support to change configs online, please use SQL variables")
 		default:
 			return errors.Errorf("Unknown server type %s", serverInfo.ServerType)
 		}
 		if err := s.doRequest(url); err != nil {
-			s.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			s.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}
 	return nil
@@ -125,7 +136,7 @@ func (s *SetConfigExec) doRequest(url string) (retErr error) {
 		return err
 	}
 	var httpHandler func(req *http.Request) (*http.Response, error)
-	if v := s.ctx.Value(TestSetConfigHTTPHandlerKey); v != nil {
+	if v := s.Ctx().Value(TestSetConfigHTTPHandlerKey); v != nil {
 		httpHandler = v.(func(*http.Request) (*http.Response, error))
 	} else {
 		httpHandler = util.InternalHTTPClient().Do
@@ -167,8 +178,9 @@ func isValidInstance(instance string) bool {
 
 // ConvertConfigItem2JSON converts the config item specified by key and val to json.
 // For example:
-// 	set config x key="val" ==> {"key":"val"}
-// 	set config x key=233 ==> {"key":233}
+//
+//	set config x key="val" ==> {"key":"val"}
+//	set config x key=233 ==> {"key":233}
 func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.Expression) (body string, err error) {
 	if val == nil {
 		return "", errors.Errorf("cannot set config to null")

@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/testkit/testfork",
     visibility = ["//visibility:public"],
     deps = [
-        "@com_github_cockroachdb_errors//:errors",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
 )

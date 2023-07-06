@@ -43,6 +43,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cascades"],
     flaky = True,
+    shard_count = 40,
     deps = [
         "//domain",
         "//expression",
@@ -56,6 +57,7 @@ go_test(
         "//testkit",
         "//testkit/testdata",
         "//testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

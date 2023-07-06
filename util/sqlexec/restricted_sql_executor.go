@@ -55,32 +55,32 @@ type RestrictedSQLExecutor interface {
 
 // ExecOption is a struct defined for ExecRestrictedStmt/SQL option.
 type ExecOption struct {
-	IgnoreWarning      bool
-	SnapshotTS         uint64
-	AnalyzeVer         int
 	AnalyzeSnapshot    *bool
-	PartitionPruneMode string
-	UseCurSession      bool
-	TrackSysProcID     uint64
 	TrackSysProc       func(id uint64, ctx sessionctx.Context) error
 	UnTrackSysProc     func(id uint64)
+	PartitionPruneMode string
+	SnapshotTS         uint64
+	AnalyzeVer         int
+	TrackSysProcID     uint64
+	IgnoreWarning      bool
+	UseCurSession      bool
 }
 
 // OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
 type OptionFuncAlias = func(option *ExecOption)
 
 // ExecOptionIgnoreWarning tells ExecRestrictedStmt/SQL to ignore the warnings.
-var ExecOptionIgnoreWarning OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionIgnoreWarning = func(option *ExecOption) {
 	option.IgnoreWarning = true
 }
 
 // ExecOptionAnalyzeVer1 tells ExecRestrictedStmt/SQL to collect statistics with version1.
-var ExecOptionAnalyzeVer1 OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionAnalyzeVer1 = func(option *ExecOption) {
 	option.AnalyzeVer = 1
 }
 
 // ExecOptionAnalyzeVer2 tells ExecRestrictedStmt/SQL to collect statistics with version2.
-var ExecOptionAnalyzeVer2 OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionAnalyzeVer2 = func(option *ExecOption) {
 	option.AnalyzeVer = 2
 }
 
@@ -100,13 +100,13 @@ func GetAnalyzeSnapshotOption(analyzeSnapshot bool) OptionFuncAlias {
 }
 
 // ExecOptionUseCurSession tells ExecRestrictedStmt/SQL to use current session.
-var ExecOptionUseCurSession OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionUseCurSession = func(option *ExecOption) {
 	option.UseCurSession = true
 }
 
 // ExecOptionUseSessionPool tells ExecRestrictedStmt/SQL to use session pool.
 // UseCurSession is false by default, sometimes we set it explicitly for readability
-var ExecOptionUseSessionPool OptionFuncAlias = func(option *ExecOption) {
+var ExecOptionUseSessionPool = func(option *ExecOption) {
 	option.UseCurSession = false
 }
 
@@ -149,6 +149,8 @@ type SQLExecutor interface {
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// clear allowed flag
 	ClearDiskFullOpt()
+	// GetSessionVars is used to read some result after ExecuteXXX
+	GetSessionVars() *variable.SessionVars
 }
 
 // SQLParser is an interface provides parsing sql statement.
@@ -169,7 +171,7 @@ type Statement interface {
 	OriginText() string
 
 	// GetTextToLog gets the desensitization SQL text for logging.
-	GetTextToLog() string
+	GetTextToLog(keepHint bool) string
 
 	// Exec executes SQL and gets a Recordset.
 	Exec(ctx context.Context) (RecordSet, error)

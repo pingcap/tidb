@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
-	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -74,16 +73,16 @@ func setUpRPCService(t *testing.T, dom *domain.Domain, addr string) (*grpc.Serve
 	require.NoError(t, err)
 
 	// Fix issue 9836
-	sm := &mockSessionManager{
-		processInfoMap: make(map[uint64]*util.ProcessInfo, 1),
-		serverID:       1,
+	sm := &testkit.MockSessionManager{
+		PS:    make([]*util.ProcessInfo, 1),
+		SerID: 1,
 	}
-	sm.processInfoMap[1] = &util.ProcessInfo{
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
-	}
+	})
 	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
 	port := lis.Addr().(*net.TCPAddr).Port
 	addr = fmt.Sprintf("127.0.0.1:%d", port)
@@ -167,48 +166,6 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 		}, nil
 	}))
 	return srv, mockAddr
-}
-
-type mockSessionManager struct {
-	processInfoMap map[uint64]*util.ProcessInfo
-	serverID       uint64
-}
-
-func (sm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
-	panic("unimplemented!")
-}
-
-func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	return sm.processInfoMap
-}
-
-func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	rs, ok := sm.processInfoMap[id]
-	return rs, ok
-}
-
-func (sm *mockSessionManager) StoreInternalSession(_ interface{}) {
-}
-
-func (sm *mockSessionManager) DeleteInternalSession(_ interface{}) {
-}
-
-func (sm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
-	return nil
-}
-
-func (sm *mockSessionManager) Kill(_ uint64, _ bool) {}
-
-func (sm *mockSessionManager) KillAllConnections() {}
-
-func (sm *mockSessionManager) UpdateTLSConfig(_ *tls.Config) {}
-
-func (sm *mockSessionManager) ServerID() uint64 {
-	return sm.serverID
-}
-
-func (sm *mockSessionManager) SetServerID(serverID uint64) {
-	sm.serverID = serverID
 }
 
 type mockStore struct {
@@ -333,7 +290,7 @@ func TestTableStorageStats(t *testing.T) {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 35
+	result := 51
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.
@@ -347,25 +304,63 @@ func TestTableStorageStats(t *testing.T) {
 
 	tk.MustExec("grant all privileges on *.* to 'testuser2'@'localhost'")
 	tk.MustExec("grant select on *.* to 'testuser3'@'localhost'")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 
 	// User has no access to this schema, so the result set is empty.
 	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("0"))
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 
 	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows(strconv.Itoa(result)))
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser3",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 
 	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows(strconv.Itoa(result)))
+}
+
+func TestIssue42619(t *testing.T) {
+	s := createInfosSchemaClusterTableSuite(t)
+	mockAddr := s.mockAddr
+	store := &mockStore{
+		s.store.(helper.Storage),
+		mockAddr,
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustQuery("SELECT TABLE_SCHEMA, TABLE_NAME, PEER_COUNT, REGION_COUNT, EMPTY_REGION_COUNT, TABLE_SIZE, TABLE_KEYS " +
+		"FROM information_schema.TABLE_STORAGE_STATS " +
+		"WHERE TABLE_SCHEMA = 'test' and TABLE_NAME='t'").Check(
+		testkit.Rows("test t 1 1 1 1 1"))
+
+	tk.MustExec(
+		"CREATE TABLE tp (a int(11) DEFAULT NULL,b int(11) DEFAULT NULL,c int(11) DEFAULT NULL," +
+			"KEY ia(a), KEY ib(b), KEY ic (c))" +
+			"PARTITION BY RANGE (`a`)" +
+			"(PARTITION `p0` VALUES LESS THAN (300)," +
+			"PARTITION `p1` VALUES LESS THAN (600)," +
+			"PARTITION `p2` VALUES LESS THAN (900)," +
+			"PARTITION `p3` VALUES LESS THAN (MAXVALUE))")
+	tk.MustQuery("SELECT TABLE_SCHEMA, TABLE_NAME, PEER_COUNT, REGION_COUNT, EMPTY_REGION_COUNT, TABLE_SIZE, TABLE_KEYS " +
+		"FROM information_schema.TABLE_STORAGE_STATS " +
+		"WHERE TABLE_SCHEMA = 'test'").Sort().Check(
+		testkit.Rows(
+			"test t 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+			"test tp 1 1 1 1 1",
+		))
 }

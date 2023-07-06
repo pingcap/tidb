@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
@@ -97,6 +96,20 @@ func TestCurrentUser(t *testing.T) {
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
 }
 
+func TestCurrentResourceGroup(t *testing.T) {
+	ctx := mock.NewContext()
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.ResourceGroupName = "rg1"
+
+	fc := funcs[ast.CurrentResourceGroup]
+	f, err := fc.getFunction(ctx, nil)
+	require.NoError(t, err)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "rg1", d.GetString())
+	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+}
+
 func TestCurrentRole(t *testing.T) {
 	ctx := mock.NewContext()
 	fc := funcs[ast.CurrentRole]
@@ -164,7 +177,7 @@ func TestBenchMark(t *testing.T) {
 		{3, types.CurrentTime(mysql.TypeDatetime), 0, false},
 		{3, types.CurrentTime(mysql.TypeTimestamp), 0, false},
 		{3, types.CurrentTime(mysql.TypeDuration), 0, false},
-		{3, json.CreateBinary("[1]"), 0, false},
+		{3, types.CreateBinaryJSON("[1]"), 0, false},
 	}
 
 	for _, c := range cases {

@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "util",
+    srcs = [
+        "mock_gpool.go",
+        "shard_pool_map.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/resourcemanager/util",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/intest",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_test(
+    name = "util_test",
+    timeout = "short",
+    srcs = ["shard_pool_map_test.go"],
+    embed = [":util"],
+    flaky = True,
+    deps = [
+        "//util/intest",
+        "@com_github_stretchr_testify//require",
+    ],
+)

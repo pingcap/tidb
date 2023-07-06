@@ -21,12 +21,8 @@ import (
 	"github.com/pingcap/tidb/util/disjointset"
 )
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalProjection) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
+// ResolveIndicesItself resolve indices for PhysicalPlan itself
+func (p *PhysicalProjection) ResolveIndicesItself() (err error) {
 	for i, expr := range p.Exprs {
 		p.Exprs[i], err = expr.ResolveIndices(p.children[0].Schema())
 		if err != nil {
@@ -39,6 +35,15 @@ func (p *PhysicalProjection) ResolveIndices() (err error) {
 	}
 	refine4NeighbourProj(p, childProj)
 	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalProjection) ResolveIndices() (err error) {
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
 }
 
 // refine4NeighbourProj refines the index for p.Exprs whose type is *Column when
@@ -74,12 +79,8 @@ func refine4NeighbourProj(p, childProj *PhysicalProjection) {
 	}
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalHashJoin) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
+// ResolveIndicesItself resolve indices for PhyicalPlan itself
+func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	lSchema := p.children[0].Schema()
 	rSchema := p.children[1].Schema()
 	for i, fun := range p.EqualConditions {
@@ -94,6 +95,19 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 		}
 		p.RightJoinKeys[i] = rArg.(*expression.Column)
 		p.EqualConditions[i] = expression.NewFunctionInternal(fun.GetCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
+	}
+	for i, fun := range p.NAEqualConditions {
+		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
+		if err != nil {
+			return err
+		}
+		p.LeftNAJoinKeys[i] = lArg.(*expression.Column)
+		rArg, err := fun.GetArgs()[1].ResolveIndices(rSchema)
+		if err != nil {
+			return err
+		}
+		p.RightNAJoinKeys[i] = rArg.(*expression.Column)
+		p.NAEqualConditions[i] = expression.NewFunctionInternal(fun.GetCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, expr := range p.LeftConditions {
 		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
@@ -114,6 +128,15 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 		}
 	}
 	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalHashJoin) ResolveIndices() (err error) {
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
 }
 
 // ResolveIndices implements Plan interface.
@@ -367,12 +390,8 @@ func (p *PhysicalSelection) ResolveIndices() (err error) {
 	return nil
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
-	err = p.basePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
+// ResolveIndicesItself resolve indices for PhysicalPlan itself
+func (p *PhysicalExchangeSender) ResolveIndicesItself() (err error) {
 	for i, col := range p.HashCols {
 		colExpr, err1 := col.Col.ResolveIndices(p.children[0].Schema())
 		if err1 != nil {
@@ -380,7 +399,52 @@ func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 		}
 		p.HashCols[i].Col, _ = colExpr.(*expression.Column)
 	}
-	return err
+	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
+	err = p.basePhysicalPlan.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
+}
+
+// ResolveIndicesItself resolve indices for PhysicalPlan itself
+func (p *PhysicalExpand) ResolveIndicesItself() (err error) {
+	// for version 1
+	for _, gs := range p.GroupingSets {
+		for _, groupingExprs := range gs {
+			for k, groupingExpr := range groupingExprs {
+				gExpr, err := groupingExpr.ResolveIndices(p.children[0].Schema())
+				if err != nil {
+					return err
+				}
+				groupingExprs[k] = gExpr
+			}
+		}
+	}
+	// for version 2
+	for i, oneLevel := range p.LevelExprs {
+		for j, expr := range oneLevel {
+			// expr in expand level-projections only contains column ref and literal constant projection.
+			p.LevelExprs[i][j], err = expr.ResolveIndices(p.children[0].Schema())
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalExpand) ResolveIndices() (err error) {
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
 }
 
 // ResolveIndices implements Plan interface.
@@ -531,6 +595,29 @@ func (p *PhysicalTopN) ResolveIndices() (err error) {
 			return err
 		}
 	}
+	for i, item := range p.PartitionBy {
+		newCol, err := item.Col.ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.PartitionBy[i].Col = newCol.(*expression.Column)
+	}
+	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalLimit) ResolveIndices() (err error) {
+	err = p.basePhysicalPlan.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	for i, item := range p.PartitionBy {
+		newCol, err := item.Col.ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.PartitionBy[i].Col = newCol.(*expression.Column)
+	}
 	return
 }
 
@@ -566,6 +653,30 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 			return err
 		}
 		p.PhysicalHashJoin.EqualConditions[i] = newSf.(*expression.ScalarFunction)
+	}
+	for i, cond := range p.PhysicalHashJoin.NAEqualConditions {
+		newSf, err := cond.ResolveIndices(joinedSchema)
+		if err != nil {
+			return err
+		}
+		p.PhysicalHashJoin.NAEqualConditions[i] = newSf.(*expression.ScalarFunction)
+	}
+	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalTableScan) ResolveIndices() (err error) {
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
+}
+
+// ResolveIndicesItself implements PhysicalTableScan interface.
+func (p *PhysicalTableScan) ResolveIndicesItself() (err error) {
+	for i, column := range p.schema.Columns {
+		column.Index = i
 	}
 	return
 }
@@ -629,17 +740,6 @@ func (p *Insert) ResolveIndices() (err error) {
 			}
 		}
 	}
-	for _, set := range p.SetList {
-		newCol, err := set.Col.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return err
-		}
-		set.Col = newCol.(*expression.Column)
-		set.Expr, err = set.Expr.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return err
-		}
-	}
 	for i, expr := range p.GenCols.Exprs {
 		p.GenCols.Exprs[i], err = expr.ResolveIndices(p.tableSchema)
 		if err != nil {
@@ -665,7 +765,7 @@ func (p *physicalSchemaProducer) ResolveIndices() (err error) {
 	return err
 }
 
-func (p *baseSchemaProducer) ResolveIndices() (err error) {
+func (*baseSchemaProducer) ResolveIndices() (err error) {
 	return
 }
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/hex"
+	"fmt"
 	"net/url"
 	"os"
 	"path"
@@ -75,11 +76,17 @@ const (
 	// flagEnableOpenTracing is whether to enable opentracing
 	flagEnableOpenTracing = "enable-opentracing"
 	flagSkipCheckPath     = "skip-check-path"
-	flagWithSysTable      = "with-sys-table"
+	flagDryRun            = "dry-run"
+	// TODO used for local test, should be removed later
+	flagSkipAWS                       = "skip-aws"
+	flagCloudAPIConcurrency           = "cloud-api-concurrency"
+	flagWithSysTable                  = "with-sys-table"
+	flagOperatorPausedGCAndSchedulers = "operator-paused-gc-and-scheduler"
 
 	defaultSwitchInterval       = 5 * time.Minute
 	defaultGRPCKeepaliveTime    = 10 * time.Second
 	defaultGRPCKeepaliveTimeout = 3 * time.Second
+	defaultCloudAPIConcurrency  = 8
 
 	flagCipherType    = "crypter.method"
 	flagCipherKey     = "crypter.key"
@@ -90,8 +97,21 @@ const (
 	crypterAES192KeyLen = 24
 	crypterAES256KeyLen = 32
 
-	tidbNewCollationEnabled = "new_collation_enabled"
+	flagFullBackupType = "type"
 )
+
+// FullBackupType type when doing full backup or restore
+type FullBackupType string
+
+const (
+	FullBackupTypeKV  FullBackupType = "kv" // default type
+	FullBackupTypeEBS FullBackupType = "aws-ebs"
+)
+
+// Valid whether the type is valid
+func (t FullBackupType) Valid() bool {
+	return t == FullBackupTypeKV || t == FullBackupTypeEBS
+}
 
 // TLSConfig is the common configuration for TLS connection.
 type TLSConfig struct {
@@ -117,6 +137,15 @@ func (tls *TLSConfig) ToTLSConfig() (*tls.Config, error) {
 		return nil, errors.Trace(err)
 	}
 	return tlsConfig, nil
+}
+
+// Convert the TLS config to the PD security option.
+func (tls *TLSConfig) ToPDSecurityOption() pd.SecurityOption {
+	securityOption := pd.SecurityOption{}
+	securityOption.CAPath = tls.CA
+	securityOption.CertPath = tls.Cert
+	securityOption.KeyPath = tls.Key
+	return securityOption
 }
 
 // ParseFromFlags parses the TLS config from the flag set.
@@ -213,6 +242,9 @@ type Config struct {
 
 	// whether there's explicit filter
 	ExplicitFilter bool `json:"-" toml:"-"`
+
+	// KeyspaceName is the name of the keyspace of the task
+	KeyspaceName string `json:"keyspace-name" toml:"keyspace-name"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -230,12 +262,6 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagChecksum, true, "Run checksum at end of task")
 	flags.Bool(flagRemoveTiFlash, true,
 		"Remove TiFlash replicas before backup or restore, for unsupported versions of TiFlash")
-
-	// Default concurrency is different for backup and restore.
-	// Leave it 0 and let them adjust the value.
-	flags.Uint32(flagConcurrency, 0, "The size of thread pool on each node that executes the task")
-	// It may confuse users , so just hide it.
-	_ = flags.MarkHidden(flagConcurrency)
 
 	flags.Uint64(flagRateLimitUnit, units.MiB, "The unit of rate limit")
 	_ = flags.MarkHidden(flagRateLimitUnit)
@@ -449,9 +475,7 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.NoCreds, err = flags.GetBool(flagNoCreds); err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.Concurrency, err = flags.GetUint32(flagConcurrency); err != nil {
-		return errors.Trace(err)
-	}
+
 	if cfg.Checksum, err = flags.GetBool(flagChecksum); err != nil {
 		return errors.Trace(err)
 	}
@@ -633,26 +657,25 @@ func ReadBackupMeta(
 	}
 	metaData, err := s.ReadFile(ctx, fileName)
 	if err != nil {
-		if gcsObjectNotFound(err) {
-			// change gcs://bucket/abc/def to gcs://bucket/abc and read defbackupmeta
-			oldPrefix := u.GetGcs().GetPrefix()
-			newPrefix, file := path.Split(oldPrefix)
-			newFileName := file + fileName
-			u.GetGcs().Prefix = newPrefix
-			s, err = storage.New(ctx, u, storageOpts(cfg))
-			if err != nil {
-				return nil, nil, nil, errors.Trace(err)
-			}
-			log.Info("retry load metadata in gcs", zap.String("newPrefix", newPrefix), zap.String("newFileName", newFileName))
-			metaData, err = s.ReadFile(ctx, newFileName)
-			if err != nil {
-				return nil, nil, nil, errors.Trace(err)
-			}
-			// reset prefix for tikv download sst file correctly.
-			u.GetGcs().Prefix = oldPrefix
-		} else {
+		if !gcsObjectNotFound(err) {
 			return nil, nil, nil, errors.Annotate(err, "load backupmeta failed")
 		}
+		// change gcs://bucket/abc/def to gcs://bucket/abc and read defbackupmeta
+		oldPrefix := u.GetGcs().GetPrefix()
+		newPrefix, file := path.Split(oldPrefix)
+		newFileName := file + fileName
+		u.GetGcs().Prefix = newPrefix
+		s, err = storage.New(ctx, u, storageOpts(cfg))
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		log.Info("retry load metadata in gcs", zap.String("newPrefix", newPrefix), zap.String("newFileName", newFileName))
+		metaData, err = s.ReadFile(ctx, newFileName)
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		// reset prefix for tikv download sst file correctly.
+		u.GetGcs().Prefix = oldPrefix
 	}
 
 	// the prefix of backupmeta file is iv(16 bytes) if encryption method is valid
@@ -744,4 +767,30 @@ func normalizePDURL(pd string, useTLS bool) (string, error) {
 // see details https://github.com/pingcap/br/issues/675#issuecomment-753780742
 func gcsObjectNotFound(err error) bool {
 	return errors.Cause(err) == gcs.ErrObjectNotExist // nolint:errorlint
+}
+
+// write progress in tmp file for tidb-operator, so tidb-operator can retrieve the
+// progress of ebs backup. and user can get the progress through `kubectl get job`
+// todo: maybe change to http api later
+func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, total int64, progressFile string) {
+	// remove tmp file
+	defer func() {
+		_ = os.Remove(progressFile)
+	}()
+
+	for progress.GetCurrent() < total {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+			break
+		}
+		cur := progress.GetCurrent()
+		p := float64(cur) / float64(total)
+		p *= 100
+		err := os.WriteFile(progressFile, []byte(fmt.Sprintf("%.2f", p)), 0600)
+		if err != nil {
+			log.Warn("failed to update tmp progress file", zap.Error(err))
+		}
+	}
 }

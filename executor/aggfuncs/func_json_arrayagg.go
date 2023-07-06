@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -37,47 +36,33 @@ type partialResult4JsonArrayagg struct {
 	entries []interface{}
 }
 
-func (e *jsonArrayagg) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*jsonArrayagg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonArrayagg{}
 	p.entries = make([]interface{}, 0)
 	return PartialResult(&p), DefPartialResult4JsonArrayagg + DefSliceSize
 }
 
-func (e *jsonArrayagg) ResetPartialResult(pr PartialResult) {
+func (*jsonArrayagg) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4JsonArrayagg)(pr)
 	p.entries = p.entries[:0]
 }
 
-func (e *jsonArrayagg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *jsonArrayagg) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4JsonArrayagg)(pr)
 	if len(p.entries) == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
 
-	// appendBinary does not support some type such as uint8、types.time，so convert is needed here
-	for idx, val := range p.entries {
-		switch x := val.(type) {
-		case *types.MyDecimal:
-			float64Val, err := x.ToFloat64()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			p.entries[idx] = float64Val
-		case []uint8, types.Time, types.Duration:
-			strVal, err := types.ToString(x)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			p.entries[idx] = strVal
-		}
+	json, err := types.CreateBinaryJSONWithCheck(p.entries)
+	if err != nil {
+		return errors.Trace(err)
 	}
-
-	chk.AppendJSON(e.ordinal, json.CreateBinary(p.entries))
+	chk.AppendJSON(e.ordinal, json)
 	return nil
 }
 
-func (e *jsonArrayagg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *jsonArrayagg) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4JsonArrayagg)(pr)
 	for _, row := range rowsInGroup {
 		item, err := e.args[0].Eval(row)
@@ -85,19 +70,23 @@ func (e *jsonArrayagg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 			return 0, errors.Trace(err)
 		}
 
-		realItem := item.Clone().GetValue()
+		realItem, err := getRealJSONValue(item, e.args[0].GetType())
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+
 		switch x := realItem.(type) {
-		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
+		case nil, bool, int64, uint64, float64, string, types.BinaryJSON, types.Opaque, types.Time, types.Duration:
 			p.entries = append(p.entries, realItem)
 			memDelta += getValMemDelta(realItem)
 		default:
-			return 0, json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
+			return 0, types.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
 	}
 	return memDelta, nil
 }
 
-func (e *jsonArrayagg) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*jsonArrayagg) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4JsonArrayagg)(src), (*partialResult4JsonArrayagg)(dst)
 	p2.entries = append(p2.entries, p1.entries...)
 	return 0, nil

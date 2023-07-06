@@ -19,6 +19,7 @@ package realtikvtest
 import (
 	"flag"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,11 +37,21 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
 
-// WithRealTiKV is a flag identify whether tests run with real TiKV
-var WithRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with real TiKV")
+var (
+	// WithRealTiKV is a flag identify whether tests run with real TiKV
+	WithRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with real TiKV")
+
+	// TiKVPath is the path of the TiKV Storage.
+	TiKVPath = flag.String("tikv-path", "tikv://127.0.0.1:2379?disableGC=true", "TiKV addr")
+
+	// KeyspaceName is an option to specify the name of keyspace that the tests run on,
+	// this option is only valid while the flag WithRealTiKV is set.
+	KeyspaceName = flag.String("keyspace-name", "", "the name of keyspace that the tests run on")
+)
 
 // RunTestMain run common setups for all real tikv tests.
 func RunTestMain(m *testing.M) {
@@ -53,11 +64,11 @@ func RunTestMain(m *testing.M) {
 	})
 	tikv.EnableFailpoints()
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/internal/retry.newBackoffFn.func1"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc.(*addrConn).resetTransport"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc.(*ccBalancerWrapper).watcher"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*controlBuffer).get"),
@@ -65,6 +76,7 @@ func RunTestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
@@ -90,29 +102,40 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 	var dom *domain.Domain
 	var err error
 
+	session.SetSchemaLease(500 * time.Millisecond)
+
 	if *WithRealTiKV {
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
+			conf.KeyspaceName = *KeyspaceName
 		})
-		store, err = d.Open("tikv://127.0.0.1:2379?disableGC=true")
+		store, err = d.Open(*TiKVPath)
 		require.NoError(t, err)
 
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
+		sm := testkit.MockSessionManager{}
+		dom.InfoSyncer().SetSessionManager(&sm)
 		tk := testkit.NewTestKit(t, store)
 		// set it to default value.
 		tk.MustExec(fmt.Sprintf("set global innodb_lock_wait_timeout = %d", variable.DefInnodbLockWaitTimeout))
 		tk.MustExec("use test")
 		rs := tk.MustQuery("show tables")
+		tables := []string{}
 		for _, row := range rs.Rows() {
-			tk.MustExec(fmt.Sprintf("drop table %s", row[0]))
+			tables = append(tables, fmt.Sprintf("`%v`", row[0]))
+		}
+		if len(tables) > 0 {
+			tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
 		}
 	} else {
 		store, err = mockstore.NewMockStore(opts...)
 		require.NoError(t, err)
 		session.DisableStats4Test()
 		dom, err = session.BootstrapSession(store)
+		sm := testkit.MockSessionManager{}
+		dom.InfoSyncer().SetSessionManager(&sm)
 		require.NoError(t, err)
 	}
 
@@ -120,6 +143,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		dom.Close()
 		require.NoError(t, store.Close())
 		transaction.PrewriteMaxBackoff.Store(20000)
+		view.Stop()
 	})
 	return store, dom
 }

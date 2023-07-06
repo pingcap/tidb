@@ -196,14 +196,22 @@ func PrewritePessimisticWithAssertion(pk []byte, key []byte, value []byte, start
 	store *TestStore) error {
 	mutation := newMutation(kvrpcpb.Op_Put, key, value)
 	mutation.Assertion = assertion
+	pessimisticActions := make([]kvrpcpb.PrewriteRequest_PessimisticAction, len(isPessimisticLock))
+	for i := range isPessimisticLock {
+		if isPessimisticLock[i] {
+			pessimisticActions[i] = kvrpcpb.PrewriteRequest_DO_PESSIMISTIC_CHECK
+		} else {
+			pessimisticActions[i] = kvrpcpb.PrewriteRequest_SKIP_PESSIMISTIC_CHECK
+		}
+	}
 	prewriteReq := &kvrpcpb.PrewriteRequest{
-		Mutations:         []*kvrpcpb.Mutation{mutation},
-		PrimaryLock:       pk,
-		StartVersion:      startTs,
-		LockTtl:           lockTTL,
-		IsPessimisticLock: isPessimisticLock,
-		ForUpdateTs:       forUpdateTs,
-		AssertionLevel:    assertionLevel,
+		Mutations:          []*kvrpcpb.Mutation{mutation},
+		PrimaryLock:        pk,
+		StartVersion:       startTs,
+		LockTtl:            lockTTL,
+		PessimisticActions: pessimisticActions,
+		ForUpdateTs:        forUpdateTs,
+		AssertionLevel:     assertionLevel,
 	}
 	return store.MvccStore.prewritePessimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
 }
@@ -707,6 +715,15 @@ func TestCheckTxnStatus(t *testing.T) {
 	require.Equal(t, uint64(41), resCommitTs)
 	require.NoError(t, err)
 	require.Equal(t, kvrpcpb.Action_NoAction, action)
+
+	// check on mismatching primary
+	startTs = 43
+	callerStartTs = 44
+	currentTs = 44
+	MustAcquirePessimisticLock([]byte("another_key"), pk, startTs, startTs, store)
+	_, _, _, err = CheckTxnStatus(pk, startTs, callerStartTs, currentTs, true, store)
+	require.IsType(t, &kverrors.ErrPrimaryMismatch{}, errors.Cause(err))
+	MustPessimisticRollback(pk, startTs, startTs, store)
 }
 
 func TestCheckSecondaryLocksStatus(t *testing.T) {

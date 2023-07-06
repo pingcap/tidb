@@ -16,16 +16,12 @@ package common_test
 
 import (
 	"context"
-	"database/sql"
-	"database/sql/driver"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
 
@@ -35,7 +31,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	tmysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/dbutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -85,66 +82,14 @@ func TestGetJSON(t *testing.T) {
 	require.Regexp(t, ".*http status code != 200.*", err.Error())
 }
 
-func TestToDSN(t *testing.T) {
-	param := common.MySQLConnectParam{
-		Host:             "127.0.0.1",
-		Port:             4000,
-		User:             "root",
-		Password:         "123456",
-		SQLMode:          "strict",
-		MaxAllowedPacket: 1234,
-		TLS:              "cluster",
-		Vars: map[string]string{
-			"tidb_distsql_scan_concurrency": "1",
-		},
-	}
-	require.Equal(t, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency='1'", param.ToDSN())
-
-	param.Host = "::1"
-	require.Equal(t, "root:123456@tcp([::1]:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency='1'", param.ToDSN())
-}
-
-type mockDriver struct {
-	driver.Driver
-	plainPsw string
-}
-
-func (m *mockDriver) Open(dsn string) (driver.Conn, error) {
-	cfg, err := mysql.ParseDSN(dsn)
-	if err != nil {
-		return nil, err
-	}
-	accessDenied := cfg.Passwd != m.plainPsw
-	return &mockConn{accessDenied: accessDenied}, nil
-}
-
-type mockConn struct {
-	driver.Conn
-	driver.Pinger
-	accessDenied bool
-}
-
-func (c *mockConn) Ping(ctx context.Context) error {
-	if c.accessDenied {
-		return &mysql.MySQLError{Number: tmysql.ErrAccessDenied, Message: "access denied"}
-	}
-	return nil
-}
-
-func (c *mockConn) Close() error {
-	return nil
-}
-
 func TestConnect(t *testing.T) {
 	plainPsw := "dQAUoDiyb1ucWZk7"
-	driverName := "mysql-mock-" + strconv.Itoa(rand.Int())
-	sql.Register(driverName, &mockDriver{plainPsw: plainPsw})
 
 	require.NoError(t, failpoint.Enable(
-		"github.com/pingcap/tidb/br/pkg/lightning/common/MockMySQLDriver",
-		fmt.Sprintf("return(\"%s\")", driverName)))
+		"github.com/pingcap/tidb/br/pkg/lightning/common/MustMySQLPassword",
+		fmt.Sprintf("return(\"%s\")", plainPsw)))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/MockMySQLDriver"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/MustMySQLPassword"))
 	}()
 
 	param := common.MySQLConnectParam{
@@ -155,13 +100,11 @@ func TestConnect(t *testing.T) {
 		SQLMode:          "strict",
 		MaxAllowedPacket: 1234,
 	}
-	db, err := param.Connect()
+	_, err := param.Connect()
 	require.NoError(t, err)
-	require.NoError(t, db.Close())
 	param.Password = base64.StdEncoding.EncodeToString([]byte(plainPsw))
-	db, err = param.Connect()
+	_, err = param.Connect()
 	require.NoError(t, err)
-	require.NoError(t, db.Close())
 }
 
 func TestIsContextCanceledError(t *testing.T) {
@@ -237,4 +180,138 @@ func TestInterpolateMySQLString(t *testing.T) {
 	assert.Equal(t, "'123'", common.InterpolateMySQLString("123"))
 	assert.Equal(t, "'1''23'", common.InterpolateMySQLString("1'23"))
 	assert.Equal(t, "'1''2''''3'", common.InterpolateMySQLString("1'2''3"))
+}
+
+func TestGetAutoRandomColumn(t *testing.T) {
+	tests := []struct {
+		ddl     string
+		colName string
+	}{
+		{"create table t(c int)", ""},
+		{"create table t(c int auto_increment)", ""},
+		{"create table t(c bigint auto_random primary key)", "c"},
+		{"create table t(a int, c bigint auto_random primary key)", "c"},
+		{"create table t(c bigint auto_random, a int, primary key(c,a))", "c"},
+		{"create table t(a int, c bigint auto_random, primary key(c,a))", "c"},
+	}
+	p := parser.New()
+	for _, tt := range tests {
+		tableInfo, err := dbutil.GetTableInfoBySQL(tt.ddl, p)
+		require.NoError(t, err)
+		col := common.GetAutoRandomColumn(tableInfo)
+		if tt.colName == "" {
+			require.Nil(t, col, tt.ddl)
+		} else {
+			require.Equal(t, tt.colName, col.Name.L, tt.ddl)
+		}
+	}
+}
+
+func TestBuildAddIndexSQL(t *testing.T) {
+	tests := []struct {
+		table     string
+		current   string
+		desired   string
+		singleSQL string
+		multiSQLs []string
+	}{
+		{
+			table: "`test`.`non_pk_auto_inc`",
+			current: `CREATE TABLE non_pk_auto_inc (
+				pk varchar(255),
+				id int(11) NOT NULL AUTO_INCREMENT,
+				UNIQUE KEY uniq_id (id)
+			)`,
+			desired: `CREATE TABLE non_pk_auto_inc (
+				pk varchar(255) PRIMARY KEY NONCLUSTERED,
+				id int(11) NOT NULL AUTO_INCREMENT,
+				UNIQUE KEY uniq_id (id)
+			)`,
+			singleSQL: "ALTER TABLE `test`.`non_pk_auto_inc` ADD PRIMARY KEY (`pk`)",
+			multiSQLs: []string{"ALTER TABLE `test`.`non_pk_auto_inc` ADD PRIMARY KEY (`pk`)"},
+		},
+		{
+			table: "`test`.`multi_indexes`",
+			current: `
+CREATE TABLE multi_indexes (
+    c1 bigint PRIMARY KEY CLUSTERED,
+    c2 varchar(255) NOT NULL,
+    c3 varchar(255) NOT NULL,
+    c4 varchar(255) NOT NULL,
+    c5 varchar(255) NOT NULL,
+    c6 varchar(255) NOT NULL,
+    c7 varchar(255) NOT NULL,
+    c8 varchar(255) NOT NULL,
+    c9 varchar(255) NOT NULL,
+    c10 varchar(255) NOT NULL,
+    c11 varchar(255) NOT NULL
+)
+`,
+			desired: `
+CREATE TABLE multi_indexes (
+    c1 bigint PRIMARY KEY CLUSTERED,
+    c2 varchar(255) NOT NULL UNIQUE KEY,
+    c3 varchar(255) NOT NULL,
+    c4 varchar(255) NOT NULL,
+    c5 varchar(255) NOT NULL,
+    c6 varchar(255) NOT NULL,
+    c7 varchar(255) NOT NULL,
+    c8 varchar(255) NOT NULL,
+    c9 varchar(255) NOT NULL,
+    c10 varchar(255) NOT NULL,
+    c11 varchar(255) NOT NULL,
+    INDEX idx_c2 (c2) COMMENT 'single column index',
+    INDEX idx_c2_c3(c2, c3) COMMENT 'multiple column index',
+    UNIQUE KEY uniq_c4 (c4) COMMENT 'single column unique key',
+    UNIQUE KEY uniq_c4_c5 (c4, c5) COMMENT 'multiple column unique key',
+    INDEX idx_c6 (c6 ASC)  COMMENT 'single column index with asc order',
+    INDEX idx_c7 (c7 DESC) COMMENT 'single column index with desc order',
+    INDEX idx_c6_c7 (c6 ASC, c7 DESC) COMMENT 'multiple column index with asc and desc order',
+    INDEX idx_c8 (c8) VISIBLE COMMENT 'single column index with visible',
+    INDEX idx_c9 (c9) INVISIBLE COMMENT 'single column index with invisible',
+    INDEX idx_lower_c10 ((lower(c10))) COMMENT 'single column index with function',
+    INDEX idx_prefix_c11 (c11(3)) COMMENT 'single column index with prefix'
+);`,
+			singleSQL: "ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c2`(`c2`) COMMENT 'single column index'" +
+				", ADD KEY `idx_c2_c3`(`c2`,`c3`) COMMENT 'multiple column index'" +
+				", ADD UNIQUE KEY `uniq_c4`(`c4`) COMMENT 'single column unique key'" +
+				", ADD UNIQUE KEY `uniq_c4_c5`(`c4`,`c5`) COMMENT 'multiple column unique key'" +
+				", ADD KEY `idx_c6`(`c6`) COMMENT 'single column index with asc order'" +
+				", ADD KEY `idx_c7`(`c7`) COMMENT 'single column index with desc order'" +
+				", ADD KEY `idx_c6_c7`(`c6`,`c7`) COMMENT 'multiple column index with asc and desc order'" +
+				", ADD KEY `idx_c8`(`c8`) COMMENT 'single column index with visible'" +
+				", ADD KEY `idx_c9`(`c9`) INVISIBLE COMMENT 'single column index with invisible'" +
+				", ADD KEY `idx_lower_c10`((lower(`c10`))) COMMENT 'single column index with function'" +
+				", ADD KEY `idx_prefix_c11`(`c11`(3)) COMMENT 'single column index with prefix'" +
+				", ADD UNIQUE KEY `c2`(`c2`)",
+			multiSQLs: []string{
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c2`(`c2`) COMMENT 'single column index'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c2_c3`(`c2`,`c3`) COMMENT 'multiple column index'",
+				"ALTER TABLE `test`.`multi_indexes` ADD UNIQUE KEY `uniq_c4`(`c4`) COMMENT 'single column unique key'",
+				"ALTER TABLE `test`.`multi_indexes` ADD UNIQUE KEY `uniq_c4_c5`(`c4`,`c5`) COMMENT 'multiple column unique key'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c6`(`c6`) COMMENT 'single column index with asc order'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c7`(`c7`) COMMENT 'single column index with desc order'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c6_c7`(`c6`,`c7`)" +
+					" COMMENT 'multiple column index with asc and desc order'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c8`(`c8`) COMMENT 'single column index with visible'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c9`(`c9`) INVISIBLE COMMENT 'single column index with invisible'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_lower_c10`((lower(`c10`)))" +
+					" COMMENT 'single column index with function'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_prefix_c11`(`c11`(3)) COMMENT 'single column index with prefix'",
+				"ALTER TABLE `test`.`multi_indexes` ADD UNIQUE KEY `c2`(`c2`)",
+			},
+		}}
+
+	p := parser.New()
+
+	for _, tt := range tests {
+		curTblInfo, err := dbutil.GetTableInfoBySQL(tt.current, p)
+		require.NoError(t, err)
+		desiredTblInfo, err := dbutil.GetTableInfoBySQL(tt.desired, p)
+		require.NoError(t, err)
+
+		singleSQL, multiSQLs := common.BuildAddIndexSQL(tt.table, curTblInfo, desiredTblInfo)
+		require.Equal(t, tt.singleSQL, singleSQL)
+		require.Equal(t, tt.multiSQLs, multiSQLs)
+	}
 }

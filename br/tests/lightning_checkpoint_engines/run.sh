@@ -15,9 +15,10 @@
 # limitations under the License.
 
 set -eux
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 do_run_lightning() {
-    run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-engines.log" --config "tests/$TEST_NAME/$1.toml"
+    run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-engines.log" --config "$CUR/$1.toml"
 }
 
 check_cluster_version 4 0 0 'local backend'
@@ -53,7 +54,7 @@ run_sql 'DROP DATABASE cpeng;'
 rm -f "/tmp/tidb_lightning_checkpoint.pb"
 
 # Data engine part
-export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownImport=sleep(500);github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfStatusBecomes=return(120);github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfIndexEngineImported=return(140)'
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownImport=sleep(500);github.com/pingcap/tidb/br/pkg/lightning/importer/FailIfStatusBecomes=return(120);github.com/pingcap/tidb/br/pkg/lightning/importer/FailIfIndexEngineImported=return(140)'
 for i in $(seq "$ENGINE_COUNT"); do
     echo "******** Importing Table Now (step $i/$ENGINE_COUNT) ********"
     do_run_lightning config 2> /dev/null && exit 1

@@ -38,9 +38,9 @@ func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest []byte) *KvEx
 // ensure the semantic of "SQL execution count of TiKV".
 type KvExecCounter struct {
 	stats  *StatementStats
+	marked map[string]struct{} // HashSet<Target>
 	digest SQLPlanDigest
 	mu     sync.Mutex
-	marked map[string]struct{} // HashSet<Target>
 }
 
 // RPCInterceptor returns an interceptor.RPCInterceptor for client-go.
@@ -49,14 +49,14 @@ type KvExecCounter struct {
 // each RPC request is initiated, in order to count the number of SQL executions of
 // the TiKV dimension.
 func (c *KvExecCounter) RPCInterceptor() interceptor.RPCInterceptor {
-	return func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+	return interceptor.NewRPCInterceptor("kv-exec-counter", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 		return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 			if topsqlstate.TopSQLEnabled() {
 				c.mark(target)
 			}
 			return next(target, req)
 		}
-	}
+	})
 }
 
 // mark this target during the current execution of statement.

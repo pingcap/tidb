@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
@@ -43,7 +42,7 @@ func TestAppendRow(t *testing.T) {
 		chk.AppendString(2, str)
 		chk.AppendBytes(3, []byte(str))
 		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
-		chk.AppendJSON(5, json.CreateBinary(str))
+		chk.AppendJSON(5, types.CreateBinaryJSON(str))
 	}
 	require.Equal(t, numCols, chk.NumCols())
 	require.Equal(t, numRows, chk.NumRows())
@@ -145,7 +144,7 @@ func TestAppendChunk(t *testing.T) {
 	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeVarchar))
 	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeJSON))
 
-	jsonObj, err := json.ParseBinaryFromString("{\"k1\":\"v1\"}")
+	jsonObj, err := types.ParseBinaryJSONFromString("{\"k1\":\"v1\"}")
 	require.NoError(t, err)
 
 	src := NewChunkWithCapacity(fieldTypes, 32)
@@ -193,7 +192,7 @@ func TestAppendChunk(t *testing.T) {
 	require.Equal(t, 0, len(col.elemBuf))
 	for i := 0; i < 12; i += 2 {
 		jsonElem := dst.GetRow(i).GetJSON(2)
-		require.Zero(t, json.CompareBinary(jsonElem, jsonObj))
+		require.Zero(t, types.CompareBinaryJSON(jsonElem, jsonObj))
 	}
 }
 
@@ -203,7 +202,7 @@ func TestTruncateTo(t *testing.T) {
 	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeVarchar))
 	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeJSON))
 
-	jsonObj, err := json.ParseBinaryFromString("{\"k1\":\"v1\"}")
+	jsonObj, err := types.ParseBinaryJSONFromString("{\"k1\":\"v1\"}")
 	require.NoError(t, err)
 
 	src := NewChunkWithCapacity(fieldTypes, 32)
@@ -254,7 +253,7 @@ func TestTruncateTo(t *testing.T) {
 	for i := 0; i < 12; i += 2 {
 		row := src.GetRow(i)
 		jsonElem := row.GetJSON(2)
-		require.Zero(t, json.CompareBinary(jsonElem, jsonObj))
+		require.Zero(t, types.CompareBinaryJSON(jsonElem, jsonObj))
 	}
 
 	chk := NewChunkWithCapacity(fieldTypes[:1], 1)
@@ -434,7 +433,7 @@ func TestCompare(t *testing.T) {
 		case mysql.TypeBit:
 			chunk.AppendBytes(i, []byte{0})
 		case mysql.TypeJSON:
-			chunk.AppendJSON(i, json.CreateBinary(int64(0)))
+			chunk.AppendJSON(i, types.CreateBinaryJSON(int64(0)))
 		default:
 			require.FailNow(t, "type not handled", allTypes[i].GetType())
 		}
@@ -467,7 +466,7 @@ func TestCompare(t *testing.T) {
 		case mysql.TypeBit:
 			chunk.AppendBytes(i, []byte{1})
 		case mysql.TypeJSON:
-			chunk.AppendJSON(i, json.CreateBinary(int64(1)))
+			chunk.AppendJSON(i, types.CreateBinaryJSON(int64(1)))
 		default:
 			require.FailNow(t, "type not handled", allTypes[i].GetType())
 		}
@@ -522,7 +521,7 @@ func TestCopyTo(t *testing.T) {
 			case mysql.TypeBit:
 				chunk.AppendBytes(i, []byte{byte(k)})
 			case mysql.TypeJSON:
-				chunk.AppendJSON(i, json.CreateBinary(int64(k)))
+				chunk.AppendJSON(i, types.CreateBinaryJSON(int64(k)))
 			default:
 				require.FailNow(t, "type not handled", allTypes[i].GetType())
 			}
@@ -583,7 +582,7 @@ func TestChunkMemoryUsage(t *testing.T) {
 	// empty chunk with initial capactiy
 	require.Equal(t, int64(expectedUsage), chk.MemoryUsage())
 
-	jsonObj, err := json.ParseBinaryFromString("1")
+	jsonObj, err := types.ParseBinaryJSONFromString("1")
 	require.NoError(t, err)
 
 	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
@@ -1013,7 +1012,7 @@ func TestAppendRows(t *testing.T) {
 		chk.AppendString(2, str)
 		chk.AppendBytes(3, []byte(str))
 		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
-		chk.AppendJSON(5, json.CreateBinary(str))
+		chk.AppendJSON(5, types.CreateBinaryJSON(str))
 	}
 	require.Equal(t, numCols, chk.NumCols())
 	require.Equal(t, numRows, chk.NumRows())

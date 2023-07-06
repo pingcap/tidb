@@ -16,31 +16,33 @@ package executor
 
 import (
 	"context"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	pd "github.com/tikv/pd/client"
+	"github.com/pingcap/tidb/util/sem"
 	"go.uber.org/zap"
 )
 
 // SetExecutor executes set statement.
 type SetExecutor struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	vars []*expression.VarAssignment
 	done bool
@@ -53,7 +55,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
-	sessionVars := e.ctx.GetSessionVars()
+	sessionVars := e.Ctx().GetSessionVars()
 	for _, v := range e.vars {
 		// Variable is case insensitive, we use lower case.
 		if v.Name == ast.SetNames || v.Name == ast.SetCharset {
@@ -87,14 +89,12 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err != nil {
 				return err
 			}
-			sessionVars.UsersLock.Lock()
 			if value.IsNull() {
 				sessionVars.UnsetUserVar(name)
 			} else {
-				sessionVars.Users[name] = value
-				sessionVars.UserVarTypes[name] = v.Expr.GetType()
+				sessionVars.SetUserVarVal(name, value)
+				sessionVars.SetUserVarType(name, v.Expr.GetType())
 			}
-			sessionVars.UsersLock.Unlock()
 			continue
 		}
 
@@ -106,7 +106,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expression.VarAssignment) error {
-	sessionVars := e.ctx.GetSessionVars()
+	sessionVars := e.Ctx().GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
 		if variable.IsRemovedSysVar(name) {
@@ -114,37 +114,48 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		}
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
+
+	if sysVar.RequireDynamicPrivileges != nil {
+		semEnabled := sem.IsEnabled()
+		pm := privilege.GetPrivilegeManager(e.Ctx())
+		privs := sysVar.RequireDynamicPrivileges(v.IsGlobal, semEnabled)
+		for _, priv := range privs {
+			if !pm.RequestDynamicVerification(sessionVars.ActiveRoles, priv, false) {
+				msg := priv
+				if !semEnabled {
+					msg = "SUPER or " + msg
+				}
+				return core.ErrSpecificAccessDenied.GenWithStackByArgs(msg)
+			}
+		}
+	}
+
 	if sysVar.IsNoop && !variable.EnableNoopVariables.Load() {
 		// The variable is a noop. For compatibility we allow it to still
 		// be changed, but we append a warning since users might be expecting
 		// something that's not going to happen.
-		sessionVars.StmtCtx.AppendWarning(ErrSettingNoopVariable.GenWithStackByArgs(sysVar.Name))
+		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrSettingNoopVariable.GenWithStackByArgs(sysVar.Name))
 	}
 	if sysVar.HasInstanceScope() && !v.IsGlobal && sessionVars.EnableLegacyInstanceScope {
 		// For backward compatibility we will change the v.IsGlobal to true,
 		// and append a warning saying this will not be supported in future.
 		v.IsGlobal = true
-		sessionVars.StmtCtx.AppendWarning(ErrInstanceScope.GenWithStackByArgs(sysVar.Name))
+		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.GenWithStackByArgs(sysVar.Name))
 	}
 
 	if v.IsGlobal {
-		valStr, err := e.getVarValue(v, sysVar)
+		valStr, err := e.getVarValue(ctx, v, sysVar)
 		if err != nil {
 			return err
 		}
-		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, valStr)
-		if err != nil {
-			return err
-		}
-		// Some PD client dynamic options need to be checked first and set here.
-		err = e.checkPDClientDynamicOption(name, sessionVars)
+		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(ctx, name, valStr)
 		if err != nil {
 			return err
 		}
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
 			if auditPlugin.OnGlobalVariableEvent != nil {
-				auditPlugin.OnGlobalVariableEvent(context.Background(), e.ctx.GetSessionVars(), name, valStr)
+				auditPlugin.OnGlobalVariableEvent(context.Background(), e.Ctx().GetSessionVars(), name, valStr)
 			}
 			return nil
 		})
@@ -152,7 +163,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		return err
 	}
 	// Set session variable
-	valStr, err := e.getVarValue(v, nil)
+	valStr, err := e.getVarValue(ctx, v, nil)
 	if err != nil {
 		return err
 	}
@@ -175,10 +186,10 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	if sessionVars.InTxn() {
 		if name == variable.TxnIsolationOneShot ||
 			name == variable.TiDBTxnReadTS {
-			return errors.Trace(ErrCantChangeTxCharacteristics)
+			return errors.Trace(exeerrors.ErrCantChangeTxCharacteristics)
 		}
 		if name == variable.TiDBSnapshot && sessionVars.TxnCtx.IsStaleness {
-			return errors.Trace(ErrCantChangeTxCharacteristics)
+			return errors.Trace(exeerrors.ErrCantChangeTxCharacteristics)
 		}
 	}
 	err = sessionVars.SetSystemVar(name, valStr)
@@ -189,14 +200,14 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	if newSnapshotIsSet {
 		if name == variable.TiDBTxnReadTS {
-			err = sessionctx.ValidateStaleReadTS(ctx, e.ctx, newSnapshotTS)
+			err = sessionctx.ValidateStaleReadTS(ctx, e.Ctx(), newSnapshotTS)
 		} else {
-			err = sessionctx.ValidateSnapshotReadTS(ctx, e.ctx, newSnapshotTS)
+			err = sessionctx.ValidateSnapshotReadTS(ctx, e.Ctx(), newSnapshotTS)
 			// Also check gc safe point for snapshot read.
 			// We don't check snapshot with gc safe point for read_ts
 			// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
 			if err == nil {
-				err = gcutil.ValidateSnapshot(e.ctx, newSnapshotTS)
+				err = gcutil.ValidateSnapshot(e.Ctx(), newSnapshotTS)
 			}
 		}
 		if err != nil {
@@ -216,48 +227,9 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	return nil
 }
 
-func (e *SetExecutor) checkPDClientDynamicOption(name string, sessionVars *variable.SessionVars) error {
-	if name != variable.TiDBTSOClientBatchMaxWaitTime &&
-		name != variable.TiDBEnableTSOFollowerProxy {
-		return nil
-	}
-	var (
-		err    error
-		valStr string
-	)
-	valStr, err = sessionVars.GlobalVarsAccessor.GetGlobalSysVar(name)
-	if err != nil {
-		return err
-	}
-	switch name {
-	case variable.TiDBTSOClientBatchMaxWaitTime:
-		var val float64
-		val, err = strconv.ParseFloat(valStr, 64)
-		if err != nil {
-			return err
-		}
-		err = domain.GetDomain(e.ctx).SetPDClientDynamicOption(
-			pd.MaxTSOBatchWaitInterval,
-			time.Duration(float64(time.Millisecond)*val),
-		)
-		if err != nil {
-			return err
-		}
-		logutil.BgLogger().Info("set pd client dynamic option", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
-	case variable.TiDBEnableTSOFollowerProxy:
-		val := variable.TiDBOptOn(valStr)
-		err = domain.GetDomain(e.ctx).SetPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
-		if err != nil {
-			return err
-		}
-		logutil.BgLogger().Info("set pd client dynamic option", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
-	}
-	return nil
-}
-
 func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	var err error
-	sessionVars := e.ctx.GetSessionVars()
+	sessionVars := e.Ctx().GetSessionVars()
 	if co == "" {
 		if co, err = charset.GetDefaultCollation(cs); err != nil {
 			return err
@@ -300,7 +272,7 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, coDb))
 }
 
-func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value string, err error) {
+func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignment, sysVar *variable.SysVar) (value string, err error) {
 	if v.IsDefault {
 		// To set a SESSION variable to the GLOBAL value or a GLOBAL value
 		// to the compiled-in MySQL default value, use the DEFAULT keyword.
@@ -308,20 +280,29 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		if sysVar != nil {
 			return sysVar.Value, nil
 		}
-		return e.ctx.GetSessionVars().GetGlobalSystemVar(v.Name)
+		return e.Ctx().GetSessionVars().GetGlobalSystemVar(ctx, v.Name)
 	}
 	nativeVal, err := v.Expr.Eval(chunk.Row{})
 	if err != nil || nativeVal.IsNull() {
 		return "", err
 	}
-	return nativeVal.ToString()
+
+	value, err = nativeVal.ToString()
+	if err != nil {
+		return "", err
+	}
+
+	// We need to clone the string because the value is constructed by `hack.String` in Datum which reuses the under layer `[]byte`
+	// instead of allocating some new spaces. The `[]byte` in Datum will be reused in `chunk.Chunk` by different statements in session.
+	// If we do not clone the value, the system variable will have a risk to be modified by other statements.
+	return strings.Clone(value), nil
 }
 
 func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uint64) error {
 	if name != variable.TiDBSnapshot && name != variable.TiDBTxnReadTS {
 		return nil
 	}
-	vars := e.ctx.GetSessionVars()
+	vars := e.Ctx().GetSessionVars()
 	if snapshotTS == 0 {
 		vars.SnapshotInfoschema = nil
 		return nil
@@ -329,12 +310,12 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uin
 	logutil.BgLogger().Info("load snapshot info schema",
 		zap.Uint64("conn", vars.ConnectionID),
 		zap.Uint64("SnapshotTS", snapshotTS))
-	dom := domain.GetDomain(e.ctx)
+	dom := domain.GetDomain(e.Ctx())
 	snapInfo, err := dom.GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
 		return err
 	}
 
-	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(e.ctx, snapInfo)
+	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(e.Ctx(), snapInfo)
 	return nil
 }

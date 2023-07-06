@@ -1,0 +1,55 @@
+[
+  {
+    "Name": "TestWarningsInSlowQuery",
+    "Cases": [
+      {
+        "SQL": "insert into t(a) value (1)",
+        "Result": ""
+      },
+      {
+        "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ a/0 from t",
+        "Result": "[{\"Level\":\"Warning\",\"Message\":\"Division by 0\"}]"
+      },
+      {
+        "SQL": "create binding for select * from t where c = 10 using select * from t use index (c_d_e) where c = 10",
+        "Result": ""
+      },
+      {
+        "SQL": "select * from t where c = 10",
+        "Result": "[{\"Level\":\"Note\",\"Message\":\"Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`c_d_e`) WHERE `c` = 10\",\"IsExtra\":true}]"
+      },
+      {
+        "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where a > 1 order by f",
+        "Result": "[{\"Level\":\"Warning\",\"Message\":\"Expression about 'test.t.h' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.\",\"IsExtra\":true},{\"Level\":\"Note\",\"Message\":\"[t,t(tiflash)] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}\",\"IsExtra\":true},{\"Level\":\"Warning\",\"Message\":\"Expression about 'test.t.h' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.\",\"IsExtra\":true},{\"Level\":\"Note\",\"Message\":\"[t,t(tiflash),f,f_g] remain after pruning paths for t given Prop{SortItems: [{test.t.f asc}], TaskTp: rootTask}\",\"IsExtra\":true}]"
+      },
+      {
+        "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where f > 1",
+        "Result": "[{\"Level\":\"Warning\",\"Message\":\"Expression about 'test.t.h' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.\",\"IsExtra\":true},{\"Level\":\"Note\",\"Message\":\"[t,t(tiflash),f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}\",\"IsExtra\":true}]"
+      },
+      {
+        "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ f from t where f > 1",
+        "Result": "[{\"Level\":\"Note\",\"Message\":\"[t(tiflash),f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}\",\"IsExtra\":true}]"
+      },
+      {
+        "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where f > 3 and g = 5",
+        "Result": "[{\"Level\":\"Warning\",\"Message\":\"Expression about 'test.t.h' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.\",\"IsExtra\":true},{\"Level\":\"Note\",\"Message\":\"[t,t(tiflash),f_g,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}\",\"IsExtra\":true}]"
+      },
+      {
+        "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where g = 5 order by f",
+        "Result": "[{\"Level\":\"Warning\",\"Message\":\"Expression about 'test.t.h' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.\",\"IsExtra\":true},{\"Level\":\"Note\",\"Message\":\"[t,t(tiflash),g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}\",\"IsExtra\":true},{\"Level\":\"Warning\",\"Message\":\"Expression about 'test.t.h' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.\",\"IsExtra\":true},{\"Level\":\"Note\",\"Message\":\"[t,t(tiflash),f_g,g] remain after pruning paths for t given Prop{SortItems: [{test.t.f asc}], TaskTp: rootTask}\",\"IsExtra\":true}]"
+      },
+      {
+        "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where d = 3 order by c, e",
+        "Result": "[{\"Level\":\"Warning\",\"Message\":\"Expression about 'test.t.h' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.\",\"IsExtra\":true},{\"Level\":\"Note\",\"Message\":\"[t,t(tiflash)] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}\",\"IsExtra\":true},{\"Level\":\"Warning\",\"Message\":\"Expression about 'test.t.h' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.\",\"IsExtra\":true},{\"Level\":\"Note\",\"Message\":\"[t,t(tiflash),c_d_e] remain after pruning paths for t given Prop{SortItems: [{test.t.c asc} {test.t.e asc}], TaskTp: rootTask}\",\"IsExtra\":true}]"
+      },
+      {
+        "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where h = '11,22'",
+        "Result": "[{\"Level\":\"Warning\",\"Message\":\"Expression about 'test.t.h' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.\",\"IsExtra\":true},{\"Level\":\"Warning\",\"Message\":\"Expression about 'test.t.h' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.\",\"IsExtra\":true},{\"Level\":\"Note\",\"Message\":\"[t,t(tiflash)] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}\",\"IsExtra\":true}]"
+      },
+      {
+        "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where a > rand()*100",
+        "Result": "[{\"Level\":\"Warning\",\"Message\":\"Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to storage layer now.\",\"IsExtra\":true},{\"Level\":\"Warning\",\"Message\":\"Expression about 'test.t.h' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.\",\"IsExtra\":true},{\"Level\":\"Warning\",\"Message\":\"Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.\",\"IsExtra\":true},{\"Level\":\"Note\",\"Message\":\"[t,t(tiflash)] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}\",\"IsExtra\":true}]"
+      }
+    ]
+  }
+]

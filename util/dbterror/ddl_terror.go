@@ -32,6 +32,8 @@ var (
 	ErrInvalidDDLJob = ClassDDL.NewStd(mysql.ErrInvalidDDLJob)
 	// ErrCancelledDDLJob means the DDL job is cancelled.
 	ErrCancelledDDLJob = ClassDDL.NewStd(mysql.ErrCancelledDDLJob)
+	// ErrPausedDDLJob returns when the DDL job cannot be paused.
+	ErrPausedDDLJob = ClassDDL.NewStd(mysql.ErrPausedDDLJob)
 	// ErrRunMultiSchemaChanges means we run multi schema changes.
 	ErrRunMultiSchemaChanges = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change for %s"), nil))
 	// ErrOperateSameColumn means we change the same columns multiple times in a DDL.
@@ -49,6 +51,8 @@ var (
 	ErrCantDropColWithIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop column with index"), nil))
 	// ErrCantDropColWithAutoInc means can't drop column with auto_increment
 	ErrCantDropColWithAutoInc = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "can't remove column with auto_increment when @@tidb_allow_remove_auto_inc disabled"), nil))
+	// ErrCantDropColWithCheckConstraint means can't drop column with check constraint
+	ErrCantDropColWithCheckConstraint = ClassDDL.NewStd(mysql.ErrDependentByCheckConstraint)
 	// ErrUnsupportedAddColumn means add columns is unsupported
 	ErrUnsupportedAddColumn = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add column"), nil))
 	// ErrUnsupportedModifyColumn means modify columns is unsupoorted
@@ -95,6 +99,8 @@ var (
 	ErrReorgPanic = ClassDDL.NewStd(mysql.ErrReorgPanic)
 	// ErrFkColumnCannotDrop is used when foreign key column can't be dropped.
 	ErrFkColumnCannotDrop = ClassDDL.NewStd(mysql.ErrFkColumnCannotDrop)
+	// ErrFkColumnCannotDropChild is used when foreign key column can't be dropped.
+	ErrFkColumnCannotDropChild = ClassDDL.NewStd(mysql.ErrFkColumnCannotDropChild)
 	// ErrFKIncompatibleColumns is used when foreign key column type is incompatible.
 	ErrFKIncompatibleColumns = ClassDDL.NewStd(mysql.ErrFKIncompatibleColumns)
 	// ErrOnlyOnRangeListPartition is used when the partition type is range list.
@@ -298,6 +304,8 @@ var (
 	ErrUnsupportedExpressionIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "creating expression index containing unsafe functions without allow-expression-index in config"), nil))
 	// ErrPartitionExchangePartTable is returned when exchange table partition with another table is partitioned.
 	ErrPartitionExchangePartTable = ClassDDL.NewStd(mysql.ErrPartitionExchangePartTable)
+	// ErrPartitionExchangeTempTable is returned when exchange table partition with a temporary table
+	ErrPartitionExchangeTempTable = ClassDDL.NewStd(mysql.ErrPartitionExchangeTempTable)
 	// ErrTablesDifferentMetadata is returned when exchanges tables is not compatible.
 	ErrTablesDifferentMetadata = ClassDDL.NewStd(mysql.ErrTablesDifferentMetadata)
 	// ErrRowDoesNotMatchPartition is returned when the row record of exchange table does not match the partition rule.
@@ -365,8 +373,13 @@ var (
 	ErrDependentByFunctionalIndex = ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
 	// ErrFunctionalIndexOnBlob when the expression of expression index returns blob or text.
 	ErrFunctionalIndexOnBlob = ClassDDL.NewStd(mysql.ErrFunctionalIndexOnBlob)
-	// ErrIncompatibleTiFlashAndPlacement when placement and tiflash replica options are set at the same time
-	ErrIncompatibleTiFlashAndPlacement = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Placement and tiflash replica options cannot be set at the same time", nil))
+	// ErrDependentByPartitionFunctional returns when the dropped column depends by expression partition.
+	ErrDependentByPartitionFunctional = ClassDDL.NewStd(mysql.ErrDependentByPartitionFunctional)
+
+	// ErrUnsupportedAlterTableSpec means we don't support this alter table specification (i.e. unknown)
+	ErrUnsupportedAlterTableSpec = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "Unsupported/unknown ALTER TABLE specification"), nil))
+	// ErrGeneralUnsupportedDDL as a generic error to customise by argument
+	ErrGeneralUnsupportedDDL = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "%s"), nil))
 
 	// ErrAutoConvert when auto convert happens
 	ErrAutoConvert = ClassDDL.NewStd(mysql.ErrAutoConvert)
@@ -382,8 +395,14 @@ var (
 	ErrCancelFinishedDDLJob = ClassDDL.NewStd(mysql.ErrCancelFinishedDDLJob)
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
 	ErrCannotCancelDDLJob = ClassDDL.NewStd(mysql.ErrCannotCancelDDLJob)
-	// ErrDDLSetting returns when failing to enable/disable DDL
+	// ErrCannotPauseDDLJob returns when the State is not qualified to be paused.
+	ErrCannotPauseDDLJob = ClassDDL.NewStd(mysql.ErrCannotPauseDDLJob)
+	// ErrCannotResumeDDLJob returns  when the State is not qualified to be resumed.
+	ErrCannotResumeDDLJob = ClassDDL.NewStd(mysql.ErrCannotResumeDDLJob)
+	// ErrDDLSetting returns when failing to enable/disable DDL.
 	ErrDDLSetting = ClassDDL.NewStd(mysql.ErrDDLSetting)
+	// ErrIngestFailed returns when the DDL ingest job is failed.
+	ErrIngestFailed = ClassDDL.NewStd(mysql.ErrIngestFailed)
 
 	// ErrColumnInChange indicates there is modification on the column in parallel.
 	ErrColumnInChange = ClassDDL.NewStd(mysql.ErrColumnInChange)
@@ -396,4 +415,75 @@ var (
 
 	// ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable is used when alter alter tiflash related action(e.g. set tiflash mode, set tiflash replica) with unsupported charset.
 	ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER TiFlash settings for tables not supported by TiFlash: table contains %s charset"), nil))
+
+	// ErrDropIndexNeededInForeignKey returns when drop index which is needed in foreign key.
+	ErrDropIndexNeededInForeignKey = ClassDDL.NewStd(mysql.ErrDropIndexNeededInForeignKey)
+	// ErrForeignKeyCannotDropParent returns when drop table which has foreign key referred.
+	ErrForeignKeyCannotDropParent = ClassDDL.NewStd(mysql.ErrForeignKeyCannotDropParent)
+	// ErrTruncateIllegalForeignKey returns when truncate table which has foreign key referred.
+	ErrTruncateIllegalForeignKey = ClassDDL.NewStd(mysql.ErrTruncateIllegalForeignKey)
+	// ErrForeignKeyColumnCannotChange returns when change column which used by foreign key.
+	ErrForeignKeyColumnCannotChange = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChange)
+	// ErrForeignKeyColumnCannotChangeChild returns when change child table's column which used by foreign key.
+	ErrForeignKeyColumnCannotChangeChild = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChangeChild)
+	// ErrNoReferencedRow2 returns when there are rows in child table don't have related foreign key value in refer table.
+	ErrNoReferencedRow2 = ClassDDL.NewStd(mysql.ErrNoReferencedRow2)
+
+	// ErrUnsupportedColumnInTTLConfig returns when a column type is not expected in TTL config
+	ErrUnsupportedColumnInTTLConfig = ClassDDL.NewStd(mysql.ErrUnsupportedColumnInTTLConfig)
+	// ErrTTLColumnCannotDrop returns when a column is dropped while referenced by TTL config
+	ErrTTLColumnCannotDrop = ClassDDL.NewStd(mysql.ErrTTLColumnCannotDrop)
+	// ErrSetTTLOptionForNonTTLTable returns when the `TTL_ENABLE` or `TTL_JOB_INTERVAL` option is set on a non-TTL table
+	ErrSetTTLOptionForNonTTLTable = ClassDDL.NewStd(mysql.ErrSetTTLOptionForNonTTLTable)
+	// ErrTempTableNotAllowedWithTTL returns when setting TTL config for a temp table
+	ErrTempTableNotAllowedWithTTL = ClassDDL.NewStd(mysql.ErrTempTableNotAllowedWithTTL)
+	// ErrUnsupportedTTLReferencedByFK returns when the TTL config is set for a table referenced by foreign key
+	ErrUnsupportedTTLReferencedByFK = ClassDDL.NewStd(mysql.ErrUnsupportedTTLReferencedByFK)
+	// ErrUnsupportedPrimaryKeyTypeWithTTL returns when create or alter a table with TTL options but the primary key is not supported
+	ErrUnsupportedPrimaryKeyTypeWithTTL = ClassDDL.NewStd(mysql.ErrUnsupportedPrimaryKeyTypeWithTTL)
+
+	// ErrNotSupportedYet returns when tidb does not support this feature.
+	ErrNotSupportedYet = ClassDDL.NewStd(mysql.ErrNotSupportedYet)
+
+	// ErrColumnCheckConstraintReferOther is returned when create column check constraint referring other column.
+	ErrColumnCheckConstraintReferOther = ClassDDL.NewStd(mysql.ErrColumnCheckConstraintReferencesOtherColumn)
+	// ErrTableCheckConstraintReferUnknown is returned when create table check constraint referring non-existing column.
+	ErrTableCheckConstraintReferUnknown = ClassDDL.NewStd(mysql.ErrTableCheckConstraintReferUnknown)
+	// ErrConstraintNotFound is returned for dropping a non-existent constraint.
+	ErrConstraintNotFound = ClassDDL.NewStd(mysql.ErrConstraintNotFound)
+	// ErrCheckConstraintIsViolated is returned for violating an existent check constraint.
+	ErrCheckConstraintIsViolated = ClassDDL.NewStd(mysql.ErrCheckConstraintViolated)
+	// ErrCheckConstraintNamedFuncIsNotAllowed is returned for not allowed function with name.
+	ErrCheckConstraintNamedFuncIsNotAllowed = ClassDDL.NewStd(mysql.ErrCheckConstraintNamedFunctionIsNotAllowed)
+	// ErrCheckConstraintFuncIsNotAllowed is returned for not allowed function.
+	ErrCheckConstraintFuncIsNotAllowed = ClassDDL.NewStd(mysql.ErrCheckConstraintFunctionIsNotAllowed)
+	// ErrCheckConstraintVariables is returned for referring user or system variables.
+	ErrCheckConstraintVariables = ClassDDL.NewStd(mysql.ErrCheckConstraintVariables)
+	// ErrCheckConstraintRefersAutoIncrementColumn is returned for referring auto-increment columns.
+	ErrCheckConstraintRefersAutoIncrementColumn = ClassDDL.NewStd(mysql.ErrCheckConstraintRefersAutoIncrementColumn)
+	// ErrCheckConstraintUsingFKReferActionColumn is returned for referring foreign key columns.
+	ErrCheckConstraintUsingFKReferActionColumn = ClassDDL.NewStd(mysql.ErrCheckConstraintClauseUsingFKReferActionColumn)
+	// ErrNonBooleanExprForCheckConstraint is returned for non bool expression.
+	ErrNonBooleanExprForCheckConstraint = ClassDDL.NewStd(mysql.ErrNonBooleanExprForCheckConstraint)
 )
+
+// ReorgRetryableErrCodes is the error codes that are retryable for reorganization.
+var ReorgRetryableErrCodes = map[uint16]struct{}{
+	mysql.ErrPDServerTimeout:           {},
+	mysql.ErrTiKVServerTimeout:         {},
+	mysql.ErrTiKVServerBusy:            {},
+	mysql.ErrResolveLockTimeout:        {},
+	mysql.ErrRegionUnavailable:         {},
+	mysql.ErrGCTooEarly:                {},
+	mysql.ErrWriteConflict:             {},
+	mysql.ErrTiKVStoreLimit:            {},
+	mysql.ErrTiKVStaleCommand:          {},
+	mysql.ErrTiKVMaxTimestampNotSynced: {},
+	mysql.ErrTiFlashServerTimeout:      {},
+	mysql.ErrTiFlashServerBusy:         {},
+	mysql.ErrInfoSchemaExpired:         {},
+	mysql.ErrInfoSchemaChanged:         {},
+	mysql.ErrWriteConflictInTiDB:       {},
+	mysql.ErrTxnRetryable:              {},
+	mysql.ErrNotOwner:                  {},
+}

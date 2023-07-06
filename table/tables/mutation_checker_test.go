@@ -87,7 +87,7 @@ func TestCompareIndexData(t *testing.T) {
 }
 
 func TestCheckRowInsertionConsistency(t *testing.T) {
-	sessVars := variable.NewSessionVars()
+	sessVars := variable.NewSessionVars(nil)
 	rd := rowcodec.Encoder{Enable: true}
 
 	// mocked data
@@ -230,7 +230,7 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 			{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeDatetime)},
 		},
 	}
-	sessVars := variable.NewSessionVars()
+	sessVars := variable.NewSessionVars(nil)
 	rd := rowcodec.Encoder{Enable: true}
 
 	now := types.CurrentTime(mysql.TypeDatetime)
@@ -310,9 +310,9 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 					require.Nil(t, err)
 					rowMutation := mutation{key: rowKey, value: rowValue}
 					corruptedRowMutation := mutation{key: corruptedRowKey, value: rowValue}
-					err = checkHandleConsistency(rowMutation, indexMutations, maps.IndexIDToInfo, "t")
+					err = checkHandleConsistency(rowMutation, indexMutations, maps.IndexIDToInfo, &tableInfo)
 					require.Nil(t, err)
-					err = checkHandleConsistency(corruptedRowMutation, indexMutations, maps.IndexIDToInfo, "t")
+					err = checkHandleConsistency(corruptedRowMutation, indexMutations, maps.IndexIDToInfo, &tableInfo)
 					require.NotNil(t, err)
 				}
 			}
@@ -332,7 +332,7 @@ func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, sessVars *
 	if err != nil {
 		return nil, nil, err
 	}
-	rsData := TryGetHandleRestoredDataWrapper(table, rowToInsert, nil, indexInfo)
+	rsData := TryGetHandleRestoredDataWrapper(table.meta, rowToInsert, nil, indexInfo)
 	value, err := tablecodec.GenIndexValuePortal(
 		sessVars.StmtCtx, &tableInfo, indexInfo, NeedRestoredData(indexInfo.Columns, tableInfo.Columns),
 		distinct, false, indexedValues, handle, 0, rsData,

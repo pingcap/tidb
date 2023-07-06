@@ -32,6 +32,10 @@ func GetTiKVReplicaReadType(t kv.ReplicaReadType) storekv.ReplicaReadType {
 		return storekv.ReplicaReadMixed
 	case kv.ReplicaReadClosestAdaptive:
 		return storekv.ReplicaReadMixed
+	case kv.ReplicaReadLearner:
+		return storekv.ReplicaReadLearner
+	case kv.ReplicaReadPreferLeader:
+		return storekv.ReplicaReadPreferLeader
 	}
 	return 0
 }

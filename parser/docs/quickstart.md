@@ -106,6 +106,7 @@ If the parser runs properly, you should get a result like this:
 >   You can use [`github.com/pingcap/tidb/parser/test_driver`](https://pkg.go.dev/github.com/pingcap/tidb/parser/test_driver) as the `parser_driver` for test. Again, if you need advanced features, please use the `parser_driver` in TiDB (run `go get -v github.com/pingcap/tidb/types/parser_driver@4a1b2e9` and import it).
 > - The instantiated parser object is not goroutine safe. It is better to keep it in a single goroutine.
 > - The instantiated parser object is not lightweight. It is better to reuse it if possible.
+> - Warning: the 'parser.result' object is being reused without being properly reset or copied. This can cause unexpected behavior or errors if the object is used for multiple parsing operations or concurrently in multiple goroutines. To avoid these issues, make a copy of the 'parser.result' object before calling 'parser.Parse()' again or before using it in another goroutine, or create a new 'parser' object altogether for each new parsing operation.
 > - The 2nd and 3rd arguments of [`parser.Parse()`](https://pkg.go.dev/github.com/pingcap/tidb/parser?tab=doc#Parser.Parse) are charset and collation respectively. If you pass an empty string into it, a default value is chosen.
 
 

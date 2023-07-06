@@ -109,6 +109,7 @@ func TypeStr(tp byte) (r string) {
 // It is used for converting Text to Blob,
 // or converting Char to Binary.
 // Args:
+//
 //	tp: type enum
 //	cs: charset
 func TypeToStr(tp byte, cs string) (r string) {
@@ -120,13 +121,16 @@ func TypeToStr(tp byte, cs string) (r string) {
 		ts = strings.Replace(ts, "text", "blob", 1)
 	} else if IsTypeChar(tp) {
 		ts = strings.Replace(ts, "char", "binary", 1)
+	} else if tp == mysql.TypeNull {
+		ts = "binary"
 	}
 	return ts
 }
 
 // StrToType convert a string to type enum.
 // Args:
-// 	ts: type string
+//
+//	ts: type string
 func StrToType(ts string) (tp byte) {
 	ts = strings.Replace(ts, "blob", "text", 1)
 	ts = strings.Replace(ts, "binary", "char", 1)
@@ -152,7 +156,8 @@ var (
 	ErrInvalidDefault = terror.ClassTypes.NewStd(mysql.ErrInvalidDefault)
 	// ErrDataOutOfRange is returned when meet a value out of range.
 	ErrDataOutOfRange = terror.ClassTypes.NewStd(mysql.ErrDataOutOfRange)
-	// ErrTruncatedWrongValue is returned when meet a value bigger than 99999999999999999999999999999999999999999999999999999999999999999 during parsing.
+	// ErrTruncatedWrongValue is returned when meet a value bigger than
+	// 99999999999999999999999999999999999999999999999999999999999999999 during parsing.
 	ErrTruncatedWrongValue = terror.ClassTypes.NewStd(mysql.ErrTruncatedWrongValue)
 	// ErrIllegalValueForType is returned when strconv.ParseFloat meet strconv.ErrRange during parsing.
 	ErrIllegalValueForType = terror.ClassTypes.NewStd(mysql.ErrIllegalValueForType)

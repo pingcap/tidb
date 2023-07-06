@@ -105,10 +105,81 @@ func ExtractCorrelatedCols4PhysicalPlan(p PhysicalPlan) []*expression.Correlated
 	return corCols
 }
 
+// ExtractOuterApplyCorrelatedCols only extract the correlated columns whose corresponding Apply operator is outside the plan.
+// For Plan-1, ExtractOuterApplyCorrelatedCols(CTE-1) will return cor_col_1.
+// Plan-1:
+//
+//	Apply_1
+//	 |_ outerSide
+//	 |_CTEExec(CTE-1)
+//
+//	CTE-1
+//	 |_Selection(cor_col_1)
+//
+// For Plan-2, the result of ExtractOuterApplyCorrelatedCols(CTE-2) will not return cor_col_3.
+// Because Apply_3 is inside CTE-2.
+// Plan-2:
+//
+//	Apply_2
+//	 |_ outerSide
+//	 |_ Selection(cor_col_2)
+//	     |_CTEExec(CTE-2)
+//	CTE-2
+//	 |_ Apply_3
+//	     |_ outerSide
+//	     |_ innerSide(cor_col_3)
+func ExtractOuterApplyCorrelatedCols(p PhysicalPlan) []*expression.CorrelatedColumn {
+	return extractOuterApplyCorrelatedColsHelper(p, []*expression.Schema{})
+}
+
+func extractOuterApplyCorrelatedColsHelper(p PhysicalPlan, outerSchemas []*expression.Schema) []*expression.CorrelatedColumn {
+	if p == nil {
+		return nil
+	}
+	curCorCols := p.ExtractCorrelatedCols()
+	newCorCols := make([]*expression.CorrelatedColumn, 0, len(curCorCols))
+
+	// If a corresponding Apply is found inside this PhysicalPlan, ignore it.
+	for _, corCol := range curCorCols {
+		var found bool
+		for _, outerSchema := range outerSchemas {
+			if outerSchema.ColumnIndex(&corCol.Column) != -1 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			newCorCols = append(newCorCols, corCol)
+		}
+	}
+
+	switch v := p.(type) {
+	case *PhysicalApply:
+		var outerPlan PhysicalPlan
+		if v.InnerChildIdx == 0 {
+			outerPlan = v.Children()[1]
+		} else {
+			outerPlan = v.Children()[0]
+		}
+		outerSchemas = append(outerSchemas, outerPlan.Schema())
+		newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(v.Children()[0], outerSchemas)...)
+		newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(v.Children()[1], outerSchemas)...)
+	case *PhysicalCTE:
+		newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(v.SeedPlan, outerSchemas)...)
+		newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(v.RecurPlan, outerSchemas)...)
+	default:
+		for _, child := range p.Children() {
+			newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(child, outerSchemas)...)
+		}
+	}
+
+	return newCorCols
+}
+
 // decorrelateSolver tries to convert apply plan to join plan.
 type decorrelateSolver struct{}
 
-func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*expression.Constant {
+func (*decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*expression.Constant {
 	defaultValueMap := make(map[int]*expression.Constant, len(agg.AggFuncs))
 	for i, f := range agg.AggFuncs {
 		switch f.Name {
@@ -134,6 +205,8 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			join.tp = plancodec.TypeJoin
 			p = join
 			appendApplySimplifiedTraceStep(apply, join, opt)
+		} else if apply.NoDecorrelate {
+			goto NoOptimize
 		} else if sel, ok := innerPlan.(*LogicalSelection); ok {
 			// If the inner plan is a selection, we add this condition to join predicates.
 			// Notice that no matter what kind of join is, it's always right.
@@ -171,10 +244,28 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 				// TODO: Actually, it can be optimized. We need to first push the projection down to the selection. And then the APPLY can be decorrelated.
 				goto NoOptimize
 			}
+
+			// step1: substitute the all the schema with new expressions (including correlated column maybe, but it doesn't affect the collation infer inside)
+			// eg: projection: constant("guo") --> column8, once upper layer substitution failed here, the lower layer behind
+			// projection can't supply column8 anymore.
+			//
+			//	upper OP (depend on column8)   --> projection(constant "guo" --> column8)  --> lower layer OP
+			//	          |                                                       ^
+			//	          +-------------------------------------------------------+
+			//
+			//	upper OP (depend on column8)   --> lower layer OP
+			//	          |                             ^
+			//	          +-----------------------------+      // Fail: lower layer can't supply column8 anymore.
+			hasFail := apply.columnSubstituteAll(proj.Schema(), proj.Exprs)
+			if hasFail {
+				goto NoOptimize
+			}
+			// step2: when it can be substituted all, we then just do the de-correlation (apply conditions included).
 			for i, expr := range proj.Exprs {
 				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
 			}
-			apply.columnSubstitute(proj.Schema(), proj.Exprs)
+			apply.decorrelate(outerPlan.Schema())
+
 			innerPlan = proj.children[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin && apply.JoinType != AntiSemiJoin && apply.JoinType != AntiLeftOuterSemiJoin {
@@ -351,6 +442,10 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 		}
 	}
 NoOptimize:
+	// CTE's logical optimization is independent.
+	if _, ok := p.(*LogicalCTE); ok {
+		return p, nil
+	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		np, err := s.optimize(ctx, child, opt)
@@ -477,7 +572,7 @@ func appendModifyAggTraceStep(outerPlan LogicalPlan, p *LogicalApply, agg *Logic
 			}
 			buffer.WriteString(f.String())
 		}
-		buffer.WriteString(fmt.Sprintf("], and %v_%v's conditions added [", p.TP(), p.ID()))
+		fmt.Fprintf(buffer, "], and %v_%v's conditions added [", p.TP(), p.ID())
 		for i, cond := range eqCondWithCorCol {
 			if i > 0 {
 				buffer.WriteString(",")
@@ -495,8 +590,8 @@ func appendModifyAggTraceStep(outerPlan LogicalPlan, p *LogicalApply, agg *Logic
 			}
 			buffer.WriteString(cond.String())
 		}
-		buffer.WriteString(fmt.Sprintf("] are correlated to %v_%v and pulled up as %v_%v's join key",
-			outerPlan.TP(), outerPlan.ID(), p.TP(), p.ID()))
+		fmt.Fprintf(buffer, "] are correlated to %v_%v and pulled up as %v_%v's join key",
+			outerPlan.TP(), outerPlan.ID(), p.TP(), p.ID())
 		return buffer.String()
 	}
 	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)

@@ -22,11 +22,14 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/mppcoordmanager"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
@@ -54,6 +57,12 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			Time:    time.Duration(config.Status.GRPCKeepAliveTime) * time.Second,
 			Timeout: time.Duration(config.Status.GRPCKeepAliveTimeout) * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			// Allow clients send consecutive pings in every 5 seconds.
+			// The default value of MinTime is 5 minutes,
+			// which is too long compared with 10 seconds of TiDB's keepalive time.
+			MinTime: 5 * time.Second,
 		}),
 		grpc.MaxConcurrentStreams(uint32(config.Status.GRPCConcurrentStreams)),
 		grpc.InitialWindowSize(int32(config.Status.GRPCInitialWindowSize)),
@@ -192,7 +201,7 @@ func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Reque
 	defer func() {
 		sc := se.GetSessionVars().StmtCtx
 		if sc.MemTracker != nil {
-			sc.MemTracker.DetachFromGlobalTracker()
+			sc.MemTracker.Detach()
 		}
 		se.Close()
 	}()
@@ -210,11 +219,13 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	extensions, err := extension.GetExtensions()
+	if err != nil {
+		return nil, err
+	}
 	do := domain.GetDomain(se)
 	is := do.InfoSchema()
-	pm := &privileges.UserPrivileges{
-		Handle: do.PrivilegeHandle(),
-	}
+	pm := privileges.NewUserPrivileges(do.PrivilegeHandle(), extensions)
 	privilege.BindPrivilegeManager(se, pm)
 	vars := se.GetSessionVars()
 	vars.TxnCtx.InfoSchema = is
@@ -222,14 +233,19 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	// TODO: remove this.
 	vars.SetHashAggPartialConcurrency(1)
 	vars.SetHashAggFinalConcurrency(1)
-	vars.StmtCtx.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
-	vars.StmtCtx.MemTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
+	vars.StmtCtx.InitMemTracker(memory.LabelForSQLText, -1)
+	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
 	switch variable.OOMAction.Load() {
 	case variable.OOMActionCancel:
 		action := &memory.PanicOnExceed{}
-		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
-		vars.StmtCtx.MemTracker.SetActionOnExceed(action)
+		vars.MemTracker.SetActionOnExceed(action)
 	}
 	se.SetSessionManager(s.sm)
 	return se, nil
+}
+
+// ReportMPPTaskStatus implements tikv server interface
+func (s *rpcServer) ReportMPPTaskStatus(ctx context.Context, req *mpp.ReportTaskStatusRequest) (resp *mpp.ReportTaskStatusResponse, err error) {
+	resp = mppcoordmanager.InstanceMPPCoordinatorManager.ReportStatus(req)
+	return resp, nil
 }

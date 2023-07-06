@@ -17,6 +17,8 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"sort"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
@@ -27,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
@@ -38,9 +39,10 @@ type ScalarFunction struct {
 	FuncName model.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
-	RetType  *types.FieldType
-	Function builtinFunc
-	hashcode []byte
+	RetType           *types.FieldType
+	Function          builtinFunc
+	hashcode          []byte
+	canonicalhashcode []byte
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
@@ -194,6 +196,13 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
+		if extFunc, exist := extensionFuncs.Load(funcName); exist {
+			fc = extFunc.(functionClass)
+			ok = true
+		}
+	}
+
+	if !ok {
 		db := ctx.GetSessionVars().CurrentDB
 		if db == "" {
 			return nil, errors.Trace(ErrNoDB)
@@ -343,6 +352,11 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 	return sf
 }
 
+// Traverse implements the TraverseDown interface.
+func (sf *ScalarFunction) Traverse(action TraverseAction) Expression {
+	return action.Transform(sf)
+}
+
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	var (
@@ -425,17 +439,133 @@ func (sf *ScalarFunction) EvalDuration(ctx sessionctx.Context, row chunk.Row) (t
 }
 
 // EvalJSON implements Expression interface.
-func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
+func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
 	return sf.Function.evalJSON(row)
 }
 
 // HashCode implements Expression interface.
 func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
+	if sc != nil && sc.CanonicalHashCode {
+		if len(sf.canonicalhashcode) > 0 {
+			return sf.canonicalhashcode
+		}
+		simpleCanonicalizedHashCode(sf, sc)
+		return sf.canonicalhashcode
+	}
 	if len(sf.hashcode) > 0 {
 		return sf.hashcode
 	}
 	ReHashCode(sf, sc)
 	return sf.hashcode
+}
+
+// ExpressionsSemanticEqual is used to judge whether two expression tree is semantic equivalent.
+func ExpressionsSemanticEqual(ctx sessionctx.Context, expr1, expr2 Expression) bool {
+	sc := ctx.GetSessionVars().StmtCtx
+	sc.CanonicalHashCode = true
+	defer func() {
+		sc.CanonicalHashCode = false
+	}()
+	return bytes.Equal(expr1.HashCode(sc), expr2.HashCode(sc))
+}
+
+// simpleCanonicalizedHashCode is used to judge whether two expression is semantically equal.
+func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContext) {
+	if sf.canonicalhashcode != nil {
+		sf.canonicalhashcode = sf.canonicalhashcode[:0]
+	}
+	sf.canonicalhashcode = append(sf.canonicalhashcode, scalarFunctionFlag)
+
+	argsHashCode := make([][]byte, 0, len(sf.GetArgs()))
+	for _, arg := range sf.GetArgs() {
+		argsHashCode = append(argsHashCode, arg.HashCode(sc))
+	}
+	switch sf.FuncName.L {
+	case ast.Plus, ast.Mul, ast.EQ, ast.In, ast.LogicOr, ast.LogicAnd:
+		// encode original function name.
+		sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
+		// reorder parameters hashcode, eg: a+b and b+a should has the same hashcode here.
+		sort.Slice(argsHashCode, func(i, j int) bool {
+			return bytes.Compare(argsHashCode[i], argsHashCode[j]) <= 0
+		})
+		for _, argCode := range argsHashCode {
+			sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
+		}
+
+	case ast.GE, ast.LE: // directed binary OP: a >= b and b <= a should have the same hashcode.
+		// encode GE function name.
+		sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GE))
+		// encode GE function name and switch the args order.
+		if sf.FuncName.L == ast.GE {
+			for _, argCode := range argsHashCode {
+				sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
+			}
+		} else {
+			for i := len(argsHashCode) - 1; i >= 0; i-- {
+				sf.canonicalhashcode = append(sf.canonicalhashcode, argsHashCode[i]...)
+			}
+		}
+	case ast.GT, ast.LT:
+		sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GT))
+		if sf.FuncName.L == ast.GT {
+			for _, argCode := range argsHashCode {
+				sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
+			}
+		} else {
+			for i := len(argsHashCode) - 1; i >= 0; i-- {
+				sf.canonicalhashcode = append(sf.canonicalhashcode, argsHashCode[i]...)
+			}
+		}
+	case ast.UnaryNot:
+		child, ok := sf.GetArgs()[0].(*ScalarFunction)
+		if !ok {
+			// encode original function name.
+			sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
+			// use the origin arg hash code.
+			for _, argCode := range argsHashCode {
+				sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
+			}
+		} else {
+			childArgsHashCode := make([][]byte, 0, len(child.GetArgs()))
+			for _, arg := range child.GetArgs() {
+				childArgsHashCode = append(childArgsHashCode, arg.HashCode(sc))
+			}
+			switch child.FuncName.L {
+			case ast.GT: // not GT  ==> LE  ==> use GE and switch args
+				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GE))
+				for i := len(childArgsHashCode) - 1; i >= 0; i-- {
+					sf.canonicalhashcode = append(sf.canonicalhashcode, childArgsHashCode[i]...)
+				}
+			case ast.LT: // not LT  ==> GE
+				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GE))
+				for _, argCode := range childArgsHashCode {
+					sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
+				}
+			case ast.GE: // not GE  ==> LT  ==> use GT and switch args
+				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GT))
+				for i := len(childArgsHashCode) - 1; i >= 0; i-- {
+					sf.canonicalhashcode = append(sf.canonicalhashcode, childArgsHashCode[i]...)
+				}
+			case ast.LE: // not LE  ==> GT
+				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GT))
+				for _, argCode := range childArgsHashCode {
+					sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
+				}
+			}
+		}
+	default:
+		// encode original function name.
+		sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
+		for _, argCode := range argsHashCode {
+			sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
+		}
+		// Cast is a special case. The RetType should also be considered as an argument.
+		// Please see `newFunctionImpl()` for detail.
+		if sf.FuncName.L == ast.Cast {
+			evalTp := sf.RetType.EvalType()
+			sf.canonicalhashcode = append(sf.canonicalhashcode, byte(evalTp))
+		}
+	}
 }
 
 // ReHashCode is used after we change the argument in place.
@@ -486,6 +616,24 @@ func (sf *ScalarFunction) resolveIndicesByVirtualExpr(schema *Schema) bool {
 		}
 	}
 	return true
+}
+
+// RemapColumn remaps columns with provided mapping and returns new expression
+func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
+	newSf, ok := sf.Clone().(*ScalarFunction)
+	if !ok {
+		return nil, errors.New("failed to cast to scalar function")
+	}
+	for i, arg := range sf.GetArgs() {
+		newArg, err := arg.RemapColumn(m)
+		if err != nil {
+			return nil, err
+		}
+		newSf.GetArgs()[i] = newArg
+	}
+	// clear hash code
+	newSf.hashcode = nil
+	return newSf, nil
 }
 
 // GetSingleColumn returns (Col, Desc) when the ScalarFunction is equivalent to (Col, Desc)
@@ -590,4 +738,22 @@ func (sf *ScalarFunction) Repertoire() Repertoire {
 // SetRepertoire sets a specified repertoire for this expression.
 func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
 	sf.Function.SetRepertoire(r)
+}
+
+const emptyScalarFunctionSize = int64(unsafe.Sizeof(ScalarFunction{}))
+
+// MemoryUsage return the memory usage of ScalarFunction
+func (sf *ScalarFunction) MemoryUsage() (sum int64) {
+	if sf == nil {
+		return
+	}
+
+	sum = emptyScalarFunctionSize + int64(len(sf.FuncName.L)+len(sf.FuncName.O)) + int64(cap(sf.hashcode))
+	if sf.RetType != nil {
+		sum += sf.RetType.MemoryUsage()
+	}
+	if sf.Function != nil {
+		sum += sf.Function.MemoryUsage()
+	}
+	return sum
 }

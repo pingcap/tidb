@@ -20,6 +20,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	goatomic "sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -55,14 +56,14 @@ type Feedback struct {
 // QueryFeedback is used to represent the query feedback info. It contains the query's scan ranges and number of rows
 // in each range.
 type QueryFeedback struct {
-	PhysicalID int64
 	Hist       *Histogram
-	Tp         int
 	Feedback   []Feedback
-	Expected   int64 // Expected is the Expected scan count of corresponding query.
-	actual     int64 // actual is the actual scan count of corresponding query.
-	Valid      bool  // Valid represents the whether this query feedback is still Valid.
-	desc       bool  // desc represents the corresponding query is desc scan.
+	PhysicalID int64
+	Tp         int
+	Expected   int64         // Expected is the Expected scan count of corresponding query.
+	actual     int64         // actual is the actual scan count of corresponding query.
+	Valid      goatomic.Bool // Valid represents the whether this query feedback is still Valid.
+	desc       bool          // desc represents the corresponding query is desc scan.
 }
 
 // NewQueryFeedback returns a new query feedback.
@@ -74,14 +75,15 @@ func NewQueryFeedback(physicalID int64, hist *Histogram, expected int64, desc bo
 	if hist != nil && hist.IsIndexHist() {
 		tp = IndexType
 	}
-	return &QueryFeedback{
+	rs := &QueryFeedback{
 		PhysicalID: physicalID,
-		Valid:      true,
 		Tp:         tp,
 		Hist:       hist,
 		Expected:   expected,
 		desc:       desc,
 	}
+	rs.Valid.Store(FeedbackProbability.Load() > 0)
+	return rs
 }
 
 // QueryFeedbackKey is the key for a group of feedbacks on the same index/column.
@@ -276,13 +278,13 @@ func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range) {
 func (q *QueryFeedback) Invalidate() {
 	q.Feedback = nil
 	q.Hist = nil
-	q.Valid = false
+	q.Valid.Store(false)
 	q.actual = -1
 }
 
 // Actual gets the actual row count.
 func (q *QueryFeedback) Actual() int64 {
-	if !q.Valid {
+	if !q.Valid.Load() {
 		return -1
 	}
 	return q.actual
@@ -305,7 +307,7 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts, ndvs []int64) {
 	}
 	metrics.DistSQLScanKeysPartialHistogram.Observe(float64(sum))
 	q.actual += sum
-	if !q.Valid || q.Hist == nil {
+	if !q.Valid.Load() || q.Hist == nil {
 		return
 	}
 
@@ -573,7 +575,7 @@ func (b *BucketFeedback) splitBucket(newNumBkts int, totalCount float64, originB
 
 // getOverlapFraction gets the overlap fraction of feedback and bucket range. In order to get the bucket count, it also
 // returns the ratio between bucket fraction and feedback fraction.
-func getOverlapFraction(fb Feedback, bkt bucket) (float64, float64) {
+func getOverlapFraction(fb Feedback, bkt bucket) (overlap, ratio float64) {
 	datums := make([]types.Datum, 0, 4)
 	datums = append(datums, *fb.Lower, *fb.Upper)
 	datums = append(datums, *bkt.Lower, *bkt.Upper)
@@ -586,7 +588,7 @@ func getOverlapFraction(fb Feedback, bkt bucket) (float64, float64) {
 	fbUpper := calcFraction4Datums(minValue, maxValue, fb.Upper)
 	bktLower := calcFraction4Datums(minValue, maxValue, bkt.Lower)
 	bktUpper := calcFraction4Datums(minValue, maxValue, bkt.Upper)
-	ratio := (bktUpper - bktLower) / (fbUpper - fbLower)
+	ratio = (bktUpper - bktLower) / (fbUpper - fbLower)
 	// full overlap
 	if fbLower <= bktLower && bktUpper <= fbUpper {
 		return bktUpper - bktLower, ratio
@@ -595,12 +597,13 @@ func getOverlapFraction(fb Feedback, bkt bucket) (float64, float64) {
 		return fbUpper - fbLower, ratio
 	}
 	// partial overlap
-	overlap := math.Min(bktUpper-fbLower, fbUpper-bktLower)
+	overlap = math.Min(bktUpper-fbLower, fbUpper-bktLower)
 	return overlap, ratio
 }
 
 // mergeFullyContainedFeedback merges the max fraction of non-overlapped feedbacks that are fully contained in the bucket.
-func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContext, bkt bucket) (float64, float64, int64, bool) {
+func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContext, bkt bucket) (
+	sumFraction, sumCount float64, ndv int64, ok bool) {
 	feedbacks := make([]Feedback, 0, len(b.feedback))
 	// Get all the fully contained feedbacks.
 	for _, fb := range b.feedback {
@@ -621,10 +624,6 @@ func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContex
 	if !ok {
 		return 0, 0, 0, false
 	}
-	var (
-		sumFraction, sumCount float64
-		ndv                   int64
-	)
 	for _, fb := range sortedFBs {
 		fraction, _ := getOverlapFraction(fb, bkt)
 		sumFraction += fraction
@@ -1038,21 +1037,6 @@ func SplitFeedbackByQueryType(feedbacks []Feedback) ([]Feedback, []Feedback) {
 		}
 	}
 	return eqFB, ranFB
-}
-
-// CleanRangeFeedbackByTopN will not update the part containing the TopN.
-func CleanRangeFeedbackByTopN(feedbacks []Feedback, topN *TopN) []Feedback {
-	for i := len(feedbacks) - 1; i >= 0; i-- {
-		lIdx, lMatch := topN.LowerBound(feedbacks[i].Lower.GetBytes())
-		rIdx, _ := topN.LowerBound(feedbacks[i].Upper.GetBytes())
-		// If the LowerBound return the same result for the range's upper bound and lower bound and the lower one isn't matched,
-		// we can indicate that no top-n overlaps the feedback's ranges.
-		if lIdx == rIdx && !lMatch {
-			continue
-		}
-		feedbacks = append(feedbacks[:i], feedbacks[i+1:]...)
-	}
-	return feedbacks
 }
 
 // setNextValue sets the next value for the given datum. For types like float,

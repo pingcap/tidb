@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -32,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
@@ -118,45 +119,46 @@ type AfFinalResult struct {
 // It is built from the Aggregate Plan. When Next() is called, it reads all the data from Src
 // and updates all the items in PartialAggFuncs.
 // The parallel execution flow is as the following graph shows:
-//
-//                            +-------------+
-//                            | Main Thread |
-//                            +------+------+
-//                                   ^
-//                                   |
-//                                   +
-//                              +-+-            +-+
-//                              | |    ......   | |  finalOutputCh
-//                              +++-            +-+
-//                               ^
-//                               |
-//                               +---------------+
-//                               |               |
-//                 +--------------+             +--------------+
-//                 | final worker |     ......  | final worker |
-//                 +------------+-+             +-+------------+
-//                              ^                 ^
-//                              |                 |
-//                             +-+  +-+  ......  +-+
-//                             | |  | |          | |
-//                             ...  ...          ...    partialOutputChs
-//                             | |  | |          | |
-//                             +++  +++          +++
-//                              ^    ^            ^
-//          +-+                 |    |            |
-//          | |        +--------o----+            |
-// inputCh  +-+        |        +-----------------+---+
-//          | |        |                              |
-//          ...    +---+------------+            +----+-----------+
-//          | |    | partial worker |   ......   | partial worker |
-//          +++    +--------------+-+            +-+--------------+
-//           |                     ^                ^
-//           |                     |                |
-//      +----v---------+          +++ +-+          +++
-//      | data fetcher | +------> | | | |  ......  | |   partialInputChs
-//      +--------------+          +-+ +-+          +-+
+/*
+                            +-------------+
+                            | Main Thread |
+                            +------+------+
+                                   ^
+                                   |
+                                   +
+                              +-+-            +-+
+                              | |    ......   | |  finalOutputCh
+                              +++-            +-+
+                               ^
+                               |
+                               +---------------+
+                               |               |
+                 +--------------+             +--------------+
+                 | final worker |     ......  | final worker |
+                 +------------+-+             +-+------------+
+                              ^                 ^
+                              |                 |
+                             +-+  +-+  ......  +-+
+                             | |  | |          | |
+                             ...  ...          ...    partialOutputChs
+                             | |  | |          | |
+                             +++  +++          +++
+                              ^    ^            ^
+          +-+                 |    |            |
+          | |        +--------o----+            |
+ inputCh  +-+        |        +-----------------+---+
+          | |        |                              |
+          ...    +---+------------+            +----+-----------+
+          | |    | partial worker |   ......   | partial worker |
+          +++    +--------------+-+            +-+--------------+
+           |                     ^                ^
+           |                     |                |
+      +----v---------+          +++ +-+          +++
+      | data fetcher | +------> | | | |  ......  | |   partialInputChs
+      +--------------+          +-+ +-+          +-+
+*/
 type HashAggExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	sc               *stmtctx.StatementContext
 	PartialAggFuncs  []aggfuncs.AggFunc
@@ -230,7 +232,7 @@ type HashAggIntermData struct {
 }
 
 // getPartialResultBatch fetches a batch of partial results from HashAggIntermData.
-func (d *HashAggIntermData) getPartialResultBatch(sc *stmtctx.StatementContext, prs [][]aggfuncs.PartialResult, aggFuncs []aggfuncs.AggFunc, maxChunkSize int) (_ [][]aggfuncs.PartialResult, groupKeys []string, reachEnd bool) {
+func (d *HashAggIntermData) getPartialResultBatch(_ *stmtctx.StatementContext, prs [][]aggfuncs.PartialResult, _ []aggfuncs.AggFunc, maxChunkSize int) (_ [][]aggfuncs.PartialResult, groupKeys []string, reachEnd bool) {
 	keyStart := d.cursor
 	for ; d.cursor < len(d.groupKeys) && len(prs) < maxChunkSize; d.cursor++ {
 		prs = append(prs, d.partialResultMap[d.groupKeys[d.cursor]])
@@ -243,6 +245,9 @@ func (d *HashAggIntermData) getPartialResultBatch(sc *stmtctx.StatementContext, 
 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
+	if e.stats != nil {
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+	}
 	if e.isUnparallelExec {
 		var firstErr error
 		e.childResult = nil
@@ -255,7 +260,7 @@ func (e *HashAggExec) Close() error {
 			firstErr = e.listInDisk.Close()
 		}
 		e.spillAction, e.tmpChkForSpill = nil, nil
-		if err := e.baseExecutor.Close(); firstErr == nil {
+		if err := e.BaseExecutor.Close(); firstErr == nil {
 			firstErr = err
 		}
 		return firstErr
@@ -274,48 +279,47 @@ func (e *HashAggExec) Close() error {
 		}
 		close(e.finishCh)
 		for _, ch := range e.partialOutputChs {
-			for range ch {
-			}
+			channel.Clear(ch)
 		}
 		for _, ch := range e.partialInputChs {
-			for range ch {
-			}
+			channel.Clear(ch)
 		}
-		for range e.finalOutputCh {
-		}
+		channel.Clear(e.finalOutputCh)
 		e.executed = false
 		if e.memTracker != nil {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 	}
-	return e.baseExecutor.Close()
+	return e.BaseExecutor.Close()
 }
 
 // Open implements the Executor Open interface.
 func (e *HashAggExec) Open(ctx context.Context) error {
 	failpoint.Inject("mockHashAggExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
-		if val.(bool) {
+		if val, _ := val.(bool); val {
 			failpoint.Return(errors.New("mock HashAggExec.baseExecutor.Open returned error"))
 		}
 	})
 
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	// If panic here, the children executor should be closed because they are open.
-	defer closeBaseExecutor(&e.baseExecutor)
 	e.prepared = false
 
-	e.memTracker = memory.NewTracker(e.id, -1)
-	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
-		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.ID(), -1)
+	}
+	if e.Ctx().GetSessionVars().TrackAggregateMemoryUsage {
+		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	}
 
 	if e.isUnparallelExec {
 		e.initForUnparallelExec()
 		return nil
 	}
-	e.initForParallelExec(e.ctx)
+	e.initForParallelExec(e.Ctx())
 	return nil
 }
 
@@ -327,22 +331,23 @@ func (e *HashAggExec) initForUnparallelExec() {
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<e.bInMap) + setSize)
 	e.groupKeyBuffer = make([][]byte, 0, 8)
-	e.childResult = newFirstChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.Children(0))
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 
 	e.offsetOfSpilledChks, e.numOfSpilledChks = 0, 0
 	e.executed, e.isChildDrained = false, false
-	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
-	e.tmpChkForSpill = newFirstChunk(e.children[0])
-	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
-		e.diskTracker = disk.NewTracker(e.id, -1)
-		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
+	e.listInDisk = chunk.NewListInDisk(retTypes(e.Children(0)))
+
+	e.tmpChkForSpill = tryNewCacheChunk(e.Children(0))
+	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
+		e.diskTracker = disk.NewTracker(e.ID(), -1)
+		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
 		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
+		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
 	}
 }
 
-func closeBaseExecutor(b *baseExecutor) {
+func closeBaseExecutor(b *exec.BaseExecutor) {
 	if r := recover(); r != nil {
 		// Release the resource, but throw the panic again and let the top level handle it.
 		terror.Log(b.Close())
@@ -351,8 +356,8 @@ func closeBaseExecutor(b *baseExecutor) {
 	}
 }
 
-func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
-	sessionVars := e.ctx.GetSessionVars()
+func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
+	sessionVars := e.Ctx().GetSessionVars()
 	finalConcurrency := sessionVars.HashAggFinalConcurrency()
 	partialConcurrency := sessionVars.HashAggPartialConcurrency()
 	e.isChildReturnEmpty = true
@@ -376,14 +381,14 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
 		w := HashAggPartialWorker{
-			baseHashAggWorker: newBaseHashAggWorker(e.ctx, e.finishCh, e.PartialAggFuncs, e.maxChunkSize, e.memTracker),
+			baseHashAggWorker: newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
 			inputCh:           e.partialInputChs[i],
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
 			globalOutputCh:    e.finalOutputCh,
 			partialResultsMap: make(aggPartialResultMapper),
 			groupByItems:      e.GroupByItems,
-			chk:               newFirstChunk(e.children[0]),
+			chk:               tryNewCacheChunk(e.Children(0)),
 			groupKey:          make([][]byte, 0, 8),
 		}
 		// There is a bucket in the empty partialResultsMap.
@@ -396,7 +401,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		e.memTracker.Consume(w.chk.MemoryUsage())
 		e.partialWorkers[i] = w
 		input := &HashAggInput{
-			chk:        newFirstChunk(e.children[0]),
+			chk:        newFirstChunk(e.Children(0)),
 			giveBackCh: w.inputCh,
 		}
 		e.memTracker.Consume(input.chk.MemoryUsage())
@@ -407,7 +412,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	for i := 0; i < finalConcurrency; i++ {
 		groupSet, setSize := set.NewStringSetWithMemoryUsage()
 		w := HashAggFinalWorker{
-			baseHashAggWorker:   newBaseHashAggWorker(e.ctx, e.finishCh, e.FinalAggFuncs, e.maxChunkSize, e.memTracker),
+			baseHashAggWorker:   newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
 			partialResultMap:    make(aggPartialResultMapper),
 			groupSet:            groupSet,
 			inputCh:             e.partialOutputChs[i],
@@ -419,6 +424,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		}
 		// There is a bucket in the empty partialResultsMap.
 		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<w.BInMap) + setSize)
+		groupSet.SetTracker(e.memTracker)
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, w.stats)
@@ -485,7 +491,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 		if w.stats != nil {
 			w.stats.ExecTime += int64(time.Since(execStart))
-			w.stats.TaskNum += 1
+			w.stats.TaskNum++
 		}
 		// The intermData can be promised to be not empty if reaching here,
 		// so we set needShuffle to be true.
@@ -502,7 +508,7 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 	return mem
 }
 
-func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, finalConcurrency int) (err error) {
+func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, _ int) (err error) {
 	memSize := getGroupKeyMemUsage(w.groupKey)
 	w.groupKey, err = getGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	failpoint.Inject("ConsumeRandomPanic", nil)
@@ -531,7 +537,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 
 // shuffleIntermData shuffles the intermediate data of partial workers to corresponded final workers.
 // We only support parallel execution for single-machine, so process of encode and decode can be skipped.
-func (w *HashAggPartialWorker) shuffleIntermData(sc *stmtctx.StatementContext, finalConcurrency int) {
+func (w *HashAggPartialWorker) shuffleIntermData(_ *stmtctx.StatementContext, finalConcurrency int) {
 	groupKeysSlice := make([][]string, finalConcurrency)
 	for groupKey := range w.partialResultsMap {
 		finalWorkerIdx := int(murmur3.Sum32([]byte(groupKey))) % finalConcurrency
@@ -604,31 +610,42 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 	return groupKey, nil
 }
 
-func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
+func (w *baseHashAggWorker) getPartialResult(_ *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
 	n := len(groupKey)
 	partialResults := make([][]aggfuncs.PartialResult, n)
 	allMemDelta := int64(0)
+	partialResultSize := w.getPartialResultSliceLenConsiderByteAlign()
 	for i := 0; i < n; i++ {
 		var ok bool
 		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
 			continue
 		}
-		for _, af := range w.aggFuncs {
+		partialResults[i] = make([]aggfuncs.PartialResult, partialResultSize)
+		for j, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
-			partialResults[i] = append(partialResults[i], partialResult)
-			allMemDelta += memDelta + 8 // the memory usage of PartialResult
+			partialResults[i][j] = partialResult
+			allMemDelta += memDelta // the memory usage of PartialResult
 		}
-		mapper[string(groupKey[i])] = partialResults[i]
-		allMemDelta += int64(len(groupKey[i]))
+		allMemDelta += int64(partialResultSize * 8)
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
-		if len(mapper) > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		if len(mapper)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
 			w.BInMap++
 		}
+		mapper[string(groupKey[i])] = partialResults[i]
+		allMemDelta += int64(len(groupKey[i]))
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(allMemDelta)
 	return partialResults
+}
+
+func (w *baseHashAggWorker) getPartialResultSliceLenConsiderByteAlign() int {
+	length := len(w.aggFuncs)
+	if len(w.aggFuncs) == 1 {
+		return 1
+	}
+	return length + length&1
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
@@ -694,7 +711,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		}
 		if w.stats != nil {
 			w.stats.ExecTime += int64(time.Since(execStart))
-			w.stats.TaskNum += 1
+			w.stats.TaskNum++
 		}
 	}
 }
@@ -802,7 +819,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 			chk = input.chk
 		}
 		mSize := chk.MemoryUsage()
-		err = Next(ctx, e.children[0], chk)
+		err = Next(ctx, e.Children(0), chk)
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: err}
 			e.memTracker.Consume(-mSize)
@@ -856,7 +873,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
 	partialStart := time.Now()
 	for i := range e.partialWorkers {
-		go e.partialWorkers[i].run(e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
+		go e.partialWorkers[i].run(e.Ctx(), partialWorkerWaitGroup, len(e.finalWorkers))
 	}
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
@@ -868,7 +885,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
 	finalStart := time.Now()
 	for i := range e.finalWorkers {
-		go e.finalWorkers[i].run(e.ctx, finalWorkerWaitGroup)
+		go e.finalWorkers[i].run(e.Ctx(), finalWorkerWaitGroup)
 	}
 	go func() {
 		finalWorkerWaitGroup.Wait()
@@ -894,7 +911,7 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 	}
 
 	failpoint.Inject("parallelHashAggError", func(val failpoint.Value) {
-		if val.(bool) {
+		if val, _ := val.(bool); val {
 			failpoint.Return(errors.New("HashAggExec.parallelExec error"))
 		}
 	})
@@ -929,7 +946,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 	chk.Reset()
 	for {
 		if e.prepared {
-			// Since we return e.maxChunkSize rows every time, so we should not traverse
+			// Since we return e.MaxChunkSize() rows every time, so we should not traverse
 			// `groupSet` because of its randomness.
 			for ; e.cursor4GroupKey < len(e.groupKeys); e.cursor4GroupKey++ {
 				partialResults := e.getPartialResults(e.groupKeys[e.cursor4GroupKey])
@@ -937,7 +954,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 					chk.SetNumVirtualRows(chk.NumRows() + 1)
 				}
 				for i, af := range e.PartialAggFuncs {
-					if err := af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk); err != nil {
+					if err := af.AppendFinalResult2Chunk(e.Ctx(), partialResults[i], chk); err != nil {
 						return err
 					}
 				}
@@ -999,7 +1016,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		}
 
 		failpoint.Inject("unparallelHashAggError", func(val failpoint.Value) {
-			if val.(bool) {
+			if val, _ := val.(bool); val {
 				failpoint.Return(errors.New("HashAggExec.unparallelExec error"))
 			}
 		})
@@ -1008,13 +1025,14 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		if e.childResult.NumRows() == 0 {
 			return nil
 		}
-		e.groupKeyBuffer, err = getGroupKey(e.ctx, e.childResult, e.groupKeyBuffer, e.GroupByItems)
+		e.groupKeyBuffer, err = getGroupKey(e.Ctx(), e.childResult, e.groupKeyBuffer, e.GroupByItems)
 		if err != nil {
 			return err
 		}
 
 		allMemDelta := int64(0)
 		sel := make([]int, 0, e.childResult.NumRows())
+		var tmpBuf [1]chunk.Row
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
@@ -1027,7 +1045,8 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			}
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
-				memDelta, err := af.UpdatePartialResult(e.ctx, []chunk.Row{e.childResult.GetRow(j)}, partialResults[i])
+				tmpBuf[0] = e.childResult.GetRow(j)
+				memDelta, err := af.UpdatePartialResult(e.Ctx(), tmpBuf[:], partialResults[i])
 				if err != nil {
 					return err
 				}
@@ -1069,14 +1088,13 @@ func (e *HashAggExec) spillUnprocessedData(isFullChk bool) (err error) {
 func (e *HashAggExec) getNextChunk(ctx context.Context) (err error) {
 	e.childResult.Reset()
 	if !e.isChildDrained {
-		if err := Next(ctx, e.children[0], e.childResult); err != nil {
+		if err := Next(ctx, e.Children(0), e.childResult); err != nil {
 			return err
 		}
-		if e.childResult.NumRows() == 0 {
-			e.isChildDrained = true
-		} else {
+		if e.childResult.NumRows() != 0 {
 			return nil
 		}
+		e.isChildDrained = true
 	}
 	if e.offsetOfSpilledChks < e.numOfSpilledChks {
 		e.childResult, err = e.listInDisk.GetChunk(e.offsetOfSpilledChks)
@@ -1098,13 +1116,13 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 			partialResults = append(partialResults, partialResult)
 			allMemDelta += memDelta
 		}
-		e.partialResultMap[groupKey] = partialResults
-		allMemDelta += int64(len(groupKey))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
-		if len(e.partialResultMap) > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		if len(e.partialResultMap)+1 > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << e.bInMap))
 			e.bInMap++
 		}
+		e.partialResultMap[groupKey] = partialResults
+		allMemDelta += int64(len(groupKey))
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(allMemDelta)
@@ -1112,15 +1130,14 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 }
 
 func (e *HashAggExec) initRuntimeStats() {
-	if e.runtimeStats != nil {
+	if e.RuntimeStats() != nil {
 		stats := &HashAggRuntimeStats{
-			PartialConcurrency: e.ctx.GetSessionVars().HashAggPartialConcurrency(),
-			FinalConcurrency:   e.ctx.GetSessionVars().HashAggFinalConcurrency(),
+			PartialConcurrency: e.Ctx().GetSessionVars().HashAggPartialConcurrency(),
+			FinalConcurrency:   e.Ctx().GetSessionVars().HashAggFinalConcurrency(),
 		}
 		stats.PartialStats = make([]*AggWorkerStat, 0, stats.PartialConcurrency)
 		stats.FinalStats = make([]*AggWorkerStat, 0, stats.FinalConcurrency)
 		e.stats = stats
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 }
 
@@ -1158,7 +1175,7 @@ func (w *AggWorkerStat) Clone() *AggWorkerStat {
 	}
 }
 
-func (e *HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, concurrency int, wallTime int64, workerStats []*AggWorkerStat) {
+func (*HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, concurrency int, wallTime int64, workerStats []*AggWorkerStat) {
 	var totalTime, totalWait, totalExec, totalTaskNum int64
 	for _, w := range workerStats {
 		totalTime += w.WorkerTime
@@ -1167,13 +1184,13 @@ func (e *HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, con
 		totalTaskNum += w.TaskNum
 	}
 	buf.WriteString(prefix)
-	buf.WriteString(fmt.Sprintf("_worker:{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s",
-		time.Duration(wallTime), concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime)))
+	fmt.Fprintf(buf, "_worker:{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s",
+		time.Duration(wallTime), concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime))
 	n := len(workerStats)
 	if n > 0 {
 		slices.SortFunc(workerStats, func(i, j *AggWorkerStat) bool { return i.WorkerTime < j.WorkerTime })
-		buf.WriteString(fmt.Sprintf(", max:%v, p95:%v",
-			time.Duration(workerStats[n-1].WorkerTime), time.Duration(workerStats[n*19/20].WorkerTime)))
+		fmt.Fprintf(buf, ", max:%v, p95:%v",
+			time.Duration(workerStats[n-1].WorkerTime), time.Duration(workerStats[n*19/20].WorkerTime))
 	}
 	buf.WriteString("}")
 }
@@ -1219,7 +1236,7 @@ func (e *HashAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *HashAggRuntimeStats) Tp() int {
+func (*HashAggRuntimeStats) Tp() int {
 	return execdetails.TpHashAggRuntimeStat
 }
 
@@ -1227,7 +1244,7 @@ func (e *HashAggRuntimeStats) Tp() int {
 // It assumes all the input data is sorted by group by key.
 // When Next() is called, it will return a result for the same group.
 type StreamAggExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	executed bool
 	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
@@ -1251,18 +1268,18 @@ type StreamAggExec struct {
 // Open implements the Executor Open interface.
 func (e *StreamAggExec) Open(ctx context.Context) error {
 	failpoint.Inject("mockStreamAggExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
-		if val.(bool) {
+		if val, _ := val.(bool); val {
 			failpoint.Return(errors.New("mock StreamAggExec.baseExecutor.Open returned error"))
 		}
 	})
 
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	// If panic in Open, the children executor should be closed because they are open.
-	defer closeBaseExecutor(&e.baseExecutor)
+	defer closeBaseExecutor(&e.BaseExecutor)
 
-	e.childResult = newFirstChunk(e.children[0])
+	e.childResult = tryNewCacheChunk(e.Children(0))
 	e.executed = false
 	e.isChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
@@ -1275,10 +1292,14 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 		e.memUsageOfInitialPartialResult += memDelta
 	}
 
-	// bytesLimit <= 0 means no limit, for now we just track the memory footprint
-	e.memTracker = memory.NewTracker(e.id, -1)
-	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
-		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		// bytesLimit <= 0 means no limit, for now we just track the memory footprint
+		e.memTracker = memory.NewTracker(e.ID(), -1)
+	}
+	if e.Ctx().GetSessionVars().TrackAggregateMemoryUsage {
+		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(e.childResult.MemoryUsage() + e.memUsageOfInitialPartialResult)
@@ -1292,7 +1313,7 @@ func (e *StreamAggExec) Close() error {
 		e.childResult = nil
 	}
 	e.groupChecker.reset()
-	return e.baseExecutor.Close()
+	return e.BaseExecutor.Close()
 }
 
 // Next implements the Executor Next interface.
@@ -1313,13 +1334,12 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 		if err = e.consumeCurGroupRowsAndFetchChild(ctx, chk); err != nil {
 			return err
 		}
-		if !e.executed {
-			_, err := e.groupChecker.splitIntoGroups(e.childResult)
-			if err != nil {
-				return err
-			}
-		} else {
+		if e.executed {
 			return nil
+		}
+		_, err := e.groupChecker.splitIntoGroups(e.childResult)
+		if err != nil {
+			return err
 		}
 	}
 	begin, end := e.groupChecker.getNextGroup()
@@ -1362,7 +1382,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 
 	allMemDelta := int64(0)
 	for i, aggFunc := range e.aggFuncs {
-		memDelta, err := aggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i])
+		memDelta, err := aggFunc.UpdatePartialResult(e.Ctx(), e.groupRows, e.partialResults[i])
 		if err != nil {
 			return err
 		}
@@ -1382,7 +1402,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 	}
 
 	mSize := e.childResult.MemoryUsage()
-	err = Next(ctx, e.children[0], e.childResult)
+	err = Next(ctx, e.Children(0), e.childResult)
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 	if err != nil {
@@ -1409,7 +1429,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 // result chunk, and reset the evaluation context for each aggregation.
 func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	for i, aggFunc := range e.aggFuncs {
-		err := aggFunc.AppendFinalResult2Chunk(e.ctx, e.partialResults[i], chk)
+		err := aggFunc.AppendFinalResult2Chunk(e.Ctx(), e.partialResults[i], chk)
 		if err != nil {
 			return err
 		}
@@ -1816,7 +1836,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousIsNull = isNull
 		}
 	case types.ETJson:
-		var previousKey, key json.BinaryJSON
+		var previousKey, key types.BinaryJSON
 		if !previousIsNull {
 			previousKey = col.GetJSON(0)
 		}
@@ -1827,7 +1847,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			if e.sameGroup[i] {
 				if isNull == previousIsNull {
-					if !isNull && json.CompareBinary(previousKey, key) != 0 {
+					if !isNull && types.CompareBinaryJSON(previousKey, key) != 0 {
 						e.sameGroup[i] = false
 					}
 				} else {
@@ -1930,6 +1950,7 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()))
 		atomic.StoreUint32(&a.e.inSpillMode, 1)
+		memory.QueryForceDisk.Add(1)
 		return
 	}
 	if fallback := a.GetFallback(); fallback != nil {
@@ -1938,9 +1959,6 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 }
 
 // GetPriority get the priority of the Action
-func (a *AggSpillDiskAction) GetPriority() int64 {
+func (*AggSpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
-
-// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (a *AggSpillDiskAction) SetLogHook(hook func(uint64)) {}

@@ -16,15 +16,20 @@ package core
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/size"
 	"golang.org/x/exp/slices"
 )
 
@@ -39,7 +44,7 @@ type AggregateFuncExtractor struct {
 }
 
 // Enter implements Visitor interface.
-func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+func (*AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
@@ -49,6 +54,7 @@ func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 
 // Leave implements Visitor interface.
 func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+	//nolint: revive
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
 		if _, ok := a.skipAggMap[v]; !ok {
@@ -66,7 +72,7 @@ type WindowFuncExtractor struct {
 }
 
 // Enter implements Visitor interface.
-func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+func (*WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
@@ -76,6 +82,7 @@ func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 
 // Leave implements Visitor interface.
 func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+	//nolint: revive
 	switch v := n.(type) {
 	case *ast.WindowFuncExpr:
 		a.windowFuncs = append(a.windowFuncs, v)
@@ -176,6 +183,16 @@ func (s *physicalSchemaProducer) SetSchema(schema *expression.Schema) {
 	s.schema = schema
 }
 
+// MemoryUsage return the memory usage of physicalSchemaProducer
+func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = s.basePhysicalPlan.MemoryUsage() + size.SizeOfPointer
+	return
+}
+
 // baseSchemaProducer stores the schema for the base plans who can produce schema directly.
 type baseSchemaProducer struct {
 	schema *expression.Schema
@@ -208,6 +225,22 @@ func (s *baseSchemaProducer) SetSchema(schema *expression.Schema) {
 func (s *baseSchemaProducer) setSchemaAndNames(schema *expression.Schema, names types.NameSlice) {
 	s.schema = schema
 	s.names = names
+}
+
+// MemoryUsage return the memory usage of baseSchemaProducer
+func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.basePlan.MemoryUsage()
+	if s.schema != nil {
+		sum += s.schema.MemoryUsage()
+	}
+	for _, name := range s.names {
+		sum += name.MemoryUsage()
+	}
+	return
 }
 
 // Schema implements the Plan.Schema interface.
@@ -367,38 +400,6 @@ func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bo
 	return false
 }
 
-func cloneExprs(exprs []expression.Expression) []expression.Expression {
-	cloned := make([]expression.Expression, 0, len(exprs))
-	for _, e := range exprs {
-		cloned = append(cloned, e.Clone())
-	}
-	return cloned
-}
-
-func cloneCols(cols []*expression.Column) []*expression.Column {
-	cloned := make([]*expression.Column, 0, len(cols))
-	for _, c := range cols {
-		cloned = append(cloned, c.Clone().(*expression.Column))
-	}
-	return cloned
-}
-
-func cloneColInfos(cols []*model.ColumnInfo) []*model.ColumnInfo {
-	cloned := make([]*model.ColumnInfo, 0, len(cols))
-	for _, c := range cols {
-		cloned = append(cloned, c.Clone())
-	}
-	return cloned
-}
-
-func cloneRanges(ranges []*ranger.Range) []*ranger.Range {
-	cloned := make([]*ranger.Range, 0, len(ranges))
-	for _, r := range ranges {
-		cloned = append(cloned, r.Clone())
-	}
-	return cloned
-}
-
 func clonePhysicalPlan(plans []PhysicalPlan) ([]PhysicalPlan, error) {
 	cloned := make([]PhysicalPlan, 0, len(plans))
 	for _, p := range plans {
@@ -409,4 +410,57 @@ func clonePhysicalPlan(plans []PhysicalPlan) ([]PhysicalPlan, error) {
 		cloned = append(cloned, c)
 	}
 	return cloned, nil
+}
+
+// GetPhysID returns the physical table ID.
+func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d types.Datum) (int64, error) {
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return tblInfo.ID, nil
+	}
+
+	if partitionExpr == nil {
+		return tblInfo.ID, nil
+	}
+
+	switch pi.Type {
+	case model.PartitionTypeHash:
+		intVal := d.GetInt64()
+		partIdx := mathutil.Abs(intVal % int64(pi.Num))
+		return pi.Definitions[partIdx].ID, nil
+	case model.PartitionTypeKey:
+		if len(pi.Columns) > 1 {
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
+		}
+		partIdx, err := partitionExpr.LocateKeyPartitionWithSPC(pi, []types.Datum{d})
+		if err != nil {
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
+		}
+		return pi.Definitions[partIdx].ID, nil
+	case model.PartitionTypeRange:
+		// we've check the type assertions in func TryFastPlan
+		col, ok := partitionExpr.Expr.(*expression.Column)
+		if !ok {
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
+		}
+		unsigned := mysql.HasUnsignedFlag(col.GetType().GetFlag())
+		ranges := partitionExpr.ForRangePruning
+		length := len(ranges.LessThan)
+		intVal := d.GetInt64()
+		partIdx := sort.Search(length, func(i int) bool {
+			return ranges.Compare(i, intVal, unsigned) > 0
+		})
+		if partIdx >= 0 && partIdx < length {
+			return pi.Definitions[partIdx].ID, nil
+		}
+	case model.PartitionTypeList:
+		isNull := false // we've guaranteed this in the build process of either TryFastPlan or buildBatchPointGet
+		intVal := d.GetInt64()
+		partIdx := partitionExpr.ForListPruning.LocatePartition(intVal, isNull)
+		if partIdx >= 0 {
+			return pi.Definitions[partIdx].ID, nil
+		}
+	}
+
+	return 0, errors.Errorf("dual partition")
 }

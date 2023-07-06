@@ -38,10 +38,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
+	pb "github.com/pingcap/kvproto/pkg/autoid"
+	autoid "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	util2 "github.com/pingcap/tidb/server/internal/util"
+	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/logutil"
@@ -79,9 +83,9 @@ func sleepWithCtx(ctx context.Context, d time.Duration) {
 }
 
 func (s *Server) listenStatusHTTPServer() error {
-	s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
+	s.statusAddr = net.JoinHostPort(s.cfg.Status.StatusHost, strconv.Itoa(int(s.cfg.Status.StatusPort)))
 	if s.cfg.Status.StatusPort == 0 && !RunInGoTest {
-		s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
+		s.statusAddr = net.JoinHostPort(s.cfg.Status.StatusHost, strconv.Itoa(defaultStatusPort))
 	}
 
 	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
@@ -202,6 +206,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
 	router.Handle("/plan_replayer/dump/{filename}", s.newPlanReplayerHandler()).Name("PlanReplayerDump")
+	router.Handle("/extract_task/dump", s.newExtractServeHandler()).Name("ExtractTaskDump")
 
 	router.Handle("/optimize_trace/dump/{filename}", s.newOptimizeTraceHandler()).Name("OptimizeTraceDump")
 
@@ -414,6 +419,9 @@ func (s *Server) startHTTPServer() {
 	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
 	router.Handle("/test/ddl/hook", &ddlHookHandler{tikvHandlerTool.Store.(kv.Storage)})
 
+	// ttlJobTriggerHandler is enabled only for tests, so we can accelerate the schedule of TTL job
+	router.Handle("/test/ttl/trigger/{db}/{table}", &ttlJobTriggerHandler{tikvHandlerTool.Store.(kv.Storage)})
+
 	var (
 		httpRouterPage bytes.Buffer
 		pathTemplate   string
@@ -454,9 +462,40 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	httpL := m.Match(cmux.HTTP1Fast())
 	grpcL := m.Match(cmux.Any())
 
-	statusServer := &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(serverMux, s.cfg)}
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
+	if s.cfg.Store == "tikv" {
+		keyspaceName := config.GetGlobalKeyspaceName()
+		for {
+			var fullPath string
+			if keyspaceName == "" {
+				fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
+			} else {
+				fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
+			}
+			store, err := store.New(fullPath)
+			if err != nil {
+				logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
+				break
+			}
+			ebd, ok := store.(kv.EtcdBackend)
+			if !ok {
+				break
+			}
+			etcdAddr, err := ebd.EtcdAddrs()
+			if err != nil {
+				logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
+				break
+			}
+			selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
+			service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
+			logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
+			pb.RegisterAutoIDAllocServer(grpcServer, service)
+			s.autoIDService = service
+			break
+		}
+	}
 
 	s.statusServer = statusServer
 	s.grpcServer = grpcServer
@@ -511,7 +550,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	// If the server is in the process of shutting down, return a non-200 status.
 	// It is important not to return status{} as acquiring the s.ConnectionCount()
 	// acquires a lock that may already be held by the shutdown process.
-	if s.inShutdownMode {
+	if !s.health.Load() {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

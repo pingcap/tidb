@@ -12,8 +12,8 @@ go_library(
     deps = [
         "//br/pkg/streamhelper/config",
         "//parser/terror",
-        "//types/json",
         "//util/logutil",
+        "//util/tiflashcompute",
         "//util/tikvutil",
         "//util/versioninfo",
         "@com_github_burntsushi_toml//:toml",
@@ -37,6 +37,7 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
+    shard_count = 23,
     deps = [
         "//testkit/testsetup",
         "//util/logutil",

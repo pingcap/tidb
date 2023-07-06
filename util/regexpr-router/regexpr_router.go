@@ -34,11 +34,10 @@ const (
 )
 
 type filterWrapper struct {
-	filter *filter.Filter
-	typ    FilterType
-	target filter.Table
-
+	filter  *filter.Filter
 	rawRule *router.TableRule
+	target  filter.Table
+	typ     FilterType
 }
 
 // RouteTable is route table

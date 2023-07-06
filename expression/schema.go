@@ -16,6 +16,10 @@ package expression
 
 import (
 	"strings"
+	"unsafe"
+
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
@@ -169,11 +173,10 @@ func (s *Schema) ColumnsIndices(cols []*Column) (ret []int) {
 	ret = make([]int, 0, len(cols))
 	for _, col := range cols {
 		pos := s.ColumnIndex(col)
-		if pos != -1 {
-			ret = append(ret, pos)
-		} else {
+		if pos == -1 {
 			return nil
 		}
+		ret = append(ret, pos)
 	}
 	return
 }
@@ -205,6 +208,45 @@ func (s *Schema) ExtractColGroups(colGroups [][]*Column) ([][]int, []int) {
 		}
 	}
 	return extracted, offsets
+}
+
+const emptySchemaSize = int64(unsafe.Sizeof(Schema{}))
+
+// MemoryUsage return the memory usage of Schema
+func (s *Schema) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = emptySchemaSize + int64(cap(s.Columns))*size.SizeOfPointer + int64(cap(s.Keys)+cap(s.UniqueKeys))*size.SizeOfSlice
+
+	for _, col := range s.Columns {
+		sum += col.MemoryUsage()
+	}
+	for _, cols := range s.Keys {
+		sum += int64(cap(cols)) * size.SizeOfPointer
+		for _, col := range cols {
+			sum += col.MemoryUsage()
+		}
+	}
+	for _, cols := range s.UniqueKeys {
+		sum += int64(cap(cols)) * size.SizeOfPointer
+		for _, col := range cols {
+			sum += col.MemoryUsage()
+		}
+	}
+	return
+}
+
+// GetExtraHandleColumn gets the extra handle column.
+func (s *Schema) GetExtraHandleColumn() *Column {
+	columnLen := len(s.Columns)
+	if columnLen > 0 && s.Columns[columnLen-1].ID == model.ExtraHandleID {
+		return s.Columns[columnLen-1]
+	} else if columnLen > 1 && s.Columns[columnLen-2].ID == model.ExtraHandleID {
+		return s.Columns[columnLen-2]
+	}
+	return nil
 }
 
 // MergeSchema will merge two schema into one schema. We shouldn't need to consider unique keys.

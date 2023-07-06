@@ -57,6 +57,8 @@ const (
 	TypeExchangeSender = "ExchangeSender"
 	// TypeExchangeReceiver is the type of mpp exchanger receiver.
 	TypeExchangeReceiver = "ExchangeReceiver"
+	// TypeExpand is the type of mpp expand source operator.
+	TypeExpand = "Expand"
 	// TypeMergeJoin is the type of merge join.
 	TypeMergeJoin = "MergeJoin"
 	// TypeIndexJoin is the type of index look up join.
@@ -127,6 +129,14 @@ const (
 	TypeCTE = "CTEFullScan"
 	// TypeCTEDefinition is the type of CTE definition
 	TypeCTEDefinition = "CTE"
+	// TypeForeignKeyCheck is the type of FKCheck
+	TypeForeignKeyCheck = "Foreign_Key_Check"
+	// TypeForeignKeyCascade is the type of FKCascade
+	TypeForeignKeyCascade = "Foreign_Key_Cascade"
+	// TypeImportInto is the type of ImportInto.
+	TypeImportInto = "ImportInto"
+	// TypeSequence is the type of Sequence
+	TypeSequence = "Sequence"
 )
 
 // plan id.
@@ -187,6 +197,10 @@ const (
 	typePartitionUnionID      int = 53
 	typeShuffleID             int = 54
 	typeShuffleReceiverID     int = 55
+	typeForeignKeyCheck       int = 56
+	typeForeignKeyCascade     int = 57
+	typeExpandID              int = 58
+	typeImportIntoID          int = 59
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -302,6 +316,14 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeCTEDefinitionID
 	case TypeCTETable:
 		return typeCTETableID
+	case TypeForeignKeyCheck:
+		return typeForeignKeyCheck
+	case TypeForeignKeyCascade:
+		return typeForeignKeyCascade
+	case TypeExpand:
+		return typeExpandID
+	case TypeImportInto:
+		return typeImportIntoID
 	}
 	// Should never reach here.
 	return 0
@@ -420,6 +442,14 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeCTEDefinition
 	case typeCTETableID:
 		return TypeCTETable
+	case typeForeignKeyCheck:
+		return TypeForeignKeyCheck
+	case typeForeignKeyCascade:
+		return TypeForeignKeyCascade
+	case typeExpandID:
+		return TypeExpand
+	case typeImportIntoID:
+		return TypeImportInto
 	}
 
 	// Should never reach here.

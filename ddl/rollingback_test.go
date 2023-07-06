@@ -17,10 +17,12 @@ package ddl_test
 import (
 	"context"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
@@ -50,13 +52,13 @@ func TestCancelAddIndexJobError(t *testing.T) {
 	require.NotNil(t, tbl)
 
 	d := dom.DDL()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var (
 		checkErr error
-		jobID    int64
+		jobID    atomic.Int64
 		res      sqlexec.RecordSet
 	)
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.TableID != tbl.Meta().ID {
 			return
 		}
@@ -64,7 +66,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 			return
 		}
 		if job.SchemaState == model.StateDeleteOnly {
-			jobID = job.ID
+			jobID.Store(job.ID)
 			res, checkErr = tk1.Exec("admin cancel ddl jobs " + strconv.Itoa(int(job.ID)))
 			// drain the result set here, otherwise the cancel action won't take effect immediately.
 			chk := res.NewChunk(nil)
@@ -77,6 +79,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 			}
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(hook)
 
 	// This will hang on stateDeleteOnly, and the job will be canceled.
@@ -85,7 +88,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 	require.EqualError(t, err, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")
 
 	// Verification of the history job state.
-	job, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
+	job, err := ddl.GetHistoryJobByID(tk.Session(), jobID.Load())
 	require.NoError(t, err)
 	require.Equal(t, int64(4), job.ErrorCount)
 	require.EqualError(t, job.Error, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")

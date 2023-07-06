@@ -16,21 +16,26 @@ package ddl_test
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
@@ -39,13 +44,14 @@ func TestDDLStatsInfo(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	d := domain.DDL()
 
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session()
 	dbInfo, err := testSchemaInfo(store, "test_stat")
 	require.NoError(t, err)
-	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
+	testCreateSchema(t, ctx, d, dbInfo)
 	tblInfo, err := testTableInfo(store, "t", 2)
 	require.NoError(t, err)
-	testCreateTable(t, testkit.NewTestKit(t, store).Session(), d, dbInfo, tblInfo)
-	ctx := testkit.NewTestKit(t, store).Session()
+	testCreateTable(t, ctx, d, dbInfo, tblInfo)
 	err = sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 
@@ -57,7 +63,7 @@ func TestDDLStatsInfo(t *testing.T) {
 	require.NoError(t, err)
 	_, err = m.AddRecord(ctx, types.MakeDatums(3, 3))
 	require.NoError(t, err)
-	ctx.StmtCommit()
+	ctx.StmtCommit(context.Background())
 	require.NoError(t, ctx.CommitTxn(context.Background()))
 
 	job := buildCreateIdxJob(dbInfo, tblInfo, true, "idx", "c1")
@@ -86,7 +92,8 @@ func TestDDLStatsInfo(t *testing.T) {
 			varMap, err := d.Stats(nil)
 			wg.Done()
 			require.NoError(t, err)
-			require.Equal(t, "1", varMap[ddlJobReorgHandle])
+			_, err = hex.DecodeString(varMap[ddlJobReorgHandle].(string))
+			require.NoError(t, err)
 		}
 	}
 }
@@ -142,27 +149,13 @@ func TestGetDDLInfo(t *testing.T) {
 }
 
 func addDDLJobs(sess session.Session, txn kv.Transaction, job *model.Job) error {
-	if variable.EnableConcurrentDDL.Load() {
-		b, err := job.Encode(true)
-		if err != nil {
-			return err
-		}
-		_, err = sess.Execute(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), fmt.Sprintf("insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values (%d, %t, %s, %s, %s, %d, %t)",
-			job.ID, job.MayNeedReorg(), strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), strconv.Quote(strconv.FormatInt(job.TableID, 10)), wrapKey2String(b), job.Type, false))
+	b, err := job.Encode(true)
+	if err != nil {
 		return err
 	}
-	m := meta.NewMeta(txn)
-	if job.MayNeedReorg() {
-		return m.EnQueueDDLJob(job, meta.AddIndexJobListKey)
-	}
-	return m.EnQueueDDLJob(job)
-}
-
-func wrapKey2String(key []byte) string {
-	if len(key) == 0 {
-		return "''"
-	}
-	return fmt.Sprintf("0x%x", key)
+	_, err = sess.Execute(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), fmt.Sprintf("insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values (%d, %t, %s, %s, %s, %d, %t)",
+		job.ID, job.MayNeedReorg(), strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), strconv.Quote(strconv.FormatInt(job.TableID, 10)), util.WrapKey2String(b), job.Type, false))
+	return err
 }
 
 func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
@@ -175,5 +168,43 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 			[]*ast.IndexPartSpecification{{
 				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
 				Length: types.UnspecifiedLength}}},
+		ReorgMeta: &model.DDLReorgMeta{ // Add index job must have this field.
+			SQLMode:       mysql.SQLMode(0),
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+		},
 	}
+}
+
+func TestIssue42268(t *testing.T) {
+	// issue 42268 missing table name in 'admin show ddl' result during drop table
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_0")
+	tk.MustExec("create table t_0 (c1 int, c2 int)")
+
+	tbl := external.GetTableByName(t, tk, "test", "t_0")
+	require.NotNil(t, tbl)
+	require.Equal(t, 2, len(tbl.Cols()))
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateNone:
+		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+			rs := tk1.MustQuery("admin show ddl jobs")
+			tblName := fmt.Sprintf("%s", rs.Rows()[0][2])
+			require.Equal(t, tblName, "t_0")
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk.MustExec("drop table t_0")
 }

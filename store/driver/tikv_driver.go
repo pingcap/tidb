@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/copr"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
@@ -53,6 +55,12 @@ var mc storeCache
 func init() {
 	mc.cache = make(map[string]*tikvStore)
 	rand.Seed(time.Now().UnixNano())
+
+	// Setup the Hooks to dynamic control global resource controller.
+	variable.EnableGlobalResourceControlFunc = tikv.EnableResourceControl
+	variable.DisableGlobalResourceControlFunc = tikv.DisableResourceControl
+	// cannot use this package directly, it causes import cycle
+	importer.GetKVStore = getKVStore
 }
 
 // Option is a function that changes some config of Driver
@@ -86,6 +94,10 @@ func WithPDClientConfig(client config.PDClient) Option {
 	}
 }
 
+func getKVStore(path string, tls config.Security) (kv.Storage, error) {
+	return TiKVDriver{}.OpenWithOptions(path, WithSecurity(tls))
+}
+
 // TiKVDriver implements engine TiKV.
 type TiKVDriver struct {
 	pdConfig        config.PDClient
@@ -113,16 +125,37 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 
 // OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig
 // unspecified options will be set to global config
-func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage, error) {
+func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv.Storage, err error) {
 	mc.Lock()
 	defer mc.Unlock()
 	d.setDefaultAndOptions(options...)
-	etcdAddrs, disableGC, err := config.ParsePath(path)
+	etcdAddrs, disableGC, keyspaceName, err := config.ParsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
+	var (
+		pdCli pd.Client
+		spkv  *tikv.EtcdSafePointKV
+		s     *tikv.KVStore
+	)
+	defer func() {
+		if err != nil {
+			if s != nil {
+				// if store is created, it will close spkv and pdCli inside
+				_ = s.Close()
+				return
+			}
+			if spkv != nil {
+				_ = spkv.Close()
+			}
+			if pdCli != nil {
+				pdCli.Close()
+			}
+		}
+	}()
+
+	pdCli, err = pd.NewClient(etcdAddrs, pd.SecurityOption{
 		CAPath:   d.security.ClusterSSLCA,
 		CertPath: d.security.ClusterSSLCert,
 		KeyPath:  d.security.ClusterSSLKey,
@@ -135,15 +168,15 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		),
 		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
 		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
-	pdCli = util.InterceptedPDClient{Client: pdCli}
-
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	pdCli = util.InterceptedPDClient{Client: pdCli}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
 	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
 	if store, ok := mc.cache[uuid]; ok {
+		pdCli.Close()
 		return store, nil
 	}
 
@@ -152,16 +185,40 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		return nil, errors.Trace(err)
 	}
 
-	spkv, err := tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig)
+	spkv, err = tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	pdClient := tikv.CodecPDClient{Client: pdCli}
-	s, err := tikv.NewKVStore(uuid, &pdClient, spkv, tikv.NewRPCClient(tikv.WithSecurity(d.security)))
+	// ---------------- keyspace logic  ----------------
+	var (
+		pdClient *tikv.CodecPDClient
+	)
+
+	if keyspaceName == "" {
+		logutil.BgLogger().Info("using API V1.")
+		pdClient = tikv.NewCodecPDClient(tikv.ModeTxn, pdCli)
+	} else {
+		logutil.BgLogger().Info("using API V2.", zap.String("keyspaceName", keyspaceName))
+		pdClient, err = tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, pdCli, keyspaceName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	codec := pdClient.GetCodec()
+
+	rpcClient := tikv.NewRPCClient(
+		tikv.WithSecurity(d.security),
+		tikv.WithCodec(codec),
+	)
+
+	s, err = tikv.NewKVStore(uuid, pdClient, spkv, rpcClient, tikv.WithPDHTTPClient(tlsConfig, etcdAddrs))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// ---------------- keyspace logic  ----------------
 	if d.txnLocalLatches.Enabled {
 		s.EnableTxnLocalLatches(d.txnLocalLatches.Capacity)
 	}
@@ -178,6 +235,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		memCache:  kv.NewCacheDB(),
 		enableGC:  !disableGC,
 		coprStore: coprStore,
+		codec:     codec,
 	}
 
 	mc.cache[uuid] = store
@@ -192,6 +250,7 @@ type tikvStore struct {
 	enableGC  bool
 	gcWorker  *gcworker.GCWorker
 	coprStore *copr.Store
+	codec     tikv.Codec
 }
 
 // Name gets the name of the storage engine
@@ -342,4 +401,8 @@ func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 		result = append(result, entries...)
 	}
 	return result, nil
+}
+
+func (s *tikvStore) GetCodec() tikv.Codec {
+	return s.codec
 }

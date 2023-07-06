@@ -49,9 +49,9 @@ var systemTZ atomic.String
 // they suggests that only programmers knows which one is best for their use case.
 // For detail, please refer to: https://github.com/golang/go/issues/26106
 type locCache struct {
-	sync.RWMutex
 	// locMap stores locations used in past and can be retrieved by a timezone's name.
 	locMap map[string]*time.Location
+	mu     sync.RWMutex
 }
 
 // inferOneStepLinkForPath only read one step link for the path, not like filepath.EvalSymlinks, which gets the
@@ -154,23 +154,24 @@ func GetSystemTZ() (string, error) {
 
 // getLoc first trying to load location from a cache map. If nothing found in such map, then call
 // `time.LoadLocation` to get a timezone location. After trying both way, an error will be returned
-//  if valid Location is not found.
+//
+//	if valid Location is not found.
 func (lm *locCache) getLoc(name string) (*time.Location, error) {
 	if name == "System" {
 		return time.Local, nil
 	}
-	lm.RLock()
+	lm.mu.RLock()
 	v, ok := lm.locMap[name]
-	lm.RUnlock()
+	lm.mu.RUnlock()
 	if ok {
 		return v, nil
 	}
 
 	if loc, err := time.LoadLocation(name); err == nil {
 		// assign value back to map
-		lm.Lock()
+		lm.mu.Lock()
 		lm.locMap[name] = loc
-		lm.Unlock()
+		lm.mu.Unlock()
 		return loc, nil
 	}
 

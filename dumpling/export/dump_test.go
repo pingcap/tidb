@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/coreos/go-semver/semver"
+	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/parser"
@@ -18,7 +21,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func TestDumpBlock(t *testing.T) {
+func TestDumpExit(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -56,7 +59,6 @@ func TestDumpBlock(t *testing.T) {
 	})
 
 	writerCtx := tctx.WithContext(writingCtx)
-	// simulate taskChan is full
 	taskChan := make(chan Task, 1)
 	taskChan <- &TaskDatabaseMeta{}
 	d.conf.Tables = DatabaseTables{}.AppendTable(database, nil)
@@ -178,6 +180,7 @@ func TestAdjustTableCollation(t *testing.T) {
 		"create table `test`.`t1` (id int, name varchar(20), work varchar(20)) CHARSET=utf8mb4",
 		"create table `test`.`t1` (id int, name varchar(20) COLLATE utf8mb4_general_ci, work varchar(20)) CHARSET=utf8mb4",
 		"create table `test`.`t1` (id int, name varchar(20) COLLATE utf8mb4_general_ci, work varchar(20) CHARACTER SET utf8mb4) CHARSET=utf8mb4",
+		"create table `test`.`t1` (name varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin) CHARSET=latin1 COLLATE=latin1_bin",
 	}
 
 	expectedSQLs := []string{
@@ -191,6 +194,7 @@ func TestAdjustTableCollation(t *testing.T) {
 		"CREATE TABLE `test`.`t1` (`id` INT,`name` VARCHAR(20),`work` VARCHAR(20)) DEFAULT CHARACTER SET = UTF8MB4 DEFAULT COLLATE = UTF8MB4_GENERAL_CI",
 		"CREATE TABLE `test`.`t1` (`id` INT,`name` VARCHAR(20) COLLATE utf8mb4_general_ci,`work` VARCHAR(20)) DEFAULT CHARACTER SET = UTF8MB4 DEFAULT COLLATE = UTF8MB4_GENERAL_CI",
 		"CREATE TABLE `test`.`t1` (`id` INT,`name` VARCHAR(20) COLLATE utf8mb4_general_ci,`work` VARCHAR(20) CHARACTER SET UTF8MB4 COLLATE utf8mb4_general_ci) DEFAULT CHARACTER SET = UTF8MB4 DEFAULT COLLATE = UTF8MB4_GENERAL_CI",
+		"CREATE TABLE `test`.`t1` (`name` VARCHAR(20) CHARACTER SET UTF8MB4 COLLATE utf8mb4_bin) DEFAULT CHARACTER SET = LATIN1 DEFAULT COLLATE = LATIN1_BIN",
 	}
 
 	charsetAndDefaultCollationMap := map[string]string{"utf8mb4": "utf8mb4_general_ci"}
@@ -222,4 +226,129 @@ func TestUnregisterMetrics(t *testing.T) {
 	_, err = NewDumper(ctx, conf)
 	// should not panic
 	require.Error(t, err)
+}
+
+func TestSetDefaultSessionParams(t *testing.T) {
+	testCases := []struct {
+		si             version.ServerInfo
+		sessionParams  map[string]interface{}
+		expectedParams map[string]interface{}
+	}{
+		{
+			si: version.ServerInfo{
+				ServerType:    version.ServerTypeTiDB,
+				HasTiKV:       true,
+				ServerVersion: semver.New("6.1.0"),
+			},
+			sessionParams: map[string]interface{}{
+				"tidb_snapshot": "2020-01-01 00:00:00",
+			},
+			expectedParams: map[string]interface{}{
+				"tidb_snapshot": "2020-01-01 00:00:00",
+			},
+		},
+		{
+			si: version.ServerInfo{
+				ServerType:    version.ServerTypeTiDB,
+				HasTiKV:       true,
+				ServerVersion: semver.New("6.2.0"),
+			},
+			sessionParams: map[string]interface{}{
+				"tidb_snapshot": "2020-01-01 00:00:00",
+			},
+			expectedParams: map[string]interface{}{
+				"tidb_enable_paging": "ON",
+				"tidb_snapshot":      "2020-01-01 00:00:00",
+			},
+		},
+		{
+			si: version.ServerInfo{
+				ServerType:    version.ServerTypeTiDB,
+				HasTiKV:       true,
+				ServerVersion: semver.New("6.2.0"),
+			},
+			sessionParams: map[string]interface{}{
+				"tidb_enable_paging": "OFF",
+				"tidb_snapshot":      "2020-01-01 00:00:00",
+			},
+			expectedParams: map[string]interface{}{
+				"tidb_enable_paging": "OFF",
+				"tidb_snapshot":      "2020-01-01 00:00:00",
+			},
+		},
+		{
+			si: version.ServerInfo{
+				ServerType:    version.ServerTypeMySQL,
+				ServerVersion: semver.New("8.0.32"),
+			},
+			sessionParams:  map[string]interface{}{},
+			expectedParams: map[string]interface{}{},
+		},
+	}
+
+	for _, testCase := range testCases {
+		setDefaultSessionParams(testCase.si, testCase.sessionParams)
+		require.Equal(t, testCase.expectedParams, testCase.sessionParams)
+	}
+}
+
+func TestSetSessionParams(t *testing.T) {
+	// case 1: fail to set tidb_snapshot, should return error with hint
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	mock.ExpectQuery("SELECT @@tidb_config").
+		WillReturnError(errors.New("mock error"))
+	mock.ExpectQuery("SELECT COUNT\\(1\\) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'").
+		WillReturnError(errors.New("mock error"))
+	tikvErr := &mysql.MySQLError{
+		Number:  1105,
+		Message: "can not get 'tikv_gc_safe_point'",
+	}
+	mock.ExpectExec("SET SESSION tidb_snapshot").
+		WillReturnError(tikvErr)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/dumpling/export/SkipResetDB", "return(true)"))
+	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/SkipResetDB=return(true)")
+
+	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	defer cancel()
+
+	conf := DefaultConfig()
+	conf.ServerInfo = version.ServerInfo{
+		ServerType: version.ServerTypeTiDB,
+		HasTiKV:    false,
+	}
+	conf.Snapshot = "439153276059648000"
+	conf.Consistency = ConsistencyTypeSnapshot
+	d := &Dumper{
+		tctx:      tctx,
+		conf:      conf,
+		cancelCtx: cancel,
+		dbHandle:  db,
+	}
+	err = setSessionParam(d)
+	require.ErrorContains(t, err, "consistency=none")
+
+	// case 2: fail to set other
+	conf.ServerInfo = version.ServerInfo{
+		ServerType: version.ServerTypeMySQL,
+		HasTiKV:    false,
+	}
+	conf.Snapshot = ""
+	conf.Consistency = ConsistencyTypeFlush
+	conf.SessionParams = map[string]interface{}{
+		"mock": "UTC",
+	}
+	d.dbHandle = db
+	mock.ExpectExec("SET SESSION mock").
+		WillReturnError(errors.New("Unknown system variable mock"))
+	mock.ExpectClose()
+	mock.ExpectClose()
+
+	err = setSessionParam(d)
+	require.NoError(t, err)
 }

@@ -321,10 +321,27 @@ func runeLen(b byte) int {
 	return 4
 }
 
-// IsCICollation returns if the collation is case-sensitive
+// IsCICollation returns if the collation is case-insensitive
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
-		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci"
+		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" || collate == "gbk_chinese_ci"
+}
+
+// ConvertAndGetBinCollation converts collator to binary collator
+func ConvertAndGetBinCollation(collate string) Collator {
+	switch collate {
+	case "utf8_general_ci":
+		return GetCollator("utf8_bin")
+	case "utf8_unicode_ci":
+		return GetCollator("utf8_bin")
+	case "utf8mb4_general_ci":
+		return GetCollator("utf8mb4_bin")
+	case "utf8mb4_unicode_ci":
+		return GetCollator("utf8mb4_bin")
+	case "gbk_chinese_ci":
+		return GetCollator("gbk_bin")
+	}
+	return GetCollator(collate)
 }
 
 // IsBinCollation returns if the collation is 'xx_bin' or 'bin'.

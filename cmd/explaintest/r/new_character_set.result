@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 drop table if exists t;
 set names utf8mb4;
 create table t (a varchar(255) charset utf8mb4);

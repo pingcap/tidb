@@ -16,37 +16,42 @@ package ddl
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	atomicutil "go.uber.org/atomic"
 )
 
-var _ util.SchemaSyncer = &MockSchemaSyncer{}
+var _ syncer.SchemaSyncer = &MockSchemaSyncer{}
 
 const mockCheckVersInterval = 2 * time.Millisecond
 
-// MockSchemaSyncer is a mock schema syncer, it is exported for tesing.
+// MockSchemaSyncer is a mock schema syncer, it is exported for testing.
 type MockSchemaSyncer struct {
 	selfSchemaVersion int64
+	mdlSchemaVersions sync.Map
 	globalVerCh       chan clientv3.WatchResponse
 	mockSession       chan struct{}
 }
 
 // NewMockSchemaSyncer creates a new mock SchemaSyncer.
-func NewMockSchemaSyncer() util.SchemaSyncer {
+func NewMockSchemaSyncer() syncer.SchemaSyncer {
 	return &MockSchemaSyncer{}
 }
 
 // Init implements SchemaSyncer.Init interface.
-func (s *MockSchemaSyncer) Init(ctx context.Context) error {
+func (s *MockSchemaSyncer) Init(_ context.Context) error {
+	s.mdlSchemaVersions = sync.Map{}
 	s.globalVerCh = make(chan clientv3.WatchResponse, 1)
 	s.mockSession = make(chan struct{}, 1)
 	return nil
@@ -58,11 +63,20 @@ func (s *MockSchemaSyncer) GlobalVersionCh() clientv3.WatchChan {
 }
 
 // WatchGlobalSchemaVer implements SchemaSyncer.WatchGlobalSchemaVer interface.
-func (s *MockSchemaSyncer) WatchGlobalSchemaVer(context.Context) {}
+func (*MockSchemaSyncer) WatchGlobalSchemaVer(context.Context) {}
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
-func (s *MockSchemaSyncer) UpdateSelfVersion(ctx context.Context, version int64) error {
-	atomic.StoreInt64(&s.selfSchemaVersion, version)
+func (s *MockSchemaSyncer) UpdateSelfVersion(_ context.Context, jobID int64, version int64) error {
+	failpoint.Inject("mockUpdateMDLToETCDError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock update mdl to etcd error"))
+		}
+	})
+	if variable.EnableMDL.Load() {
+		s.mdlSchemaVersions.Store(jobID, version)
+	} else {
+		atomic.StoreInt64(&s.selfSchemaVersion, version)
+	}
 	return nil
 }
 
@@ -83,7 +97,7 @@ func (s *MockSchemaSyncer) Restart(_ context.Context) error {
 }
 
 // OwnerUpdateGlobalVersion implements SchemaSyncer.OwnerUpdateGlobalVersion interface.
-func (s *MockSchemaSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version int64) error {
+func (s *MockSchemaSyncer) OwnerUpdateGlobalVersion(_ context.Context, _ int64) error {
 	select {
 	case s.globalVerCh <- clientv3.WatchResponse{}:
 	default:
@@ -91,13 +105,8 @@ func (s *MockSchemaSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version
 	return nil
 }
 
-// MustGetGlobalVersion implements SchemaSyncer.MustGetGlobalVersion interface.
-func (s *MockSchemaSyncer) MustGetGlobalVersion(ctx context.Context) (int64, error) {
-	return 0, nil
-}
-
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
-func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer int64) error {
+func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
 	ticker := time.NewTicker(mockCheckVersInterval)
 	defer ticker.Stop()
 
@@ -111,9 +120,16 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 			})
 			return errors.Trace(ctx.Err())
 		case <-ticker.C:
-			ver := atomic.LoadInt64(&s.selfSchemaVersion)
-			if ver >= latestVer {
-				return nil
+			if variable.EnableMDL.Load() {
+				ver, ok := s.mdlSchemaVersions.Load(jobID)
+				if ok && ver.(int64) >= latestVer {
+					return nil
+				}
+			} else {
+				ver := atomic.LoadInt64(&s.selfSchemaVersion)
+				if ver >= latestVer {
+					return nil
+				}
 			}
 		}
 	}
@@ -121,6 +137,58 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 
 // Close implements SchemaSyncer.Close interface.
 func (*MockSchemaSyncer) Close() {}
+
+// NewMockStateSyncer creates a new mock StateSyncer.
+func NewMockStateSyncer() syncer.StateSyncer {
+	return &MockStateSyncer{}
+}
+
+// MockStateSyncer is a mock state syncer, it is exported for testing.
+type MockStateSyncer struct {
+	clusterState *atomicutil.Pointer[syncer.StateInfo]
+	globalVerCh  chan clientv3.WatchResponse
+	mockSession  chan struct{}
+}
+
+// Init implements StateSyncer.Init interface.
+func (s *MockStateSyncer) Init(context.Context) error {
+	s.globalVerCh = make(chan clientv3.WatchResponse, 1)
+	s.mockSession = make(chan struct{}, 1)
+	state := syncer.NewStateInfo(syncer.StateNormalRunning)
+	s.clusterState = atomicutil.NewPointer(state)
+	return nil
+}
+
+// UpdateGlobalState implements StateSyncer.UpdateGlobalState interface.
+func (s *MockStateSyncer) UpdateGlobalState(_ context.Context, stateInfo *syncer.StateInfo) error {
+	failpoint.Inject("mockUpgradingState", func(val failpoint.Value) {
+		if val.(bool) {
+			s.clusterState.Store(stateInfo)
+			failpoint.Return(nil)
+		}
+	})
+	s.globalVerCh <- clientv3.WatchResponse{}
+	s.clusterState.Store(stateInfo)
+	return nil
+}
+
+// GetGlobalState implements StateSyncer.GetGlobalState interface.
+func (s *MockStateSyncer) GetGlobalState(context.Context) (*syncer.StateInfo, error) {
+	return s.clusterState.Load(), nil
+}
+
+// IsUpgradingState implements StateSyncer.IsUpgradingState interface.
+func (s *MockStateSyncer) IsUpgradingState() bool {
+	return s.clusterState.Load().State == syncer.StateUpgrading
+}
+
+// WatchChan implements StateSyncer.WatchChan interface.
+func (s *MockStateSyncer) WatchChan() clientv3.WatchChan {
+	return s.globalVerCh
+}
+
+// Rewatch implements StateSyncer.Rewatch interface.
+func (*MockStateSyncer) Rewatch(context.Context) {}
 
 type mockDelRange struct {
 }
@@ -136,15 +204,15 @@ func (*mockDelRange) addDelRangeJob(_ context.Context, _ *model.Job) error {
 }
 
 // removeFromGCDeleteRange implements delRangeManager interface.
-func (*mockDelRange) removeFromGCDeleteRange(_ context.Context, _ int64, _ []int64) error {
+func (*mockDelRange) removeFromGCDeleteRange(_ context.Context, _ int64) error {
 	return nil
 }
 
 // start implements delRangeManager interface.
-func (dr *mockDelRange) start() {}
+func (*mockDelRange) start() {}
 
 // clear implements delRangeManager interface.
-func (dr *mockDelRange) clear() {}
+func (*mockDelRange) clear() {}
 
 // MockTableInfo mocks a table info by create table stmt ast and a specified table id.
 func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {
@@ -158,6 +226,10 @@ func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID in
 		return nil, errors.Trace(err)
 	}
 	tbl.ID = tableID
+
+	if err = setTableAutoRandomBits(ctx, tbl, stmt.Cols); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	// The specified charset will be handled in handleTableOptions
 	if err = handleTableOptions(stmt.Options, tbl); err != nil {

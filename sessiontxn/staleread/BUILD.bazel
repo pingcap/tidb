@@ -21,6 +21,7 @@ go_library(
         "//parser/ast",
         "//parser/mysql",
         "//sessionctx",
+        "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//sessiontxn",
         "//sessiontxn/internal",
@@ -28,6 +29,7 @@ go_library(
         "//types",
         "//util/dbterror",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//oracle",
     ],
 )
@@ -36,11 +38,13 @@ go_test(
     name = "staleread_test",
     timeout = "short",
     srcs = [
+        "externalts_test.go",
         "main_test.go",
         "processor_test.go",
         "provider_test.go",
     ],
     flaky = True,
+    shard_count = 10,
     deps = [
         ":staleread",
         "//domain",
@@ -48,6 +52,7 @@ go_test(
         "//kv",
         "//parser",
         "//parser/ast",
+        "//parser/auth",
         "//sessionctx",
         "//sessiontxn",
         "//table/temptable",

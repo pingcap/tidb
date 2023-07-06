@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strconv"
 	"testing"
 
@@ -255,19 +256,28 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	tk.MustExec("set @@tidb_merge_join_concurrency=4;")
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("create table t1(c1 int, c2 int)")
-	tk.MustExec("insert into t values(1,1)")
-	tk.MustExec("insert into t1 values(1,3),(4,4)")
-
+	tk.MustExec("insert into t values(1,1),(2,2),(3,3),(4,4)")
+	for i := 1; i <= 1024; i += 4 {
+		tk.MustExec(fmt.Sprintf("insert into t1 values(%v,%v),(%v,%v),(%v,%v),(%v,%v)", i, i, i+1, i+1, i+2, i+2, i+3, i+3))
+	}
 	result := checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	result.Check(testkit.Rows("1 3 1 1"))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
+
+	var expect []string
+	expect = append(expect, "1 1 1 1")
+	for i := 21; i <= 1024; i++ {
+		expect = append(expect, fmt.Sprintf("%v %v <nil> <nil>", i, i))
+	}
+	sort.Strings(expect)
+	result.Sort().Check(testkit.Rows(expect...))
+	require.Equal(t, int64(0), tk.Session().GetSessionVars().MemTracker.BytesConsumed())
+	require.Greater(t, tk.Session().GetSessionVars().MemTracker.MaxConsumed(), int64(0))
+	require.Equal(t, int64(0), tk.Session().GetSessionVars().DiskTracker.BytesConsumed())
+	require.Greater(t, tk.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
 }
 
 func TestMergeJoinInDisk(t *testing.T) {
@@ -457,13 +467,12 @@ func TestMergeJoin(t *testing.T) {
 	tk.MustExec("create table s (a int)")
 	tk.MustExec("insert into s values (4), (1), (3), (2)")
 	tk.MustQuery("explain format = 'brief' select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
-		"MergeJoin 12487.50 root  inner join, left key:test.s.a, right key:test.s.a",
-		"├─Sort(Build) 9990.00 root  test.s.a:desc",
-		"│ └─TableReader 9990.00 root  data:Selection",
-		"│   └─Selection 9990.00 cop[tikv]  not(isnull(test.s.a))",
-		"│     └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
-		"└─Sort(Probe) 9990.00 root  test.s.a:desc",
-		"  └─TableReader 9990.00 root  data:Selection",
+		"Sort 12487.50 root  test.s.a:desc",
+		"└─HashJoin 12487.50 root  inner join, equal:[eq(test.s.a, test.s.a)]",
+		"  ├─TableReader(Build) 9990.00 root  data:Selection",
+		"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.s.a))",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
+		"  └─TableReader(Probe) 9990.00 root  data:Selection",
 		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.s.a))",
 		"      └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
 	))
@@ -619,13 +628,12 @@ func TestShuffleMergeJoin(t *testing.T) {
 	tk.MustExec("create table s (a int)")
 	tk.MustExec("insert into s values (4), (1), (3), (2)")
 	tk.MustQuery("explain format = 'brief' select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
-		"MergeJoin 12487.50 root  inner join, left key:test.s.a, right key:test.s.a",
-		"├─Sort(Build) 9990.00 root  test.s.a:desc",
-		"│ └─TableReader 9990.00 root  data:Selection",
-		"│   └─Selection 9990.00 cop[tikv]  not(isnull(test.s.a))",
-		"│     └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
-		"└─Sort(Probe) 9990.00 root  test.s.a:desc",
-		"  └─TableReader 9990.00 root  data:Selection",
+		"Sort 12487.50 root  test.s.a:desc",
+		"└─HashJoin 12487.50 root  inner join, equal:[eq(test.s.a, test.s.a)]",
+		"  ├─TableReader(Build) 9990.00 root  data:Selection",
+		"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.s.a))",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
+		"  └─TableReader(Probe) 9990.00 root  data:Selection",
 		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.s.a))",
 		"      └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
 	))
@@ -731,6 +739,7 @@ func TestVectorizedMergeJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	existTableMap := make(map[string]struct{})
 	runTest := func(ts1, ts2 []int) {
 		getTable := func(prefix string, ts []int) string {
@@ -850,6 +859,7 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	existTableMap := make(map[string]struct{})
 	runTest := func(ts1, ts2 []int) {
 		getTable := func(prefix string, ts []int) string {

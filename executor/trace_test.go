@@ -50,6 +50,10 @@ func TestTraceExec(t *testing.T) {
 	require.Greater(t, len(rows), 1)
 	require.True(t, rowsOrdered(rows))
 
+	rows = tk.MustQuery("trace format='row' analyze table trace").Rows()
+	require.Greater(t, len(rows), 1)
+	require.True(t, rowsOrdered(rows))
+
 	tk.MustExec("trace format='log' insert into trace (c1, c2, c3) values (1, 2, 3)")
 	rows = tk.MustQuery("trace format='log' select * from trace where id = 0;").Rows()
 	require.GreaterOrEqual(t, len(rows), 1)
@@ -74,8 +78,10 @@ func TestTracePlanStmt(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table tp123(id int);")
-	rows := tk.MustQuery("trace plan select * from tp123").Rows()
+	tk.MustExec("create table tp1(id int);")
+	tk.MustExec("create table tp2(id int);")
+	tk.MustExec("set @@tidb_cost_model_version=2")
+	rows := tk.MustQuery("trace plan select * from tp1 t1, tp2 t2 where t1.id = t2.id").Rows()
 	require.Len(t, rows, 1)
 	require.Len(t, rows[0], 1)
 	require.Regexp(t, ".*zip", rows[0][0])

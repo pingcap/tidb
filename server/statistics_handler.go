@@ -15,7 +15,9 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -23,9 +25,12 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 // StatsHandler is the handler for dumping statistics.
@@ -53,11 +58,21 @@ func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	is := sh.do.InfoSchema()
 	h := sh.do.StatsHandle()
+	var err error
+	dumpPartitionStats := true
+	dumpParams := req.URL.Query()[pDumpPartitionStats]
+	if len(dumpParams) > 0 && len(dumpParams[0]) > 0 {
+		dumpPartitionStats, err = strconv.ParseBool(dumpParams[0])
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	tbl, err := is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
 	if err != nil {
 		writeError(w, err)
 	} else {
-		js, err := h.DumpStatsToJSON(params[pDBName], tbl.Meta(), nil)
+		js, err := h.DumpStatsToJSON(params[pDBName], tbl.Meta(), nil, dumpPartitionStats)
 		if err != nil {
 			writeError(w, err)
 		} else {
@@ -94,9 +109,18 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	defer se.Close()
+	enabeld, err := sh.do.StatsHandle().CheckHistoricalStatsEnable()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if !enabeld {
+		writeError(w, fmt.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats))
+		return
+	}
 
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
-	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, params[pSnapshot], mysql.TypeTimestamp, 6)
+	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, params[pSnapshot], mysql.TypeTimestamp, 6, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -107,27 +131,30 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	snapshot := oracle.GoTimeToTS(t1)
-	err = gcutil.ValidateSnapshot(se, snapshot)
+	tbl, err := getSnapshotTableInfo(sh.do, snapshot, params[pDBName], params[pTableName])
 	if err != nil {
-		writeError(w, err)
-		return
+		logutil.BgLogger().Info("fail to get snapshot TableInfo in historical stats API, switch to use latest infoschema", zap.Error(err))
+		is := sh.do.InfoSchema()
+		tbl, err = is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 
-	is, err := sh.do.GetSnapshotInfoSchema(snapshot)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
 	h := sh.do.StatsHandle()
-	tbl, err := is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	js, err := h.DumpStatsToJSONBySnapshot(params[pDBName], tbl.Meta(), snapshot)
+	js, err := h.DumpHistoricalStatsBySnapshot(params[pDBName], tbl.Meta(), snapshot)
 	if err != nil {
 		writeError(w, err)
 	} else {
 		writeData(w, js)
 	}
+}
+
+func getSnapshotTableInfo(dom *domain.Domain, snapshot uint64, dbName, tblName string) (table.Table, error) {
+	is, err := dom.GetSnapshotInfoSchema(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	return is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
 }

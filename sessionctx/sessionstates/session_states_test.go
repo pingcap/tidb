@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -108,8 +107,9 @@ func TestSystemVars(t *testing.T) {
 		},
 		{
 			// hidden variable
-			inSessionStates: false,
+			inSessionStates: true,
 			varName:         variable.TiDBTxnReadTS,
+			expectedValue:   "",
 		},
 		{
 			// none-scoped variable
@@ -132,7 +132,7 @@ func TestSystemVars(t *testing.T) {
 		{
 			// sem invisible variable
 			inSessionStates: false,
-			varName:         variable.TiDBAllowRemoveAutoInc,
+			varName:         variable.TiDBConfig,
 		},
 		{
 			// noop variables
@@ -378,20 +378,6 @@ func TestSessionCtx(t *testing.T) {
 			},
 		},
 		{
-			// check MPPStoreLastFailTime
-			setFunc: func(tk *testkit.TestKit) any {
-				tk.Session().GetSessionVars().MPPStoreLastFailTime = map[string]time.Time{"store1": time.Now()}
-				return tk.Session().GetSessionVars().MPPStoreLastFailTime
-			},
-			checkFunc: func(tk *testkit.TestKit, param any) {
-				failTime := tk.Session().GetSessionVars().MPPStoreLastFailTime
-				require.Equal(t, 1, len(failTime))
-				tm, ok := failTime["store1"]
-				require.True(t, ok)
-				require.True(t, param.(map[string]time.Time)["store1"].Equal(tm))
-			},
-		},
-		{
 			// check FoundInPlanCache
 			setFunc: func(tk *testkit.TestKit) any {
 				require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
@@ -434,6 +420,79 @@ func TestSessionCtx(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+			},
+		},
+		{
+			// check ResourceGroupName
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("SET GLOBAL tidb_enable_resource_control='on'")
+				tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec = 100")
+				tk.MustExec("SET RESOURCE GROUP `rg1`")
+				require.Equal(t, "rg1", tk.Session().GetSessionVars().ResourceGroupName)
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
+			},
+		},
+		{
+			// check HypoTiFlashReplicas
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec(`alter table test.t1 set hypo tiflash replica 1`)
+				require.NotNil(t, tk.Session().GetSessionVars().HypoTiFlashReplicas["test"]["t1"])
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
+					`TableReader_12 10000.00 root  MppVersion: 2, data:ExchangeSender_11`,
+					`└─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
+					`  └─TableFullScan_10 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo`))
+			},
+		},
+		{
+			// check empty HypoTiFlashReplicas
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec(`alter table test.t1 set hypo tiflash replica 1`)
+				tk.MustExec(`alter table test.t1 set hypo tiflash replica 0`)
+				require.Empty(t, tk.Session().GetSessionVars().HypoTiFlashReplicas["test"])
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
+					`TableReader_5 10000.00 root  data:TableFullScan_4`,
+					`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+			},
+		},
+		{
+			// check HypoIndexes
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec(`create index hypo_id type hypo on test.t1(id)`)
+				require.NotNil(t, tk.Session().GetSessionVars().HypoIndexes["test"]["t1"])
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery(`show create table test.t1`).Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+					"  `id` int(11) DEFAULT NULL,\n" +
+					"  KEY `hypo_id` (`id`) /* HYPO INDEX */\n" +
+					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`IndexReader_7 10000.00 root  index:IndexFullScan_6`,
+					`└─IndexFullScan_6 10000.00 cop[tikv] table:t1, index:hypo_id(id) keep order:false, stats:pseudo`))
+			},
+		},
+		{
+			// check empty HypoIndexes
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec(`create index hypo_id type hypo on test.t1(id)`)
+				tk.MustExec(`drop hypo index hypo_id on test.t1`)
+				require.Empty(t, tk.Session().GetSessionVars().HypoIndexes["test"]["t1"])
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery(`show create table test.t1`).Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+					"  `id` int(11) DEFAULT NULL\n" +
+					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`TableReader_5 10000.00 root  data:TableFullScan_4`,
+					`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 	}
@@ -941,9 +1000,9 @@ func TestPreparedStatements(t *testing.T) {
 				require.NoError(t, conn.Dispatch(context.Background(), cmd))
 				cmd = getFetchBytes(1, 10)
 				require.NoError(t, conn.Dispatch(context.Background(), cmd))
-				// This COM_STMT_FETCH returns EOF.
+				// This COM_STMT_FETCH returns error, because the cursor has been automatically closed.
 				cmd = getFetchBytes(1, 10)
-				require.NoError(t, conn.Dispatch(context.Background(), cmd))
+				require.Error(t, conn.Dispatch(context.Background(), cmd))
 				return uint32(1)
 			},
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
@@ -958,14 +1017,14 @@ func TestPreparedStatements(t *testing.T) {
 		//		rootTk := testkit.NewTestKit(t, store)
 		//		rootTk.MustExec(`CREATE USER 'u1'@'localhost'`)
 		//		rootTk.MustExec("create table test.t1(id int)")
-		//		require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+		//		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 		//		rootTk.MustExec(`GRANT SELECT ON test.t1 TO 'u1'@'localhost'`)
 		//		tk.MustExec("prepare stmt from 'select * from test.t1'")
 		//		rootTk.MustExec(`REVOKE SELECT ON test.t1 FROM 'u1'@'localhost'`)
 		//		return nil
 		//	},
 		//	prepareFunc: func(tk *testkit.TestKit, conn server.MockConn) {
-		//		require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+		//		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 		//	},
 		//	restoreErr: errno.ErrNoSuchTable,
 		//	cleanFunc: func(tk *testkit.TestKit) {
@@ -979,6 +1038,7 @@ func TestPreparedStatements(t *testing.T) {
 	for _, tt := range tests {
 		conn1 := server.CreateMockConn(t, sv)
 		tk1 := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+		conn1.Context().Session.GetSessionVars().User = nil
 		var param any
 		if tt.setFunc != nil {
 			param = tt.setFunc(tk1, conn1)
@@ -1267,6 +1327,16 @@ func TestShowStateFail(t *testing.T) {
 			},
 		},
 		{
+			// enable sandbox mode
+			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
+				tk.Session().EnableSandBoxMode()
+			},
+			showErr: errno.ErrCannotMigrateSession,
+			cleanFunc: func(tk *testkit.TestKit) {
+				tk.Session().DisableSandBoxMode()
+			},
+		},
+		{
 			// after COM_STMT_SEND_LONG_DATA
 			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
 				cmd := append([]byte{mysql.ComStmtPrepare}, []byte("select ?")...)
@@ -1303,7 +1373,7 @@ func TestShowStateFail(t *testing.T) {
 			},
 		},
 		{
-			// fetched all the data but the EOF packet is not sent
+			// fetched all the data and `ServerStatusLastRowSend` is set, then the cursor should have been closed
 			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
 				tk.MustExec("create table test.t1(id int)")
 				tk.MustExec("insert test.t1 value(1), (2), (3)")
@@ -1313,26 +1383,8 @@ func TestShowStateFail(t *testing.T) {
 				require.NoError(t, conn.Dispatch(context.Background(), cmd))
 				cmd = getFetchBytes(1, 10)
 				require.NoError(t, conn.Dispatch(context.Background(), cmd))
-			},
-			showErr: errno.ErrCannotMigrateSession,
-			cleanFunc: func(tk *testkit.TestKit) {
-				tk.MustExec("drop table test.t1")
-			},
-		},
-		{
-			// EOF is sent
-			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
-				tk.MustExec("create table test.t1(id int)")
-				tk.MustExec("insert test.t1 value(1), (2), (3)")
-				cmd := append([]byte{mysql.ComStmtPrepare}, []byte("select * from test.t1")...)
-				require.NoError(t, conn.Dispatch(context.Background(), cmd))
-				cmd = getExecuteBytes(1, true, false)
-				require.NoError(t, conn.Dispatch(context.Background(), cmd))
-				cmd = getFetchBytes(1, 10)
-				require.NoError(t, conn.Dispatch(context.Background(), cmd))
-				// This COM_STMT_FETCH returns EOF.
-				cmd = getFetchBytes(1, 10)
-				require.NoError(t, conn.Dispatch(context.Background(), cmd))
+				// following FETCH command should fail because the cursor has been closed
+				require.Error(t, conn.Dispatch(context.Background(), getFetchBytes(1, 10)))
 			},
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("drop table test.t1")
@@ -1362,6 +1414,7 @@ func TestShowStateFail(t *testing.T) {
 	})
 	for _, tt := range tests {
 		conn1 := server.CreateMockConn(t, sv)
+		conn1.Context().Session.GetSessionVars().User = nil
 		tk1 := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
 		tt.setFunc(tk1, conn1)
 		if tt.showErr == 0 {
@@ -1376,6 +1429,18 @@ func TestShowStateFail(t *testing.T) {
 		}
 		conn1.Close()
 	}
+}
+
+func TestInvalidSysVar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// unknown is an unknown variable
+	// tidb_executor_concurrency is in wrong data type
+	// max_prepared_stmt_count is in wrong scope
+	tk.MustExec(`set session_states '{"sys-vars": {"timestamp":"100", "unknown":"100", "tidb_executor_concurrency":"hello", "max_prepared_stmt_count":"100"}}'`)
+	tk.MustQuery("select @@timestamp").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@tidb_executor_concurrency").Check(testkit.Rows("5"))
+	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("-1"))
 }
 
 func showSessionStatesAndSet(t *testing.T, tk1, tk2 *testkit.TestKit) {

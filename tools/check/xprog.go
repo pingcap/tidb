@@ -23,6 +23,7 @@ import (
 	"strings"
 )
 
+//nolint:typecheck
 func main() {
 	// See https://github.com/golang/go/issues/15513#issuecomment-773994959
 	// go test --exec=xprog ./...
@@ -83,6 +84,7 @@ func getPackageInfo(dir string) string {
 	return pkg
 }
 
+// MoveFile moves a file from src to dst.
 func MoveFile(sourcePath, destPath string) error {
 	filepath.Clean(sourcePath)
 	filepath.Clean(destPath)

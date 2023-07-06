@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -42,7 +44,7 @@ import (
 
 // SplitIndexRegionExec represents a split index regions executor.
 type SplitIndexRegionExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	tableInfo      *model.TableInfo
 	partitionNames []model.CIStr
@@ -89,14 +91,14 @@ const checkScatterRegionFinishBackOff = 50
 
 // splitIndexRegion is used to split index regions.
 func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
-	store := e.ctx.GetStore()
+	store := e.Ctx().GetStore()
 	s, ok := store.(kv.SplittableStore)
 	if !ok {
 		return nil
 	}
 
 	start := time.Now()
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.Ctx().GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitIdxKeys, true, &e.tableInfo.ID)
 	if err != nil {
@@ -110,10 +112,10 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 		return nil
 	}
 
-	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
+	if !e.Ctx().GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
-	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
+	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.Ctx(), start, s, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
 	return nil
 }
 
@@ -164,7 +166,7 @@ func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromValueList(physicalID i
 	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
 	index := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
 	for _, v := range e.valueLists {
-		idxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, v, kv.IntHandle(math.MinInt64), nil)
+		idxKey, _, err := index.GenIndexKey(e.Ctx().GetSessionVars().StmtCtx, v, kv.IntHandle(math.MinInt64), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -225,13 +227,13 @@ func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromBound(physicalID int64
 	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
 	index := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
 	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
-	lowerIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.lower, kv.IntHandle(math.MinInt64), nil)
+	lowerIdxKey, _, err := index.GenIndexKey(e.Ctx().GetSessionVars().StmtCtx, e.lower, kv.IntHandle(math.MinInt64), nil)
 	if err != nil {
 		return nil, err
 	}
 	// Use math.MinInt64 as handle_id for the upper index key to avoid affecting calculate split point.
 	// If use math.MaxInt64 here, test of `TestSplitIndex` will report error.
-	upperIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.upper, kv.IntHandle(math.MinInt64), nil)
+	upperIdxKey, _, err := index.GenIndexKey(e.Ctx().GetSessionVars().StmtCtx, e.upper, kv.IntHandle(math.MinInt64), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +243,7 @@ func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromBound(physicalID int64
 		upperStr := datumSliceToString(e.upper)
 		errMsg := fmt.Sprintf("Split index `%v` region lower value %v should less than the upper value %v",
 			e.indexInfo.Name, lowerStr, upperStr)
-		return nil, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
+		return nil, exeerrors.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 	}
 	return getValuesList(lowerIdxKey, upperIdxKey, e.num, keys), nil
 }
@@ -320,7 +322,7 @@ func datumSliceToString(ds []types.Datum) string {
 
 // SplitTableRegionExec represents a split table regions executor.
 type SplitTableRegionExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	tableInfo      *model.TableInfo
 	partitionNames []model.CIStr
@@ -357,14 +359,14 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error
 }
 
 func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
-	store := e.ctx.GetStore()
+	store := e.Ctx().GetStore()
 	s, ok := store.(kv.SplittableStore)
 	if !ok {
 		return nil
 	}
 
 	start := time.Now()
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.Ctx().GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
 
@@ -379,11 +381,11 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 		return nil
 	}
 
-	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
+	if !e.Ctx().GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
 
-	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, "")
+	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.Ctx(), start, s, regionIDs, e.tableInfo.Name.L, "")
 	return nil
 }
 
@@ -547,7 +549,7 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 		upperRecordID := e.upper[0].GetUint64()
 		if upperRecordID <= lowerRecordID {
 			errMsg := fmt.Sprintf("lower value %v should less than the upper value %v", lowerRecordID, upperRecordID)
-			return 0, 0, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
+			return 0, 0, exeerrors.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 		}
 		step = int64((upperRecordID - lowerRecordID) / uint64(e.num))
 		lowerValue = int64(lowerRecordID)
@@ -556,14 +558,14 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 		upperRecordID := e.upper[0].GetInt64()
 		if upperRecordID <= lowerRecordID {
 			errMsg := fmt.Sprintf("lower value %v should less than the upper value %v", lowerRecordID, upperRecordID)
-			return 0, 0, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
+			return 0, 0, exeerrors.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 		}
 		step = int64(uint64(upperRecordID-lowerRecordID) / uint64(e.num))
 		lowerValue = lowerRecordID
 	}
 	if step < minRegionStepValue {
 		errMsg := fmt.Sprintf("the region size is too small, expected at least %d, but got %d", minRegionStepValue, step)
-		return 0, 0, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
+		return 0, 0, exeerrors.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 	}
 	return lowerValue, step, nil
 }
@@ -602,7 +604,7 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID int
 		upperStr := datumSliceToString(e.upper)
 		errMsg := fmt.Sprintf("Split table `%v` region lower value %v should less than the upper value %v",
 			e.tableInfo.Name.O, lowerStr, upperStr)
-		return nil, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
+		return nil, exeerrors.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 	}
 	low := tablecodec.EncodeRecordKey(recordPrefix, lowerHandle)
 	up := tablecodec.EncodeRecordKey(recordPrefix, upperHandle)

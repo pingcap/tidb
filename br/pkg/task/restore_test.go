@@ -27,7 +27,7 @@ import (
 
 func TestRestoreConfigAdjust(t *testing.T) {
 	cfg := &RestoreConfig{}
-	cfg.adjustRestoreConfig()
+	cfg.Adjust()
 
 	require.Equal(t, uint32(defaultRestoreConcurrency), cfg.Config.Concurrency)
 	require.Equal(t, defaultSwitchInterval, cfg.Config.SwitchModeInterval)
@@ -61,6 +61,16 @@ func TestConfigureRestoreClient(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint(128), client.GetBatchDdlSize())
 	require.True(t, client.IsOnline())
+}
+
+func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {
+	restoreCfg := RestoreConfig{}
+
+	restoreCfg.adjustRestoreConfigForStreamRestore()
+	require.Equal(t, restoreCfg.PitrBatchCount, uint32(defaultPiTRBatchCount))
+	require.Equal(t, restoreCfg.PitrBatchSize, uint32(defaultPiTRBatchSize))
+	require.Equal(t, restoreCfg.PitrConcurrency, uint32(defaultPiTRConcurrency))
+	require.Equal(t, restoreCfg.Concurrency, restoreCfg.PitrConcurrency)
 }
 
 func TestCheckRestoreDBAndTable(t *testing.T) {

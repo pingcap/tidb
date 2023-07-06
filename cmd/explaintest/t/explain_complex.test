@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 CREATE TABLE `dt` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT ,
   `aid` varchar(32) NOT NULL,
@@ -173,4 +174,22 @@ CREATE TABLE org_position (
   UNIQUE KEY org_employee_position_pk (hotel_id,user_id,position_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+set tidb_cost_model_version=2;
 explain format = 'brief' SELECT d.id, d.ctx, d.name, d.left_value, d.right_value, d.depth, d.leader_id, d.status, d.created_on, d.updated_on FROM org_department AS d LEFT JOIN org_position AS p ON p.department_id = d.id AND p.status = 1000 LEFT JOIN org_employee_position AS ep ON ep.position_id = p.id AND ep.status = 1000 WHERE (d.ctx = 1 AND (ep.user_id = 62 OR d.id = 20 OR d.id = 20) AND d.status = 1000) GROUP BY d.id ORDER BY d.left_value;
+set tidb_cost_model_version=1;
+
+create table test.Tab_A (id int primary key,bid int,cid int,name varchar(20),type varchar(20),num int,amt decimal(11,2));
+create table test.Tab_B (id int primary key,name varchar(20));
+create table test.Tab_C (id int primary key,name varchar(20),amt decimal(11,2));
+
+insert into test.Tab_A values(2,2,2,'A01','01',112,111);
+insert into test.Tab_A values(4,4,4,'A02','02',112,111);
+insert into test.Tab_B values(2,'B01');
+insert into test.Tab_B values(4,'B02');
+insert into test.Tab_C values(2,'C01',22);
+insert into test.Tab_C values(4,'C01',5);
+
+explain select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
+
+select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
+

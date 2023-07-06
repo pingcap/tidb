@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -310,11 +309,11 @@ func (p *mockBuiltinDouble) vecEvalJSON(input *chunk.Chunk, result *chunk.Column
 	result.ReserveString(input.NumRows())
 	for i := 0; i < input.NumRows(); i++ {
 		j := buf.GetJSON(i)
-		path, err := json.ParseJSONPathExpr("$.key")
+		path, err := types.ParseJSONPathExpr("$.key")
 		if err != nil {
 			return err
 		}
-		ret, ok := j.Extract([]json.PathExpression{path})
+		ret, ok := j.Extract([]types.JSONPathExpression{path})
 		if !ok {
 			return errors.Errorf("path not found")
 		}
@@ -385,24 +384,24 @@ func (p *mockBuiltinDouble) evalDuration(row chunk.Row) (types.Duration, bool, e
 	return v, isNull, err
 }
 
-func (p *mockBuiltinDouble) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
+func (p *mockBuiltinDouble) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
 	j, isNull, err := p.args[0].EvalJSON(p.ctx, row)
 	if err != nil {
-		return json.BinaryJSON{}, false, err
+		return types.BinaryJSON{}, false, err
 	}
 	if isNull {
-		return json.BinaryJSON{}, true, nil
+		return types.BinaryJSON{}, true, nil
 	}
-	path, err := json.ParseJSONPathExpr("$.key")
+	path, err := types.ParseJSONPathExpr("$.key")
 	if err != nil {
-		return json.BinaryJSON{}, false, err
+		return types.BinaryJSON{}, false, err
 	}
-	ret, ok := j.Extract([]json.PathExpression{path})
+	ret, ok := j.Extract([]types.JSONPathExpression{path})
 	if !ok {
-		return json.BinaryJSON{}, true, err
+		return types.BinaryJSON{}, true, err
 	}
 	if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, 2*ret.GetInt64()))); err != nil {
-		return json.BinaryJSON{}, false, err
+		return types.BinaryJSON{}, false, err
 	}
 	return j, false, nil
 }
@@ -455,7 +454,7 @@ func genMockRowDouble(eType types.EvalType, enableVec bool) (builtinFunc, *chunk
 		case types.ETDuration:
 			input.AppendDuration(0, types.Duration{Duration: time.Duration(i)})
 		case types.ETJson:
-			j := new(json.BinaryJSON)
+			j := new(types.BinaryJSON)
 			if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, i))); err != nil {
 				return nil, nil, nil, err
 			}
@@ -519,9 +518,9 @@ func checkVecEval(t *testing.T, eType types.EvalType, sel []int, result *chunk.C
 		}
 	case types.ETJson:
 		for i, j := range sel {
-			path, err := json.ParseJSONPathExpr("$.key")
+			path, err := types.ParseJSONPathExpr("$.key")
 			require.NoError(t, err)
-			ret, ok := result.GetJSON(i).Extract([]json.PathExpression{path})
+			ret, ok := result.GetJSON(i).Extract([]types.JSONPathExpression{path})
 			require.True(t, ok)
 			require.Equal(t, int64(j*2), ret.GetInt64())
 		}

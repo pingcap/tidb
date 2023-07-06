@@ -255,7 +255,8 @@ type PDInfoProvider interface {
 
 // MaybeQPS get a number like the QPS of last seconds for each store via the prometheus interface.
 // TODO: this is a temporary solution(aha, like in a Hackthon),
-//       we MUST find a better way for providing this information.
+//
+//	we MUST find a better way for providing this information.
 func MaybeQPS(ctx context.Context, mgr PDInfoProvider) (float64, error) {
 	c := mgr.GetPDClient()
 	prefix := "http://"
@@ -302,7 +303,9 @@ func MaybeQPS(ctx context.Context, mgr PDInfoProvider) (float64, error) {
 			return errors.Annotatef(err, "failed to get count from %s", statusAddr)
 		}
 		elapsed := float64(time.Since(start)) / float64(time.Second)
-		log.Info("calc qps", zap.Uint64("diff", c1-c0), zap.Float64("elapsed", elapsed), zap.Uint64("c0", c0), zap.Uint64("c1", c1))
+		log.Info("calc qps",
+			zap.Uint64("diff", c1-c0), zap.Float64("elapsed", elapsed),
+			zap.Uint64("c0", c0), zap.Uint64("c1", c1))
 
 		qpsMap.Store(s.GetId(), float64(c1-c0)/elapsed)
 		return nil

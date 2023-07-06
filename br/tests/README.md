@@ -62,7 +62,7 @@ This folder contains all tests which relies on external processes such as TiDB.
     `/tmp/backup_restore_test`. All test artifacts will be written into this folder.
 
 If you have docker installed, you can skip step 1 and step 2 by running
-`tests/up.sh --pull-images` to build and run a testing Docker container.
+`br/tests/up.sh --pull-images` (in `tidb` directory) to build and run a testing Docker container.
 
 ## Running
 
@@ -87,8 +87,10 @@ After executing the tests, run `make br_coverage` to get a coverage report at
 
 ## Writing new tests
 
-New integration tests can be written as shell scripts in `tests/TEST_NAME/run.sh`.
+1. New integration tests can be written as shell scripts in `tests/TEST_NAME/run.sh`.
 The script should exit with a nonzero error code on failure.
+2. Add TEST_NAME to existing group in [run_group.sh](./run_group.sh)(Recommended), or add a new group for it.
+3. If you add a new group, the name of the new group must be added to CI [br-integration-test](https://github.com/PingCAP-QE/ci/blob/main/pipelines/pingcap/tidb/latest/pull_br_integration_test.groovy).
 
 Several convenient commands are provided:
 

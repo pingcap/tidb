@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util/metricsutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
@@ -25,12 +26,25 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		return errors.Trace(err)
 	}
 
+	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName); err != nil {
+		return errors.Trace(err)
+	}
+
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {
 		var store *appdash.MemoryStore
 		ctx, store = trace.TracerStartSpan(ctx)
 		defer trace.TracerFinishSpan(ctx, store)
 	}
+
+	if cfg.FullBackupType == task.FullBackupTypeEBS {
+		if err := task.RunBackupEBS(ctx, tidbGlue, &cfg); err != nil {
+			log.Error("failed to backup", zap.Error(err))
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
 	if cfg.IgnoreStats {
 		// Do not run stat worker in BR.
 		session.DisableStats4Test()
@@ -63,6 +77,26 @@ func runBackupRawCommand(command *cobra.Command, cmdName string) error {
 	return nil
 }
 
+func runBackupTxnCommand(command *cobra.Command, cmdName string) error {
+	cfg := task.TxnKvConfig{Config: task.Config{LogProgress: HasLogFile()}}
+	if err := cfg.ParseBackupConfigFromFlags(command.Flags()); err != nil {
+		command.SilenceUsage = false
+		return errors.Trace(err)
+	}
+
+	ctx := GetDefaultContext()
+	if cfg.EnableOpenTracing {
+		var store *appdash.MemoryStore
+		ctx, store = trace.TracerStartSpan(ctx)
+		defer trace.TracerFinishSpan(ctx, store)
+	}
+	if err := task.RunBackupTxn(ctx, gluetikv.Glue{}, cmdName, &cfg); err != nil {
+		log.Error("failed to backup txn kv", zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // NewBackupCommand return a full backup subcommand.
 func NewBackupCommand() *cobra.Command {
 	command := &cobra.Command{
@@ -89,6 +123,7 @@ func NewBackupCommand() *cobra.Command {
 		newDBBackupCommand(),
 		newTableBackupCommand(),
 		newRawBackupCommand(),
+		newTxnBackupCommand(),
 	)
 
 	task.DefineBackupFlags(command.PersistentFlags())
@@ -109,6 +144,7 @@ func newFullBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, acceptAllTables, false)
+	task.DefineBackupEBSFlags(command.PersistentFlags())
 	return command
 }
 
@@ -153,5 +189,20 @@ func newRawBackupCommand() *cobra.Command {
 	}
 
 	task.DefineRawBackupFlags(command)
+	return command
+}
+
+// newTxnBackupCommand return a txn kv range backup subcommand.
+func newTxnBackupCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "txn",
+		Short: "(experimental) backup a txn kv range from TiKV cluster",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return runBackupTxnCommand(command, task.TxnBackupCmd)
+		},
+	}
+
+	task.DefineTxnBackupFlags(command)
 	return command
 }

@@ -50,11 +50,13 @@ type baseCollector struct {
 
 // ReservoirRowSampleCollector collects the samples from the source and organize the samples by row.
 // It will maintain the following things:
-//   Row samples.
-//   FM sketches(To calculate the NDV).
-//   Null counts.
-//   The data sizes.
-//   The number of rows.
+//
+//	Row samples.
+//	FM sketches(To calculate the NDV).
+//	Null counts.
+//	The data sizes.
+//	The number of rows.
+//
 // It uses weighted reservoir sampling(A-Res) to do the sampling.
 type ReservoirRowSampleCollector struct {
 	*baseCollector
@@ -170,7 +172,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 			return nil, err
 		}
 		if chk.NumRows() == 0 {
-			return collector, nil
+			break
 		}
 		collector.Base().Count += int64(chk.NumRows())
 		for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -210,6 +212,20 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 			collector.sampleRow(newCols, s.Rng)
 		}
 	}
+	for i, group := range s.ColGroups {
+		if len(group) != 1 {
+			continue
+		}
+		// For the single-column group, its FMSketch is the same as that of the corresponding column. Hence, we don't
+		// maintain its FMSketch in collectColumnGroups. We just copy the corresponding column's FMSketch after
+		// iterating all rows. Also, we can directly copy TotalSize and NullCount.
+		colIdx := group[0]
+		colGroupIdx := len(s.ColsFieldType) + i
+		collector.Base().FMSketches[colGroupIdx] = collector.Base().FMSketches[colIdx].Copy()
+		collector.Base().NullCount[colGroupIdx] = collector.Base().NullCount[colIdx]
+		collector.Base().TotalSizes[colGroupIdx] = collector.Base().TotalSizes[colIdx]
+	}
+	return collector, nil
 }
 
 func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64) error {
@@ -232,17 +248,19 @@ func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols [
 	colLen := len(cols)
 	datumBuffer := make([]types.Datum, 0, len(cols))
 	for i, group := range colGroups {
+		if len(group) == 1 {
+			// For the single-column group, its FMSketch is the same as that of the corresponding column. Hence, we
+			// don't need to maintain its FMSketch. We just copy the corresponding column's FMSketch after iterating
+			// all rows. Also, we can directly copy TotalSize and NullCount.
+			continue
+		}
+		// We don't maintain the null counts information for the multi-column group.
 		datumBuffer = datumBuffer[:0]
-		hasNull := true
 		for _, c := range group {
 			datumBuffer = append(datumBuffer, cols[c])
-			hasNull = hasNull && cols[c].IsNull()
-			s.TotalSizes[colLen+i] += sizes[c] - 1
-		}
-		// We don't maintain the null counts information for the multi-column group
-		if hasNull && len(group) == 1 {
-			s.NullCount[colLen+i]++
-			continue
+			if !cols[c].IsNull() {
+				s.TotalSizes[colLen+i] += sizes[c] - 1
+			}
 		}
 		err := s.FMSketches[colLen+i].InsertRowValue(sc, datumBuffer)
 		if err != nil {
@@ -397,11 +415,13 @@ func RowSamplesToProto(samples WeightedRowSampleHeap) []*tipb.RowSample {
 
 // BernoulliRowSampleCollector collects the samples from the source and organize the sample by row.
 // It will maintain the following things:
-//   Row samples.
-//   FM sketches(To calculate the NDV).
-//   Null counts.
-//   The data sizes.
-//   The number of rows.
+//
+//	Row samples.
+//	FM sketches(To calculate the NDV).
+//	Null counts.
+//	The data sizes.
+//	The number of rows.
+//
 // It uses the bernoulli sampling to collect the data.
 type BernoulliRowSampleCollector struct {
 	*baseCollector

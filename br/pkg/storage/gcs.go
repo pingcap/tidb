@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -90,24 +91,36 @@ func (options *GCSBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	return nil
 }
 
-type gcsStorage struct {
+// GCSStorage defines some standard operations for BR/Lightning on the GCS storage.
+// It implements the `ExternalStorage` interface.
+type GCSStorage struct {
 	gcs    *backuppb.GCS
 	bucket *storage.BucketHandle
 }
 
+// GetBucketHandle gets the handle to the GCS API on the bucket.
+func (s *GCSStorage) GetBucketHandle() *storage.BucketHandle {
+	return s.bucket
+}
+
+// GetOptions gets the external storage operations for the GCS.
+func (s *GCSStorage) GetOptions() *backuppb.GCS {
+	return s.gcs
+}
+
 // DeleteFile delete the file in storage
-func (s *gcsStorage) DeleteFile(ctx context.Context, name string) error {
+func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 	object := s.objectName(name)
 	err := s.bucket.Object(object).Delete(ctx)
 	return errors.Trace(err)
 }
 
-func (s *gcsStorage) objectName(name string) string {
+func (s *GCSStorage) objectName(name string) string {
 	return path.Join(s.gcs.Prefix, name)
 }
 
 // WriteFile writes data to a file to storage.
-func (s *gcsStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+func (s *GCSStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	object := s.objectName(name)
 	wc := s.bucket.Object(object).NewWriter(ctx)
 	wc.StorageClass = s.gcs.StorageClass
@@ -120,7 +133,7 @@ func (s *gcsStorage) WriteFile(ctx context.Context, name string, data []byte) er
 }
 
 // ReadFile reads the file from the storage and returns the contents.
-func (s *gcsStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+func (s *GCSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
 	object := s.objectName(name)
 	rc, err := s.bucket.Object(object).NewReader(ctx)
 	if err != nil {
@@ -143,7 +156,7 @@ func (s *gcsStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 }
 
 // FileExists return true if file exists.
-func (s *gcsStorage) FileExists(ctx context.Context, name string) (bool, error) {
+func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, error) {
 	object := s.objectName(name)
 	_, err := s.bucket.Object(object).Attrs(ctx)
 	if err != nil {
@@ -156,14 +169,19 @@ func (s *gcsStorage) FileExists(ctx context.Context, name string) (bool, error) 
 }
 
 // Open a Reader by file path.
-func (s *gcsStorage) Open(ctx context.Context, path string) (ExternalFileReader, error) {
+func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader, error) {
 	object := s.objectName(path)
 	handle := s.bucket.Object(object)
 
-	rc, err := handle.NewRangeReader(ctx, 0, -1)
+	attrs, err := handle.Attrs(ctx)
 	if err != nil {
+		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
+			return nil, errors.Annotatef(err,
+				"the object doesn't exist, file info: input.bucket='%s', input.key='%s'",
+				s.gcs.Bucket, path)
+		}
 		return nil, errors.Annotatef(err,
-			"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
+			"failed to get gcs file attribute, file info: input.bucket='%s', input.key='%s'",
 			s.gcs.Bucket, path)
 	}
 
@@ -171,8 +189,9 @@ func (s *gcsStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 		storage:   s,
 		name:      path,
 		objHandle: handle,
-		reader:    rc,
+		reader:    nil, // lazy create
 		ctx:       ctx,
+		totalSize: attrs.Size,
 	}, nil
 }
 
@@ -182,17 +201,18 @@ func (s *gcsStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 // The first argument is the file path that can be used in `Open`
 // function; the second argument is the size in byte of the file determined
 // by path.
-func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
 	if opt == nil {
 		opt = &WalkOption{}
-	}
-	if len(opt.ObjPrefix) != 0 {
-		return errors.New("gcs storage not support ObjPrefix for now")
 	}
 	prefix := path.Join(s.gcs.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
+	if len(opt.ObjPrefix) != 0 {
+		prefix += opt.ObjPrefix
+	}
+
 	query := &storage.Query{Prefix: prefix}
 	// only need each object's name and size
 	err := query.SetAttrSelection([]string{"Name", "Size"})
@@ -221,12 +241,12 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	return nil
 }
 
-func (s *gcsStorage) URI() string {
+func (s *GCSStorage) URI() string {
 	return "gcs://" + s.gcs.Bucket + "/" + s.gcs.Prefix
 }
 
 // Create implements ExternalStorage interface.
-func (s *gcsStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (s *GCSStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
 	object := s.objectName(name)
 	wc := s.bucket.Object(object).NewWriter(ctx)
 	wc.StorageClass = s.gcs.StorageClass
@@ -235,7 +255,7 @@ func (s *gcsStorage) Create(ctx context.Context, name string) (ExternalFileWrite
 }
 
 // Rename file name from oldFileName to newFileName.
-func (s *gcsStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	data, err := s.ReadFile(ctx, oldFileName)
 	if err != nil {
 		return errors.Trace(err)
@@ -247,7 +267,8 @@ func (s *gcsStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	return s.DeleteFile(ctx, oldFileName)
 }
 
-func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*gcsStorage, error) {
+// NewGCSStorage creates a GCS external storage implementation.
+func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*GCSStorage, error) {
 	var clientOps []option.ClientOption
 	if opts.NoCredentials {
 		clientOps = append(clientOps, option.WithoutAuthentication())
@@ -301,7 +322,7 @@ func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		// so we need find sst in slash directory
 		gcs.Prefix += "//"
 	}
-	return &gcsStorage{gcs: gcs, bucket: bucket}, nil
+	return &GCSStorage{gcs: gcs, bucket: bucket}, nil
 }
 
 func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {
@@ -327,11 +348,12 @@ func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix strin
 
 // gcsObjectReader wrap storage.Reader and add the `Seek` method.
 type gcsObjectReader struct {
-	storage   *gcsStorage
+	storage   *GCSStorage
 	name      string
 	objHandle *storage.ObjectHandle
 	reader    io.ReadCloser
 	pos       int64
+	totalSize int64
 	// reader context used for implement `io.Seek`
 	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
 	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
@@ -369,31 +391,35 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 	var realOffset int64
 	switch whence {
 	case io.SeekStart:
-		if offset < 0 {
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range.", offset)
-		}
 		realOffset = offset
 	case io.SeekCurrent:
 		realOffset = r.pos + offset
-		if r.pos < 0 && realOffset >= 0 {
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'.", offset, r.pos)
-		}
 	case io.SeekEnd:
-		if offset >= 0 {
+		if offset > 0 {
 			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
 		}
-		// GCS supports `NewRangeReader(ctx, -10, -1)`, which means read the last 10 bytes.
-		realOffset = offset
+		realOffset = offset + r.totalSize
 	default:
 		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
+	}
+
+	if realOffset < 0 {
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'. total size is '%v'", offset, r.pos, r.totalSize)
 	}
 
 	if realOffset == r.pos {
 		return realOffset, nil
 	}
 
-	_ = r.reader.Close()
+	if r.reader != nil {
+		_ = r.reader.Close()
+		r.reader = nil
+	}
 	r.pos = realOffset
+	if realOffset >= r.totalSize {
+		r.reader = io.NopCloser(bytes.NewReader(nil))
+		return realOffset, nil
+	}
 	rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, -1)
 	if err != nil {
 		return 0, errors.Annotatef(err,

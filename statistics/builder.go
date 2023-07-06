@@ -405,7 +405,8 @@ func BuildHistAndTopN(
 }
 
 // pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.
-//   We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
+//
+//	We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
 func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []TopNMeta {
 	// If the sampleRows holds all rows, or NDV of samples equals to actual NDV, we just return the TopN directly.
 	if sampleRows == totalRows || totalRows <= 1 || int64(len(topns)) >= ndv {
@@ -432,12 +433,12 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 		if otherNDV > 1 {
 			selectivity /= otherNDV
 		}
-		N := float64(totalRows)
+		totalRowsN := float64(totalRows)
 		n := float64(sampleRows)
-		K := N * float64(topns[topNNum-1].Count) / n
+		k := totalRowsN * float64(topns[topNNum-1].Count) / n
 		// Since we are sampling without replacement. The distribution would be a hypergeometric distribution.
 		// Thus the variance is the following formula.
-		variance := n * K * (N - K) * (N - n) / (N * N * (N - 1))
+		variance := n * k * (totalRowsN - k) * (totalRowsN - n) / (totalRowsN * totalRowsN * (totalRowsN - 1))
 		stddev := math.Sqrt(variance)
 		// We choose the bound that plus two stddev of the sample frequency, plus an additional 0.5 for the continuity correction.
 		//   Note:

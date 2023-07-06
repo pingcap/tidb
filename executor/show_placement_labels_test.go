@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,7 +51,7 @@ func TestShowPlacementLabelsBuilder(t *testing.T) {
 	}
 
 	b := &showPlacementLabelsResultBuilder{}
-	toBinaryJSON := func(obj interface{}) (bj json.BinaryJSON) {
+	toBinaryJSON := func(obj interface{}) (bj types.BinaryJSON) {
 		d, err := gjson.Marshal(obj)
 		require.NoError(t, err)
 		err = bj.UnmarshalJSON(d)
@@ -74,8 +74,8 @@ func TestShowPlacementLabelsBuilder(t *testing.T) {
 			bj := toBinaryJSON(expect[1])
 
 			require.Equal(t, expect[0].(string), row[0].(string))
-			require.Equal(t, bj.TypeCode, row[1].(json.BinaryJSON).TypeCode)
-			require.Equal(t, bj.Value, row[1].(json.BinaryJSON).Value)
+			require.Equal(t, bj.TypeCode, row[1].(types.BinaryJSON).TypeCode)
+			require.Equal(t, bj.Value, row[1].(types.BinaryJSON).Value)
 		}
 	}
 }

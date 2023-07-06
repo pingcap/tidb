@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"time"
 
@@ -27,9 +28,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
@@ -38,16 +42,32 @@ const (
 	loadDeleteRangeSQL           = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%n WHERE ts < %?`
 	recordDoneDeletedRangeSQL    = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
 	completeDeleteRangeSQL       = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
-	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id in (` // + idList + ")"
+	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %?`
 	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
 	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
 	loadGlobalVars               = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
+	// KeyOpDefaultTimeout is the default timeout for each key operation.
+	KeyOpDefaultTimeout = 2 * time.Second
+	// KeyOpRetryInterval is the interval between two key operations.
+	KeyOpRetryInterval = 30 * time.Millisecond
+	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
+	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
+	// DDLAllSchemaVersionsByJob is the path on etcd that is used to store all servers current schema versions.
+	DDLAllSchemaVersionsByJob = "/tidb/ddl/all_schema_by_job_versions"
+	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
+	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
+	// ServerGlobalState is the path on etcd that is used to store the server global state.
+	ServerGlobalState = "/tidb/server/global_state"
+	// SessionTTL is the etcd session's TTL in seconds.
+	SessionTTL = 90
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
 type DelRangeTask struct {
-	JobID, ElementID int64
-	StartKey, EndKey kv.Key
+	StartKey  kv.Key
+	EndKey    kv.Key
+	JobID     int64
+	ElementID int64
 }
 
 // Range returns the range [start, end) to delete.
@@ -106,16 +126,19 @@ func loadDeleteRangesFromTable(ctx context.Context, sctx sessionctx.Context, tab
 }
 
 // CompleteDeleteRange moves a record from gc_delete_range table to gc_delete_range_done table.
-func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask) error {
+func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask, needToRecordDone bool) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
 	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
-	if err != nil {
-		return errors.Trace(err)
+	if needToRecordDone {
+		_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	err = RemoveFromGCDeleteRange(sctx, dr.JobID, dr.ElementID)
@@ -134,20 +157,8 @@ func RemoveFromGCDeleteRange(sctx sessionctx.Context, jobID, elementID int64) er
 }
 
 // RemoveMultiFromGCDeleteRange is exported for ddl pkg to use.
-func RemoveMultiFromGCDeleteRange(ctx context.Context, sctx sessionctx.Context, jobID int64, elementIDs []int64) error {
-	var buf strings.Builder
-	buf.WriteString(completeDeleteMultiRangesSQL)
-	paramIDs := make([]interface{}, 0, 1+len(elementIDs))
-	paramIDs = append(paramIDs, jobID)
-	for i, elementID := range elementIDs {
-		if i > 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString("%?")
-		paramIDs = append(paramIDs, elementID)
-	}
-	buf.WriteString(")")
-	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, buf.String(), paramIDs...)
+func RemoveMultiFromGCDeleteRange(ctx context.Context, sctx sessionctx.Context, jobID int64) error {
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, completeDeleteMultiRangesSQL, jobID)
 	return errors.Trace(err)
 }
 
@@ -255,4 +266,62 @@ func GetInternalResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 // IsInternalResourceGroupTaggerForTopSQL use for testing.
 func IsInternalResourceGroupTaggerForTopSQL(tag []byte) bool {
 	return bytes.Equal(tag, internalResourceGroupTag)
+}
+
+// DeleteKeyFromEtcd deletes key value from etcd.
+func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeout time.Duration) error {
+	var err error
+	ctx := context.Background()
+	for i := 0; i < retryCnt; i++ {
+		childCtx, cancel := context.WithTimeout(ctx, timeout)
+		_, err = etcdCli.Delete(childCtx, key)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		logutil.BgLogger().Warn("etcd-cli delete key failed", zap.String("category", "ddl"), zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
+	}
+	return errors.Trace(err)
+}
+
+// PutKVToEtcd puts key value to etcd.
+// etcdCli is client of etcd.
+// retryCnt is retry time when an error occurs.
+// opts are configures of etcd Operations.
+func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
+	opts ...clientv3.OpOption) error {
+	var err error
+	for i := 0; i < retryCnt; i++ {
+		if IsContextDone(ctx) {
+			return errors.Trace(ctx.Err())
+		}
+
+		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
+		_, err = etcdCli.Put(childCtx, key, val, opts...)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		logutil.BgLogger().Warn("etcd-cli put kv failed", zap.String("category", "ddl"), zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+		time.Sleep(KeyOpRetryInterval)
+	}
+	return errors.Trace(err)
+}
+
+// IsContextDone checks if context is done.
+func IsContextDone(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+	}
+	return false
+}
+
+// WrapKey2String wraps the key to a string.
+func WrapKey2String(key []byte) string {
+	if len(key) == 0 {
+		return "''"
+	}
+	return fmt.Sprintf("0x%x", key)
 }

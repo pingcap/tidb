@@ -159,10 +159,8 @@ type certInfo struct {
 	expireTime time.Time
 }
 
-// We cannot guarantee that the cert and key paths are set at the same time because they are set through system variables.
 func (sc *signingCert) setCertPath(certPath string) {
 	sc.Lock()
-	// Just in case of repeatedly loading global variables, we check the path to avoid useless loading.
 	if certPath != sc.certPath {
 		sc.certPath = certPath
 		// It may fail expectedly because the key path is not set yet.

@@ -31,9 +31,6 @@ type ActionOnExceed interface {
 	// Action will be called when memory usage exceeds memory quota by the
 	// corresponding Tracker.
 	Action(t *Tracker)
-	// SetLogHook binds a log hook which will be triggered and log an detailed
-	// message for the out-of-memory sql.
-	SetLogHook(hook func(uint64))
 	// SetFallback sets a fallback action which will be triggered if itself has
 	// already been triggered.
 	SetFallback(a ActionOnExceed)
@@ -45,6 +42,40 @@ type ActionOnExceed interface {
 	SetFinished()
 	// IsFinished returns the finished state of the Action.
 	IsFinished() bool
+}
+
+var _ ActionOnExceed = &actionWithPriority{}
+
+type actionWithPriority struct {
+	ActionOnExceed
+	priority int64
+}
+
+// NewActionWithPriority wraps the action with a new priority
+func NewActionWithPriority(action ActionOnExceed, priority int64) *actionWithPriority {
+	return &actionWithPriority{
+		action,
+		priority,
+	}
+}
+
+func (a *actionWithPriority) GetPriority() int64 {
+	return a.priority
+}
+
+// ActionInvoker indicates the invoker of the Action.
+type ActionInvoker byte
+
+const (
+	// SingleQuery indicates the Action is invoked by a tidb_mem_quota_query.
+	SingleQuery ActionInvoker = iota
+	// Instance indicates the Action is invoked by a tidb_server_memory_limit.
+	Instance
+)
+
+// ActionCareInvoker is the interface for the Actions which need to be aware of the invoker.
+type ActionCareInvoker interface {
+	SetInvoker(invoker ActionInvoker)
 }
 
 // BaseOOMAction manages the fallback action for all Action.
@@ -82,16 +113,19 @@ const (
 	DefPanicPriority = iota
 	DefLogPriority
 	DefSpillPriority
+	// DefCursorFetchSpillPriority is higher than normal disk spill, because it can release much more memory in the future.
+	// And the performance impaction of it is less than other disk-spill action, because it's write-only in execution stage.
+	DefCursorFetchSpillPriority
 	DefRateLimitPriority
 )
 
 // LogOnExceed logs a warning only once when memory usage exceeds memory quota.
 type LogOnExceed struct {
-	BaseOOMAction
-	mutex   sync.Mutex // For synchronization.
-	acted   bool
-	ConnID  uint64
 	logHook func(uint64)
+	BaseOOMAction
+	ConnID uint64
+	mutex  sync.Mutex // For synchronization.
+	acted  bool
 }
 
 // SetLogHook sets a hook for LogOnExceed.
@@ -121,11 +155,12 @@ func (*LogOnExceed) GetPriority() int64 {
 
 // PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
+	logHook func(uint64)
 	BaseOOMAction
+	ConnID  uint64
 	mutex   sync.Mutex // For synchronization.
 	acted   bool
-	ConnID  uint64
-	logHook func(uint64)
+	invoker ActionInvoker
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
@@ -134,18 +169,24 @@ func (a *PanicOnExceed) SetLogHook(hook func(uint64)) {
 }
 
 // Action panics when memory usage exceeds memory quota.
-func (a *PanicOnExceed) Action(_ *Tracker) {
+func (a *PanicOnExceed) Action(t *Tracker) {
 	a.mutex.Lock()
-	if a.acted {
+	defer func() {
 		a.mutex.Unlock()
-		return
+	}()
+	if !a.acted {
+		if a.logHook == nil {
+			logutil.BgLogger().Warn("memory exceeds quota",
+				zap.Uint64("conn", t.SessionID.Load()), zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
+		} else {
+			a.logHook(a.ConnID)
+		}
 	}
 	a.acted = true
-	a.mutex.Unlock()
-	if a.logHook != nil {
-		a.logHook(a.ConnID)
+	if a.invoker == SingleQuery {
+		panic(PanicMemoryExceedWarnMsg + WarnMsgSuffixForSingleQuery + fmt.Sprintf("[conn=%d]", a.ConnID))
 	}
-	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
+	panic(PanicMemoryExceedWarnMsg + WarnMsgSuffixForInstance + fmt.Sprintf("[conn=%d]", a.ConnID))
 }
 
 // GetPriority get the priority of the Action
@@ -153,11 +194,20 @@ func (*PanicOnExceed) GetPriority() int64 {
 	return DefPanicPriority
 }
 
+// SetInvoker sets the invoker of the Action.
+func (a *PanicOnExceed) SetInvoker(invoker ActionInvoker) {
+	a.invoker = invoker
+}
+
 var (
 	errMemExceedThreshold = dbterror.ClassUtil.NewStd(errno.ErrMemExceedThreshold)
 )
 
 const (
-	// PanicMemoryExceed represents the panic message when out of memory quota.
-	PanicMemoryExceed string = "Out Of Memory Quota!"
+	// PanicMemoryExceedWarnMsg represents the panic message when out of memory quota.
+	PanicMemoryExceedWarnMsg string = "Your query has been cancelled due to exceeding the allowed memory limit"
+	// WarnMsgSuffixForSingleQuery represents the suffix of the warning message when out of memory quota for a single query.
+	WarnMsgSuffixForSingleQuery string = " for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again."
+	// WarnMsgSuffixForInstance represents the suffix of the warning message when out of memory quota for the tidb-server instance.
+	WarnMsgSuffixForInstance string = " for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."
 )

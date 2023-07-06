@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 # prepare database
 create database collation_point_get;
 use collation_point_get;

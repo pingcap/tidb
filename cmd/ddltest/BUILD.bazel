@@ -11,6 +11,8 @@ go_test(
         "random_test.go",
     ],
     flaky = True,
+    race = "on",
+    shard_count = 6,
     deps = [
         "//config",
         "//domain",

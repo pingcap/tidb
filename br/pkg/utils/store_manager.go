@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -96,6 +97,10 @@ type StoreManager struct {
 	tlsConf   *tls.Config
 }
 
+func (mgr *StoreManager) GetKeepalive() keepalive.ClientParameters {
+	return mgr.keepalive
+}
+
 // NewStoreManager create a new manager for gRPC connections to stores.
 func NewStoreManager(pdCli pd.Client, kl keepalive.ClientParameters, tlsConf *tls.Config) *StoreManager {
 	return &StoreManager{
@@ -132,7 +137,7 @@ func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if mgr.tlsConf != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(mgr.tlsConf))
 	}

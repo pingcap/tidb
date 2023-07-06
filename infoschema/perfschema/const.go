@@ -17,6 +17,7 @@ package perfschema
 // perfSchemaTables is a shortcut to involve all table names.
 var perfSchemaTables = []string{
 	tableGlobalStatus,
+	tableSessionConnectAttrs,
 	tableSessionStatus,
 	tableSetupActors,
 	tableSetupObjects,
@@ -284,7 +285,6 @@ const tableTransCurrent = "CREATE TABLE if not exists performance_schema." + tab
 	"NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));"
 
 // tableTransHistory contains the column name definitions for table events_transactions_history, same as MySQL.
-//
 const tableTransHistory = "CREATE TABLE if not exists performance_schema." + tableNameEventsTransactionsHistory + " (" +
 	"THREAD_ID		BIGINT(20) UNSIGNED NOT NULL," +
 	"EVENT_ID		BIGINT(20) UNSIGNED NOT NULL," +
@@ -550,3 +550,10 @@ const tablePDProfileGoroutines = "CREATE TABLE IF NOT EXISTS " + tableNamePDProf
 const tableSessionVariables = "CREATE TABLE IF NOT EXISTS " + tableNameSessionVariables + " (" +
 	"VARIABLE_NAME VARCHAR(64) NOT NULL," +
 	"VARIABLE_VALUE VARCHAR(1024) NOT NULL);"
+
+// tableSessionConnectAttrs contains the column name definitions for the table session_connect_attrs
+const tableSessionConnectAttrs = "CREATE TABLE IF NOT EXISTS " + tableNameSessionConnectAttrs + " (" +
+	"PROCESSLIST_ID bigint unsigned NOT NULL," +
+	"ATTR_NAME varchar(32) COLLATE utf8mb4_bin NOT NULL," +
+	"ATTR_VALUE varchar(1024) COLLATE utf8mb4_bin DEFAULT NULL," +
+	"ORDINAL_POSITION int DEFAULT NULL);"

@@ -21,15 +21,20 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -39,6 +44,11 @@ import (
 
 // topNThreshold is the minimum ratio of the number of topn elements in CMSketch, 10 means 1 / 10 = 10%.
 const topNThreshold = uint64(10)
+
+var (
+	// ErrQueryInterrupted indicates interrupted
+	ErrQueryInterrupted = dbterror.ClassExecutor.NewStd(mysql.ErrQueryInterrupted)
+)
 
 // CMSketch is used to estimate point queries.
 // Refer: https://en.wikipedia.org/wiki/Count-min_sketch
@@ -90,6 +100,18 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		}
 	}
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].cnt > sorted[j].cnt })
+
+	failpoint.Inject("StabilizeV1AnalyzeTopN", func(val failpoint.Value) {
+		if val.(bool) {
+			// The earlier TopN entry will modify the CMSketch, therefore influence later TopN entry's row count.
+			// So we need to make the order here fully deterministic to make the stats from analyze ver1 stable.
+			// See (*SampleCollector).ExtractTopN(), which calls this function, for details
+			sort.SliceStable(sorted, func(i, j int) bool {
+				return sorted[i].cnt > sorted[j].cnt ||
+					(sorted[i].cnt == sorted[j].cnt && string(sorted[i].data) < string(sorted[j].data))
+			})
+		}
+	})
 
 	var (
 		sumTopN   uint64
@@ -197,7 +219,7 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 
 func updateValueBytes(c *CMSketch, t *TopN, d []byte, count uint64) {
 	h1, h2 := murmur3.Sum128(d)
-	if oriCount, ok := t.QueryTopN(d); ok {
+	if oriCount, ok := t.QueryTopN(nil, d); ok {
 		if count > oriCount {
 			t.updateTopNWithDelta(d, count-oriCount, true)
 		} else {
@@ -209,7 +231,7 @@ func updateValueBytes(c *CMSketch, t *TopN, d []byte, count uint64) {
 
 // setValue sets the count for value that hashed into (h1, h2), and update defaultValue if necessary.
 func (c *CMSketch) setValue(h1, h2 uint64, count uint64) {
-	oriCount := c.queryHashValue(h1, h2)
+	oriCount := c.queryHashValue(nil, h1, h2)
 	if c.considerDefVal(oriCount) {
 		// We should update c.defaultValue if we used c.defaultValue when getting the estimate count.
 		// This should make estimation better, remove this line if it does not work as expected.
@@ -238,16 +260,20 @@ func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 	}
 }
 
-func queryValue(sc *stmtctx.StatementContext, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
+func queryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
+	var sc *stmtctx.StatementContext
+	if sctx != nil {
+		sc = sctx.GetSessionVars().StmtCtx
+	}
 	bytes, err := tablecodec.EncodeValue(sc, nil, val)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	h1, h2 := murmur3.Sum128(bytes)
-	if ret, ok := t.QueryTopN(bytes); ok {
+	if ret, ok := t.QueryTopN(sctx, bytes); ok {
 		return ret, nil
 	}
-	return c.queryHashValue(h1, h2), nil
+	return c.queryHashValue(sctx, h1, h2), nil
 }
 
 // QueryBytes is used to query the count of specified bytes.
@@ -256,17 +282,33 @@ func (c *CMSketch) QueryBytes(d []byte) uint64 {
 		failpoint.Return(uint64(val.(int)))
 	})
 	h1, h2 := murmur3.Sum128(d)
-	return c.queryHashValue(h1, h2)
+	return c.queryHashValue(nil, h1, h2)
 }
 
-func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func (c *CMSketch) queryHashValue(sctx sessionctx.Context, h1, h2 uint64) (result uint64) {
 	vals := make([]uint32, c.depth)
+	originVals := make([]uint32, c.depth)
 	min := uint32(math.MaxUint32)
+	useDefaultValue := false
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx,
+				"Origin Values", originVals,
+				"Values", vals,
+				"Use default value", useDefaultValue,
+				"Result", result,
+			)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	// We want that when res is 0 before the noise is eliminated, the default value is not used.
 	// So we need a temp value to distinguish before and after eliminating noise.
 	temp := uint32(1)
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
+		originVals[i] = c.table[i][j]
 		if min > c.table[i][j] {
 			min = c.table[i][j]
 		}
@@ -289,6 +331,7 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	}
 	res = res - temp
 	if c.considerDefVal(uint64(res)) {
+		useDefaultValue = true
 		return c.defaultValue
 	}
 	return uint64(res)
@@ -329,12 +372,14 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 // MergeCMSketch4IncrementalAnalyze merges two CM Sketch for incremental analyze. Since there is no value
 // that appears partially in `c` and `rc` for incremental analyze, it uses `max` to merge them.
 // Here is a simple proof: when we query from the CM sketch, we use the `min` to get the answer:
-//   (1): For values that only appears in `c, using `max` to merge them affects the `min` query result less than using `sum`;
-//   (2): For values that only appears in `rc`, it is the same as condition (1);
-//   (3): For values that appears both in `c` and `rc`, if they do not appear partially in `c` and `rc`, for example,
-//        if `v` appears 5 times in the table, it can appears 5 times in `c` and 3 times in `rc`, then `max` also gives the correct answer.
+//
+//	(1): For values that only appears in `c, using `max` to merge them affects the `min` query result less than using `sum`;
+//	(2): For values that only appears in `rc`, it is the same as condition (1);
+//	(3): For values that appears both in `c` and `rc`, if they do not appear partially in `c` and `rc`, for example,
+//	     if `v` appears 5 times in the table, it can appears 5 times in `c` and 3 times in `rc`, then `max` also gives the correct answer.
+//
 // So in fact, if we can know the number of appearances of each value in the first place, it is better to use `max` to construct the CM sketch rather than `sum`.
-func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, numTopN uint32) error {
+func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, _ uint32) error {
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
@@ -469,14 +514,14 @@ func (c *CMSketch) Copy() *CMSketch {
 }
 
 // GetWidthAndDepth returns the width and depth of CM Sketch.
-func (c *CMSketch) GetWidthAndDepth() (int32, int32) {
+func (c *CMSketch) GetWidthAndDepth() (width, depth int32) {
 	return c.width, c.depth
 }
 
 // CalcDefaultValForAnalyze calculate the default value for Analyze.
 // The value of it is count / NDV in CMSketch. This means count and NDV are not include topN.
-func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
-	c.defaultValue = c.count / mathutil.Max(1, NDV)
+func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
+	c.defaultValue = c.count / mathutil.Max(1, ndv)
 }
 
 // TopN stores most-common values, which is used to estimate point queries.
@@ -511,7 +556,8 @@ func (c *TopN) String() string {
 }
 
 // Num returns the ndv of the TopN.
-//   TopN is declared directly in Histogram. So the Len is occupied by the Histogram. We use Num instead.
+//
+//	TopN is declared directly in Histogram. So the Len is occupied by the Histogram. We use Num instead.
 func (c *TopN) Num() int {
 	if c == nil {
 		return 0
@@ -567,11 +613,22 @@ type TopNMeta struct {
 }
 
 // QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
-func (c *TopN) QueryTopN(d []byte) (uint64, bool) {
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func (c *TopN) QueryTopN(sctx sessionctx.Context, d []byte) (result uint64, found bool) {
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result, "Found", found)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	if c == nil {
 		return 0, false
 	}
 	idx := c.findTopN(d)
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.RecordAnyValuesWithNames(sctx, "FindTopN idx", idx)
+	}
 	if idx < 0 {
 		return 0, false
 	}
@@ -613,7 +670,15 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 }
 
 // BetweenCount estimates the row count for interval [l, r).
-func (c *TopN) BetweenCount(l, r []byte) uint64 {
+// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+func (c *TopN) BetweenCount(sctx sessionctx.Context, l, r []byte) (result uint64) {
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	if c == nil {
 		return 0
 	}
@@ -622,6 +687,9 @@ func (c *TopN) BetweenCount(l, r []byte) uint64 {
 	ret := uint64(0)
 	for i := lIdx; i < rIdx; i++ {
 		ret += c.TopN[i].Count
+	}
+	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugTraceTopNRange(sctx, c, lIdx, rIdx)
 	}
 	return ret
 }
@@ -718,14 +786,16 @@ func NewTopN(n int) *TopN {
 
 // MergePartTopN2GlobalTopN is used to merge the partition-level topN to global-level topN.
 // The input parameters:
-//     1. `topNs` are the partition-level topNs to be merged.
-//     2. `n` is the size of the global-level topN. Notice: This value can be 0 and has no default value, we must explicitly specify this value.
-//     3. `hists` are the partition-level histograms. Some values not in topN may be placed in the histogram. We need it here to make the value in the global-level TopN more accurate.
+//  1. `topNs` are the partition-level topNs to be merged.
+//  2. `n` is the size of the global-level topN. Notice: This value can be 0 and has no default value, we must explicitly specify this value.
+//  3. `hists` are the partition-level histograms. Some values not in topN may be placed in the histogram. We need it here to make the value in the global-level TopN more accurate.
+//
 // The output parameters:
-//     1. `*TopN` is the final global-level topN.
-//     2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
-//     3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
-func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs []*TopN, n uint32, hists []*Histogram, isIndex bool) (*TopN, []TopNMeta, []*Histogram, error) {
+//  1. `*TopN` is the final global-level topN.
+//  2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
+//  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
+func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n uint32, hists []*Histogram,
+	isIndex bool, kiiled *uint32) (*TopN, []TopNMeta, []*Histogram, error) {
 	if checkEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
@@ -746,6 +816,9 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs [
 	// The datum is used to find the value in the histogram.
 	datumMap := make(map[hack.MutableString]types.Datum)
 	for i, topN := range topNs {
+		if atomic.LoadUint32(kiiled) == 1 {
+			return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+		}
 		if topN.TotalCount() == 0 {
 			continue
 		}
@@ -777,7 +850,7 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs [
 						var err error
 						if types.IsTypeTime(hists[0].Tp.GetType()) {
 							// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
-							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.GetType(), sc.TimeZone)
+							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.GetType(), loc)
 						} else if types.IsTypeFloat(hists[0].Tp.GetType()) {
 							_, d, err = codec.DecodeAsFloat32(val.Encoded, hists[0].Tp.GetType())
 						} else {
@@ -791,7 +864,7 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs [
 					datum = d
 				}
 				// Get the row count which the value is equal to the encodedVal from histogram.
-				count, _ := hists[j].equalRowCount(datum, isIndex)
+				count, _ := hists[j].equalRowCount(nil, datum, isIndex)
 				if count != 0 {
 					counter[encodedVal] += count
 					// Remove the value corresponding to encodedVal from the histogram.
@@ -860,6 +933,22 @@ func checkEmptyTopNs(topNs []*TopN) bool {
 		count += topN.TotalCount()
 	}
 	return count == 0
+}
+
+// SortTopnMeta sort topnMeta
+func SortTopnMeta(topnMetas []TopNMeta) []TopNMeta {
+	slices.SortFunc(topnMetas, func(i, j TopNMeta) bool {
+		if i.Count != j.Count {
+			return i.Count > j.Count
+		}
+		return bytes.Compare(i.Encoded, j.Encoded) < 0
+	})
+	return topnMetas
+}
+
+// GetMergedTopNFromSortedSlice returns merged topn
+func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
+	return getMergedTopNFromSortedSlice(sorted, n)
 }
 
 func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {

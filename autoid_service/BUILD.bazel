@@ -1,0 +1,43 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "autoid_service",
+    srcs = ["autoid.go"],
+    importpath = "github.com/pingcap/tidb/autoid_service",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//config",
+        "//kv",
+        "//meta",
+        "//meta/autoid",
+        "//metrics",
+        "//owner",
+        "//parser/model",
+        "//util/logutil",
+        "//util/mathutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/autoid",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//keepalive",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "autoid_service_test",
+    timeout = "short",
+    srcs = ["autoid_test.go"],
+    embed = [":autoid_service"],
+    flaky = True,
+    deps = [
+        "//parser/model",
+        "//testkit",
+        "@com_github_pingcap_kvproto//pkg/autoid",
+        "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_tests_v3//integration",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
+    ],
+)

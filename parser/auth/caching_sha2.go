@@ -38,6 +38,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+
+	"github.com/pingcap/tidb/parser/mysql"
 )
 
 const (
@@ -60,20 +62,27 @@ func b64From24bit(b []byte, n int, buf *bytes.Buffer) {
 	}
 }
 
-func sha256crypt(plaintext string, salt []byte, iterations int) string {
+// Sha256Hash is an util function to calculate sha256 hash.
+func Sha256Hash(input []byte) []byte {
+	res := sha256.Sum256(input)
+	return res[:]
+}
+
+// 'hash' function should return an array with 32 bytes, the same as SHA-256
+func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) []byte) string {
 	// Numbers in the comments refer to the description of the algorithm on https://www.akkadia.org/drepper/SHA-crypt.txt
 
 	// 1, 2, 3
 	bufA := bytes.NewBuffer(make([]byte, 0, 4096))
-	bufA.Write([]byte(plaintext))
+	bufA.WriteString(plaintext)
 	bufA.Write(salt)
 
 	// 4, 5, 6, 7, 8
 	bufB := bytes.NewBuffer(make([]byte, 0, 4096))
-	bufB.Write([]byte(plaintext))
+	bufB.WriteString(plaintext)
 	bufB.Write(salt)
-	bufB.Write([]byte(plaintext))
-	sumB := sha256.Sum256(bufB.Bytes())
+	bufB.WriteString(plaintext)
+	sumB := hash(bufB.Bytes())
 	bufB.Reset()
 
 	// 9, 10
@@ -86,22 +95,22 @@ func sha256crypt(plaintext string, salt []byte, iterations int) string {
 	// 11
 	for i = len(plaintext); i > 0; i >>= 1 {
 		if i%2 == 0 {
-			bufA.Write([]byte(plaintext))
+			bufA.WriteString(plaintext)
 		} else {
 			bufA.Write(sumB[:])
 		}
 	}
 
 	// 12
-	sumA := sha256.Sum256(bufA.Bytes())
+	sumA := hash(bufA.Bytes())
 	bufA.Reset()
 
 	// 13, 14, 15
 	bufDP := bufA
 	for range []byte(plaintext) {
-		bufDP.Write([]byte(plaintext))
+		bufDP.WriteString(plaintext)
 	}
-	sumDP := sha256.Sum256(bufDP.Bytes())
+	sumDP := hash(bufDP.Bytes())
 	bufDP.Reset()
 
 	// 16
@@ -119,7 +128,7 @@ func sha256crypt(plaintext string, salt []byte, iterations int) string {
 	for i = 0; i < 16+int(sumA[0]); i++ {
 		bufDS.Write(salt)
 	}
-	sumDS := sha256.Sum256(bufDS.Bytes())
+	sumDS := hash(bufDS.Bytes())
 	bufDS.Reset()
 
 	// 20
@@ -134,7 +143,7 @@ func sha256crypt(plaintext string, salt []byte, iterations int) string {
 
 	// 21
 	bufC := bufA
-	var sumC [32]byte
+	var sumC []byte
 	for i = 0; i < iterations; i++ {
 		bufC.Reset()
 		if i&1 != 0 {
@@ -153,15 +162,15 @@ func sha256crypt(plaintext string, salt []byte, iterations int) string {
 		} else {
 			bufC.Write(p)
 		}
-		sumC = sha256.Sum256(bufC.Bytes())
+		sumC = hash(bufC.Bytes())
 		sumA = sumC
 	}
 
 	// 22
 	buf := bytes.NewBuffer(make([]byte, 0, 100))
 	buf.Write([]byte{'$', 'A', '$'})
-	rounds := fmt.Sprintf("%03d", iterations/ITERATION_MULTIPLIER)
-	buf.Write([]byte(rounds))
+	rounds := fmt.Sprintf("%03X", iterations/ITERATION_MULTIPLIER)
+	buf.WriteString(rounds)
 	buf.Write([]byte{'$'})
 	buf.Write(salt)
 
@@ -180,8 +189,8 @@ func sha256crypt(plaintext string, salt []byte, iterations int) string {
 	return buf.String()
 }
 
-// CheckShaPassword is to checks if a MySQL style caching_sha2 authentication string matches a password
-func CheckShaPassword(pwhash []byte, password string) (bool, error) {
+// CheckHashingPassword checks if a caching_sha2_password or tidb_sm3_password authentication string matches a password
+func CheckHashingPassword(pwhash []byte, password string, hash string) (bool, error) {
 	pwhashParts := bytes.Split(pwhash, []byte("$"))
 	if len(pwhashParts) != 4 {
 		return false, errors.New("failed to decode hash parts")
@@ -192,20 +201,26 @@ func CheckShaPassword(pwhash []byte, password string) (bool, error) {
 		return false, errors.New("digest type is incompatible")
 	}
 
-	iterations, err := strconv.Atoi(string(pwhashParts[2]))
+	iterations, err := strconv.ParseInt(string(pwhashParts[2]), 16, 64)
 	if err != nil {
 		return false, errors.New("failed to decode iterations")
 	}
 	iterations = iterations * ITERATION_MULTIPLIER
 	salt := pwhashParts[3][:SALT_LENGTH]
 
-	newHash := sha256crypt(password, salt, iterations)
+	var newHash string
+	switch hash {
+	case mysql.AuthCachingSha2Password:
+		newHash = hashCrypt(password, salt, int(iterations), Sha256Hash)
+	case mysql.AuthTiDBSM3Password:
+		newHash = hashCrypt(password, salt, int(iterations), Sm3Hash)
+	}
 
 	return bytes.Equal(pwhash, []byte(newHash)), nil
 }
 
-// NewSha2Password creates a new MySQL style caching_sha2 password hash
-func NewSha2Password(pwd string) string {
+// NewHashPassword creates a new password for caching_sha2_password or tidb_sm3_password
+func NewHashPassword(pwd string, hash string) string {
 	salt := make([]byte, SALT_LENGTH)
 	rand.Read(salt)
 
@@ -219,5 +234,12 @@ func NewSha2Password(pwd string) string {
 		}
 	}
 
-	return sha256crypt(pwd, salt, 5*ITERATION_MULTIPLIER)
+	switch hash {
+	case mysql.AuthCachingSha2Password:
+		return hashCrypt(pwd, salt, 5*ITERATION_MULTIPLIER, Sha256Hash)
+	case mysql.AuthTiDBSM3Password:
+		return hashCrypt(pwd, salt, 5*ITERATION_MULTIPLIER, Sm3Hash)
+	default:
+		return ""
+	}
 }

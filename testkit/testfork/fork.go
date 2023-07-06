@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cockroachdb/errors"
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,7 +57,7 @@ func (s *pickStack) PickValue(values []any) (any, error) {
 
 	stackLen := len(s.stack)
 	if s.pos > stackLen {
-		return nil, errors.Newf("illegal state %d > %d", s.pos, stackLen)
+		return nil, errors.Errorf("illegal state %d > %d", s.pos, stackLen)
 	}
 
 	defer func() {
@@ -105,10 +105,13 @@ type T struct {
 // RunTest runs the test function `f` multiple times util all the values in `Pick` are tested.
 func RunTest(t *testing.T, f func(t *T)) {
 	idx := 0
-	for stack := newPickStack(); stack.Valid(); stack.NextStack() {
-		success := t.Run("", func(t *testing.T) {
+	runFunc := func(stack *pickStack, f func(t *T)) func(t *testing.T) {
+		return func(t *testing.T) {
 			f(&T{T: t, stack: stack})
-		})
+		}
+	}
+	for stack := newPickStack(); stack.Valid(); stack.NextStack() {
+		success := t.Run("", runFunc(stack, f))
 
 		if !success {
 			_, err := fmt.Fprintf(os.Stderr, "SubTest #%v failed, failed values: %s\n", idx, stack.ValuesText())

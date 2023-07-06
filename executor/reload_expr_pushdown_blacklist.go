@@ -17,7 +17,9 @@ package executor
 import (
 	"context"
 	"strings"
+	"time"
 
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -28,12 +30,12 @@ import (
 
 // ReloadExprPushdownBlacklistExec indicates ReloadExprPushdownBlacklist executor.
 type ReloadExprPushdownBlacklistExec struct {
-	baseExecutor
+	exec.BaseExecutor
 }
 
 // Next implements the Executor Next interface.
 func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	return LoadExprPushdownBlacklist(e.ctx)
+	return LoadExprPushdownBlacklist(e.Ctx())
 }
 
 // LoadExprPushdownBlacklist loads the latest data from table mysql.expr_pushdown_blacklist.
@@ -67,8 +69,26 @@ func LoadExprPushdownBlacklist(sctx sessionctx.Context) (err error) {
 		}
 		newBlocklist[name] = value
 	}
+	if isSameExprPushDownBlackList(newBlocklist, expression.DefaultExprPushDownBlacklist.Load().(map[string]uint32)) {
+		return nil
+	}
+	expression.ExprPushDownBlackListReloadTimeStamp.Store(time.Now().UnixNano())
 	expression.DefaultExprPushDownBlacklist.Store(newBlocklist)
 	return nil
+}
+
+// isSameExprPushDownBlackList checks whether two exprPushDownBlacklist are the same.
+func isSameExprPushDownBlackList(l1, l2 map[string]uint32) bool {
+	if len(l1) != len(l2) {
+		return false
+	}
+	for k, v1 := range l1 {
+		v2, ok := l2[k]
+		if !ok || v1 != v2 {
+			return false
+		}
+	}
+	return true
 }
 
 // funcName2Alias indicates map of the origin function name to the name used in TiDB.
@@ -257,6 +277,7 @@ var funcName2Alias = map[string]string{
 	"collation":                  ast.Collation,
 	"connection_id":              ast.ConnectionID,
 	"current_user":               ast.CurrentUser,
+	"current_resource_group":     ast.CurrentResourceGroup,
 	"current_role":               ast.CurrentRole,
 	"database":                   ast.Database,
 	"found_rows":                 ast.FoundRows,
@@ -304,6 +325,7 @@ var funcName2Alias = map[string]string{
 	"sha1":                       ast.SHA1,
 	"sha":                        ast.SHA,
 	"sha2":                       ast.SHA2,
+	"sm3":                        ast.SM3,
 	"uncompress":                 ast.Uncompress,
 	"uncompressed_length":        ast.UncompressedLength,
 	"validate_password_strength": ast.ValidatePasswordStrength,

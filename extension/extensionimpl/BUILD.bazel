@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "extensionimpl",
+    srcs = ["bootstrap.go"],
+    importpath = "github.com/pingcap/tidb/extension/extensionimpl",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//domain",
+        "//extension",
+        "//kv",
+        "//util/chunk",
+        "//util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@io_etcd_go_etcd_client_v3//:client",
+    ],
+)

@@ -4,6 +4,6 @@
 CREATE TABLE `non_pk_auto_inc` (
   `pk` char(36) NOT NULL,
   `id` int(11) NOT NULL AUTO_INCREMENT,
-  PRIMARY KEY (`pk`),
+  PRIMARY KEY (`pk`) /*T![clustered_index] NONCLUSTERED */,
   UNIQUE KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;

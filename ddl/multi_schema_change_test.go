@@ -20,11 +20,13 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,6 +143,10 @@ func TestMultiSchemaChangeAddColumnsCancelled(t *testing.T) {
 	tk.MustExec("insert into t values (1);")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
+		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization
 	})
 	dom.DDL().SetHook(hook)
@@ -220,6 +226,10 @@ func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
 	tk.MustExec("insert into t values ();")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in delete-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
+		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteReorganization
 	})
 	dom.DDL().SetHook(hook)
@@ -234,6 +244,10 @@ func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
 	tk.MustExec("insert into t values ();")
 	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in public.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
+		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
 	})
 	dom.DDL().SetHook(hook)
@@ -255,6 +269,10 @@ func TestMultiSchemaChangeDropIndexedColumnsCancelled(t *testing.T) {
 	tk.MustExec("insert into t values ();")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in delete-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
+		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteReorganization
 	})
 	dom.DDL().SetHook(hook)
@@ -354,6 +372,10 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 	tk.MustExec("insert into t values ()")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
+		assertMultiSchema(t, job, 2)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
 	dom.DDL().SetHook(hook)
@@ -366,7 +388,7 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2)")
 	tk.MustExec("insert into t values ()")
-	hook1 := &ddl.TestDDLCallback{Do: dom}
+	hook1 := &callback.TestDDLCallback{Do: dom}
 	hook1.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization {
@@ -422,6 +444,10 @@ func TestMultiSchemaChangeAlterColumns(t *testing.T) {
 	tk.MustExec("create table t (a int default 1, b int default 2)")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in write-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
+		assertMultiSchema(t, job, 2)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
 	dom.DDL().SetHook(hook)
@@ -433,11 +459,12 @@ func TestMultiSchemaChangeAlterColumns(t *testing.T) {
 	// Test dml stmts when do alter
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2)")
-	hook1 := &ddl.TestDDLCallback{Do: dom}
+	hook1 := &callback.TestDDLCallback{Do: dom}
 	hook1.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteOnly {
-			tk.Exec("insert into t values ()")
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("insert into test.t values ()")
 		}
 	}
 	dom.DDL().SetHook(hook1)
@@ -489,6 +516,10 @@ func TestMultiSchemaChangeChangeColumns(t *testing.T) {
 	tk.MustExec("insert into t values ()")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
+		assertMultiSchema(t, job, 2)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
 	dom.DDL().SetHook(hook)
@@ -547,6 +578,10 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2, 3);")
 	cancelHook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel the job when index 't2' is in write-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
+		assertMultiSchema(t, job, 4)
 		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
 	})
 	dom.DDL().SetHook(cancelHook)
@@ -565,6 +600,10 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2, 3);")
 	cancelHook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel the job when index 't1' is in public.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
+		assertMultiSchema(t, job, 4)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
 	})
 	dom.DDL().SetHook(cancelHook)
@@ -613,6 +652,10 @@ func TestMultiSchemaChangeDropIndexesCancelled(t *testing.T) {
 	// Test for cancelling the job in a middle state.
 	tk.MustExec("create table t (a int, b int, index(a), unique index(b), index idx(a, b));")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
+		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteOnly
 	})
 	dom.DDL().SetHook(hook)
@@ -627,6 +670,10 @@ func TestMultiSchemaChangeDropIndexesCancelled(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, index(a), unique index(b), index idx(a, b));")
 	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
+		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
 	})
 	dom.DDL().SetHook(hook)
@@ -674,8 +721,8 @@ func TestMultiSchemaChangeAddDropIndexes(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, c int, index (a), index(b), index(c));")
 	tk.MustExec("insert into t values (1, 2, 3);")
-	tk.MustExec("alter table t add index aa(a), drop index a, add index cc(c), drop index b, drop index c, add index bb(b);")
-	tk.MustQuery("select * from t use index(aa, bb, cc);").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("alter table t add index xa(a), drop index a, add index xc(c), drop index b, drop index c, add index xb(b);")
+	tk.MustQuery("select * from t use index(xa, xb, xc);").Check(testkit.Rows("1 2 3"))
 	tk.MustGetErrCode("select * from t use index(a);", errno.ErrKeyDoesNotExist)
 	tk.MustGetErrCode("select * from t use index(b);", errno.ErrKeyDoesNotExist)
 	tk.MustGetErrCode("select * from t use index(c);", errno.ErrKeyDoesNotExist)
@@ -721,6 +768,10 @@ func TestMultiSchemaChangeRenameIndexes(t *testing.T) {
 	tk.MustExec("insert into t values ()")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
+		assertMultiSchema(t, job, 2)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
 	dom.DDL().SetHook(hook)
@@ -868,6 +919,10 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, index i1(a), unique index i2(b), index i3(a, b));")
 	tk.MustExec("insert into t values (1, 2, 3);")
 	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+		if job.Type != model.ActionMultiSchemaChange {
+			return false
+		}
+		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
 	})
 	dom.DDL().SetHook(hook)
@@ -919,17 +974,19 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2);")
 	originHook := dom.DDL().GetHook()
 	var checked bool
-	dom.DDL().SetHook(&ddl.TestDDLCallback{Do: dom,
-		OnJobUpdatedExported: func(job *model.Job) {
-			assert.NotNil(t, job.MultiSchemaInfo)
-			// "modify column a tinyint" in write-reorg.
-			if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization {
-				checked = true
-				rs, err := tk.Exec("select * from t use index(i1);")
-				assert.NoError(t, err)
-				assert.NoError(t, rs.Close())
-			}
-		}})
+	callback := &callback.TestDDLCallback{Do: dom}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		assert.NotNil(t, job.MultiSchemaInfo)
+		// "modify column a tinyint" in write-reorg.
+		if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization {
+			checked = true
+			rs, err := tk.Exec("select * from t use index(i1);")
+			assert.NoError(t, err)
+			assert.NoError(t, rs.Close())
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	dom.DDL().SetHook(callback)
 	tk.MustExec("alter table t alter index i1 invisible, modify column a tinyint, alter index i2 invisible;")
 	dom.DDL().SetHook(originHook)
 	require.True(t, checked)
@@ -959,6 +1016,7 @@ func TestMultiSchemaChangeMixCancelled(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 
 	tk.MustExec("create table t (a int, b int, c int, index i1(c), index i2(c));")
 	tk.MustExec("insert into t values (1, 2, 3);")
@@ -986,7 +1044,7 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	originHook := dom.DDL().GetHook()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateDeleteOnly {
@@ -996,13 +1054,19 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 			assert.Equal(t, len(rows), 4)
 			assert.Equal(t, rows[1][1], "test")
 			assert.Equal(t, rows[1][2], "t")
-			assert.Equal(t, rows[1][3], "add index /* subjob */")
+			assert.Equal(t, rows[1][3], "add index /* subjob */ /* txn-merge */")
 			assert.Equal(t, rows[1][4], "delete only")
 			assert.Equal(t, rows[1][len(rows[1])-1], "running")
+			assert.True(t, len(rows[1][8].(string)) > 0)
+			assert.True(t, len(rows[1][9].(string)) > 0)
+			assert.True(t, len(rows[1][10].(string)) > 0)
 
 			assert.Equal(t, rows[2][3], "add index /* subjob */")
 			assert.Equal(t, rows[2][4], "none")
 			assert.Equal(t, rows[2][len(rows[2])-1], "queueing")
+			assert.True(t, len(rows[2][8].(string)) > 0)
+			assert.True(t, len(rows[2][9].(string)) > 0)
+			assert.True(t, len(rows[2][10].(string)) > 0)
 		}
 	}
 
@@ -1073,7 +1137,7 @@ func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2", "2 1"))
 
 	originHook := dom.DDL().GetHook()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -1121,8 +1185,46 @@ func TestMultiSchemaChangeUnsupportedType(t *testing.T) {
 	tk.MustExec("use test;")
 
 	tk.MustExec("create table t (a int, b int);")
-	tk.MustGetErrMsg("alter table t add column c int, auto_id_cache = 1;",
+	tk.MustGetErrMsg("alter table t add column c int, auto_id_cache = 10;",
 		"[ddl:8200]Unsupported multi schema change for modify auto id cache")
+}
+
+func TestMultiSchemaChangeSchemaVersion(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t(a int, b int, c int, d int)")
+	tk.MustExec("insert into t values (1,2,3,4)")
+
+	schemaVerMap := map[int64]struct{}{}
+
+	originHook := dom.DDL().GetHook()
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobSchemaStateChanged = func(schemaVer int64) {
+		if schemaVer != 0 {
+			// No same return schemaVer during multi-schema change
+			_, ok := schemaVerMap[schemaVer]
+			assert.False(t, ok)
+			schemaVerMap[schemaVer] = struct{}{}
+		}
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t drop column b, drop column c")
+	tk.MustExec("alter table t add column b int, add column c int")
+	tk.MustExec("alter table t add index k(b), add column e int")
+	tk.MustExec("alter table t alter index k invisible, drop column e")
+	dom.DDL().SetHook(originHook)
+}
+
+func TestMultiSchemaChangeAddIndexChangeColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE t (a SMALLINT DEFAULT '30219', b TIME NULL DEFAULT '02:45:06', PRIMARY KEY (a));")
+	tk.MustExec("ALTER TABLE t ADD unique INDEX idx4 (b), change column a e MEDIUMINT DEFAULT '5280454' FIRST;")
+	tk.MustExec("insert ignore into t (e) values (5586359),(501788),(-5961048),(220083),(-4917129),(-7267211),(7750448);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("5586359 02:45:06"))
+	tk.MustExec("admin check table t;")
 }
 
 func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
@@ -1137,7 +1239,7 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 		"'2020-01-01 10:00:00', 'wer', '10:00:00', 2.1, 12, 'qwer', 12, 'asdf');")
 
 	originHook := dom.DDL().GetHook()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -1165,6 +1267,27 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 	dom.DDL().SetHook(originHook)
 }
 
+func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+
+	orig := variable.EnableRowLevelChecksum.Load()
+	defer variable.EnableRowLevelChecksum.Store(orig)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c int)")
+
+	variable.EnableRowLevelChecksum.Store(true)
+	tk.Session().GetSessionVars().EnableRowLevelChecksum = false
+	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
+
+	variable.EnableRowLevelChecksum.Store(false)
+	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
+	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
+}
+
 type cancelOnceHook struct {
 	store     kv.Storage
 	triggered bool
@@ -1172,7 +1295,7 @@ type cancelOnceHook struct {
 	pred      func(job *model.Job) bool
 	s         sessionctx.Context
 
-	ddl.TestDDLCallback
+	callback.TestDDLCallback
 }
 
 func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {
@@ -1180,8 +1303,8 @@ func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {
 		return
 	}
 	c.triggered = true
-	errs, err := ddl.CancelJobs(c.s, c.store, []int64{job.ID})
-	if errs[0] != nil {
+	errs, err := ddl.CancelJobs(c.s, []int64{job.ID})
+	if len(errs) > 0 && errs[0] != nil {
 		c.cancelErr = errs[0]
 		return
 	}
@@ -1205,7 +1328,7 @@ func newCancelJobHook(t *testing.T, store kv.Storage, dom *domain.Domain,
 	return &cancelOnceHook{
 		store:           store,
 		pred:            pred,
-		TestDDLCallback: ddl.TestDDLCallback{Do: dom},
+		TestDDLCallback: callback.TestDDLCallback{Do: dom},
 		s:               tk.Session(),
 	}
 }
@@ -1216,4 +1339,9 @@ func putTheSameDDLJobTwice(t *testing.T, fn func()) {
 	fn()
 	err = failpoint.Disable("github.com/pingcap/tidb/ddl/mockParallelSameDDLJobTwice")
 	require.NoError(t, err)
+}
+
+func assertMultiSchema(t *testing.T, job *model.Job, subJobLen int) {
+	assert.NotNil(t, job.MultiSchemaInfo, job)
+	assert.Len(t, job.MultiSchemaInfo.SubJobs, subJobLen, job)
 }

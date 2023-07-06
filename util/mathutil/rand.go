@@ -24,9 +24,9 @@ const maxRandValue = 0x3FFFFFFF
 // MysqlRng is random number generator and this implementation is ported from MySQL.
 // See https://github.com/tikv/tikv/pull/6117#issuecomment-562489078.
 type MysqlRng struct {
+	mu    *sync.Mutex
 	seed1 uint32
 	seed2 uint32
-	mu    *sync.Mutex
 }
 
 // NewWithSeed create a rng with random seed.

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -53,7 +52,9 @@ func IntergerUnsignedUpperBound(intType byte) uint64 {
 	case mysql.TypeBit:
 		return math.MaxUint64
 	case mysql.TypeEnum:
-		return math.MaxUint64
+		// enum can have at most 65535 distinct elements
+		// it would be better to use len(FieldType.GetElems()), but we only have a byte type here
+		return 65535
 	case mysql.TypeSet:
 		return math.MaxUint64
 	default:
@@ -74,8 +75,12 @@ func IntergerSignedUpperBound(intType byte) int64 {
 		return math.MaxInt32
 	case mysql.TypeLonglong:
 		return math.MaxInt64
+	case mysql.TypeEnum:
+		// enum can have at most 65535 distinct elements
+		// it would be better to use len(FieldType.GetElems()), but we only have a byte type here
+		return 65535
 	default:
-		panic("Input byte is not a mysql type")
+		panic("Input byte is not a mysql int type")
 	}
 }
 
@@ -92,6 +97,8 @@ func IntergerSignedLowerBound(intType byte) int64 {
 		return math.MinInt32
 	case mysql.TypeLonglong:
 		return math.MinInt64
+	case mysql.TypeEnum:
+		return 0
 	default:
 		panic("Input byte is not a mysql type")
 	}
@@ -247,7 +254,7 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 	if intStr == "" {
 		intStr = "0"
 	}
-	if sc.ShouldClipToZero() && intStr[0] == '-' {
+	if intStr[0] == '-' {
 		return 0, overflow(str, tp)
 	}
 
@@ -256,8 +263,7 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 		round++
 	}
 
-	upperBound -= round
-	upperStr := strconv.FormatUint(upperBound, 10)
+	upperStr := strconv.FormatUint(upperBound-round, 10)
 	if len(intStr) > len(upperStr) ||
 		(len(intStr) == len(upperStr) && intStr > upperStr) {
 		return upperBound, overflow(str, tp)
@@ -302,7 +308,7 @@ func StrToUint(sc *stmtctx.StatementContext, str string, isFuncCast bool) (uint6
 
 // StrToDateTime converts str to MySQL DateTime.
 func StrToDateTime(sc *stmtctx.StatementContext, str string, fsp int) (Time, error) {
-	return ParseTime(sc, str, mysql.TypeDatetime, fsp)
+	return ParseTime(sc, str, mysql.TypeDatetime, fsp, nil)
 }
 
 // StrToDuration converts str to Duration. It returns Duration in normal case,
@@ -548,25 +554,25 @@ func StrToFloat(sc *stmtctx.StatementContext, str string, isFuncCast bool) (floa
 }
 
 // ConvertJSONToInt64 casts JSON into int64.
-func ConvertJSONToInt64(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned bool) (int64, error) {
+func ConvertJSONToInt64(sc *stmtctx.StatementContext, j BinaryJSON, unsigned bool) (int64, error) {
 	return ConvertJSONToInt(sc, j, unsigned, mysql.TypeLonglong)
 }
 
 // ConvertJSONToInt casts JSON into int by type.
-func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned bool, tp byte) (int64, error) {
+func ConvertJSONToInt(sc *stmtctx.StatementContext, j BinaryJSON, unsigned bool, tp byte) (int64, error) {
 	switch j.TypeCode {
-	case json.TypeCodeObject, json.TypeCodeArray:
+	case JSONTypeCodeObject, JSONTypeCodeArray, JSONTypeCodeOpaque, JSONTypeCodeDate, JSONTypeCodeDatetime, JSONTypeCodeTimestamp, JSONTypeCodeDuration:
 		return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
-	case json.TypeCodeLiteral:
+	case JSONTypeCodeLiteral:
 		switch j.Value[0] {
-		case json.LiteralFalse:
+		case JSONLiteralFalse:
 			return 0, nil
-		case json.LiteralNil:
+		case JSONLiteralNil:
 			return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
 		default:
 			return 1, nil
 		}
-	case json.TypeCodeInt64:
+	case JSONTypeCodeInt64:
 		i := j.GetInt64()
 		if unsigned {
 			uBound := IntergerUnsignedUpperBound(tp)
@@ -578,7 +584,7 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		uBound := IntergerSignedUpperBound(tp)
 		i, err := ConvertIntToInt(i, lBound, uBound, tp)
 		return i, sc.HandleOverflow(err, err)
-	case json.TypeCodeUint64:
+	case JSONTypeCodeUint64:
 		u := j.GetUint64()
 		if unsigned {
 			uBound := IntergerUnsignedUpperBound(tp)
@@ -589,7 +595,7 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		uBound := IntergerSignedUpperBound(tp)
 		i, err := ConvertUintToInt(u, uBound, tp)
 		return i, sc.HandleOverflow(err, err)
-	case json.TypeCodeFloat64:
+	case JSONTypeCodeFloat64:
 		f := j.GetFloat64()
 		if !unsigned {
 			lBound := IntergerSignedLowerBound(tp)
@@ -600,7 +606,7 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		bound := IntergerUnsignedUpperBound(tp)
 		u, err := ConvertFloatToUint(sc, f, bound, tp)
 		return int64(u), sc.HandleOverflow(err, err)
-	case json.TypeCodeString:
+	case JSONTypeCodeString:
 		str := string(hack.String(j.GetString()))
 		if !unsigned {
 			r, e := StrToInt(sc, str, false)
@@ -613,26 +619,26 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 }
 
 // ConvertJSONToFloat casts JSON into float64.
-func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float64, error) {
+func ConvertJSONToFloat(sc *stmtctx.StatementContext, j BinaryJSON) (float64, error) {
 	switch j.TypeCode {
-	case json.TypeCodeObject, json.TypeCodeArray:
+	case JSONTypeCodeObject, JSONTypeCodeArray, JSONTypeCodeOpaque, JSONTypeCodeDate, JSONTypeCodeDatetime, JSONTypeCodeTimestamp, JSONTypeCodeDuration:
 		return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
-	case json.TypeCodeLiteral:
+	case JSONTypeCodeLiteral:
 		switch j.Value[0] {
-		case json.LiteralFalse:
+		case JSONLiteralFalse:
 			return 0, nil
-		case json.LiteralNil:
+		case JSONLiteralNil:
 			return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
 		default:
 			return 1, nil
 		}
-	case json.TypeCodeInt64:
+	case JSONTypeCodeInt64:
 		return float64(j.GetInt64()), nil
-	case json.TypeCodeUint64:
+	case JSONTypeCodeUint64:
 		return float64(j.GetUint64()), nil
-	case json.TypeCodeFloat64:
+	case JSONTypeCodeFloat64:
 		return j.GetFloat64(), nil
-	case json.TypeCodeString:
+	case JSONTypeCodeString:
 		str := string(hack.String(j.GetString()))
 		return StrToFloat(sc, str, false)
 	}
@@ -640,28 +646,28 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 }
 
 // ConvertJSONToDecimal casts JSON into decimal.
-func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyDecimal, error) {
+func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j BinaryJSON) (*MyDecimal, error) {
 	var err error = nil
 	res := new(MyDecimal)
 	switch j.TypeCode {
-	case json.TypeCodeObject, json.TypeCodeArray:
+	case JSONTypeCodeObject, JSONTypeCodeArray, JSONTypeCodeOpaque, JSONTypeCodeDate, JSONTypeCodeDatetime, JSONTypeCodeTimestamp, JSONTypeCodeDuration:
 		err = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", j.String())
-	case json.TypeCodeLiteral:
+	case JSONTypeCodeLiteral:
 		switch j.Value[0] {
-		case json.LiteralFalse:
+		case JSONLiteralFalse:
 			res = res.FromInt(0)
-		case json.LiteralNil:
+		case JSONLiteralNil:
 			err = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", j.String())
 		default:
 			res = res.FromInt(1)
 		}
-	case json.TypeCodeInt64:
+	case JSONTypeCodeInt64:
 		res = res.FromInt(j.GetInt64())
-	case json.TypeCodeUint64:
+	case JSONTypeCodeUint64:
 		res = res.FromUint(j.GetUint64())
-	case json.TypeCodeFloat64:
+	case JSONTypeCodeFloat64:
 		err = res.FromFloat64(j.GetFloat64())
-	case json.TypeCodeString:
+	case JSONTypeCodeString:
 		err = res.FromString(j.GetString())
 	}
 	err = sc.HandleTruncate(err)
@@ -758,6 +764,8 @@ func ToString(value interface{}) (string, error) {
 	case Enum:
 		return v.String(), nil
 	case Set:
+		return v.String(), nil
+	case BinaryJSON:
 		return v.String(), nil
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", value, value)

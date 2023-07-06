@@ -28,14 +28,29 @@ type RegionWithLeader struct {
 	Leader *metapb.Peer
 }
 
-type RegionScanner interface {
+type TiKVClusterMeta interface {
 	// RegionScan gets a list of regions, starts from the region that contains key.
 	// Limit limits the maximum number of regions returned.
 	RegionScan(ctx context.Context, key, endKey []byte, limit int) ([]RegionWithLeader, error)
+
+	// Stores returns the store metadata from the cluster.
+	Stores(ctx context.Context) ([]Store, error)
+
+	// Updates the service GC safe point for the cluster.
+	// Returns the latest service GC safe point.
+	// If the arguments is `0`, this would remove the service safe point.
+	// NOTE: once we support multi tasks, perhaps we need to allow the caller to provide a namespace.
+	// For now, all tasks (exactly one task in fact) use the same checkpoint.
+	BlockGCUntil(ctx context.Context, at uint64) (uint64, error)
+}
+
+type Store struct {
+	ID     uint64
+	BootAt uint64
 }
 
 type RegionIter struct {
-	cli              RegionScanner
+	cli              TiKVClusterMeta
 	startKey, endKey []byte
 	currentStartKey  []byte
 	// When the endKey become "", we cannot check whether the scan is done by
@@ -57,7 +72,7 @@ func (r *RegionIter) String() string {
 }
 
 // IterateRegion creates an iterater over the region range.
-func IterateRegion(cli RegionScanner, startKey, endKey []byte) *RegionIter {
+func IterateRegion(cli TiKVClusterMeta, startKey, endKey []byte) *RegionIter {
 	return &RegionIter{
 		cli:             cli,
 		startKey:        startKey,
@@ -75,17 +90,21 @@ func CheckRegionConsistency(startKey, endKey []byte, regions []RegionWithLeader)
 	}
 
 	if bytes.Compare(regions[0].Region.StartKey, startKey) > 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "first region's startKey > startKey, startKey: %s, regionStartKey: %s",
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+			"first region's startKey > startKey, startKey: %s, regionStartKey: %s",
 			redact.Key(startKey), redact.Key(regions[0].Region.StartKey))
-	} else if len(regions[len(regions)-1].Region.EndKey) != 0 && bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "last region's endKey < endKey, endKey: %s, regionEndKey: %s",
+	} else if len(regions[len(regions)-1].Region.EndKey) != 0 &&
+		bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+			"last region's endKey < endKey, endKey: %s, regionEndKey: %s",
 			redact.Key(endKey), redact.Key(regions[len(regions)-1].Region.EndKey))
 	}
 
 	cur := regions[0]
 	for _, r := range regions[1:] {
 		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
-			return errors.Annotatef(berrors.ErrPDBatchScanRegion, "region endKey not equal to next region startKey, endKey: %s, startKey: %s",
+			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+				"region endKey not equal to next region startKey, endKey: %s, startKey: %s",
 				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey))
 		}
 		cur = r

@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -47,10 +47,10 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
-	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const clusterLogBatchSize = 256
@@ -70,7 +70,7 @@ type memTableRetriever interface {
 
 // MemTableReaderExec executes memTable information retrieving from the MemTable components
 type MemTableReaderExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	table     *model.TableInfo
 	retriever memTableRetriever
 	// cacheRetrieved is used to indicate whether has the parent executor retrieved
@@ -100,14 +100,14 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
 	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
-	if cache, tbl := e.ctx.GetSessionVars().InspectionTableCache, e.table.Name.L; cache != nil &&
+	if cache, tbl := e.Ctx().GetSessionVars().InspectionTableCache, e.table.Name.L; cache != nil &&
 		e.isInspectionCacheableTable(tbl) {
 		// TODO: cached rows will be returned fully, we should refactor this part.
 		if !e.cacheRetrieved {
 			// Obtain data from cache first.
 			cached, found := cache[tbl]
 			if !found {
-				rows, err := e.retriever.retrieve(ctx, e.ctx)
+				rows, err := e.retriever.retrieve(ctx, e.Ctx())
 				cached = variable.TableSnapshot{Rows: rows, Err: err}
 				cache[tbl] = cached
 			}
@@ -115,7 +115,7 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			rows, err = cached.Rows, cached.Err
 		}
 	} else {
-		rows, err = e.retriever.retrieve(ctx, e.ctx)
+		rows, err = e.retriever.retrieve(ctx, e.Ctx())
 	}
 	if err != nil {
 		return err
@@ -137,8 +137,8 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *MemTableReaderExec) Close() error {
-	if stats := e.retriever.getRuntimeStats(); stats != nil && e.runtimeStats != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, stats)
+	if stats := e.retriever.getRuntimeStats(); stats != nil && e.RuntimeStats() != nil {
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), stats)
 	}
 	return e.retriever.close()
 }
@@ -177,7 +177,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
+	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
 	//nolint: prealloc
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
@@ -310,108 +310,12 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 		return nil, nil
 	}
 	e.retrieved = true
-
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
-
-	type result struct {
-		idx  int
-		rows [][]types.Datum
-		err  error
-	}
-	wg := sync.WaitGroup{}
-	ch := make(chan result, len(serversInfo))
-	infoTp := e.serverInfoType
-	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
-	for i, srv := range serversInfo {
-		address := srv.Address
-		remote := address
-		if srv.ServerType == "tidb" {
-			remote = srv.StatusAddr
-		}
-		wg.Add(1)
-		go func(index int, remote, address, serverTP string) {
-			util.WithRecovery(func() {
-				defer wg.Done()
-				items, err := getServerInfoByGRPC(ctx, remote, infoTp)
-				if err != nil {
-					ch <- result{idx: index, err: err}
-					return
-				}
-				partRows := serverInfoItemToRows(items, serverTP, address)
-				ch <- result{idx: index, rows: partRows}
-			}, nil)
-		}(i, remote, address, srv.ServerType)
-	}
-	wg.Wait()
-	close(ch)
-	// Keep the original order to make the result more stable
-	var results []result //nolint: prealloc
-	for result := range ch {
-		if result.err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
-			continue
-		}
-		results = append(results, result)
-	}
-	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
-	for _, result := range results {
-		finalRows = append(finalRows, result.rows...)
-	}
-	return finalRows, nil
-}
-
-func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {
-	rows := make([][]types.Datum, 0, len(items))
-	for _, v := range items {
-		for _, item := range v.Pairs {
-			row := types.MakeDatums(
-				tp,
-				addr,
-				v.Tp,
-				v.Name,
-				item.Key,
-				item.Value,
-			)
-			rows = append(rows, row)
-		}
-	}
-	return rows
-}
-
-func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
-	opt := grpc.WithInsecure()
-	security := config.GetGlobalConfig().Security
-	if len(security.ClusterSSLCA) != 0 {
-		clusterSecurity := security.ClusterSecurity()
-		tlsConfig, err := clusterSecurity.ToTLSConfig()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
-	}
-	conn, err := grpc.Dial(address, opt)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		err := conn.Close()
-		if err != nil {
-			log.Error("close grpc connection error", zap.Error(err))
-		}
-	}()
-
-	cli := diagnosticspb.NewDiagnosticsClient(conn)
-	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
-	defer cancel()
-	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
-	if err != nil {
-		return nil, err
-	}
-	return r.Items, nil
+	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
+	return infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, serversInfo, e.serverInfoType, true)
 }
 
 func parseFailpointServerInfo(s string) []infoschema.ServerInfo {
@@ -426,28 +330,6 @@ func parseFailpointServerInfo(s string) []infoschema.ServerInfo {
 		})
 	}
 	return serversInfo
-}
-
-func filterClusterServerInfo(serversInfo []infoschema.ServerInfo, nodeTypes, addresses set.StringSet) []infoschema.ServerInfo {
-	if len(nodeTypes) == 0 && len(addresses) == 0 {
-		return serversInfo
-	}
-
-	filterServers := make([]infoschema.ServerInfo, 0, len(serversInfo))
-	for _, srv := range serversInfo {
-		// Skip some node type which has been filtered in WHERE clause
-		// e.g: SELECT * FROM cluster_config WHERE type='tikv'
-		if len(nodeTypes) > 0 && !nodeTypes.Exist(srv.ServerType) {
-			continue
-		}
-		// Skip some node address which has been filtered in WHERE clause
-		// e.g: SELECT * FROM cluster_config WHERE address='192.16.8.12:2379'
-		if len(addresses) > 0 && !addresses.Exist(srv.Address) {
-			continue
-		}
-		filterServers = append(filterServers, srv)
-	}
-	return filterServers
 }
 
 type clusterLogRetriever struct {
@@ -515,7 +397,7 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 
 	instances := e.extractor.Instances
 	nodeTypes := e.extractor.NodeTypes
-	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, instances)
+	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, nodeTypes, instances)
 
 	var levels = make([]diagnosticspb.LogLevel, 0, len(e.extractor.LogLevels))
 	for l := range e.extractor.LogLevels {
@@ -551,7 +433,7 @@ func (e *clusterLogRetriever) startRetrieving(
 	serversInfo []infoschema.ServerInfo,
 	req *diagnosticspb.SearchLogRequest) ([]chan logStreamResult, error) {
 	// gRPC options
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
 		clusterSecurity := security.ClusterSecurity()
@@ -781,7 +663,7 @@ type HistoryHotRegion struct {
 	EndKey        string  `json:"end_key"`
 }
 
-func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan hotRegionsResult, error) {
+func (e *hotRegionsHistoryRetriver) initialize(_ context.Context, sctx sessionctx.Context) ([]chan hotRegionsResult, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
 		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
@@ -808,12 +690,10 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 		IsLeaders:  e.extractor.IsLeaders,
 	}
 
-	return e.startRetrieving(ctx, sctx, pdServers, historyHotRegionsRequest)
+	return e.startRetrieving(pdServers, historyHotRegionsRequest)
 }
 
 func (e *hotRegionsHistoryRetriver) startRetrieving(
-	ctx context.Context,
-	sctx sessionctx.Context,
 	pdServers []infoschema.ServerInfo,
 	req *HistoryHotRegionsRequest,
 ) ([]chan hotRegionsResult, error) {
@@ -989,7 +869,7 @@ type tikvRegionPeersRetriever struct {
 	retrieved bool
 }
 
-func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *tikvRegionPeersRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}

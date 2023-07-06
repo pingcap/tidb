@@ -28,7 +28,8 @@ const (
 
 // ntile divides the partition into n ranked groups and returns the group number a row belongs to.
 // e.g. We have 11 rows and n = 3. They will be divided into 3 groups.
-//      First 4 rows belongs to group 1. Following 4 rows belongs to group 2. The last 3 rows belongs to group 3.
+//
+//	First 4 rows belongs to group 1. Following 4 rows belongs to group 2. The last 3 rows belongs to group 3.
 type ntile struct {
 	n uint64
 	baseAggFunc
@@ -42,11 +43,11 @@ type partialResult4Ntile struct {
 	numRows     uint64
 }
 
-func (n *ntile) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*ntile) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4Ntile{curGroupIdx: 1}), DefPartialResult4Ntile
 }
 
-func (n *ntile) ResetPartialResult(pr PartialResult) {
+func (*ntile) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4Ntile)(pr)
 	p.curIdx = 0
 	p.curGroupIdx = 1

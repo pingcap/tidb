@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/meta",
     visibility = ["//visibility:public"],
     deps = [
+        "//domain/resourcegroup",
         "//errno",
         "//kv",
         "//metrics",
@@ -16,10 +17,8 @@ go_library(
         "//parser/mysql",
         "//structure",
         "//util/dbterror",
-        "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -32,13 +31,12 @@ go_test(
     ],
     embed = [":meta"],
     flaky = True,
+    shard_count = 12,
     deps = [
-        "//ddl",
         "//kv",
         "//parser/model",
         "//store/mockstore",
         "//testkit/testsetup",
-        "//testkit/testutil",
         "//util",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

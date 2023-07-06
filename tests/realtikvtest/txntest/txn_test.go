@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -176,4 +177,116 @@ func TestStatementErrorInTransaction(t *testing.T) {
 	tk.MustExec("update test set b = 11 where a = 1 and b = 2;")
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from test where a = 1 and b = 11").Check(testkit.Rows())
+}
+
+func TestWriteConflictMessage(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int primary key)")
+	tk.MustExec("begin optimistic")
+	tk2.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t values (1)")
+	err := tk.ExecToErr("commit")
+	require.Contains(t, err.Error(), "Write conflict")
+	require.Contains(t, err.Error(), "tableName=test.t, handle=1}")
+	require.Contains(t, err.Error(), "reason=Optimistic")
+
+	tk.MustExec("create table t2 (id varchar(30) primary key clustered)")
+	tk.MustExec("begin optimistic")
+	tk2.MustExec("insert into t2 values ('hello')")
+	tk.MustExec("insert into t2 values ('hello')")
+	err = tk.ExecToErr("commit")
+	require.Contains(t, err.Error(), "Write conflict")
+	require.Contains(t, err.Error(), "tableName=test.t2, handle={hello}")
+	require.Contains(t, err.Error(), "reason=Optimistic")
+}
+
+func TestDuplicateErrorMessage(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tx_isolation='read-committed'")
+	tk2.MustExec("use test")
+	tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=off")
+	tk.MustExec("create table t (c int primary key, v int)")
+	tk.MustExec("create table t2 (c int primary key, v int)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1, 1)")
+	tk2.MustExec("insert into t values (1, 1)")
+	tk2.MustExec("insert into t2 values (1, 2)")
+	tk.MustContainErrMsg("update t set v = v + 1 where c = 1", "Duplicate entry '1' for key 't.PRIMARY'")
+
+	tk.MustExec("create table t3 (c int, v int, unique key i1(v))")
+	tk.MustExec("create table t4 (c int, v int, unique key i1(v))")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t3 values (1, 1)")
+	tk2.MustExec("insert into t3 values (1, 1)")
+	tk2.MustExec("insert into t4 values (1, 2)")
+	tk.MustContainErrMsg("update t3 set c = c + 1 where v = 1", "Duplicate entry '1' for key 't3.i1'")
+}
+
+func TestAssertionWhenPessimisticLockLost(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
+	tk1.MustExec("set @@tidb_txn_assertion_level=strict")
+	tk2.MustExec("set @@tidb_constraint_check_in_place_pessimistic=0")
+	tk2.MustExec("set @@tidb_txn_assertion_level=strict")
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("create table t (id int primary key, val text)")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t where id = 1 for update")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (1, 'b')")
+	tk2.MustExec("insert into t values (2, 'b')")
+	tk2.MustExec("commit")
+	tk1.MustExec("select * from t where id = 2 for update")
+	tk1.MustExec("insert into t values (1, 'a') on duplicate key update val = concat(val, 'a')")
+	err := tk1.ExecToErr("commit")
+	require.NotContains(t, err.Error(), "assertion")
+}
+
+func TestSelectLockForPartitionTable(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(a int, b int, c int, key idx(a, b, c)) PARTITION BY HASH (c) PARTITIONS 10")
+	tk1.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
+	tk1.MustExec("analyze table t")
+	tk1.MustExec("begin")
+	tk1.HasPlan("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update", "IndexLookUp_9")
+	tk1.MustExec("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update")
+	ch := make(chan bool, 1)
+	go func() {
+		tk2.MustExec("use test")
+		tk2.MustExec("begin")
+		ch <- false
+		// block here, until tk1 finish
+		tk2.MustExec("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update")
+		ch <- true
+	}()
+
+	res := <-ch
+	// Sleep here to make sure SelectLock stmt is executed
+	time.Sleep(10 * time.Millisecond)
+
+	select {
+	case res = <-ch:
+	default:
+	}
+	require.False(t, res)
+
+	tk1.MustExec("commit")
+	// wait until tk2 finished
+	res = <-ch
+	require.True(t, res)
 }

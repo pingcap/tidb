@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
@@ -27,6 +28,26 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
+
+func BenchmarkChecksum(b *testing.B) {
+	b.ReportAllocs()
+	datums := types.MakeDatums(1, "abc", 1.1)
+	tp1 := types.NewFieldType(mysql.TypeLong)
+	tp2 := types.NewFieldType(mysql.TypeVarchar)
+	tp3 := types.NewFieldType(mysql.TypeDouble)
+	cols := []rowcodec.ColData{
+		{&model.ColumnInfo{ID: 1, FieldType: *tp1}, &datums[0]},
+		{&model.ColumnInfo{ID: 2, FieldType: *tp2}, &datums[1]},
+		{&model.ColumnInfo{ID: 3, FieldType: *tp3}, &datums[2]},
+	}
+	row := rowcodec.RowData{Cols: cols}
+	for i := 0; i < b.N; i++ {
+		_, err := row.Checksum()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
 
 func BenchmarkEncode(b *testing.B) {
 	b.ReportAllocs()

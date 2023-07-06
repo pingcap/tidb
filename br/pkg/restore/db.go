@@ -11,7 +11,9 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -24,7 +26,8 @@ import (
 
 // DB is a TiDB instance, not thread-safe.
 type DB struct {
-	se glue.Session
+	se            glue.Session
+	preallocedIDs *prealloctableid.PreallocIDs
 }
 
 type UniqueTableName struct {
@@ -62,12 +65,11 @@ func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) 
 		// Set placement mode for handle placement policy.
 		err = se.Execute(context.Background(), fmt.Sprintf("set @@tidb_placement_mode='%s';", policyMode))
 		if err != nil {
-			if variable.ErrUnknownSystemVar.Equal(err) {
-				// not support placement policy, just ignore it
-				log.Warn("target tidb not support tidb_placement_mode, ignore create policies", zap.Error(err))
-			} else {
+			if !variable.ErrUnknownSystemVar.Equal(err) {
 				return nil, false, errors.Trace(err)
 			}
+			// not support placement policy, just ignore it
+			log.Warn("target tidb not support tidb_placement_mode, ignore create policies", zap.Error(err))
 		} else {
 			log.Info("set tidb_placement_mode success", zap.String("mode", policyMode))
 			supportPolicy = true
@@ -76,6 +78,10 @@ func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) 
 	return &DB{
 		se: se,
 	}, supportPolicy, nil
+}
+
+func (db *DB) registerPreallocatedIDs(ids *prealloctableid.PreallocIDs) {
+	db.preallocedIDs = ids
 }
 
 // ExecDDL executes the query of a ddl job.
@@ -171,7 +177,6 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	return errors.Trace(err)
 }
 
-//
 func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error {
 	var restoreMetaSQL string
 	var err error
@@ -273,6 +278,19 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 	return nil
 }
 
+func (db *DB) tableIDAllocFilter() ddl.AllocTableIDIf {
+	return func(ti *model.TableInfo) bool {
+		if db.preallocedIDs == nil {
+			return true
+		}
+		prealloced := db.preallocedIDs.PreallocedFor(ti)
+		if prealloced {
+			log.Info("reusing table ID", zap.Stringer("table", ti.Name))
+		}
+		return !prealloced
+	}
+}
+
 // CreateTables execute a internal CREATE TABLES.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	ddlTables map[UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
@@ -289,8 +307,12 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 					return errors.Trace(err)
 				}
 			}
+
+			if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
+				ttlInfo.Enable = false
+			}
 		}
-		if err := batchSession.CreateTables(ctx, m); err != nil {
+		if err := batchSession.CreateTables(ctx, m, db.tableIDAllocFilter()); err != nil {
 			return err
 		}
 
@@ -317,7 +339,11 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		}
 	}
 
-	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
+	if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
+		ttlInfo.Enable = false
+	}
+
+	err := db.se.CreateTable(ctx, table.DB.Name, table.Info, db.tableIDAllocFilter())
 	if err != nil {
 		log.Error("create table failed",
 			zap.Stringer("db", table.DB.Name),

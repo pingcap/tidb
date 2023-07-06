@@ -231,7 +231,7 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 222", "3 113 1003"))
 	tk1.MustExec("update write_tmp1 set v = 3333 where id = 2")
 	for !lastReadFromCache(tk) {
-		tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 222", "3 113 1003"))
+		tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
 	}
 	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
 }
@@ -445,6 +445,24 @@ func TestRenewLease(t *testing.T) {
 	require.True(t, i < 20)
 }
 
+func TestCacheTableAddColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cache_add_column (f1 int, index k(f1))")
+	tk.MustExec("insert into cache_add_column (f1) values (1)")
+	tk.MustExec("alter table cache_add_column add column f2 int not null, add column f3 int default 3, add column f4 int default null")
+	tk.MustExec("alter table cache_add_column cache")
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		tk.MustQuery("select * from cache_add_column").Check(testkit.Rows("1 0 3 <nil>"))
+	}
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		tk.MustQuery("select * from cache_add_column use index(k) where f1 = 1").Check(testkit.Rows("1 0 3 <nil>"))
+	}
+}
+
 func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -454,7 +472,7 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 
 	// This line is a hack, if auth user string is "", the statement summary is skipped,
 	// so it's added to make the later code been covered.
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 
 	tk.MustExec("drop table if exists wait_tb1")
 	tk.MustExec("create table wait_tb1(id int)")

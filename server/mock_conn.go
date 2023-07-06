@@ -18,14 +18,18 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"flag"
+	"math/rand"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,6 +43,8 @@ type MockConn interface {
 	Dispatch(ctx context.Context, data []byte) error
 	// Close releases resources
 	Close()
+	// ID returns the connection ID.
+	ID() uint64
 }
 
 type mockConn struct {
@@ -66,11 +72,16 @@ func (mc *mockConn) Close() {
 	require.NoError(mc.t, mc.clientConn.Close())
 }
 
+// ID implements MockConn.ID
+func (mc *mockConn) ID() uint64 {
+	return mc.clientConn.connectionID
+}
+
 // CreateMockServer creates a mock server.
 func CreateMockServer(t *testing.T, store kv.Storage) *Server {
 	if !RunInGoTest {
 		// If CreateMockServer is called in another package, RunInGoTest is not initialized.
-		RunInGoTest = flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
+		RunInGoTest = intest.InTest
 	}
 	tidbdrv := NewTiDBDriver(store)
 	cfg := config.NewConfig()
@@ -80,25 +91,41 @@ func CreateMockServer(t *testing.T, store kv.Storage) *Server {
 	cfg.Security.AutoTLS = false
 	server, err := NewServer(cfg, tidbdrv)
 	require.NoError(t, err)
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
 	return server
 }
 
 // CreateMockConn creates a mock connection together with a session.
 func CreateMockConn(t *testing.T, server *Server) MockConn {
-	tc, err := server.driver.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "", nil)
+	extensions, err := extension.GetExtensions()
+	require.NoError(t, err)
+
+	connID := rand.Uint64()
+	tc, err := server.driver.OpenCtx(connID, 0, uint8(tmysql.DefaultCollationID), "", nil, extensions.NewSessionExtensions())
 	require.NoError(t, err)
 
 	cc := &clientConn{
-		server:     server,
-		salt:       []byte{},
-		collation:  tmysql.DefaultCollationID,
-		alloc:      arena.NewAllocator(1024),
-		chunkAlloc: chunk.NewAllocator(),
+		connectionID: connID,
+		server:       server,
+		salt:         []byte{},
+		collation:    tmysql.DefaultCollationID,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
+		extensions: tc.GetExtensions(),
 	}
 	cc.setCtx(tc)
+	cc.server.rwlock.Lock()
+	server.clients[cc.connectionID] = cc
+	cc.server.rwlock.Unlock()
+	tc.Session.SetSessionManager(server)
+	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
+	err = tc.Session.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
+	require.NoError(t, err)
 	return &mockConn{
 		clientConn: cc,
 		t:          t,

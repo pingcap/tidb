@@ -23,11 +23,13 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil"
+	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -38,15 +40,13 @@ const (
 
 // SingleTargetDataSink reports data to grpc servers.
 type SingleTargetDataSink struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	curRPCAddr string
+	ctx        context.Context
+	registerer DataSinkRegisterer
+	cancel     context.CancelFunc
 	conn       *grpc.ClientConn
 	sendTaskCh chan sendTask
-
 	registered *atomic.Bool
-	registerer DataSinkRegisterer
+	curRPCAddr string
 }
 
 // NewSingleTargetDataSink returns a new SingleTargetDataSink
@@ -90,7 +90,7 @@ func (ds *SingleTargetDataSink) recoverRun() {
 		}
 		err := ds.conn.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("[top-sql] single target dataSink close connection failed", zap.Error(err))
+			logutil.BgLogger().Warn("single target dataSink close connection failed", zap.String("category", "top-sql"), zap.Error(err))
 		}
 		ds.conn = nil
 	}()
@@ -160,7 +160,7 @@ func (ds *SingleTargetDataSink) TrySend(data *ReportData, deadline time.Time) er
 	case <-ds.ctx.Done():
 		return ds.ctx.Err()
 	default:
-		ignoreReportChannelFullCounter.Inc()
+		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
 		return errors.New("the channel of single target dataSink is full")
 	}
 }
@@ -189,10 +189,10 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 	start := time.Now()
 	defer func() {
 		if err != nil {
-			logutil.BgLogger().Warn("[top-sql] single target data sink failed to send data to receiver", zap.Error(err))
-			reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			logutil.BgLogger().Warn("single target data sink failed to send data to receiver", zap.String("category", "top-sql"), zap.Error(err))
+			reporter_metrics.ReportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			reporter_metrics.ReportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
@@ -237,11 +237,11 @@ func (ds *SingleTargetDataSink) sendBatchTopSQLRecord(ctx context.Context, recor
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		topSQLReportRecordCounterHistogram.Observe(float64(sentCount))
+		reporter_metrics.TopSQLReportRecordCounterHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			reporter_metrics.ReportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			reporter_metrics.ReportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
@@ -271,11 +271,11 @@ func (ds *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMetas [
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		topSQLReportSQLCountHistogram.Observe(float64(sentCount))
+		reporter_metrics.TopSQLReportSQLCountHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reportSQLDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			reporter_metrics.ReportSQLDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reportSQLDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			reporter_metrics.ReportSQLDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
@@ -306,11 +306,11 @@ func (ds *SingleTargetDataSink) sendBatchPlanMeta(ctx context.Context, planMetas
 	start := time.Now()
 	sentCount := 0
 	defer func() {
-		topSQLReportPlanCountHistogram.Observe(float64(sentCount))
+		reporter_metrics.TopSQLReportPlanCountHistogram.Observe(float64(sentCount))
 		if err != nil {
-			reportPlanDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			reporter_metrics.ReportPlanDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
-			reportPlanDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			reporter_metrics.ReportPlanDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}()
 
@@ -341,7 +341,7 @@ func (ds *SingleTargetDataSink) tryEstablishConnection(ctx context.Context, targ
 
 	if ds.conn != nil {
 		err := ds.conn.Close()
-		logutil.BgLogger().Warn("[top-sql] grpc dataSink close connection failed", zap.Error(err))
+		logutil.BgLogger().Warn("grpc dataSink close connection failed", zap.String("category", "top-sql"), zap.Error(err))
 	}
 
 	ds.conn, err = ds.dial(ctx, targetRPCAddr)
@@ -359,7 +359,7 @@ func (*SingleTargetDataSink) dial(ctx context.Context, targetRPCAddr string) (*g
 		dialCtx,
 		targetRPCAddr,
 		grpc.WithBlock(),
-		grpc.WithInsecure(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithInitialWindowSize(grpcInitialWindowSize),
 		grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 		grpc.WithDefaultCallOptions(

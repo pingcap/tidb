@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	ast "github.com/pingcap/tidb/parser/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -177,8 +176,22 @@ func SetTypeFlag(flag *uint, flagItem uint, on bool) {
 	}
 }
 
-// DefaultParamTypeForValue returns the default FieldType for the parameterized value.
-func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
+// InferParamTypeFromDatum is used for plan cache to infer the type of a parameter from its datum.
+func InferParamTypeFromDatum(d *Datum, tp *FieldType) {
+	InferParamTypeFromUnderlyingValue(d.GetValue(), tp)
+	if IsStringKind(d.k) {
+		// consider charset and collation here
+		c, err := collate.GetCollationByName(d.collation)
+		if err != nil || c == nil {
+			return // use default charset and collation
+		}
+		tp.SetCharset(c.CharsetName)
+		tp.SetCollate(d.collation)
+	}
+}
+
+// InferParamTypeFromUnderlyingValue is used for plan cache to infer the type of a parameter from its underlying value.
+func InferParamTypeFromUnderlyingValue(value interface{}, tp *FieldType) {
 	switch value.(type) {
 	case nil:
 		tp.SetType(mysql.TypeVarString)
@@ -318,7 +331,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.SetFlen(len(x.Name))
 		tp.SetDecimal(UnspecifiedLength)
 		SetBinChsClnFlag(tp)
-	case json.BinaryJSON:
+	case BinaryJSON:
 		tp.SetType(mysql.TypeJSON)
 		tp.SetFlen(UnspecifiedLength)
 		tp.SetDecimal(0)

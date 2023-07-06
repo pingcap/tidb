@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
@@ -59,15 +59,16 @@ func TestStmtLabel(t *testing.T) {
 		{"update label set c3 = 3 where c1 = 1", "Update"},
 		{"update label set c3 = 3 where c2 = 1", "Update"},
 		{"update label set c3 = 3 where c2 = 1 order by c3 limit 1", "Update"},
+		{"import into label from '/file.csv'", "ImportInto"},
 	}
 	for _, tt := range tests {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(tk.Session(), stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		err = plannercore.Preprocess(context.Background(), tk.Session(), stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
 		_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
-		require.Equal(t, tt.label, executor.GetStmtLabel(stmtNode))
+		require.Equal(t, tt.label, ast.GetStmtLabel(stmtNode))
 	}
 }

@@ -11,9 +11,12 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -38,6 +41,10 @@ const (
 	regionCountPrefix    = "pd/api/v1/stats/region"
 	storePrefix          = "pd/api/v1/store"
 	schedulerPrefix      = "pd/api/v1/schedulers"
+	resetTSPrefix        = "pd/api/v1/admin/reset-ts"
+	recoveringMarkPrefix = "pd/api/v1/admin/cluster/markers/snapshot-recovering"
+	baseAllocIDPrefix    = "pd/api/v1/admin/base-alloc-id"
+	minResolvedTSPrefix  = "pd/api/v1/min-resolved-ts"
 	regionLabelPrefix    = "pd/api/v1/config/region-label/rule"
 	maxMsgSize           = int(128 * units.MiB) // pd.ScanRegion may return a large response
 	scheduleConfigPrefix = "pd/api/v1/config/schedule"
@@ -110,7 +117,7 @@ var (
 		"shuffle-region-scheduler":     {},
 		"shuffle-hot-region-scheduler": {},
 	}
-	expectPDCfg = map[string]pauseConfigGenerator{
+	expectPDCfgGenerators = map[string]pauseConfigGenerator{
 		"max-merge-region-keys": zeroPauseConfig,
 		"max-merge-region-size": zeroPauseConfig,
 		// TODO "leader-schedule-limit" and "region-schedule-limit" don't support ttl for now,
@@ -136,38 +143,64 @@ var (
 )
 
 // pdHTTPRequest defines the interface to send a request to pd and return the result in bytes.
-type pdHTTPRequest func(ctx context.Context, addr string, prefix string, cli *http.Client, method string, body io.Reader) ([]byte, error)
+type pdHTTPRequest func(ctx context.Context, addr string, prefix string,
+	cli *http.Client, method string, body io.Reader) ([]byte, error)
 
 // pdRequest is a func to send an HTTP to pd and return the result bytes.
 func pdRequest(
 	ctx context.Context,
 	addr string, prefix string,
 	cli *http.Client, method string, body io.Reader) ([]byte, error) {
+	_, respBody, err := pdRequestWithCode(ctx, addr, prefix, cli, method, body)
+	return respBody, err
+}
+
+func pdRequestWithCode(
+	ctx context.Context,
+	addr string, prefix string,
+	cli *http.Client, method string, body io.Reader) (int, []byte, error) {
 	u, err := url.Parse(addr)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return 0, nil, errors.Trace(err)
 	}
 	reqURL := fmt.Sprintf("%s/%s", u, prefix)
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return 0, nil, errors.Trace(err)
 	}
-	resp, err := cli.Do(req)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	var resp *http.Response
 	count := 0
 	for {
+		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
-		if count > pdRequestRetryTime || resp.StatusCode < 500 {
+		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
+			if failType, ok := v.(int); ok && count <= pdRequestRetryTime-1 {
+				resp = nil
+				switch failType {
+				case 0:
+					err = &net.OpError{
+						Op:  "read",
+						Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+					}
+				default:
+					err = &url.Error{
+						Op:  "read",
+						Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+					}
+				}
+			}
+		})
+		if count > pdRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
+			(err != nil && !common.IsRetryableError(err)) {
 			break
 		}
-		_ = resp.Body.Close()
-		time.Sleep(pdRequestRetryInterval())
-		resp, err = cli.Do(req)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if resp != nil {
+			_ = resp.Body.Close()
 		}
+		time.Sleep(pdRequestRetryInterval())
+	}
+	if err != nil {
+		return 0, nil, errors.Trace(err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -175,14 +208,15 @@ func pdRequest(
 
 	if resp.StatusCode != http.StatusOK {
 		res, _ := io.ReadAll(resp.Body)
-		return nil, errors.Annotatef(berrors.ErrPDInvalidResponse, "[%d] %s %s", resp.StatusCode, res, reqURL)
+		return resp.StatusCode, nil, errors.Annotatef(berrors.ErrPDInvalidResponse,
+			"[%d] %s %s", resp.StatusCode, res, reqURL)
 	}
 
 	r, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return resp.StatusCode, nil, errors.Trace(err)
 	}
-	return r, nil
+	return resp.StatusCode, r, nil
 }
 
 func pdRequestRetryInterval() time.Duration {
@@ -192,6 +226,15 @@ func pdRequestRetryInterval() time.Duration {
 		}
 	})
 	return time.Second
+}
+
+// DefaultExpectPDCfgGenerators returns default pd config generators
+func DefaultExpectPDCfgGenerators() map[string]pauseConfigGenerator {
+	clone := make(map[string]pauseConfigGenerator, len(expectPDCfgGenerators))
+	for k := range expectPDCfgGenerators {
+		clone[k] = expectPDCfgGenerators[k]
+	}
+	return clone
 }
 
 // PdController manage get/update config from pd.
@@ -233,7 +276,8 @@ func NewPdController(
 		}
 	}
 	if failure != nil {
-		return nil, errors.Annotatef(berrors.ErrPDUpdateFailed, "pd address (%s) not available, please check network", pdAddrs)
+		return nil, errors.Annotatef(berrors.ErrPDUpdateFailed,
+			"pd address (%s) not available, error is %s, please check network", pdAddrs, failure)
 	}
 
 	version := parseVersion(versionBytes)
@@ -244,7 +288,9 @@ func NewPdController(
 	pdClient, err := pd.NewClientWithContext(
 		ctx, addrs, securityOption,
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
-		pd.WithCustomTimeoutOption(10*time.Second),
+		// If the time too short, we may scatter a region many times, because
+		// the interface `ScatterRegions` may time out.
+		pd.WithCustomTimeoutOption(60*time.Second),
 		pd.WithMaxErrorRetry(3),
 	)
 	if err != nil {
@@ -383,7 +429,8 @@ func (p *PdController) getStoreInfoWith(
 	return nil, errors.Trace(err)
 }
 
-func (p *PdController) doPauseSchedulers(ctx context.Context, schedulers []string, post pdHTTPRequest) ([]string, error) {
+func (p *PdController) doPauseSchedulers(ctx context.Context,
+	schedulers []string, post pdHTTPRequest) ([]string, error) {
 	// pause this scheduler with 300 seconds
 	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(pauseTimeout.Seconds())})
 	if err != nil {
@@ -581,13 +628,14 @@ func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interf
 	return p.doUpdatePDScheduleConfig(ctx, cfg, post, prefix)
 }
 
-func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig) error {
+func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig,
+	configsNeedRestore map[string]pauseConfigGenerator) error {
 	if err := pd.ResumeSchedulers(ctx, clusterCfg.Schedulers); err != nil {
 		return errors.Annotate(err, "fail to add PD schedulers")
 	}
 	log.Info("restoring config", zap.Any("config", clusterCfg.ScheduleCfg))
 	mergeCfg := make(map[string]interface{})
-	for cfgKey := range expectPDCfg {
+	for cfgKey := range configsNeedRestore {
 		value := clusterCfg.ScheduleCfg[cfgKey]
 		if value == nil {
 			// Ignore non-exist config.
@@ -610,8 +658,15 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 
 // MakeUndoFunctionByConfig return an UndoFunc based on specified ClusterConfig
 func (p *PdController) MakeUndoFunctionByConfig(config ClusterConfig) UndoFunc {
+	return p.GenRestoreSchedulerFunc(config, expectPDCfgGenerators)
+}
+
+// GenRestoreSchedulerFunc gen restore func
+func (p *PdController) GenRestoreSchedulerFunc(config ClusterConfig,
+	configsNeedRestore map[string]pauseConfigGenerator) UndoFunc {
+	// todo: we only need config names, not a map[string]pauseConfigGenerator
 	restore := func(ctx context.Context) error {
-		return restoreSchedulers(ctx, p, config)
+		return restoreSchedulers(ctx, p, config, configsNeedRestore)
 	}
 	return restore
 }
@@ -630,10 +685,72 @@ func (p *PdController) RemoveSchedulers(ctx context.Context) (undo UndoFunc, err
 	return undo, errors.Trace(err)
 }
 
+// RemoveSchedulersWithConfig removes the schedulers that may slow down BR speed.
+func (p *PdController) RemoveSchedulersWithConfig(
+	ctx context.Context,
+) (undo UndoFunc, config *ClusterConfig, err error) {
+	undo = Nop
+
+	origin, _, err1 := p.RemoveSchedulersWithOrigin(ctx)
+	if err1 != nil {
+		err = err1
+		return
+	}
+
+	undo = p.MakeUndoFunctionByConfig(ClusterConfig{Schedulers: origin.Schedulers, ScheduleCfg: origin.ScheduleCfg})
+	return undo, &origin, errors.Trace(err)
+}
+
+// RemoveAllPDSchedulers pause pd scheduler during the snapshot backup and restore
+func (p *PdController) RemoveAllPDSchedulers(ctx context.Context) (undo UndoFunc, err error) {
+	undo = Nop
+
+	// during the backup, we shall stop all scheduler so that restore easy to implement
+	// during phase-2, pd is fresh and in recovering-mode(recovering-mark=true), there's no leader
+	// so there's no leader or region schedule initially. when phase-2 start force setting leaders, schedule may begin.
+	// we don't want pd do any leader or region schedule during this time, so we set those params to 0
+	// before we force setting leaders
+	const enableTiKVSplitRegion = "enable-tikv-split-region"
+	scheduleLimitParams := []string{
+		"hot-region-schedule-limit",
+		"leader-schedule-limit",
+		"merge-schedule-limit",
+		"region-schedule-limit",
+		"replica-schedule-limit",
+		enableTiKVSplitRegion,
+	}
+	pdConfigGenerators := DefaultExpectPDCfgGenerators()
+	for _, param := range scheduleLimitParams {
+		if param == enableTiKVSplitRegion {
+			pdConfigGenerators[param] = func(int, interface{}) interface{} { return false }
+		} else {
+			pdConfigGenerators[param] = func(int, interface{}) interface{} { return 0 }
+		}
+	}
+
+	oldPDConfig, _, err1 := p.RemoveSchedulersWithConfigGenerator(ctx, pdConfigGenerators)
+	if err1 != nil {
+		err = err1
+		return
+	}
+
+	undo = p.GenRestoreSchedulerFunc(oldPDConfig, pdConfigGenerators)
+	return undo, errors.Trace(err)
+}
+
 // RemoveSchedulersWithOrigin pause and remove br related schedule configs and return the origin and modified configs
-func (p *PdController) RemoveSchedulersWithOrigin(ctx context.Context) (origin ClusterConfig, modified ClusterConfig, err error) {
+func (p *PdController) RemoveSchedulersWithOrigin(ctx context.Context) (origin ClusterConfig,
+	modified ClusterConfig, err error) {
+	return p.RemoveSchedulersWithConfigGenerator(ctx, expectPDCfgGenerators)
+}
+
+// RemoveSchedulersWithConfigGenerator pause scheduler with custom config generator
+func (p *PdController) RemoveSchedulersWithConfigGenerator(ctx context.Context,
+	pdConfigGenerators map[string]pauseConfigGenerator) (
+	origin ClusterConfig, modified ClusterConfig, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("PdController.RemoveSchedulers", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("PdController.RemoveSchedulers",
+			opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -648,9 +765,9 @@ func (p *PdController) RemoveSchedulersWithOrigin(ctx context.Context) (origin C
 	if err != nil {
 		return originCfg, removedCfg, err
 	}
-	disablePDCfg := make(map[string]interface{}, len(expectPDCfg))
-	originPDCfg := make(map[string]interface{}, len(expectPDCfg))
-	for cfgKey, cfgValFunc := range expectPDCfg {
+	disablePDCfg := make(map[string]interface{}, len(pdConfigGenerators))
+	originPDCfg := make(map[string]interface{}, len(pdConfigGenerators))
+	for cfgKey, cfgValFunc := range pdConfigGenerators {
 		value, ok := scheduleCfg[cfgKey]
 		if !ok {
 			// Ignore non-exist config.
@@ -713,6 +830,110 @@ func (p *PdController) doRemoveSchedulersWith(
 		removedSchedulers, err = p.pauseSchedulersAndConfigWith(ctx, needRemoveSchedulers, nil, pdRequest)
 	}
 	return removedSchedulers, err
+}
+
+// GetMinResolvedTS get min-resolved-ts from pd
+func (p *PdController) GetMinResolvedTS(ctx context.Context) (uint64, error) {
+	var err error
+	for _, addr := range p.addrs {
+		v, e := pdRequest(ctx, addr, minResolvedTSPrefix, p.cli, http.MethodGet, nil)
+		if e != nil {
+			log.Warn("failed to get min resolved ts", zap.String("addr", addr), zap.Error(e))
+			err = e
+			continue
+		}
+		log.Info("min resolved ts", zap.String("resp", string(v)))
+		d := struct {
+			IsRealTime    bool   `json:"is_real_time,omitempty"`
+			MinResolvedTS uint64 `json:"min_resolved_ts"`
+		}{}
+		err = json.Unmarshal(v, &d)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if !d.IsRealTime {
+			message := "min resolved ts not enabled"
+			log.Error(message, zap.String("addr", addr))
+			return 0, errors.Trace(errors.New(message))
+		}
+		return d.MinResolvedTS, nil
+	}
+	return 0, errors.Trace(err)
+}
+
+// RecoverBaseAllocID recover base alloc id
+func (p *PdController) RecoverBaseAllocID(ctx context.Context, id uint64) error {
+	reqData, _ := json.Marshal(&struct {
+		ID string `json:"id"`
+	}{
+		ID: fmt.Sprintf("%d", id),
+	})
+	var err error
+	for _, addr := range p.addrs {
+		_, e := pdRequest(ctx, addr, baseAllocIDPrefix, p.cli, http.MethodPost, bytes.NewBuffer(reqData))
+		if e != nil {
+			log.Warn("failed to recover base alloc id", zap.String("addr", addr), zap.Error(e))
+			err = e
+			continue
+		}
+		return nil
+	}
+	return errors.Trace(err)
+}
+
+// ResetTS reset current ts of pd
+func (p *PdController) ResetTS(ctx context.Context, ts uint64) error {
+	// reset-ts of PD will never set ts < current pd ts
+	// we set force-use-larger=true to allow ts > current pd ts + 24h(on default)
+	reqData, _ := json.Marshal(&struct {
+		Tso            string `json:"tso"`
+		ForceUseLarger bool   `json:"force-use-larger"`
+	}{
+		Tso:            fmt.Sprintf("%d", ts),
+		ForceUseLarger: true,
+	})
+	var err error
+	for _, addr := range p.addrs {
+		code, _, e := pdRequestWithCode(ctx, addr, resetTSPrefix, p.cli, http.MethodPost, bytes.NewBuffer(reqData))
+		if e != nil {
+			// for pd version <= 6.2, if the given ts < current ts of pd, pd returns StatusForbidden.
+			// it's not an error for br
+			if code == http.StatusForbidden {
+				log.Info("reset-ts returns with status forbidden, ignore")
+				return nil
+			}
+			log.Warn("failed to reset ts", zap.Uint64("ts", ts), zap.String("addr", addr), zap.Error(e))
+			err = e
+			continue
+		}
+		return nil
+	}
+	return errors.Trace(err)
+}
+
+// MarkRecovering mark pd into recovering
+func (p *PdController) MarkRecovering(ctx context.Context) error {
+	return p.operateRecoveringMark(ctx, http.MethodPost)
+}
+
+// UnmarkRecovering unmark pd recovering
+func (p *PdController) UnmarkRecovering(ctx context.Context) error {
+	return p.operateRecoveringMark(ctx, http.MethodDelete)
+}
+
+func (p *PdController) operateRecoveringMark(ctx context.Context, method string) error {
+	var err error
+	for _, addr := range p.addrs {
+		_, e := pdRequest(ctx, addr, recoveringMarkPrefix, p.cli, method, nil)
+		if e != nil {
+			log.Warn("failed to operate recovering mark", zap.String("method", method),
+				zap.String("addr", addr), zap.Error(e))
+			err = e
+			continue
+		}
+		return nil
+	}
+	return errors.Trace(err)
 }
 
 // RegionLabel is the label of a region. This struct is partially copied from
@@ -789,11 +1010,13 @@ func (p *PdController) DeleteRegionLabelRule(ctx context.Context, ruleID string)
 // PauseSchedulersByKeyRange will pause schedulers for regions in the specific key range.
 // This function will spawn a goroutine to keep pausing schedulers periodically until the context is done.
 // The return done channel is used to notify the caller that the background goroutine is exited.
-func (p *PdController) PauseSchedulersByKeyRange(ctx context.Context, startKey, endKey []byte) (done <-chan struct{}, err error) {
+func (p *PdController) PauseSchedulersByKeyRange(ctx context.Context,
+	startKey, endKey []byte) (done <-chan struct{}, err error) {
 	return p.pauseSchedulerByKeyRangeWithTTL(ctx, startKey, endKey, pauseTimeout)
 }
 
-func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context, startKey, endKey []byte, ttl time.Duration) (_done <-chan struct{}, err error) {
+func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context,
+	startKey, endKey []byte, ttl time.Duration) (_done <-chan struct{}, err error) {
 	rule := LabelRule{
 		ID: uuid.New().String(),
 		Labels: []RegionLabel{{
@@ -827,7 +1050,8 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context, star
 					if berrors.IsContextCanceled(err) {
 						break loop
 					}
-					log.Warn("pause scheduler by key range failed, ignore it and wait next time pause", zap.Error(err))
+					log.Warn("pause scheduler by key range failed, ignore it and wait next time pause",
+						zap.Error(err))
 				}
 			case <-ctx.Done():
 				break loop

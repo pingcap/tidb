@@ -69,14 +69,15 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "TestKey", s3.SseKmsKeyId)
 
 	// special character in access keys
-	s, err = ParseBackend(`s3://bucket4/prefix/path?access-key=NXN7IPIOSAAKDEEOLMAF&secret-access-key=nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw`, nil)
+	s, err = ParseBackend(`s3://bucket4/prefix/path?access-key=******&secret-access-key=******+&session-token=******`, nil)
 	require.NoError(t, err)
 	s3 = s.GetS3()
 	require.NotNil(t, s3)
 	require.Equal(t, "bucket4", s3.Bucket)
 	require.Equal(t, "prefix/path", s3.Prefix)
-	require.Equal(t, "NXN7IPIOSAAKDEEOLMAF", s3.AccessKey)
-	require.Equal(t, "nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw", s3.SecretAccessKey)
+	require.Equal(t, "******", s3.AccessKey)
+	require.Equal(t, "******+", s3.SecretAccessKey)
+	require.Equal(t, "******", s3.SessionToken)
 	require.True(t, s3.ForcePathStyle)
 
 	// parse role ARN and external ID
@@ -212,4 +213,83 @@ func TestFormatBackendURL(t *testing.T) {
 		},
 	})
 	require.Equal(t, "azure://bucket/some%20prefix/", backendURL.String())
+}
+
+func TestParseRawURL(t *testing.T) {
+	cases := []struct {
+		url             string
+		schema          string
+		host            string
+		path            string
+		accessKey       string
+		secretAccessKey string
+	}{
+		{
+			url:             `s3://bucket/prefix/path?access-key=NXN7IPIOSAAKDEEOLMAF&secret-access-key=nREY/7DtPaIbYKrKlEEMMF/ExCiJEX=XMLPUANw`,
+			schema:          "s3",
+			host:            "bucket",
+			path:            "/prefix/path",
+			accessKey:       "NXN7IPIOSAAKDEEOLMAF",                    // fake ak/sk
+			secretAccessKey: "nREY/7DtPaIbYKrKlEEMMF/ExCiJEX=XMLPUANw", // w/o "+"
+		},
+		{
+			url:             `s3://bucket/prefix/path?access-key=NXN7IPIOSAAKDEEOLMAF&secret-access-key=nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw`,
+			schema:          "s3",
+			host:            "bucket",
+			path:            "/prefix/path",
+			accessKey:       "NXN7IPIOSAAKDEEOLMAF",                     // fake ak/sk
+			secretAccessKey: "nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw", // with "+"
+		},
+	}
+
+	for _, c := range cases {
+		storageRawURL := c.url
+		storageURL, err := ParseRawURL(storageRawURL)
+		require.NoError(t, err)
+
+		require.Equal(t, c.schema, storageURL.Scheme)
+		require.Equal(t, c.host, storageURL.Host)
+		require.Equal(t, c.path, storageURL.Path)
+
+		require.Equal(t, 1, len(storageURL.Query()["access-key"]))
+		accessKey := storageURL.Query()["access-key"][0]
+		require.Equal(t, c.accessKey, accessKey)
+
+		require.Equal(t, 1, len(storageURL.Query()["secret-access-key"]))
+		secretAccessKey := storageURL.Query()["secret-access-key"][0]
+		require.Equal(t, c.secretAccessKey, secretAccessKey)
+	}
+}
+
+func TestIsLocal(t *testing.T) {
+	type args struct {
+		path string
+	}
+	tests := []struct {
+		name   string
+		args   args
+		want   bool
+		errStr string
+	}{
+		{"local", args{":"}, false, "missing protocol scheme"},
+		{"local", args{"~/tmp/file"}, true, ""},
+		{"local", args{"."}, true, ""},
+		{"local", args{".."}, true, ""},
+		{"local", args{"./tmp/file"}, true, ""},
+		{"local", args{"/tmp/file"}, true, ""},
+		{"local", args{"local:///tmp/file"}, true, ""},
+		{"local", args{"file:///tmp/file"}, true, ""},
+		{"local", args{"s3://bucket/tmp/file"}, false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := IsLocalPath(tt.args.path)
+			if tt.errStr != "" {
+				require.ErrorContains(t, err, tt.errStr)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, got, tt.want)
+		})
+	}
 }

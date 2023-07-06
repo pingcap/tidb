@@ -16,6 +16,7 @@ package core
 
 import (
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // HandleCols is the interface that holds handle columns.
@@ -38,6 +40,10 @@ type HandleCols interface {
 	// BuildHandleFromIndexRow builds a Handle from index row data.
 	// The last column(s) of `row` must be the handle column(s).
 	BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error)
+	// BuildHandleFromIndexRow builds a Handle from index row data.
+	// The last column of `row` must be the pids,
+	// and the second to last column(s) of `row` must be the handle column(s).
+	BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.PartitionHandle, error)
 	// ResolveIndices resolves handle column indices.
 	ResolveIndices(schema *expression.Schema) (HandleCols, error)
 	// IsInt returns if the HandleCols is a single tnt column.
@@ -50,8 +56,10 @@ type HandleCols interface {
 	NumCols() int
 	// Compare compares two datum rows by handle order.
 	Compare(a, b []types.Datum, ctors []collate.Collator) (int, error)
-	// GetFieldTypes return field types of columns.
+	// GetFieldsTypes return field types of columns.
 	GetFieldsTypes() []*types.FieldType
+	// MemoryUsage return the memory usage
+	MemoryUsage() int64
 }
 
 // CommonHandleCols implements the kv.HandleCols interface.
@@ -89,6 +97,22 @@ func (cb *CommonHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, e
 	return cb.buildHandleByDatumsBuffer(datumBuf)
 }
 
+// BuildPartitionHandleFromIndexRow implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.PartitionHandle, error) {
+	datumBuf := make([]types.Datum, 0, 4)
+	for i := 0; i < cb.NumCols(); i++ {
+		datumBuf = append(datumBuf, row.GetDatum(row.Len()-1-cb.NumCols()+i, cb.columns[i].RetType))
+	}
+	handle, err := cb.buildHandleByDatumsBuffer(datumBuf)
+	if err != nil {
+		return kv.PartitionHandle{}, err
+	}
+	return kv.NewPartitionHandle(
+		row.GetInt64(row.Len()-1),
+		handle,
+	), nil
+}
+
 // BuildHandleByDatums implements the kv.HandleCols interface.
 func (cb *CommonHandleCols) BuildHandleByDatums(row []types.Datum) (kv.Handle, error) {
 	datumBuf := make([]types.Datum, 0, 4)
@@ -117,7 +141,7 @@ func (cb *CommonHandleCols) ResolveIndices(schema *expression.Schema) (HandleCol
 }
 
 // IsInt implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) IsInt() bool {
+func (*CommonHandleCols) IsInt() bool {
 	return false
 }
 
@@ -170,6 +194,21 @@ func (cb *CommonHandleCols) GetFieldsTypes() []*types.FieldType {
 	return fieldTps
 }
 
+const emptyCommonHandleColsSize = int64(unsafe.Sizeof(CommonHandleCols{}))
+
+// MemoryUsage return the memory usage of CommonHandleCols
+func (cb *CommonHandleCols) MemoryUsage() (sum int64) {
+	if cb == nil {
+		return
+	}
+
+	sum = emptyCommonHandleColsSize + int64(cap(cb.columns))*size.SizeOfPointer
+	for _, col := range cb.columns {
+		sum += col.MemoryUsage()
+	}
+	return
+}
+
 // NewCommonHandleCols creates a new CommonHandleCols.
 func NewCommonHandleCols(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	tableColumns []*expression.Column) *CommonHandleCols {
@@ -196,8 +235,16 @@ func (ib *IntHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
 }
 
 // BuildHandleFromIndexRow implements the kv.HandleCols interface.
-func (ib *IntHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
+func (*IntHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
 	return kv.IntHandle(row.GetInt64(row.Len() - 1)), nil
+}
+
+// BuildPartitionHandleFromIndexRow implements the kv.HandleCols interface.
+func (*IntHandleCols) BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.PartitionHandle, error) {
+	return kv.NewPartitionHandle(
+		row.GetInt64(row.Len()-1),
+		kv.IntHandle(row.GetInt64(row.Len()-2)),
+	), nil
 }
 
 // BuildHandleByDatums implements the kv.HandleCols interface.
@@ -215,7 +262,7 @@ func (ib *IntHandleCols) ResolveIndices(schema *expression.Schema) (HandleCols, 
 }
 
 // IsInt implements the kv.HandleCols interface.
-func (ib *IntHandleCols) IsInt() bool {
+func (*IntHandleCols) IsInt() bool {
 	return true
 }
 
@@ -233,7 +280,7 @@ func (ib *IntHandleCols) GetCol(idx int) *expression.Column {
 }
 
 // NumCols implements the kv.HandleCols interface.
-func (ib *IntHandleCols) NumCols() int {
+func (*IntHandleCols) NumCols() int {
 	return 1
 }
 
@@ -245,8 +292,20 @@ func (ib *IntHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator) (
 }
 
 // GetFieldsTypes implements the kv.HandleCols interface.
-func (ib *IntHandleCols) GetFieldsTypes() []*types.FieldType {
+func (*IntHandleCols) GetFieldsTypes() []*types.FieldType {
 	return []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+}
+
+// MemoryUsage return the memory usage of IntHandleCols
+func (ib *IntHandleCols) MemoryUsage() (sum int64) {
+	if ib == nil {
+		return
+	}
+
+	if ib.col != nil {
+		sum = ib.col.MemoryUsage()
+	}
+	return
 }
 
 // NewIntHandleCols creates a new IntHandleCols.

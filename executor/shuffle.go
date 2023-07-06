@@ -20,8 +20,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -30,52 +32,55 @@ import (
 )
 
 // ShuffleExec is the executor to run other executors in a parallel manner.
+//
 //  1. It fetches chunks from M `DataSources` (value of M depends on the actual executor, e.g. M = 1 for WindowExec, M = 2 for MergeJoinExec).
+//
 //  2. It splits tuples from each `DataSource` into N partitions (Only "split by hash" is implemented so far).
+//
 //  3. It invokes N workers in parallel, each one has M `receiver` to receive partitions from `DataSources`
+//
 //  4. It assigns partitions received as input to each worker and executes child executors.
+//
 //  5. It collects outputs from each worker, then sends outputs to its parent.
 //
-//                                +-------------+
-//                        +-------| Main Thread |
-//                        |       +------+------+
-//                        |              ^
-//                        |              |
-//                        |              +
-//                        v             +++
-//                 outputHolderCh       | | outputCh (1 x Concurrency)
-//                        v             +++
-//                        |              ^
-//                        |              |
-//                        |      +-------+-------+
-//                        v      |               |
-//                 +--------------+             +--------------+
-//          +----- |    worker    |   .......   |    worker    |  worker (N Concurrency): child executor, eg. WindowExec (+SortExec)
-//          |      +------------+-+             +-+------------+
-//          |                 ^                 ^
-//          |                 |                 |
-//          |                +-+  +-+  ......  +-+
-//          |                | |  | |          | |
-//          |                ...  ...          ...  inputCh (Concurrency x 1)
-//          v                | |  | |          | |
-//    inputHolderCh          +++  +++          +++
-//          v                 ^    ^            ^
-//          |                 |    |            |
-//          |          +------o----+            |
-//          |          |      +-----------------+-----+
-//          |          |                              |
-//          |      +---+------------+------------+----+-----------+
-//          |      |              Partition Splitter              |
-//          |      +--------------+-+------------+-+--------------+
-//          |                             ^
-//          |                             |
-//          |             +---------------v-----------------+
-//          +---------->  |    fetch data from DataSource   |
-//                        +---------------------------------+
-//
-//
+//     +-------------+
+//     +-------| Main Thread |
+//     |       +------+------+
+//     |              ^
+//     |              |
+//     |              +
+//     v             +++
+//     outputHolderCh       | | outputCh (1 x Concurrency)
+//     v             +++
+//     |              ^
+//     |              |
+//     |      +-------+-------+
+//     v      |               |
+//     +--------------+             +--------------+
+//     +----- |    worker    |   .......   |    worker    |  worker (N Concurrency): child executor, eg. WindowExec (+SortExec)
+//     |      +------------+-+             +-+------------+
+//     |                 ^                 ^
+//     |                 |                 |
+//     |                +-+  +-+  ......  +-+
+//     |                | |  | |          | |
+//     |                ...  ...          ...  inputCh (Concurrency x 1)
+//     v                | |  | |          | |
+//     inputHolderCh          +++  +++          +++
+//     v                 ^    ^            ^
+//     |                 |    |            |
+//     |          +------o----+            |
+//     |          |      +-----------------+-----+
+//     |          |                              |
+//     |      +---+------------+------------+----+-----------+
+//     |      |              Partition Splitter              |
+//     |      +--------------+-+------------+-+--------------+
+//     |                             ^
+//     |                             |
+//     |             +---------------v-----------------+
+//     +---------->  |    fetch data from DataSource   |
+//     +---------------------------------+
 type ShuffleExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	concurrency int
 	workers     []*shuffleWorker
 
@@ -84,7 +89,7 @@ type ShuffleExec struct {
 
 	// each dataSource has a corresponding spliter
 	splitters   []partitionSplitter
-	dataSources []Executor
+	dataSources []exec.Executor
 
 	finishCh chan struct{}
 	outputCh chan *shuffleOutput
@@ -103,7 +108,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 
@@ -162,8 +167,7 @@ func (e *ShuffleExec) Close() error {
 	for _, w := range e.workers {
 		for _, r := range w.receivers {
 			if r.inputCh != nil {
-				for range r.inputCh {
-				}
+				channel.Clear(r.inputCh)
 			}
 		}
 		// close child executor of each worker
@@ -172,15 +176,14 @@ func (e *ShuffleExec) Close() error {
 		}
 	}
 	if e.outputCh != nil {
-		for range e.outputCh { // workers exit before `e.outputCh` is closed.
-		}
+		channel.Clear(e.outputCh)
 	}
 	e.executed = false
 
-	if e.runtimeStats != nil {
+	if e.RuntimeStats() != nil {
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("ShuffleConcurrency", e.concurrency))
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
+		e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), runtimeStats)
 	}
 
 	// close dataSources
@@ -190,7 +193,7 @@ func (e *ShuffleExec) Close() error {
 		}
 	}
 	// close baseExecutor
-	if err := e.baseExecutor.Close(); err != nil && firstErr == nil {
+	if err := e.BaseExecutor.Close(); err != nil && firstErr == nil {
 		firstErr = err
 	}
 	return errors.Trace(firstErr)
@@ -260,7 +263,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 		workerIndices []int
 	)
 	results := make([]*chunk.Chunk, len(e.workers))
-	chk := newFirstChunk(e.dataSources[dataSourceIndex])
+	chk := tryNewCacheChunk(e.dataSources[dataSourceIndex])
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -281,7 +284,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 			break
 		}
 
-		workerIndices, err = e.splitters[dataSourceIndex].split(e.ctx, chk, workerIndices)
+		workerIndices, err = e.splitters[dataSourceIndex].split(e.Ctx(), chk, workerIndices)
 		if err != nil {
 			e.outputCh <- &shuffleOutput{err: err}
 			return
@@ -314,11 +317,11 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 	}
 }
 
-var _ Executor = &shuffleReceiver{}
+var _ exec.Executor = &shuffleReceiver{}
 
 // shuffleReceiver receives chunk from dataSource through inputCh
 type shuffleReceiver struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	finishCh <-chan struct{}
 	executed bool
@@ -329,7 +332,7 @@ type shuffleReceiver struct {
 
 // Open implements the Executor Open interface.
 func (e *shuffleReceiver) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	e.executed = false
@@ -338,7 +341,7 @@ func (e *shuffleReceiver) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *shuffleReceiver) Close() error {
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.Trace(e.BaseExecutor.Close())
 }
 
 // Next implements the Executor Next interface.
@@ -365,7 +368,7 @@ func (e *shuffleReceiver) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // shuffleWorker is the multi-thread worker executing child executors within "partition".
 type shuffleWorker struct {
-	childExec Executor
+	childExec exec.Executor
 
 	finishCh <-chan struct{}
 

@@ -16,11 +16,13 @@ package ddl_test
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -41,21 +43,21 @@ func TestIndexChange(t *testing.T) {
 	tk.MustExec("insert t values (1, 1), (2, 2), (3, 3);")
 
 	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
+	tc := &callback.TestDDLCallback{Do: dom}
 	// set up hook
 	prevState := model.StateNone
 	addIndexDone := false
-	var jobID int64
+	var jobID atomic.Int64
 	var (
 		deleteOnlyTable table.Table
 		writeOnlyTable  table.Table
 		publicTable     table.Table
 	)
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == prevState {
 			return
 		}
-		jobID = job.ID
+		jobID.Store(job.ID)
 		ctx1 := testNewContext(store)
 		prevState = job.SchemaState
 		require.NoError(t, dom.Reload())
@@ -78,6 +80,7 @@ func TestIndexChange(t *testing.T) {
 			}
 		}
 	}
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(tc)
 	tk.MustExec("alter table t add index c2(c2)")
 	// We need to make sure onJobUpdated is called in the first hook.
@@ -90,12 +93,12 @@ func TestIndexChange(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	v := getSchemaVer(t, tk.Session())
-	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: publicTable.Meta()})
+	checkHistoryJobArgs(t, tk.Session(), jobID.Load(), &historyJobArgs{ver: v, tbl: publicTable.Meta()})
 
 	prevState = model.StateNone
 	var noneTable table.Table
-	tc.OnJobUpdatedExported = func(job *model.Job) {
-		jobID = job.ID
+	onJobUpdatedExportedFunc2 := func(job *model.Job) {
+		jobID.Store(job.ID)
 		if job.SchemaState == prevState {
 			return
 		}
@@ -119,9 +122,10 @@ func TestIndexChange(t *testing.T) {
 			require.Equalf(t, 0, len(noneTable.Indices()), "index should have been dropped")
 		}
 	}
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
 	tk.MustExec("alter table t drop index c2")
 	v = getSchemaVer(t, tk.Session())
-	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: noneTable.Meta()})
+	checkHistoryJobArgs(t, tk.Session(), jobID.Load(), &historyJobArgs{ver: v, tbl: noneTable.Meta()})
 }
 
 func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interface{}, handle int64, exists bool) error {
@@ -217,6 +221,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 }
 
 func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table.Table) error {
+	var err1 error
 	// WriteOnlyTable: insert t values (6, 6)
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	if err != nil {
@@ -227,7 +232,11 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 6, 6, true)
-	if err != nil {
+	if ddl.IsEnableFastReorg() {
+		// Need check temp index also.
+		err1 = checkIndexExists(ctx, writeTbl, 6, 6, true)
+	}
+	if err != nil && err1 != nil {
 		return errors.Trace(err)
 	}
 	// PublicTable: insert t values (7, 7)
@@ -246,10 +255,18 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 5, 7, true)
-	if err != nil {
+	if ddl.IsEnableFastReorg() {
+		// Need check temp index also.
+		err1 = checkIndexExists(ctx, writeTbl, 5, 7, true)
+	}
+	if err != nil && err1 != nil {
 		return errors.Trace(err)
 	}
-	err = checkIndexExists(ctx, publicTbl, 7, 7, false)
+	if ddl.IsEnableFastReorg() {
+		err = checkIndexExists(ctx, writeTbl, 7, 7, false)
+	} else {
+		err = checkIndexExists(ctx, publicTbl, 7, 7, false)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -279,7 +296,11 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		idxVal := row[1].GetInt64()
 		handle := row[0].GetInt64()
 		err = checkIndexExists(ctx, publicTbl, idxVal, handle, true)
-		if err != nil {
+		if ddl.IsEnableFastReorg() {
+			// Need check temp index also.
+			err1 = checkIndexExists(ctx, writeTbl, idxVal, handle, true)
+		}
+		if err != nil && err1 != nil {
 			return errors.Trace(err)
 		}
 	}

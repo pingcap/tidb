@@ -15,6 +15,8 @@
 package variable_test
 
 import (
+	"context"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -23,8 +25,15 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
+	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
+	util2 "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -32,7 +41,7 @@ import (
 )
 
 func TestSetSystemVariable(t *testing.T) {
-	v := variable.NewSessionVars()
+	v := variable.NewSessionVars(nil)
 	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
 	mtx := new(sync.Mutex)
@@ -45,10 +54,12 @@ func TestSetSystemVariable(t *testing.T) {
 		{variable.TxnIsolation, "SERIALIZABLE", true},
 		{variable.TimeZone, "xyz", true},
 		{variable.TiDBOptAggPushDown, "1", false},
+		{variable.TiDBOptDeriveTopN, "1", false},
 		{variable.TiDBOptDistinctAggPushDown, "1", false},
 		{variable.TiDBMemQuotaQuery, "1024", false},
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", true}, // now global only
+		{variable.TiDBEnableRowLevelChecksum, "1", true},
 	}
 
 	for _, tc := range testCases {
@@ -125,16 +136,9 @@ func TestSession(t *testing.T) {
 
 func TestAllocMPPID(t *testing.T) {
 	ctx := mock.NewContext()
-
-	seVar := ctx.GetSessionVars()
-	require.NotNil(t, seVar)
-
-	require.Equal(t, int64(1), seVar.AllocMPPTaskID(1))
-	require.Equal(t, int64(2), seVar.AllocMPPTaskID(1))
-	require.Equal(t, int64(3), seVar.AllocMPPTaskID(1))
-	require.Equal(t, int64(1), seVar.AllocMPPTaskID(2))
-	require.Equal(t, int64(2), seVar.AllocMPPTaskID(2))
-	require.Equal(t, int64(3), seVar.AllocMPPTaskID(2))
+	require.Equal(t, int64(1), plannercore.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(2), plannercore.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(3), plannercore.AllocMPPTaskID(ctx))
 }
 
 func TestSlowLogFormat(t *testing.T) {
@@ -159,13 +163,31 @@ func TestSlowLogFormat(t *testing.T) {
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
 		},
-		TimeDetail: util.TimeDetail{
-			ProcessTime: time.Second * time.Duration(2),
-			WaitTime:    time.Minute,
+		DetailsNeedP90: execdetails.DetailsNeedP90{
+			TimeDetail: util.TimeDetail{
+				ProcessTime: time.Second * time.Duration(2),
+				WaitTime:    time.Minute,
+			},
 		},
 	}
-	statsInfos := make(map[string]uint64)
-	statsInfos["t1"] = 0
+	usedStats1 := &stmtctx.UsedStatsInfoForTable{
+		Name:                  "t1",
+		TblInfo:               nil,
+		Version:               123,
+		RealtimeCount:         1000,
+		ModifyCount:           0,
+		ColumnStatsLoadStatus: map[int64]string{2: "allEvicted", 3: "onlyCmsEvicted"},
+		IndexStatsLoadStatus:  map[int64]string{1: "allLoaded", 2: "allLoaded"},
+	}
+	usedStats2 := &stmtctx.UsedStatsInfoForTable{
+		Name:                  "t2",
+		TblInfo:               nil,
+		Version:               0,
+		RealtimeCount:         10000,
+		ModifyCount:           0,
+		ColumnStatsLoadStatus: map[int64]string{2: "unInitialized"},
+	}
+
 	copTasks := &stmtctx.CopTasksDetails{
 		NumCopTasks:       10,
 		AvgProcessTime:    time.Second,
@@ -197,6 +219,8 @@ func TestSlowLogFormat(t *testing.T) {
 	var memMax int64 = 2333
 	var diskMax int64 = 6666
 	resultFields := `# Txn_start_ts: 406649736972468225
+# Keyspace_name: keyspace_a
+# Keyspace_ID: 1
 # User@Host: root[root] @ 192.168.0.1 [192.168.0.1]
 # Conn_ID: 1
 # Exec_retry_time: 5.1 Exec_retry_count: 3
@@ -210,8 +234,8 @@ func TestSlowLogFormat(t *testing.T) {
 # DB: test
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
-# Digest: 01d00e6e93b28184beae487ac05841145d2a2f6a7b16de32a763bed27967e83d
-# Stats: t1:pseudo
+# Digest: e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7
+# Stats: t1:123[1000;0][ID 1:allLoaded,ID 2:allLoaded][ID 2:allEvicted,ID 3:onlyCmsEvicted],t2:pseudo[10000;0]
 # Num_cop_tasks: 10
 # Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3 Cop_proc_addr: 10.6.131.78
 # Cop_wait_avg: 0.01 Cop_wait_p90: 0.02 Cop_wait_max: 0.03 Cop_wait_addr: 10.6.131.79
@@ -231,11 +255,14 @@ func TestSlowLogFormat(t *testing.T) {
 # Result_rows: 12345
 # Succ: true
 # IsExplicitTxn: true
+# IsSyncStatsFailed: false
 # IsWriteCacheTable: true`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
+		KeyspaceName:      "keyspace_a",
+		KeyspaceID:        1,
 		SQL:               sql,
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
@@ -244,7 +271,6 @@ func TestSlowLogFormat(t *testing.T) {
 		TimeOptimize:      time.Duration(10),
 		TimeWaitTS:        time.Duration(3),
 		IndexNames:        "[t1:a,t2:b]",
-		StatsInfos:        statsInfos,
 		CopTasks:          copTasks,
 		ExecDetail:        execDetail,
 		MemMax:            memMax,
@@ -268,6 +294,7 @@ func TestSlowLogFormat(t *testing.T) {
 		ExecRetryTime:     5*time.Second + time.Millisecond*100,
 		IsExplicitTxn:     true,
 		IsWriteCacheTable: true,
+		UsedStats:         map[int64]*stmtctx.UsedStatsInfoForTable{1: usedStats1, 2: usedStats2},
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
@@ -283,7 +310,7 @@ func TestIsolationRead(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tiflash", "tidb"}
 	})
-	sessVars := variable.NewSessionVars()
+	sessVars := variable.NewSessionVars(nil)
 	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
 	require.True(t, ok)
 	_, ok = sessVars.IsolationReadEngines[kv.TiKV]
@@ -326,6 +353,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		},
 	}
 	tc.SetPessimisticLockCache([]byte{'a'}, []byte{'a'})
+	tc.FlushStmtPessimisticLockCache()
 
 	tc.AddSavepoint("S1", nil)
 	require.Equal(t, 1, len(tc.Savepoints))
@@ -345,6 +373,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		TableID:  9,
 	}
 	tc.SetPessimisticLockCache([]byte{'b'}, []byte{'b'})
+	tc.FlushStmtPessimisticLockCache()
 
 	tc.AddSavepoint("S2", nil)
 	require.Equal(t, 2, len(tc.Savepoints))
@@ -362,6 +391,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		TableID:  13,
 	}
 	tc.SetPessimisticLockCache([]byte{'c'}, []byte{'c'})
+	tc.FlushStmtPessimisticLockCache()
 
 	tc.AddSavepoint("s2", nil)
 	require.Equal(t, 2, len(tc.Savepoints))
@@ -382,4 +412,125 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	succ = tc.DeleteSavepoint("s1")
 	require.True(t, succ)
 	require.Equal(t, 0, len(tc.Savepoints))
+}
+
+func TestNonPreparedPlanCacheStmt(t *testing.T) {
+	sessVars := variable.NewSessionVars(nil)
+	sessVars.SessionPlanCacheSize = 100
+	sql1 := "select * from t where a>?"
+	sql2 := "select * from t where a<?"
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
+
+	sessVars.AddNonPreparedPlanCacheStmt(sql1, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
+
+	sessVars.AddNonPreparedPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
+}
+
+func TestHookContext(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	ctx := mock.NewContext()
+	ctx.Store = store
+	sv := variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "testhooksysvar", Value: variable.On, Type: variable.TypeBool, SetSession: func(s *variable.SessionVars, val string) error {
+		require.Equal(t, s.GetStore(), store)
+		return nil
+	}}
+	variable.RegisterSysVar(&sv)
+
+	ctx.GetSessionVars().SetSystemVar("testhooksysvar", "test")
+}
+
+func TestGetReuseChunk(t *testing.T) {
+	fieldTypes := []*types.FieldType{
+		types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
+	}
+
+	sessVars := variable.NewSessionVars(nil)
+
+	// SetAlloc efficient
+	sessVars.SetAlloc(nil)
+	require.Nil(t, sessVars.ChunkPool.Alloc)
+	require.False(t, sessVars.GetUseChunkAlloc())
+	// alloc is nil ，Allocate memory from the system
+	chk1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
+	require.NotNil(t, chk1)
+
+	chunkReuseMap := make(map[*chunk.Chunk]struct{}, 14)
+	columnReuseMap := make(map[*chunk.Column]struct{}, 14)
+
+	alloc := chunk.NewAllocator()
+	sessVars.EnableReuseCheck = true
+	sessVars.SetAlloc(alloc)
+	require.NotNil(t, sessVars.ChunkPool.Alloc)
+	require.Equal(t, alloc, sessVars.ChunkPool.Alloc)
+	require.False(t, sessVars.GetUseChunkAlloc())
+
+	//tries to apply from the cache
+	initCap := 10
+	chk1 = sessVars.GetNewChunkWithCapacity(fieldTypes, initCap, initCap, sessVars.ChunkPool.Alloc)
+	require.NotNil(t, chk1)
+	chunkReuseMap[chk1] = struct{}{}
+	for i := 0; i < chk1.NumCols(); i++ {
+		columnReuseMap[chk1.Column(i)] = struct{}{}
+	}
+
+	alloc.Reset()
+	chkres1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
+	require.NotNil(t, chkres1)
+	_, exist := chunkReuseMap[chkres1]
+	require.True(t, exist)
+	for i := 0; i < chkres1.NumCols(); i++ {
+		_, exist := columnReuseMap[chkres1.Column(i)]
+		require.True(t, exist)
+	}
+	allocpool := variable.ReuseChunkPool{Alloc: alloc}
+
+	sessVars.ClearAlloc(&allocpool.Alloc, false)
+	require.Equal(t, alloc, allocpool.Alloc)
+
+	sessVars.ClearAlloc(&allocpool.Alloc, true)
+	require.NotEqual(t, allocpool.Alloc, alloc)
+	require.Nil(t, sessVars.ChunkPool.Alloc)
+}
+
+func TestUserVarConcurrently(t *testing.T) {
+	sv := variable.NewSessionVars(nil)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	var wg util2.WaitGroupWrapper
+	wg.Run(func() {
+		for i := 0; ; i++ {
+			select {
+			case <-time.After(time.Millisecond):
+				name := strconv.Itoa(i)
+				sv.SetUserVarVal(name, types.Datum{})
+				sv.GetUserVarVal(name)
+			case <-ctx.Done():
+				return
+			}
+		}
+	})
+	wg.Run(func() {
+		for {
+			select {
+			case <-time.After(time.Millisecond):
+				var states sessionstates.SessionStates
+				require.NoError(t, sv.EncodeSessionStates(ctx, &states))
+				require.NoError(t, sv.DecodeSessionStates(ctx, &states))
+			case <-ctx.Done():
+				return
+			}
+		}
+	})
+	wg.Wait()
+	cancel()
 }

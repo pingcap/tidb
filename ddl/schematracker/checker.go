@@ -17,26 +17,37 @@ package schematracker
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
+)
+
+var (
+	// ConstructResultOfShowCreateDatabase should be assigned to executor.ConstructResultOfShowCreateDatabase.
+	// It is used to break cycle import.
+	ConstructResultOfShowCreateDatabase func(sessionctx.Context, *model.DBInfo, bool, *bytes.Buffer) error
+	// ConstructResultOfShowCreateTable should be assigned to executor.ConstructResultOfShowCreateTable.
+	// It is used to break cycle import.
+	ConstructResultOfShowCreateTable func(sessionctx.Context, *model.TableInfo, autoid.Allocators, *bytes.Buffer) error
 )
 
 func init() {
@@ -47,8 +58,7 @@ func init() {
 type Checker struct {
 	realDDL ddl.DDL
 	tracker SchemaTracker
-
-	closed bool
+	closed  atomic.Bool
 }
 
 // NewChecker creates a Checker.
@@ -61,21 +71,21 @@ func NewChecker(realDDL ddl.DDL) *Checker {
 
 // Disable turns off check.
 func (d *Checker) Disable() {
-	d.closed = true
+	d.closed.Store(true)
 }
 
 // Enable turns on check.
 func (d *Checker) Enable() {
-	d.closed = false
+	d.closed.Store(false)
 }
 
 // CreateTestDB creates a `test` database like the default behaviour of TiDB.
-func (d Checker) CreateTestDB() {
-	d.tracker.createTestDB()
+func (d *Checker) CreateTestDB() {
+	d.tracker.CreateTestDB()
 }
 
-func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
-	if d.closed {
+func (d *Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
+	if d.closed.Load() {
 		return
 	}
 	dbInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).SchemaByName(dbName)
@@ -90,12 +100,12 @@ func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 	}
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := executor.ConstructResultOfShowCreateDatabase(ctx, dbInfo, false, result)
+	err := ConstructResultOfShowCreateDatabase(ctx, dbInfo, false, result)
 	if err != nil {
 		panic(err)
 	}
 	result2 := bytes.NewBuffer(make([]byte, 0, 512))
-	err = executor.ConstructResultOfShowCreateDatabase(ctx, dbInfo2, false, result2)
+	err = ConstructResultOfShowCreateDatabase(ctx, dbInfo2, false, result2)
 	if err != nil {
 		panic(err)
 	}
@@ -107,8 +117,13 @@ func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 	}
 }
 
-func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.CIStr) {
-	if d.closed {
+func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.CIStr) {
+	if d.closed.Load() {
+		return
+	}
+
+	if dbName.L == mysql.SystemDB {
+		// no need to check system tables.
 		return
 	}
 
@@ -125,12 +140,12 @@ func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.
 	}
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := executor.ConstructResultOfShowCreateTable(ctx, tableInfo.Meta(), autoid.Allocators{}, result)
+	err := ConstructResultOfShowCreateTable(ctx, tableInfo.Meta(), autoid.Allocators{}, result)
 	if err != nil {
 		panic(err)
 	}
 	result2 := bytes.NewBuffer(make([]byte, 0, 512))
-	err = executor.ConstructResultOfShowCreateTable(ctx, tableInfo2, autoid.Allocators{}, result2)
+	err = ConstructResultOfShowCreateTable(ctx, tableInfo2, autoid.Allocators{}, result2)
 	if err != nil {
 		panic(err)
 	}
@@ -152,7 +167,7 @@ func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.
 }
 
 // CreateSchema implements the DDL interface.
-func (d Checker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error {
+func (d *Checker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error {
 	err := d.realDDL.CreateSchema(ctx, stmt)
 	if err != nil {
 		return err
@@ -167,7 +182,7 @@ func (d Checker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseSt
 }
 
 // AlterSchema implements the DDL interface.
-func (d Checker) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error {
+func (d *Checker) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error {
 	err := d.realDDL.AlterSchema(sctx, stmt)
 	if err != nil {
 		return err
@@ -182,7 +197,7 @@ func (d Checker) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStm
 }
 
 // DropSchema implements the DDL interface.
-func (d Checker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error {
+func (d *Checker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error {
 	err := d.realDDL.DropSchema(ctx, stmt)
 	if err != nil {
 		return err
@@ -196,8 +211,13 @@ func (d Checker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) 
 	return nil
 }
 
+// RecoverSchema implements the DDL interface.
+func (*Checker) RecoverSchema(_ sessionctx.Context, _ *ddl.RecoverSchemaInfo) (err error) {
+	return nil
+}
+
 // CreateTable implements the DDL interface.
-func (d Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error {
+func (d *Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error {
 	err := d.realDDL.CreateTable(ctx, stmt)
 	if err != nil {
 		return err
@@ -223,7 +243,7 @@ func (d Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) 
 }
 
 // CreateView implements the DDL interface.
-func (d Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error {
+func (d *Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error {
 	err := d.realDDL.CreateView(ctx, stmt)
 	if err != nil {
 		return err
@@ -238,7 +258,7 @@ func (d Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) er
 }
 
 // DropTable implements the DDL interface.
-func (d Checker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+func (d *Checker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	err = d.realDDL.DropTable(ctx, stmt)
 	_ = d.tracker.DropTable(ctx, stmt)
 
@@ -249,13 +269,19 @@ func (d Checker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err
 }
 
 // RecoverTable implements the DDL interface.
-func (d Checker) RecoverTable(ctx sessionctx.Context, recoverInfo *ddl.RecoverInfo) (err error) {
+func (*Checker) RecoverTable(_ sessionctx.Context, _ *ddl.RecoverInfo) (err error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+// FlashbackCluster implements the DDL interface.
+func (*Checker) FlashbackCluster(_ sessionctx.Context, _ uint64) (err error) {
 	//TODO implement me
 	panic("implement me")
 }
 
 // DropView implements the DDL interface.
-func (d Checker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+func (d *Checker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	err = d.realDDL.DropView(ctx, stmt)
 	if err != nil {
 		return err
@@ -272,7 +298,7 @@ func (d Checker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err 
 }
 
 // CreateIndex implements the DDL interface.
-func (d Checker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
+func (d *Checker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
 	err := d.realDDL.CreateIndex(ctx, stmt)
 	if err != nil {
 		return err
@@ -287,7 +313,7 @@ func (d Checker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) 
 }
 
 // DropIndex implements the DDL interface.
-func (d Checker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
+func (d *Checker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 	err := d.realDDL.DropIndex(ctx, stmt)
 	if err != nil {
 		return err
@@ -302,7 +328,7 @@ func (d Checker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) erro
 }
 
 // AlterTable implements the DDL interface.
-func (d Checker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
+func (d *Checker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
 	err := d.realDDL.AlterTable(ctx, sctx, stmt)
 	if err != nil {
 		return err
@@ -321,13 +347,13 @@ func (d Checker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *
 }
 
 // TruncateTable implements the DDL interface.
-func (d Checker) TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error {
+func (*Checker) TruncateTable(_ sessionctx.Context, _ ast.Ident) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // RenameTable implements the DDL interface.
-func (d Checker) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error {
+func (d *Checker) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error {
 	err := d.realDDL.RenameTable(ctx, stmt)
 	if err != nil {
 		return err
@@ -345,70 +371,86 @@ func (d Checker) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) 
 }
 
 // LockTables implements the DDL interface.
-func (d Checker) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
+func (d *Checker) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
 	return d.realDDL.LockTables(ctx, stmt)
 }
 
 // UnlockTables implements the DDL interface.
-func (d Checker) UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error {
+func (d *Checker) UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error {
 	return d.realDDL.UnlockTables(ctx, lockedTables)
 }
 
 // CleanupTableLock implements the DDL interface.
-func (d Checker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
+func (d *Checker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
 	return d.realDDL.CleanupTableLock(ctx, tables)
 }
 
 // UpdateTableReplicaInfo implements the DDL interface.
-func (d Checker) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
+func (*Checker) UpdateTableReplicaInfo(_ sessionctx.Context, _ int64, _ bool) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // RepairTable implements the DDL interface.
-func (d Checker) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
+func (*Checker) RepairTable(_ sessionctx.Context, _ *ast.CreateTableStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // CreateSequence implements the DDL interface.
-func (d Checker) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
+func (*Checker) CreateSequence(_ sessionctx.Context, _ *ast.CreateSequenceStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // DropSequence implements the DDL interface.
-func (d Checker) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error) {
+func (*Checker) DropSequence(_ sessionctx.Context, _ *ast.DropSequenceStmt) (err error) {
 	//TODO implement me
 	panic("implement me")
 }
 
 // AlterSequence implements the DDL interface.
-func (d Checker) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {
+func (*Checker) AlterSequence(_ sessionctx.Context, _ *ast.AlterSequenceStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // CreatePlacementPolicy implements the DDL interface.
-func (d Checker) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error {
+func (*Checker) CreatePlacementPolicy(_ sessionctx.Context, _ *ast.CreatePlacementPolicyStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // DropPlacementPolicy implements the DDL interface.
-func (d Checker) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error {
+func (*Checker) DropPlacementPolicy(_ sessionctx.Context, _ *ast.DropPlacementPolicyStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // AlterPlacementPolicy implements the DDL interface.
-func (d Checker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error {
+func (*Checker) AlterPlacementPolicy(_ sessionctx.Context, _ *ast.AlterPlacementPolicyStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
+// AddResourceGroup implements the DDL interface.
+// ResourceGroup do not affect the transaction.
+func (*Checker) AddResourceGroup(_ sessionctx.Context, _ *ast.CreateResourceGroupStmt) error {
+	return nil
+}
+
+// DropResourceGroup implements the DDL interface.
+func (*Checker) DropResourceGroup(_ sessionctx.Context, _ *ast.DropResourceGroupStmt) error {
+	return nil
+}
+
+// AlterResourceGroup implements the DDL interface.
+func (*Checker) AlterResourceGroup(_ sessionctx.Context, _ *ast.AlterResourceGroupStmt) error {
+	return nil
+}
+
 // CreateSchemaWithInfo implements the DDL interface.
-func (d Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInfo, onExist ddl.OnExist) error {
+func (d *Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInfo, onExist ddl.OnExist) error {
 	err := d.realDDL.CreateSchemaWithInfo(ctx, info, onExist)
 	if err != nil {
 		return err
@@ -423,120 +465,137 @@ func (d Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInfo
 }
 
 // CreateTableWithInfo implements the DDL interface.
-func (d Checker) CreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info *model.TableInfo, onExist ddl.OnExist) error {
+func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ *model.TableInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // BatchCreateTableWithInfo implements the DDL interface.
-func (d Checker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, onExist ddl.OnExist) error {
+func (*Checker) BatchCreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ []*model.TableInfo, _ ...ddl.CreateTableWithInfoConfigurier) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // CreatePlacementPolicyWithInfo implements the DDL interface.
-func (d Checker) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist ddl.OnExist) error {
+func (*Checker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *model.PolicyInfo, _ ddl.OnExist) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // Start implements the DDL interface.
-func (d Checker) Start(ctxPool *pools.ResourcePool) error {
+func (d *Checker) Start(ctxPool *pools.ResourcePool) error {
 	return d.realDDL.Start(ctxPool)
 }
 
 // GetLease implements the DDL interface.
-func (d Checker) GetLease() time.Duration {
+func (d *Checker) GetLease() time.Duration {
 	return d.realDDL.GetLease()
 }
 
 // Stats implements the DDL interface.
-func (d Checker) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+func (d *Checker) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	return d.realDDL.Stats(vars)
 }
 
 // GetScope implements the DDL interface.
-func (d Checker) GetScope(status string) variable.ScopeFlag {
+func (d *Checker) GetScope(status string) variable.ScopeFlag {
 	return d.realDDL.GetScope(status)
 }
 
 // Stop implements the DDL interface.
-func (d Checker) Stop() error {
+func (d *Checker) Stop() error {
 	return d.realDDL.Stop()
 }
 
 // RegisterStatsHandle implements the DDL interface.
-func (d Checker) RegisterStatsHandle(h *handle.Handle) {
+func (d *Checker) RegisterStatsHandle(h *handle.Handle) {
 	d.realDDL.RegisterStatsHandle(h)
 }
 
 // SchemaSyncer implements the DDL interface.
-func (d Checker) SchemaSyncer() util.SchemaSyncer {
+func (d *Checker) SchemaSyncer() syncer.SchemaSyncer {
 	return d.realDDL.SchemaSyncer()
 }
 
+// StateSyncer implements the DDL interface.
+func (d *Checker) StateSyncer() syncer.StateSyncer {
+	return d.realDDL.StateSyncer()
+}
+
 // OwnerManager implements the DDL interface.
-func (d Checker) OwnerManager() owner.Manager {
+func (d *Checker) OwnerManager() owner.Manager {
 	return d.realDDL.OwnerManager()
 }
 
 // GetID implements the DDL interface.
-func (d Checker) GetID() string {
+func (d *Checker) GetID() string {
 	return d.realDDL.GetID()
 }
 
 // GetTableMaxHandle implements the DDL interface.
-func (d Checker) GetTableMaxHandle(ctx *ddl.JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error) {
+func (d *Checker) GetTableMaxHandle(ctx *ddl.JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error) {
 	return d.realDDL.GetTableMaxHandle(ctx, startTS, tbl)
 }
 
 // SetBinlogClient implements the DDL interface.
-func (d Checker) SetBinlogClient(client *pumpcli.PumpsClient) {
+func (d *Checker) SetBinlogClient(client *pumpcli.PumpsClient) {
 	d.realDDL.SetBinlogClient(client)
 }
 
 // GetHook implements the DDL interface.
-func (d Checker) GetHook() ddl.Callback {
+func (d *Checker) GetHook() ddl.Callback {
 	return d.realDDL.GetHook()
 }
 
 // SetHook implements the DDL interface.
-func (d Checker) SetHook(h ddl.Callback) {
+func (d *Checker) SetHook(h ddl.Callback) {
 	d.realDDL.SetHook(h)
 }
 
 // GetInfoSchemaWithInterceptor implements the DDL interface.
-func (d Checker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
+func (d *Checker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
 	return d.realDDL.GetInfoSchemaWithInterceptor(ctx)
 }
 
 // DoDDLJob implements the DDL interface.
-func (d Checker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+func (d *Checker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return d.realDDL.DoDDLJob(ctx, job)
-}
-
-// MoveJobFromQueue2Table implements the DDL interface.
-func (d Checker) MoveJobFromQueue2Table(bool) error {
-	panic("implement me")
-}
-
-// MoveJobFromTable2Queue implements the DDL interface.
-func (d Checker) MoveJobFromTable2Queue() error {
-	panic("implement me")
 }
 
 // StorageDDLInjector wraps kv.Storage to inject checker to domain's DDL in bootstrap time.
 type StorageDDLInjector struct {
 	kv.Storage
+	kv.EtcdBackend
 	Injector func(ddl.DDL) *Checker
+}
+
+var _ kv.EtcdBackend = StorageDDLInjector{}
+
+// EtcdAddrs implements the kv.EtcdBackend interface.
+func (s StorageDDLInjector) EtcdAddrs() ([]string, error) {
+	return s.EtcdBackend.EtcdAddrs()
+}
+
+// TLSConfig implements the kv.EtcdBackend interface.
+func (s StorageDDLInjector) TLSConfig() *tls.Config {
+	return s.EtcdBackend.TLSConfig()
+}
+
+// StartGCWorker implements the kv.EtcdBackend interface.
+func (s StorageDDLInjector) StartGCWorker() error {
+	return s.EtcdBackend.StartGCWorker()
 }
 
 // NewStorageDDLInjector creates a new StorageDDLInjector to inject Checker.
 func NewStorageDDLInjector(s kv.Storage) kv.Storage {
-	return StorageDDLInjector{
+	ret := StorageDDLInjector{
 		Storage:  s,
 		Injector: NewChecker,
 	}
+	if ebd, ok := s.(kv.EtcdBackend); ok {
+		ret.EtcdBackend = ebd
+	}
+	return ret
 }
 
 // UnwrapStorage unwraps StorageDDLInjector for one level.

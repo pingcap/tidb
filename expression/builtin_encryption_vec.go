@@ -26,13 +26,14 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
+	"github.com/pingcap/tidb/util/zeropool"
 )
 
 //revive:disable:defer
@@ -42,6 +43,12 @@ func (b *builtinAesDecryptSig) vectorized() bool {
 
 func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	if n == 0 {
+		// If chunk has 0 rows, just return an empty value. So we can simplify codes below it by ignoring 0 row case.
+		result.Reset(types.ETString)
+		return nil
+	}
+
 	strBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
@@ -517,24 +524,55 @@ func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	return nil
 }
 
+func (b *builtinSM3Sig) vectorized() bool {
+	return true
+}
+
+// vecEvalString evals Sm3Hash(str).
+func (b *builtinSM3Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return errors.Trace(err)
+	}
+	result.ReserveString(n)
+	hasher := auth.NewSM3()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetBytes(i)
+		_, err = hasher.Write(str)
+		if err != nil {
+			return err
+		}
+		result.AppendString(fmt.Sprintf("%x", hasher.Sum(nil)))
+		hasher.Reset()
+	}
+	return nil
+}
+
 func (b *builtinCompressSig) vectorized() bool {
 	return true
 }
 
 var (
 	defaultByteSliceSize = 1024
-	bytePool             = sync.Pool{
-		New: func() interface{} {
-			return make([]byte, defaultByteSliceSize)
-		},
-	}
+	bytePool             = zeropool.New[[]byte](func() []byte {
+		return make([]byte, defaultByteSliceSize)
+	})
 )
 
 func allocByteSlice(n int) []byte {
 	if n > defaultByteSliceSize {
 		return make([]byte, n)
 	}
-	return bytePool.Get().([]byte)
+	return bytePool.Get()
 }
 
 func deallocateByteSlice(b []byte) {
@@ -827,6 +865,48 @@ func (b *builtinUncompressedLengthSig) vecEvalInt(input *chunk.Chunk, result *ch
 			continue
 		}
 		i64s[i] = int64(binary.LittleEndian.Uint32([]byte(str)[0:4]))
+	}
+	return nil
+}
+
+func (b *builtinValidatePasswordStrengthSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinValidatePasswordStrengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	globalVars := b.ctx.GetSessionVars().GlobalVarsAccessor
+	enableValidation := false
+	validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	if err != nil {
+		return err
+	}
+	enableValidation = variable.TiDBOptOn(validation)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if !enableValidation {
+			i64s[i] = 0
+		} else if score, isNull, err := b.validateStr(buf.GetString(i), &globalVars); err != nil {
+			return err
+		} else if !isNull {
+			i64s[i] = score
+		} else {
+			result.SetNull(i, true)
+		}
 	}
 	return nil
 }

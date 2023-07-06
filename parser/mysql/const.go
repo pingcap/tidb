@@ -81,6 +81,8 @@ const (
 	MaxKeyParts = 16
 	// MaxIndexIdentifierLen is max length of index identifier.
 	MaxIndexIdentifierLen = 64
+	// MaxForeignKeyIdentifierLen is max length of foreign key identifier.
+	MaxForeignKeyIdentifierLen = 64
 	// MaxConstraintIdentifierLen is max length of constrain identifier.
 	MaxConstraintIdentifierLen = 64
 	// MaxViewIdentifierLen is max length of view identifier.
@@ -138,7 +140,7 @@ const (
 	ClientLongFlag                                      // CLIENT_LONG_FLAG
 	ClientConnectWithDB                                 // CLIENT_CONNECT_WITH_DB
 	ClientNoSchema                                      // CLIENT_NO_SCHEMA
-	ClientCompress                                      // CLIENT_COMPRESS, Not supported: https://github.com/pingcap/tidb/issues/22605
+	ClientCompress                                      // CLIENT_COMPRESS
 	ClientODBC                                          // CLIENT_ODBC
 	ClientLocalFiles                                    // CLIENT_LOCAL_FILES
 	ClientIgnoreSpace                                   // CLIENT_IGNORE_SPACE
@@ -158,8 +160,8 @@ const (
 	ClientHandleExpiredPasswords                        // CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS, Not supported: https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_expired_passwords.html
 	ClientSessionTrack                                  // CLIENT_SESSION_TRACK, Not supported: https://github.com/pingcap/tidb/issues/35309
 	ClientDeprecateEOF                                  // CLIENT_DEPRECATE_EOF
-	// 1 << 25 == CLIENT_OPTIONAL_RESULTSET_METADATA
-	// 1 << 26 == CLIENT_ZSTD_COMPRESSION_ALGORITHM
+	ClientOptionalResultsetMetadata                     // CLIENT_OPTIONAL_RESULTSET_METADATA, Not supported: https://dev.mysql.com/doc/c-api/8.0/en/c-api-optional-metadata.html
+	ClientZstdCompressionAlgorithm                      // CLIENT_ZSTD_COMPRESSION_ALGORITHM
 	// 1 << 27 == CLIENT_QUERY_ATTRIBUTES
 	// 1 << 28 == MULTI_FACTOR_AUTHENTICATION
 	// 1 << 29 == CLIENT_CAPABILITY_EXTENSION
@@ -176,8 +178,13 @@ const (
 const (
 	AuthNativePassword      = "mysql_native_password" // #nosec G101
 	AuthCachingSha2Password = "caching_sha2_password" // #nosec G101
+	AuthTiDBSM3Password     = "tidb_sm3_password"     // #nosec G101
+	AuthMySQLClearPassword  = "mysql_clear_password"
 	AuthSocket              = "auth_socket"
 	AuthTiDBSessionToken    = "tidb_session_token"
+	AuthTiDBAuthToken       = "tidb_auth_token"
+	AuthLDAPSimple          = "authentication_ldap_simple"
+	AuthLDAPSASL            = "authentication_ldap_sasl"
 )
 
 // MySQL database and tables.
@@ -204,6 +211,8 @@ const (
 	RoleEdgeTable = "role_edges"
 	// DefaultRoleTable is the table contain default active role info
 	DefaultRoleTable = "default_roles"
+	// PasswordHistoryTable is the table in system db contains password history.
+	PasswordHistoryTable = "password_history"
 )
 
 // MySQL type maximum length.
@@ -225,6 +234,7 @@ const (
 	MaxDurationWidthNoFsp    = 10 // HH:MM:SS
 	MaxDurationWidthWithFsp  = 17 // HH:MM:SS[.fraction] -838:59:59.000000 to 838:59:59.000000
 	MaxBlobWidth             = 16777216
+	MaxLongBlobWidth         = 4294967295
 	MaxBitDisplayWidth       = 64
 	MaxFloatPrecisionLength  = 24
 	MaxDoublePrecisionLength = 53
@@ -241,8 +251,12 @@ const MaxTypeSetMembers = 64
 
 // PWDHashLen is the length of mysql_native_password's hash.
 const PWDHashLen = 40 // excluding the '*'
+
 // SHAPWDHashLen is the length of sha256_password's hash.
 const SHAPWDHashLen = 70
+
+// SM3PWDHashLen is the length of tidb_sm3_password's hash.
+const SM3PWDHashLen = 70
 
 // Command2Str is the command information to command name.
 var Command2Str = map[byte]string{
@@ -396,6 +410,16 @@ func (m SQLMode) HasNoAutoCreateUserMode() bool {
 // HasAllowInvalidDatesMode detects if 'ALLOW_INVALID_DATES' mode is set in SQLMode
 func (m SQLMode) HasAllowInvalidDatesMode() bool {
 	return m&ModeAllowInvalidDates == ModeAllowInvalidDates
+}
+
+// DelSQLMode delete sql mode from ori
+func DelSQLMode(ori SQLMode, del SQLMode) SQLMode {
+	return ori & (^del)
+}
+
+// SetSQLMode add sql mode to ori
+func SetSQLMode(ori SQLMode, add SQLMode) SQLMode {
+	return ori | add
 }
 
 // consts for sql modes.
@@ -616,4 +640,13 @@ const (
 	CursorTypeReadOnly = 1 << iota
 	CursorTypeForUpdate
 	CursorTypeScrollable
+)
+
+const (
+	// CompressionNone is no compression in use
+	CompressionNone = iota
+	// CompressionZlib is zlib/deflate
+	CompressionZlib
+	// CompressionZstd is Facebook's Zstandard
+	CompressionZstd
 )

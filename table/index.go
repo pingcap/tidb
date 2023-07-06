@@ -35,6 +35,7 @@ type CreateIdxOpt struct {
 	Ctx             context.Context
 	Untouched       bool // If true, the index key/value is no need to commit.
 	IgnoreAssertion bool
+	FromBackFill    bool
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
@@ -52,6 +53,14 @@ var WithIgnoreAssertion = func(opt *CreateIdxOpt) {
 	opt.IgnoreAssertion = true
 }
 
+// FromBackfill indicates that the index is created by DDL backfill worker.
+// In the backfill-merge process, the index KVs from DML will be redirected to
+// the temp index. On the other hand, the index KVs from DDL backfill worker should
+// never be redirected to the temp index.
+var FromBackfill = func(opt *CreateIdxOpt) {
+	opt.FromBackFill = true
+}
+
 // WithCtx returns a CreateIdxFunc.
 // This option is used to pass context.Context.
 func WithCtx(ctx context.Context) CreateIdxOptFunc {
@@ -60,18 +69,30 @@ func WithCtx(ctx context.Context) CreateIdxOptFunc {
 	}
 }
 
+// IndexIter is index kvs iter.
+type IndexIter interface {
+	Next(kb []byte) ([]byte, []byte, bool, error)
+	Valid() bool
+}
+
 // Index is the interface for index data on KV store.
 type Index interface {
 	// Meta returns IndexInfo.
 	Meta() *model.IndexInfo
+	// TableMeta returns TableInfo
+	TableMeta() *model.TableInfo
 	// Create supports insert into statement.
 	Create(ctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) (kv.Handle, error)
 	// Delete supports delete from statement.
 	Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
+	// GenIndexKVIter generate index key and value for multi-valued index, use iterator to reduce the memory allocation.
+	GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum) IndexIter
 	// Exist supports check index exists or not.
 	Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error)
-	// GenIndexKey generates an index key.
+	// GenIndexKey generates an index key. If the index is a multi-valued index, use GenIndexKVIter instead.
 	GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error)
+	// GenIndexValue generates an index value.
+	GenIndexValue(sc *stmtctx.StatementContext, distinct bool, indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum) ([]byte, error)
 	// FetchValues fetched index column values in a row.
 	// Param columns is a reused buffer, if it is not nil, FetchValues will fill the index values in it,
 	// and return the buffer, if it is nil, FetchValues will allocate the buffer instead.

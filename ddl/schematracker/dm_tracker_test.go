@@ -16,7 +16,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSES/QL-LICENSE file.
 
-package schematracker
+package schematracker_test
 
 import (
 	"bytes"
@@ -24,17 +24,21 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
-func execCreate(t *testing.T, tracker SchemaTracker, sql string) {
+func execCreate(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
 	sctx := mock.NewContext()
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
@@ -54,8 +58,8 @@ func TestNoNumLimit(t *testing.T) {
 	}
 	sql += ");"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
 	sql = "create table test.t_too_many_indexes ("
@@ -79,12 +83,12 @@ func TestNoNumLimit(t *testing.T) {
 func TestCreateTableLongIndex(t *testing.T) {
 	sql := "create table test.t (c1 int, c2 blob, c3 varchar(64), index idx_c2(c2(555555)));"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 }
 
-func execAlter(t *testing.T, tracker SchemaTracker, sql string) {
+func execAlter(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
 	ctx := context.Background()
 	sctx := mock.NewContext()
 	p := parser.New()
@@ -94,51 +98,63 @@ func execAlter(t *testing.T, tracker SchemaTracker, sql string) {
 	require.NoError(t, err)
 }
 
+func mustTableByName(t *testing.T, tracker schematracker.SchemaTracker, schema, table string) *model.TableInfo {
+	tblInfo, err := tracker.TableByName(model.NewCIStr(schema), model.NewCIStr(table))
+	require.NoError(t, err)
+	return tblInfo
+}
+
 func TestAlterPK(t *testing.T) {
 	sql := "create table test.t (c1 int primary key, c2 blob);"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
-	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
+	tblInfo := mustTableByName(t, tracker, "test", "t")
 	require.Equal(t, 1, len(tblInfo.Indices))
 
 	sql = "alter table test.t drop primary key;"
 	execAlter(t, tracker, sql)
+	// TableInfo should be immutable.
+	require.Equal(t, 1, len(tblInfo.Indices))
+	tblInfo = mustTableByName(t, tracker, "test", "t")
 	require.Equal(t, 0, len(tblInfo.Indices))
 
 	sql = "alter table test.t add primary key(c1);"
 	execAlter(t, tracker, sql)
+	tblInfo = mustTableByName(t, tracker, "test", "t")
 	require.Equal(t, 1, len(tblInfo.Indices))
 
 	sql = "alter table test.t drop primary key;"
 	execAlter(t, tracker, sql)
+	tblInfo = mustTableByName(t, tracker, "test", "t")
 	require.Equal(t, 0, len(tblInfo.Indices))
 }
 
 func TestDropColumn(t *testing.T) {
 	sql := "create table test.t(a int, b int auto_increment, c int, key(b))"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
-	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
+	tblInfo := mustTableByName(t, tracker, "test", "t")
 	require.Equal(t, 1, len(tblInfo.Indices))
 
 	sql = "alter table test.t drop column b"
 	execAlter(t, tracker, sql)
+	tblInfo = mustTableByName(t, tracker, "test", "t")
 	require.Equal(t, 0, len(tblInfo.Indices))
 
 	sql = "alter table test.t add index idx_2_col(a, c)"
 	execAlter(t, tracker, sql)
+	tblInfo = mustTableByName(t, tracker, "test", "t")
 	require.Equal(t, 1, len(tblInfo.Indices))
 
 	sql = "alter table test.t drop column c"
 	execAlter(t, tracker, sql)
+	tblInfo = mustTableByName(t, tracker, "test", "t")
 	require.Equal(t, 1, len(tblInfo.Indices))
 	require.Equal(t, 1, len(tblInfo.Columns))
 }
@@ -146,8 +162,8 @@ func TestDropColumn(t *testing.T) {
 func TestFullTextIndex(t *testing.T) {
 	sql := "create table test.t (a text, fulltext key (a))"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 }
 
@@ -164,12 +180,11 @@ func TestIndexLength(t *testing.T) {
 	// copy TestIndexLength in db_integration_test.go
 	sql := "create table test.t(a text, b text charset ascii, c blob, index(a(768)), index (b(3072)), index (c(3072)));"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
-	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
+	tblInfo := mustTableByName(t, tracker, "test", "t")
 
 	expected := "CREATE TABLE `t` (\n" +
 		"  `a` text DEFAULT NULL,\n" +
@@ -181,7 +196,7 @@ func TestIndexLength(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	checkShowCreateTable(t, tblInfo, expected)
 
-	err = tracker.DeleteTable(model.NewCIStr("test"), model.NewCIStr("t"))
+	err := tracker.DeleteTable(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	sql = "create table test.t(a text, b text charset ascii, c blob);"
@@ -194,9 +209,7 @@ func TestIndexLength(t *testing.T) {
 	sql = "alter table test.t add index (c(3072))"
 	execAlter(t, tracker, sql)
 
-	tblInfo, err = tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-
+	tblInfo = mustTableByName(t, tracker, "test", "t")
 	checkShowCreateTable(t, tblInfo, expected)
 }
 
@@ -204,8 +217,8 @@ func TestIssue5092(t *testing.T) {
 	// copy TestIssue5092 in db_integration_test.go
 	sql := "create table test.t (a int)"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
 	sql = "alter table test.t add column (b int, c int)"
@@ -221,8 +234,7 @@ func TestIssue5092(t *testing.T) {
 	sql = "alter table test.t add column b2 int after b1, add column c2 int first"
 	execAlter(t, tracker, sql)
 
-	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
+	tblInfo := mustTableByName(t, tracker, "test", "t")
 
 	expected := "CREATE TABLE `t` (\n" +
 		"  `c2` int(11) DEFAULT NULL,\n" +
@@ -282,16 +294,16 @@ func TestBitDefaultValues(t *testing.T) {
     field_35 timestamp null default null
 	);`
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 }
 
 func TestAddExpressionIndex(t *testing.T) {
 	sql := "create table test.t (a int, b real);"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
 	sql = "alter table test.t add index idx((a+b))"
@@ -299,8 +311,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	sql = "alter table test.t add index idx_multi((a+b),(a+1), b);"
 	execAlter(t, tracker, sql)
 
-	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
+	tblInfo := mustTableByName(t, tracker, "test", "t")
 
 	expected := "CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
@@ -315,6 +326,8 @@ func TestAddExpressionIndex(t *testing.T) {
 	sql = "alter table test.t drop index idx_multi;"
 	execAlter(t, tracker, sql)
 
+	tblInfo = mustTableByName(t, tracker, "test", "t")
+
 	expected = "CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` double DEFAULT NULL\n" +
@@ -326,8 +339,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	sql = "alter table test.t2 add unique index ei_ab ((concat(a, b)));"
 	execAlter(t, tracker, sql)
 
-	tblInfo, err = tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	require.NoError(t, err)
+	tblInfo = mustTableByName(t, tracker, "test", "t2")
 
 	expected = "CREATE TABLE `t2` (\n" +
 		"  `a` varchar(10) DEFAULT NULL,\n" +
@@ -339,6 +351,8 @@ func TestAddExpressionIndex(t *testing.T) {
 	sql = "alter table test.t2 alter index ei_ab invisible;"
 	execAlter(t, tracker, sql)
 
+	tblInfo = mustTableByName(t, tracker, "test", "t2")
+
 	expected = "CREATE TABLE `t2` (\n" +
 		"  `a` varchar(10) DEFAULT NULL,\n" +
 		"  `b` varchar(10) DEFAULT NULL,\n" +
@@ -349,8 +363,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	sql = "create table test.t3(a int, key((a+1)), key((a+2)), key idx((a+3)), key((a+4)), UNIQUE KEY ((a * 2)));"
 	execCreate(t, tracker, sql)
 
-	tblInfo, err = tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
-	require.NoError(t, err)
+	tblInfo = mustTableByName(t, tracker, "test", "t3")
 
 	expected = "CREATE TABLE `t3` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
@@ -377,8 +390,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	sql = "alter table test.t4 add index idx((a+c));"
 	execAlter(t, tracker, sql)
 
-	tblInfo, err = tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
-	require.NoError(t, err)
+	tblInfo = mustTableByName(t, tracker, "test", "t4")
 
 	expected = "CREATE TABLE `t4` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
@@ -397,15 +409,14 @@ func TestAddExpressionIndex(t *testing.T) {
 func TestAtomicMultiSchemaChange(t *testing.T) {
 	sql := "create table test.t (a int);"
 
-	tracker := NewSchemaTracker(2)
-	tracker.createTestDB()
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
 	sql = "alter table test.t add b int, add c int;"
 	execAlter(t, tracker, sql)
 
-	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
+	tblInfo := mustTableByName(t, tracker, "test", "t")
 	require.Len(t, tblInfo.Columns, 3)
 
 	sql = "alter table test.t add d int, add a int;"
@@ -418,7 +429,80 @@ func TestAtomicMultiSchemaChange(t *testing.T) {
 	err = tracker.AlterTable(ctx, sctx, stmt.(*ast.AlterTableStmt))
 	require.True(t, infoschema.ErrColumnExists.Equal(err))
 
-	tblInfo, err = tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
+	tblInfo = mustTableByName(t, tracker, "test", "t")
 	require.Len(t, tblInfo.Columns, 3)
+}
+
+func TestImmutableTableInfo(t *testing.T) {
+	sql := "create table test.t (a varchar(20)) charset latin1;"
+
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
+	execCreate(t, tracker, sql)
+
+	tblInfo := mustTableByName(t, tracker, "test", "t")
+	require.Equal(t, "", tblInfo.Comment)
+
+	sql = "alter table test.t comment = '123';"
+	execAlter(t, tracker, sql)
+	require.Equal(t, "", tblInfo.Comment)
+
+	tblInfo = mustTableByName(t, tracker, "test", "t")
+	require.Equal(t, "123", tblInfo.Comment)
+
+	require.Equal(t, "latin1", tblInfo.Charset)
+	require.Equal(t, "latin1_bin", tblInfo.Collate)
+	require.Equal(t, "latin1", tblInfo.Columns[0].GetCharset())
+	require.Equal(t, "latin1_bin", tblInfo.Columns[0].GetCollate())
+
+	sql = "alter table test.t convert to character set utf8mb4 collate utf8mb4_general_ci;"
+	execAlter(t, tracker, sql)
+	require.Equal(t, "latin1", tblInfo.Charset)
+	require.Equal(t, "latin1_bin", tblInfo.Collate)
+	require.Equal(t, "latin1", tblInfo.Columns[0].GetCharset())
+	require.Equal(t, "latin1_bin", tblInfo.Columns[0].GetCollate())
+	tblInfo = mustTableByName(t, tracker, "test", "t")
+	require.Equal(t, "utf8mb4", tblInfo.Charset)
+	require.Equal(t, "utf8mb4_general_ci", tblInfo.Collate)
+	require.Equal(t, "utf8mb4", tblInfo.Columns[0].GetCharset())
+	require.Equal(t, "utf8mb4_general_ci", tblInfo.Columns[0].GetCollate())
+}
+
+var _ sqlexec.RestrictedSQLExecutor = (*mockRestrictedSQLExecutor)(nil)
+
+type mockRestrictedSQLExecutor struct {
+	sessionctx.Context
+}
+
+func (m mockRestrictedSQLExecutor) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+	return nil, nil
+}
+
+func (m mockRestrictedSQLExecutor) ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...sqlexec.OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error) {
+	return nil, nil, nil
+}
+
+func (m mockRestrictedSQLExecutor) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+	return nil, nil, nil
+}
+
+func TestModifyFromNullToNotNull(t *testing.T) {
+	sql := "create table test.t (a int, b int);"
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB()
+	execCreate(t, tracker, sql)
+
+	sql = "alter table test.t modify column a int not null;"
+	ctx := context.Background()
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	// converting from NULL to NOT NULL needs to check data, so caller should provide a RestrictedSQLExecutor
+	executorCtx := mockRestrictedSQLExecutor{sctx}
+	err = tracker.AlterTable(ctx, executorCtx, stmt.(*ast.AlterTableStmt))
+	require.NoError(t, err)
+
+	tblInfo := mustTableByName(t, tracker, "test", "t")
+	require.Len(t, tblInfo.Columns, 2)
 }

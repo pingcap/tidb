@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
@@ -48,6 +50,17 @@ type SessionStatesHandler interface {
 	EncodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
 	// DecodeSessionStates decodes a map into session states.
 	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
+}
+
+// PlanCache is an interface for prepare and non-prepared plan cache
+type PlanCache interface {
+	Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool)
+	Put(key kvcache.Key, value kvcache.Value, opts *utilpc.PlanCacheMatchOpts)
+	Delete(key kvcache.Key)
+	DeleteAll()
+	Size() int
+	SetCapacity(capacity uint) error
+	Close()
 }
 
 // Context is an interface for transaction and executive args environment.
@@ -106,8 +119,8 @@ type Context interface {
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 
-	// PreparedPlanCache returns the cache of the physical plan
-	PreparedPlanCache() *kvcache.SimpleLRUCache
+	// GetSessionPlanCache returns the session-level cache of the physical plan.
+	GetSessionPlanCache() PlanCache
 
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})
@@ -120,9 +133,10 @@ type Context interface {
 	HasDirtyContent(tid int64) bool
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
-	StmtCommit()
-	// StmtRollback provides statement level rollback.
-	StmtRollback()
+	StmtCommit(ctx context.Context)
+	// StmtRollback provides statement level rollback. The parameter `forPessimisticRetry` should be true iff it's used
+	// for auto-retrying execution of DMLs in pessimistic transactions.
+	StmtRollback(ctx context.Context, isForPessimisticRetry bool)
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
 	// IsDDLOwner checks whether this session is DDL owner.
@@ -162,10 +176,21 @@ type Context interface {
 	ShowProcess() *util.ProcessInfo
 	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
 	GetAdvisoryLock(string, int64) error
+	// IsUsedAdvisoryLock checks for existing locks (aka IS_USED_LOCK()).
+	IsUsedAdvisoryLock(string) uint64
 	// ReleaseAdvisoryLock releases an advisory lock (aka RELEASE_LOCK()).
 	ReleaseAdvisoryLock(string) bool
 	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
 	ReleaseAllAdvisoryLocks() int
+	// GetExtensions returns the `*extension.SessionExtensions` object
+	GetExtensions() *extension.SessionExtensions
+	// InSandBoxMode indicates that this Session is in sandbox mode
+	// Ref about sandbox mode: https://dev.mysql.com/doc/refman/8.0/en/expired-password-handling.html
+	InSandBoxMode() bool
+	// EnableSandBoxMode enable the sandbox mode of this Session
+	EnableSandBoxMode()
+	// DisableSandBoxMode enable the sandbox mode of this Session
+	DisableSandBoxMode()
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after
@@ -221,7 +246,10 @@ const allowedTimeFromNow = 100 * time.Millisecond
 
 // ValidateStaleReadTS validates that readTS does not exceed the current time not strictly.
 func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error {
-	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
+	currentTS, err := sctx.GetSessionVars().StmtCtx.GetStaleTSO()
+	if currentTS == 0 || err != nil {
+		currentTS, err = sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
+	}
 	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD
 	if err != nil {
 		metrics.ValidateReadTSFromPDCount.Inc()

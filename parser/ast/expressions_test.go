@@ -81,7 +81,7 @@ func TestExpresionsVisitorCover(t *testing.T) {
 			{NewParamMarkerExpr(0), 0, 0},
 			{&ParenthesesExpr{Expr: ce}, 1, 1},
 			{&PatternInExpr{Expr: ce, List: []ExprNode{ce, ce, ce}, Sel: ce}, 5, 5},
-			{&PatternLikeExpr{Expr: ce, Pattern: ce}, 2, 2},
+			{&PatternLikeOrIlikeExpr{Expr: ce, Pattern: ce}, 2, 2},
 			{&PatternRegexpExpr{Expr: ce, Pattern: ce}, 2, 2},
 			{&PositionExpr{}, 0, 0},
 			{&RowExpr{Values: []ExprNode{ce, ce}}, 2, 2},

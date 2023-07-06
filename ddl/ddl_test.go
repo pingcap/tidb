@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -40,9 +39,13 @@ import (
 
 const testLease = 5 * time.Millisecond
 
+// DDLForTest exports for testing.
 type DDLForTest interface {
 	// SetInterceptor sets the interceptor.
 	SetInterceptor(h Interceptor)
+	NewReorgCtx(jobID int64, rowCount int64) *reorgCtx
+	GetReorgCtx(jobID int64) *reorgCtx
+	RemoveReorgCtx(id int64)
 }
 
 // SetInterceptor implements DDL.SetInterceptor interface.
@@ -53,22 +56,32 @@ func (d *ddl) SetInterceptor(i Interceptor) {
 	d.mu.interceptor = i
 }
 
+// IsReorgCanceled exports for testing.
+func (rc *reorgCtx) IsReorgCanceled() bool {
+	return rc.isReorgCanceled()
+}
+
+// NewReorgCtx exports for testing.
+func (d *ddl) NewReorgCtx(jobID int64, rowCount int64) *reorgCtx {
+	return d.newReorgCtx(jobID, rowCount)
+}
+
+// GetReorgCtx exports for testing.
+func (d *ddl) GetReorgCtx(jobID int64) *reorgCtx {
+	return d.getReorgCtx(jobID)
+}
+
+// RemoveReorgCtx exports for testing.
+func (d *ddl) RemoveReorgCtx(id int64) {
+	d.removeReorgCtx(id)
+}
+
 // JobNeedGCForTest is only used for test.
 var JobNeedGCForTest = jobNeedGC
 
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
-	return getRangeEndKey(NewJobContext(), store, priority, t, startHandle, endHandle)
-}
-
-func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
-	// init infoCache and a stub infoSchema
-	ic := infoschema.NewCache(2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	options = append(options, WithInfoCache(ic))
-	d := newDDL(ctx, options...)
-	err := d.Start(nil)
-	return d, err
+	return getRangeEndKey(NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
 }
 
 func createMockStore(t *testing.T) kv.Storage {
@@ -147,7 +160,7 @@ func TestModifyColumn(t *testing.T) {
 	for _, tt := range tests {
 		ftA := colDefStrToFieldType(t, tt.origin, ctx)
 		ftB := colDefStrToFieldType(t, tt.to, ctx)
-		err := checkModifyTypes(ctx, ftA, ftB, false)
+		err := checkModifyTypes(ftA, ftB, false)
 		if err == nil {
 			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
 		} else {
@@ -266,109 +279,6 @@ func TestBuildJobDependence(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-}
-
-func TestNotifyDDLJob(t *testing.T) {
-	store := createMockStore(t)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NoDDLDispatchLoop", `return(true)`))
-	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/NoDDLDispatchLoop"))
-
-	getFirstNotificationAfterStartDDL := func(d *ddl) {
-		select {
-		case <-d.workers[addIdxWorker].ddlJobCh:
-		default:
-			// The notification may be received by the worker.
-		}
-		select {
-		case <-d.workers[generalWorker].ddlJobCh:
-		default:
-			// The notification may be received by the worker.
-		}
-
-		select {
-		case <-d.ddlJobCh:
-		default:
-		}
-	}
-
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(store),
-		WithLease(testLease),
-	)
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, d.Stop())
-	}()
-	getFirstNotificationAfterStartDDL(d)
-	// Ensure that the notification is not handled in workers `start` function.
-	d.cancel()
-	for _, worker := range d.workers {
-		worker.Close()
-	}
-
-	job := &model.Job{
-		SchemaID:   1,
-		TableID:    2,
-		Type:       model.ActionCreateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{},
-	}
-	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
-	// This DDL request is a general DDL job.
-	d.asyncNotifyWorker(job)
-	select {
-	case <-d.workers[generalWorker].ddlJobCh:
-	case <-d.ddlJobCh:
-	default:
-		require.FailNow(t, "do not get the general job notification")
-	}
-	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
-	// This DDL request is a add index DDL job.
-	job.Type = model.ActionAddIndex
-	d.asyncNotifyWorker(job)
-	select {
-	case <-d.workers[addIdxWorker].ddlJobCh:
-	case <-d.ddlJobCh:
-	default:
-		require.FailNow(t, "do not get the add index job notification")
-	}
-
-	// Test the notification mechanism that the owner and the server receiving the DDL request are not on the same TiDB.
-	// And the etcd client is nil.
-	d1, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(store),
-		WithLease(testLease),
-	)
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, d1.Stop())
-	}()
-	getFirstNotificationAfterStartDDL(d1)
-	// Ensure that the notification is not handled by worker's "start".
-	d1.cancel()
-	for _, worker := range d1.workers {
-		worker.Close()
-	}
-	d1.ownerManager.RetireOwner()
-	d1.asyncNotifyWorker(job)
-	job.Type = model.ActionCreateTable
-	d1.asyncNotifyWorker(job)
-	require.False(t, d1.OwnerManager().IsOwner())
-	select {
-	case <-d1.workers[addIdxWorker].ddlJobCh:
-		require.FailNow(t, "should not get the add index job notification")
-	case <-d1.workers[generalWorker].ddlJobCh:
-		require.FailNow(t, "should not get the general job notification")
-	case <-d1.ddlJobCh:
-		require.FailNow(t, "should not get the job notification")
-	default:
-	}
 }
 
 func TestError(t *testing.T) {

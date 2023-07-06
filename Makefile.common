@@ -66,6 +66,11 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitHash=$(shell git 
 LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
 
+EXTENSION_FLAG =
+ifeq ($(shell if [ -d extension/enterprise/.git ]; then echo "true"; fi),true)
+	EXTENSION_FLAG += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEnterpriseExtensionGitHash=$(shell cd extension/enterprise && git rev-parse HEAD)"
+endif
+
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
 COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
 
@@ -103,13 +108,18 @@ DUMPLING_PACKAGE_DIRECTORIES := $(DUMPLING_PACKAGES) | sed 's|github.com/pingcap
 DUMPLING_BIN        := bin/dumpling
 DUMPLING_CHECKER := awk '{ print } END { if (NR > 0) { exit 1 } }'
 
-DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.ReleaseVersion=$(shell git describe --tags --dirty='-dev')"
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.ReleaseVersion=$(shell git describe --tags --dirty='-dev' --always)"
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.BuildTimestamp=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitHash=$(shell git rev-parse HEAD)"
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GoVersion=$(shell go version)"
 
-DUMPLING_GOBUILD := CGO_ENABLED=0 GO111MODULE=on go build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'
+DUMPLING_GOBUILD := CGO_ENABLED=1 GO111MODULE=on go build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'
 DUMPLING_GOTEST  := CGO_ENABLED=1 GO111MODULE=on go test -ldflags '$(DUMPLING_LDFLAGS)'
 
 TEST_COVERAGE_DIR := "test_coverage"
+
+ifneq ("$(CI)", "")
+	BAZEL_GLOBAL_CONFIG := --output_user_root=/home/jenkins/.tidb/tmp
+	BAZEL_CMD_CONFIG := --config=ci --repository_cache=/home/jenkins/.tidb/tmp
+endif

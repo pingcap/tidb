@@ -2,7 +2,9 @@
 
 package export
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // Task is a file dump task for dumpling, it could either be dumping database/table/view/policy metadata, table data
 type Task interface {

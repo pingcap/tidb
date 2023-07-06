@@ -1,0 +1,40 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "gctuner",
+    srcs = [
+        "finalizer.go",
+        "mem.go",
+        "memory_limit_tuner.go",
+        "tuner.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/gctuner",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util",
+        "//util/intest",
+        "//util/memory",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_test(
+    name = "gctuner_test",
+    timeout = "short",
+    srcs = [
+        "finalizer_test.go",
+        "mem_test.go",
+        "memory_limit_tuner_test.go",
+        "tuner_test.go",
+    ],
+    embed = [":gctuner"],
+    flaky = True,
+    race = "on",
+    shard_count = 5,
+    deps = [
+        "//util/memory",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

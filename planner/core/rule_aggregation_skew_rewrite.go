@@ -28,11 +28,14 @@ type skewDistinctAggRewriter struct {
 }
 
 // skewDistinctAggRewriter will rewrite group distinct aggregate into 2 level aggregates, e.g.:
-//    select S_NATIONKEY as s, count(S_SUPPKEY), count(distinct S_NAME) from supplier group by s;
+//
+//	select S_NATIONKEY as s, count(S_SUPPKEY), count(distinct S_NAME) from supplier group by s;
+//
 // will be rewritten to
-//    select S_NATIONKEY as s, sum(c), count(S_NAME) from (
-//      select S_NATIONKEY, S_NAME, count(S_SUPPKEY) c from supplier group by S_NATIONKEY, S_NAME
-//    ) as T group by s;
+//
+//	select S_NATIONKEY as s, sum(c), count(S_NAME) from (
+//	  select S_NATIONKEY, S_NAME, count(S_SUPPKEY) c from supplier group by S_NATIONKEY, S_NAME
+//	) as T group by s;
 //
 // If the group key is highly skewed and the distinct key has large number of distinct values
 // (a.k.a. high cardinality), the query execution will be slow. This rule may help to ease the
@@ -231,7 +234,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 	return proj
 }
 
-func (a *skewDistinctAggRewriter) isQualifiedAgg(aggFunc *aggregation.AggFuncDesc) bool {
+func (*skewDistinctAggRewriter) isQualifiedAgg(aggFunc *aggregation.AggFuncDesc) bool {
 	if aggFunc.Mode != aggregation.CompleteMode {
 		return false
 	}

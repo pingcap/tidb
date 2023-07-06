@@ -22,17 +22,19 @@ import (
 )
 
 /*
-	resultReorder reorder query results.
-	NOTE: it's not a common rule for all queries, it's specially implemented for a few customers.
+resultReorder reorder query results.
+NOTE: it's not a common rule for all queries, it's specially implemented for a few customers.
 
-	Results of some queries are not ordered, for example:
-		create table t (a int); insert into t values (1), (2); select a from t;
-	In the case above, the result can be `1 2` or `2 1`, which is not ordered.
-	This rule reorders results by modifying or injecting a Sort operator:
-	1. iterate the plan from the root, and ignore all input-order operators (Sel/Proj/Limit);
-	2. when meeting the first non-input-order operator,
-		2.1. if it's a Sort, update it by appending all output columns into its order-by list,
-		2.2. otherwise, inject a new Sort upon this operator.
+Results of some queries are not ordered, for example:
+
+	create table t (a int); insert into t values (1), (2); select a from t;
+
+In the case above, the result can be `1 2` or `2 1`, which is not ordered.
+This rule reorders results by modifying or injecting a Sort operator:
+ 1. iterate the plan from the root, and ignore all input-order operators (Sel/Proj/Limit);
+ 2. when meeting the first non-input-order operator,
+    2.1. if it's a Sort, update it by appending all output columns into its order-by list,
+    2.2. otherwise, inject a new Sort upon this operator.
 */
 type resultReorder struct {
 }
@@ -91,7 +93,7 @@ func (rs *resultReorder) injectSort(lp LogicalPlan) LogicalPlan {
 	return sort
 }
 
-func (rs *resultReorder) isInputOrderKeeper(lp LogicalPlan) bool {
+func (*resultReorder) isInputOrderKeeper(lp LogicalPlan) bool {
 	switch lp.(type) {
 	case *LogicalSelection, *LogicalProjection, *LogicalLimit:
 		return true
@@ -121,6 +123,6 @@ func (rs *resultReorder) extractHandleCol(lp LogicalPlan) *expression.Column {
 	return nil
 }
 
-func (rs *resultReorder) name() string {
+func (*resultReorder) name() string {
 	return "result_reorder"
 }

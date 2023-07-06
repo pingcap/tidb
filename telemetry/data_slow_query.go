@@ -43,7 +43,7 @@ func (bucketMap SlowQueryBucket) String() string {
 	if bucketMap == nil {
 		return "nil"
 	}
-	var retStr string = "{"
+	var retStr = "{"
 	for k, v := range bucketMap {
 		retStr += k + ":" + strconv.Itoa(v) + ","
 	}
@@ -64,7 +64,7 @@ var (
 func getSlowQueryStats() (*slowQueryStats, error) {
 	slowQueryBucket, err := getSlowQueryBucket()
 	if err != nil {
-		logutil.BgLogger().Info(err.Error())
+		logutil.BgLogger().Info("Failed to get Slow Query Stats", zap.Error(err))
 		return nil, err
 	}
 

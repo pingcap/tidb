@@ -17,18 +17,20 @@ package property
 import (
 	"bytes"
 	"fmt"
+	"unsafe"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
 // these tasks one by one.
-var wholeTaskTypes = []TaskType{CopSingleReadTaskType, CopDoubleReadTaskType, RootTaskType}
+var wholeTaskTypes = []TaskType{CopSingleReadTaskType, CopMultiReadTaskType, RootTaskType}
 
 // SortItem wraps the column and its order.
 type SortItem struct {
@@ -46,6 +48,15 @@ func (s *SortItem) String() string {
 // Clone makes a copy of SortItem.
 func (s SortItem) Clone() SortItem {
 	return SortItem{Col: s.Col.Clone().(*expression.Column), Desc: s.Desc}
+}
+
+// MemoryUsage return the memory usage of SortItem
+func (s SortItem) MemoryUsage() (sum int64) {
+	sum = size.SizeOfBool
+	if s.Col != nil {
+		sum += s.Col.MemoryUsage()
+	}
+	return
 }
 
 // MPPPartitionType is the way to partition during mpp data exchanging.
@@ -105,6 +116,19 @@ func (partitionCol *MPPPartitionColumn) Equal(other *MPPPartitionColumn) bool {
 	return partitionCol.Col.Equal(nil, other.Col)
 }
 
+// MemoryUsage return the memory usage of MPPPartitionColumn
+func (partitionCol *MPPPartitionColumn) MemoryUsage() (sum int64) {
+	if partitionCol == nil {
+		return
+	}
+
+	sum = size.SizeOfInt32
+	if partitionCol.Col != nil {
+		sum += partitionCol.Col.MemoryUsage()
+	}
+	return
+}
+
 // ExplainColumnList generates explain information for a list of columns.
 func ExplainColumnList(cols []*MPPPartitionColumn) []byte {
 	buffer := bytes.NewBufferString("")
@@ -136,6 +160,16 @@ func GetCollateNameByIDForPartition(collateID int32) string {
 	collateID = collate.RestoreCollationIDIfNeeded(collateID)
 	return collate.CollationID2Name(collateID)
 }
+
+// cteProducerStatus indicates whether we can let the current CTE consumer/reader be executed on the MPP nodes.
+type cteProducerStatus int
+
+// Constants for CTE status.
+const (
+	NoCTEOrAllProducerCanMPP cteProducerStatus = iota
+	SomeCTEFailedMpp
+	AllCTECanMpp
+)
 
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.
@@ -178,10 +212,13 @@ type PhysicalProperty struct {
 	// RejectSort means rejecting the sort property from its children, but it only works for MPP tasks.
 	// Non-MPP tasks do not care about it.
 	RejectSort bool
+
+	CTEProducerStatus cteProducerStatus
 }
 
 // NewPhysicalProperty builds property from columns.
-func NewPhysicalProperty(taskTp TaskType, cols []*expression.Column, desc bool, expectCnt float64, enforced bool) *PhysicalProperty {
+func NewPhysicalProperty(taskTp TaskType, cols []*expression.Column,
+	desc bool, expectCnt float64, enforced bool) *PhysicalProperty {
 	return &PhysicalProperty{
 		SortItems:      SortItemsFromCols(cols, desc),
 		TaskTp:         taskTp,
@@ -252,7 +289,8 @@ func (p *PhysicalProperty) IsPrefix(prop *PhysicalProperty) bool {
 		return false
 	}
 	for i := range p.SortItems {
-		if !p.SortItems[i].Col.Equal(nil, prop.SortItems[i].Col) || p.SortItems[i].Desc != prop.SortItems[i].Desc {
+		if !p.SortItems[i].Col.Equal(nil,
+			prop.SortItems[i].Col) || p.SortItems[i].Desc != prop.SortItems[i].Desc {
 			return false
 		}
 	}
@@ -265,7 +303,8 @@ func (p *PhysicalProperty) IsSortItemAllForPartition() bool {
 		return false
 	}
 	for i := range p.SortItemsForPartition {
-		if !p.SortItemsForPartition[i].Col.Equal(nil, p.SortItems[i].Col) || p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc {
+		if !p.SortItemsForPartition[i].Col.Equal(nil,
+			p.SortItems[i].Col) || p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc {
 			return false
 		}
 	}
@@ -305,6 +344,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = append(p.hashcode, col.hashCode(nil)...)
 		}
 	}
+	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEProducerStatus))...)
 	return p.hashcode
 }
 
@@ -324,6 +364,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionTp:        p.MPPPartitionTp,
 		MPPPartitionCols:      p.MPPPartitionCols,
 		RejectSort:            p.RejectSort,
+		CTEProducerStatus:     p.CTEProducerStatus,
 	}
 	return prop
 }
@@ -339,4 +380,25 @@ func (p *PhysicalProperty) AllSameOrder() (isSame bool, desc bool) {
 		}
 	}
 	return true, p.SortItems[0].Desc
+}
+
+const emptyPhysicalPropertySize = int64(unsafe.Sizeof(PhysicalProperty{}))
+
+// MemoryUsage return the memory usage of PhysicalProperty
+func (p *PhysicalProperty) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyPhysicalPropertySize + int64(cap(p.hashcode))
+	for _, sortItem := range p.SortItems {
+		sum += sortItem.MemoryUsage()
+	}
+	for _, sortItem := range p.SortItemsForPartition {
+		sum += sortItem.MemoryUsage()
+	}
+	for _, mppCol := range p.MPPPartitionCols {
+		sum += mppCol.MemoryUsage()
+	}
+	return
 }
