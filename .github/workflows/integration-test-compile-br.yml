@@ -1,5 +1,6 @@
 name: BR & Lightning
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
@@ -40,10 +41,15 @@ permissions:
   contents: read  #  to fetch code (actions/checkout)
 
 jobs:
-  compile-windows:
-    if: github.event_name == 'push' || github.event_name == 'pull_request' && github.event.label.name == 'action/run-br-cross-platform-build'
-    name: Compile for Windows job
-    runs-on: windows-latest
+  compile:
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    name: Compile for ${{ matrix.os }}
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest,  ubuntu-latest, windows-latest]
+
     steps:
       - uses: actions/checkout@v2.1.0
 
@@ -55,42 +61,17 @@ jobs:
       - name: Run build
         run: make build_tools
 
-  compile:
-    if: github.event_name == 'pull_request' && github.event.label.name == 'action/run-br-cross-platform-build'
-    name: Compile for ${{ matrix.os }} / ${{ matrix.target}}
-
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: macos-latest
-            target: x86_64-apple-darwin
-
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-
-    steps:
-      - uses: actions/checkout@v2.1.0
-
-      - name: Set up Go
-        uses: actions/setup-go@v2
-        with:
-          go-version: 1.18
-
-      - name: Run build
-        run: make build_tools
-
   compile-freebsd:
-    if: github.event_name == 'pull_request' && github.event.label.name == 'action/run-br-cross-platform-build'
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     name: Compile for FreeBSD job
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2.1.0
 
       - name: Set up Go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v3
         with:
-          go-version: 1.18
+          go-version-file: 'go.mod'
 
       - name: Compile for FreeBSD
         run: GOOS=freebsd make build_tools
