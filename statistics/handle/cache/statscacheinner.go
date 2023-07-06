@@ -88,12 +88,7 @@ func (sc *StatsCacheWrapper) Copy() StatsCacheWrapper {
 
 // Version returns the version of the cache.
 func (sc *StatsCacheWrapper) Version() (v uint64) {
-	for _, t := range sc.Values() {
-		if t.Version > v {
-			v = t.Version
-		}
-	}
-	return v
+	return maximumTableVersionInCache(sc.StatsCacheInner)
 }
 
 // Update updates the statistics table cache using Copy on write.
@@ -105,6 +100,15 @@ func (sc *StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int
 	newCache := sc.Copy()
 	batchUpdateStatsCache(newCache.StatsCacheInner, tables, deletedIDs, option.byQuery)
 	return newCache
+}
+
+func maximumTableVersionInCache(c internal.StatsCacheInner) (v uint64) {
+	for _, t := range c.Values() {
+		if t.Version > v {
+			v = t.Version
+		}
+	}
+	return v
 }
 
 func batchUpdateStatsCache(c internal.StatsCacheInner, tables []*statistics.Table, deletedIDs []int64, byQuery bool) {
