@@ -496,7 +496,7 @@ func TestSessionCtx(t *testing.T) {
 			},
 		},
 		{
-			// check reqest source
+			// check request source
 			setFunc: func(tk *testkit.TestKit) any {
 				tk.MustExec(`set @@tidb_request_source_type="lightning"`)
 				require.Equal(t, "lightning", tk.Session().GetSessionVars().ExplicitRequestSourceType)
