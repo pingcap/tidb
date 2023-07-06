@@ -5115,6 +5115,13 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
+		if reqCols[i].ID < 0 {
+			// model.ExtraHandleID, ExtraPidColID, ExtraPhysTblID... etc
+			// Don't set the default value for that column.
+			chk.AppendNull(i)
+			return nil
+		}
+
 		ci := getColInfoByID(tbl, reqCols[i].ID)
 		d, err := table.GetColOriginDefaultValue(ctx, ci)
 		if err != nil {
