@@ -1810,7 +1810,7 @@ func TestAddFieldsForBinding(t *testing.T) {
 func TestClusterInfoTime(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("SELECT START_TIME+1 FROM information_schema.CLUSTER_INFO")
+	tk.MustQuery("SELECT START_TIME+1 FROM information_schema.CLUSTER_INFO")
 	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	require.Lenf(t, warnings, 0, "expect no warnings, but found: %+v", warnings)
 }
