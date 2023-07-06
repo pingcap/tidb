@@ -2188,23 +2188,31 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 		return err
 	}
 	for _, table := range tables {
-<<<<<<< HEAD
-		if recorder != nil ||
-			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > tiFlashStoreCount) {
-			if recorder != nil && table.Info.TiFlashReplica != nil {
-=======
 		if table.Info.TiFlashReplica != nil {
 			// we should not set available to true. because we cannot guarantee the raft log lag of tiflash when restore finished.
 			// just let tiflash ticker set it by checking lag of all related regions.
 			table.Info.TiFlashReplica.Available = false
+			table.Info.TiFlashReplica.AvailablePartitionIDs = nil
 			if recorder != nil {
->>>>>>> 0f20315681d (br: pipeline wait tiflash synced (#43726))
 				recorder.AddTable(table.Info.ID, *table.Info.TiFlashReplica)
+				log.Info("record tiflash replica for table, to reset it by ddl later",
+					zap.Stringer("db", table.DB.Name),
+					zap.Stringer("table", table.Info.Name),
+				)
+				table.Info.TiFlashReplica = nil
+			} else if table.Info.TiFlashReplica.Count > tiFlashStoreCount {
+				// we cannot satisfy TiFlash replica in restore cluster. so we should
+				// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
+				// see details at https://github.com/pingcap/br/issues/931
+				// TODO maybe set table.Info.TiFlashReplica.Count to tiFlashStoreCount, but we need more tests about it.
+				log.Warn("table does not satisfy tiflash replica requirements, set tiflash replcia to unavaiable",
+					zap.Stringer("db", table.DB.Name),
+					zap.Stringer("table", table.Info.Name),
+					zap.Uint64("expect tiflash replica", table.Info.TiFlashReplica.Count),
+					zap.Uint64("actual tiflash store", tiFlashStoreCount),
+				)
+				table.Info.TiFlashReplica = nil
 			}
-			// we cannot satisfy TiFlash replica in restore cluster. so we should
-			// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
-			// see details at https://github.com/pingcap/br/issues/931
-			table.Info.TiFlashReplica = nil
 		}
 	}
 	return nil
