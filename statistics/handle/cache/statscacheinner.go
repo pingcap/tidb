@@ -80,7 +80,7 @@ func (sc *StatsCacheWrapper) Version() (v uint64) {
 }
 
 // Update updates the statistics table cache using Copy on write.
-func (sc *StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64, opts ...TableStatsOpt) StatsCacheWrapper {
+func (sc *StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) StatsCacheWrapper {
 	option := &TableStatsOption{}
 	for _, opt := range opts {
 		opt(option)

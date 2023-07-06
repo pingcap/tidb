@@ -618,7 +618,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
-	h.updateStatsCache(oldCache.Update(tables, deletedTableIDs, lastVersion, opts...))
+	h.updateStatsCache(oldCache.Update(tables, deletedTableIDs, opts...))
 	return nil
 }
 
@@ -997,7 +997,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
 		if tblInfo.GetPartitionInfo() == nil || h.statsCacheLen() < 64 {
-			h.updateStatsCache(statsCache.Update([]*statistics.Table{tbl}, nil, statsCache.Version()))
+			h.updateStatsCache(statsCache.Update([]*statistics.Table{tbl}, nil))
 		}
 		return tbl
 	}
@@ -1105,7 +1105,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 	}
 	tbl = tbl.Copy()
 	tbl.Columns[c.ID] = colHist
-	if h.updateStatsCache(oldCache.Update([]*statistics.Table{tbl}, nil, oldCache.Version())) {
+	if h.updateStatsCache(oldCache.Update([]*statistics.Table{tbl}, nil)) {
 		statistics.HistogramNeededItems.Delete(col)
 	}
 	return nil
@@ -1158,7 +1158,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 	}
 	tbl = tbl.Copy()
 	tbl.Indices[idx.ID] = idxHist
-	if h.updateStatsCache(oldCache.Update([]*statistics.Table{tbl}, nil, oldCache.Version())) {
+	if h.updateStatsCache(oldCache.Update([]*statistics.Table{tbl}, nil)) {
 		statistics.HistogramNeededItems.Delete(idx)
 	}
 	return nil
@@ -1167,12 +1167,6 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 // LastUpdateVersion gets the last update version.
 func (h *Handle) LastUpdateVersion() uint64 {
 	return h.statsCache.Load().Version()
-}
-
-// SetLastUpdateVersion sets the last update version.
-func (h *Handle) SetLastUpdateVersion(version uint64) {
-	statsCache := h.statsCache.Load()
-	h.updateStatsCache(statsCache.Update(nil, nil, version))
 }
 
 // FlushStats flushes the cached stats update into store.
@@ -1807,7 +1801,7 @@ func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 		}
 		newTbl := tbl.Copy()
 		delete(newTbl.ExtendedStats.Stats, statsName)
-		if h.updateStatsCache(oldCache.Update([]*statistics.Table{newTbl}, nil, oldCache.Version())) {
+		if h.updateStatsCache(oldCache.Update([]*statistics.Table{newTbl}, nil)) {
 			return
 		}
 		if retry == 1 {
@@ -1840,7 +1834,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 			}
 			tables = append(tables, t)
 		}
-		if h.updateStatsCache(oldCache.Update(tables, nil, oldCache.Version())) {
+		if h.updateStatsCache(oldCache.Update(tables, nil)) {
 			return nil
 		}
 	}
