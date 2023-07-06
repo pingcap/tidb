@@ -112,7 +112,6 @@ func batchUpdateStatsCache(c internal.StatsCacheInner, tables []*statistics.Tabl
 	for _, id := range deletedIDs {
 		c.Del(id)
 	}
-	return
 }
 
 // TableRowStatsCache is the cache of table row count.
