@@ -67,7 +67,7 @@ func (s *StatsCache) UpdateCache(newCache StatsCacheWrapper) (updated bool, newC
 	s.mu.Lock()
 	oldCache := s.cache.Load()
 	newCost = newCache.Cost()
-	if oldCache.Version() < newCache.Version() {
+	if oldCache.Version() <= newCache.Version() {
 		s.memTracker.Consume(newCost - oldCache.Cost())
 		s.cache.Store(&newCache)
 		updated = true
