@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
@@ -487,4 +488,46 @@ func GetAutoRandomColumn(tblInfo *model.TableInfo) *model.ColumnInfo {
 		return tblInfo.Columns[offset]
 	}
 	return nil
+}
+
+// GetBackoffWeightFromDB gets the backoff weight from database.
+func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
+	val, err := getSessionVariable(ctx, db, variable.TiDBBackOffWeight)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(val)
+}
+
+// copy from dbutil to avoid import cycle
+func getSessionVariable(ctx context.Context, db *sql.DB, variable string) (value string, err error) {
+	query := fmt.Sprintf("SHOW VARIABLES LIKE '%s'", variable)
+	rows, err := db.QueryContext(ctx, query)
+
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	defer rows.Close()
+
+	// Show an example.
+	/*
+		mysql> SHOW VARIABLES LIKE "binlog_format";
+		+---------------+-------+
+		| Variable_name | Value |
+		+---------------+-------+
+		| binlog_format | ROW   |
+		+---------------+-------+
+	*/
+
+	for rows.Next() {
+		if err = rows.Scan(&variable, &value); err != nil {
+			return "", errors.Trace(err)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return "", errors.Trace(err)
+	}
+
+	return value, nil
 }
