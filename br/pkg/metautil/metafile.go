@@ -215,6 +215,13 @@ func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backup
 	for _, f := range reader.backupMeta.Files {
 		output(f)
 	}
+	// Read backupmeta range files for file-copy.
+	for _, r := range reader.backupMeta.Ranges {
+		for _, f := range r.Files {
+			output(f)
+		}
+	}
+
 	// Read backupmeta v2 data files.
 	outputFn := func(m *backuppb.MetaFile) {
 		for _, f := range m.DataFiles {
