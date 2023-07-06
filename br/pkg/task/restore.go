@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
@@ -491,14 +492,13 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 }
 
 // CheckRestoreDBAndTable is used to check whether the restore dbs or tables have been backup
-func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
+func CheckRestoreDBAndTable(cfg *RestoreConfig, dbs []*utils.Database) error {
 	if len(cfg.Schemas) == 0 && len(cfg.Tables) == 0 {
 		return nil
 	}
-	schemas := client.GetDatabases()
 	schemasMap := make(map[string]struct{})
 	tablesMap := make(map[string]struct{})
-	for _, db := range schemas {
+	for _, db := range dbs {
 		dbName := db.Info.Name.L
 		if dbCIStrName, ok := utils.GetSysDBCIStrName(db.Info.Name); utils.IsSysDB(dbCIStrName.O) && ok {
 			dbName = dbCIStrName.L
@@ -512,6 +512,7 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 			tablesMap[utils.EncloseDBAndTable(dbName, table.Info.Name.L)] = struct{}{}
 		}
 	}
+	// TODO we may don't need to check restoreSchemas here. only return error when map is nil.
 	restoreSchemas := cfg.Schemas
 	restoreTables := cfg.Tables
 	for schema := range restoreSchemas {
@@ -673,13 +674,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if err != nil {
 		return errors.Trace(err)
 	}
-	backupVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
-	if cfg.CheckRequirements && backupVersion != nil {
-		if versionErr := version.CheckClusterVersion(ctx, mgr.GetPDClient(), version.CheckVersionForBackup(backupVersion)); versionErr != nil {
-			return errors.Trace(versionErr)
-		}
-	}
-	if err = restore.CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
+
+	if err = CheckBeforeLoadsData(ctx, cfg, client, backupMeta); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -688,15 +684,24 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	if client.IsRawKvMode() {
-		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw kv data")
+	// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
+	// to avoid import cycle problem which we won't do it in this pr, then refactor this
+	//
+	// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
+	if cmdName == FullRestoreCmd && cfg.WithSysTable {
+		client.InitFullClusterRestore(cfg.ExplicitFilter)
 	}
-	if err = CheckRestoreDBAndTable(client, cfg); err != nil {
-		return err
-	}
+
 	files, tables, dbs := filterRestoreFiles(client, cfg)
 	if len(dbs) == 0 && len(tables) != 0 {
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
+	}
+
+	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
+	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
+
+	if err = CheckAfterLoadsData(ctx, cfg, client, dbs, tables, ddlJobs); err != nil {
+		return errors.Trace(err)
 	}
 
 	archiveSize := reader.ArchiveSize(ctx, files)
@@ -708,26 +713,13 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
-	// to avoid import cycle problem which we won't do it in this pr, then refactor this
-	//
-	// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
-	if cmdName == FullRestoreCmd && cfg.WithSysTable {
-		client.InitFullClusterRestore(cfg.ExplicitFilter)
-	}
-	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
-		if err = client.CheckTargetClusterFresh(ctx); err != nil {
-			return errors.Trace(err)
-		}
-		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
+	var newTS uint64
 	if client.IsIncremental() {
 		// don't support checkpoint for the ddl restore
 		log.Info("the incremental snapshot restore doesn't support checkpoint mode, so unuse checkpoint.")
 		cfg.UseCheckpoint = false
+		// generate new timestamp rewrite rule for incremental restore.
+		newTS = restoreTS
 	}
 
 	restoreSchedulers, schedulersConfig, err := restorePreWork(ctx, client, mgr, true)
@@ -794,23 +786,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
 	// so, we should keep the safe point unchangeable. to avoid GC life time is shorter than transaction duration.
 	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), sp)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	var newTS uint64
-	if client.IsIncremental() {
-		newTS = restoreTS
-	}
-	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
-	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
-
-	err = client.PreCheckTableTiFlashReplica(ctx, tables, cfg.tiflashRecorder)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = client.PreCheckTableClusterIndex(tables, ddlJobs, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1146,4 +1121,77 @@ func restoreTableStream(
 			batcher.Add(t)
 		}
 	}
+}
+
+// CheckBeforeLoadsData will check
+// 1. whether backup cluster version can restore to this cluster.
+// 2. whether new collation version matched to restore cluster.
+// Note: these checks *can* skipped by setting --check-requirements == false
+func CheckBeforeLoadsData(ctx context.Context, cfg *RestoreConfig, client *restore.Client, backupMeta *backuppb.BackupMeta) error {
+	var err error
+	if cfg.CheckRequirements {
+		// check backup cluster version is match to new restore cluster version.
+		backupVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
+		if backupVersion != nil {
+			if versionErr := version.CheckClusterVersion(ctx, client.GetPDClient(), version.CheckVersionForBackup(backupVersion)); versionErr != nil {
+				return errors.Trace(versionErr)
+			}
+		}
+
+		// if we cannot get new collation here, let user check it manually.
+		if backupMeta.GetNewCollationsEnabled() == "" {
+			return errors.Annotatef(berrors.ErrUnknown,
+				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
+					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
+					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
+					"use --check-requirements=false to skip this check")
+		}
+		if err = restore.CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), client); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		// skip check due to user set --check-requirements == false, only add a warn log here.
+		if backupMeta.GetNewCollationsEnabled() == "" {
+			log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
+		}
+	}
+
+	// unreachable: cannot restore raw kv no matter wether --check-requirements is false or not.
+	if backupMeta.IsRawKv {
+		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw kv data")
+	}
+
+	return nil
+}
+
+// CheckAfterLoadsData will check the backup data integrity and whether data matched with settings and cluster.
+// 1. restore db and table must exists in backup data.
+// 2. tiflash replica must satisfied with new cluster.
+// 3. table cluster index must matched with the table in restore cluster.
+// Note: these checks *cannot* skipped by setting --check-requirements == false
+func CheckAfterLoadsData(ctx context.Context, cfg *RestoreConfig, client *restore.Client,
+	dbs []*utils.Database, tables []*metautil.Table, ddlJobs []*model.Job) error {
+	var err error
+	if err = CheckRestoreDBAndTable(cfg, dbs); err != nil {
+		return err
+	}
+	err = client.PreCheckTableTiFlashReplica(ctx, tables, cfg.tiflashRecorder)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = client.PreCheckTableClusterIndex(tables, ddlJobs, client.GetDomain())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
+		if err = client.CheckTargetClusterFresh(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		if err = client.CheckSysTableCompatibility(client.GetDomain(), tables); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }

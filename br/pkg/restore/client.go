@@ -3667,8 +3667,13 @@ func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecord
 }
 
 // MockClient create a fake client used to test.
-func MockClient(dbs map[string]*utils.Database) *Client {
-	return &Client{databases: dbs}
+func MockClient(dbs map[string]*utils.Database, se glue.Session) *Client {
+	return &Client{
+		databases: dbs,
+		db: &DB{
+			se: se,
+		},
+	}
 }
 
 func CheckKeyspaceBREnable(ctx context.Context, pdClient pd.Client) error {
@@ -3677,28 +3682,9 @@ func CheckKeyspaceBREnable(ctx context.Context, pdClient pd.Client) error {
 
 func CheckNewCollationEnable(
 	backupNewCollationEnable string,
-	g glue.Glue,
-	storage kv.Storage,
-	CheckRequirements bool,
+	client *Client,
 ) error {
-	if backupNewCollationEnable == "" {
-		if CheckRequirements {
-			return errors.Annotatef(berrors.ErrUnknown,
-				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
-					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
-					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
-					"use --check-requirements=false to skip this check")
-		}
-		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
-		return nil
-	}
-
-	se, err := g.CreateSession(storage)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	newCollationEnable, err := se.GetGlobalVariable(utils.GetTidbNewCollationEnabled())
+	newCollationEnable, err := client.db.se.GetGlobalVariable(utils.GetTidbNewCollationEnabled())
 	if err != nil {
 		return errors.Trace(err)
 	}

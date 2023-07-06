@@ -77,7 +77,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 	cases := []struct {
 		cfgSchemas map[string]struct{}
 		cfgTables  map[string]struct{}
-		backupDBs  map[string]*utils.Database
+		backupDBs  []*utils.Database
 	}{
 		{
 			cfgSchemas: map[string]struct{}{
@@ -160,14 +160,13 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 	for _, ca := range cases {
 		cfg.Schemas = ca.cfgSchemas
 		cfg.Tables = ca.cfgTables
-		client := restore.MockClient(ca.backupDBs)
 
-		err := CheckRestoreDBAndTable(client, cfg)
+		err := CheckRestoreDBAndTable(cfg, ca.backupDBs)
 		require.NoError(t, err)
 	}
 }
 
-func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*utils.Database {
+func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) []*utils.Database {
 	testDir := t.TempDir()
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)
@@ -246,7 +245,11 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 			}),
 	)
 	require.NoError(t, err)
-	return dbs
+	dbList := make([]*utils.Database, 0, len(dbs))
+	for _, db := range dbs {
+		dbList = append(dbList, db)
+	}
+	return dbList
 }
 
 func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) *backuppb.BackupMeta {

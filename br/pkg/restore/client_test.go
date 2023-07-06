@@ -652,7 +652,7 @@ func TestRestoreMetaKVFilesWithBatchMethod1(t *testing.T) {
 	files := []*backuppb.DataFileInfo{}
 	batchCount := 0
 
-	client := restore.MockClient(nil)
+	client := restore.MockClient(nil, nil)
 	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
@@ -690,7 +690,7 @@ func TestRestoreMetaKVFilesWithBatchMethod2(t *testing.T) {
 	batchCount := 0
 	result := make(map[int][]*backuppb.DataFileInfo)
 
-	client := restore.MockClient(nil)
+	client := restore.MockClient(nil, nil)
 	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
@@ -782,7 +782,7 @@ func TestRestoreMetaKVFilesWithBatchMethod3(t *testing.T) {
 	result := make(map[int][]*backuppb.DataFileInfo)
 	resultKV := make(map[int]int)
 
-	client := restore.MockClient(nil)
+	client := restore.MockClient(nil, nil)
 	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
@@ -869,7 +869,7 @@ func TestRestoreMetaKVFilesWithBatchMethod4(t *testing.T) {
 	batchCount := 0
 	result := make(map[int][]*backuppb.DataFileInfo)
 
-	client := restore.MockClient(nil)
+	client := restore.MockClient(nil, nil)
 	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
@@ -950,7 +950,7 @@ func TestRestoreMetaKVFilesWithBatchMethod5(t *testing.T) {
 	batchCount := 0
 	result := make(map[int][]*backuppb.DataFileInfo)
 
-	client := restore.MockClient(nil)
+	client := restore.MockClient(nil, nil)
 	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
@@ -1048,7 +1048,7 @@ func TestRestoreMetaKVFilesWithBatchMethod6(t *testing.T) {
 	result := make(map[int][]*backuppb.DataFileInfo)
 	resultKV := make(map[int]int)
 
-	client := restore.MockClient(nil)
+	client := restore.MockClient(nil, nil)
 	sr := MockEmptySchemasReplace()
 	err := client.RestoreMetaKVFilesWithBatchMethod(
 		context.Background(),
@@ -1681,7 +1681,9 @@ func TestCheckNewCollationEnable(t *testing.T) {
 		g := &gluetidb.MockGlue{
 			GlobalVars: map[string]string{"new_collation_enabled": ca.newCollationEnableInCluster},
 		}
-		err := restore.CheckNewCollationEnable(ca.backupMeta.GetNewCollationsEnabled(), g, nil, ca.CheckRequirements)
+		se, _ := g.CreateSession(nil)
+		client := restore.MockClient(nil, se)
+		err := restore.CheckNewCollationEnable(ca.backupMeta.GetNewCollationsEnabled(), client)
 
 		t.Logf("[%d] Got Error: %v\n", i, err)
 		if ca.isErr {
