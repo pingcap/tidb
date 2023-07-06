@@ -33,20 +33,6 @@ func TestIssue44051(t *testing.T) {
 	rs := tk.MustQuery("WITH tmp AS (SELECT t2.* FROM t2) SELECT * FROM t1 WHERE t1.id = (select id from tmp where id = 1) or t1.id = (select id from tmp where id = 2) or t1.id = (select id from tmp where id = 3)")
 	rs.Sort().Check(testkit.Rows("1 <nil> <nil> <nil>", "2 <nil> <nil> <nil>", "3 <nil> <nil> <nil>"))
 }
-<<<<<<< HEAD
-=======
-
-func TestIssue42732(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t1 (a INT, b INT)")
-	tk.MustExec("CREATE TABLE t2 (a INT, b INT)")
-	tk.MustExec("INSERT INTO t1 VALUES (1, 1)")
-	tk.MustExec("INSERT INTO t2 VALUES (1, 1)")
-	tk.MustQuery("SELECT one.a, one.b as b2 FROM t1 one ORDER BY (SELECT two.b FROM t2 two WHERE two.a = one.b)").Check(testkit.Rows("1 1"))
-}
 
 // https://github.com/pingcap/tidb/issues/45036
 func TestIssue45036(t *testing.T) {
@@ -74,4 +60,3 @@ func TestIssue45036(t *testing.T) {
 		"    └─TableReader_9 10000.00 root partition:all data:TableRangeScan_8",
 		"      └─TableRangeScan_8 10000.00 cop[tikv] table:s range:[1,100000], keep order:false, stats:pseudo"))
 }
->>>>>>> 073a5f8b906 (planner, expression: fix TableFullScan caused by extraHandleId not correctly found (#45139))
