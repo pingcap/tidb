@@ -20,7 +20,6 @@ go_library(
         "//statistics/handle/cache/internal/mapcache",
         "//types",
         "//util/chunk",
-        "//util/memory",
         "//util/sqlexec",
         "//util/syncutil",
     ],
