@@ -23,13 +23,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 const (
-	clientMaxRetry      = 10
-	clientRetryInterval = 2 * time.Second
+	clientMaxRetry     = 5
+	clientRetryBackoff = uint64(1000)
 )
 
 // GetTimerOption is the option to get timers
@@ -131,17 +132,17 @@ const DefaultStoreNamespace = "default"
 
 // defaultTimerClient is the default implement of timer client
 type defaultTimerClient struct {
-	namespace     string
-	store         *TimerStore
-	retryInterval time.Duration
+	namespace    string
+	store        *TimerStore
+	retryBackoff uint64
 }
 
 // NewDefaultTimerClient creates a new defaultTimerClient
 func NewDefaultTimerClient(store *TimerStore) TimerClient {
 	return &defaultTimerClient{
-		namespace:     DefaultStoreNamespace,
-		store:         store,
-		retryInterval: clientRetryInterval,
+		namespace:    DefaultStoreNamespace,
+		store:        store,
+		retryBackoff: clientRetryBackoff,
 	}
 }
 
@@ -192,21 +193,21 @@ func (c *defaultTimerClient) ManualTriggerEvent(ctx context.Context, timerID str
 	reqUUID := uuid.New()
 	requestID := hex.EncodeToString(reqUUID[:])
 
-	err := c.retryWhenVersionNotMatch(ctx, timerID, func() error {
+	err := util.RunWithRetry(clientMaxRetry, c.retryBackoff, func() (bool, error) {
 		timer, err := c.store.GetByID(ctx, timerID)
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		if timer.EventID != "" {
-			return errors.New("manual trigger is not allowed when event is not closed")
+			return false, errors.New("manual trigger is not allowed when event is not closed")
 		}
 
 		if !timer.Enable {
-			return errors.New("manual trigger is not allowed when timer is disabled")
+			return false, errors.New("manual trigger is not allowed when timer is disabled")
 		}
 
-		return c.store.Update(ctx, timerID, &TimerUpdate{
+		err = c.store.Update(ctx, timerID, &TimerUpdate{
 			ManualRequest: NewOptionalVal(ManualRequest{
 				ManualRequestID:   requestID,
 				ManualRequestTime: time.Now(),
@@ -214,6 +215,13 @@ func (c *defaultTimerClient) ManualTriggerEvent(ctx context.Context, timerID str
 			}),
 			CheckVersion: NewOptionalVal(timer.Version),
 		})
+
+		if errors.ErrorEqual(ErrVersionNotMatch, err) {
+			logutil.BgLogger().Warn("failed to update timer for version not match, retry", zap.String("timerID", timerID))
+			return true, err
+		}
+
+		return false, err
 	})
 
 	if err != nil {
@@ -254,21 +262,4 @@ func (c *defaultTimerClient) CloseTimerEvent(ctx context.Context, timerID string
 
 func (c *defaultTimerClient) DeleteTimer(ctx context.Context, timerID string) (bool, error) {
 	return c.store.Delete(ctx, timerID)
-}
-
-func (c *defaultTimerClient) retryWhenVersionNotMatch(ctx context.Context, timerID string, fn func() error) (err error) {
-	for i := 0; i <= clientMaxRetry; i++ {
-		err = fn()
-		if !errors.ErrorEqual(ErrVersionNotMatch, err) || i == clientMaxRetry {
-			return err
-		}
-
-		logutil.BgLogger().Warn("failed to update timer for version not match, retry", zap.String("timerID", timerID))
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(c.retryInterval):
-		}
-	}
-	return
 }

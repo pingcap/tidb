@@ -240,7 +240,7 @@ func TestTimerUpdate(t *testing.T) {
 	require.True(t, errors.ErrorEqual(err, ErrEventIDNotMatch))
 	require.Equal(t, tpl, *tm)
 
-	// test apply without check1
+	// test apply without check for some common fields
 	now := time.Now()
 	update = &TimerUpdate{
 		Enable:          NewOptionalVal(true),
@@ -293,7 +293,7 @@ func TestTimerUpdate(t *testing.T) {
 	}, record.EventExtra)
 	require.Equal(t, tpl, *tm)
 
-	// test apply without check2
+	// test apply without check for ManualRequest and EventExtra
 	tpl = *record.Clone()
 	tm = tpl.Clone()
 	update = &TimerUpdate{
@@ -319,7 +319,7 @@ func TestTimerUpdate(t *testing.T) {
 	}, record.EventExtra)
 	require.Equal(t, tpl, *tm)
 
-	// test apply without check3
+	// test apply without check for empty ManualRequest and EventExtra
 	tpl = *record.Clone()
 	tm = tpl.Clone()
 	update = &TimerUpdate{
