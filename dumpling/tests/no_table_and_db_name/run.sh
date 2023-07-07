@@ -27,11 +27,9 @@ run_sql "set global tidb_general_log=1;"
 # dumping with file size = 233 bytes, actually 10 rows
 run_dumpling -F 233B --filetype csv --sql "select * from $TEST_NAME.t"
 run_sql "set global tidb_general_log=0;"
-read -p 123
-# should not contain SHOW FULL TABLES
-assert ! grep "GENERAL_LOG" $DUMPLING_TEST_DIR/tidb.log | grep --ignore-case "SHOW FULL TABLES"
-assert ! grep "GENERAL_LOG" $DUMPLING_TEST_DIR/tidb.log | grep --ignore-case "INFORMATION_SCHEMA.TABLES"
-assert ! grep "GENERAL_LOG" $DUMPLING_TEST_DIR/tidb.log | grep --ignore-case "SHOW TABLE STATUS"
+assert [ $( grep "GENERAL_LOG" $DUMPLING_TEST_DIR/tidb.log | grep --ignore-case "SHOW FULL TABLES" | wc -l ) -eq 0 ]
+assert [ $( grep "GENERAL_LOG" $DUMPLING_TEST_DIR/tidb.log | grep --ignore-case "INFORMATION_SCHEMA.TABLES" | wc -l ) -eq 0 ]
+assert [ $( grep "GENERAL_LOG" $DUMPLING_TEST_DIR/tidb.log | grep --ignore-case "SHOW TABLE STATUS" | wc -l ) -eq 0 ]
 
 assert [ $( ls -lh $DUMPLING_OUTPUT_DIR | grep -e ".csv$" | wc -l ) -eq 10 ]
 
