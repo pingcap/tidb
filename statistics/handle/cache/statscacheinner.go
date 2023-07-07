@@ -86,19 +86,26 @@ func (sc *StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int
 		opt(option)
 	}
 	newCache := StatsCacheWrapper{}
-	newCache.StatsCacheInner = sc.StatsCacheInner.Copy()
+	newCache.StatsCacheInner = CopyAndUpdateStatsCache(sc.StatsCacheInner, tables, deletedIDs, option.byQuery)
+	return newCache
+}
+
+// CopyAndUpdateStatsCache copies the base cache and updates the new cache.
+// The base cache should keep unchanged.
+func CopyAndUpdateStatsCache(base internal.StatsCacheInner, tables []*statistics.Table, deletedIDs []int64, byQuery bool) internal.StatsCacheInner {
+	c := base.Copy()
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
-		if option.byQuery {
-			newCache.PutByQuery(id, tbl)
+		if byQuery {
+			c.PutByQuery(id, tbl)
 		} else {
-			newCache.Put(id, tbl)
+			c.Put(id, tbl)
 		}
 	}
 	for _, id := range deletedIDs {
-		newCache.Del(id)
+		c.Del(id)
 	}
-	return newCache
+	return c
 }
 
 // TableRowStatsCache is the cache of table row count.
