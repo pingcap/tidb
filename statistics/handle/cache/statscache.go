@@ -31,18 +31,12 @@ func NewStatsCachePointer() *StatsCachePointer {
 	return &result
 }
 
-// Clear removes all cached stats from the cache.
-func (s *StatsCachePointer) Clear() {
-	newCache := NewStatsCacheWrapper()
-	s.Store(newCache)
-}
-
 // Load loads the cached stats from the cache.
 func (s *StatsCachePointer) Load() *StatsCacheWrapper {
 	return s.Load()
 }
 
 // Replace replaces the cache with the new cache.
-func (s *StatsCachePointer) Replace(newCache StatsCacheWrapper) {
-	s.Store(&newCache)
+func (s *StatsCachePointer) Replace(newCache *StatsCacheWrapper) {
+	s.Store(newCache)
 }
