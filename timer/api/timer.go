@@ -64,6 +64,43 @@ func (p *SchedIntervalPolicy) NextEventTime(watermark time.Time) (time.Time, boo
 	return watermark.Add(p.interval), true
 }
 
+// ManualRequest is the request info to trigger timer manually
+type ManualRequest struct {
+	// ManualRequestID is the id of manual request
+	ManualRequestID string
+	// ManualRequestTime is the request time
+	ManualRequestTime time.Time
+	// ManualTimeout is the timeout for the request, if the timer is not triggered after timeout, processed will be set to true
+	// with empty event id.
+	ManualTimeout time.Duration
+	// ManualProcessed indicates the request is processed (triggered or timeout)
+	ManualProcessed bool
+	// ManualEventID means the triggered event id for the current request
+	ManualEventID string
+}
+
+// IsManualRequesting indicates that whether this timer is requesting to trigger event manually
+func (r *ManualRequest) IsManualRequesting() bool {
+	return r.ManualRequestID != "" && !r.ManualProcessed
+}
+
+// SetProcessed sets the timer's manual request to processed
+func (r *ManualRequest) SetProcessed(eventID string) ManualRequest {
+	newManual := *r
+	newManual.ManualProcessed = true
+	newManual.ManualEventID = eventID
+	return newManual
+}
+
+// EventExtra stores some extra attributes for event
+type EventExtra struct {
+	// EventManualRequestID is the related request id of the manual trigger
+	// If current event is not triggered manually, it is empty
+	EventManualRequestID string
+	// EventWatermark is the watermark when event triggers
+	EventWatermark time.Time
+}
+
 // TimerSpec is the specification of a timer without any runtime status
 type TimerSpec struct {
 	// Namespace is the namespace of the timer
@@ -144,6 +181,8 @@ type TimerRecord struct {
 	TimerSpec
 	// ID is the id of timer, it is unique and auto assigned by the store when created.
 	ID string
+	// ManualRequest is the request to trigger timer event manually
+	ManualRequest
 	// EventStatus indicates the current schedule status of the timer's event
 	EventStatus SchedEventStatus
 	// EventID indicates the id of current triggered event
@@ -155,6 +194,8 @@ type TimerRecord struct {
 	// EventStart indicates the start time of current triggered event
 	// If the `EventStatus` is `IDLE`, `EventStart.IsZero()` should returns true
 	EventStart time.Time
+	// EventExtra stores some extra attributes for event
+	EventExtra
 	// SummaryData is a binary which is used to store some summary information of the timer.
 	// User can update it when closing a timer's event to update the summary.
 	SummaryData []byte

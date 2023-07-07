@@ -22,14 +22,137 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	timerapi "github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/timer/tablestore"
+	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTTLManualTriggerOneTimer(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(tablestore.CreateTimerTableSQL("test", "test_timers"))
+	timerStore := tablestore.NewTableTimerStore(1, do.SysSessionPool(), "test", "test_timers", nil)
+	defer timerStore.Close()
+	var zeroWatermark time.Time
+	cli := timerapi.NewDefaultTimerClient(timerStore)
+	sync := ttlworker.NewTTLTimerSyncer(do.SysSessionPool(), cli)
+
+	tk.MustExec("set @@global.tidb_ttl_job_enable=0")
+	tk.MustExec("create table tp1(a int, t timestamp) TTL=`t`+interval 1 HOUR ttl_job_interval='3h' partition by range(a) (" +
+		"partition p0 values less than (10)," +
+		"partition p1 values less than (100)," +
+		"partition p2 values less than (1000)" +
+		")")
+
+	key, physical := getPhysicalTableInfo(t, do, "test", "tp1", "p0")
+	_, err := cli.GetTimerByKey(context.TODO(), key)
+	require.True(t, errors.ErrorEqual(err, timerapi.ErrTimerNotExist))
+
+	// start trigger
+	check := sync.ManualTriggerTTLTimer(context.TODO(), physical)
+	timer := checkTimerWithTableMeta(t, do, cli, "test", "tp1", "p0", zeroWatermark)
+	require.True(t, timer.IsManualRequesting())
+	require.Equal(t, timerapi.SchedEventIdle, timer.EventStatus)
+	done, err := check()
+	require.NoError(t, err)
+	require.False(t, done)
+
+	// event triggerred with event status to trigger
+	require.NoError(t, timerStore.Update(context.TODO(), timer.ID, &timerapi.TimerUpdate{
+		EventStatus: timerapi.NewOptionalVal(timerapi.SchedEventTrigger),
+		EventID:     timerapi.NewOptionalVal("event1"),
+		EventStart:  timerapi.NewOptionalVal(time.Now()),
+	}))
+	done, err = check()
+	require.NoError(t, err)
+	require.True(t, done)
+
+	// start trigger
+	watermark := time.Unix(3600*123, 0)
+	require.NoError(t, cli.CloseTimerEvent(context.TODO(), timer.ID, "event1", timerapi.WithSetWatermark(watermark)))
+	check = sync.ManualTriggerTTLTimer(context.TODO(), physical)
+	timer = checkTimerWithTableMeta(t, do, cli, "test", "tp1", "p0", watermark)
+	require.True(t, timer.IsManualRequesting())
+	done, err = check()
+	require.NoError(t, err)
+	require.False(t, done)
+
+	// mark manual trigger done
+	require.NoError(t, timerStore.Update(context.TODO(), timer.ID, &timerapi.TimerUpdate{
+		ManualRequest: timerapi.NewOptionalVal(timerapi.ManualRequest{
+			ManualRequestID: timer.ManualRequestID,
+			ManualProcessed: true,
+			ManualEventID:   "event2",
+		}),
+	}))
+	done, err = check()
+	require.NoError(t, err)
+	require.True(t, done)
+
+	// start trigger
+	check = sync.ManualTriggerTTLTimer(context.TODO(), physical)
+	timer = checkTimerWithTableMeta(t, do, cli, "test", "tp1", "p0", watermark)
+	require.True(t, timer.IsManualRequesting())
+	done, err = check()
+	require.NoError(t, err)
+	require.False(t, done)
+
+	// mark manual trigger done but not event related
+	require.NoError(t, timerStore.Update(context.TODO(), timer.ID, &timerapi.TimerUpdate{
+		ManualRequest: timerapi.NewOptionalVal(timerapi.ManualRequest{
+			ManualRequestID: timer.ManualRequestID,
+			ManualProcessed: true,
+		}),
+	}))
+	done, err = check()
+	require.NoError(t, err)
+	require.False(t, done)
+
+	// disable ttl
+	tk.MustExec("alter table tp1 ttl_enable='OFF'")
+	key, physical = getPhysicalTableInfo(t, do, "test", "tp1", "p0")
+	check = sync.ManualTriggerTTLTimer(context.TODO(), physical)
+	done, err = check()
+	require.EqualError(t, err, "manual trigger is not allowed when timer is disabled")
+	require.False(t, done)
+
+	// start trigger
+	tk.MustExec("alter table tp1 ttl_enable='ON'")
+	key, physical = getPhysicalTableInfo(t, do, "test", "tp1", "p0")
+	check = sync.ManualTriggerTTLTimer(context.TODO(), physical)
+	timer = checkTimerWithTableMeta(t, do, cli, "test", "tp1", "p0", watermark)
+	require.True(t, timer.IsManualRequesting())
+	done, err = check()
+	require.NoError(t, err)
+	require.False(t, done)
+
+	// timer deleted
+	_, err = cli.DeleteTimer(context.TODO(), timer.ID)
+	require.NoError(t, err)
+	done, err = check()
+	require.True(t, errors.ErrorEqual(err, timerapi.ErrTimerNotExist))
+	require.False(t, done)
+
+	// ctx timeout
+	ctx, cancel := context.WithCancel(context.TODO())
+	check = sync.ManualTriggerTTLTimer(ctx, physical)
+	done, err = check()
+	require.NoError(t, err)
+	require.False(t, done)
+
+	cancel()
+	done, err = check()
+	require.Same(t, err, ctx.Err())
+	require.False(t, done)
+}
 
 func TestTTLTimerSync(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
@@ -53,10 +176,10 @@ func TestTTLTimerSync(t *testing.T) {
 	var zeroTime time.Time
 	wm1 := time.Unix(3600*24*12, 0)
 	wm2 := time.Unix(3600*24*24, 0)
-	insertTTLTableStatusWatermark(t, do, tk, "test", "t1", "", zeroTime)
-	insertTTLTableStatusWatermark(t, do, tk, "test", "t2", "", wm1)
-	insertTTLTableStatusWatermark(t, do, tk, "test", "tp1", "p0", zeroTime)
-	insertTTLTableStatusWatermark(t, do, tk, "test", "tp1", "p1", wm2)
+	insertTTLTableStatusWatermark(t, do, tk, "test", "t1", "", zeroTime, false)
+	insertTTLTableStatusWatermark(t, do, tk, "test", "t2", "", wm1, false)
+	insertTTLTableStatusWatermark(t, do, tk, "test", "tp1", "p0", zeroTime, false)
+	insertTTLTableStatusWatermark(t, do, tk, "test", "tp1", "p1", wm2, true)
 
 	cli := timerapi.NewDefaultTimerClient(timerStore)
 	sync := ttlworker.NewTTLTimerSyncer(do.SysSessionPool(), cli)
@@ -156,31 +279,26 @@ func TestTTLTimerSync(t *testing.T) {
 	checkTimersNotChange(t, cli, timer2, timer3, timer4, timer5, timerP10, timerP11, timerP12)
 }
 
-func insertTTLTableStatusWatermark(t *testing.T, do *domain.Domain, tk *testkit.TestKit, db, table, partition string, watermark time.Time) {
-	tbl, err := do.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	physicalID := tblInfo.ID
-	var par model.PartitionDefinition
-	if partition != "" {
-		for _, def := range tblInfo.Partition.Definitions {
-			if def.Name.L == model.NewCIStr(partition).L {
-				par = def
-			}
-		}
-		require.NotNil(t, par)
-		physicalID = par.ID
-	}
-
+func insertTTLTableStatusWatermark(t *testing.T, do *domain.Domain, tk *testkit.TestKit, db, table, partition string, watermark time.Time, jobRunning bool) {
+	_, physical := getPhysicalTableInfo(t, do, db, table, partition)
 	if watermark.IsZero() {
-		tk.MustExec("insert into mysql.tidb_ttl_table_status (table_id, parent_table_id) values (?, ?)", physicalID, tblInfo.ID)
+		tk.MustExec("insert into mysql.tidb_ttl_table_status (table_id, parent_table_id) values (?, ?)", physical.ID, physical.TableInfo.ID)
 		return
 	}
 
-	tk.MustExec(
-		"insert into mysql.tidb_ttl_table_status (table_id, parent_table_id, last_job_id, last_job_start_time, last_job_finish_time, last_job_ttl_expire) values(?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), FROM_UNIXTIME(?))",
-		physicalID, tblInfo.ID, uuid.NewString(), watermark.Unix(), watermark.Add(time.Minute).Unix(), watermark.Add(-time.Minute).Unix(),
-	)
+	if jobRunning {
+		tk.MustExec(
+			"insert into mysql.tidb_ttl_table_status (table_id, parent_table_id, last_job_id, last_job_start_time, last_job_finish_time, last_job_ttl_expire, current_job_id, current_job_start_time) values(?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), FROM_UNIXTIME(?), ?, FROM_UNIXTIME(?))",
+			physical.ID, physical.TableInfo.ID, uuid.NewString(), watermark.Add(-10*time.Minute).Unix(), watermark.Add(-time.Minute).Unix(), watermark.Add(-20*time.Minute).Unix(),
+			uuid.NewString(),
+			watermark.Unix(),
+		)
+	} else {
+		tk.MustExec(
+			"insert into mysql.tidb_ttl_table_status (table_id, parent_table_id, last_job_id, last_job_start_time, last_job_finish_time, last_job_ttl_expire) values(?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), FROM_UNIXTIME(?))",
+			physical.ID, physical.TableInfo.ID, uuid.NewString(), watermark.Unix(), watermark.Add(time.Minute).Unix(), watermark.Add(-time.Minute).Unix(),
+		)
+	}
 }
 
 func checkTimerCnt(t *testing.T, cli timerapi.TimerClient, cnt int) {
@@ -214,50 +332,46 @@ func checkTimersNotChange(t *testing.T, cli timerapi.TimerClient, timers ...*tim
 	}
 }
 
+func getPhysicalTableInfo(t *testing.T, do *domain.Domain, db, table, partition string) (string, *cache.PhysicalTable) {
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	physical, err := cache.NewPhysicalTable(model.NewCIStr(db), tblInfo, model.NewCIStr(partition))
+	require.NoError(t, err)
+	return fmt.Sprintf("/tidb/ttl/physical_table/%d/%d", tblInfo.ID, physical.ID), physical
+}
+
 func checkTimerWithTableMeta(t *testing.T, do *domain.Domain, cli timerapi.TimerClient, db, table, partition string, watermark time.Time) *timerapi.TimerRecord {
 	is := do.InfoSchema()
 	dbInfo, ok := is.SchemaByName(model.NewCIStr(db))
 	require.True(t, ok)
-	tbl, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	physicalID := tblInfo.ID
-	var par model.PartitionDefinition
-	if partition != "" {
-		for _, def := range tblInfo.Partition.Definitions {
-			if def.Name.L == model.NewCIStr(partition).L {
-				par = def
-			}
-		}
-		require.NotNil(t, par)
-		physicalID = par.ID
-	}
 
-	key := fmt.Sprintf("/tidb/ttl/physical_table/%d/%d", tblInfo.ID, physicalID)
+	key, physical := getPhysicalTableInfo(t, do, db, table, partition)
 	timer, err := cli.GetTimerByKey(context.TODO(), key)
 	require.NoError(t, err)
 
-	require.Equal(t, tblInfo.TTLInfo.Enable, timer.Enable)
+	require.Equal(t, physical.TTLInfo.Enable, timer.Enable)
 	require.Equal(t, timerapi.SchedEventInterval, timer.SchedPolicyType)
-	require.Equal(t, tblInfo.TTLInfo.JobInterval, timer.SchedPolicyExpr)
+	require.Equal(t, physical.TTLInfo.JobInterval, timer.SchedPolicyExpr)
 	if partition == "" {
 		require.Equal(t, []string{
 			fmt.Sprintf("db=%s", dbInfo.Name.O),
-			fmt.Sprintf("table=%s", tblInfo.Name.O),
+			fmt.Sprintf("table=%s", physical.Name.O),
 		}, timer.Tags)
 	} else {
 		require.Equal(t, []string{
 			fmt.Sprintf("db=%s", dbInfo.Name.O),
-			fmt.Sprintf("table=%s", tblInfo.Name.O),
-			fmt.Sprintf("partition=%s", par.Name.O),
+			fmt.Sprintf("table=%s", physical.Name.O),
+			fmt.Sprintf("partition=%s", physical.Partition.O),
 		}, timer.Tags)
 	}
 
 	require.NotNil(t, timer.Data)
 	var timerData ttlworker.TTLTimerData
 	require.NoError(t, json.Unmarshal(timer.Data, &timerData))
-	require.Equal(t, tblInfo.ID, timerData.TableID)
-	require.Equal(t, physicalID, timerData.PhysicalID)
+	require.Equal(t, physical.TableInfo.ID, timerData.TableID)
+	require.Equal(t, physical.ID, timerData.PhysicalID)
 	require.Equal(t, watermark.Unix(), timer.Watermark.Unix())
 	return timer
 }

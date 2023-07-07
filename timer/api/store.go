@@ -172,6 +172,8 @@ type TimerUpdate struct {
 	SchedPolicyType OptionalVal[SchedPolicyType]
 	// SchedPolicyExpr indicates to set the timer's `SchedPolicyExpr` field
 	SchedPolicyExpr OptionalVal[string]
+	// ManualRequest indicates to set the timer's manual request
+	ManualRequest OptionalVal[ManualRequest]
 	// EventStatus indicates the event status
 	EventStatus OptionalVal[SchedEventStatus]
 	// EventID indicates to set the timer event id
@@ -180,6 +182,8 @@ type TimerUpdate struct {
 	EventData OptionalVal[[]byte]
 	// EventStart indicates the start time of event
 	EventStart OptionalVal[time.Time]
+	// EventExtra indicates to set the `EventExtra` field
+	EventExtra OptionalVal[EventExtra]
 	// Watermark indicates to set the timer's `Watermark` field
 	Watermark OptionalVal[time.Time]
 	// SummaryData indicates to set the timer's `Summary` field
@@ -220,6 +224,10 @@ func (u *TimerUpdate) Apply(record *TimerRecord) (*TimerRecord, error) {
 		record.SchedPolicyExpr = v
 	}
 
+	if v, ok := u.ManualRequest.Get(); ok {
+		record.ManualRequest = v
+	}
+
 	if v, ok := u.EventStatus.Get(); ok {
 		record.EventStatus = v
 	}
@@ -234,6 +242,10 @@ func (u *TimerUpdate) Apply(record *TimerRecord) (*TimerRecord, error) {
 
 	if v, ok := u.EventStart.Get(); ok {
 		record.EventStart = v
+	}
+
+	if v, ok := u.EventExtra.Get(); ok {
+		record.EventExtra = v
 	}
 
 	if v, ok := u.Watermark.Get(); ok {

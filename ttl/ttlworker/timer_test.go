@@ -122,6 +122,9 @@ func triggerTestTimer(t *testing.T, store *timerapi.TimerStore, timerID string) 
 		EventStatus: timerapi.NewOptionalVal(timerapi.SchedEventTrigger),
 		EventID:     timerapi.NewOptionalVal(eventID),
 		EventStart:  timerapi.NewOptionalVal(time.Now().Add(-2 * time.Second)),
+		EventExtra: timerapi.NewOptionalVal(timerapi.EventExtra{
+			EventWatermark: timer.Watermark,
+		}),
 	})
 	require.NoError(t, err)
 	timer, err = store.GetByID(context.TODO(), timerID)
