@@ -13,7 +13,6 @@ go_test(
     deps = [
         "//config",
         "//domain",
-        "//errno",
         "//expression",
         "//kv",
         "//parser/ast",
@@ -22,7 +21,6 @@ go_test(
         "//parser/model",
         "//parser/mysql",
         "//parser/terror",
-        "//planner/core",
         "//privilege/privileges",
         "//session",
         "//sessionctx",
@@ -41,7 +39,6 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
-        "@com_github_tikv_client_go_v2//txnkv/transaction",
         "@org_uber_go_goleak//:goleak",
     ],
 )

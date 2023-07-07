@@ -15,12 +15,15 @@
 package expression
 
 import (
+	"context"
+
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -73,6 +76,7 @@ func (b *BuiltinGroupingImplSig) SetMetadata(mode tipb.GroupingMode, groupingMar
 	b.isMetaInited = true
 	err := b.checkMetadata()
 	if err != nil {
+		logutil.Logger(context.Background()).Error("grouping meta check err: " + err.Error())
 		b.isMetaInited = false
 		return err
 	}
@@ -95,6 +99,7 @@ func (b *BuiltinGroupingImplSig) getGroupingMode() tipb.GroupingMode {
 func (b *BuiltinGroupingImplSig) metadata() proto.Message {
 	err := b.checkMetadata()
 	if err != nil {
+		logutil.Logger(context.Background()).Error("grouping meta check err: " + err.Error())
 		return &tipb.GroupingFunctionMetadata{}
 	}
 	args := &tipb.GroupingFunctionMetadata{}
@@ -117,6 +122,9 @@ func (b *BuiltinGroupingImplSig) Clone() builtinFunc {
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.mode = b.mode
 	newSig.groupingMarks = b.groupingMarks
+	// mpp task generation will clone whole plan tree, including every expression related.
+	// if grouping function missed cloning this field, the ToPB check will errors.
+	newSig.isMetaInited = b.isMetaInited
 	return newSig
 }
 
