@@ -661,12 +661,15 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 	return false, nil
 }
 
+func getCorColHashCode(corCol *expression.CorrelatedColumn) (res []byte) {
+	return codec.HashCode(res, *corCol.Data)
+}
+
 // Return true if cor col has changed.
 func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
 	var changed bool
 	for i, corCol := range p.corCols {
-		corCol.CleanHashCode()
-		newHashCode := corCol.HashCode(p.ctx.GetSessionVars().StmtCtx)
+		newHashCode := getCorColHashCode(corCol)
 		if !bytes.Equal(newHashCode, p.corColHashCodes[i]) {
 			changed = true
 			p.corColHashCodes[i] = newHashCode
