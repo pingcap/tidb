@@ -148,8 +148,9 @@ func (m *MapCache) FreshMemUsage() {
 // Copy implements StatsCacheInner
 func (m *MapCache) Copy() internal.StatsCacheInner {
 	newM := &MapCache{
-		tables:   make(map[int64]cacheItem, len(m.tables)),
-		memUsage: m.memUsage,
+		tables:               make(map[int64]cacheItem, len(m.tables)),
+		memUsage:             m.memUsage,
+		maxTableStatsVersion: m.maxTableStatsVersion,
 	}
 	for k, v := range m.tables {
 		newM.tables[k] = v.copy()

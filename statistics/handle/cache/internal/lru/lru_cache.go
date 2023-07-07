@@ -289,6 +289,7 @@ func (s *StatsInnerCache) Copy() internal.StatsCacheInner {
 		newCache.elements[tblID] = element.copy()
 	}
 	newCache.lru.onEvict = newCache.onEvict
+	newCache.maxTableStatsVersion = s.maxTableStatsVersion
 	return newCache
 }
 
