@@ -88,7 +88,7 @@ type Handle struct {
 
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
-	statsCache *cache.StatsCache
+	statsCache *cache.StatsCachePointer
 
 	// feedback is used to store query feedback info.
 	feedback struct {
@@ -447,7 +447,7 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 func (h *Handle) Clear() {
 	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
 	h.mu.Lock()
-	h.statsCache.Clear()
+	h.statsCache.Replace(cache.NewStatsCacheWrapper())
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
@@ -490,7 +490,7 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	handle.lease.Store(lease)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
-	handle.statsCache = cache.NewStatsCache()
+	handle.statsCache = cache.NewStatsCachePointer()
 	handle.globalMap.data = make(tableDeltaMap)
 	handle.feedback.data = statistics.NewQueryFeedbackMap()
 	handle.colMap.data = make(colStatsUsageMap)
@@ -964,7 +964,7 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 
 // GetMemConsumed returns the mem size of statscache consumed
 func (h *Handle) GetMemConsumed() (size int64) {
-	size = h.statsCache.GetMemConsumed()
+	size = h.statsCache.Load().Cost()
 	return
 }
 
@@ -1011,11 +1011,9 @@ func (h *Handle) statsCacheLen() int {
 // if the global statsCache has been modified by others already.
 // Callers should add retry loop if necessary.
 func (h *Handle) updateStatsCache(newCache cache.StatsCacheWrapper) (updated bool) {
-	updated, newCost := h.statsCache.UpdateCache(newCache)
-	if updated {
-		handle_metrics.CostGauge.Set(float64(newCost))
-	}
-	return
+	h.statsCache.Replace(&newCache)
+	handle_metrics.CostGauge.Set(float64(newCache.Cost()))
+	return true
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
