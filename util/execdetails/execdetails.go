@@ -539,13 +539,9 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 	e.threads += tmp.threads
 	e.totalTasks += tmp.totalTasks
 	if tmp.procTimes.Size() == 0 {
-		e.procTimes.Add(Duration(tmp.consume.Load()))
+		e.procTimes.Add(Duration(tmp.consume))
 	} else {
-<<<<<<< HEAD
-		e.procTimes = append(e.procTimes, time.Duration(tmp.consume))
-=======
 		e.procTimes.MergePercentile(&tmp.procTimes)
->>>>>>> 6f54a29444a (*: use approximately algorithm to calculate p90 in slowlog. (#44269))
 	}
 	e.tiflashScanContext.Merge(tmp.tiflashScanContext)
 }
@@ -608,15 +604,9 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 func (crs *CopRuntimeStats) MergeBasicStats() (procTimes Percentile[Duration], totalTime time.Duration, totalTasks, totalLoops, totalThreads int32, totalTiFlashScanContext TiFlashScanContext) {
 	totalTiFlashScanContext = TiFlashScanContext{}
 	for _, instanceStats := range crs.stats {
-<<<<<<< HEAD
-		procTimes = append(procTimes, instanceStats.procTimes...)
+		procTimes.MergePercentile(&instanceStats.procTimes)
 		totalTime += time.Duration(instanceStats.consume)
 		totalLoops += instanceStats.loop
-=======
-		procTimes.MergePercentile(&instanceStats.procTimes)
-		totalTime += time.Duration(instanceStats.consume.Load())
-		totalLoops += instanceStats.loop.Load()
->>>>>>> 6f54a29444a (*: use approximately algorithm to calculate p90 in slowlog. (#44269))
 		totalThreads += instanceStats.threads
 		totalTiFlashScanContext.Merge(instanceStats.tiflashScanContext)
 		totalTasks += instanceStats.totalTasks
@@ -635,11 +625,7 @@ func (crs *CopRuntimeStats) String() string {
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
-<<<<<<< HEAD
-		buf.WriteString(fmt.Sprintf("%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(procTimes[0]), totalLoops))
-=======
-		fmt.Fprintf(buf, "%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(time.Duration(procTimes.GetPercentile(0))), totalLoops)
->>>>>>> 6f54a29444a (*: use approximately algorithm to calculate p90 in slowlog. (#44269))
+		buf.WriteString(fmt.Sprintf("%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(time.Duration(procTimes.GetPercentile(0))), totalLoops))
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
 			if !totalTiFlashScanContext.Empty() {
@@ -649,17 +635,9 @@ func (crs *CopRuntimeStats) String() string {
 			buf.WriteString("}")
 		}
 	} else {
-<<<<<<< HEAD
-		n := len(procTimes)
-		slices.Sort(procTimes)
 		buf.WriteString(fmt.Sprintf("%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
-			crs.storeType, FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]), FormatDuration(avgTime),
-			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalLoops, totalTasks))
-=======
-		fmt.Fprintf(buf, "%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
 			crs.storeType, FormatDuration(time.Duration(procTimes.GetMax().GetFloat64())), FormatDuration(time.Duration(procTimes.GetMin().GetFloat64())), FormatDuration(avgTime),
-			FormatDuration(time.Duration(procTimes.GetPercentile(0.8))), FormatDuration(time.Duration(procTimes.GetPercentile(0.95))), totalLoops, totalTasks)
->>>>>>> 6f54a29444a (*: use approximately algorithm to calculate p90 in slowlog. (#44269))
+			FormatDuration(time.Duration(procTimes.GetPercentile(0.8))), FormatDuration(time.Duration(procTimes.GetPercentile(0.95))), totalLoops, totalTasks))
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
 			if !totalTiFlashScanContext.Empty() {
