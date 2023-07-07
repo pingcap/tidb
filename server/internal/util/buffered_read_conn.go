@@ -19,6 +19,7 @@ import (
 	"net"
 )
 
+// DefaultReaderSize is the default size of bufio.Reader.
 const DefaultReaderSize = 16 * 1024
 
 // BufferedReadConn is a net.Conn compatible structure that reads from bufio.Reader.
@@ -27,13 +28,15 @@ type BufferedReadConn struct {
 	rb *bufio.Reader
 }
 
-func (conn BufferedReadConn) Read(b []byte) (n int, err error) {
-	return conn.rb.Read(b)
-}
-
+// NewBufferedReadConn creates a BufferedReadConn.
 func NewBufferedReadConn(conn net.Conn) *BufferedReadConn {
 	return &BufferedReadConn{
 		Conn: conn,
 		rb:   bufio.NewReaderSize(conn, DefaultReaderSize),
 	}
+}
+
+// Read reads data from the connection.
+func (conn BufferedReadConn) Read(b []byte) (n int, err error) {
+	return conn.rb.Read(b)
 }
