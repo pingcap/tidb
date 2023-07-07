@@ -1812,5 +1812,5 @@ func TestClusterInfoTime(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("SELECT START_TIME+1 FROM information_schema.CLUSTER_INFO")
 	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-	require.Lenf(t, warnings, 0, "expect no warnings, but found: %+v", warnings)
+	require.Nil(t, warnings)
 }

@@ -1355,7 +1355,7 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 	rows := make([][]types.Datum, 0, len(servers))
 	for _, server := range servers {
 		upTimeStr := ""
-		startTimeNative := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
+		startTimeNative := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 		if server.StartTimestamp > 0 {
 			startTime := time.Unix(server.StartTimestamp, 0)
 			startTimeNative = types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, 0)
