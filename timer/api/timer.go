@@ -64,7 +64,7 @@ func (p *SchedIntervalPolicy) NextEventTime(watermark time.Time) (time.Time, boo
 	return watermark.Add(p.interval), true
 }
 
-// ManualRequest is the request info to trigger timer manually
+// ManualRequest is the request info to trigger timer manually.
 type ManualRequest struct {
 	// ManualRequestID is the id of manual request
 	ManualRequestID string
