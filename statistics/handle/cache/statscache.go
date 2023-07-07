@@ -88,7 +88,6 @@ func (s *StatsCache) CreateAndUpdateCache(statsCache *StatsCacheWrapper, tables 
 	old := s.cache.Swap(&newCache)
 	old.Release()
 	updated = true
-	updated = true
 	s.mu.Unlock()
 	return updated, newCost
 }
