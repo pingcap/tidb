@@ -458,8 +458,7 @@ check-bazel-prepare:
 	./tools/check/check-bazel-prepare.sh
 
 bazel_test: bazel_prepare
-	export FALPOINT_TEMP=$PWD/ff
-	FALPOINT_TEMP=$PWD/ff bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
 		$(BAZEL_TEST_CONFIG) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
