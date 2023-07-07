@@ -2045,6 +2045,8 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			return ver, err
 		}
 
+		preSplitAndScatter(w.sess.Context, d.store, tblInfo, newPartitions)
+
 		job.CtxVars = []interface{}{oldIDs, newIDs}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
