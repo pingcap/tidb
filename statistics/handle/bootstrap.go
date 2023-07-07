@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -437,9 +436,7 @@ func (h *Handle) initStatsBuckets(cache *cache.StatsCacheWrapper) error {
 		}
 		h.initStatsBuckets4Chunk(cache, iter)
 	}
-	lastVersion := uint64(0)
 	for _, table := range cache.Values() {
-		lastVersion = mathutil.Max(lastVersion, table.Version)
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
 				idx.Buckets[i].Count += idx.Buckets[i-1].Count
@@ -453,7 +450,6 @@ func (h *Handle) initStatsBuckets(cache *cache.StatsCacheWrapper) error {
 			col.PreCalculateScalar()
 		}
 	}
-	cache.SetVersion(lastVersion)
 	return nil
 }
 
@@ -479,11 +475,6 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	lastVersion := uint64(0)
-	for _, table := range cache.Values() {
-		lastVersion = mathutil.Max(lastVersion, table.Version)
-	}
-	cache.SetVersion(lastVersion)
 	cache.FreshMemUsage()
 	h.updateStatsCache(cache)
 	return nil
