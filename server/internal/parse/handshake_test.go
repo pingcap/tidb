@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/server/internal/parse/handshake"
+	"github.com/pingcap/tidb/server/internal/handshake"
 	"github.com/stretchr/testify/require"
 )
 
