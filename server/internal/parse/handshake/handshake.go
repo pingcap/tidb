@@ -16,8 +16,8 @@ package handshake
 
 import "github.com/klauspost/compress/zstd"
 
-// HandshakeResponse41 is the response message for a successful initial handshake.
-type HandshakeResponse41 struct {
+// Response41 is the response message for a successful initial handshake.
+type Response41 struct {
 	Attrs      map[string]string
 	User       string
 	DBName     string

@@ -462,7 +462,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
-	var resp handshake.HandshakeResponse41
+	var resp handshake.Response41
 	var pos int
 
 	if len(data) < 2 {
@@ -571,7 +571,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	return err
 }
 
-func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshake.HandshakeResponse41) error {
+func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshake.Response41) error {
 	if resp.Capability&mysql.ClientPluginAuth > 0 {
 		newAuth, err := cc.checkAuthPlugin(ctx, resp)
 		if err != nil {
@@ -607,7 +607,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshake.Hand
 }
 
 // authSha implements the caching_sha2_password specific part of the protocol.
-func (cc *clientConn) authSha(ctx context.Context, resp handshake.HandshakeResponse41) ([]byte, error) {
+func (cc *clientConn) authSha(ctx context.Context, resp handshake.Response41) ([]byte, error) {
 	const (
 		shaCommand       = 1
 		requestRsaPubKey = 2 // Not supported yet, only TLS is supported as secure channel.
@@ -645,7 +645,7 @@ func (cc *clientConn) authSha(ctx context.Context, resp handshake.HandshakeRespo
 
 // authSM3 implements the tidb_sm3_password specific part of the protocol.
 // tidb_sm3_password is very similar to caching_sha2_password.
-func (cc *clientConn) authSM3(ctx context.Context, resp handshake.HandshakeResponse41) ([]byte, error) {
+func (cc *clientConn) authSM3(ctx context.Context, resp handshake.Response41) ([]byte, error) {
 	// If no password is specified, we don't send the FastAuthFail to do the full authentication
 	// as that doesn't make sense without a password and confuses the client.
 	// https://github.com/pingcap/tidb/issues/40831
@@ -744,7 +744,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 }
 
 // Check if the Authentication Plugin of the server, client and user configuration matches
-func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.HandshakeResponse41) ([]byte, error) {
+func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Response41) ([]byte, error) {
 	// Open a context unless this was done before.
 	if ctx := cc.getCtx(); ctx == nil {
 		err := cc.openSession()
@@ -2390,7 +2390,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		return err
 	}
-	fakeResp := &handshake.HandshakeResponse41{
+	fakeResp := &handshake.Response41{
 		Auth:       pass,
 		AuthPlugin: pluginName,
 		Capability: cc.capability,

@@ -188,7 +188,7 @@ func TestIssue33699(t *testing.T) {
 
 func TestMalformHandshakeHeader(t *testing.T) {
 	data := []byte{0x00}
-	var p handshake.HandshakeResponse41
+	var p handshake.Response41
 	_, err := parse.HandshakeResponseHeader(context.Background(), &p, data)
 	require.Error(t, err)
 }
@@ -209,7 +209,7 @@ func TestParseHandshakeResponse(t *testing.T) {
 		0x6c, 0x61, 0x74, 0x66, 0x6f, 0x72, 0x6d, 0x06, 0x78, 0x38, 0x36, 0x5f, 0x36, 0x34, 0x03, 0x66,
 		0x6f, 0x6f, 0x03, 0x62, 0x61, 0x72,
 	}
-	var p handshake.HandshakeResponse41
+	var p handshake.Response41
 	offset, err := parse.HandshakeResponseHeader(context.Background(), &p, data)
 	require.NoError(t, err)
 	require.Equal(t, mysql.ClientConnectAtts, p.Capability&mysql.ClientConnectAtts)
@@ -232,7 +232,7 @@ func TestParseHandshakeResponse(t *testing.T) {
 		0x74, 0x00, 0x6d, 0x79, 0x73, 0x71, 0x6c, 0x5f, 0x6e, 0x61, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x70,
 		0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x00,
 	}
-	p = handshake.HandshakeResponse41{}
+	p = handshake.Response41{}
 	offset, err = parse.HandshakeResponseHeader(context.Background(), &p, data)
 	require.NoError(t, err)
 	capability := mysql.ClientProtocol41 |
@@ -263,7 +263,7 @@ func TestIssue1768(t *testing.T) {
 		0x34, 0x0c, 0x70, 0x72, 0x6f, 0x67, 0x72, 0x61, 0x6d, 0x5f, 0x6e, 0x61, 0x6d, 0x65, 0x05, 0x6d,
 		0x79, 0x73, 0x71, 0x6c,
 	}
-	p := handshake.HandshakeResponse41{}
+	p := handshake.Response41{}
 	offset, err := parse.HandshakeResponseHeader(context.Background(), &p, data)
 	require.NoError(t, err)
 	require.Equal(t, mysql.ClientPluginAuthLenencClientData, p.Capability&mysql.ClientPluginAuthLenencClientData)
@@ -1155,7 +1155,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp := handshake.HandshakeResponse41{
+	resp := handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthNativePassword,
 	}
@@ -1176,7 +1176,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthCachingSha2Password,
 	}
@@ -1199,7 +1199,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthTiDBSM3Password,
 	}
@@ -1221,7 +1221,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
@@ -1244,7 +1244,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthNativePassword,
 	}
@@ -1267,7 +1267,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthCachingSha2Password,
 	}
@@ -1290,7 +1290,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthTiDBSM3Password,
 	}
@@ -1312,7 +1312,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
@@ -1336,7 +1336,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthNativePassword,
 	}
@@ -1359,7 +1359,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthCachingSha2Password,
 	}
@@ -1382,7 +1382,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthTiDBSM3Password,
 	}
@@ -1404,7 +1404,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
@@ -1428,7 +1428,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthNativePassword,
 	}
@@ -1451,7 +1451,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthCachingSha2Password,
 	}
@@ -1474,7 +1474,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthTiDBSM3Password,
 	}
@@ -1496,7 +1496,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshake.HandshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
@@ -1583,7 +1583,7 @@ func TestAuthPlugin2(t *testing.T) {
 	}
 	cc.setCtx(tc)
 
-	resp := handshake.HandshakeResponse41{
+	resp := handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 	}
 
@@ -1656,7 +1656,7 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 	tokenBytes := []byte(rows[0][1].(string))
 
 	// auth with the token
-	resp := handshake.HandshakeResponse41{
+	resp := handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthTiDBSessionToken,
 		Auth:       tokenBytes,
@@ -1948,7 +1948,7 @@ func TestAuthSha(t *testing.T) {
 	ctx := &TiDBContext{Session: tk.Session()}
 	cc.setCtx(ctx)
 
-	resp := handshake.HandshakeResponse41{
+	resp := handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthCachingSha2Password,
 		Auth:       []byte{}, // No password
@@ -2025,7 +2025,7 @@ func TestLDAPAuthSwitch(t *testing.T) {
 	cc.isUnixSocket = true
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	respAuthSwitch, err := cc.checkAuthPlugin(context.Background(), &handshake.HandshakeResponse41{
+	respAuthSwitch, err := cc.checkAuthPlugin(context.Background(), &handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		User:       "test_simple_ldap",
 	})

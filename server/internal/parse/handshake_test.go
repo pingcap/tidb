@@ -25,7 +25,7 @@ func TestAuthSwitchRequest(t *testing.T) {
 		0x61, 0x6d, 0x5f, 0x6e, 0x61, 0x6d, 0x65, 0x5, 0x6d, 0x79, 0x73, 0x71, 0x6c,
 	}
 
-	var resp handshake.HandshakeResponse41
+	var resp handshake.Response41
 	pos, err := HandshakeResponseHeader(context.Background(), &resp, data)
 	require.NoError(t, err)
 	err = HandshakeResponseBody(context.Background(), &resp, data, pos)

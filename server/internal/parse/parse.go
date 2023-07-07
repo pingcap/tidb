@@ -383,8 +383,8 @@ func StmtFetchCmd(data []byte) (stmtID uint32, fetchSize uint32, err error) {
 	return
 }
 
-// HandshakeResponseHeader parses the common header of SSLRequest and HandshakeResponse41.
-func HandshakeResponseHeader(ctx context.Context, packet *handshake.HandshakeResponse41, data []byte) (parsedBytes int, err error) {
+// HandshakeResponseHeader parses the common header of SSLRequest and Response41.
+func HandshakeResponseHeader(ctx context.Context, packet *handshake.Response41, data []byte) (parsedBytes int, err error) {
 	// Ensure there are enough data to read:
 	// http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::SSLRequest
 	if len(data) < 4+4+1+23 {
@@ -409,7 +409,7 @@ func HandshakeResponseHeader(ctx context.Context, packet *handshake.HandshakeRes
 }
 
 // HandshakeResponseBody parse the HandshakeResponse (except the common header part).
-func HandshakeResponseBody(ctx context.Context, packet *handshake.HandshakeResponse41, data []byte, offset int) (err error) {
+func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, data []byte, offset int) (err error) {
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
