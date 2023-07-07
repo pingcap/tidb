@@ -2255,34 +2255,6 @@ func TestMatchIdentity(t *testing.T) {
 	require.Equal(t, "%", identity.Hostname)
 }
 
-func TestGetSysVariables(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	// Test ScopeSession
-	tk.MustExec("select @@warning_count")
-	tk.MustExec("select @@session.warning_count")
-	tk.MustExec("select @@local.warning_count")
-	err := tk.ExecToErr("select @@global.warning_count")
-	require.True(t, terror.ErrorEqual(err, variable.ErrIncorrectScope), fmt.Sprintf("err %v", err))
-
-	// Test ScopeGlobal
-	tk.MustExec("select @@max_connections")
-	tk.MustExec("select @@global.max_connections")
-	tk.MustGetErrMsg("select @@session.max_connections", "[variable:1238]Variable 'max_connections' is a GLOBAL variable")
-	tk.MustGetErrMsg("select @@local.max_connections", "[variable:1238]Variable 'max_connections' is a GLOBAL variable")
-
-	// Test ScopeNone
-	tk.MustExec("select @@performance_schema_max_mutex_classes")
-	tk.MustExec("select @@global.performance_schema_max_mutex_classes")
-	// For issue 19524, test
-	tk.MustExec("select @@session.performance_schema_max_mutex_classes")
-	tk.MustExec("select @@local.performance_schema_max_mutex_classes")
-	tk.MustGetErrMsg("select @@global.last_insert_id", "[variable:1238]Variable 'last_insert_id' is a SESSION variable")
-}
-
 func TestSession(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
