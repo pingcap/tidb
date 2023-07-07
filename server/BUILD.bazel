@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "server",
     srcs = [
-        "buffered_read_conn.go",
         "conn.go",
         "conn_stmt.go",
         "driver.go",
@@ -55,6 +54,7 @@ go_library(
         "//privilege/privileges/ldap",
         "//server/internal/column",
         "//server/internal/dump",
+        "//server/internal/handshake",
         "//server/internal/parse",
         "//server/internal/util",
         "//server/metrics",
@@ -185,6 +185,8 @@ go_test(
         "//parser/mysql",
         "//planner/core",
         "//server/internal/column",
+        "//server/internal/handshake",
+        "//server/internal/parse",
         "//server/internal/util",
         "//session",
         "//sessionctx",

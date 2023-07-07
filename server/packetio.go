@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/server/internal/util"
 	server_metrics "github.com/pingcap/tidb/server/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
@@ -55,7 +56,7 @@ const defaultWriterSize = 16 * 1024
 // packetIO is a helper to read and write data in packet format.
 // MySQL Packets: https://dev.mysql.com/doc/internals/en/mysql-packet.html
 type packetIO struct {
-	bufReadConn *bufferedReadConn
+	bufReadConn *util.BufferedReadConn
 	bufWriter   *bufio.Writer
 	sequence    uint8
 	readTimeout time.Duration
@@ -69,7 +70,7 @@ type packetIO struct {
 	compressedWriter     *compressedWriter
 }
 
-func newPacketIO(bufReadConn *bufferedReadConn) *packetIO {
+func newPacketIO(bufReadConn *util.BufferedReadConn) *packetIO {
 	p := &packetIO{sequence: 0, compressionAlgorithm: mysql.CompressionNone, compressedSequence: 0, zstdLevel: 3}
 	p.setBufferedReadConn(bufReadConn)
 	p.setMaxAllowedPacket(variable.DefMaxAllowedPacket)
@@ -83,7 +84,7 @@ func (p *packetIO) SetCompressionAlgorithm(ca int) {
 	p.bufWriter.Flush()
 }
 
-func (p *packetIO) setBufferedReadConn(bufReadConn *bufferedReadConn) {
+func (p *packetIO) setBufferedReadConn(bufReadConn *util.BufferedReadConn) {
 	p.bufReadConn = bufReadConn
 	p.bufWriter = bufio.NewWriterSize(bufReadConn, defaultWriterSize)
 }

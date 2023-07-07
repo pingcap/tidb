@@ -25,6 +25,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,7 +69,7 @@ func TestPacketIORead(t *testing.T) {
 		_, err := inBuffer.Write([]byte{0x01, 0x00, 0x00, 0x00, 0x01})
 		require.NoError(t, err)
 		// Test read one packet
-		brc := newBufferedReadConn(&bytesConn{inBuffer})
+		brc := util.NewBufferedReadConn(&bytesConn{inBuffer})
 		pkt := newPacketIO(brc)
 		readBytes, err := pkt.readPacket()
 		require.NoError(t, err)
@@ -90,7 +91,7 @@ func TestPacketIORead(t *testing.T) {
 		_, err = inBuffer.Write(buf)
 		require.NoError(t, err)
 		// Test read multiple packets
-		brc = newBufferedReadConn(&bytesConn{inBuffer})
+		brc = util.NewBufferedReadConn(&bytesConn{inBuffer})
 		pkt = newPacketIO(brc)
 		readBytes, err = pkt.readPacket()
 		require.NoError(t, err)
@@ -108,7 +109,7 @@ func TestPacketIORead(t *testing.T) {
 
 		require.NoError(t, err)
 		// Test read one packet
-		brc := newBufferedReadConn(&bytesConn{inBuffer})
+		brc := util.NewBufferedReadConn(&bytesConn{inBuffer})
 		pkt := newPacketIO(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
 		readBytes, err := pkt.readPacket()
@@ -140,7 +141,7 @@ func TestPacketIORead(t *testing.T) {
 
 		require.NoError(t, err)
 		// Test read one packet
-		brc := newBufferedReadConn(&bytesConn{inBuffer})
+		brc := util.NewBufferedReadConn(&bytesConn{inBuffer})
 		pkt := newPacketIO(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
 		readBytes, err := pkt.readPacket()
@@ -177,7 +178,7 @@ func TestPacketIORead(t *testing.T) {
 
 		require.NoError(t, err)
 		// Test read one packet
-		brc := newBufferedReadConn(&bytesConn{inBuffer})
+		brc := util.NewBufferedReadConn(&bytesConn{inBuffer})
 		pkt := newPacketIO(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZstd)
 		readBytes, err := pkt.readPacket()

@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "handshake",
+    srcs = ["handshake.go"],
+    importpath = "github.com/pingcap/tidb/server/internal/handshake",
+    visibility = ["//server:__subpackages__"],
+    deps = ["@com_github_klauspost_compress//zstd"],
+)
