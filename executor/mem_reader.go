@@ -608,6 +608,18 @@ func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 		if err != nil {
 			return err
 		}
+		// For https://github.com/pingcap/tidb/issues/41827,
+		// When handle type is year, tablecodec.DecodeIndexHandle will convert it to IntHandle instead of CommonHandle
+		if m.table.IsCommonHandle && handle.IsInt() {
+			b, err := codec.EncodeKey(m.ctx.GetSessionVars().StmtCtx, nil, types.NewDatum(handle.IntValue()))
+			if err != nil {
+				return err
+			}
+			handle, err = kv.NewCommonHandle(b)
+			if err != nil {
+				return err
+			}
+		}
 		handles = append(handles, handle)
 		return nil
 	})
