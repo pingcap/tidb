@@ -215,6 +215,8 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
 		updatePartitionInfo(tblInfo)
 
+		preSplitAndScatter(w.sess.Context, d.store, tblInfo, addingDefinitions)
+
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -2174,6 +2176,8 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		tblInfo.Partition.DroppingDefinitions = nil
 		tblInfo.Partition.NewPartitionIDs = nil
 
+		preSplitAndScatter(w.sess.Context, d.store, tblInfo, newPartitions)
+
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{oldIDs, newIDs}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
@@ -2652,7 +2656,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// and we will soon start writing to the new partitions.
 		if s, ok := d.store.(kv.SplittableStore); ok && s != nil {
 			// partInfo only contains the AddingPartitions
-			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo, true)
+			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, true)
 		}
 
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
