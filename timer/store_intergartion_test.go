@@ -783,12 +783,18 @@ func TestTableStoreManualTrigger(t *testing.T) {
 		eventID = timer.EventID
 	}
 
-	require.NotNil(t, hookReqID.Load())
-	require.Equal(t, reqID, *hookReqID.Load())
 	require.Equal(t, reqID, timer.ManualRequestID)
 	require.Equal(t, eventID, timer.ManualEventID)
 	require.True(t, timer.ManualProcessed)
 	require.Equal(t, reqID, timer.EventManualRequestID)
+	start = time.Now()
+	for hookReqID.Load() == nil {
+		if time.Since(start) > time.Minute {
+			require.FailNow(t, "timeout")
+		}
+		time.Sleep(100 * time.Microsecond)
+	}
+	require.Equal(t, reqID, *hookReqID.Load())
 
 	require.NoError(t, cli.CloseTimerEvent(context.TODO(), timer.ID, timer.EventID))
 	timer, err = cli.GetTimerByID(context.TODO(), timer.ID)

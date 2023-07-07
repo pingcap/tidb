@@ -33,10 +33,10 @@ const (
 	clientRetryBackoff = uint64(1000)
 )
 
-// GetTimerOption is the option to get timers
+// GetTimerOption is the option to get timers.
 type GetTimerOption func(*TimerCond)
 
-// WithKey indicates to get a timer with the specified key
+// WithKey indicates to get a timer with the specified key.
 func WithKey(key string) GetTimerOption {
 	return func(cond *TimerCond) {
 		cond.Key.Set(key)
@@ -44,7 +44,7 @@ func WithKey(key string) GetTimerOption {
 	}
 }
 
-// WithKeyPrefix to get timers with the indicated key prefix
+// WithKeyPrefix to get timers with the indicated key prefix.
 func WithKeyPrefix(keyPrefix string) GetTimerOption {
 	return func(cond *TimerCond) {
 		cond.Key.Set(keyPrefix)
@@ -52,31 +52,31 @@ func WithKeyPrefix(keyPrefix string) GetTimerOption {
 	}
 }
 
-// WithID indicates to get a timer with the specified id
+// WithID indicates to get a timer with the specified id.
 func WithID(id string) GetTimerOption {
 	return func(cond *TimerCond) {
 		cond.ID.Set(id)
 	}
 }
 
-// WithTag indicates to get a timer with the specified tags
+// WithTag indicates to get a timer with the specified tags.
 func WithTag(tags ...string) GetTimerOption {
 	return func(cond *TimerCond) {
 		cond.Tags.Set(tags)
 	}
 }
 
-// UpdateTimerOption is the option to update the timer
+// UpdateTimerOption is the option to update the timer.
 type UpdateTimerOption func(*TimerUpdate)
 
-// WithSetEnable indicates to set the timer's `Enable` field
+// WithSetEnable indicates to set the timer's `Enable` field.
 func WithSetEnable(enable bool) UpdateTimerOption {
 	return func(update *TimerUpdate) {
 		update.Enable.Set(enable)
 	}
 }
 
-// WithSetSchedExpr indicates to set the timer's schedule policy
+// WithSetSchedExpr indicates to set the timer's schedule policy.
 func WithSetSchedExpr(tp SchedPolicyType, expr string) UpdateTimerOption {
 	return func(update *TimerUpdate) {
 		update.SchedPolicyType.Set(tp)
@@ -84,60 +84,60 @@ func WithSetSchedExpr(tp SchedPolicyType, expr string) UpdateTimerOption {
 	}
 }
 
-// WithSetWatermark indicates to set the timer's watermark
+// WithSetWatermark indicates to set the timer's watermark.
 func WithSetWatermark(watermark time.Time) UpdateTimerOption {
 	return func(update *TimerUpdate) {
 		update.Watermark.Set(watermark)
 	}
 }
 
-// WithSetSummaryData indicates to set the timer's summary
+// WithSetSummaryData indicates to set the timer's summary.
 func WithSetSummaryData(summary []byte) UpdateTimerOption {
 	return func(update *TimerUpdate) {
 		update.SummaryData.Set(summary)
 	}
 }
 
-// WithSetTags indicates to set the timer's tags
+// WithSetTags indicates to set the timer's tags.
 func WithSetTags(tags []string) UpdateTimerOption {
 	return func(update *TimerUpdate) {
 		update.Tags.Set(tags)
 	}
 }
 
-// TimerClient is an interface exposed to user to manage timers
+// TimerClient is an interface exposed to user to manage timers.
 type TimerClient interface {
-	// GetDefaultNamespace returns the default namespace of this client
+	// GetDefaultNamespace returns the default namespace of this client.
 	GetDefaultNamespace() string
-	// CreateTimer creates a new timer
+	// CreateTimer creates a new timer.
 	CreateTimer(ctx context.Context, spec TimerSpec) (*TimerRecord, error)
-	// GetTimerByID queries the timer by ID
+	// GetTimerByID queries the timer by ID.
 	GetTimerByID(ctx context.Context, timerID string) (*TimerRecord, error)
-	// GetTimerByKey queries the timer by key
+	// GetTimerByKey queries the timer by key.
 	GetTimerByKey(ctx context.Context, key string) (*TimerRecord, error)
-	// GetTimers queries timers by options
+	// GetTimers queries timers by options.
 	GetTimers(ctx context.Context, opts ...GetTimerOption) ([]*TimerRecord, error)
-	// UpdateTimer updates a timer
+	// UpdateTimer updates a timer.
 	UpdateTimer(ctx context.Context, timerID string, opts ...UpdateTimerOption) error
-	// ManualTriggerEvent triggers event manually
+	// ManualTriggerEvent triggers event manually.
 	ManualTriggerEvent(ctx context.Context, timerID string) (string, error)
-	// CloseTimerEvent closes the triggering event of a timer
+	// CloseTimerEvent closes the triggering event of a timer.
 	CloseTimerEvent(ctx context.Context, timerID string, eventID string, opts ...UpdateTimerOption) error
-	// DeleteTimer deletes a timer
+	// DeleteTimer deletes a timer.
 	DeleteTimer(ctx context.Context, timerID string) (bool, error)
 }
 
-// DefaultStoreNamespace is the default namespace
+// DefaultStoreNamespace is the default namespace.
 const DefaultStoreNamespace = "default"
 
-// defaultTimerClient is the default implement of timer client
+// defaultTimerClient is the default implement of timer client.
 type defaultTimerClient struct {
 	namespace    string
 	store        *TimerStore
 	retryBackoff uint64
 }
 
-// NewDefaultTimerClient creates a new defaultTimerClient
+// NewDefaultTimerClient creates a new defaultTimerClient.
 func NewDefaultTimerClient(store *TimerStore) TimerClient {
 	return &defaultTimerClient{
 		namespace:    DefaultStoreNamespace,
