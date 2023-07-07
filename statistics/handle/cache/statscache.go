@@ -33,7 +33,7 @@ func NewStatsCachePointer() *StatsCachePointer {
 
 // Load loads the cached stats from the cache.
 func (s *StatsCachePointer) Load() *StatsCacheWrapper {
-	return s.Load()
+	return s.Pointer.Load()
 }
 
 // Replace replaces the cache with the new cache.
