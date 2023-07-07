@@ -36,10 +36,9 @@ import (
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/server/internal"
 	"github.com/pingcap/tidb/server/internal/parse"
 	"github.com/pingcap/tidb/server/internal/parse/handshake"
-	util2 "github.com/pingcap/tidb/server/internal/util"
+	serverutil "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -81,7 +80,7 @@ func TestIssue33699(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := util2.NewTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -276,7 +275,7 @@ func TestInitialHandshake(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	var outBuffer bytes.Buffer
-	cfg := util2.NewTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
@@ -605,7 +604,7 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := util2.NewTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -755,7 +754,7 @@ func TestShutDown(t *testing.T) {
 	err = cc.handleQuery(context.Background(), "select 1")
 	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
 
-	cfg := util2.NewTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
@@ -1128,7 +1127,7 @@ func TestShowErrors(t *testing.T) {
 func TestHandleAuthPlugin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	cfg := util2.NewTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
@@ -1509,7 +1508,7 @@ func TestChangeUserAuth(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user user1")
 
-	cfg := util2.NewTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 
@@ -1557,7 +1556,7 @@ func TestChangeUserAuth(t *testing.T) {
 func TestAuthPlugin2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	cfg := util2.NewTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 
@@ -1700,7 +1699,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	bytes := append([]byte{0x00, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 999)))...)
 	_, err := inBuffer.Write(bytes)
 	require.NoError(t, err)
-	brc := internal.newBufferedReadConn(&bytesConn{inBuffer})
+	brc := serverutil.NewBufferedReadConn(&bytesConn{inBuffer})
 	pkt := newPacketIO(brc)
 	pkt.setMaxAllowedPacket(maxAllowedPacket)
 	readBytes, err = pkt.readPacket()
@@ -1713,7 +1712,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	bytes = append([]byte{0x01, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 1000)))...)
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
-	brc = internal.newBufferedReadConn(&bytesConn{inBuffer})
+	brc = serverutil.NewBufferedReadConn(&bytesConn{inBuffer})
 	pkt = newPacketIO(brc)
 	pkt.setMaxAllowedPacket(maxAllowedPacket)
 	_, err = pkt.readPacket()
@@ -1725,7 +1724,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	bytes = append([]byte{0x01, 0x02, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 488)))...)
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
-	brc = internal.newBufferedReadConn(&bytesConn{inBuffer})
+	brc = serverutil.NewBufferedReadConn(&bytesConn{inBuffer})
 	pkt = newPacketIO(brc)
 	pkt.setMaxAllowedPacket(maxAllowedPacket)
 	readBytes, err = pkt.readPacket()
@@ -1736,7 +1735,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	bytes = append([]byte{0x01, 0x02, 0x00, 0x01}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("b", 488)))...)
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
-	brc = internal.newBufferedReadConn(&bytesConn{inBuffer})
+	brc = serverutil.NewBufferedReadConn(&bytesConn{inBuffer})
 	pkt.setBufferedReadConn(brc)
 	readBytes, err = pkt.readPacket()
 	require.NoError(t, err)
@@ -1749,7 +1748,7 @@ func TestOkEof(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := util2.NewTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -1812,7 +1811,7 @@ func TestExtensionChangeUser(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := util2.NewTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -1923,7 +1922,7 @@ func TestAuthSha(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := util2.NewTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -1997,7 +1996,7 @@ func TestProcessInfoForExecuteCommand(t *testing.T) {
 
 func TestLDAPAuthSwitch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	cfg := util2.NewTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
