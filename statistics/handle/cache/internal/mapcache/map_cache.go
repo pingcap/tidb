@@ -35,8 +35,9 @@ func (c cacheItem) copy() cacheItem {
 
 // MapCache is a cache based on map.
 type MapCache struct {
-	tables   map[int64]cacheItem
-	memUsage int64
+	tables               map[int64]cacheItem
+	memUsage             int64
+	maxTableStatsVersion uint64
 }
 
 // NewMapCache creates a new map cache.
@@ -65,6 +66,9 @@ func (m *MapCache) PutByQuery(k int64, v *statistics.Table) {
 
 // Put implements StatsCacheInner
 func (m *MapCache) Put(k int64, v *statistics.Table) {
+	if v.Version > m.maxTableStatsVersion {
+		m.maxTableStatsVersion = v.Version
+	}
 	item, ok := m.tables[k]
 	if ok {
 		oldCost := item.cost
@@ -159,4 +163,9 @@ func (*MapCache) SetCapacity(int64) {}
 // Front implements StatsCacheInner
 func (*MapCache) Front() int64 {
 	return 0
+}
+
+// Version implements StatsCacheInner
+func (m *MapCache) Version() uint64 {
+	return m.maxTableStatsVersion
 }
