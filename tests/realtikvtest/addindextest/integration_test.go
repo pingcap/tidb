@@ -413,7 +413,6 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 	ddl.SetBackfillTaskChanSizeForTest(1024)
 }
 
-<<<<<<< HEAD
 type testCallback struct {
 	ddl.Callback
 	OnJobRunBeforeExported func(job *model.Job)
@@ -431,7 +430,8 @@ func (c *testCallback) OnJobRunBefore(job *model.Job) {
 	if c.OnJobRunBeforeExported != nil {
 		c.OnJobRunBeforeExported(job)
 	}
-=======
+}
+
 func TestAddIndexFinishImportError(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -452,5 +452,4 @@ func TestAddIndexFinishImportError(t *testing.T) {
 	//nolint: forcetypeassert
 	jobTp := rows[0][3].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
->>>>>>> adbcb4efbf9 (ddl/ingest: create new local backend if necessary (#44140))
 }
