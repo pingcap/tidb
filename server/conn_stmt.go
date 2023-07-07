@@ -276,9 +276,19 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
 	if err != nil {
+		// If error is returned during the planner phase or the executor.Open
+		// phase, the rs will be nil, and StmtCtx.MemTracker StmtCtx.DiskTracker
+		// will not be detached. We need to detach them manually.
+		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
+			sv.StmtCtx.DetachMemDiskTracker()
+		}
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
+
 	if rs == nil {
 		if useCursor {
 			vars.SetStatusFlag(mysql.ServerStatusCursorExists, false)
@@ -332,13 +342,6 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 			cl.OnFetchReturned()
 		}
 
-		// as the `Next` of `ResultSet` will never be called, all rows have been cached inside it. We could close this
-		// `ResultSet`.
-		err = rs.Close()
-		if err != nil {
-			return false, err
-		}
-
 		stmt.SetCursorActive(true)
 
 		// explicitly flush columnInfo to client.
@@ -349,7 +352,6 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 
 		return false, cc.flush(ctx)
 	}
-	defer terror.Call(rs.Close)
 	retryable, err := cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), 0)
 	if err != nil {
 		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))

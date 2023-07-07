@@ -161,6 +161,12 @@ func (s *MockStateSyncer) Init(context.Context) error {
 
 // UpdateGlobalState implements StateSyncer.UpdateGlobalState interface.
 func (s *MockStateSyncer) UpdateGlobalState(_ context.Context, stateInfo *syncer.StateInfo) error {
+	failpoint.Inject("mockUpgradingState", func(val failpoint.Value) {
+		if val.(bool) {
+			s.clusterState.Store(stateInfo)
+			failpoint.Return(nil)
+		}
+	})
 	s.globalVerCh <- clientv3.WatchResponse{}
 	s.clusterState.Store(stateInfo)
 	return nil

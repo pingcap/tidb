@@ -392,7 +392,6 @@ func (w *planReplayerTaskDumpWorker) handleTask(task *PlanReplayerDumpTask) {
 	occupy := true
 	handleTask := true
 	defer func() {
-		util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpWorker", nil, false)
 		logutil.BgLogger().Debug("[plan-replayer-capture] handle task",
 			zap.String("sql-digest", sqlDigest),
 			zap.String("plan-digest", planDigest),
@@ -400,6 +399,8 @@ func (w *planReplayerTaskDumpWorker) handleTask(task *PlanReplayerDumpTask) {
 			zap.Bool("occupy", occupy),
 			zap.Bool("handle", handleTask))
 	}()
+	defer util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpWorker", nil, false)
+
 	if task.IsContinuesCapture {
 		if w.status.checkTaskKeyFinishedBefore(task) {
 			check = false

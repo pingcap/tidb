@@ -272,7 +272,7 @@ func (txn *LazyTxn) changeToPending(future *txnFuture) {
 	txn.txnFuture = future
 }
 
-func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
+func (txn *LazyTxn) changePendingToValid(ctx context.Context, sctx sessionctx.Context) error {
 	if txn.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -306,6 +306,9 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 		uint64(txn.Transaction.Len()),
 		txn.mu.TxnInfo.CurrentSQLDigest,
 		txn.mu.TxnInfo.AllSQLDigests)
+
+	// set resource group name for kv request such as lock pessimistic keys.
+	txn.SetOption(kv.ResourceGroupName, sctx.GetSessionVars().ResourceGroupName)
 
 	return nil
 }
@@ -594,7 +597,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
-		if err := txn.changePendingToValid(ctx); err != nil {
+		if err := txn.changePendingToValid(ctx, sctx); err != nil {
 			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
 			txn.cleanup()
@@ -602,8 +605,6 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 			return txn, err
 		}
 		txn.lazyUniquenessCheckEnabled = !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic
-		// set resource group name for kv request such as lock pessimistic keys.
-		txn.SetOption(kv.ResourceGroupName, sctx.GetSessionVars().ResourceGroupName)
 	}
 	return txn, nil
 }
