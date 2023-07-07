@@ -972,7 +972,7 @@ func TestAdjustDiskQuota(t *testing.T) {
 	require.Equal(t, int64(0), int64(cfg.TikvImporter.DiskQuota))
 }
 
-func TestAdjustOnDuplicate(t *testing.T) {
+func TestAdjustConflictStrategy(t *testing.T) {
 	cfg := NewConfig()
 	assignMinimalLegalValue(cfg)
 	ctx := context.Background()
