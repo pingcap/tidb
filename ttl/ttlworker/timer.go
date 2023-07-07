@@ -45,7 +45,7 @@ type ttlTimerSummary struct {
 }
 
 type ttlJobAdapter interface {
-	CouldSubmitJob(tableID, physicalID int64) bool
+	IsTableTTLEnabled(tableID, physicalID int64) bool
 	SubmitJob(ctx context.Context, tableID, physicalID int64, requestID string, watermark time.Time) (*ttlJobTrace, error)
 	GetJob(ctx context.Context, tableID, physicalID int64, requestID string) (*ttlJobTrace, error)
 }
@@ -105,7 +105,7 @@ func (t *ttlTimerHook) OnPreSchedEvent(_ context.Context, event timerapi.TimerSh
 		return
 	}
 
-	if !t.adapter.CouldSubmitJob(data.TableID, data.PhysicalID) {
+	if !t.adapter.IsTableTTLEnabled(data.TableID, data.PhysicalID) {
 		r.Delay = time.Minute
 		return
 	}
@@ -138,12 +138,22 @@ func (t *ttlTimerHook) OnSchedEvent(ctx context.Context, event timerapi.TimerShe
 		return err
 	}
 
-	if job == nil && t.nowFunc().Sub(timer.EventStart) > 10*time.Minute {
-		logger.Warn("cancel current TTL timer event because job not submitted for a long time")
-		return t.cli.CloseTimerEvent(ctx, timer.ID, eventID, timerapi.WithSetWatermark(timer.Watermark))
-	}
-
 	if job == nil {
+		cancel := false
+		if !timer.Enable || !t.adapter.IsTableTTLEnabled(data.TableID, data.PhysicalID) {
+			cancel = true
+			logger.Warn("cancel current TTL timer event because table's ttl is not enabled")
+		}
+
+		if t.nowFunc().Sub(timer.EventStart) > 10*time.Minute {
+			cancel = true
+			logger.Warn("cancel current TTL timer event because job not submitted for a long time")
+		}
+
+		if cancel {
+			return t.cli.CloseTimerEvent(ctx, timer.ID, eventID, timerapi.WithSetWatermark(timer.Watermark))
+		}
+
 		logger.Info("submit TTL job for current timer event")
 		if job, err = t.adapter.SubmitJob(ctx, data.TableID, data.PhysicalID, eventID, timer.EventStart); err != nil {
 			return err

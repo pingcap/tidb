@@ -115,6 +115,19 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 		if time.Since(timer.CreateTime) > g.delayDelete {
 			if _, err = g.cli.DeleteTimer(ctx, timer.ID); err != nil {
 				logutil.BgLogger().Error("failed to delete timer", zap.Error(err), zap.String("timerID", timer.ID))
+			} else {
+				delete(g.key2Timers, key)
+			}
+		} else if timer.Enable {
+			if err = g.cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetEnable(false)); err != nil {
+				logutil.BgLogger().Error("failed to disable timer", zap.Error(err), zap.String("timerID", timer.ID))
+			}
+
+			timer, err = g.cli.GetTimerByID(ctx, timer.ID)
+			if err != nil {
+				logutil.BgLogger().Error("failed to get timer", zap.Error(err), zap.String("timerID", timer.ID))
+			} else {
+				g.key2Timers[key] = timer
 			}
 		}
 	}

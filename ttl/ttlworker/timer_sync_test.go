@@ -129,7 +129,11 @@ func TestTTLTimerSync(t *testing.T) {
 	require.NotEqual(t, oldTimerP20.ID, timerP20.ID)
 	timerP21 = checkTimerWithTableMeta(t, do, cli, "test", "tp2", "p1", zeroTime)
 	require.NotEqual(t, oldTimerP21.ID, timerP21.ID)
-	checkTimersNotChange(t, cli, timer1, oldTimer2, timer3, timer4, timer5, timerP10, oldTimerP11, timerP12, timerP13, oldTimerP20, oldTimerP21)
+	oldTimer2 = checkTimerOnlyDisabled(t, cli, oldTimer2)
+	oldTimerP11 = checkTimerOnlyDisabled(t, cli, oldTimerP11)
+	oldTimerP20 = checkTimerOnlyDisabled(t, cli, oldTimerP20)
+	oldTimerP21 = checkTimerOnlyDisabled(t, cli, oldTimerP21)
+	checkTimersNotChange(t, cli, timer1, timer3, timer4, timer5, timerP10, timerP12, timerP13)
 
 	// drop table/partition
 	tk.MustExec("drop table t1a")
@@ -137,8 +141,12 @@ func TestTTLTimerSync(t *testing.T) {
 	tk.MustExec("drop table tp2")
 	sync.SyncTimers(context.TODO(), do.InfoSchema())
 	checkTimerCnt(t, cli, 15)
+	checkTimerOnlyDisabled(t, cli, timer1)
+	checkTimerOnlyDisabled(t, cli, timerP13)
+	checkTimerOnlyDisabled(t, cli, timerP20)
+	checkTimerOnlyDisabled(t, cli, timerP21)
 	checkTimersNotChange(t, cli, oldTimer2, oldTimerP11, oldTimerP20, oldTimerP21)
-	checkTimersNotChange(t, cli, timer1, timer2, timer3, timer4, timer5, timerP10, timerP11, timerP12, timerP13, timerP20, timerP21)
+	checkTimersNotChange(t, cli, timer2, timer3, timer4, timer5, timerP10, timerP11, timerP12)
 
 	// clear deleted tables
 	sync.SetDelayDeleteInterval(time.Millisecond)
@@ -179,6 +187,23 @@ func checkTimerCnt(t *testing.T, cli timerapi.TimerClient, cnt int) {
 	timers, err := cli.GetTimers(context.TODO())
 	require.NoError(t, err)
 	require.Equal(t, cnt, len(timers))
+}
+
+func checkTimerOnlyDisabled(t *testing.T, cli timerapi.TimerClient, timer *timerapi.TimerRecord) *timerapi.TimerRecord {
+	tm, err := cli.GetTimerByID(context.TODO(), timer.ID)
+	require.NoError(t, err)
+	if !timer.Enable {
+		require.Equal(t, *timer, *tm)
+		return timer
+	}
+
+	require.False(t, tm.Enable)
+	require.Greater(t, tm.Version, timer.Version)
+	tm2 := timer.Clone()
+	tm2.Enable = tm.Enable
+	tm2.Version = tm.Version
+	require.Equal(t, *tm, *tm2)
+	return tm
 }
 
 func checkTimersNotChange(t *testing.T, cli timerapi.TimerClient, timers ...*timerapi.TimerRecord) {
