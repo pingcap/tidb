@@ -595,10 +595,6 @@ func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 	return &coprocessor.Response{}
 }
 
-func hasMeaningfulGatherId(taskMeta *mpp.TaskMeta) bool {
-	return taskMeta.GatherId > 0
-}
-
 // MPPTaskHandler exists in a single store.
 type MPPTaskHandler struct {
 	// When a connect request comes, it contains server task (source) and client task (target), Exchanger dataCh set will find dataCh by client task.
