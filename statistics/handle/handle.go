@@ -1168,12 +1168,6 @@ func (h *Handle) LastUpdateVersion() uint64 {
 	return h.statsCache.Load().Version()
 }
 
-// SetLastUpdateVersion sets the last update version.
-func (h *Handle) SetLastUpdateVersion(version uint64) {
-	statsCache := h.statsCache.Load()
-	h.updateStatsCache(statsCache.Update(nil, nil))
-}
-
 // FlushStats flushes the cached stats update into store.
 func (h *Handle) FlushStats() {
 	for len(h.ddlEventCh) > 0 {
