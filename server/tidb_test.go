@@ -3185,7 +3185,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 
 func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	cfg := util2.NewTestConfig()
-	cfg.Port = 4000
+	cfg.Port = 0
 	cfg.Status.ReportStatus = false
 	// Setup proxy protocol config
 	cfg.ProxyProtocol.Networks = "*"
