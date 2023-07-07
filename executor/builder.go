@@ -5153,7 +5153,12 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		iterInTbl = storages.IterInTbl
 		producer = storages.Producer
 	} else {
+		if v.SeedPlan == nil {
+			b.err = errors.New("cte.seedPlan cannot be nil")
+			return nil
+		}
 		// Build seed part.
+		corCols := plannercore.ExtractOuterApplyCorrelatedCols(v.SeedPlan)
 		seedExec := b.build(v.SeedPlan)
 		if b.err != nil {
 			return nil
@@ -5174,10 +5179,15 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl}
 
 		// Build recursive part.
-		recursiveExec := b.build(v.RecurPlan)
-		if b.err != nil {
-			return nil
+		var recursiveExec Executor
+		if v.RecurPlan != nil {
+			recursiveExec = b.build(v.RecurPlan)
+			if b.err != nil {
+				return nil
+			}
+			corCols = append(corCols, plannercore.ExtractOuterApplyCorrelatedCols(v.RecurPlan)...)
 		}
+
 		var sel []int
 		if v.CTE.IsDistinct {
 			sel = make([]int, chkSize)
@@ -5186,18 +5196,24 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 			}
 		}
 
+		var corColHashCodes [][]byte
+		for _, corCol := range corCols {
+			corColHashCodes = append(corColHashCodes, getCorColHashCode(corCol))
+		}
+
 		producer = &cteProducer{
-			ctx:           b.ctx,
-			seedExec:      seedExec,
-			recursiveExec: recursiveExec,
-			resTbl:        resTbl,
-			iterInTbl:     iterInTbl,
-			isDistinct:    v.CTE.IsDistinct,
-			sel:           sel,
-			hasLimit:      v.CTE.HasLimit,
-			limitBeg:      v.CTE.LimitBeg,
-			limitEnd:      v.CTE.LimitEnd,
-			isInApply:     v.CTE.IsInApply,
+			ctx:             b.ctx,
+			seedExec:        seedExec,
+			recursiveExec:   recursiveExec,
+			resTbl:          resTbl,
+			iterInTbl:       iterInTbl,
+			isDistinct:      v.CTE.IsDistinct,
+			sel:             sel,
+			hasLimit:        v.CTE.HasLimit,
+			limitBeg:        v.CTE.LimitBeg,
+			limitEnd:        v.CTE.LimitEnd,
+			corCols:         corCols,
+			corColHashCodes: corColHashCodes,
 		}
 		storageMap[v.CTE.IDForStorage].Producer = producer
 	}
