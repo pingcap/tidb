@@ -15,10 +15,15 @@ http_archive(
 load("@bazel_skylib//lib:versions.bzl", "versions")
 versions.check(minimum_bazel_version = "6.0.0")
 
-git_repository(
-  name = "io_bazel_rules_go",
-  commit = "c1d874c8bdabf455194a9989f2df0fb7e770841d",
-  remote = "https://github.com/xhebox/rules_go",
+http_archive(
+    name = "io_bazel_rules_go",
+    sha256 = "d6f7f8844dc21647aa306c423ddb27174fcaa223592b950f7f75928921391036",
+    strip_prefix = "rules_go-304ca54e9d70081a889c1a15270ae43d38ae053b",
+    type = "zip",
+    urls = [
+        "http://bazel-cache.pingcap.net:8080/xhebox/rules_go/zip/304ca54e9d70081a889c1a15270ae43d38ae053b",
+        "https://codeload.github.com/xhebox/rules_go/zip/304ca54e9d70081a889c1a15270ae43d38ae053b",
+    ],
 )
 
 http_archive(
