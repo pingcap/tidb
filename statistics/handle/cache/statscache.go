@@ -54,7 +54,7 @@ func (s *StatsCache) Load() *StatsCacheWrapper {
 
 // Version returns the version of the cached stats.
 func (s *StatsCache) Version() uint64 {
-	return s.Load().version
+	return s.Load().Version()
 }
 
 // GetMemConsumed returns the memory usage of the cache.
@@ -67,11 +67,9 @@ func (s *StatsCache) UpdateCache(newCache StatsCacheWrapper) (updated bool, newC
 	s.mu.Lock()
 	oldCache := s.cache.Load()
 	newCost = newCache.Cost()
-	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
-		s.memTracker.Consume(newCost - oldCache.Cost())
-		s.cache.Store(&newCache)
-		updated = true
-	}
+	s.memTracker.Consume(newCost - oldCache.Cost())
+	s.cache.Store(&newCache)
+	updated = true
 	s.mu.Unlock()
 	return updated, newCost
 }

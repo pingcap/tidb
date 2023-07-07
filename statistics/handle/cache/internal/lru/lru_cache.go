@@ -30,6 +30,7 @@ type StatsInnerCache struct {
 	// lru maintains item lru cache
 	lru *innerItemLruCache
 	sync.RWMutex
+	maxTableStatsVersion uint64
 }
 
 // NewStatsLruCache creates a new LRU cache for statistics.
@@ -128,6 +129,9 @@ func (s *StatsInnerCache) Put(tblID int64, tbl *statistics.Table) {
 }
 
 func (s *StatsInnerCache) put(tblID int64, tbl *statistics.Table, tblMemUsage *statistics.TableMemoryUsage, needMove bool) {
+	if tbl.Version > s.maxTableStatsVersion {
+		s.maxTableStatsVersion = tbl.Version
+	}
 	element, exist := s.elements[tblID]
 	if exist {
 		s.updateColumns(tblID, tbl, tblMemUsage, needMove)
@@ -285,7 +289,15 @@ func (s *StatsInnerCache) Copy() internal.StatsCacheInner {
 		newCache.elements[tblID] = element.copy()
 	}
 	newCache.lru.onEvict = newCache.onEvict
+	newCache.maxTableStatsVersion = s.maxTableStatsVersion
 	return newCache
+}
+
+// Version implements statsCacheInner
+func (s *StatsInnerCache) Version() uint64 {
+	s.RLock()
+	defer s.RUnlock()
+	return s.maxTableStatsVersion
 }
 
 // SetCapacity implements statsCacheInner
