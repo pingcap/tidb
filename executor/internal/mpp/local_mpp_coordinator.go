@@ -444,7 +444,7 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 		return
 	}
 	// only root task should establish a stream conn with tiFlash to receive result.
-	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
+	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, GatherId: c.gatherID, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
 		Address:    req.Meta.GetAddress(),
 		MppVersion: req.MppVersion.ToInt64(),
 	}
@@ -700,7 +700,7 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := c.originalPlan.(*plannercore.PhysicalExchangeSender)
 	sctx := c.sessionCtx
-	frags, kvRanges, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.mppQueryID, sender, c.is)
+	frags, kvRanges, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
