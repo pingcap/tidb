@@ -148,21 +148,12 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 		logFields = append(logFields, zap.String("database", info.DB))
 	}
 	var tableIDs, indexNames string
-<<<<<<< HEAD
-	if len(info.StmtCtx.TableIDs) > 0 {
-		tableIDs = strings.Replace(fmt.Sprintf("%v", info.StmtCtx.TableIDs), " ", ",", -1)
-		logFields = append(logFields, zap.String("table_ids", tableIDs))
-	}
-	if len(info.StmtCtx.IndexNames) > 0 {
-		indexNames = strings.Replace(fmt.Sprintf("%v", info.StmtCtx.IndexNames), " ", ",", -1)
-=======
 	if len(info.TableIDs) > 0 {
-		tableIDs = strings.ReplaceAll(fmt.Sprintf("%v", info.TableIDs), " ", ",")
+		tableIDs = strings.Replace(fmt.Sprintf("%v", info.TableIDs), " ", ",", -1)
 		logFields = append(logFields, zap.String("table_ids", tableIDs))
 	}
 	if len(info.IndexNames) > 0 {
-		indexNames = strings.ReplaceAll(fmt.Sprintf("%v", info.IndexNames), " ", ",")
->>>>>>> af04707eda7 (*: fix data race in ProcessInfo (#45127))
+		indexNames = strings.Replace(fmt.Sprintf("%v", info.IndexNames), " ", ",", -1)
 		logFields = append(logFields, zap.String("index_names", indexNames))
 	}
 	logFields = append(logFields, zap.Uint64("txn_start_ts", info.CurTxnStartTS))
