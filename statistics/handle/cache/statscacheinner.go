@@ -90,8 +90,7 @@ func (sc *StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int
 	return newCache
 }
 
-// CopyAndUpdateStatsCache copies the base cache and updates the new cache.
-// The base cache should keep unchanged.
+// CopyAndUpdateStatsCache copies the base cache and applies some updates to the new copied cache, the base cache should keep unchanged.
 func CopyAndUpdateStatsCache(base internal.StatsCacheInner, tables []*statistics.Table, deletedIDs []int64, byQuery bool) internal.StatsCacheInner {
 	c := base.Copy()
 	for _, tbl := range tables {
