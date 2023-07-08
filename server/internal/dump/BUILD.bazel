@@ -6,8 +6,15 @@ go_library(
     importpath = "github.com/pingcap/tidb/server/internal/dump",
     visibility = ["//server:__subpackages__"],
     deps = [
+        "//errno",
+        "//parser/charset",
         "//parser/mysql",
+        "//server/internal/column",
+        "//server/internal/util",
         "//types",
+        "//util/chunk",
+        "//util/dbterror",
+        "//util/hack",
     ],
 )
 
@@ -17,10 +24,16 @@ go_test(
     srcs = ["dump_test.go"],
     embed = [":dump"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
+        "//parser/charset",
+        "//parser/mysql",
+        "//server/internal/column",
+        "//server/internal/util",
         "//sessionctx/stmtctx",
         "//types",
+        "//util/chunk",
+        "//util/mock",
         "@com_github_stretchr_testify//require",
     ],
 )
