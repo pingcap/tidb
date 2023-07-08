@@ -18,26 +18,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/core/internal"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/stretchr/testify/require"
 )
-
-func setTiFlashReplica(t *testing.T, dom *domain.Domain, dbName, tableName string) {
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr(dbName))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == tableName {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
-}
 
 // Rule should bot be applied for TiKV.
 func TestPushDerivedTopnNegative(t *testing.T) {
