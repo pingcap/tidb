@@ -36,14 +36,11 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
 	testDataMap.LoadTestSuiteData("testdata", "ordered_result_mode_suite")
 	testDataMap.LoadTestSuiteData("testdata", "point_get_plan")
-	testDataMap.LoadTestSuiteData("testdata", "enforce_mpp_suite")
 	testDataMap.LoadTestSuiteData("testdata", "expression_rewriter_suite")
 	testDataMap.LoadTestSuiteData("testdata", "partition_pruner")
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
 	testDataMap.LoadTestSuiteData("testdata", "window_push_down_suite")
 	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
-	testDataMap.LoadTestSuiteData("testdata", "flat_plan_suite")
-	testDataMap.LoadTestSuiteData("testdata", "binary_plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "json_plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window")
 	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification")
@@ -89,10 +86,6 @@ func GetPointGetPlanData() testdata.TestData {
 	return testDataMap["point_get_plan"]
 }
 
-func GetEnforceMPPSuiteData() testdata.TestData {
-	return testDataMap["enforce_mpp_suite"]
-}
-
 func GetExpressionRewriterSuiteData() testdata.TestData {
 	return testDataMap["expression_rewriter_suite"]
 }
@@ -107,14 +100,6 @@ func GetIntegrationSuiteData() testdata.TestData {
 
 func GetWindowPushDownSuiteData() testdata.TestData {
 	return testDataMap["window_push_down_suite"]
-}
-
-func GetFlatPlanSuiteData() testdata.TestData {
-	return testDataMap["flat_plan_suite"]
-}
-
-func GetBinaryPlanSuiteData() testdata.TestData {
-	return testDataMap["binary_plan_suite"]
 }
 
 func GetJSONPlanSuiteData() testdata.TestData {
