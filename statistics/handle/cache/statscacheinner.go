@@ -72,17 +72,6 @@ func NewStatsCacheWrapper() *StatsCacheWrapper {
 // StatsCacheWrapper caches the tables in memory for Handle.
 type StatsCacheWrapper struct {
 	internal.StatsCacheInner
-	// version is the latest version of cache. It is bumped when new records of `mysql.stats_meta` are loaded into cache.
-	version uint64
-	// minorVersion is to differentiate the cache when the version is unchanged while the cache contents are
-	// modified indeed. This can happen when we load extra column histograms into cache, or when we modify the cache with
-	// statistics feedbacks, etc. We cannot bump the version then because no new changes of `mysql.stats_meta` are loaded,
-	// while the override of StatsCacheWrapper is in a copy-on-write way, to make sure the StatsCacheWrapper is unchanged by others during the
-	// the interval of 'copy' and 'write', every 'write' should bump / check this minorVersion if the version keeps
-	// unchanged.
-	// This bump / check logic is encapsulated in `StatsCacheWrapper.update` and `updateStatsCache`, callers don't need to care
-	// about this minorVersion actually.
-	minorVersion uint64
 }
 
 // Len returns the number of tables in the cache.
@@ -90,51 +79,32 @@ func (sc *StatsCacheWrapper) Len() int {
 	return sc.StatsCacheInner.Len()
 }
 
-// Copy copies the cache.
-func (sc *StatsCacheWrapper) Copy() StatsCacheWrapper {
-	newCache := StatsCacheWrapper{
-		version:      sc.version,
-		minorVersion: sc.minorVersion,
-	}
-	newCache.StatsCacheInner = sc.StatsCacheInner.Copy()
-	return newCache
-}
-
-// SetVersion sets the version of the cache.
-func (sc *StatsCacheWrapper) SetVersion(version uint64) {
-	sc.version = version
-}
-
-// Version returns the version of the cache.
-func (sc *StatsCacheWrapper) Version() uint64 {
-	return sc.version
-}
-
 // Update updates the statistics table cache using Copy on write.
-func (sc *StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64, opts ...TableStatsOpt) StatsCacheWrapper {
+func (sc *StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) StatsCacheWrapper {
 	option := &TableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
 	}
-	newCache := sc.Copy()
-	if newVersion == newCache.version {
-		newCache.minorVersion += uint64(1)
-	} else {
-		newCache.version = newVersion
-		newCache.minorVersion = uint64(0)
-	}
+	newCache := StatsCacheWrapper{}
+	newCache.StatsCacheInner = CopyAndUpdateStatsCache(sc.StatsCacheInner, tables, deletedIDs, option.byQuery)
+	return newCache
+}
+
+// CopyAndUpdateStatsCache copies the base cache and applies some updates to the new copied cache, the base cache should keep unchanged.
+func CopyAndUpdateStatsCache(base internal.StatsCacheInner, tables []*statistics.Table, deletedIDs []int64, byQuery bool) internal.StatsCacheInner {
+	c := base.Copy()
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
-		if option.byQuery {
-			newCache.PutByQuery(id, tbl)
+		if byQuery {
+			c.PutByQuery(id, tbl)
 		} else {
-			newCache.Put(id, tbl)
+			c.Put(id, tbl)
 		}
 	}
 	for _, id := range deletedIDs {
-		newCache.Del(id)
+		c.Del(id)
 	}
-	return newCache
+	return c
 }
 
 // TableRowStatsCache is the cache of table row count.

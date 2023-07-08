@@ -343,7 +343,7 @@ func TestDefaultClientManualTriggerRetry(t *testing.T) {
 		TimerStoreCore: inject,
 	}
 	cli := NewDefaultTimerClient(store)
-	cli.(*defaultTimerClient).retryInterval = time.Millisecond
+	cli.(*defaultTimerClient).retryBackoff = 1
 	ctx := context.Background()
 	spec := TimerSpec{
 		Key:             "k1",
@@ -362,7 +362,7 @@ func TestDefaultClientManualTriggerRetry(t *testing.T) {
 	updateTimes := 0
 	inject.beforeUpdate = func() {
 		updateTimes++
-		if updateTimes < 5 {
+		if updateTimes < 3 {
 			err = inject.TimerStore.Update(context.TODO(), timerID, &TimerUpdate{
 				Watermark: NewOptionalVal(time.Now()),
 			})
@@ -372,7 +372,7 @@ func TestDefaultClientManualTriggerRetry(t *testing.T) {
 	reqID, err := cli.ManualTriggerEvent(context.TODO(), timerID)
 	require.NoError(t, err)
 	require.NotEmpty(t, reqID)
-	require.Equal(t, 5, updateTimes)
+	require.Equal(t, 3, updateTimes)
 
 	// max retry
 	inject.beforeUpdate = func() {
@@ -389,7 +389,7 @@ func TestDefaultClientManualTriggerRetry(t *testing.T) {
 	updateTimes = 0
 	inject.beforeUpdate = func() {
 		updateTimes++
-		if updateTimes < 5 {
+		if updateTimes < 3 {
 			err = inject.TimerStore.Update(context.TODO(), timerID, &TimerUpdate{
 				Watermark: NewOptionalVal(time.Now()),
 			})
@@ -404,5 +404,5 @@ func TestDefaultClientManualTriggerRetry(t *testing.T) {
 	reqID, err = cli.ManualTriggerEvent(context.TODO(), timerID)
 	require.EqualError(t, err, "manual trigger is not allowed when timer is disabled")
 	require.Empty(t, reqID)
-	require.Equal(t, 5, updateTimes)
+	require.Equal(t, 3, updateTimes)
 }

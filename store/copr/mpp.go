@@ -197,7 +197,7 @@ func (c *MPPClient) CancelMPPTasks(param kv.CancelMPPTasksParam) {
 
 	firstReq := reqs[0]
 	killReq := &mpp.CancelTaskRequest{
-		Meta: &mpp.TaskMeta{StartTs: firstReq.StartTs, QueryTs: firstReq.MppQueryID.QueryTs, LocalQueryId: firstReq.MppQueryID.LocalQueryID, ServerId: firstReq.MppQueryID.ServerID, MppVersion: firstReq.MppVersion.ToInt64()},
+		Meta: &mpp.TaskMeta{StartTs: firstReq.StartTs, GatherId: firstReq.GatherID, QueryTs: firstReq.MppQueryID.QueryTs, LocalQueryId: firstReq.MppQueryID.LocalQueryID, ServerId: firstReq.MppQueryID.ServerID, MppVersion: firstReq.MppVersion.ToInt64()},
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
@@ -234,6 +234,7 @@ func (c *MPPClient) EstablishMPPConns(param kv.EstablishMPPConnsParam) (*tikvrpc
 		SenderMeta: taskMeta,
 		ReceiverMeta: &mpp.TaskMeta{
 			StartTs:      req.StartTs,
+			GatherId:     req.GatherID,
 			QueryTs:      req.MppQueryID.QueryTs,
 			LocalQueryId: req.MppQueryID.LocalQueryID,
 			ServerId:     req.MppQueryID.ServerID,

@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,28 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package handshake
 
-import (
-	"bufio"
-	"net"
-)
+import "github.com/klauspost/compress/zstd"
 
-const defaultReaderSize = 16 * 1024
-
-// bufferedReadConn is a net.Conn compatible structure that reads from bufio.Reader.
-type bufferedReadConn struct {
-	net.Conn
-	rb *bufio.Reader
-}
-
-func (conn bufferedReadConn) Read(b []byte) (n int, err error) {
-	return conn.rb.Read(b)
-}
-
-func newBufferedReadConn(conn net.Conn) *bufferedReadConn {
-	return &bufferedReadConn{
-		Conn: conn,
-		rb:   bufio.NewReaderSize(conn, defaultReaderSize),
-	}
+// Response41 is the response message for a successful initial handshake.
+type Response41 struct {
+	Attrs      map[string]string
+	User       string
+	DBName     string
+	AuthPlugin string
+	Auth       []byte
+	ZstdLevel  zstd.EncoderLevel
+	Capability uint32
+	Collation  uint8
 }
