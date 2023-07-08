@@ -4,7 +4,6 @@ go_test(
     name = "casetest_test",
     timeout = "moderate",
     srcs = [
-        "binary_plan_test.go",
         "expression_rewriter_test.go",
         "integration_partition_test.go",
         "integration_test.go",
@@ -26,7 +25,6 @@ go_test(
     race = "on",
     shard_count = 50,
     deps = [
-        "//config",
         "//domain",
         "//expression",
         "//expression/aggregation",
@@ -49,12 +47,9 @@ go_test(
         "//types",
         "//util",
         "//util/hint",
-        "//util/logutil",
         "//util/mock",
         "//util/plancodec",
-        "@com_github_golang_snappy//:snappy",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
