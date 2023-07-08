@@ -1,25 +1,5 @@
 [
   {
-    "name": "TestPushLimitDownIndexLookUpReader",
-    "cases": [
-      // Limit should be pushed down into IndexLookUpReader, row count of IndexLookUpReader and TableScan should be 1.00.
-      "explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 limit 2,1",
-      // Projection atop IndexLookUpReader, Limit should be pushed down into IndexLookUpReader, and Projection should have row count 1.00 as well.
-      "explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1",
-      // Limit should be pushed down into IndexLookUpReader when Selection on top of IndexScan.
-      "explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1",
-      // Limit should NOT be pushed down into IndexLookUpReader when Selection on top of TableScan.
-      "explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 and a > 1 limit 2,1"
-    ]
-  },
-  {
-    "name": "TestIsFromUnixtimeNullRejective",
-    "cases": [
-      // fix #12385
-      "explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);"
-    ]
-  },
-  {
     "name": "TestAggColumnPrune",
     "cases": [
       "select count(1) from t join (select count(1) from t where false) as tmp",
