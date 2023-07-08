@@ -14,9 +14,12 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//parser/duration",
+        "//util",
+        "//util/logutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@org_golang_x_exp//slices",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -33,7 +36,7 @@ go_test(
     embed = [":api"],
     flaky = True,
     race = "on",
-    shard_count = 10,
+    shard_count = 11,
     deps = [
         "//testkit/testsetup",
         "@com_github_pingcap_errors//:errors",

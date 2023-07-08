@@ -133,6 +133,46 @@ func (w *hookWorker) triggerEvent(req *triggerEventRequest, logger *zap.Logger) 
 		eventID: req.eventID,
 	}
 
+	if timer.IsManualRequesting() {
+		logger.Info("manual trigger request detected",
+			zap.String("requestID", timer.ManualRequestID),
+			zap.Time("requestTime", timer.ManualRequestTime),
+			zap.Duration("timeout", timer.ManualTimeout),
+		)
+		timeout := timer.ManualRequestTime.Add(timer.ManualTimeout)
+		if w.nowFunc().After(timeout) {
+			logger.Warn(
+				"cancel manual trigger for timer is disabled for request timeout",
+				zap.String("requestID", timer.ManualRequestID),
+				zap.Bool("timerEnable", timer.Enable),
+			)
+
+			processed := timer.ManualRequest.SetProcessed("")
+			err := req.store.Update(w.ctx, timer.ID, &api.TimerUpdate{
+				ManualRequest: api.NewOptionalVal(processed),
+				CheckVersion:  api.NewOptionalVal(timer.Version),
+			})
+
+			if err == nil {
+				timer, err = req.store.GetByID(w.ctx, timer.ID)
+				if err == nil {
+					resp.newTimerRecord.Set(timer)
+				}
+			}
+
+			if err != nil {
+				logger.Error(
+					"error occurs when close manual request",
+					zap.Error(err),
+					zap.Duration("retryAfter", workerEventDefaultRetryInterval),
+				)
+				resp.retryAfter.Set(workerEventDefaultRetryInterval)
+			}
+
+			return resp
+		}
+	}
+
 	if timer.EventStatus == api.SchedEventIdle {
 		var preResult api.PreSchedEventResult
 		if w.hook != nil {
@@ -265,5 +305,16 @@ func buildEventUpdate(req *triggerEventRequest, result api.PreSchedEventResult, 
 	update.EventStart.Set(nowFunc())
 	update.EventData.Set(result.EventData)
 	update.CheckVersion.Set(req.timer.Version)
+
+	eventExtra := api.EventExtra{
+		EventWatermark: req.timer.Watermark,
+	}
+
+	if manual := req.timer.ManualRequest; manual.IsManualRequesting() {
+		eventExtra.EventManualRequestID = manual.ManualRequestID
+		update.ManualRequest.Set(manual.SetProcessed(req.eventID))
+	}
+
+	update.EventExtra.Set(eventExtra)
 	return &update
 }

@@ -18,13 +18,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/timer/api"
 )
 
 type timerExt struct {
-	Tags []string `json:"tags,omitempty"`
+	Tags   []string          `json:"tags,omitempty"`
+	Manual *manualRequestObj `json:"manual,omitempty"`
+	Event  *eventExtObj      `json:"event,omitempty"`
 }
 
 // CreateTimerTableSQL returns a SQL to create timer table
@@ -79,7 +82,9 @@ func buildInsertTimerSQL(dbName, tableName string, record *api.TimerRecord) (str
 	}
 
 	ext := &timerExt{
-		Tags: record.Tags,
+		Tags:   record.Tags,
+		Manual: newManualRequestObj(record.ManualRequest),
+		Event:  newEventExtObj(record.EventExtra),
 	}
 
 	extJSON, err := json.Marshal(ext)
@@ -104,7 +109,7 @@ func buildInsertTimerSQL(dbName, tableName string, record *api.TimerRecord) (str
 		"EVENT_DATA, "+
 		"SUMMARY_DATA, "+
 		"VERSION) "+
-		"VALUES (%%?, %%?, %%?, 'TIDB', %%?, %%?, %%?, %s, %%?, %%?, %%?, %%?, %s, %%?, %%?, 1)",
+		"VALUES (%%?, %%?, %%?, 'TIDB', %%?, %%?, %%?, %s, %%?, JSON_MERGE_PATCH('{}', %%?), %%?, %%?, %s, %%?, %%?, 1)",
 		indentString(dbName, tableName),
 		watermarkFormat,
 		eventStartFormat,
@@ -276,6 +281,115 @@ func buildUpdateTimerSQL(dbName, tblName string, timerID string, update *api.Tim
 	return sql, append(args, timerID), nil
 }
 
+type manualRequestObj struct {
+	RequestID       *string `json:"request_id"`
+	RequestTimeUnix *int64  `json:"request_time_unix"`
+	TimeoutSec      *int64  `json:"timeout_sec"`
+	Processed       *bool   `json:"processed"`
+	EventID         *string `json:"event_id"`
+}
+
+func newManualRequestObj(manual api.ManualRequest) *manualRequestObj {
+	var empty api.ManualRequest
+	if manual == empty {
+		return nil
+	}
+
+	obj := &manualRequestObj{}
+	if v := manual.ManualRequestID; v != "" {
+		obj.RequestID = &v
+	}
+
+	if v := manual.ManualRequestTime; !v.IsZero() {
+		unix := v.Unix()
+		obj.RequestTimeUnix = &unix
+	}
+
+	if v := manual.ManualTimeout; v != 0 {
+		sec := int64(v / time.Second)
+		obj.TimeoutSec = &sec
+	}
+
+	if v := manual.ManualProcessed; v {
+		processed := true
+		obj.Processed = &processed
+	}
+
+	if v := manual.ManualEventID; v != "" {
+		obj.EventID = &v
+	}
+
+	return obj
+}
+
+func (o *manualRequestObj) ToManualRequest() (r api.ManualRequest) {
+	if o == nil {
+		return
+	}
+
+	if v := o.RequestID; v != nil {
+		r.ManualRequestID = *v
+	}
+
+	if v := o.RequestTimeUnix; v != nil {
+		r.ManualRequestTime = time.Unix(*v, 0)
+	}
+
+	if v := o.TimeoutSec; v != nil {
+		r.ManualTimeout = time.Duration(*v) * time.Second
+	}
+
+	if v := o.Processed; v != nil {
+		r.ManualProcessed = *v
+	}
+
+	if v := o.EventID; v != nil {
+		r.ManualEventID = *v
+	}
+
+	return r
+}
+
+type eventExtObj struct {
+	ManualRequestID *string `json:"manual_request_id"`
+	WatermarkUnix   *int64  `json:"watermark_unix"`
+}
+
+func newEventExtObj(e api.EventExtra) *eventExtObj {
+	var empty api.EventExtra
+	if e == empty {
+		return nil
+	}
+
+	obj := &eventExtObj{}
+	if v := e.EventManualRequestID; v != "" {
+		obj.ManualRequestID = &v
+	}
+
+	if v := e.EventWatermark; !v.IsZero() {
+		unix := v.Unix()
+		obj.WatermarkUnix = &unix
+	}
+
+	return obj
+}
+
+func (o *eventExtObj) ToEventExtra() (e api.EventExtra) {
+	if o == nil {
+		return
+	}
+
+	if v := o.ManualRequestID; v != nil {
+		e.EventManualRequestID = *v
+	}
+
+	if v := o.WatermarkUnix; v != nil {
+		e.EventWatermark = time.Unix(*o.WatermarkUnix, 0)
+	}
+
+	return
+}
+
 func buildUpdateCriteria(update *api.TimerUpdate, args []any) (string, []any, error) {
 	updateFields := make([]string, 0, cap(args)-len(args))
 	if val, ok := update.Enable.Get(); ok {
@@ -289,6 +403,14 @@ func buildUpdateCriteria(update *api.TimerUpdate, args []any) (string, []any, er
 			val = nil
 		}
 		extFields["tags"] = val
+	}
+
+	if val, ok := update.ManualRequest.Get(); ok {
+		extFields["manual"] = newManualRequestObj(val)
+	}
+
+	if val, ok := update.EventExtra.Get(); ok {
+		extFields["event"] = newEventExtObj(val)
 	}
 
 	if val, ok := update.SchedPolicyType.Get(); ok {

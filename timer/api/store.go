@@ -31,14 +31,14 @@ type optionalVal interface {
 	Clear()
 }
 
-// OptionalVal is used by `TimerCond` and `TimerUpdate` to indicate
-// whether some field's condition has been set or whether is field should be update
+// OptionalVal is used by `TimerCond` and `TimerUpdate` to indicate.
+// whether some field's condition has been set or whether is field should be updated.
 type OptionalVal[T any] struct {
 	v       T
 	present bool
 }
 
-// NewOptionalVal creates a new OptionalVal
+// NewOptionalVal creates a new OptionalVal.
 func NewOptionalVal[T any](val T) (o OptionalVal[T]) {
 	o.Set(val)
 	return
@@ -61,7 +61,7 @@ func (o *OptionalVal[T]) Get() (v T, present bool) {
 	return o.v, o.present
 }
 
-// Set sets the value
+// Set sets the value.
 func (o *OptionalVal[T]) Set(v T) {
 	o.v, o.present = v, true
 }
@@ -94,24 +94,24 @@ loop:
 	}
 }
 
-// TimerCond is the condition to filter a timer record
+// TimerCond is the condition to filter a timer record.
 type TimerCond struct {
-	// ID indicates to filter the timer record with ID
+	// ID indicates to filter the timer record with ID.
 	ID OptionalVal[string]
-	// Namespace indicates to filter the timer by Namespace
+	// Namespace indicates to filter the timer by Namespace.
 	Namespace OptionalVal[string]
-	// Key indicates to filter the timer record with ID
-	// The filter behavior is defined by `KeyPrefix`
+	// Key indicates to filter the timer record with ID.
+	// The filter behavior is defined by `KeyPrefix`.
 	Key OptionalVal[string]
-	// KeyPrefix indicates how to filter with timer's key if `Key` is set
+	// KeyPrefix indicates how to filter with timer's key if `Key` is set.
 	// If `KeyPrefix is` true, it will check whether the timer's key is prefixed with `TimerCond.Key`.
 	// Otherwise, it will check whether the timer's key equals `TimerCond.Key`.
 	KeyPrefix bool
-	// Tags indicates to filter the timer record with specified tags
+	// Tags indicates to filter the timer record with specified tags.
 	Tags OptionalVal[[]string]
 }
 
-// Match will return whether the condition match the timer record
+// Match will return whether the condition match the timer record.
 func (c *TimerCond) Match(t *TimerRecord) bool {
 	if val, ok := c.ID.Get(); ok && t.ID != val {
 		return false
@@ -142,7 +142,7 @@ func (c *TimerCond) Match(t *TimerRecord) bool {
 	return true
 }
 
-// FieldsSet returns all fields that has been set exclude excludes
+// FieldsSet returns all fields that has been set exclude excludes.
 func (c *TimerCond) FieldsSet(excludes ...unsafe.Pointer) (fields []string) {
 	iterOptionalFields(reflect.ValueOf(c).Elem(), excludes, func(name string, val optionalVal) bool {
 		if val.Present() {
@@ -153,7 +153,7 @@ func (c *TimerCond) FieldsSet(excludes ...unsafe.Pointer) (fields []string) {
 	return
 }
 
-// Clear clears all fields
+// Clear clears all fields.
 func (c *TimerCond) Clear() {
 	iterOptionalFields(reflect.ValueOf(c).Elem(), nil, func(name string, val optionalVal) bool {
 		val.Clear()
@@ -162,35 +162,39 @@ func (c *TimerCond) Clear() {
 	c.KeyPrefix = false
 }
 
-// TimerUpdate indicates how to update a timer
+// TimerUpdate indicates how to update a timer.
 type TimerUpdate struct {
-	// Tags indicates to set all tags for a timer
+	// Tags indicates to set all tags for a timer.
 	Tags OptionalVal[[]string]
-	// Enable indicates to set the timer's `Enable` field
+	// Enable indicates to set the timer's `Enable` field.
 	Enable OptionalVal[bool]
-	// SchedPolicyType indicates to set the timer's `SchedPolicyType` field
+	// SchedPolicyType indicates to set the timer's `SchedPolicyType` field.
 	SchedPolicyType OptionalVal[SchedPolicyType]
-	// SchedPolicyExpr indicates to set the timer's `SchedPolicyExpr` field
+	// SchedPolicyExpr indicates to set the timer's `SchedPolicyExpr` field.
 	SchedPolicyExpr OptionalVal[string]
-	// EventStatus indicates the event status
+	// ManualRequest indicates to set the timer's manual request.
+	ManualRequest OptionalVal[ManualRequest]
+	// EventStatus indicates the event status.
 	EventStatus OptionalVal[SchedEventStatus]
-	// EventID indicates to set the timer event id
+	// EventID indicates to set the timer event id.
 	EventID OptionalVal[string]
-	// EventData indicates to set the timer event data
+	// EventData indicates to set the timer event data.
 	EventData OptionalVal[[]byte]
-	// EventStart indicates the start time of event
+	// EventStart indicates the start time of event.
 	EventStart OptionalVal[time.Time]
-	// Watermark indicates to set the timer's `Watermark` field
+	// EventExtra indicates to set the `EventExtra` field.
+	EventExtra OptionalVal[EventExtra]
+	// Watermark indicates to set the timer's `Watermark` field.
 	Watermark OptionalVal[time.Time]
-	// SummaryData indicates to set the timer's `Summary` field
+	// SummaryData indicates to set the timer's `Summary` field.
 	SummaryData OptionalVal[[]byte]
-	// CheckVersion indicates to check the timer's version when update
+	// CheckVersion indicates to check the timer's version when updated.
 	CheckVersion OptionalVal[uint64]
-	// CheckEventID indicates to check the timer's eventID
+	// CheckEventID indicates to check the timer's eventID.
 	CheckEventID OptionalVal[string]
 }
 
-// Apply applies the update to a timer
+// Apply applies the update to a timer.
 func (u *TimerUpdate) Apply(record *TimerRecord) (*TimerRecord, error) {
 	if v, ok := u.CheckVersion.Get(); ok && record.Version != v {
 		return nil, errors.Trace(ErrVersionNotMatch)
@@ -220,6 +224,10 @@ func (u *TimerUpdate) Apply(record *TimerRecord) (*TimerRecord, error) {
 		record.SchedPolicyExpr = v
 	}
 
+	if v, ok := u.ManualRequest.Get(); ok {
+		record.ManualRequest = v
+	}
+
 	if v, ok := u.EventStatus.Get(); ok {
 		record.EventStatus = v
 	}
@@ -236,6 +244,10 @@ func (u *TimerUpdate) Apply(record *TimerRecord) (*TimerRecord, error) {
 		record.EventStart = v
 	}
 
+	if v, ok := u.EventExtra.Get(); ok {
+		record.EventExtra = v
+	}
+
 	if v, ok := u.Watermark.Get(); ok {
 		record.Watermark = v
 	}
@@ -247,7 +259,7 @@ func (u *TimerUpdate) Apply(record *TimerRecord) (*TimerRecord, error) {
 	return record, nil
 }
 
-// FieldsSet returns all fields that has been set exclude excludes
+// FieldsSet returns all fields that has been set exclude excludes.
 func (u *TimerUpdate) FieldsSet(excludes ...unsafe.Pointer) (fields []string) {
 	iterOptionalFields(reflect.ValueOf(u).Elem(), excludes, func(name string, val optionalVal) bool {
 		if val.Present() {
@@ -258,7 +270,7 @@ func (u *TimerUpdate) FieldsSet(excludes ...unsafe.Pointer) (fields []string) {
 	return
 }
 
-// Clear clears all fields
+// Clear clears all fields.
 func (u *TimerUpdate) Clear() {
 	iterOptionalFields(reflect.ValueOf(u).Elem(), nil, func(name string, val optionalVal) bool {
 		val.Clear()
@@ -266,33 +278,33 @@ func (u *TimerUpdate) Clear() {
 	})
 }
 
-// Cond is an interface to match a timer record
+// Cond is an interface to match a timer record.
 type Cond interface {
-	// Match returns whether a record match the condition
+	// Match returns whether a record match the condition.
 	Match(timer *TimerRecord) bool
 }
 
-// OperatorTp is the operator type of the condition
+// OperatorTp is the operator type of the condition.
 type OperatorTp int8
 
 const (
-	// OperatorAnd means 'AND' operator
+	// OperatorAnd means 'AND' operator.
 	OperatorAnd OperatorTp = iota
-	// OperatorOr means 'OR' operator
+	// OperatorOr means 'OR' operator.
 	OperatorOr
 )
 
-// Operator implements Cond
+// Operator implements Cond.
 type Operator struct {
-	// Op indicates the operator type
+	// Op indicates the operator type.
 	Op OperatorTp
-	// Not indicates whether to apply 'NOT' to the condition
+	// Not indicates whether to apply 'NOT' to the condition.
 	Not bool
-	// Children is the children of the operator
+	// Children is the children of the operator.
 	Children []Cond
 }
 
-// And returns a condition `AND(child1, child2, ...)`
+// And returns a condition `AND(child1, child2, ...)`.
 func And(children ...Cond) *Operator {
 	return &Operator{
 		Op:       OperatorAnd,
@@ -300,7 +312,7 @@ func And(children ...Cond) *Operator {
 	}
 }
 
-// Or returns a condition `OR(child1, child2, ...)`
+// Or returns a condition `OR(child1, child2, ...)`.
 func Or(children ...Cond) *Operator {
 	return &Operator{
 		Op:       OperatorOr,
@@ -308,7 +320,7 @@ func Or(children ...Cond) *Operator {
 	}
 }
 
-// Not returns a condition `NOT(cond)`
+// Not returns a condition `NOT(cond)`.
 func Not(cond Cond) *Operator {
 	if c, ok := cond.(*Operator); ok {
 		newCriteria := *c
@@ -322,7 +334,7 @@ func Not(cond Cond) *Operator {
 	}
 }
 
-// Match will return whether the condition match the timer record
+// Match will return whether the condition match the timer record.
 func (c *Operator) Match(t *TimerRecord) bool {
 	switch c.Op {
 	case OperatorAnd:
@@ -343,47 +355,47 @@ func (c *Operator) Match(t *TimerRecord) bool {
 	return false
 }
 
-// WatchTimerEventType is the type of the watch event
+// WatchTimerEventType is the type of the watch event.
 type WatchTimerEventType int8
 
 const (
-	// WatchTimerEventCreate indicates that a new timer is created
+	// WatchTimerEventCreate indicates that a new timer is created.
 	WatchTimerEventCreate WatchTimerEventType = 1 << iota
-	// WatchTimerEventUpdate indicates that a timer is updated
+	// WatchTimerEventUpdate indicates that a timer is updated.
 	WatchTimerEventUpdate
-	// WatchTimerEventDelete indicates that a timer is deleted
+	// WatchTimerEventDelete indicates that a timer is deleted.
 	WatchTimerEventDelete
 )
 
-// WatchTimerEvent is the watch event object
+// WatchTimerEvent is the watch event object.
 type WatchTimerEvent struct {
-	// Tp indicates the event type
+	// Tp indicates the event type.
 	Tp WatchTimerEventType
-	// TimerID indicates the timer id for the event
+	// TimerID indicates the timer id for the event.
 	TimerID string
 }
 
-// WatchTimerResponse is the response of watch
+// WatchTimerResponse is the response of watch.
 type WatchTimerResponse struct {
-	// Events contains all events in the response
+	// Events contains all events in the response.
 	Events []*WatchTimerEvent
 }
 
-// WatchTimerChan is the chan of the watch timer
+// WatchTimerChan is the chan of the watch timer.
 type WatchTimerChan <-chan WatchTimerResponse
 
-// TimerStoreCore is an interface, it contains several core methods of store
+// TimerStoreCore is an interface, it contains several core methods of store.
 type TimerStoreCore interface {
 	// Create creates a new record. If `record.ID` is empty, an id will be assigned automatically.
 	// The first return value is the final id of the timer.
 	Create(ctx context.Context, record *TimerRecord) (string, error)
-	// List lists the timers that match the condition
+	// List lists the timers that match the condition.
 	List(ctx context.Context, cond Cond) ([]*TimerRecord, error)
-	// Update updates a timer
+	// Update updates a timer.
 	Update(ctx context.Context, timerID string, update *TimerUpdate) error
-	// Delete deletes a timer
+	// Delete deletes a timer.
 	Delete(ctx context.Context, timerID string) (bool, error)
-	// WatchSupported indicates whether watch supported for this store
+	// WatchSupported indicates whether watch supported for this store.
 	WatchSupported() bool
 	// Watch watches all changes of the store. A chan will be returned to receive `WatchTimerResponse`
 	// The returned chan be closed when the context in the argument is done.
@@ -392,19 +404,19 @@ type TimerStoreCore interface {
 	Close()
 }
 
-// TimerStore extends TimerStoreCore to provide some extra methods for timer operations
+// TimerStore extends TimerStoreCore to provide some extra methods for timer operations.
 type TimerStore struct {
 	TimerStoreCore
 }
 
 // GetByID gets a timer by ID. If the timer with the specified ID not exists,
-// an error `ErrTimerNotExist` will be returned
+// an error `ErrTimerNotExist` will be returned.
 func (s *TimerStore) GetByID(ctx context.Context, timerID string) (record *TimerRecord, err error) {
 	return s.getOneRecord(ctx, &TimerCond{ID: NewOptionalVal(timerID)})
 }
 
 // GetByKey gets a timer by key. If the timer with the specified key not exists in the namespace,
-// an error `ErrTimerNotExist` will be returned
+// an error `ErrTimerNotExist` will be returned.
 func (s *TimerStore) GetByKey(ctx context.Context, namespace, key string) (record *TimerRecord, err error) {
 	return s.getOneRecord(ctx, &TimerCond{Namespace: NewOptionalVal(namespace), Key: NewOptionalVal(key)})
 }
@@ -422,13 +434,13 @@ func (s *TimerStore) getOneRecord(ctx context.Context, cond Cond) (record *Timer
 	return records[0], nil
 }
 
-// TimerWatchEventNotifier is used to notify timer watch events
+// TimerWatchEventNotifier is used to notify timer watch events.
 type TimerWatchEventNotifier interface {
 	// Watch watches all changes of the store. A chan will be returned to receive `WatchTimerResponse`
 	// The returned chan be closed when the context in the argument is done.
 	Watch(ctx context.Context) WatchTimerChan
-	// Notify sends the event to watchers
+	// Notify sends the event to watchers.
 	Notify(tp WatchTimerEventType, timerID string)
-	// Close closes the notifier
+	// Close closes the notifier.
 	Close()
 }

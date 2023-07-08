@@ -200,13 +200,15 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 				Watermark:       watermark,
 				Enable:          row.GetInt64(9) != 0,
 			},
-			EventStatus: api.SchedEventStatus(row.GetString(11)),
-			EventID:     row.GetString(12),
-			EventData:   eventData,
-			EventStart:  eventStart,
-			SummaryData: summaryData,
-			CreateTime:  createTime,
-			Version:     row.GetUint64(18),
+			ManualRequest: ext.Manual.ToManualRequest(),
+			EventStatus:   api.SchedEventStatus(row.GetString(11)),
+			EventID:       row.GetString(12),
+			EventData:     eventData,
+			EventStart:    eventStart,
+			EventExtra:    ext.Event.ToEventExtra(),
+			SummaryData:   summaryData,
+			CreateTime:    createTime,
+			Version:       row.GetUint64(18),
 		}
 		timers = append(timers, timer)
 	}
