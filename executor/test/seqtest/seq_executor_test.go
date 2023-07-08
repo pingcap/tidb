@@ -668,7 +668,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	require.NoError(t, rs.Close())
 	require.Eventually(t, func() bool {
 		return !checkGoroutineExists(keyword)
-	}, time.Second*1, time.Millisecond*10)
+	}, time.Millisecond*100, time.Millisecond*10)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
