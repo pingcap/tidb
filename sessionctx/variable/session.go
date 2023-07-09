@@ -744,6 +744,9 @@ type SessionVars struct {
 	// PlanColumnID is the unique id for column when building plan.
 	PlanColumnID atomic.Int64
 
+	// MapScalarSubQ maps the scalar sub queries from its ID to its struct.
+	MapScalarSubQ map[int64]interface{}
+
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
 
@@ -821,6 +824,8 @@ type SessionVars struct {
 
 	// Enable3StageMultiDistinctAgg indicates whether to allow 3 stage multi distinct aggregate
 	Enable3StageMultiDistinctAgg bool
+
+	ExplainNonEvaledSubQuery bool
 
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
@@ -2145,6 +2150,14 @@ func (s *SessionVars) CleanBuffers() {
 // AllocPlanColumnID allocates column id for plan.
 func (s *SessionVars) AllocPlanColumnID() int64 {
 	return s.PlanColumnID.Add(1)
+}
+
+// RegisterScalarSubQ register a scalar sub query into the map. This will be used for EXPLAIN.
+func (s *SessionVars) RegisterScalarSubQ(id int64, scalarSubQ interface{}) {
+	if s.MapScalarSubQ == nil {
+		s.MapScalarSubQ = make(map[int64]interface{})
+	}
+	s.MapScalarSubQ[id] = scalarSubQ
 }
 
 // GetCharsetInfo gets charset and collation for current context.

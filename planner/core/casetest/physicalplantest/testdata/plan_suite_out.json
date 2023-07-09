@@ -8665,5 +8665,76 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestExplainNonEvaledSubquery",
+    "Cases": [
+      {
+        "SQL": "select * from t1 where a = (select a from t2 limit 1)",
+        "Plan": [
+          "Selection 8000.00 root  eq(test.t1.a, ScalarQuery#16)",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarQuery N/A root  ScalarQuery#16",
+          "└─MaxOneRow 1.00 root  ",
+          "  └─Limit 1.00 root  offset:0, count:1",
+          "    └─TableReader 1.00 root  data:Limit",
+          "      └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "        └─TableFullScan 1.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "select * from t1 where exists(select 1 from t2 where a = 1)",
+        "Plan": [
+          "Selection 8000.00 root  ScalarQuery#9",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarQuery N/A root  ScalarQuery#9",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(test.t2.a, 1)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "select * from t1 where not exists(select 1 from t2 where a = 1)",
+        "Plan": [
+          "Selection 8000.00 root  not(ScalarQuery#9)",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarQuery N/A root  ScalarQuery#9",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(test.t2.a, 1)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
+        "Plan": [
+          "Selection 8000.00 root  ScalarQuery#24",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarQuery N/A root  ScalarQuery#18",
+          "└─MaxOneRow 1.00 root  ",
+          "  └─Limit 1.00 root  offset:0, count:1",
+          "    └─TableReader 1.00 root  data:Limit",
+          "      └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "        └─TableFullScan 1.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "ScalarQuery N/A root  ScalarQuery#24",
+          "└─Selection 6400.00 root  eq(cast(test.t2.a, double BINARY), cast(ScalarQuery#18, double BINARY)), eq(cast(test.t2.b, double BINARY), cast(ScalarQuery#18, double BINARY))",
+          "  └─TableReader 8000.00 root  data:Selection",
+          "    └─Selection 8000.00 cop[tikv]  eq(test.t2.b, test.t2.a)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "select * from t1 where (a, b) = (select a, b from t2 limit 1)",
+        "Plan": null,
+        "Error": "[expression:1241]Operand should contain 2 column(s)"
+      }
+    ]
   }
 ]
