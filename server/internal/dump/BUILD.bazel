@@ -17,16 +17,10 @@ go_test(
     srcs = ["dump_test.go"],
     embed = [":dump"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 3,
     deps = [
-        "//parser/charset",
-        "//parser/mysql",
-        "//server/internal/column",
-        "//server/internal/util",
         "//sessionctx/stmtctx",
         "//types",
-        "//util/chunk",
-        "//util/mock",
         "@com_github_stretchr_testify//require",
     ],
 )
