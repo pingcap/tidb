@@ -44,5 +44,6 @@ func skipShardCount(path string) bool {
 	return strings.HasPrefix(path, "tests") ||
 		(strings.HasPrefix(path, "util") &&
 			!strings.HasPrefix(path, "util/admin") &&
-			!strings.HasPrefix(path, "util/chunk"))
+			!strings.HasPrefix(path, "util/chunk") &&
+			!strings.HasPrefix(path, "util/stmtsummary"))
 }
