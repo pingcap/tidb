@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 // ScalarSubQueryExpr is a expression placeholder for the non-correlated scalar subqueries which can be evaluated during optimizing phase.
@@ -41,11 +42,13 @@ type ScalarSubQueryExpr struct {
 	evalErr error
 	evaled  bool
 
+	hashcode []byte
+
 	expression.Constant
 }
 
 // Traverse implements the TraverseDown interface.
-func (s *ScalarSubQueryExpr) Traverse(action expression.TraverseAction) expression.Expression {
+func (s *ScalarSubQueryExpr) Traverse(_ expression.TraverseAction) expression.Expression {
 	return s
 }
 
@@ -81,37 +84,37 @@ func (s *ScalarSubQueryExpr) Eval(_ chunk.Row) (types.Datum, error) {
 }
 
 // EvalInt returns the int64 representation of expression.
-func (s *ScalarSubQueryExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
+func (*ScalarSubQueryExpr) EvalInt(_ sessionctx.Context, _ chunk.Row) (val int64, isNull bool, err error) {
 	return 0, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
 }
 
 // EvalReal returns the float64 representation of expression.
-func (s *ScalarSubQueryExpr) EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error) {
+func (*ScalarSubQueryExpr) EvalReal(_ sessionctx.Context, _ chunk.Row) (val float64, isNull bool, err error) {
 	return 0, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
 }
 
 // EvalString returns the string representation of expression.
-func (s *ScalarSubQueryExpr) EvalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error) {
+func (*ScalarSubQueryExpr) EvalString(_ sessionctx.Context, _ chunk.Row) (val string, isNull bool, err error) {
 	return "", false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
 }
 
 // EvalDecimal returns the decimal representation of expression.
-func (s *ScalarSubQueryExpr) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
+func (*ScalarSubQueryExpr) EvalDecimal(_ sessionctx.Context, _ chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
 	return nil, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
 }
 
 // EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
-func (s *ScalarSubQueryExpr) EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Time, isNull bool, err error) {
+func (*ScalarSubQueryExpr) EvalTime(_ sessionctx.Context, _ chunk.Row) (val types.Time, isNull bool, err error) {
 	return types.ZeroTime, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
 }
 
 // EvalDuration returns the duration representation of expression.
-func (s *ScalarSubQueryExpr) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error) {
+func (*ScalarSubQueryExpr) EvalDuration(_ sessionctx.Context, _ chunk.Row) (val types.Duration, isNull bool, err error) {
 	return types.ZeroDuration, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
 }
 
 // EvalJSON returns the JSON representation of expression.
-func (s *ScalarSubQueryExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
+func (*ScalarSubQueryExpr) EvalJSON(_ sessionctx.Context, _ chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
 	return types.BinaryJSON{}, false, errors.Errorf("Evaluation methods is not implemented for ScalarSubQueryExpr")
 }
 
@@ -128,7 +131,7 @@ func (s *ScalarSubQueryExpr) Clone() expression.Expression {
 }
 
 // Equal implements the Expression interface.
-func (s *ScalarSubQueryExpr) Equal(ctx sessionctx.Context, e expression.Expression) bool {
+func (s *ScalarSubQueryExpr) Equal(_ sessionctx.Context, e expression.Expression) bool {
 	anotherS, ok := e.(*ScalarSubQueryExpr)
 	if !ok {
 		return false
@@ -140,42 +143,42 @@ func (s *ScalarSubQueryExpr) Equal(ctx sessionctx.Context, e expression.Expressi
 }
 
 // IsCorrelated implements the Expression interface.
-func (s *ScalarSubQueryExpr) IsCorrelated() bool {
+func (*ScalarSubQueryExpr) IsCorrelated() bool {
 	return false
 }
 
 // ConstItem implements the Expression interface.
-func (s *ScalarSubQueryExpr) ConstItem(sc *stmtctx.StatementContext) bool {
+func (*ScalarSubQueryExpr) ConstItem(_ *stmtctx.StatementContext) bool {
 	return true
 }
 
 // Decorrelate implements the Expression interface.
-func (s *ScalarSubQueryExpr) Decorrelate(schema *expression.Schema) expression.Expression {
+func (s *ScalarSubQueryExpr) Decorrelate(_ *expression.Schema) expression.Expression {
 	return s
 }
 
 // resolveIndices implements the Expression interface.
-func (s *ScalarSubQueryExpr) resolveIndices(schema *expression.Schema) error {
+func (*ScalarSubQueryExpr) resolveIndices(_ *expression.Schema) error {
 	return nil
 }
 
 // ResolveIndices implements the Expression interface.
-func (s *ScalarSubQueryExpr) ResolveIndices(schema *expression.Schema) (expression.Expression, error) {
+func (s *ScalarSubQueryExpr) ResolveIndices(_ *expression.Schema) (expression.Expression, error) {
 	return s, nil
 }
 
 // ResolveIndicesByVirtualExpr implements the Expression interface.
-func (s *ScalarSubQueryExpr) ResolveIndicesByVirtualExpr(schema *expression.Schema) (expression.Expression, bool) {
+func (s *ScalarSubQueryExpr) ResolveIndicesByVirtualExpr(_ *expression.Schema) (expression.Expression, bool) {
 	return s, false
 }
 
 // resolveIndicesByVirtualExpr implements the Expression interface.
-func (s *ScalarSubQueryExpr) resolveIndicesByVirtualExpr(schema *expression.Schema) bool {
+func (*ScalarSubQueryExpr) resolveIndicesByVirtualExpr(_ *expression.Schema) bool {
 	return false
 }
 
 // RemapColumn implements the Expression interface.
-func (s *ScalarSubQueryExpr) RemapColumn(map[int64]*expression.Column) (expression.Expression, error) {
+func (s *ScalarSubQueryExpr) RemapColumn(_ map[int64]*expression.Column) (expression.Expression, error) {
 	return s, nil
 }
 
@@ -190,8 +193,14 @@ func (s *ScalarSubQueryExpr) ExplainNormalizedInfo() string {
 }
 
 // HashCode implements the Expression interface.
-func (s *ScalarSubQueryExpr) HashCode(sc *stmtctx.StatementContext) []byte {
-	return nil
+func (s *ScalarSubQueryExpr) HashCode(_ *stmtctx.StatementContext) []byte {
+	if len(s.hashcode) != 0 {
+		return s.hashcode
+	}
+	s.hashcode = make([]byte, 0, 9)
+	s.hashcode = append(s.hashcode, expression.ScalarSubQFlag)
+	s.hashcode = codec.EncodeInt(s.hashcode, s.scalarSubQueryID)
+	return s.hashcode
 }
 
 // MemoryUsage implements the Expression interface.
@@ -227,7 +236,7 @@ func (s *ScalarSubQueryExpr) MarshalJSON() ([]byte, error) {
 }
 
 // ReverseEval evaluates the only one column value with given function result.
-func (s *ScalarSubQueryExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
+func (s *ScalarSubQueryExpr) ReverseEval(_ *stmtctx.StatementContext, _ types.Datum, _ types.RoundingType) (val types.Datum, err error) {
 	if s.evalErr != nil {
 		return s.Value, s.evalErr
 	}
@@ -242,51 +251,51 @@ func (s *ScalarSubQueryExpr) ReverseEval(sc *stmtctx.StatementContext, res types
 }
 
 // SupportReverseEval implements the Expression interface.
-func (s *ScalarSubQueryExpr) SupportReverseEval() bool {
+func (*ScalarSubQueryExpr) SupportReverseEval() bool {
 	return true
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
-func (s *ScalarSubQueryExpr) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (*ScalarSubQueryExpr) VecEvalInt(_ sessionctx.Context, _ *chunk.Chunk, _ *chunk.Column) error {
 	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
 }
 
 // VecEvalReal evaluates this expression in a vectorized manner.
-func (s *ScalarSubQueryExpr) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (*ScalarSubQueryExpr) VecEvalReal(_ sessionctx.Context, _ *chunk.Chunk, _ *chunk.Column) error {
 	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
 }
 
 // VecEvalString evaluates this expression in a vectorized manner.
-func (s *ScalarSubQueryExpr) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (*ScalarSubQueryExpr) VecEvalString(_ sessionctx.Context, _ *chunk.Chunk, _ *chunk.Column) error {
 	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
 }
 
 // VecEvalDecimal evaluates this expression in a vectorized manner.
-func (s *ScalarSubQueryExpr) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (*ScalarSubQueryExpr) VecEvalDecimal(_ sessionctx.Context, _ *chunk.Chunk, _ *chunk.Column) error {
 	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
 }
 
 // VecEvalTime evaluates this expression in a vectorized manner.
-func (s *ScalarSubQueryExpr) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (*ScalarSubQueryExpr) VecEvalTime(_ sessionctx.Context, _ *chunk.Chunk, _ *chunk.Column) error {
 	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
 }
 
 // VecEvalDuration evaluates this expression in a vectorized manner.
-func (s *ScalarSubQueryExpr) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (*ScalarSubQueryExpr) VecEvalDuration(_ sessionctx.Context, _ *chunk.Chunk, _ *chunk.Column) error {
 	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
 }
 
 // VecEvalJSON evaluates this expression in a vectorized manner.
-func (s *ScalarSubQueryExpr) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (*ScalarSubQueryExpr) VecEvalJSON(_ sessionctx.Context, _ *chunk.Chunk, _ *chunk.Column) error {
 	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")
 }
 
 // Vectorized returns whether the expression can be vectorized.
-func (s *ScalarSubQueryExpr) Vectorized() bool {
+func (*ScalarSubQueryExpr) Vectorized() bool {
 	return true
 }
 
 // Schema implements the Plan interface.
-func (s *ScalarSubQueryExpr) Schema() *expression.Schema {
+func (*ScalarSubQueryExpr) Schema() *expression.Schema {
 	return nil
 }
