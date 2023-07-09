@@ -10,3 +10,14 @@ go_library(
         "//util/dbterror",
     ],
 )
+
+go_library(
+    name = "err",
+    srcs = ["error.go"],
+    importpath = "github.com/pingcap/tidb/server/err",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//util/dbterror",
+    ],
+)
