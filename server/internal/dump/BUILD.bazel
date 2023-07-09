@@ -6,15 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/server/internal/dump",
     visibility = ["//server:__subpackages__"],
     deps = [
-        "//errno",
-        "//parser/charset",
         "//parser/mysql",
-        "//server/internal/column",
-        "//server/internal/util",
         "//types",
-        "//util/chunk",
-        "//util/dbterror",
-        "//util/hack",
     ],
 )
 

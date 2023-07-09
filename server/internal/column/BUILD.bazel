@@ -11,7 +11,12 @@ go_library(
     deps = [
         "//parser/charset",
         "//parser/mysql",
+        "//server/internal",
         "//server/internal/dump",
+        "//server/internal/util",
+        "//types",
+        "//util/chunk",
+        "//util/hack",
         "//util/logutil",
         "@org_uber_go_zap//:zap",
     ],

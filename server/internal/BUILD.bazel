@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "internal",
+    srcs = ["error.go"],
+    importpath = "github.com/pingcap/tidb/server/internal",
+    visibility = ["//server:__subpackages__"],
+    deps = [
+        "//errno",
+        "//util/dbterror",
+    ],
+)

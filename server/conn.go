@@ -2239,9 +2239,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		for i := 0; i < rowCount; i++ {
 			data = data[0:4]
 			if binary {
-				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+				data, err = column.DumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
 			} else {
-				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+				data, err = column.DumpTextRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
 			}
 			if err != nil {
 				reg.End()
@@ -2295,7 +2295,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs cursorRes
 		row := iter.Current()
 
 		data = data[0:4]
-		data, err = dumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
+		data, err = column.DumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
 		if err != nil {
 			return err
 		}
