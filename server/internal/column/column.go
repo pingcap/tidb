@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/server/internal"
+	"github.com/pingcap/tidb/server/err"
 	"github.com/pingcap/tidb/server/internal/dump"
 	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/types"
@@ -184,7 +184,7 @@ func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder
 			d.UpdateDataEncoding(mysql.DefaultCollationID)
 			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetJSON(i).String())))
 		default:
-			return nil, internal.ErrInvalidType.GenWithStack("invalid type %v", columns[i].Type)
+			return nil, err.ErrInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}
 	}
 	return buffer, nil
@@ -243,7 +243,7 @@ func DumpBinaryRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncod
 			d.UpdateDataEncoding(mysql.DefaultCollationID)
 			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetJSON(i).String())))
 		default:
-			return nil, internal.ErrInvalidType.GenWithStack("invalid type %v", columns[i].Type)
+			return nil, err.ErrInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}
 	}
 	return buffer, nil

@@ -11,7 +11,7 @@ go_library(
     deps = [
         "//parser/charset",
         "//parser/mysql",
-        "//server/internal",
+        "//server/error",
         "//server/internal/dump",
         "//server/internal/util",
         "//types",
