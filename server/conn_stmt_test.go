@@ -15,6 +15,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -31,7 +32,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/internal/column"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -351,4 +356,270 @@ func TestCursorFetchErrorInFetch(t *testing.T) {
 	require.False(t, stmt.GetCursorActive())
 	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
 	require.Len(t, tk.Session().GetSessionVars().DiskTracker.GetChildrenForTest(), 0)
+}
+
+func TestCursorFetchExecuteCheck(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	appendUint32 := binary.LittleEndian.AppendUint32
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+
+	stmt, _, _, err := c.Context().Prepare("select 1")
+	require.NoError(t, err)
+
+	// execute with wrong ID
+	require.Error(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID()+1)),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+
+	// execute with wrong flag
+	require.Error(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly|mysql.CursorTypeForUpdate, 0x1, 0x0, 0x0, 0x0,
+	)))
+
+	require.Error(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly|mysql.CursorTypeScrollable, 0x1, 0x0, 0x0, 0x0,
+	)))
+}
+
+func getExpectOutput(t *testing.T, originalConn *mockConn, writeFn func(conn *clientConn)) []byte {
+	buf := bytes.NewBuffer([]byte{})
+	conn := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		capability: originalConn.capability,
+		pkt: &packetIO{
+			sequence:  originalConn.pkt.sequence,
+			bufWriter: bufio.NewWriter(buf),
+		},
+	}
+	conn.setCtx(originalConn.getCtx())
+	writeFn(conn)
+	require.NoError(t, conn.flush(context.Background()))
+
+	return buf.Bytes()
+}
+
+func expectedLonglongFetchResult(t *testing.T, c *mockConn, i int64) []byte {
+	return getExpectOutput(t, c, func(conn *clientConn) {
+		var err error
+
+		cols := []*column.Info{{
+			Name:  "id",
+			Table: "t",
+			Type:  mysql.TypeLonglong,
+		}}
+
+		chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+		chk.AppendInt64(0, i)
+
+		data := make([]byte, 4)
+		data, err = column.DumpBinaryRow(data, cols, chk.GetRow(0), conn.rsEncoder)
+		require.NoError(t, err)
+		require.NoError(t, conn.writePacket(data))
+		require.NoError(t, conn.writeEOF(context.Background(), mysql.ServerStatusCursorExists|mysql.ServerStatusAutocommit))
+	})
+}
+
+func TestCursorFetchExecuteWithOpenCursor(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	appendUint32 := binary.LittleEndian.AppendUint32
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability = mysql.ClientProtocol41
+
+	stmt, _, _, err := c.Context().Prepare("select * from (select 1 as id union all select 2 as id union all select 3 as id) t order by id")
+	require.NoError(t, err)
+
+	// execute the statement
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+
+	out := c.GetOutput()
+	// fetch one row
+	expected := expectedLonglongFetchResult(t, c, 1)
+	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
+	require.NoError(t, c.flush(context.Background()))
+	require.Equal(t, expected, out.Bytes())
+
+	out = c.GetOutput()
+	// fetch the next row
+	expected = expectedLonglongFetchResult(t, c, 2)
+	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
+	require.NoError(t, c.flush(context.Background()))
+	require.Equal(t, expected, out.Bytes())
+
+	// re-execute the statement
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+	out = c.GetOutput()
+	// the first row should be 1 again
+	expected = expectedLonglongFetchResult(t, c, 1)
+	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
+	require.NoError(t, c.flush(context.Background()))
+	require.Equal(t, expected, out.Bytes())
+}
+
+func TestCursorFetchReset(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	appendUint32 := binary.LittleEndian.AppendUint32
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability = mysql.ClientProtocol41
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id_1 BIGINT, id_2 BIGINT)")
+	tk.MustExec("insert into t values (1, 1), (1, 2)")
+
+	stmt, _, _, err := c.Context().Prepare("select id_1 from t where id_1 = ?")
+	require.NoError(t, err)
+
+	// execute the statement with id_1 = 1
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+		0x0, 0x1, 0x3, 0x0,
+		0x1, 0x0, 0x0, 0x0,
+	)))
+
+	out := c.GetOutput()
+	// fetch one row
+	expected := expectedLonglongFetchResult(t, c, 1)
+	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
+	require.NoError(t, c.flush(context.Background()))
+	require.Equal(t, expected, out.Bytes())
+	// reset the statement
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
+	)))
+	// the following fetch will fail
+	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
+}
+
+func dispatchSendLongData(c *mockConn, stmtID int, paramIndex uint16, parameter []byte) error {
+	appendUint16 := binary.LittleEndian.AppendUint16
+	appendUint32 := binary.LittleEndian.AppendUint32
+
+	return c.Dispatch(context.Background(),
+		append(
+			appendUint16(
+				appendUint32([]byte{mysql.ComStmtSendLongData}, uint32(stmtID)),
+				paramIndex), // the index of parameter
+			parameter..., // the parameter
+		),
+	)
+}
+
+func TestCursorFetchSendLongData(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	appendUint32 := binary.LittleEndian.AppendUint32
+	appendUint64 := binary.LittleEndian.AppendUint64
+
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability = mysql.ClientProtocol41
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id_1 BIGINT, id_2 BIGINT)")
+	tk.MustExec("insert into t values (1, 1), (1, 2)")
+
+	// as the `ComStmtSendLongData` only sends bytes parameters, use `SUBSTR(HEX(?), 1, 2)` to convert a little endian 1 to
+	// a string "1"
+	stmt, _, _, err := c.Context().Prepare("select id_1 from t where id_1 = cast(SUBSTR(HEX(?), 1, 2) as UNSIGNED)")
+	require.NoError(t, err)
+
+	// send a parameter to the server
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, appendUint64([]byte{}, 1)))
+
+	// execute the statement without argument
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+		0x0, 0x0,
+	)))
+
+	out := c.GetOutput()
+	// fetch one row
+	expected := expectedLonglongFetchResult(t, c, 1)
+	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
+	require.NoError(t, c.flush(context.Background()))
+	require.Equal(t, expected, out.Bytes())
+}
+
+func TestCursorFetchSendLongDataReset(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	appendUint32 := binary.LittleEndian.AppendUint32
+	appendUint64 := binary.LittleEndian.AppendUint64
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability = mysql.ClientProtocol41
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id_1 BIGINT, id_2 BIGINT)")
+	tk.MustExec("insert into t values (1, 1), (1, 1), (2, 2), (2, 2)")
+
+	// as the `ComStmtSendLongData` only sends bytes parameters, use `SUBSTR(HEX(?), 1, 2)` to convert a little endian 2 to
+	// a string "2"
+	stmt, _, _, err := c.Context().Prepare("select id_1 from t where id_1 = cast(SUBSTR(HEX(?), 1, 2) as UNSIGNED)")
+	require.NoError(t, err)
+
+	// send a parameter to the server
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, appendUint64([]byte{}, 1)))
+	// reset the statement
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
+	)))
+	// execute directly will fail
+	require.Error(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+		0x0, 0x0,
+	)))
+
+	// send a parameter to the server
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, appendUint64([]byte{}, 2)))
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+		0x0, 0x0,
+	)))
+
+	out := c.GetOutput()
+	// fetch one row, it will get "2" because the argument is 2 now.
+	expected := expectedLonglongFetchResult(t, c, 2)
+	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
+	require.NoError(t, c.flush(context.Background()))
+	require.Equal(t, expected, out.Bytes())
 }
