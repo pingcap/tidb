@@ -393,10 +393,10 @@ func TestConcatWSSig(t *testing.T) {
 func TestLeft(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 
 	cases := []struct {
@@ -443,10 +443,10 @@ func TestLeft(t *testing.T) {
 func TestRight(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 
 	cases := []struct {
@@ -980,10 +980,10 @@ func TestSubstringIndex(t *testing.T) {
 func TestSpace(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 
 	cases := []struct {
@@ -1412,7 +1412,7 @@ func TestBitLength(t *testing.T) {
 
 func TestChar(t *testing.T) {
 	ctx := createContext(t)
-	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
 	tbl := []struct {
 		str      string
 		iNum     int64
@@ -1533,10 +1533,10 @@ func TestFindInSet(t *testing.T) {
 func TestField(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 
 	tbl := []struct {
@@ -2322,7 +2322,7 @@ func TestBin(t *testing.T) {
 	fc := funcs[ast.Bin]
 	dtbl := tblToDtbl(tbl)
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
 	for _, c := range dtbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)

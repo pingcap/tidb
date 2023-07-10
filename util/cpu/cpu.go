@@ -30,9 +30,12 @@ import (
 
 var cpuUsage atomic.Float64
 
+// If your kernel is lower than linux 4.7, you cannot get the cpu usage in the container.
+var unsupported atomic.Bool
+
 // GetCPUUsage returns the cpu usage of the current process.
-func GetCPUUsage() float64 {
-	return cpuUsage.Load()
+func GetCPUUsage() (float64, bool) {
+	return cpuUsage.Load(), unsupported.Load()
 }
 
 // Observer is used to observe the cpu usage of the current process.
@@ -56,6 +59,12 @@ func NewCPUObserver() *Observer {
 
 // Start starts the cpu observer.
 func (c *Observer) Start() {
+	_, err := cgroup.GetCgroupCPU()
+	if err != nil {
+		unsupported.Store(true)
+		log.Error("GetCgroupCPU", zap.Error(err))
+		return
+	}
 	c.wg.Add(1)
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)

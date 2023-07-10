@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -44,12 +46,12 @@ import (
  * See https://dev.mysql.com/doc/refman/5.7/en/grant.html
  ************************************************************************************/
 var (
-	_ Executor = (*GrantExec)(nil)
+	_ exec.Executor = (*GrantExec)(nil)
 )
 
 // GrantExec executes GrantStmt.
 type GrantExec struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	Privs                 []*ast.PrivElem
 	ObjectType            ast.ObjectTypeType
@@ -72,7 +74,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
-		dbName = e.ctx.GetSessionVars().CurrentDB
+		dbName = e.Ctx().GetSessionVars().CurrentDB
 	}
 
 	// For table & column level, check whether table exists and privilege is valid
@@ -81,16 +83,16 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for _, p := range e.Privs {
 			if len(p.Cols) == 0 {
 				if !mysql.AllTablePrivs.Has(p.Priv) && p.Priv != mysql.AllPriv && p.Priv != mysql.UsagePriv && p.Priv != mysql.GrantPriv && p.Priv != mysql.ExtendedPriv {
-					return ErrIllegalGrantForTable
+					return exeerrors.ErrIllegalGrantForTable
 				}
 			} else {
 				if !mysql.AllColumnPrivs.Has(p.Priv) && p.Priv != mysql.AllPriv && p.Priv != mysql.UsagePriv {
-					return ErrWrongUsage.GenWithStackByArgs("COLUMN GRANT", "NON-COLUMN PRIVILEGES")
+					return exeerrors.ErrWrongUsage.GenWithStackByArgs("COLUMN GRANT", "NON-COLUMN PRIVILEGES")
 				}
 			}
 		}
 		dbNameStr := model.NewCIStr(dbName)
-		schema := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
+		schema := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
 		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName))
 		// Allow GRANT on non-existent table with at least create privilege, see issue #28533 #29268
 		if err != nil {
@@ -122,15 +124,15 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	// Commit the old transaction, like DDL.
-	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
+	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
 		return err
 	}
-	defer func() { e.ctx.GetSessionVars().SetInTxn(false) }()
+	defer func() { e.Ctx().GetSessionVars().SetInTxn(false) }()
 
 	// Create internal session to start internal transaction.
 	isCommit := false
-	internalSession, err := e.getSysSession()
-	internalSession.GetSessionVars().User = e.ctx.GetSessionVars().User
+	internalSession, err := e.GetSysSession()
+	internalSession.GetSessionVars().User = e.Ctx().GetSessionVars().User
 	if err != nil {
 		return err
 	}
@@ -141,7 +143,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				logutil.BgLogger().Error("rollback error occur at grant privilege", zap.Error(err))
 			}
 		}
-		e.releaseSysSession(internalCtx, internalSession)
+		e.ReleaseSysSession(internalCtx, internalSession)
 	}()
 
 	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(internalCtx, "begin")
@@ -151,12 +153,12 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	// Check which user is not exist.
 	for _, user := range e.Users {
-		exists, err := userExists(ctx, e.ctx, user.User.Username, user.User.Hostname)
+		exists, err := userExists(ctx, e.Ctx(), user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err
 		}
-		if !exists && e.ctx.GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
-			return ErrCantCreateUserWithGrant
+		if !exists && e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
+			return exeerrors.ErrCantCreateUserWithGrant
 		} else if !exists {
 			// This code path only applies if mode NO_AUTO_CREATE_USER is unset.
 			// It is required for compatibility with 5.7 but removed from 8.0
@@ -164,7 +166,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			// spelling errors will create users with no passwords.
 			pwd, ok := user.EncodedPassword()
 			if !ok {
-				return errors.Trace(ErrPasswordFormat)
+				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
 			authPlugin := mysql.AuthNativePassword
 			if user.AuthOpt != nil && user.AuthOpt.AuthPlugin != "" {
@@ -243,7 +245,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	isCommit = true
-	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
+	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
 }
 
 func containsNonDynamicPriv(privList []*ast.PrivElem) bool {
@@ -300,7 +302,7 @@ func checkAndInitTablePriv(ctx sessionctx.Context, dbName, tblName string, is in
 // checkAndInitColumnPriv checks if column scope privilege entry exists in mysql.Columns_priv.
 // If unexists, insert a new one.
 func (e *GrantExec) checkAndInitColumnPriv(user string, host string, cols []*ast.ColumnName, internalSession sessionctx.Context) error {
-	dbName, tbl, err := getTargetSchemaAndTable(e.ctx, e.Level.DBName, e.Level.TableName, e.is)
+	dbName, tbl, err := getTargetSchemaAndTable(e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
 		return err
 	}
@@ -453,6 +455,9 @@ func (e *GrantExec) grantLevelPriv(priv *ast.PrivElem, user *ast.UserSpec, inter
 	if priv.Priv == mysql.ExtendedPriv {
 		return e.grantDynamicPriv(priv.Name, user, internalSession)
 	}
+	if priv.Priv == mysql.UsagePriv {
+		return nil
+	}
 	switch e.Level.Level {
 	case ast.GrantLevelGlobal:
 		return e.grantGlobalLevel(priv, user, internalSession)
@@ -471,14 +476,14 @@ func (e *GrantExec) grantLevelPriv(priv *ast.PrivElem, user *ast.UserSpec, inter
 func (e *GrantExec) grantDynamicPriv(privName string, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	privName = strings.ToUpper(privName)
 	if e.Level.Level != ast.GrantLevelGlobal { // DYNAMIC can only be *.*
-		return ErrIllegalPrivilegeLevel.GenWithStackByArgs(privName)
+		return exeerrors.ErrIllegalPrivilegeLevel.GenWithStackByArgs(privName)
 	}
-	if !privilege.GetPrivilegeManager(e.ctx).IsDynamicPrivilege(privName) {
+	if !privilege.GetPrivilegeManager(e.Ctx()).IsDynamicPrivilege(privName) {
 		// In GRANT context, MySQL returns a syntax error if the privilege has not been registered with the server:
 		// ERROR 1149 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use
 		// But in REVOKE context, it returns a warning ErrDynamicPrivilegeNotRegistered. It is not strictly compatible,
 		// but TiDB returns the more useful ErrDynamicPrivilegeNotRegistered instead of a parse error.
-		return ErrDynamicPrivilegeNotRegistered.GenWithStackByArgs(privName)
+		return exeerrors.ErrDynamicPrivilegeNotRegistered.GenWithStackByArgs(privName)
 	}
 	grantOption := "N"
 	if e.WithGrant {
@@ -491,10 +496,6 @@ func (e *GrantExec) grantDynamicPriv(privName string, user *ast.UserSpec, intern
 
 // grantGlobalLevel manipulates mysql.user table.
 func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	if priv.Priv == 0 || priv.Priv == mysql.UsagePriv {
-		return nil
-	}
-
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET `, mysql.SystemDB, mysql.UserTable)
 	err := composeGlobalPrivUpdate(sql, priv.Priv, "Y")
@@ -510,18 +511,15 @@ func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 
 // grantDBLevel manipulates mysql.db table.
 func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	if priv.Priv == mysql.UsagePriv {
-		return nil
-	}
 	for _, v := range mysql.StaticGlobalOnlyPrivs {
 		if v == priv.Priv {
-			return ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
+			return exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
 		}
 	}
 
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
-		dbName = e.ctx.GetSessionVars().CurrentDB
+		dbName = e.Ctx().GetSessionVars().CurrentDB
 	}
 
 	sql := new(strings.Builder)
@@ -539,12 +537,9 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 
 // grantTableLevel manipulates mysql.tables_priv table.
 func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	if priv.Priv == mysql.UsagePriv {
-		return nil
-	}
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
-		dbName = e.ctx.GetSessionVars().CurrentDB
+		dbName = e.Ctx().GetSessionVars().CurrentDB
 	}
 	tblName := e.Level.TableName
 
@@ -563,7 +558,7 @@ func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, inte
 
 // grantColumnLevel manipulates mysql.tables_priv table.
 func (e *GrantExec) grantColumnLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	dbName, tbl, err := getTargetSchemaAndTable(e.ctx, e.Level.DBName, e.Level.TableName, e.is)
+	dbName, tbl, err := getTargetSchemaAndTable(e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
 		return err
 	}
@@ -595,7 +590,7 @@ func (e *GrantExec) grantColumnLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 func composeGlobalPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value string) error {
 	if priv != mysql.AllPriv {
 		if priv != mysql.GrantPriv && !mysql.AllGlobalPrivs.Has(priv) {
-			return ErrWrongUsage.GenWithStackByArgs("GLOBAL GRANT", "NON-GLOBAL PRIVILEGES")
+			return exeerrors.ErrWrongUsage.GenWithStackByArgs("GLOBAL GRANT", "NON-GLOBAL PRIVILEGES")
 		}
 		sqlexec.MustFormatSQL(sql, "%n=%?", priv.ColumnString(), value)
 		return nil
@@ -614,7 +609,7 @@ func composeGlobalPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, val
 func composeDBPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value string) error {
 	if priv != mysql.AllPriv {
 		if priv != mysql.GrantPriv && !mysql.AllDBPrivs.Has(priv) {
-			return ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")
+			return exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")
 		}
 		sqlexec.MustFormatSQL(sql, "%n=%?", priv.ColumnString(), value)
 		return nil

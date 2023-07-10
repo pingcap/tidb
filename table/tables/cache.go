@@ -183,7 +183,7 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage) (kv.MemBuffer,
 }
 
 func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration) {
-	if h := c.TakeStateRemoteHandle(); h != nil {
+	if h := c.TakeStateRemoteHandleNoWait(); h != nil {
 		go c.updateLockForRead(ctx, h, store, ts, leaseDuration)
 	}
 }
@@ -316,7 +316,7 @@ func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, exit chan struc
 	atomic.StoreUint64(leasePtr, writeLockLease)
 	wg <- err
 	if err != nil {
-		logutil.Logger(ctx).Warn("[cached table] lock for write lock fail", zap.Error(err))
+		logutil.Logger(ctx).Warn("lock for write lock fail", zap.String("category", "cached table"), zap.Error(err))
 		return
 	}
 
@@ -326,7 +326,7 @@ func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, exit chan struc
 		select {
 		case <-t.C:
 			if err := c.renew(ctx, leasePtr); err != nil {
-				logutil.Logger(ctx).Warn("[cached table] renew write lock lease fail", zap.Error(err))
+				logutil.Logger(ctx).Warn("renew write lock lease fail", zap.String("category", "cached table"), zap.Error(err))
 				return
 			}
 		case <-exit:

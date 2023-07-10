@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/sessionctx/stmtctx",
     visibility = ["//visibility:public"],
     deps = [
+        "//domain/resourcegroup",
         "//errno",
         "//parser",
         "//parser/ast",
@@ -21,6 +22,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//util",
+        "@org_golang_x_exp//maps",
         "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
@@ -36,6 +38,7 @@ go_test(
     ],
     embed = [":stmtctx"],
     flaky = True,
+    shard_count = 5,
     deps = [
         "//kv",
         "//sessionctx/variable",
@@ -45,6 +48,7 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
     ],
 )

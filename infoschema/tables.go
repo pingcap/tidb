@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -824,6 +826,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
+	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -995,6 +998,9 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "FAIL_REASON", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 512},
 	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "REMAINING_SECONDS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22, decimal: 6},
+	{name: "ESTIMATED_TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 }
 
 // TableTiKVRegionStatusCols is TiKV region status mem table columns.
@@ -1226,7 +1232,7 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "END_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
-	{name: "QUERY", tp: mysql.TypeVarchar, size: 64},
+	{name: "QUERY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
 var tableSequencesCols = []columnInfo{
@@ -1488,6 +1494,7 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: txninfo.DBStr, tp: mysql.TypeVarchar, size: 64, comment: "The schema this transaction works on"},
 	{name: txninfo.AllSQLDigestsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
 	{name: txninfo.RelatedTableIDsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the table IDs that the transaction has accessed"},
+	{name: txninfo.WaitingTimeStr, tp: mysql.TypeDouble, size: 22, comment: "Current lock waiting time"},
 }
 
 var tableDeadlocksCols = []columnInfo{
@@ -1591,10 +1598,11 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 }
 
 var tableResourceGroupsCols = []columnInfo{
-	{name: "GROUP_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "GROUP_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
-	{name: "RU_PER_SECOND", tp: mysql.TypeLonglong, size: 64},
-	// {name: "BURSTABLE", tp: mysql.TypeVarchar, size: 10},
+	{name: "NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
+	{name: "RU_PER_SEC", tp: mysql.TypeVarchar, size: 21},
+	{name: "PRIORITY", tp: mysql.TypeVarchar, size: 6},
+	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 3},
+	{name: "QUERY_LIMIT", tp: mysql.TypeVarchar, size: 256},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1638,6 +1646,11 @@ const (
 	ForeignKeyType = "FOREIGN KEY"
 )
 
+const (
+	// TiFlashWrite is the TiFlash write node in disaggregated mode.
+	TiFlashWrite = "tiflash_write"
+)
+
 // ServerInfo represents the basic server information of single cluster component
 type ServerInfo struct {
 	ServerType     string
@@ -1647,6 +1660,7 @@ type ServerInfo struct {
 	GitHash        string
 	StartTimestamp int64
 	ServerID       uint64
+	EngineRole     string
 }
 
 func (s *ServerInfo) isLoopBackOrUnspecifiedAddr(addr string) bool {
@@ -1734,8 +1748,8 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
 			ServerType:     "tidb",
-			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
-			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
+			Address:        net.JoinHostPort(node.IP, strconv.Itoa(int(node.Port))),
+			StatusAddr:     net.JoinHostPort(node.IP, strconv.Itoa(int(node.StatusPort))),
 			Version:        FormatTiDBVersion(node.Version, isDefaultVersion),
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
@@ -1849,6 +1863,24 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
+func isTiFlashStore(store *metapb.Store) bool {
+	for _, label := range store.Labels {
+		if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
+			return true
+		}
+	}
+	return false
+}
+
+func isTiFlashWriteNode(store *metapb.Store) bool {
+	for _, label := range store.Labels {
+		if label.GetKey() == placement.EngineRoleLabelKey && label.GetValue() == placement.EngineRoleLabelWrite {
+			return true
+		}
+	}
+	return false
+}
+
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
 func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	failpoint.Inject("mockStoreServerInfo", func(val failpoint.Value) {
@@ -1868,16 +1900,6 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			failpoint.Return(servers, nil)
 		}
 	})
-
-	isTiFlashStore := func(store *metapb.Store) bool {
-		isTiFlash := false
-		for _, label := range store.Labels {
-			if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
-				isTiFlash = true
-			}
-		}
-		return isTiFlash
-	}
 
 	store := ctx.GetStore()
 	// Get TiKV servers info.
@@ -1910,7 +1932,10 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		} else {
 			tp = tikv.GetStoreTypeByMeta(store).Name()
 		}
-
+		var engineRole string
+		if isTiFlashWriteNode(store) {
+			engineRole = placement.EngineRoleLabelWrite
+		}
 		servers = append(servers, ServerInfo{
 			ServerType:     tp,
 			Address:        store.Address,
@@ -1918,6 +1943,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			Version:        FormatStoreServerVersion(store.Version),
 			GitHash:        store.GitHash,
 			StartTimestamp: store.StartTimestamp,
+			EngineRole:     engineRole,
 		})
 	}
 	return servers, nil
@@ -1979,6 +2005,37 @@ func GetDataFromSessionVariables(ctx context.Context, sctx sessionctx.Context) (
 		}
 		row := types.MakeDatums(v.Name, value)
 		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// GetDataFromSessionConnectAttrs produces the rows for the session_connect_attrs table.
+func GetDataFromSessionConnectAttrs(sctx sessionctx.Context) ([][]types.Datum, error) {
+	sm := sctx.GetSessionManager()
+	if sm == nil {
+		return nil, nil
+	}
+	allAttrs := sm.GetConAttrs()
+	rows := make([][]types.Datum, 0, len(allAttrs)*10) // 10 Attributes per connection
+	for pid, attrs := range allAttrs {                 // Note: PID is not ordered.
+		// Sorts the attributes by key and gives ORDINAL_POSITION based on this. This is needed as we didn't store the
+		// ORDINAL_POSITION and a map doesn't have a guaranteed sort order. This is needed to keep the ORDINAL_POSITION
+		// stable over multiple queries.
+		attrnames := make([]string, 0, len(attrs))
+		for attrname := range attrs {
+			attrnames = append(attrnames, attrname)
+		}
+		sort.Strings(attrnames)
+
+		for ord, attrkey := range attrnames {
+			row := types.MakeDatums(
+				pid,
+				attrkey,
+				attrs[attrkey],
+				ord,
+			)
+			rows = append(rows, row)
+		}
 	}
 	return rows, nil
 }
@@ -2163,6 +2220,11 @@ func (it *infoschemaTable) GetPhysicalID() int64 {
 // Type implements table.Table Type interface.
 func (it *infoschemaTable) Type() table.Type {
 	return it.tp
+}
+
+// GetPartitionedTable implements table.Table GetPartitionedTable interface.
+func (it *infoschemaTable) GetPartitionedTable() table.PartitionedTable {
+	return nil
 }
 
 // VirtualTable is a dummy table.Table implementation.

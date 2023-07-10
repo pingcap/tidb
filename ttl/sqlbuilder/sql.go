@@ -32,8 +32,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-const dateTimeFormat = "2006-01-02 15:04:05.999999"
-
 func writeHex(in io.Writer, d types.Datum) error {
 	_, err := fmt.Fprintf(in, "x'%s'", hex.EncodeToString(d.GetBytes()))
 	return err
@@ -116,7 +114,7 @@ func (b *SQLBuilder) WriteSelect() error {
 	if b.state != writeBegin {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
-	b.restoreCtx.WritePlain("SELECT LOW_PRIORITY ")
+	b.restoreCtx.WritePlain("SELECT LOW_PRIORITY SQL_NO_CACHE ")
 	b.writeColNames(b.tbl.KeyColumns, false)
 	b.restoreCtx.WritePlain(" FROM ")
 	if err := b.writeTblName(); err != nil {
@@ -183,9 +181,9 @@ func (b *SQLBuilder) WriteExpireCondition(expire time.Time) error {
 
 	b.writeColNames([]*model.ColumnInfo{b.tbl.TimeColumn}, false)
 	b.restoreCtx.WritePlain(" < ")
-	b.restoreCtx.WritePlain("'")
-	b.restoreCtx.WritePlain(expire.Format(dateTimeFormat))
-	b.restoreCtx.WritePlain("'")
+	b.restoreCtx.WritePlain("FROM_UNIXTIME(")
+	b.restoreCtx.WritePlain(strconv.FormatInt(expire.Unix(), 10))
+	b.restoreCtx.WritePlain(")")
 	b.hasWriteExpireCond = true
 	return nil
 }
@@ -318,7 +316,8 @@ type ScanQueryGenerator struct {
 }
 
 // NewScanQueryGenerator creates a new ScanQueryGenerator
-func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time, rangeStart []types.Datum, rangeEnd []types.Datum) (*ScanQueryGenerator, error) {
+func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
+	rangeStart, rangeEnd []types.Datum) (*ScanQueryGenerator, error) {
 	if err := tbl.ValidateKeyPrefix(rangeStart); err != nil {
 		return nil, err
 	}

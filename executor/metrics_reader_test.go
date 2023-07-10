@@ -59,6 +59,7 @@ func TestStmtLabel(t *testing.T) {
 		{"update label set c3 = 3 where c1 = 1", "Update"},
 		{"update label set c3 = 3 where c2 = 1", "Update"},
 		{"update label set c3 = 3 where c2 = 1 order by c3 limit 1", "Update"},
+		{"import into label from '/file.csv'", "ImportInto"},
 	}
 	for _, tt := range tests {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")

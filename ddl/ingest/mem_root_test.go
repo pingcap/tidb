@@ -58,3 +58,9 @@ func TestMemoryRoot(t *testing.T) {
 	memRoot.Consume(10) // Mix usage of tag and non-tag.
 	require.Equal(t, int64(522), memRoot.CurrentUsage())
 }
+
+func TestRiskOfDiskFull(t *testing.T) {
+	require.False(t, ingest.RiskOfDiskFull(11, 100))
+	require.False(t, ingest.RiskOfDiskFull(10, 100))
+	require.True(t, ingest.RiskOfDiskFull(9, 100))
+}

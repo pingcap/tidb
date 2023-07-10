@@ -56,7 +56,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 
 	compareTS := getOracleTS(t, se)
 	lockErr = kv.ErrWriteConflict
-	nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	nextAction, err := provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	err = provider.OnStmtRetry(context.TODO())
@@ -72,7 +72,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	// Update compareTS for the next comparison
 	compareTS = getOracleTS(t, se)
 	lockErr = kv.ErrWriteConflict
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	err = provider.OnStmtStart(context.TODO(), nil)
@@ -86,14 +86,14 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	require.Greater(t, ts, compareTS2)
 
 	lockErr = newDeadLockError(false)
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.Equal(t, lockErr, err)
 	require.Equal(t, sessiontxn.StmtActionError, nextAction)
 
 	// Update compareTS for the next comparison
 	compareTS = getOracleTS(t, se)
 	lockErr = newDeadLockError(true)
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	err = provider.OnStmtRetry(context.TODO())
@@ -109,7 +109,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	// Update compareTS for the next comparison
 	compareTS = getOracleTS(t, se)
 	lockErr = newDeadLockError(true)
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	err = provider.OnStmtStart(context.TODO(), nil)
@@ -124,13 +124,13 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 
 	// StmtErrAfterLock: other errors should only update forUpdateTS but not retry
 	lockErr = errors.New("other error")
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.Equal(t, lockErr, err)
 	require.Equal(t, sessiontxn.StmtActionError, nextAction)
 
 	// StmtErrAfterQuery: always not retry and not update forUpdateTS
 	lockErr = kv.ErrWriteConflict
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, lockErr)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterQuery, lockErr)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
 	require.Nil(t, err)
 }
@@ -421,7 +421,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 
 		// retry
 		if c.shouldOptimize {
-			action, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, kv.ErrWriteConflict)
+			action, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, kv.ErrWriteConflict)
 			require.NoError(t, err)
 			require.Equal(t, sessiontxn.StmtActionRetryReady, action)
 			err = provider.OnStmtRetry(context.TODO())
@@ -699,4 +699,14 @@ func TestRRWaitTSTimeInSlowLog(t *testing.T) {
 	require.NotEqual(t, waitTS1, waitTS2)
 	require.NotEqual(t, waitTS1, waitTS3)
 	require.NotEqual(t, waitTS2, waitTS3)
+}
+
+func TestIssue41194(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("analyze table t")
 }

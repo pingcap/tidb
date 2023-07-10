@@ -242,8 +242,10 @@ func TestFDSet_AddConstant(t *testing.T) {
 	require.Equal(t, "(7)", fd.fdEdges[2].from.String())
 	require.Equal(t, "(5,6)", fd.fdEdges[2].to.String())
 
-	fd.AddConstants(NewFastIntSet(4))    // add d, {} --> {a,b,c,d}, and FD {d} --> {f,g} is transferred to constant closure.
-	require.Equal(t, 1, len(fd.fdEdges)) // => {} --> {a,b,c,d,e,f}, for lax FD {g} ~~> {e,f}, dependencies are constants, removed.
+	// add d, {} --> {a,b,c,d}, and FD {d} --> {f,g} is transferred to constant closure.
+	fd.AddConstants(NewFastIntSet(4))
+	// => {} --> {a,b,c,d,e,f}, for lax FD {g} ~~> {e,f}, dependencies are constants, removed.
+	require.Equal(t, 1, len(fd.fdEdges))
 	require.True(t, fd.fdEdges[0].strict)
 	require.False(t, fd.fdEdges[0].equiv)
 	require.Equal(t, "()", fd.fdEdges[0].from.String())
@@ -312,8 +314,10 @@ func TestFDSet_AddEquivalence(t *testing.T) {
 	require.Equal(t, "(3-5)", fd.ConstantCols().String())
 
 	fd.AddStrictFunctionalDependency(NewFastIntSet(2, 3), NewFastIntSet(5, 6)) // {b,c} --> {e,f}
-	require.Equal(t, 4, len(fd.fdEdges))                                       // res: {a,b} == {a,b}, {c,d} == {c,d},{} --> {c,d,e}, {b} --> {e,f}
-	require.True(t, fd.fdEdges[3].strict)                                      // explain: strict FD's from side c is eliminated by constant closure.
+	// res: {a,b} == {a,b}, {c,d} == {c,d},{} --> {c,d,e}, {b} --> {e,f}
+	require.Equal(t, 4, len(fd.fdEdges))
+	// explain: strict FD's from side c is eliminated by constant closure.
+	require.True(t, fd.fdEdges[3].strict)
 	require.False(t, fd.fdEdges[3].equiv)
 	require.Equal(t, "(2)", fd.fdEdges[3].from.String())
 	require.Equal(t, "(5,6)", fd.fdEdges[3].to.String())
@@ -323,7 +327,8 @@ func TestFDSet_AddEquivalence(t *testing.T) {
 	// explain:
 	// b = d build the connection between {a,b} == {a,b}, {c,d} == {c,d}, make the superset of equivalence closure.
 	// the superset equivalence closure extend the existed constant closure in turn, resulting {} --> {a,b,c,d,e}
-	// the superset constant closure eliminate existed strict FD, since determinants is constant, so the dependencies must be constant as well.
+	// the superset constant closure eliminate existed strict FD, since determinants is constant,
+	// so the dependencies must be constant as well.
 	// so extending the current constant closure as to {} --> {a,b,c,d,e,f}
 	require.Equal(t, 2, len(fd.fdEdges))
 	require.Equal(t, 1, len(fd.EquivalenceCols()))

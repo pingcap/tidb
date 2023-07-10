@@ -164,8 +164,8 @@ func (s *InferTypeSuite) createTestCase4Constants() []typeInferTestCase {
 		{"TRUE", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag | mysql.NotNullFlag, 1, 0},
 		{"FALSE", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag | mysql.NotNullFlag, 1, 0},
 		{"'1234'", mysql.TypeVarString, charset.CharsetUTF8MB4, 0 | mysql.NotNullFlag, 4, types.UnspecifiedLength},
-		{"_utf8'1234'", mysql.TypeVarString, charset.CharsetUTF8, 0 | mysql.NotNullFlag, 4, types.UnspecifiedLength},
-		{"_binary'1234'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 4, types.UnspecifiedLength},
+		{"_utf8'1234'", mysql.TypeVarString, charset.CharsetUTF8, 0 | mysql.NotNullFlag | mysql.UnderScoreCharsetFlag, 4, types.UnspecifiedLength},
+		{"_binary'1234'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag | mysql.UnderScoreCharsetFlag, 4, types.UnspecifiedLength},
 		{"b'0001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 3, 0},
 		{"b'000100001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 6, 0},
 		{"b'0000000000010000'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 6, 0},
@@ -881,6 +881,7 @@ func (s *InferTypeSuite) createTestCase4InfoFunc() []typeInferTestCase {
 		{"user()", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
 		{"connection_id()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag | mysql.NotNullFlag, mysql.MaxIntWidth, 0},
 		{"version()", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 64, types.UnspecifiedLength},
+		{"current_resource_group()", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 64, types.UnspecifiedLength},
 	}
 }
 
@@ -2998,7 +2999,7 @@ func (s *InferTypeSuite) createTestCase4JSONFuncs() []typeInferTestCase {
 		{"json_contains(c_json, 'a')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"json_contains_path(c_json, 'one', '$.a')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"json_quote('k')", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.BinaryFlag | mysql.NotNullFlag, 8, types.UnspecifiedLength},
-		{"json_valid(c_json)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
+		{"json_valid(c_json)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag, mysql.MaxIntWidth, 0},
 		{`json_search(c_json, 'one', '"a"')`, mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
 		{`json_depth(c_json)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{`json_length(c_json)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},

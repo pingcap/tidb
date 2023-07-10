@@ -25,25 +25,37 @@ import (
 
 func (r *ResourceManager) schedule() {
 	r.poolMap.Iter(func(pool *util.PoolContainer) {
+		if pool.Component == util.DistTask {
+			return
+		}
 		cmd := r.schedulePool(pool)
-		r.exec(pool, cmd)
+		r.Exec(pool, cmd)
 	})
 }
 
 func (r *ResourceManager) schedulePool(pool *util.PoolContainer) scheduler.Command {
+	if pool.Pool.Running() == 0 {
+		return scheduler.Hold
+	}
 	for _, sch := range r.scheduler {
 		cmd := sch.Tune(pool.Component, pool.Pool)
 		switch cmd {
 		case scheduler.Hold:
 			continue
 		default:
+			if cmd == scheduler.Downclock {
+				if pool.Pool.Cap() == 1 || pool.Pool.Running() > pool.Pool.Cap() {
+					continue
+				}
+			}
 			return cmd
 		}
 	}
 	return scheduler.Hold
 }
 
-func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command) {
+// Exec is to executor the command from scheduler.
+func (*ResourceManager) Exec(pool *util.PoolContainer, cmd scheduler.Command) {
 	if cmd == scheduler.Hold {
 		return
 	}
@@ -52,16 +64,20 @@ func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command) {
 		switch cmd {
 		case scheduler.Downclock:
 			concurrency := con - 1
-			log.Info("[resource manager] downclock goroutine pool",
-				zap.Int("origin concurrency", con),
-				zap.Int("concurrency", concurrency),
+			log.Debug("downclock goroutine pool", zap.String("category", "resource manager"),
+				zap.Int32("origin concurrency", con),
+				zap.Int32("concurrency", concurrency),
 				zap.String("name", pool.Pool.Name()))
 			pool.Pool.Tune(concurrency)
 		case scheduler.Overclock:
 			concurrency := con + 1
-			log.Info("[resource manager] overclock goroutine pool",
-				zap.Int("origin concurrency", con),
-				zap.Int("concurrency", concurrency),
+			// The maximum increase in concurrency compared to the original amount is limited to MaxOverclockCount.
+			if concurrency > pool.Pool.GetOriginConcurrency()+util.MaxOverclockCount {
+				return
+			}
+			log.Debug("overclock goroutine pool", zap.String("category", "resource manager"),
+				zap.Int32("origin concurrency", con),
+				zap.Int32("concurrency", concurrency),
 				zap.String("name", pool.Pool.Name()))
 			pool.Pool.Tune(concurrency)
 		}

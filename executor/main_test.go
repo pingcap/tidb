@@ -15,12 +15,10 @@
 package executor_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
@@ -30,19 +28,16 @@ import (
 
 var testDataMap = make(testdata.BookKeeper)
 var prepareMergeSuiteData testdata.TestData
-var aggMergeSuiteData testdata.TestData
 var executorSuiteData testdata.TestData
 var pointGetSuiteData testdata.TestData
 var slowQuerySuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
-	testDataMap.LoadTestSuiteData("testdata", "agg_suite")
 	testDataMap.LoadTestSuiteData("testdata", "executor_suite")
 	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
 	testDataMap.LoadTestSuiteData("testdata", "point_get_suite")
 	testDataMap.LoadTestSuiteData("testdata", "slow_query_suite")
-	aggMergeSuiteData = testDataMap["agg_suite"]
 	executorSuiteData = testDataMap["executor_suite"]
 	prepareMergeSuiteData = testDataMap["prepare_suite"]
 	pointGetSuiteData = testDataMap["point_get_suite"]
@@ -58,12 +53,15 @@ func TestMain(m *testing.M) {
 	tikv.EnableFailpoints()
 
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/ttl/ttlworker.(*ttlScanWorker).loop"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/ttl/client.(*mockClient).WatchCommand.func1"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/ttl/ttlworker.(*JobManager).jobLoop"),
 	}
 	callback := func(i int) int {
 		testDataMap.GenerateOutputIfNeeded()
@@ -71,13 +69,4 @@ func TestMain(m *testing.M) {
 	}
 
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-
-func fillData(tk *testkit.TestKit, table string) {
-	tk.MustExec("use test")
-	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))
-
-	// insert data
-	tk.MustExec(fmt.Sprintf("insert INTO %s VALUES (1, \"hello\");", table))
-	tk.MustExec(fmt.Sprintf("insert into %s values (2, \"hello\");", table))
 }

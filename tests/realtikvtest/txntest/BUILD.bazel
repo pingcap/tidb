@@ -16,10 +16,12 @@ go_test(
         "//kv",
         "//parser",
         "//session/txninfo",
+        "//store/driver",
         "//testkit",
         "//tests/realtikvtest",
         "//util",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
     ],
 )

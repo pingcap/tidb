@@ -63,6 +63,31 @@ func exprHasSetVarOrSleep(expr expression.Expression) bool {
 	return false
 }
 
+// PruneColumns implement the Expand OP's column pruning logic.
+// logicExpand is built in the logical plan building phase, where all the column prune is not done yet. So the
+// expand projection expressions is meaningless if it built at that time. (we only maintain its schema, while
+// the level projection expressions construction is left to the last logical optimize rule)
+//
+// so when do the rule_column_pruning here, we just prune the schema is enough.
+func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+	child := p.children[0]
+	// Expand need those extra redundant distinct group by columns projected from underlying projection.
+	// distinct GroupByCol must be used by aggregate above, to make sure this, append distinctGroupByCol again.
+	parentUsedCols = append(parentUsedCols, p.distinctGroupByCol...)
+	used := expression.GetUsedList(parentUsedCols, p.Schema())
+	prunedColumns := make([]*expression.Column, 0)
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] {
+			prunedColumns = append(prunedColumns, p.schema.Columns[i])
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			p.names = append(p.names[:i], p.names[i+1:]...)
+		}
+	}
+	appendColumnPruneTraceStep(p, prunedColumns, opt)
+	// Underlying still need to keep the distinct group by columns and parent used columns.
+	return child.PruneColumns(parentUsedCols, opt)
+}
+
 // PruneColumns implements LogicalPlan interface.
 // If any expression has SetVar function or Sleep function, we do not prune it.
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
@@ -343,6 +368,11 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		ds.Columns = append(ds.Columns, handleColInfo)
 		ds.schema.Append(handleCol)
 	}
+	// ref: https://github.com/pingcap/tidb/issues/44579
+	// when first entering columnPruner, we kept a column-a in datasource since upper agg function count(a) is used.
+	//		then we mark the handleCols as nil here.
+	// when second entering columnPruner, the count(a) is eliminated since it always not null. we should fill another
+	// 		extra col, in this way, handle col is useful again, otherwise, _tidb_rowid will be filled.
 	if ds.handleCols != nil && ds.handleCols.IsInt() && ds.schema.ColumnIndex(ds.handleCols.GetCol(0)) == -1 {
 		ds.handleCols = nil
 	}
@@ -659,10 +689,26 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		if dataSource.handleCols != nil {
 			resultColumn = dataSource.handleCols.GetCol(0)
 			resultColumnInfo = resultColumn.ToInfo()
+		} else if dataSource.table.Meta().PKIsHandle {
+			// dataSource.handleCols = nil doesn't mean datasource doesn't have a intPk handle.
+			// since datasource.handleCols will be cleared in the first columnPruner.
+			resultColumn = dataSource.unMutableHandleCols.GetCol(0)
+			resultColumnInfo = resultColumn.ToInfo()
 		} else {
 			resultColumn = dataSource.newExtraHandleSchemaCol()
 			resultColumnInfo = model.NewExtraHandleColInfo()
 		}
 	}
 	return resultColumn, resultColumnInfo
+}
+
+// PruneColumns implements the interface of LogicalPlan.
+// LogicalCTE just do a empty function call. It's logical optimize is indivisual phase.
+func (*LogicalCTE) PruneColumns(_ []*expression.Column, _ *logicalOptimizeOp) error {
+	return nil
+}
+
+// PruneColumns implements the interface of LogicalPlan.
+func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+	return p.children[len(p.children)-1].PruneColumns(parentUsedCols, opt)
 }

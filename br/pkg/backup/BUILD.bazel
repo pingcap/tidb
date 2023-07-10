@@ -29,7 +29,6 @@ go_library(
         "//distsql",
         "//kv",
         "//meta",
-        "//meta/autoid",
         "//parser/model",
         "//statistics/handle",
         "//util",
@@ -67,6 +66,8 @@ go_test(
     ],
     embed = [":backup"],
     flaky = True,
+    race = "on",
+    shard_count = 9,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/gluetidb",

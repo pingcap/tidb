@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/cgroup"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -143,6 +144,7 @@ func init() {
 	if cgroup.InContainer() {
 		MemTotal = MemTotalCGroup
 		MemUsed = MemUsedCGroup
+		sysutil.RegisterGetMemoryCapacity(MemTotalCGroup)
 	} else {
 		MemTotal = MemTotalNormal
 		MemUsed = MemUsedNormal

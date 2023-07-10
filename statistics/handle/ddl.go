@@ -61,6 +61,14 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
+	case model.ActionReorganizePartition:
+		for _, def := range t.PartInfo.Definitions {
+			// TODO: Should we trigger analyze instead of adding 0s?
+			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+				return err
+			}
+		}
+		// Do not update global stats, since the data have not changed!
 	case model.ActionFlashbackCluster:
 		return h.updateStatsVersion()
 	}

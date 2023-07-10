@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -25,12 +26,13 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/tikv/client-go/v2/oracle"
 	"golang.org/x/exp/slices"
 )
 
 func (e *ShowExec) fetchShowStatsExtended() error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
@@ -102,13 +104,13 @@ func (e *ShowExec) appendTableForStatsExtended(dbName string, tbl *model.TableIn
 }
 
 func (e *ShowExec) fetchShowStatsMeta() error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
@@ -139,7 +141,7 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 		partitionName,
 		e.versionToTime(statsTbl.Version),
 		statsTbl.ModifyCount,
-		statsTbl.Count,
+		statsTbl.RealtimeCount,
 	})
 }
 
@@ -153,13 +155,13 @@ func (e *ShowExec) appendTableForStatsLocked(dbName, tblName, partitionName stri
 }
 
 func (e *ShowExec) fetchShowStatsLocked() error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
@@ -187,13 +189,13 @@ func (e *ShowExec) fetchShowStatsLocked() error {
 }
 
 func (e *ShowExec) fetchShowStatsHistogram() error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
@@ -222,7 +224,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		if !col.IsStatsInitialized() {
 			continue
 		}
-		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.Count, false),
+		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.RealtimeCount, false),
 			col.StatsLoadedStatus.StatusToString(), col.MemoryUsage())
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
@@ -261,13 +263,13 @@ func (e *ShowExec) versionToTime(version uint64) types.Time {
 }
 
 func (e *ShowExec) fetchShowStatsBuckets() error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
@@ -320,13 +322,13 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 }
 
 func (e *ShowExec) fetchShowStatsTopN() error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
@@ -401,7 +403,7 @@ func (e *ShowExec) topNToRows(dbName, tblName, partitionName, colName string, nu
 	var tmpDatum types.Datum
 	for i := 0; i < len(topN.TopN); i++ {
 		tmpDatum.SetBytes(topN.TopN[i].Encoded)
-		valStr, err := statistics.ValueToString(e.ctx.GetSessionVars(), &tmpDatum, numOfCols, columnTypes)
+		valStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), &tmpDatum, numOfCols, columnTypes)
 		if err != nil {
 			return err
 		}
@@ -426,11 +428,11 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string,
 		isIndex = 1
 	}
 	for i := 0; i < hist.Len(); i++ {
-		lowerBoundStr, err := statistics.ValueToString(e.ctx.GetSessionVars(), hist.GetLower(i), numOfCols, idxColumnTypes)
+		lowerBoundStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), hist.GetLower(i), numOfCols, idxColumnTypes)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		upperBoundStr, err := statistics.ValueToString(e.ctx.GetSessionVars(), hist.GetUpper(i), numOfCols, idxColumnTypes)
+		upperBoundStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), hist.GetUpper(i), numOfCols, idxColumnTypes)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -452,13 +454,26 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string,
 }
 
 func (e *ShowExec) fetchShowStatsHealthy() {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
+	var (
+		fieldPatternsLike collate.WildcardPattern
+		fieldFilter       string
+	)
+	if e.Extractor != nil {
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
 	for _, db := range dbs {
+		if fieldFilter != "" && db.Name.L != fieldFilter {
+			continue
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(db.Name.L) {
+			continue
+		}
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
@@ -495,8 +510,8 @@ func (e *ShowExec) fetchShowHistogramsInFlight() {
 	e.appendRow([]interface{}{statistics.HistogramNeededItems.Length()})
 }
 
-func (e *ShowExec) fetchShowAnalyzeStatus() error {
-	rows, err := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
+func (e *ShowExec) fetchShowAnalyzeStatus(ctx context.Context) error {
+	rows, err := dataForAnalyzeStatusHelper(ctx, e.BaseExecutor.Ctx())
 	if err != nil {
 		return err
 	}
@@ -509,9 +524,9 @@ func (e *ShowExec) fetchShowAnalyzeStatus() error {
 }
 
 func (e *ShowExec) fetchShowColumnStatsUsage() error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
-	colStatsMap, err := h.LoadColumnStatsUsage(e.ctx.GetSessionVars().Location())
+	colStatsMap, err := h.LoadColumnStatsUsage(e.Ctx().GetSessionVars().Location())
 	if err != nil {
 		return err
 	}

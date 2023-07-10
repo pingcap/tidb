@@ -334,24 +334,23 @@ func (helper extractHelper) extractLikePattern(
 	var colName string
 	var datums []types.Datum
 	switch fn.FuncName.L {
-	case ast.EQ, ast.Like, ast.Regexp, ast.RegexpLike:
+	case ast.EQ, ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
 		colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 	}
-	if colName == extractColName {
-		switch fn.FuncName.L {
-		case ast.EQ:
-			return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
-		case ast.Like:
-			if needLike2Regexp {
-				return true, stringutil.CompileLike2Regexp(datums[0].GetString())
-			}
-			return true, datums[0].GetString()
-		case ast.Regexp, ast.RegexpLike:
-			return true, datums[0].GetString()
-		default:
-			return false, ""
+	if colName != extractColName {
+		return false, ""
+	}
+	switch fn.FuncName.L {
+	case ast.EQ:
+		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
+	case ast.Like, ast.Ilike:
+		if needLike2Regexp {
+			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
 		}
-	} else {
+		return true, datums[0].GetString()
+	case ast.Regexp, ast.RegexpLike:
+		return true, datums[0].GetString()
+	default:
 		return false, ""
 	}
 }
@@ -620,10 +619,10 @@ func (e *ClusterTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	}
 	r := new(bytes.Buffer)
 	if len(e.NodeTypes) > 0 {
-		r.WriteString(fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e.NodeTypes)))
+		fmt.Fprintf(r, "node_types:[%s], ", extractStringFromStringSet(e.NodeTypes))
 	}
 	if len(e.Instances) > 0 {
-		r.WriteString(fmt.Sprintf("instances:[%s], ", extractStringFromStringSet(e.Instances)))
+		fmt.Fprintf(r, "instances:[%s], ", extractStringFromStringSet(e.Instances))
 	}
 	// remove the last ", " in the message info
 	s := r.String()
@@ -712,20 +711,20 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	st, et := e.StartTime, e.EndTime
 	if st > 0 {
 		st := time.UnixMilli(st)
-		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
+		fmt.Fprintf(r, "start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat))
 	}
 	if et > 0 {
 		et := time.UnixMilli(et)
-		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
+		fmt.Fprintf(r, "end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat))
 	}
 	if len(e.NodeTypes) > 0 {
-		r.WriteString(fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e.NodeTypes)))
+		fmt.Fprintf(r, "node_types:[%s], ", extractStringFromStringSet(e.NodeTypes))
 	}
 	if len(e.Instances) > 0 {
-		r.WriteString(fmt.Sprintf("instances:[%s], ", extractStringFromStringSet(e.Instances)))
+		fmt.Fprintf(r, "instances:[%s], ", extractStringFromStringSet(e.Instances))
 	}
 	if len(e.LogLevels) > 0 {
-		r.WriteString(fmt.Sprintf("log_levels:[%s], ", extractStringFromStringSet(e.LogLevels)))
+		fmt.Fprintf(r, "log_levels:[%s], ", extractStringFromStringSet(e.LogLevels))
 	}
 
 	// remove the last ", " in the message info
@@ -847,29 +846,29 @@ func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) strin
 	st, et := e.StartTime, e.EndTime
 	if st > 0 {
 		st := time.UnixMilli(st)
-		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05")))
+		fmt.Fprintf(r, "start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(time.DateTime))
 	}
 	if et > 0 {
 		et := time.UnixMilli(et)
-		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05")))
+		fmt.Fprintf(r, "end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(time.DateTime))
 	}
 	if len(e.RegionIDs) > 0 {
-		r.WriteString(fmt.Sprintf("region_ids:[%s], ", extractStringFromUint64Slice(e.RegionIDs)))
+		fmt.Fprintf(r, "region_ids:[%s], ", extractStringFromUint64Slice(e.RegionIDs))
 	}
 	if len(e.StoreIDs) > 0 {
-		r.WriteString(fmt.Sprintf("store_ids:[%s], ", extractStringFromUint64Slice(e.StoreIDs)))
+		fmt.Fprintf(r, "store_ids:[%s], ", extractStringFromUint64Slice(e.StoreIDs))
 	}
 	if len(e.PeerIDs) > 0 {
-		r.WriteString(fmt.Sprintf("peer_ids:[%s], ", extractStringFromUint64Slice(e.PeerIDs)))
+		fmt.Fprintf(r, "peer_ids:[%s], ", extractStringFromUint64Slice(e.PeerIDs))
 	}
 	if len(e.IsLearners) > 0 {
-		r.WriteString(fmt.Sprintf("learner_roles:[%s], ", extractStringFromBoolSlice(e.IsLearners)))
+		fmt.Fprintf(r, "learner_roles:[%s], ", extractStringFromBoolSlice(e.IsLearners))
 	}
 	if len(e.IsLeaders) > 0 {
-		r.WriteString(fmt.Sprintf("leader_roles:[%s], ", extractStringFromBoolSlice(e.IsLeaders)))
+		fmt.Fprintf(r, "leader_roles:[%s], ", extractStringFromBoolSlice(e.IsLeaders))
 	}
 	if len(e.HotRegionTypes) > 0 {
-		r.WriteString(fmt.Sprintf("hot_region_types:[%s], ", extractStringFromStringSet(e.HotRegionTypes)))
+		fmt.Fprintf(r, "hot_region_types:[%s], ", extractStringFromStringSet(e.HotRegionTypes))
 	}
 	// remove the last ", " in the message info
 	s := r.String()
@@ -1007,6 +1006,7 @@ func (e *MetricSummaryTableExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
+	//nolint: ineffassign
 	remained, quantileSkip, quantiles := e.extractCol(schema, names, predicates, "quantile", false)
 	remained, metricsNameSkip, metricsNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	e.SkipRequest = quantileSkip || metricsNameSkip
@@ -1097,10 +1097,10 @@ func (e *InspectionSummaryTableExtractor) explainInfo(_ *PhysicalMemTable) strin
 
 	r := new(bytes.Buffer)
 	if len(e.Rules) > 0 {
-		r.WriteString(fmt.Sprintf("rules:[%s], ", extractStringFromStringSet(e.Rules)))
+		fmt.Fprintf(r, "rules:[%s], ", extractStringFromStringSet(e.Rules))
 	}
 	if len(e.MetricNames) > 0 {
-		r.WriteString(fmt.Sprintf("metric_names:[%s], ", extractStringFromStringSet(e.MetricNames)))
+		fmt.Fprintf(r, "metric_names:[%s], ", extractStringFromStringSet(e.MetricNames))
 	}
 	if len(e.Quantiles) > 0 {
 		r.WriteString("quantiles:[")
@@ -1108,7 +1108,7 @@ func (e *InspectionSummaryTableExtractor) explainInfo(_ *PhysicalMemTable) strin
 			if i > 0 {
 				r.WriteByte(',')
 			}
-			r.WriteString(fmt.Sprintf("%f", quantile))
+			fmt.Fprintf(r, "%f", quantile)
 		}
 		r.WriteString("], ")
 	}
@@ -1150,7 +1150,7 @@ func (e *InspectionRuleTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 
 	r := new(bytes.Buffer)
 	if len(e.Types) > 0 {
-		r.WriteString(fmt.Sprintf("node_types:[%s]", extractStringFromStringSet(e.Types)))
+		fmt.Fprintf(r, "node_types:[%s]", extractStringFromStringSet(e.Types))
 	}
 	return r.String()
 }
@@ -1305,13 +1305,13 @@ func (e *TableStorageStatsExtractor) explainInfo(_ *PhysicalMemTable) string {
 
 	r := new(bytes.Buffer)
 	if len(e.TableSchema) > 0 {
-		r.WriteString(fmt.Sprintf("schema:[%s]", extractStringFromStringSet(e.TableSchema)))
+		fmt.Fprintf(r, "schema:[%s]", extractStringFromStringSet(e.TableSchema))
 	}
 	if r.Len() > 0 && len(e.TableName) > 0 {
 		r.WriteString(", ")
 	}
 	if len(e.TableName) > 0 {
-		r.WriteString(fmt.Sprintf("table:[%s]", extractStringFromStringSet(e.TableName)))
+		fmt.Fprintf(r, "table:[%s]", extractStringFromStringSet(e.TableName))
 	}
 	return r.String()
 }
@@ -1377,13 +1377,13 @@ func (e *TiFlashSystemTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	}
 	r := new(bytes.Buffer)
 	if len(e.TiFlashInstances) > 0 {
-		r.WriteString(fmt.Sprintf("tiflash_instances:[%s], ", extractStringFromStringSet(e.TiFlashInstances)))
+		fmt.Fprintf(r, "tiflash_instances:[%s], ", extractStringFromStringSet(e.TiFlashInstances))
 	}
 	if len(e.TiDBDatabases) > 0 {
-		r.WriteString(fmt.Sprintf("tidb_databases:[%s], ", e.TiDBDatabases))
+		fmt.Fprintf(r, "tidb_databases:[%s], ", e.TiDBDatabases)
 	}
 	if len(e.TiDBTables) > 0 {
-		r.WriteString(fmt.Sprintf("tidb_tables:[%s], ", e.TiDBTables))
+		fmt.Fprintf(r, "tidb_tables:[%s], ", e.TiDBTables)
 	}
 	// remove the last ", " in the message info
 	s := r.String()
@@ -1402,39 +1402,100 @@ type StatementsSummaryExtractor struct {
 	// Digests represents digest applied to, and we should apply all digest if there is no digest specified.
 	// e.g: SELECT * FROM STATEMENTS_SUMMARY WHERE digest='8019af26debae8aa7642c501dbc43212417b3fb14e6aec779f709976b7e521be'
 	Digests set.StringSet
-	// Enable is true means the executor should use digest to locate statement summary.
-	// Enable is false, means the executor should keep the behavior compatible with before.
-	Enable bool
+
+	// Coarse time range predicate extracted from the where clause as:
+	// SELECT ... WHERE summary_begin_time <= endTime AND summary_end_time >= startTime
+	//
+	// N.B. it's only used by v2, so we should keep predicates not changed when extracting time range, or it will
+	// affect the correctness with v1.
+	CoarseTimeRange *TimeRange
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *StatementsSummaryExtractor) Extract(
-	_ sessionctx.Context,
+	sctx sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `digest` column
 	remained, skip, digests := e.extractCol(schema, names, predicates, "digest", false)
-	e.SkipRequest = skip
-	if e.SkipRequest {
+	if skip {
+		e.SkipRequest = true
 		return nil
 	}
-	if digests.Count() > 0 {
-		e.Enable = true
+	if !digests.Empty() {
 		e.Digests = digests
 	}
+
+	tr := e.findCoarseTimeRange(sctx, schema, names, remained)
+	if tr == nil {
+		return remained
+	}
+
+	if tr.StartTime.After(tr.EndTime) {
+		e.SkipRequest = true
+		return nil
+	}
+	e.CoarseTimeRange = tr
 	return remained
 }
 
-func (e *StatementsSummaryExtractor) explainInfo(_ *PhysicalMemTable) string {
+func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
-	if !e.Enable {
-		return ""
+	buf := bytes.NewBuffer(nil)
+	if !e.Digests.Empty() {
+		fmt.Fprintf(buf, "digests: [%s], ", extractStringFromStringSet(e.Digests))
 	}
-	return fmt.Sprintf("digests: [%s]", extractStringFromStringSet(e.Digests))
+	if e.CoarseTimeRange != nil && p.ctx.GetSessionVars() != nil && p.ctx.GetSessionVars().StmtCtx != nil {
+		stmtCtx := p.ctx.GetSessionVars().StmtCtx
+		startTime := e.CoarseTimeRange.StartTime.In(stmtCtx.TimeZone)
+		endTime := e.CoarseTimeRange.EndTime.In(stmtCtx.TimeZone)
+		startTimeStr := types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String()
+		endTimeStr := types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String()
+		fmt.Fprintf(buf, "start_time: %v, end_time: %v, ", startTimeStr, endTimeStr)
+	}
+	// remove the last ", " in the message info
+	s := buf.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+func (e *StatementsSummaryExtractor) findCoarseTimeRange(
+	sctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) *TimeRange {
+	tz := sctx.GetSessionVars().StmtCtx.TimeZone
+	_, _, endTime := e.extractTimeRange(sctx, schema, names, predicates, "summary_begin_time", tz)
+	_, startTime, _ := e.extractTimeRange(sctx, schema, names, predicates, "summary_end_time", tz)
+	return e.buildTimeRange(startTime, endTime)
+}
+
+func (e *StatementsSummaryExtractor) buildTimeRange(start, end int64) *TimeRange {
+	const defaultStatementsDuration = time.Hour
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		return nil
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultStatementsDuration)
+	}
+	if end == 0 {
+		endTime = startTime.Add(defaultStatementsDuration)
+	}
+	return &TimeRange{StartTime: startTime, EndTime: endTime}
 }
 
 // TikvRegionPeersExtractor is used to extract some predicates of cluster table.
@@ -1477,10 +1538,10 @@ func (e *TikvRegionPeersExtractor) explainInfo(_ *PhysicalMemTable) string {
 	}
 	r := new(bytes.Buffer)
 	if len(e.RegionIDs) > 0 {
-		r.WriteString(fmt.Sprintf("region_ids:[%s], ", extractStringFromUint64Slice(e.RegionIDs)))
+		fmt.Fprintf(r, "region_ids:[%s], ", extractStringFromUint64Slice(e.RegionIDs))
 	}
 	if len(e.StoreIDs) > 0 {
-		r.WriteString(fmt.Sprintf("store_ids:[%s], ", extractStringFromUint64Slice(e.StoreIDs)))
+		fmt.Fprintf(r, "store_ids:[%s], ", extractStringFromUint64Slice(e.StoreIDs))
 	}
 	// remove the last ", " in the message info
 	s := r.String()
@@ -1542,22 +1603,22 @@ func (e *ColumnsTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	}
 	r := new(bytes.Buffer)
 	if len(e.TableSchema) > 0 {
-		r.WriteString(fmt.Sprintf("table_schema:[%s], ", extractStringFromStringSet(e.TableSchema)))
+		fmt.Fprintf(r, "table_schema:[%s], ", extractStringFromStringSet(e.TableSchema))
 	}
 	if len(e.TableName) > 0 {
-		r.WriteString(fmt.Sprintf("table_name:[%s], ", extractStringFromStringSet(e.TableName)))
+		fmt.Fprintf(r, "table_name:[%s], ", extractStringFromStringSet(e.TableName))
 	}
 	if len(e.ColumnName) > 0 {
-		r.WriteString(fmt.Sprintf("column_name:[%s], ", extractStringFromStringSet(e.ColumnName)))
+		fmt.Fprintf(r, "column_name:[%s], ", extractStringFromStringSet(e.ColumnName))
 	}
 	if len(e.TableSchemaPatterns) > 0 {
-		r.WriteString(fmt.Sprintf("table_schema_pattern:[%s], ", extractStringFromStringSlice(e.TableSchemaPatterns)))
+		fmt.Fprintf(r, "table_schema_pattern:[%s], ", extractStringFromStringSlice(e.TableSchemaPatterns))
 	}
 	if len(e.TableNamePatterns) > 0 {
-		r.WriteString(fmt.Sprintf("table_name_pattern:[%s], ", extractStringFromStringSlice(e.TableNamePatterns)))
+		fmt.Fprintf(r, "table_name_pattern:[%s], ", extractStringFromStringSlice(e.TableNamePatterns))
 	}
 	if len(e.ColumnNamePatterns) > 0 {
-		r.WriteString(fmt.Sprintf("column_name_pattern:[%s], ", extractStringFromStringSlice(e.ColumnNamePatterns)))
+		fmt.Fprintf(r, "column_name_pattern:[%s], ", extractStringFromStringSlice(e.ColumnNamePatterns))
 	}
 	// remove the last ", " in the message info
 	s := r.String()
@@ -1605,7 +1666,7 @@ func (e *TiKVRegionStatusExtractor) explainInfo(_ *PhysicalMemTable) string {
 			if i > 0 {
 				r.WriteString(",")
 			}
-			r.WriteString(fmt.Sprintf("%v", tableID))
+			fmt.Fprintf(r, "%v", tableID)
 		}
 		r.WriteString("}")
 	}

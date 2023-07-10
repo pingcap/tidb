@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -172,10 +173,15 @@ func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 	object := s.objectName(path)
 	handle := s.bucket.Object(object)
 
-	rc, err := handle.NewRangeReader(ctx, 0, -1)
+	attrs, err := handle.Attrs(ctx)
 	if err != nil {
+		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
+			return nil, errors.Annotatef(err,
+				"the object doesn't exist, file info: input.bucket='%s', input.key='%s'",
+				s.gcs.Bucket, path)
+		}
 		return nil, errors.Annotatef(err,
-			"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
+			"failed to get gcs file attribute, file info: input.bucket='%s', input.key='%s'",
 			s.gcs.Bucket, path)
 	}
 
@@ -183,8 +189,9 @@ func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 		storage:   s,
 		name:      path,
 		objHandle: handle,
-		reader:    rc,
+		reader:    nil, // lazy create
 		ctx:       ctx,
+		totalSize: attrs.Size,
 	}, nil
 }
 
@@ -198,13 +205,14 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	if opt == nil {
 		opt = &WalkOption{}
 	}
-	if len(opt.ObjPrefix) != 0 {
-		return errors.New("gcs storage not support ObjPrefix for now")
-	}
 	prefix := path.Join(s.gcs.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
+	if len(opt.ObjPrefix) != 0 {
+		prefix += opt.ObjPrefix
+	}
+
 	query := &storage.Query{Prefix: prefix}
 	// only need each object's name and size
 	err := query.SetAttrSelection([]string{"Name", "Size"})
@@ -345,6 +353,7 @@ type gcsObjectReader struct {
 	objHandle *storage.ObjectHandle
 	reader    io.ReadCloser
 	pos       int64
+	totalSize int64
 	// reader context used for implement `io.Seek`
 	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
 	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
@@ -382,31 +391,35 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 	var realOffset int64
 	switch whence {
 	case io.SeekStart:
-		if offset < 0 {
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range.", offset)
-		}
 		realOffset = offset
 	case io.SeekCurrent:
 		realOffset = r.pos + offset
-		if r.pos < 0 && realOffset >= 0 {
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'.", offset, r.pos)
-		}
 	case io.SeekEnd:
-		if offset >= 0 {
+		if offset > 0 {
 			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
 		}
-		// GCS supports `NewRangeReader(ctx, -10, -1)`, which means read the last 10 bytes.
-		realOffset = offset
+		realOffset = offset + r.totalSize
 	default:
 		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
+	}
+
+	if realOffset < 0 {
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'. total size is '%v'", offset, r.pos, r.totalSize)
 	}
 
 	if realOffset == r.pos {
 		return realOffset, nil
 	}
 
-	_ = r.reader.Close()
+	if r.reader != nil {
+		_ = r.reader.Close()
+		r.reader = nil
+	}
 	r.pos = realOffset
+	if realOffset >= r.totalSize {
+		r.reader = io.NopCloser(bytes.NewReader(nil))
+		return realOffset, nil
+	}
 	rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, -1)
 	if err != nil {
 		return 0, errors.Annotatef(err,

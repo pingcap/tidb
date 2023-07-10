@@ -172,8 +172,8 @@ func (m *JobManager) UpdateHeartBeat(ctx context.Context, se session.Session, no
 }
 
 // ReportMetrics is an exported version of reportMetrics
-func (m *JobManager) ReportMetrics() {
-	m.reportMetrics()
+func (m *JobManager) ReportMetrics(se session.Session) {
+	m.reportMetrics(se)
 }
 
 func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) {
@@ -249,7 +249,7 @@ func TestLockNewTable(t *testing.T) {
 	assert.NoError(t, err)
 	expireTime := now
 
-	testPhysicalTable := &cache.PhysicalTable{ID: 1, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{ColumnName: model.NewCIStr("test"), IntervalExprStr: "5 Year", JobInterval: "1h"}}}
+	testPhysicalTable := &cache.PhysicalTable{ID: 1, Schema: model.NewCIStr("test"), TableInfo: &model.TableInfo{ID: 1, Name: model.NewCIStr("t1"), TTLInfo: &model.TTLInfo{ColumnName: model.NewCIStr("test"), IntervalExprStr: "5 Year", JobInterval: "1h"}}}
 
 	type executeInfo struct {
 		sql  string
@@ -296,7 +296,11 @@ func TestLockNewTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, now, expireTime, "test-id")),
+				nil, nil,
+			},
+			{
+				getExecuteInfo(createJobHistorySQL("test-job-id", testPhysicalTable, expireTime, now)),
 				nil, nil,
 			},
 			{
@@ -322,7 +326,11 @@ func TestLockNewTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, now, expireTime, "test-id")),
+				nil, nil,
+			},
+			{
+				getExecuteInfo(createJobHistorySQL("test-job-id", testPhysicalTable, expireTime, now)),
 				nil, nil,
 			},
 			{
@@ -340,8 +348,12 @@ func TestLockNewTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, now, expireTime, "test-id")),
 				nil, errors.New("test error message"),
+			},
+			{
+				getExecuteInfo(createJobHistorySQL("test-job-id", testPhysicalTable, expireTime, now)),
+				nil, nil,
 			},
 			{
 				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "test-job-id", 1, 0, nil, nil, expireTime, now)),

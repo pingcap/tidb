@@ -20,12 +20,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tracing"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -94,7 +94,7 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 		}
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
-	logutil.BgLogger().Info("[autoid client] connect to leader", zap.String("addr", addr))
+	logutil.BgLogger().Info("connect to leader", zap.String("category", "autoid client"), zap.String("addr", addr))
 	grpcConn, err := grpc.Dial(addr, opt)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -112,11 +112,8 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 // case increment=1 & offset=1: you can derive the ids like min+1, min+2... max.
 // case increment=x & offset=y: you firstly need to seek to firstID by `SeekToFirstAutoIDXXX`, then derive the IDs like firstID, firstID + increment * 2... in the caller.
 func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offset int64) (min int64, max int64, _ error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("autoid.Alloc", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "autoid.Alloc")
+	defer r.End()
 
 	if !validIncrementAndOffset(increment, offset) {
 		return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
@@ -137,6 +134,7 @@ retry:
 		Offset:     offset,
 		IsUnsigned: sp.isUnsigned,
 	})
+	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			time.Sleep(backoffDuration)
@@ -158,7 +156,7 @@ retry:
 const backoffDuration = 200 * time.Millisecond
 
 func (sp *singlePointAlloc) resetConn(reason error) {
-	logutil.BgLogger().Info("[autoid client] reset grpc connection",
+	logutil.BgLogger().Info("reset grpc connection", zap.String("category", "autoid client"),
 		zap.String("reason", reason.Error()))
 	var grpcConn *grpc.ClientConn
 	sp.mu.Lock()
@@ -170,7 +168,7 @@ func (sp *singlePointAlloc) resetConn(reason error) {
 	if grpcConn != nil {
 		err := grpcConn.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("[autoid client] close grpc connection error", zap.Error(err))
+			logutil.BgLogger().Warn("close grpc connection error", zap.String("category", "autoid client"), zap.Error(err))
 		}
 	}
 }
@@ -186,13 +184,13 @@ func (*singlePointAlloc) AllocSeqCache() (a int64, b int64, c int64, err error) 
 // If allocIDs is true, it will allocate some IDs and save to the cache.
 // If allocIDs is false, it will not allocate IDs.
 func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, _ bool) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("autoid.Rebase", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "autoid.Rebase")
+	defer r.End()
 
-	return sp.rebase(ctx, newBase, false)
+	start := time.Now()
+	err := sp.rebase(ctx, newBase, false)
+	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
+	return err
 }
 
 func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, force bool) error {

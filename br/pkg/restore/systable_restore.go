@@ -86,17 +86,16 @@ func generateResetSQLs(db *database, resetUsers []string) []string {
 		if sysPrivilegeTableMap[tableName] != "" {
 			for _, name := range resetUsers {
 				if strings.ToLower(name) == rootUser {
-					if !rootReset {
-						updateSQL := fmt.Sprintf("UPDATE %s.%s SET authentication_string='',"+
-							" Shutdown_priv='Y',"+
-							" Config_priv='Y'"+
-							" WHERE USER='root' AND Host='%%';",
-							db.Name.L, sysUserTableName)
-						sqls = append(sqls, updateSQL)
-						rootReset = true
-					} else {
+					if rootReset {
 						continue
 					}
+					updateSQL := fmt.Sprintf("UPDATE %s.%s SET authentication_string='',"+
+						" Shutdown_priv='Y',"+
+						" Config_priv='Y'"+
+						" WHERE USER='root' AND Host='%%';",
+						db.Name.L, sysUserTableName)
+					sqls = append(sqls, updateSQL)
+					rootReset = true
 				} else {
 					/* #nosec G202: SQL string concatenation */
 					whereClause := fmt.Sprintf("WHERE "+sysPrivilegeTableMap[tableName], name)
@@ -222,8 +221,7 @@ func (rc *Client) getDatabaseByName(name string) (*database, bool) {
 func (rc *Client) afterSystemTablesReplaced(tables []string) error {
 	var err error
 	for _, table := range tables {
-		switch {
-		case table == "user":
+		if table == "user" {
 			if rc.fullClusterRestore {
 				log.Info("privilege system table restored, please reconnect to make it effective")
 				err = rc.dom.NotifyUpdatePrivilege()
@@ -276,6 +274,22 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 
 	if isUnrecoverableTable(tableName) {
 		return berrors.ErrUnsupportedSystemTable.GenWithStack("restoring unsupported `mysql` schema table")
+	}
+
+	// Currently, we don't support restore resource group metadata, so we need to
+	// remove the resource group related metadata in mysql.user.
+	// TODO: this function should be removed when we support backup and restore
+	// resource group.
+	if tableName == sysUserTableName {
+		sql := fmt.Sprintf("UPDATE %s SET User_attributes = JSON_REMOVE(User_attributes, '$.resource_group');",
+			utils.EncloseDBAndTable(db.TemporaryName.L, sysUserTableName))
+		if err := execSQL(sql); err != nil {
+			// FIXME: find a better way to check the error or we should check the version here instead.
+			if !strings.Contains(err.Error(), "Unknown column 'User_attributes' in 'field list'") {
+				return err
+			}
+			log.Warn("remove resource group meta failed, please ensure target cluster is newer than v6.6.0", logutil.ShortError(err))
+		}
 	}
 
 	if db.ExistingTables[tableName] != nil {

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
+	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/zap"
@@ -123,7 +124,7 @@ func (tsr *RemoteTopSQLReporter) Collect(data []collector.SQLCPUTimeRecord) {
 	case tsr.collectCPUTimeChan <- data:
 	default:
 		// ignore if chan blocked
-		ignoreCollectChannelFullCounter.Inc()
+		reporter_metrics.IgnoreCollectChannelFullCounter.Inc()
 	}
 }
 
@@ -139,7 +140,7 @@ func (tsr *RemoteTopSQLReporter) CollectStmtStatsMap(data stmtstats.StatementSta
 	case tsr.collectStmtStatsChan <- data:
 	default:
 		// ignore if chan blocked
-		ignoreCollectStmtChannelFullCounter.Inc()
+		reporter_metrics.IgnoreCollectStmtChannelFullCounter.Inc()
 	}
 }
 
@@ -249,7 +250,7 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan() {
 	}:
 	default:
 		// ignore if chan blocked
-		ignoreReportChannelFullCounter.Inc()
+		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
 	}
 }
 
@@ -307,7 +308,7 @@ func (tsr *RemoteTopSQLReporter) trySend(data *ReportData, deadline time.Time) e
 	tsr.DefaultDataSinkRegisterer.Unlock()
 	for _, ds := range dataSinks {
 		if err := ds.TrySend(data, deadline); err != nil {
-			logutil.BgLogger().Warn("[top-sql] failed to send data to datasink", zap.Error(err))
+			logutil.BgLogger().Warn("failed to send data to datasink", zap.String("category", "top-sql"), zap.Error(err))
 		}
 	}
 	return nil

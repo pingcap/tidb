@@ -10,14 +10,15 @@ set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain format = 'brief' select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
-IndexJoin	5.00	root		inner join, inner:IndexLookUp, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)
-├─TableReader(Build)	1.00	root		data:Selection
-│ └─Selection	1.00	cop[tikv]		not(isnull(test.t2.a))
-│   └─TableFullScan	1.00	cop[tikv]	table:t2	keep order:false
-└─IndexLookUp(Probe)	5.00	root		
-  ├─Selection(Build)	5.00	cop[tikv]		not(isnull(test.t1.a))
-  │ └─IndexRangeScan	5.00	cop[tikv]	table:t1, index:idx(a)	range: decided by [eq(test.t1.a, test.t2.a)], keep order:false
-  └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t1	keep order:false
+Projection	5.00	root		test.t1.a, test.t1.b, test.t2.a, test.t2.b
+└─IndexJoin	5.00	root		inner join, inner:IndexLookUp, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)
+  ├─TableReader(Build)	1.00	root		data:Selection
+  │ └─Selection	1.00	cop[tikv]		not(isnull(test.t2.a))
+  │   └─TableFullScan	1.00	cop[tikv]	table:t2	keep order:false
+  └─IndexLookUp(Probe)	5.00	root		
+    ├─Selection(Build)	5.00	cop[tikv]		not(isnull(test.t1.a))
+    │ └─IndexRangeScan	5.00	cop[tikv]	table:t1, index:idx(a)	range: decided by [eq(test.t1.a, test.t2.a)], keep order:false
+    └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 join t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
 Projection	5.00	root		test.t1.a, test.t1.b, test.t2.a, test.t2.b

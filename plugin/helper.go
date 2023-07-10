@@ -44,12 +44,12 @@ type ID string
 
 // Decode decodes a plugin id into name, version parts.
 func (n ID) Decode() (name string, version string, err error) {
-	splits := strings.Split(string(n), "-")
-	if len(splits) != 2 {
+	index := strings.LastIndex(string(n), "-")
+	if index == -1 {
 		err = errInvalidPluginID.GenWithStackByArgs(string(n))
 		return
 	}
-	name = splits[0]
-	version = splits[1]
+	name = string(n)[:index]
+	version = string(n)[index+1:]
 	return
 }

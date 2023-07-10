@@ -100,6 +100,16 @@ func TestFind(t *testing.T) {
 	require.Equal(t, cols[:1], c2)
 }
 
+// checkNotNull checks if row has nil value set to a column with NotNull flag set.
+func checkNotNull(cols []*Column, row []types.Datum) error {
+	for _, c := range cols {
+		if err := c.CheckNotNull(&row[c.Offset], 0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func TestCheck(t *testing.T) {
 	col := newCol("a")
 	col.SetFlag(mysql.AutoIncrementFlag)
@@ -107,10 +117,10 @@ func TestCheck(t *testing.T) {
 	err := CheckOnce(cols)
 	require.Error(t, err)
 	cols = cols[:1]
-	err = CheckNotNull(cols, types.MakeDatums(nil))
+	err = checkNotNull(cols, types.MakeDatums(nil))
 	require.NoError(t, err)
 	cols[0].AddFlag(mysql.NotNullFlag)
-	err = CheckNotNull(cols, types.MakeDatums(nil))
+	err = checkNotNull(cols, types.MakeDatums(nil))
 	require.Error(t, err)
 	err = CheckOnce([]*Column{})
 	require.NoError(t, err)
@@ -120,18 +130,18 @@ func TestHandleBadNull(t *testing.T) {
 	col := newCol("a")
 	sc := new(stmtctx.StatementContext)
 	d := types.Datum{}
-	err := col.HandleBadNull(&d, sc)
+	err := col.HandleBadNull(&d, sc, 0)
 	require.NoError(t, err)
 	cmp, err := d.Compare(sc, &types.Datum{}, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
 	col.AddFlag(mysql.NotNullFlag)
-	err = col.HandleBadNull(&types.Datum{}, sc)
+	err = col.HandleBadNull(&types.Datum{}, sc, 0)
 	require.Error(t, err)
 
 	sc.BadNullAsWarning = true
-	err = col.HandleBadNull(&types.Datum{}, sc)
+	err = col.HandleBadNull(&types.Datum{}, sc, 0)
 	require.NoError(t, err)
 }
 

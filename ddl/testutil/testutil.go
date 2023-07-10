@@ -16,6 +16,8 @@ package testutil
 
 import (
 	"context"
+	"fmt"
+	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
@@ -27,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -93,4 +96,35 @@ func FindIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.Inde
 		return nil
 	}
 	return tbl.Meta().FindIndexByName(idxName)
+}
+
+// SubStates is a slice of SchemaState.
+type SubStates = []model.SchemaState
+
+// TestMatchCancelState is used to test whether the cancel state matches.
+func TestMatchCancelState(t *testing.T, job *model.Job, cancelState interface{}, sql string) bool {
+	switch v := cancelState.(type) {
+	case model.SchemaState:
+		if job.Type == model.ActionMultiSchemaChange {
+			msg := fmt.Sprintf("unexpected multi-schema change(sql: %s, cancel state: %s)", sql, v)
+			require.Failf(t, msg, "use []model.SchemaState as cancel states instead")
+			return false
+		}
+		return job.SchemaState == v
+	case SubStates: // For multi-schema change sub-jobs.
+		if job.MultiSchemaInfo == nil {
+			msg := fmt.Sprintf("not multi-schema change(sql: %s, cancel state: %v)", sql, v)
+			require.Failf(t, msg, "use model.SchemaState as the cancel state instead")
+			return false
+		}
+		require.Equal(t, len(job.MultiSchemaInfo.SubJobs), len(v), sql)
+		for i, subJobSchemaState := range v {
+			if job.MultiSchemaInfo.SubJobs[i].SchemaState != subJobSchemaState {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }

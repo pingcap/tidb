@@ -685,7 +685,7 @@ func TestRuntimeHintsInEvolveTasks(t *testing.T) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 2)
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
 }
 
 func TestDefaultSessionVars(t *testing.T) {
@@ -762,11 +762,11 @@ func TestPrivileges(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	tk.MustExec("create user test@'%'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 }

@@ -15,9 +15,11 @@
 package ddl
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
+	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -47,8 +50,12 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
+
+const rowCountEtcdPath = "distAddIndex"
 
 // reorgCtx is for reorganization.
 type reorgCtx struct {
@@ -59,16 +66,7 @@ type reorgCtx struct {
 	doneCh chan error
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
-	// notifyCancelReorgJob is used to notify the backfilling goroutine if the DDL job is cancelled.
-	// 0: job is not canceled.
-	// 1: job is canceled.
-	notifyCancelReorgJob int32
-	// doneKey is used to record the key that has been processed.
-	doneKey atomic.Value // nullable kv.Key
-
-	// element is used to record the current element in the reorg process, it can be
-	// accessed by reorg-worker and daemon-worker concurrently.
-	element atomic.Value
+	jobState model.JobState
 
 	mu struct {
 		sync.Mutex
@@ -76,12 +74,8 @@ type reorgCtx struct {
 		warnings      map[errors.ErrorID]*terror.Error
 		warningsCount map[errors.ErrorID]int64
 	}
-}
 
-// nullableKey can store <nil> kv.Key.
-// Storing a nil object to atomic.Value can lead to panic. This is a workaround.
-type nullableKey struct {
-	key kv.Key
+	references atomicutil.Int32
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
@@ -101,24 +95,22 @@ const defaultWaitReorgTimeout = 10 * time.Second
 // ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
 var ReorgWaitTimeout = 5 * time.Second
 
-func (rc *reorgCtx) notifyReorgCancel() {
-	atomic.StoreInt32(&rc.notifyCancelReorgJob, 1)
+func (rc *reorgCtx) notifyJobState(state model.JobState) {
+	atomic.StoreInt32((*int32)(&rc.jobState), int32(state))
 }
 
 func (rc *reorgCtx) isReorgCanceled() bool {
-	return atomic.LoadInt32(&rc.notifyCancelReorgJob) == 1
+	return int32(model.JobStateCancelled) == atomic.LoadInt32((*int32)(&rc.jobState)) ||
+		int32(model.JobStateCancelling) == atomic.LoadInt32((*int32)(&rc.jobState))
+}
+
+func (rc *reorgCtx) isReorgPaused() bool {
+	return int32(model.JobStatePaused) == atomic.LoadInt32((*int32)(&rc.jobState)) ||
+		int32(model.JobStatePausing) == atomic.LoadInt32((*int32)(&rc.jobState))
 }
 
 func (rc *reorgCtx) setRowCount(count int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
-}
-
-func (rc *reorgCtx) setNextKey(doneKey kv.Key) {
-	rc.doneKey.Store(nullableKey{key: doneKey})
-}
-
-func (rc *reorgCtx) setCurrentElement(element *meta.Element) {
-	rc.element.Store(element)
 }
 
 func (rc *reorgCtx) mergeWarnings(warnings map[errors.ErrorID]*terror.Error, warningsCount map[errors.ErrorID]int64) {
@@ -146,11 +138,54 @@ func (rc *reorgCtx) getRowCount() int64 {
 	return row
 }
 
+func getAndSetJobRowCnt(ctx context.Context, reorgInfo *reorgInfo, rc *reorgCtx, job *model.Job, client *clientv3.Client) int64 {
+	rowCount := int64(0)
+	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
+		path := fmt.Sprintf("%s/%d", rowCountEtcdPath, job.ID)
+		resp, err := client.Get(ctx, path, clientv3.WithPrefix())
+		if err != nil {
+			logutil.BgLogger().Warn("get row count from ETCD failed", zap.String("category", "ddl"), zap.Error(err))
+			return 0
+		}
+		if len(resp.Kvs) == 0 {
+			return 0
+		}
+		for _, kv := range resp.Kvs {
+			cnt, err := strconv.Atoi(string(kv.Value))
+			if err != nil {
+				logutil.BgLogger().Error("parse row count from ETCD failed", zap.String("category", "ddl"), zap.Error(err))
+				continue
+			}
+			rowCount += int64(cnt)
+		}
+		job.SetRowCount(rowCount)
+	} else {
+		rowCount = rc.getRowCount()
+		job.SetRowCount(rowCount)
+	}
+	return rowCount
+}
+
+func deleteETCDRowCntStatIfNecessary(ctx context.Context, reorgInfo *reorgInfo, job *model.Job, client *clientv3.Client) {
+	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
+		path := fmt.Sprintf("%s/%d", rowCountEtcdPath, job.ID)
+		const retryCnt = 3
+		for i := 0; i < retryCnt; i++ {
+			_, err := client.Delete(ctx, path, clientv3.WithPrefix())
+			if err == nil {
+				return
+			}
+			logutil.BgLogger().Warn("delete row count from ETCD failed", zap.String("category", "ddl"), zap.Error(err))
+		}
+	}
+}
+
 // runReorgJob is used as a portal to do the reorganization work.
 // eg:
 // 1: add index
 // 2: alter column type
 // 3: clean global index
+// 4: reorganize partitions
 /*
  ddl goroutine >---------+
    ^                     |
@@ -180,7 +215,8 @@ func (rc *reorgCtx) getRowCount() int64 {
 // the additional ddl round.
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
-func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
+func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
+	lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
 	d := reorgInfo.d
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
@@ -197,14 +233,19 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 	rc := w.getReorgCtx(job.ID)
 	if rc == nil {
 		// This job is cancelling, we should return ErrCancelledDDLJob directly.
+		//
 		// Q: Is there any possibility that the job is cancelling and has no reorgCtx?
-		// A: Yes, consider the case that we cancel the job when backfilling the last batch of data, the cancel txn is commit first,
-		// and then the backfill workers send signal to the `doneCh` of the reorgCtx, and then the DDL worker will remove the reorgCtx and
-		// update the DDL job to `done`, but at the commit time, the DDL txn will raise a "write conflict" error and retry, and it happens.
+		// A: Yes, consider the case that :
+		// - we cancel the job when backfilling the last batch of data, the cancel txn is commit first,
+		// - and then the backfill workers send signal to the `doneCh` of the reorgCtx,
+		// - and then the DDL worker will remove the reorgCtx
+		// - and update the DDL job to `done`
+		// - but at the commit time, the DDL txn will raise a "write conflict" error and retry, and it happens.
 		if job.IsCancelling() {
 			return dbterror.ErrCancelledDDLJob
 		}
-		rc = w.newReorgCtx(reorgInfo)
+
+		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
@@ -227,37 +268,37 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 	case err := <-rc.doneCh:
 		// Since job is cancelled，we don't care about its partial counts.
 		if rc.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
-			d.removeReorgCtx(job)
+			d.removeReorgCtx(job.ID)
 			return dbterror.ErrCancelledDDLJob
 		}
-		rowCount := rc.getRowCount()
+		rowCount := getAndSetJobRowCnt(w.ctx, reorgInfo, rc, job, d.etcdCli)
 		if err != nil {
-			logutil.BgLogger().Warn("[ddl] run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+			logutil.BgLogger().Warn("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount), zap.Error(err))
 		} else {
-			logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
+			logutil.BgLogger().Info("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount))
 		}
 
-		job.SetRowCount(rowCount)
+		deleteETCDRowCntStatIfNecessary(w.ctx, reorgInfo, job, d.etcdCli)
 
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
 
-		d.removeReorgCtx(job)
+		d.removeReorgCtx(job.ID)
+
+		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
+
 		// For other errors, even err is not nil here, we still wait the partial counts to be collected.
 		// since in the next round, the startKey is brand new which is stored by last time.
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		updateBackfillProgress(w, reorgInfo, tblInfo, 0)
 	case <-w.ctx.Done():
-		logutil.BgLogger().Info("[ddl] run reorg job quit")
-		d.removeReorgCtx(job)
+		logutil.BgLogger().Info("run reorg job quit", zap.String("category", "ddl"))
+		d.removeReorgCtx(job.ID)
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		rowCount := rc.getRowCount()
-		job.SetRowCount(rowCount)
+		rowCount := getAndSetJobRowCnt(w.ctx, reorgInfo, rc, job, d.etcdCli)
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
 		// Update a job's warnings.
@@ -265,7 +306,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 
 		rc.resetWarnings()
 
-		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
+		logutil.BgLogger().Info("run reorg job wait timeout", zap.String("category", "ddl"),
 			zap.Duration("wait time", waitTimeout),
 			zap.Int64("total added row count", rowCount))
 		// If timeout, we will return, check the owner and retry to wait job done again.
@@ -274,13 +315,55 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 	return nil
 }
 
+func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *model.Job, reorgInfo *reorgInfo) error {
+	if job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge {
+		// Only used for the ingest mode job.
+		return nil
+	}
+	if reorgInfo.mergingTmpIdx {
+		// Merging the temporary index uses txn mode, so we don't need to consider the checkpoint.
+		return nil
+	}
+	if job.ReorgMeta.IsDistReorg {
+		// The global checkpoint is not used in distributed tasks.
+		return nil
+	}
+	if w.getReorgCtx(job.ID) != nil {
+		// We only overwrite from checkpoint when the job runs for the first time on this TiDB instance.
+		return nil
+	}
+	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
+	if ok {
+		// We create the checkpoint manager here because we need to wait for the reorg meta to be initialized.
+		if bc.GetCheckpointManager() == nil {
+			mgr, err := ingest.NewCheckpointManager(w.ctx, bc, w.sessPool, job.ID, reorgInfo.currElement.ID)
+			if err != nil {
+				logutil.BgLogger().Warn("create checkpoint manager failed", zap.String("category", "ddl-ingest"), zap.Error(err))
+			}
+			bc.AttachCheckpointManager(mgr)
+		}
+	}
+	start, end, pid, err := getCheckpointReorgHandle(sess, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if pid > 0 {
+		reorgInfo.StartKey = start
+		reorgInfo.EndKey = end
+		reorgInfo.PhysicalTableID = pid
+	}
+	return nil
+}
+
 func (w *worker) mergeWarningsIntoJob(job *model.Job) {
 	rc := w.getReorgCtx(job.ID)
 	rc.mu.Lock()
-	defer rc.mu.Unlock()
 	partWarnings := rc.mu.warnings
 	partWarningsCount := rc.mu.warningsCount
-	job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
+	rc.mu.Unlock()
+	warnings, warningsCount := job.GetWarnings()
+	warnings, warningsCount = mergeWarningsAndWarningsCount(partWarnings, warnings, partWarningsCount, warningsCount)
+	job.SetWarnings(warnings, warningsCount)
 }
 
 func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
@@ -294,11 +377,15 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if totalCount > 0 {
 			progress = float64(addedRowCount) / float64(totalCount)
 		} else {
-			progress = 1
+			progress = 0
 		}
 		if progress > 1 {
 			progress = 1
 		}
+		logutil.BgLogger().Debug("update progress", zap.String("category", "ddl"),
+			zap.Float64("progress", progress),
+			zap.Int64("addedRowCount", addedRowCount),
+			zap.Int64("totalCount", totalCount))
 	}
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
@@ -311,24 +398,38 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
 	case model.ActionModifyColumn:
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+	case model.ActionReorganizePartition:
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
 	}
 }
 
 func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	var ctx sessionctx.Context
-	ctx, err := w.sessPool.get()
+	ctx, err := w.sessPool.Get()
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
-	defer w.sessPool.put(ctx)
+	defer w.sessPool.Put(ctx)
 
 	executor, ok := ctx.(sqlexec.RestrictedSQLExecutor)
 	// `mock.Context` is used in tests, which doesn't implement RestrictedSQLExecutor
 	if !ok {
 		return statistics.PseudoRowCount
 	}
-	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-	rows, _, err := executor.ExecRestrictedSQL(w.ctx, nil, sql, tblInfo.ID)
+	var rows []chunk.Row
+	if tblInfo.Partition != nil && len(tblInfo.Partition.DroppingDefinitions) > 0 {
+		// if Reorganize Partition, only select number of rows from the selected partitions!
+		defs := tblInfo.Partition.DroppingDefinitions
+		partIDs := make([]string, 0, len(defs))
+		for _, def := range defs {
+			partIDs = append(partIDs, strconv.FormatInt(def.ID, 10))
+		}
+		sql := "select sum(table_rows) from information_schema.partitions where tidb_partition_id in (%?);"
+		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, strings.Join(partIDs, ","))
+	} else {
+		sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
+		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, tblInfo.ID)
+	}
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
@@ -338,20 +439,36 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	return rows[0].GetInt64(0)
 }
 
-func (dc *ddlCtx) isReorgRunnable(jobID int64) error {
+func (dc *ddlCtx) isReorgCancelled(jobID int64) bool {
+	return dc.getReorgCtx(jobID).isReorgCanceled()
+}
+func (dc *ddlCtx) isReorgPaused(jobID int64) bool {
+	return dc.getReorgCtx(jobID).isReorgPaused()
+}
+
+func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 	if isChanClosed(dc.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
-	if dc.getReorgCtx(jobID).isReorgCanceled() {
+	if dc.isReorgCancelled(jobID) {
 		// Job is cancelled. So it can't be done.
 		return dbterror.ErrCancelledDDLJob
 	}
 
+	if dc.isReorgPaused(jobID) {
+		logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.String("ID", dc.uuid))
+		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(jobID)
+	}
+
+	// If isDistReorg is true, we needn't check if it is owner.
+	if isDistReorg {
+		return nil
+	}
 	if !dc.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
-		logutil.BgLogger().Info("[ddl] DDL is not the DDL owner", zap.String("ID", dc.uuid))
+		logutil.BgLogger().Info("DDL is not the DDL owner", zap.String("category", "ddl"), zap.String("ID", dc.uuid))
 		return errors.Trace(dbterror.ErrNotOwner)
 	}
 	return nil
@@ -376,7 +493,10 @@ type reorgInfo struct {
 }
 
 func (r *reorgInfo) String() string {
-	_, isEnabled := ingest.LitBackCtxMgr.Load(r.Job.ID)
+	var isEnabled bool
+	if ingest.LitInitialized {
+		_, isEnabled = ingest.LitBackCtxMgr.Load(r.Job.ID)
+	}
 	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
 		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +
 		"StartKey:" + hex.EncodeToString(r.StartKey) + "," +
@@ -549,7 +669,7 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle)
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
-		logutil.BgLogger().Info("[ddl] get noop table range",
+		logutil.BgLogger().Info("get noop table range", zap.String("category", "ddl"),
 			zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
 			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startHandleKey)),
@@ -618,7 +738,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 				return nil, errors.Trace(err)
 			}
 		}
-		logutil.BgLogger().Info("[ddl] job get table range",
+		logutil.BgLogger().Info("job get table range", zap.String("category", "ddl"),
 			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
 			zap.String("startKey", hex.EncodeToString(start)),
 			zap.String("endKey", hex.EncodeToString(end)))
@@ -653,7 +773,10 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			// We'll try to remove it in the next major TiDB version.
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
-				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()))
+				logutil.BgLogger().Warn("get reorg info, the element does not exist", zap.String("category", "ddl"), zap.String("job", job.String()))
+				if job.IsCancelling() {
+					return nil, nil
+				}
 			}
 			return &info, errors.Trace(err)
 		}
@@ -671,7 +794,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 	return &info, nil
 }
 
-func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.PartitionedTable, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -689,12 +812,13 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 			return nil, errors.Trace(err)
 		}
 		pid = partitionIDs[0]
-		tb := tbl.(table.PartitionedTable).GetPartition(pid)
-		start, end, err = getTableRange(ctx, d, tb, ver.Ver, job.Priority)
+		physTbl := tbl.GetPartition(pid)
+
+		start, end, err = getTableRange(ctx, d, physTbl, ver.Ver, job.Priority)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		logutil.BgLogger().Info("[ddl] job get table range",
+		logutil.BgLogger().Info("job get table range", zap.String("category", "ddl"),
 			zap.Int64("job ID", job.ID), zap.Int64("physical table ID", pid),
 			zap.String("start key", hex.EncodeToString(start)),
 			zap.String("end key", hex.EncodeToString(end)))
@@ -715,7 +839,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 			// We'll try to remove it in the next major TiDB version.
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
-				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()))
+				logutil.BgLogger().Warn("get reorg info, the element does not exist", zap.String("category", "ddl"), zap.String("job", job.String()))
 			}
 			return &info, errors.Trace(err)
 		}
@@ -734,24 +858,24 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 
 // UpdateReorgMeta creates a new transaction and updates tidb_ddl_reorg table,
 // so the reorg can restart in case of issues.
-func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err error) {
+func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sess.Pool) (err error) {
 	if startKey == nil && r.EndKey == nil {
 		return nil
 	}
-	sctx, err := pool.get()
+	sctx, err := pool.Get()
 	if err != nil {
 		return
 	}
-	defer pool.put(sctx)
+	defer pool.Put(sctx)
 
-	sess := newSession(sctx)
-	err = sess.begin()
+	se := sess.NewSession(sctx)
+	err = se.Begin()
 	if err != nil {
 		return
 	}
-	rh := newReorgHandler(sess)
+	rh := newReorgHandler(se)
 	err = updateDDLReorgHandle(rh.s, r.Job.ID, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
-	err1 := sess.commit()
+	err1 := se.Commit()
 	if err == nil {
 		err = err1
 	}
@@ -760,15 +884,15 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 
 // reorgHandler is used to handle the reorg information duration reorganization DDL job.
 type reorgHandler struct {
-	s *session
+	s *sess.Session
 }
 
 // NewReorgHandlerForTest creates a new reorgHandler, only used in test.
-func NewReorgHandlerForTest(sess sessionctx.Context) *reorgHandler {
-	return newReorgHandler(newSession(sess))
+func NewReorgHandlerForTest(se sessionctx.Context) *reorgHandler {
+	return newReorgHandler(sess.NewSession(se))
 }
 
-func newReorgHandler(sess *session) *reorgHandler {
+func newReorgHandler(sess *sess.Session) *reorgHandler {
 	return &reorgHandler{s: sess}
 }
 
@@ -788,7 +912,7 @@ func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Ele
 }
 
 // CleanupDDLReorgHandles removes the job reorganization related handles.
-func CleanupDDLReorgHandles(job *model.Job, s *session) {
+func CleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 	if job != nil && !job.IsFinished() && !job.IsSynced() {
 		// Job is given, but it is neither finished nor synced; do nothing
 		return

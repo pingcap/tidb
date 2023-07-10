@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/autoid"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -586,11 +586,12 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 	}
 	if len(addrs) > 0 {
 		etcdCli, err := clientv3.New(clientv3.Config{
-			Endpoints: addrs,
-			TLS:       ebd.TLSConfig(),
+			Endpoints:        addrs,
+			AutoSyncInterval: 30 * time.Second,
+			TLS:              ebd.TLSConfig(),
 		})
 		if err != nil {
-			logutil.BgLogger().Error("[autoid client] fail to connect etcd, fallback to default", zap.Error(err))
+			logutil.BgLogger().Error("fail to connect etcd, fallback to default", zap.String("category", "autoid client"), zap.Error(err))
 			return nil
 		}
 		spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
@@ -900,11 +901,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
-			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-				span1 := span.Tracer().StartSpan("alloc.alloc4Signed", opentracing.ChildOf(span.Context()))
-				defer span1.Finish()
-				opentracing.ContextWithSpan(ctx, span1)
-			}
+			defer tracing.StartRegion(ctx, "alloc.alloc4Signed").End()
 			if allocatorStats != nil {
 				txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
 			}
@@ -995,11 +992,7 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
-			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-				span1 := span.Tracer().StartSpan("alloc.alloc4Unsigned", opentracing.ChildOf(span.Context()))
-				defer span1.Finish()
-				opentracing.ContextWithSpan(ctx, span1)
-			}
+			defer tracing.StartRegion(ctx, "alloc.alloc4Unsigned").End()
 			if allocatorStats != nil {
 				txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
 			}

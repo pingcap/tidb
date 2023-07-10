@@ -33,10 +33,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/internal/handshake"
+	"github.com/pingcap/tidb/server/internal/parse"
+	serverutil "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -46,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
@@ -77,7 +80,7 @@ func TestIssue33699(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -184,8 +187,8 @@ func TestIssue33699(t *testing.T) {
 
 func TestMalformHandshakeHeader(t *testing.T) {
 	data := []byte{0x00}
-	var p handshakeResponse41
-	_, err := parseHandshakeResponseHeader(context.Background(), &p, data)
+	var p handshake.Response41
+	_, err := parse.HandshakeResponseHeader(context.Background(), &p, data)
 	require.Error(t, err)
 }
 
@@ -205,11 +208,11 @@ func TestParseHandshakeResponse(t *testing.T) {
 		0x6c, 0x61, 0x74, 0x66, 0x6f, 0x72, 0x6d, 0x06, 0x78, 0x38, 0x36, 0x5f, 0x36, 0x34, 0x03, 0x66,
 		0x6f, 0x6f, 0x03, 0x62, 0x61, 0x72,
 	}
-	var p handshakeResponse41
-	offset, err := parseHandshakeResponseHeader(context.Background(), &p, data)
+	var p handshake.Response41
+	offset, err := parse.HandshakeResponseHeader(context.Background(), &p, data)
 	require.NoError(t, err)
 	require.Equal(t, mysql.ClientConnectAtts, p.Capability&mysql.ClientConnectAtts)
-	err = parseHandshakeResponseBody(context.Background(), &p, data, offset)
+	err = parse.HandshakeResponseBody(context.Background(), &p, data, offset)
 	require.NoError(t, err)
 	eq := mapIdentical(p.Attrs, map[string]string{
 		"_client_version": "5.6.6-m9",
@@ -228,15 +231,15 @@ func TestParseHandshakeResponse(t *testing.T) {
 		0x74, 0x00, 0x6d, 0x79, 0x73, 0x71, 0x6c, 0x5f, 0x6e, 0x61, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x70,
 		0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x00,
 	}
-	p = handshakeResponse41{}
-	offset, err = parseHandshakeResponseHeader(context.Background(), &p, data)
+	p = handshake.Response41{}
+	offset, err = parse.HandshakeResponseHeader(context.Background(), &p, data)
 	require.NoError(t, err)
 	capability := mysql.ClientProtocol41 |
 		mysql.ClientPluginAuth |
 		mysql.ClientSecureConnection |
 		mysql.ClientConnectWithDB
 	require.Equal(t, capability, p.Capability&capability)
-	err = parseHandshakeResponseBody(context.Background(), &p, data, offset)
+	err = parse.HandshakeResponseBody(context.Background(), &p, data, offset)
 	require.NoError(t, err)
 	require.Equal(t, "pam", p.User)
 	require.Equal(t, "test", p.DBName)
@@ -259,45 +262,20 @@ func TestIssue1768(t *testing.T) {
 		0x34, 0x0c, 0x70, 0x72, 0x6f, 0x67, 0x72, 0x61, 0x6d, 0x5f, 0x6e, 0x61, 0x6d, 0x65, 0x05, 0x6d,
 		0x79, 0x73, 0x71, 0x6c,
 	}
-	p := handshakeResponse41{}
-	offset, err := parseHandshakeResponseHeader(context.Background(), &p, data)
+	p := handshake.Response41{}
+	offset, err := parse.HandshakeResponseHeader(context.Background(), &p, data)
 	require.NoError(t, err)
 	require.Equal(t, mysql.ClientPluginAuthLenencClientData, p.Capability&mysql.ClientPluginAuthLenencClientData)
-	err = parseHandshakeResponseBody(context.Background(), &p, data, offset)
+	err = parse.HandshakeResponseBody(context.Background(), &p, data, offset)
 	require.NoError(t, err)
 	require.NotEmpty(t, p.Auth)
-}
-
-func TestAuthSwitchRequest(t *testing.T) {
-	// this data is from a MySQL 8.0 client
-	data := []byte{
-		0x85, 0xa6, 0xff, 0x1, 0x0, 0x0, 0x0, 0x1, 0x21, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-		0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x72, 0x6f,
-		0x6f, 0x74, 0x0, 0x0, 0x63, 0x61, 0x63, 0x68, 0x69, 0x6e, 0x67, 0x5f, 0x73, 0x68, 0x61,
-		0x32, 0x5f, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x0, 0x79, 0x4, 0x5f, 0x70,
-		0x69, 0x64, 0x5, 0x37, 0x37, 0x30, 0x38, 0x36, 0x9, 0x5f, 0x70, 0x6c, 0x61, 0x74, 0x66,
-		0x6f, 0x72, 0x6d, 0x6, 0x78, 0x38, 0x36, 0x5f, 0x36, 0x34, 0x3, 0x5f, 0x6f, 0x73, 0x5,
-		0x4c, 0x69, 0x6e, 0x75, 0x78, 0xc, 0x5f, 0x63, 0x6c, 0x69, 0x65, 0x6e, 0x74, 0x5f, 0x6e,
-		0x61, 0x6d, 0x65, 0x8, 0x6c, 0x69, 0x62, 0x6d, 0x79, 0x73, 0x71, 0x6c, 0x7, 0x6f, 0x73,
-		0x5f, 0x75, 0x73, 0x65, 0x72, 0xa, 0x6e, 0x75, 0x6c, 0x6c, 0x6e, 0x6f, 0x74, 0x6e, 0x69,
-		0x6c, 0xf, 0x5f, 0x63, 0x6c, 0x69, 0x65, 0x6e, 0x74, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69,
-		0x6f, 0x6e, 0x6, 0x38, 0x2e, 0x30, 0x2e, 0x32, 0x31, 0xc, 0x70, 0x72, 0x6f, 0x67, 0x72,
-		0x61, 0x6d, 0x5f, 0x6e, 0x61, 0x6d, 0x65, 0x5, 0x6d, 0x79, 0x73, 0x71, 0x6c,
-	}
-
-	var resp handshakeResponse41
-	pos, err := parseHandshakeResponseHeader(context.Background(), &resp, data)
-	require.NoError(t, err)
-	err = parseHandshakeResponseBody(context.Background(), &resp, data, pos)
-	require.NoError(t, err)
-	require.Equal(t, "caching_sha2_password", resp.AuthPlugin)
 }
 
 func TestInitialHandshake(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	var outBuffer bytes.Buffer
-	cfg := newTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
@@ -385,8 +363,8 @@ func TestDispatch(t *testing.T) {
 			in:  []byte("select 1"),
 			err: nil,
 			out: []byte{
-				0xc, 0x0, 0x0, 0x3, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x18,
-				0x0, 0x0, 0x4, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0, 0x1, 0x31, 0x1, 0x31, 0xc, 0x3f,
+				0xc, 0x0, 0x0, 0x3, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x17,
+				0x0, 0x0, 0x4, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0, 0x1, 0x31, 0x0, 0xc, 0x3f,
 				0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x5, 0xfe,
 			},
 		},
@@ -395,8 +373,8 @@ func TestDispatch(t *testing.T) {
 			in:  []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x1, 0x0},
 			err: nil,
 			out: []byte{
-				0x1, 0x0, 0x0, 0x6, 0x1, 0x18, 0x0, 0x0, 0x7, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0,
-				0x1, 0x31, 0x1, 0x31, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0,
+				0x1, 0x0, 0x0, 0x6, 0x1, 0x17, 0x0, 0x0, 0x7, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0,
+				0x1, 0x31, 0x0, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0,
 				0x0, 0x1, 0x0, 0x0, 0x8, 0xfe,
 			},
 		},
@@ -429,9 +407,9 @@ func TestDispatch(t *testing.T) {
 			in:  []byte("t"),
 			err: nil,
 			out: []byte{
-				0x26, 0x0, 0x0, 0xc, 0x3, 0x64, 0x65, 0x66, 0x4, 0x74, 0x65, 0x73, 0x74, 0x1, 0x74,
+				0x1f, 0x0, 0x0, 0xc, 0x3, 0x64, 0x65, 0x66, 0x4, 0x74, 0x65, 0x73, 0x74, 0x1, 0x74,
 				0x1, 0x74, 0x1, 0x61, 0x1, 0x61, 0xc, 0x3f, 0x0, 0xb, 0x0, 0x0, 0x0, 0x3, 0x0, 0x0,
-				0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0xd, 0xfe,
+				0x0, 0x0, 0x0, 0xfb, 0x1, 0x0, 0x0, 0xd, 0xfe,
 			},
 		},
 		{
@@ -504,8 +482,8 @@ func TestDispatchClientProtocol41(t *testing.T) {
 			in:  []byte("select 1"),
 			err: nil,
 			out: []byte{
-				0xc, 0x0, 0x0, 0x3, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x18,
-				0x0, 0x0, 0x4, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0, 0x1, 0x31, 0x1, 0x31, 0xc, 0x3f,
+				0xc, 0x0, 0x0, 0x3, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x17,
+				0x0, 0x0, 0x4, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0, 0x1, 0x31, 0x0, 0xc, 0x3f,
 				0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0, 0x0, 0x5, 0x0, 0x0, 0x5, 0xfe,
 				0x0, 0x0, 0x2, 0x0,
 			},
@@ -515,8 +493,8 @@ func TestDispatchClientProtocol41(t *testing.T) {
 			in:  []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x1, 0x0},
 			err: nil,
 			out: []byte{
-				0x1, 0x0, 0x0, 0x6, 0x1, 0x18, 0x0, 0x0, 0x7, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0,
-				0x1, 0x31, 0x1, 0x31, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0,
+				0x1, 0x0, 0x0, 0x6, 0x1, 0x17, 0x0, 0x0, 0x7, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0,
+				0x1, 0x31, 0x0, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0,
 				0x0, 0x5, 0x0, 0x0, 0x8, 0xfe, 0x0, 0x0, 0x42, 0x0,
 			},
 		},
@@ -524,7 +502,7 @@ func TestDispatchClientProtocol41(t *testing.T) {
 			com: mysql.ComStmtFetch,
 			in:  []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 			err: nil,
-			out: []byte{0x5, 0x0, 0x0, 0x9, 0xfe, 0x0, 0x0, 0x82, 0x0},
+			out: []byte{0x5, 0x0, 0x0, 0x9, 0xfe, 0x0, 0x0, 0x42, 0x0},
 		},
 		{
 			com: mysql.ComStmtReset,
@@ -549,10 +527,9 @@ func TestDispatchClientProtocol41(t *testing.T) {
 			in:  []byte("t"),
 			err: nil,
 			out: []byte{
-				0x26, 0x0, 0x0, 0xc, 0x3, 0x64, 0x65, 0x66, 0x4, 0x74, 0x65, 0x73, 0x74, 0x1, 0x74,
+				0x1f, 0x0, 0x0, 0xc, 0x3, 0x64, 0x65, 0x66, 0x4, 0x74, 0x65, 0x73, 0x74, 0x1, 0x74,
 				0x1, 0x74, 0x1, 0x61, 0x1, 0x61, 0xc, 0x3f, 0x0, 0xb, 0x0, 0x0, 0x0, 0x3, 0x0, 0x0,
-				0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5, 0x0, 0x0, 0xd, 0xfe,
-				0x0, 0x0, 0x2, 0x0,
+				0x0, 0x0, 0x0, 0xfb, 0x5, 0x0, 0x0, 0x0d, 0xfe, 0x0, 0x0, 0x2, 0x0,
 			},
 		},
 		{
@@ -591,8 +568,8 @@ func TestQueryEndWithZero(t *testing.T) {
 			in:  append([]byte("select 1"), 0x0),
 			err: nil,
 			out: []byte{
-				0xc, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x18,
-				0x0, 0x0, 0x1, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0, 0x1, 0x31, 0x1, 0x31, 0xc, 0x3f,
+				0xc, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x17,
+				0x0, 0x0, 0x1, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0, 0x1, 0x31, 0x0, 0xc, 0x3f,
 				0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x2, 0xfe,
 			},
 		},
@@ -601,8 +578,8 @@ func TestQueryEndWithZero(t *testing.T) {
 			in:  append([]byte("select 1"), 0x0),
 			err: nil,
 			out: []byte{
-				0x1, 0x0, 0x0, 0x3, 0x1, 0x18, 0x0, 0x0, 0x4, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0,
-				0x1, 0x31, 0x1, 0x31, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0,
+				0x1, 0x0, 0x0, 0x3, 0x1, 0x17, 0x0, 0x0, 0x4, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0,
+				0x1, 0x31, 0x0, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0,
 				0x0, 0x1, 0x0, 0x0, 0x5, 0xfe, 0x2, 0x0, 0x0, 0x6, 0x1, 0x31, 0x1, 0x0, 0x0, 0x7, 0xfe,
 			},
 		},
@@ -627,7 +604,7 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -764,7 +741,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 }
 
 func TestShutDown(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	cc := &clientConn{}
 	se, err := session.CreateSession4Test(store)
@@ -775,39 +752,42 @@ func TestShutDown(t *testing.T) {
 	cc.status = connStatusShutdown
 	// assert ErrQueryInterrupted
 	err = cc.handleQuery(context.Background(), "select 1")
-	require.Equal(t, executor.ErrQueryInterrupted, err)
-}
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
 
-func TestShutdownOrNotify(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	se, err := session.CreateSession4Test(store)
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
 	require.NoError(t, err)
-	tc := &TiDBContext{
-		Session: se,
-		stmts:   make(map[int]*TiDBStatement),
-	}
-	cc := &clientConn{
-		connectionID: 1,
-		server: &Server{
-			capability: defaultCapability,
-		},
-		status: connStatusWaitShutdown,
-	}
+	srv.SetDomain(dom)
+
+	cc = &clientConn{server: srv}
 	cc.setCtx(tc)
-	require.False(t, cc.ShutdownOrNotify())
-	cc.status = connStatusReading
-	require.True(t, cc.ShutdownOrNotify())
-	require.Equal(t, connStatusShutdown, cc.status)
-	cc.status = connStatusDispatching
-	require.False(t, cc.ShutdownOrNotify())
-	require.Equal(t, connStatusWaitShutdown, cc.status)
+
+	// test in txn
+	srv.clients[dom.NextConnID()] = cc
+	cc.getCtx().GetSessionVars().SetInTxn(true)
+
+	waitTime := 100 * time.Millisecond
+	begin := time.Now()
+	srv.DrainClients(waitTime, waitTime)
+	require.Greater(t, time.Since(begin), waitTime)
+
+	// test not in txn
+	srv.clients[dom.NextConnID()] = cc
+	cc.getCtx().GetSessionVars().SetInTxn(false)
+
+	begin = time.Now()
+	srv.DrainClients(waitTime, waitTime)
+	require.Less(t, time.Since(begin), waitTime)
 }
 
 type snapshotCache interface {
 	SnapCacheHitCount() int
 }
 
-func TestPrefetchPointKeys(t *testing.T) {
+func TestPrefetchPointKeys4Update(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	cc := &clientConn{
@@ -858,6 +838,136 @@ func TestPrefetchPointKeys(t *testing.T) {
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
 }
 
+func TestPrefetchPointKeys4Delete(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	tk := testkit.NewTestKit(t, store)
+	cc.setCtx(&TiDBContext{Session: tk.Session()})
+	ctx := context.Background()
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.MustExec("use test")
+	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
+	tk.MustExec("insert prefetch values (4, 4, 4), (5, 5, 5), (6, 6, 6)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("delete from prefetch where a = 2 and b = 2")
+
+	// enable multi-statement
+	capabilities := cc.ctx.GetSessionVars().ClientCapability
+	capabilities ^= mysql.ClientMultiStatements
+	cc.ctx.SetClientCapability(capabilities)
+	query := "delete from prefetch where a = 1 and b = 1;" +
+		"delete from prefetch where a = 2 and b = 2;" +
+		"delete from prefetch where a = 3 and b = 3;"
+	err := cc.handleQuery(ctx, query)
+	require.NoError(t, err)
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
+	snap := txn.GetSnapshot()
+	//nolint:forcetypeassert
+	require.Equal(t, 4, snap.(snapshotCache).SnapCacheHitCount())
+	tk.MustExec("commit")
+	tk.MustQuery("select * from prefetch").Check(testkit.Rows("4 4 4", "5 5 5", "6 6 6"))
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("delete from prefetch where a = 5 and b = 5")
+	require.Equal(t, 2, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
+	query = "delete from prefetch where a = 4 and b = 4;" +
+		"delete from prefetch where a = 5 and b = 5;" +
+		"delete from prefetch where a = 6 and b = 6;"
+	err = cc.handleQuery(ctx, query)
+	require.NoError(t, err)
+	txn, err = tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
+	require.Equal(t, 6, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from prefetch").Check(testkit.Rows())
+}
+
+func TestPrefetchBatchPointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	tk := testkit.NewTestKit(t, store)
+	cc.setCtx(&TiDBContext{Session: tk.Session()})
+	ctx := context.Background()
+	tk.MustExec("use test")
+	tk.MustExec("create table prefetch (a int primary key, b int)")
+	tk.MustExec("insert prefetch values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("delete from prefetch where a = 1")
+
+	// enable multi-statement
+	capabilities := cc.ctx.GetSessionVars().ClientCapability
+	capabilities ^= mysql.ClientMultiStatements
+	cc.ctx.SetClientCapability(capabilities)
+	query := "delete from prefetch where a in (2,3);" +
+		"delete from prefetch where a in (4,5);"
+	err := cc.handleQuery(ctx, query)
+	require.NoError(t, err)
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
+	snap := txn.GetSnapshot()
+	//nolint:forcetypeassert
+	require.Equal(t, 4, snap.(snapshotCache).SnapCacheHitCount())
+	tk.MustExec("commit")
+	tk.MustQuery("select * from prefetch").Check(testkit.Rows())
+}
+
+func TestPrefetchPartitionTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	tk := testkit.NewTestKit(t, store)
+	cc.setCtx(&TiDBContext{Session: tk.Session()})
+	ctx := context.Background()
+	tk.MustExec("use test")
+	tk.MustExec("create table prefetch (a int primary key, b int) partition by hash(a) partitions 4")
+	tk.MustExec("insert prefetch values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("delete from prefetch where a = 1")
+
+	// enable multi-statement
+	capabilities := cc.ctx.GetSessionVars().ClientCapability
+	capabilities ^= mysql.ClientMultiStatements
+	cc.ctx.SetClientCapability(capabilities)
+	query := "delete from prefetch where a = 2;" +
+		"delete from prefetch where a = 3;" +
+		"delete from prefetch where a in (4,5);"
+	err := cc.handleQuery(ctx, query)
+	require.NoError(t, err)
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
+	snap := txn.GetSnapshot()
+	//nolint:forcetypeassert
+	require.Equal(t, 4, snap.(snapshotCache).SnapCacheHitCount())
+	tk.MustExec("commit")
+	tk.MustQuery("select * from prefetch").Check(testkit.Rows())
+}
+
 func TestTiFlashFallback(t *testing.T) {
 	store := testkit.CreateMockStore(t,
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
@@ -882,6 +992,7 @@ func TestTiFlashFallback(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	tk.MustExec("drop table if exists t")
@@ -902,9 +1013,9 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustExec(dml)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/internal/mpp/ReduceCopNextMaxBackoff", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/ReduceCopNextMaxBackoff"))
 	}()
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
@@ -917,8 +1028,7 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
 
 	// test COM_STMT_FETCH (cursor mode)
-	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}))
-	require.Error(t, cc.handleStmtFetch(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
+	require.Error(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}))
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
 	require.Error(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"))
@@ -1017,7 +1127,7 @@ func TestShowErrors(t *testing.T) {
 func TestHandleAuthPlugin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	cfg := newTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
@@ -1044,7 +1154,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp := handshakeResponse41{
+	resp := handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthNativePassword,
 	}
@@ -1065,7 +1175,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthCachingSha2Password,
 	}
@@ -1088,7 +1198,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthTiDBSM3Password,
 	}
@@ -1110,7 +1220,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
@@ -1133,7 +1243,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthNativePassword,
 	}
@@ -1156,7 +1266,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthCachingSha2Password,
 	}
@@ -1179,7 +1289,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthTiDBSM3Password,
 	}
@@ -1201,7 +1311,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
@@ -1225,7 +1335,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthNativePassword,
 	}
@@ -1248,7 +1358,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthCachingSha2Password,
 	}
@@ -1271,7 +1381,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthTiDBSM3Password,
 	}
@@ -1293,7 +1403,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
@@ -1317,7 +1427,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthNativePassword,
 	}
@@ -1340,7 +1450,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthCachingSha2Password,
 	}
@@ -1363,7 +1473,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthTiDBSM3Password,
 	}
@@ -1385,7 +1495,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server: srv,
 		user:   "unativepassword",
 	}
-	resp = handshakeResponse41{
+	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
@@ -1398,7 +1508,7 @@ func TestChangeUserAuth(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user user1")
 
-	cfg := newTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 
@@ -1446,7 +1556,7 @@ func TestChangeUserAuth(t *testing.T) {
 func TestAuthPlugin2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	cfg := newTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 
@@ -1472,7 +1582,7 @@ func TestAuthPlugin2(t *testing.T) {
 	}
 	cc.setCtx(tc)
 
-	resp := handshakeResponse41{
+	resp := handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 	}
 
@@ -1527,13 +1637,13 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 	// create a token without TLS
 	tk1 := testkit.NewTestKitWithSession(t, store, tc.Session)
 	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
-	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil)
+	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil, nil)
 	tk1.MustQuery("show session_states")
 
 	// create a token with TLS
-	cc.tlsConn = &tls.Conn{}
+	cc.tlsConn = tls.Client(nil, &tls.Config{})
 	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
-	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil)
+	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil, nil)
 	tk1.MustQuery("show session_states")
 
 	// create a token with UnixSocket
@@ -1545,7 +1655,7 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 	tokenBytes := []byte(rows[0][1].(string))
 
 	// auth with the token
-	resp := handshakeResponse41{
+	resp := handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthTiDBSessionToken,
 		Auth:       tokenBytes,
@@ -1589,7 +1699,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	bytes := append([]byte{0x00, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 999)))...)
 	_, err := inBuffer.Write(bytes)
 	require.NoError(t, err)
-	brc := newBufferedReadConn(&bytesConn{inBuffer})
+	brc := serverutil.NewBufferedReadConn(&bytesConn{inBuffer})
 	pkt := newPacketIO(brc)
 	pkt.setMaxAllowedPacket(maxAllowedPacket)
 	readBytes, err = pkt.readPacket()
@@ -1602,7 +1712,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	bytes = append([]byte{0x01, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 1000)))...)
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
-	brc = newBufferedReadConn(&bytesConn{inBuffer})
+	brc = serverutil.NewBufferedReadConn(&bytesConn{inBuffer})
 	pkt = newPacketIO(brc)
 	pkt.setMaxAllowedPacket(maxAllowedPacket)
 	_, err = pkt.readPacket()
@@ -1614,7 +1724,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	bytes = append([]byte{0x01, 0x02, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 488)))...)
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
-	brc = newBufferedReadConn(&bytesConn{inBuffer})
+	brc = serverutil.NewBufferedReadConn(&bytesConn{inBuffer})
 	pkt = newPacketIO(brc)
 	pkt.setMaxAllowedPacket(maxAllowedPacket)
 	readBytes, err = pkt.readPacket()
@@ -1625,7 +1735,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	bytes = append([]byte{0x01, 0x02, 0x00, 0x01}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("b", 488)))...)
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
-	brc = newBufferedReadConn(&bytesConn{inBuffer})
+	brc = serverutil.NewBufferedReadConn(&bytesConn{inBuffer})
 	pkt.setBufferedReadConn(brc)
 	readBytes, err = pkt.readPacket()
 	require.NoError(t, err)
@@ -1638,7 +1748,7 @@ func TestOkEof(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -1701,7 +1811,7 @@ func TestExtensionChangeUser(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -1812,7 +1922,7 @@ func TestAuthSha(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
+	cfg := serverutil.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -1837,7 +1947,7 @@ func TestAuthSha(t *testing.T) {
 	ctx := &TiDBContext{Session: tk.Session()}
 	cc.setCtx(ctx)
 
-	resp := handshakeResponse41{
+	resp := handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 		AuthPlugin: mysql.AuthCachingSha2Password,
 		Auth:       []byte{}, // No password
@@ -1850,4 +1960,97 @@ func TestAuthSha(t *testing.T) {
 	// which differs from when a password is specified as that should trigger
 	// fastAuthFail and the rest of the auth process.
 	require.Equal(t, authData, []byte{})
+}
+
+func TestProcessInfoForExecuteCommand(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	ctx := context.Background()
+
+	tk.MustExec("use test")
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+
+	tk.MustExec("create table t (col1 int)")
+
+	// simple prepare and execute
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(col1) from t"))
+	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
+	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t")
+
+	// prepare and execute with params
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(col1) from t where col1 < ? and col1 > 100"))
+	// 1 params, length of nullBitMap is 1, `0x8, 0x0` represents the type, and the following `0x10, 0x0....` is the param
+	// 10
+	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x2, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0,
+		0x1, 0x8, 0x0,
+		0x0A, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}))
+	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t where col1 < ? and col1 > 100")
+}
+
+func TestLDAPAuthSwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER test_simple_ldap IDENTIFIED WITH authentication_ldap_simple AS 'uid=test_simple_ldap,dc=example,dc=com'")
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "test_simple_ldap",
+	}
+	se, _ := session.CreateSession4Test(store)
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc.setCtx(tc)
+	cc.isUnixSocket = true
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
+	respAuthSwitch, err := cc.checkAuthPlugin(context.Background(), &handshake.Response41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		User:       "test_simple_ldap",
+	})
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
+	require.NoError(t, err)
+	require.Equal(t, []byte(mysql.AuthMySQLClearPassword), respAuthSwitch)
+}
+
+func TestEmptyOrgName(t *testing.T) {
+	inputs := []dispatchInput{
+		{
+			com: mysql.ComQuery,
+			in:  append([]byte("SELECT DATE_FORMAT(CONCAT('2023-07-0', a), '%Y')  AS 'YEAR' FROM test.t"), 0x0),
+			err: nil,
+			out: []byte{0x1, 0x0, 0x0, 0x0, 0x1, // 1 column
+				0x1a, 0x0, 0x0,
+				0x1, 0x3, 0x64, 0x65, 0x66, // catalog
+				0x0,                         // schema
+				0x0,                         // table name
+				0x0,                         // org table
+				0x4, 0x59, 0x45, 0x41, 0x52, // name 'YEAR'
+				0x0, // org name
+				0xc, 0x2e, 0x0, 0x2c, 0x0, 0x0, 0x0, 0xfd, 0x0, 0x0, 0x1f, 0x0, 0x0, 0x1, 0x0, 0x0, 0x2, 0xfe, 0x5, 0x0,
+				0x0, 0x3, 0x4, 0x32, 0x30, 0x32, 0x33, 0x1, 0x0, 0x0, 0x4, 0xfe},
+		},
+	}
+
+	testDispatch(t, inputs, 0)
 }

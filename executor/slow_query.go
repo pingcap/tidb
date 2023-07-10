@@ -275,33 +275,7 @@ func (sc *slowLogChecker) isTimeValid(t types.Time) bool {
 }
 
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
-	var resByte []byte
-	lineByte, isPrefix, err := reader.ReadLine()
-	if isPrefix {
-		// Need to read more data.
-		resByte = make([]byte, len(lineByte), len(lineByte)*2)
-	} else {
-		resByte = make([]byte, len(lineByte))
-	}
-	// Use copy here to avoid shallow copy problem.
-	copy(resByte, lineByte)
-	if err != nil {
-		return resByte, err
-	}
-
-	var tempLine []byte
-	for isPrefix {
-		tempLine, isPrefix, err = reader.ReadLine()
-		resByte = append(resByte, tempLine...) // nozero
-		// Use the max value of max_allowed_packet to check the single line length.
-		if len(resByte) > int(variable.MaxOfMaxAllowedPacket) {
-			return resByte, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
-		}
-		if err != nil {
-			return resByte, err
-		}
-	}
-	return resByte, err
+	return util.ReadLine(reader, int(variable.MaxOfMaxAllowedPacket))
 }
 
 type offset struct {

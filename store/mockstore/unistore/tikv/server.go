@@ -863,11 +863,10 @@ func (svr *Server) EstablishMPPConnectionWithStoreID(req *mpp.EstablishMPPConnec
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if mppHandler == nil {
-			time.Sleep(time.Second)
-		} else {
+		if mppHandler != nil {
 			break
 		}
+		time.Sleep(time.Second)
 	}
 	if mppHandler == nil {
 		return errors.New("task not found")
@@ -1136,6 +1135,12 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				Assertion:        x.Assertion,
 				ExistingStartTs:  x.ExistingStartTS,
 				ExistingCommitTs: x.ExistingCommitTS,
+			},
+		}
+	case *kverrors.ErrPrimaryMismatch:
+		return &kvrpcpb.KeyError{
+			PrimaryMismatch: &kvrpcpb.PrimaryMismatch{
+				LockInfo: x.Lock.ToLockInfo(x.Key),
 			},
 		}
 	default:

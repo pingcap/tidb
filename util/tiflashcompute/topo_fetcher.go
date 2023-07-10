@@ -16,7 +16,7 @@ package tiflashcompute
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -117,6 +117,9 @@ func getAutoScalerType(typ string) int {
 func InitGlobalTopoFetcher(typ string, addr string, clusterID string, isFixedPool bool) (err error) {
 	logutil.BgLogger().Info("init globalTopoFetcher", zap.Any("type", typ), zap.Any("addr", addr),
 		zap.Any("clusterID", clusterID), zap.Any("isFixedPool", isFixedPool))
+	if clusterID == "" || addr == "" {
+		return errors.Errorf("ClusterID(%s) or AutoScaler(%s) addr is empty", clusterID, addr)
+	}
 
 	ft := getAutoScalerType(typ)
 	switch ft {
@@ -252,7 +255,7 @@ func httpGetAndParseResp(url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logutil.BgLogger().Error(err.Error())
 		return nil, errTopoFetcher.GenWithStackByArgs(httpGetFailedErrMsg)

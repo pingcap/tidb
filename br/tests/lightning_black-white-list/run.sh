@@ -16,6 +16,8 @@
 
 set -eux
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 drop_dbs() {
     run_sql 'DROP DATABASE IF EXISTS firstdb;'
     run_sql 'DROP DATABASE IF EXISTS seconddb;'
@@ -49,11 +51,11 @@ check_even_table_only() {
 # Check if black-white-list works.
 
 drop_dbs
-run_lightning --config "tests/$TEST_NAME/firstdb-only.toml"
+run_lightning --config "$CUR/firstdb-only.toml"
 check_firstdb_only
 
 drop_dbs
-run_lightning --config "tests/$TEST_NAME/even-table-only.toml"
+run_lightning --config "$CUR/even-table-only.toml"
 check_even_table_only
 
 # Check the same for table-filter

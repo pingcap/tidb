@@ -43,7 +43,7 @@ const finishJobTemplate = `UPDATE mysql.tidb_ttl_table_status
 		current_job_status_update_time = NULL
 	WHERE table_id = %? AND current_job_id = %?`
 const removeTaskForJobTemplate = "DELETE FROM mysql.tidb_ttl_task WHERE job_id = %?"
-const addJobHistoryTemplate = `INSERT INTO
+const createJobHistoryRowTemplate = `INSERT INTO
     mysql.tidb_ttl_job_history (
         job_id,
         table_id,
@@ -54,14 +54,18 @@ const addJobHistoryTemplate = `INSERT INTO
         create_time,
         finish_time,
         ttl_expire,
-        summary_text,
-        expired_rows,
-        deleted_rows,
-        error_delete_rows,
         status
     )
 VALUES
-    (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`
+    (%?, %?, %?, %?, %?, %?, %?, FROM_UNIXTIME(1), %?, %?)`
+const finishJobHistoryTemplate = `UPDATE mysql.tidb_ttl_job_history
+	SET finish_time = %?,
+	    summary_text = %?,
+	    expired_rows = %?,
+	    deleted_rows = %?,
+	    error_delete_rows = %?,
+	    status = %?
+	WHERE job_id = %?`
 
 func updateJobCurrentStatusSQL(tableID int64, oldStatus cache.JobStatus, newStatus cache.JobStatus, jobID string) (string, []interface{}) {
 	return updateJobCurrentStatusTemplate, []interface{}{string(newStatus), tableID, string(oldStatus), jobID}
@@ -75,32 +79,34 @@ func removeTaskForJob(jobID string) (string, []interface{}) {
 	return removeTaskForJobTemplate, []interface{}{jobID}
 }
 
-func addJobHistorySQL(job *ttlJob, finishTime time.Time, summary *TTLSummary) (string, []interface{}) {
-	status := cache.JobStatusFinished
-	if job.status == cache.JobStatusTimeout || job.status == cache.JobStatusCancelled {
-		status = job.status
-	}
-
+func createJobHistorySQL(jobID string, tbl *cache.PhysicalTable, expire time.Time, now time.Time) (string, []interface{}) {
 	var partitionName interface{}
-	if job.tbl.Partition.O != "" {
-		partitionName = job.tbl.Partition.O
+	if tbl.Partition.O != "" {
+		partitionName = tbl.Partition.O
 	}
 
-	return addJobHistoryTemplate, []interface{}{
-		job.id,
-		job.tbl.ID,
-		job.tbl.TableInfo.ID,
-		job.tbl.Schema.O,
-		job.tbl.Name.O,
+	return createJobHistoryRowTemplate, []interface{}{
+		jobID,
+		tbl.ID,
+		tbl.TableInfo.ID,
+		tbl.Schema.O,
+		tbl.Name.O,
 		partitionName,
-		job.createTime.Format(timeFormat),
+		now.Format(timeFormat),
+		expire.Format(timeFormat),
+		string(cache.JobStatusRunning),
+	}
+}
+
+func finishJobHistorySQL(jobID string, finishTime time.Time, summary *TTLSummary) (string, []interface{}) {
+	return finishJobHistoryTemplate, []interface{}{
 		finishTime.Format(timeFormat),
-		job.ttlExpireTime.Format(timeFormat),
 		summary.SummaryText,
 		summary.TotalRows,
 		summary.SuccessRows,
 		summary.ErrorRows,
-		string(status),
+		string(cache.JobStatusFinished),
+		jobID,
 	}
 }
 
@@ -136,7 +142,7 @@ func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
-		sql, args = addJobHistorySQL(job, now, summary)
+		sql, args = finishJobHistorySQL(job.id, now, summary)
 		_, err = se.ExecuteSQL(context.TODO(), sql, args...)
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)

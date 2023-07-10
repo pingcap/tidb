@@ -10,7 +10,9 @@ go_library(
 
 go_test(
     name = "duration_test",
+    timeout = "short",
     srcs = ["duration_test.go"],
     embed = [":duration"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )
