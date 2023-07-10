@@ -207,10 +207,10 @@ func TestLRUFreshMemUsage(t *testing.T) {
 	lru.Put(int64(3), t3)
 	require.Equal(t, lru.Cost(), 6*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
 	mockTableAppendColumn(t1)
-	lru.FreshMemUsage()
+	lru.Put(int64(1), t1)
 	require.Equal(t, lru.Cost(), 6*mockCMSMemoryUsage+7*mockCMSMemoryUsage)
 	mockTableAppendIndex(t1)
-	lru.FreshMemUsage()
+	lru.Put(int64(1), t1)
 	require.Equal(t, lru.Cost(), 7*mockCMSMemoryUsage+7*mockCMSMemoryUsage)
 
 	mockTableRemoveColumn(t1)
