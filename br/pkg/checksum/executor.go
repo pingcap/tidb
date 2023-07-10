@@ -365,5 +365,16 @@ func (exec *Executor) Execute(
 		updateChecksumResponse(checksumResp, resp)
 		updateFn()
 	}
-	return checksumResp, nil
+	return checksumResp, checkContextDone(ctx)
+}
+
+// The coprocessor won't return the error if the context is done,
+// so sometimes BR would get the incomplete result.
+// checkContextDone makes sure the result is not affected by CONTEXT DONE.
+func checkContextDone(ctx context.Context) error {
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return errors.Annotate(ctxErr, "context is cancelled by other error")
+	}
+	return nil
 }
