@@ -3909,9 +3909,8 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 	checkTblName := func(n ast.Node) error {
 		source := n.(*ast.TableSource).Source
-		switch source.(type) {
-		case *ast.TableName:
-			subTblname := source.(*ast.TableName).Name
+		if src, ok := source.(*ast.TableName); ok {
+			subTblname := src.Name
 			srcTblname := tn.Name
 			subAsName := n.(*ast.TableSource).AsName
 
@@ -3920,7 +3919,6 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 				return err
 			}
 		}
-
 		return nil
 	}
 
