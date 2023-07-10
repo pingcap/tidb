@@ -415,7 +415,7 @@ func TestListPartitionPrivilege(t *testing.T) {
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.SetSession(se)
 	tk.MustExec("create database list_partition_pri")
 	tk.MustExec("use list_partition_pri")
@@ -429,7 +429,7 @@ func TestListPartitionPrivilege(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	se, err = session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "priv_test", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "priv_test", Hostname: "%"}, nil, nil, nil))
 	tk1.SetSession(se)
 	tk1.MustExec(`use list_partition_pri`)
 	err = tk1.ExecToErr(`alter table tlist truncate partition p0`)

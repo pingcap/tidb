@@ -24,6 +24,7 @@ import (
 )
 
 func (s *mockGCSSuite) TestPreCheckTableNotEmpty() {
+	s.T().Skip("feature will be moved into other statement, temporary skip this")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "precheck-tbl-empty",

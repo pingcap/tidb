@@ -897,20 +897,27 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 		}
 	}
 
-	// If this happens, some Projection Operator must be inlined into this Limit. (issues/14428)
-	// For example, if the original plan is `IndexLookUp(col1, col2) -> Limit(col1, col2) -> Project(col1)`,
-	//  then after inlining the Project, it will be `IndexLookUp(col1, col2) -> Limit(col1)` here.
-	// If the Limit is sunk into the IndexLookUp, the IndexLookUp's schema needs to be updated as well,
-	//  but updating it here is not safe, so do not sink Limit into this IndexLookUp in this case now.
-	if p.Schema().Len() != reader.Schema().Len() {
-		return false
-	}
-
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
 	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
 	if !isTableScan {
 		return false
 	}
+
+	// If this happens, some Projection Operator must be inlined into this Limit. (issues/14428)
+	// For example, if the original plan is `IndexLookUp(col1, col2) -> Limit(col1, col2) -> Project(col1)`,
+	//  then after inlining the Project, it will be `IndexLookUp(col1, col2) -> Limit(col1)` here.
+	// If the Limit is sunk into the IndexLookUp, the IndexLookUp's schema needs to be updated as well,
+	// So we add an extra projection to solve the problem.
+	if p.Schema().Len() != reader.Schema().Len() {
+		extraProj := PhysicalProjection{
+			Exprs: expression.Column2Exprs(p.schema.Columns),
+		}.Init(p.SCtx(), p.statsInfo(), p.blockOffset, nil)
+		extraProj.SetSchema(p.schema)
+		// If the root.p is already a Projection. We left the optimization for the later Projection Elimination.
+		extraProj.SetChildren(root.p)
+		root.p = extraProj
+	}
+
 	reader.PushedLimit = &PushedDownLimit{
 		Offset: p.Offset,
 		Count:  p.Count,
@@ -1214,6 +1221,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				if !clonedTblScan.Schema().Contains(pkCol) {
 					clonedTblScan.Schema().Append(pkCol)
 					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, pk)
+					copTsk.needExtraProj = true
 				}
 			} else if tblInfo.IsCommonHandle {
 				idxInfo := tblInfo.GetPrimaryKey()
@@ -1222,85 +1230,95 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 					if !clonedTblScan.Schema().Contains(c) {
 						clonedTblScan.Schema().Append(c)
 						clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, c.ToInfo())
+						copTsk.needExtraProj = true
 					}
 				}
 			} else {
 				if !clonedTblScan.Schema().Contains(tblScan.HandleCols.GetCol(0)) {
 					clonedTblScan.Schema().Append(tblScan.HandleCols.GetCol(0))
 					clonedTblScan.(*PhysicalTableScan).Columns = append(clonedTblScan.(*PhysicalTableScan).Columns, model.NewExtraHandleColInfo())
+					copTsk.needExtraProj = true
 				}
 			}
 			clonedTblScan.(*PhysicalTableScan).HandleCols, err = tblScan.HandleCols.ResolveIndices(clonedTblScan.Schema())
 			if err != nil {
 				return nil, false
 			}
+			if copTsk.needExtraProj {
+				copTsk.originSchema = copTsk.tablePlan.Schema()
+			}
 			copTsk.tablePlan = clonedTblScan
 			copTsk.indexPlanFinished = true
 			rootTask := copTsk.convertToRootTask(p.ctx)
-			if indexMerge, ok := rootTask.p.(*PhysicalIndexMergeReader); ok {
-				indexMerge.PushedLimit = &PushedDownLimit{
-					Offset: p.Offset,
-					Count:  p.Count,
+			indexMerge, ok := rootTask.p.(*PhysicalIndexMergeReader)
+			if !ok {
+				// needExtraProj == true
+				indexMerge, ok = rootTask.p.Children()[0].(*PhysicalIndexMergeReader)
+				if !ok {
+					return nil, false
 				}
-				indexMerge.ByItems = p.ByItems
-				indexMerge.KeepOrder = true
-				return rootTask, true
 			}
-		} else {
-			// The normal index scan cases.(single read and double read)
-			propMatched := p.checkOrderPropForSubIndexScan(idxScan.IdxCols, idxScan.IdxColLens, idxScan.constColsByCond, colsProp)
-			if !propMatched {
-				return nil, false
+			indexMerge.PushedLimit = &PushedDownLimit{
+				Offset: p.Offset,
+				Count:  p.Count,
 			}
-			idxScan.Desc = isDesc
-			idxScan.KeepOrder = true
-			idxScan.ByItems = p.ByItems
-			childProfile := copTsk.plan().statsInfo()
-			newCount := p.Offset + p.Count
-			stats := deriveLimitStats(childProfile, float64(newCount))
-			pushedLimit := PhysicalLimit{
-				Count: newCount,
-			}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-			pushedLimit.SetSchema(copTsk.indexPlan.Schema())
-			copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
-
-			// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalIndexScan.
-			child := pushedLimit.Children()[0]
-			// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
-			child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
-			// The Limit->Selection->IndexScan case:
-			// adjust the row count of IndexScan according to the selectivity of the Selection.
-			if selSelectivity > 0 && selSelectivity < 1 {
-				scaledRowCount := child.Stats().RowCount / selSelectivity
-				idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
-			}
-
-			rootTask := copTsk.convertToRootTask(p.ctx)
-			// embedded limit in indexLookUp, no more limit needed.
-			if idxLookup, ok := rootTask.p.(*PhysicalIndexLookUpReader); ok {
-				idxLookup.PushedLimit = &PushedDownLimit{
-					Offset: p.Offset,
-					Count:  p.Count,
-				}
-				extraInfo, extraCol, hasExtraCol := tryGetPkExtraColumn(p.ctx.GetSessionVars(), tblInfo)
-				// TODO: sometimes it will add a duplicate `_tidb_rowid` column in ts.schema()
-				if hasExtraCol {
-					idxLookup.ExtraHandleCol = extraCol
-					ts := idxLookup.TablePlans[0].(*PhysicalTableScan)
-					ts.Columns = append(ts.Columns, extraInfo)
-					ts.schema.Append(extraCol)
-					ts.HandleIdx = []int{len(ts.Columns) - 1}
-				}
-				return rootTask, true
-			}
-			rootLimit := PhysicalLimit{
-				Count:       p.Count,
-				Offset:      p.Offset,
-				PartitionBy: newPartitionBy,
-			}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-			rootLimit.SetSchema(rootTask.plan().Schema())
-			return attachPlan2Task(rootLimit, rootTask), true
+			indexMerge.ByItems = p.ByItems
+			indexMerge.KeepOrder = true
+			return rootTask, true
 		}
+		// The normal index scan cases.(single read and double read)
+		propMatched := p.checkOrderPropForSubIndexScan(idxScan.IdxCols, idxScan.IdxColLens, idxScan.constColsByCond, colsProp)
+		if !propMatched {
+			return nil, false
+		}
+		idxScan.Desc = isDesc
+		idxScan.KeepOrder = true
+		idxScan.ByItems = p.ByItems
+		childProfile := copTsk.plan().statsInfo()
+		newCount := p.Offset + p.Count
+		stats := deriveLimitStats(childProfile, float64(newCount))
+		pushedLimit := PhysicalLimit{
+			Count: newCount,
+		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+		pushedLimit.SetSchema(copTsk.indexPlan.Schema())
+		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
+
+		// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalIndexScan.
+		child := pushedLimit.Children()[0]
+		// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
+		child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
+		// The Limit->Selection->IndexScan case:
+		// adjust the row count of IndexScan according to the selectivity of the Selection.
+		if selSelectivity > 0 && selSelectivity < 1 {
+			scaledRowCount := child.Stats().RowCount / selSelectivity
+			idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
+		}
+
+		rootTask := copTsk.convertToRootTask(p.ctx)
+		// embedded limit in indexLookUp, no more limit needed.
+		if idxLookup, ok := rootTask.p.(*PhysicalIndexLookUpReader); ok {
+			idxLookup.PushedLimit = &PushedDownLimit{
+				Offset: p.Offset,
+				Count:  p.Count,
+			}
+			extraInfo, extraCol, hasExtraCol := tryGetPkExtraColumn(p.ctx.GetSessionVars(), tblInfo)
+			// TODO: sometimes it will add a duplicate `_tidb_rowid` column in ts.schema()
+			if hasExtraCol {
+				idxLookup.ExtraHandleCol = extraCol
+				ts := idxLookup.TablePlans[0].(*PhysicalTableScan)
+				ts.Columns = append(ts.Columns, extraInfo)
+				ts.schema.Append(extraCol)
+				ts.HandleIdx = []int{len(ts.Columns) - 1}
+			}
+			return rootTask, true
+		}
+		rootLimit := PhysicalLimit{
+			Count:       p.Count,
+			Offset:      p.Offset,
+			PartitionBy: newPartitionBy,
+		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+		rootLimit.SetSchema(rootTask.plan().Schema())
+		return attachPlan2Task(rootLimit, rootTask), true
 	} else if copTsk.indexPlan == nil {
 		if tblScan.HandleCols == nil {
 			return nil, false
@@ -1351,12 +1369,9 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 		rootLimit.SetSchema(rootTask.plan().Schema())
 		return attachPlan2Task(rootLimit, rootTask), true
-	} else {
-		return nil, false
 	}
 
-	rootTask := copTsk.convertToRootTask(p.ctx)
-	return attachPlan2Task(p, rootTask), true
+	return nil, false
 }
 
 // checkOrderPropForSubIndexScan checks whether these index columns can meet the specified order property.
@@ -1374,7 +1389,7 @@ func (p *PhysicalTopN) checkOrderPropForSubIndexScan(idxCols []*expression.Colum
 				idxPos++
 				break
 			}
-			if len(constColsByCond) == 0 || idxPos > len(constColsByCond) || !constColsByCond[idxPos] {
+			if idxPos >= len(constColsByCond) || !constColsByCond[idxPos] {
 				found = false
 				break
 			}

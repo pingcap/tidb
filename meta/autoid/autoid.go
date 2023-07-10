@@ -587,8 +587,8 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 	if len(addrs) > 0 {
 		etcdCli, err := clientv3.New(clientv3.Config{
 			Endpoints:        addrs,
-			AutoSyncInterval: 30 * time.Second,
 			TLS:              ebd.TLSConfig(),
+			AutoSyncInterval: 30 * time.Second,
 		})
 		if err != nil {
 			logutil.BgLogger().Error("[autoid client] fail to connect etcd, fallback to default", zap.Error(err))

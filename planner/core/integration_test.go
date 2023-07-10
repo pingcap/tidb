@@ -2568,7 +2568,7 @@ func TestCreateViewIsolationRead(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
 
@@ -3047,7 +3047,7 @@ func TestSelectIgnoreTemporaryTableInView(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("create table t2 (c int, d int)")
 	tk.MustExec("create view v1 as select * from t1 order by a")
@@ -4254,7 +4254,7 @@ func TestLeftShiftPushDownToTiFlash(t *testing.T) {
 func TestIssue36609(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d))")
 	tk.MustExec("create table t2(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d))")
@@ -5268,7 +5268,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 func TestIssue41458(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int, b int, c int, index ia(a));`)
 	tk.MustExec("select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on t3.b=t4.b where t3.a=1 and t2.a=2;")
@@ -5315,4 +5315,33 @@ func TestIssue43116(t *testing.T) {
 		"└─Selection 8000.00 cop[tikv]  in(test.sbtest1.id, 1, 1, 1, 1, 1), in(test.sbtest1.pad, \"1\", \"1\", \"1\", \"1\", \"1\")",
 		"  └─TableFullScan 10000.00 cop[tikv] table:a keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 111 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+}
+
+func TestIssue45033(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4;")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, primary key(c1, c2));")
+	tk.MustExec("create table t2 (c2 int, c1 int, primary key(c2, c1));")
+	tk.MustExec("create table t3 (c4 int, key(c4));")
+	tk.MustExec("create table t4 (c2 varchar(20) , test_col varchar(50), gen_col varchar(50) generated always as(concat(test_col,'')) virtual not null, unique key(gen_col));")
+	tk.MustQuery(`select count(1)
+				 from   (select ( case
+				                    when count(1)
+				                           over(
+				                             partition by a.c2) >= 50 then 1
+				                    else 0
+				                  end ) alias1,
+				                b.c2    as alias_col1
+				         from   t1 a
+				                left join (select c2
+				                           from   t4 f) k
+				                       on k.c2 = a.c2
+				                inner join t2 b
+				                        on b.c1 = a.c3) alias2
+				 where  exists (select 1
+				                from   (select distinct alias3.c4 as c2
+				                        from   t3 alias3) alias4
+				                where  alias4.c2 = alias2.alias_col1);`).Check(testkit.Rows("0"))
 }

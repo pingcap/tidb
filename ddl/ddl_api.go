@@ -3310,6 +3310,16 @@ func ResolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 	return validSpecs, nil
 }
 
+func isMultiSchemaChanges(specs []*ast.AlterTableSpec) bool {
+	if len(specs) > 1 {
+		return true
+	}
+	if len(specs) == 1 && len(specs[0].NewColumns) > 1 && specs[0].Tp == ast.AlterTableAddColumns {
+		return true
+	}
+	return false
+}
+
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	validSpecs, err := ResolveAlterTableSpec(sctx, stmt.Specs)
@@ -3332,6 +3342,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		if validSpecs[0].Tp != ast.AlterTableCache && validSpecs[0].Tp != ast.AlterTableNoCache {
 			return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Alter Table")
 		}
+	}
+	if isMultiSchemaChanges(validSpecs) && (sctx.GetSessionVars().EnableRowLevelChecksum || variable.EnableRowLevelChecksum.Load()) {
+		return dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change when row level checksum is enabled")
 	}
 	// set name for anonymous foreign key.
 	maxForeignKeyID := tb.Meta().MaxForeignKeyID
@@ -4219,30 +4232,35 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	var pids []int64
-	if spec.OnAllPartitions {
-		pids = make([]int64, len(meta.GetPartitionInfo().Definitions))
-		for i, def := range meta.GetPartitionInfo().Definitions {
-			pids[i] = def.ID
+	getTruncatedParts := func(pi *model.PartitionInfo) (*model.PartitionInfo, error) {
+		if spec.OnAllPartitions {
+			return pi.Clone(), nil
 		}
-	} else {
+		var defs []model.PartitionDefinition
 		// MySQL allows duplicate partition names in truncate partition
 		// so we filter them out through a hash
-		pidMap := make(map[int64]bool)
+		posMap := make(map[int]bool)
 		for _, name := range spec.PartitionNames {
-			pid, err := tables.FindPartitionByName(meta, name.L)
-			if err != nil {
-				return errors.Trace(err)
+			pos := pi.FindPartitionDefinitionByName(name.L)
+			if pos < 0 {
+				return nil, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(name.L, ident.Name.O))
 			}
-			pidMap[pid] = true
+			if _, ok := posMap[pos]; !ok {
+				defs = append(defs, pi.Definitions[pos])
+				posMap[pos] = true
+			}
 		}
-		// linter makezero does not handle changing pids to zero length,
-		// so create a new var and then assign to pids...
-		newPids := make([]int64, 0, len(pidMap))
-		for pid := range pidMap {
-			newPids = append(newPids, pid)
-		}
-		pids = newPids
+		pi = pi.Clone()
+		pi.Definitions = defs
+		return pi, nil
+	}
+	pi, err := getTruncatedParts(meta.GetPartitionInfo())
+	if err != nil {
+		return err
+	}
+	pids := make([]int64, 0, len(pi.Definitions))
+	for i := range pi.Definitions {
+		pids = append(pids, pi.Definitions[i].ID)
 	}
 
 	job := &model.Job{
@@ -4256,11 +4274,16 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
+	if _, tb, err := d.getSchemaAndTableByIdent(ctx, ident); err == nil {
+		if p, err := getTruncatedParts(tb.Meta().GetPartitionInfo()); err == nil {
+			d.preSplitAndScatter(ctx, tb.Meta(), p)
+		}
+	}
+	return nil
 }
 
 func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {

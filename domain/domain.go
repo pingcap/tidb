@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/etcd"
@@ -95,6 +96,9 @@ import (
 
 var (
 	mdlCheckLookDuration = 50 * time.Millisecond
+
+	// LoadSchemaDiffVersionGapThreshold is the threshold for version gap to reload domain by loading schema diffs
+	LoadSchemaDiffVersionGapThreshold int64 = 100
 )
 
 func init() {
@@ -229,7 +233,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 3. There are less 100 diffs.
 	// 4. No regenrated schema diff.
 	startTime := time.Now()
-	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < 100 {
+	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
 		is, relatedChanges, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
 		if err == nil {
 			do.infoCache.Insert(is, uint64(schemaTs))
@@ -414,12 +418,12 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
+		if diff.RegenerateSchemaMap {
+			return nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
+		}
 		IDs, err := builder.ApplyDiff(m, diff)
 		if err != nil {
 			return nil, nil, err
-		}
-		if diff.RegenerateSchemaMap {
-			return nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
 		if canSkipSchemaCheckerDDL(diff.Type) {
 			continue
@@ -657,8 +661,10 @@ func (do *Domain) topNSlowQueryLoop() {
 func (do *Domain) infoSyncerKeeper() {
 	defer func() {
 		logutil.BgLogger().Info("infoSyncerKeeper exited.")
-		util.Recover(metrics.LabelDomain, "infoSyncerKeeper", nil, false)
 	}()
+
+	defer util.Recover(metrics.LabelDomain, "infoSyncerKeeper", nil, false)
+
 	ticker := time.NewTicker(infosync.ReportInterval)
 	defer ticker.Stop()
 	for {
@@ -681,8 +687,10 @@ func (do *Domain) infoSyncerKeeper() {
 func (do *Domain) globalConfigSyncerKeeper() {
 	defer func() {
 		logutil.BgLogger().Info("globalConfigSyncerKeeper exited.")
-		util.Recover(metrics.LabelDomain, "globalConfigSyncerKeeper", nil, false)
 	}()
+
+	defer util.Recover(metrics.LabelDomain, "globalConfigSyncerKeeper", nil, false)
+
 	for {
 		select {
 		case entry := <-do.globalCfgSyncer.NotifyCh:
@@ -829,6 +837,7 @@ func (do *Domain) mdlCheckLoop() {
 			logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
 			err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
 			if err != nil {
+				jobNeedToSync = true
 				logutil.BgLogger().Warn("update self version failed", zap.Error(err))
 			} else {
 				jobCache[jobID] = ver
@@ -1360,7 +1369,12 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 	})
 
 	taskManager := storage.NewTaskManager(ctx, do.resourcePool)
-	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), taskManager)
+	serverID := generateSubtaskExecID(ctx, do.ddl.GetID())
+	if serverID == "" {
+		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
+		return errors.New(errMsg)
+	}
+	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, serverID, taskManager)
 	if err != nil {
 		return err
 	}
@@ -1373,6 +1387,17 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager)
 	}, "distTaskFrameworkLoop")
 	return nil
+}
+
+func generateSubtaskExecID(ctx context.Context, ID string) string {
+	serverInfos, err := infosync.GetAllServerInfo(ctx)
+	if err != nil || len(serverInfos) == 0 {
+		return ""
+	}
+	if serverNode, ok := serverInfos[ID]; ok {
+		return disttaskutil.GenerateExecID(serverNode.IP, serverNode.Port)
+	}
+	return ""
 }
 
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager) {
@@ -1542,8 +1567,9 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("loadPrivilegeInLoop exited.")
-			util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
+
 		var count int
 		for {
 			ok := true
@@ -1591,8 +1617,9 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("LoadSysVarCacheLoop exited.")
-			util.Recover(metrics.LabelDomain, "LoadSysVarCacheLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "LoadSysVarCacheLoop", nil, false)
+
 		var count int
 		for {
 			ok := true
@@ -1649,8 +1676,8 @@ func (do *Domain) WatchTiFlashComputeNodeChange() error {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("WatchTiFlashComputeNodeChange exit")
-			util.Recover(metrics.LabelDomain, "WatchTiFlashComputeNodeChange", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "WatchTiFlashComputeNodeChange", nil, false)
 
 		var count int
 		var logCount int
@@ -1726,8 +1753,9 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("globalBindHandleWorkerLoop exited.")
-			util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
+
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
 		gcBindTicker := time.NewTicker(100 * bindinfo.Lease)
 		defer func() {
@@ -1768,8 +1796,9 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("handleEvolvePlanTasksLoop exited.")
-			util.Recover(metrics.LabelDomain, "handleEvolvePlanTasksLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "handleEvolvePlanTasksLoop", nil, false)
+
 		for {
 			select {
 			case <-do.exit:
@@ -1799,8 +1828,9 @@ func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("TelemetryReportLoop exited.")
-			util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
+
 		owner := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
 		for {
 			select {
@@ -1827,8 +1857,9 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Info("TelemetryRotateSubWindowLoop exited.")
-			util.Recover(metrics.LabelDomain, "TelemetryRotateSubWindowLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "TelemetryRotateSubWindowLoop", nil, false)
+
 		for {
 			select {
 			case <-do.exit:
@@ -1916,9 +1947,10 @@ func (do *Domain) StartPlanReplayerHandle() {
 		tikcer := time.NewTicker(time.Duration(lease))
 		defer func() {
 			tikcer.Stop()
-			util.Recover(metrics.LabelDomain, "PlanReplayerTaskCollectHandle", nil, false)
 			logutil.BgLogger().Info("PlanReplayerTaskCollectHandle exited.")
 		}()
+		defer util.Recover(metrics.LabelDomain, "PlanReplayerTaskCollectHandle", nil, false)
+
 		for {
 			select {
 			case <-do.exit:
@@ -1935,9 +1967,10 @@ func (do *Domain) StartPlanReplayerHandle() {
 	do.wg.Run(func() {
 		logutil.BgLogger().Info("PlanReplayerTaskDumpHandle started")
 		defer func() {
-			util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
 			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
 		}()
+		defer util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
+
 		for _, worker := range do.planReplayerHandle.planReplayerTaskDumpHandle.workers {
 			go worker.run()
 		}
@@ -1956,6 +1989,11 @@ func (do *Domain) GetExtractHandle() *ExtractHandle {
 	return do.extractTaskHandle
 }
 
+// GetDumpFileGCChecker returns dump file GC checker for plan replayer and plan trace
+func (do *Domain) GetDumpFileGCChecker() *dumpFileGcChecker {
+	return do.dumpFileGcChecker
+}
+
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
 func (do *Domain) DumpFileGcCheckerLoop() {
 	do.wg.Run(func() {
@@ -1963,15 +2001,16 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 		gcTicker := time.NewTicker(do.dumpFileGcChecker.gcLease)
 		defer func() {
 			gcTicker.Stop()
-			util.Recover(metrics.LabelDomain, "dumpFileGcCheckerLoop", nil, false)
 			logutil.BgLogger().Info("dumpFileGcChecker exited.")
 		}()
+		defer util.Recover(metrics.LabelDomain, "dumpFileGcCheckerLoop", nil, false)
+
 		for {
 			select {
 			case <-do.exit:
 				return
 			case <-gcTicker.C:
-				do.dumpFileGcChecker.gcDumpFiles(time.Hour)
+				do.dumpFileGcChecker.GCDumpFiles(time.Hour, time.Hour*24*7)
 			}
 		}
 	}, "dumpFileGcChecker")
@@ -1993,9 +2032,10 @@ func (do *Domain) StartHistoricalStatsWorker() {
 	do.wg.Run(func() {
 		logutil.BgLogger().Info("HistoricalStatsWorker started")
 		defer func() {
-			util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
 			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
 		}()
+		defer util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
+
 		for {
 			select {
 			case <-do.exit:
@@ -2278,9 +2318,10 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		deltaUpdateTicker.Stop()
 		readMemTricker.Stop()
 		do.SetStatsUpdating(false)
-		util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
+	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
+
 	for {
 		select {
 		case <-do.exit:
@@ -2462,8 +2503,9 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 	do.wg.Run(func() {
 		defer func() {
 			logutil.BgLogger().Debug("loadSigningCertLoop exited.")
-			util.Recover(metrics.LabelDomain, "LoadSigningCertLoop", nil, false)
 		}()
+		defer util.Recover(metrics.LabelDomain, "LoadSigningCertLoop", nil, false)
+
 		for {
 			select {
 			case <-time.After(sessionstates.LoadCertInterval):

@@ -17,6 +17,7 @@ package ingest
 import (
 	"context"
 	"strconv"
+	"sync"
 	"sync/atomic"
 
 	"github.com/google/uuid"
@@ -41,6 +42,7 @@ type Engine interface {
 // Writer is the interface for the writer that can be used to write key-value pairs.
 type Writer interface {
 	WriteRow(key, idxVal []byte, handle tidbkv.Handle) error
+	LockForWrite() (unlock func())
 }
 
 // engineInfo is the engine for one index reorg task, each task will create several new writers under the
@@ -55,14 +57,13 @@ type engineInfo struct {
 	writerCount  int
 	writerCache  generic.SyncMap[int, backend.EngineWriter]
 	memRoot      MemRoot
-	diskRoot     DiskRoot
-	rowSeq       atomic.Int64
+	flushLock    *sync.RWMutex
 	flushing     atomic.Bool
 }
 
 // newEngineInfo create a new engineInfo struct.
 func newEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.EngineConfig,
-	en *backend.OpenedEngine, uuid uuid.UUID, wCnt int, memRoot MemRoot, diskRoot DiskRoot) *engineInfo {
+	en *backend.OpenedEngine, uuid uuid.UUID, wCnt int, memRoot MemRoot) *engineInfo {
 	return &engineInfo{
 		ctx:          ctx,
 		jobID:        jobID,
@@ -73,7 +74,7 @@ func newEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 		writerCount:  wCnt,
 		writerCache:  generic.NewSyncMap[int, backend.EngineWriter](wCnt),
 		memRoot:      memRoot,
-		diskRoot:     diskRoot,
+		flushLock:    &sync.RWMutex{},
 	}
 }
 
@@ -86,17 +87,6 @@ func (ei *engineInfo) Flush() error {
 		return err
 	}
 	return nil
-}
-
-// acquireFlushLock acquires the flush lock of the engine.
-func (ei *engineInfo) acquireFlushLock() (release func()) {
-	ok := ei.flushing.CompareAndSwap(false, true)
-	if !ok {
-		return nil
-	}
-	return func() {
-		ei.flushing.Store(false)
-	}
 }
 
 // Clean closes the engine and removes the local intermediate files.
@@ -169,6 +159,7 @@ type writerContext struct {
 	ctx    context.Context
 	unique bool
 	lWrite backend.EngineWriter
+	fLock  *sync.RWMutex
 }
 
 // CreateWriter creates a new writerContext.
@@ -215,6 +206,7 @@ func (ei *engineInfo) newWriterContext(workerID int, unique bool) (*writerContex
 		ctx:    ei.ctx,
 		unique: unique,
 		lWrite: lWrite,
+		fLock:  ei.flushLock,
 	}
 	return wc, nil
 }
@@ -245,4 +237,12 @@ func (wCtx *writerContext) WriteRow(key, idxVal []byte, handle tidbkv.Handle) er
 	}
 	row := kv.MakeRowsFromKvPairs(kvs)
 	return wCtx.lWrite.AppendRows(wCtx.ctx, nil, row)
+}
+
+// LockForWrite locks the local writer for write.
+func (wCtx *writerContext) LockForWrite() (unlock func()) {
+	wCtx.fLock.RLock()
+	return func() {
+		wCtx.fLock.RUnlock()
+	}
 }

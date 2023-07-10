@@ -44,13 +44,14 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
 
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	return tk
 }
 
@@ -60,7 +61,7 @@ func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	return tk
 }
 
@@ -126,7 +127,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{
 		Username: "xxx",
 		Hostname: "127.0.0.1",
-	}, nil, nil))
+	}, nil, nil, nil))
 
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
@@ -1083,7 +1084,7 @@ func TestStmtSummaryTablePrivilege(t *testing.T) {
 		Hostname:     "localhost",
 		AuthUsername: "test_user",
 		AuthHostname: "localhost",
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	result = tk1.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
 	// Ordinary users can not see others' records
@@ -1143,7 +1144,7 @@ func TestCapturePrivilege(t *testing.T) {
 		Hostname:     "localhost",
 		AuthUsername: "test_user",
 		AuthHostname: "localhost",
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	rows = tk1.MustQuery("show global bindings").Rows()
 	// Ordinary users can not see others' records
@@ -1170,7 +1171,7 @@ func TestIssue18845(t *testing.T) {
 		Hostname:     "localhost",
 		AuthUsername: "user18845",
 		AuthHostname: "localhost",
-	}, nil, nil)
+	}, nil, nil, nil)
 	tk.MustQuery(`select count(*) from information_schema.columns;`)
 }
 
@@ -1307,6 +1308,7 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	now := time.Now().Unix()
 	interval := int64(1800)
 	beginTimeForCurInterval := now - now%interval
+	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk := newTestKitWithPlanCache(t, store)
 	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
 
@@ -1534,7 +1536,7 @@ func TestInfoSchemaClientErrors(t *testing.T) {
 	errno.IncrementError(1365, "root", "localhost")
 
 	tk.MustExec("CREATE USER 'infoschematest'@'localhost'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "infoschematest", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "infoschematest", Hostname: "localhost"}, nil, nil, nil))
 
 	err := tk.QueryToErr("SELECT * FROM information_schema.client_errors_summary_global")
 	require.Equal(t, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation", err.Error())
@@ -1638,7 +1640,7 @@ func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 	err := tk.QueryToErr("select * from information_schema.deadlocks")
 	require.Error(t, err)
 	require.Equal(t, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation", err.Error())
@@ -1649,7 +1651,7 @@ func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
-	}, nil, nil))
+	}, nil, nil, nil))
 	_ = tk.MustQuery("select * from information_schema.deadlocks")
 }
 
@@ -1835,7 +1837,7 @@ func TestAddFieldsForBinding(t *testing.T) {
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, key(a))")
