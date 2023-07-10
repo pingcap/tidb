@@ -21,7 +21,7 @@ type Range struct {
 }
 
 // SortRanges checks if the range overlapped and sort them.
-func SortRanges(ranges []rtree.Range, rewriteRules *RewriteRules) ([]rtree.Range, error) {
+func SortRanges(ranges rtree.Ranges, rewriteRules *RewriteRules) (rtree.Ranges, error) {
 	rangeTree := rtree.NewRangeTree()
 	for _, rg := range ranges {
 		if rewriteRules != nil {

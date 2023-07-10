@@ -1369,7 +1369,7 @@ func (rc *Client) WrapLogFilesIterWithCheckpoint(
 // RestoreSSTFiles tries to restore the files.
 func (rc *Client) RestoreSSTFiles(
 	ctx context.Context,
-	tableIDWithFiles []TableIDWithFiles,
+	tableIDWithRange []TableIDWithRange,
 	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 ) (err error) {
@@ -1378,7 +1378,7 @@ func (rc *Client) RestoreSSTFiles(
 	defer func() {
 		elapsed := time.Since(start)
 		if err == nil {
-			log.Info("Restore files", zap.Duration("take", elapsed), zapTableIDWithFiles(tableIDWithFiles))
+			log.Info("Restore files", zap.Duration("take", elapsed), zapTableIDWithRange(tableIDWithRange))
 			summary.CollectSuccessUnit("files", fileCount, elapsed)
 		}
 	}()
@@ -1402,9 +1402,9 @@ func (rc *Client) RestoreSSTFiles(
 	var rangeFiles []*backuppb.File
 	var leftFiles []*backuppb.File
 LOOPFORTABLE:
-	for _, tableIDWithFile := range tableIDWithFiles {
-		tableID := tableIDWithFile.TableID
-		files := tableIDWithFile.Files
+	for _, withRange := range tableIDWithRange {
+		tableID := withRange.TableID
+		files := withRange.Ranges.AllFiles()
 		fileCount += len(files)
 		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
 			filesReplica := rangeFiles

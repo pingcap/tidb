@@ -378,7 +378,7 @@ func GoValidateFileRanges(
 
 				tableWithRange := TableWithRange{
 					CreatedTable: t,
-					Range:        ranges,
+					Ranges:       ranges,
 				}
 				log.Debug("sending range info",
 					zap.Stringer("table", t.Table.Name),
@@ -497,7 +497,7 @@ func TruncateTS(key []byte) []byte {
 func SplitRanges(
 	ctx context.Context,
 	client *Client,
-	ranges []rtree.Range,
+	ranges rtree.Ranges,
 	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 	isRawKv bool,
