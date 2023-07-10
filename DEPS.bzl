@@ -1959,6 +1959,13 @@ def go_deps():
         sum = "h1:O08dwjOwv9CYlJJEUZKAazSoQDKlsN34Bq3dnhqhyVI=",
         version = "v0.0.0-20170331210902-15e594fc09f1",
     )
+    go_repository(
+        name = "com_github_influxdata_tdigest",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/influxdata/tdigest",
+        sum = "h1:XpFptwYmnEKUqmkcDjrzffswZ3nvNeevbUSLPP/ZzIY=",
+        version = "v0.0.1",
+    )
 
     go_repository(
         name = "com_github_iris_contrib_blackfriday",
