@@ -142,6 +142,33 @@ func readFile(filepath string) (res []byte, err error) {
 	return res, err
 }
 
+// The field in /proc/self/cgroup and /proc/self/meminfo may appear as "cpuacct,cpu" or "rw,cpuacct,cpu"
+// while the input controller is "cpu,cpuacct"
+func controllerMatch(field string, controller string) bool {
+	if field == controller {
+		return true
+	}
+
+	fs := strings.Split(field, ",")
+	if len(fs) < 2 {
+		return false
+	}
+	cs := strings.Split(controller, ",")
+	if len(fs) < len(cs) {
+		return false
+	}
+	fmap := make(map[string]struct{}, len(fs))
+	for _, f := range fs {
+		fmap[f] = struct{}{}
+	}
+	for _, c := range cs {
+		if _, ok := fmap[c]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // The controller is defined via either type `memory` for cgroup v1 or via empty type for cgroup v2,
 // where the type is the second field in /proc/[pid]/cgroup file
 func detectControlPath(cgroupFilePath string, controller string) (string, error) {
@@ -172,7 +199,7 @@ func detectControlPath(cgroupFilePath string, controller string) (string, error)
 		// but no known container solutions support it.
 		if f0 == "0" && f1 == "" {
 			unifiedPathIfFound = string(fields[2])
-		} else if f1 == controller {
+		} else if controllerMatch(f1, controller) {
 			var result []byte
 			// In some case, the cgroup path contains `:`. We need to join them back.
 			if len(fields) > 3 {
@@ -301,7 +328,7 @@ func detectCgroupVersion(fields [][]byte, controller string) (_ int, found bool)
 
 	// Check for controller specifically in cgroup v1 (it is listed in super
 	// options field), as the value can't be found if it is not enforced.
-	if bytes.Equal(fields[pos], []byte("cgroup")) && bytes.Contains(fields[pos+2], []byte(controller)) {
+	if bytes.Equal(fields[pos], []byte("cgroup")) && controllerMatch(string(fields[pos+2]), controller) {
 		return 1, true
 	} else if bytes.Equal(fields[pos], []byte("cgroup2")) {
 		return 2, true
