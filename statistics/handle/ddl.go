@@ -16,7 +16,6 @@ package handle
 
 import (
 	"context"
-	"go.uber.org/zap"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 // HandleDDLEvent begins to process a ddl task.
