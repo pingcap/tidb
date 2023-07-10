@@ -46,9 +46,6 @@ type StatsCacheInner interface {
 	Copy() StatsCacheInner
 	// SetCapacity sets the capacity of the cache
 	SetCapacity(int64)
-	// Version returns the version of the current cache, which is defined as
-	// the max table stats version the cache has in its lifecycle.
-	Version() (maxTableStatsVersion uint64)
 
 	// Front returns the front element's owner tableID, only used for test
 	// TODO: this method is mainly for test, remove it in the future.

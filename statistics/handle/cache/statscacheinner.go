@@ -18,6 +18,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -72,6 +73,9 @@ func NewStatsCache() *StatsCache {
 // StatsCache caches the tables in memory for Handle.
 type StatsCache struct {
 	c internal.StatsCacheInner
+	// the max table stats version the cache has in its lifecycle.
+	maxTblStatsVer   uint64
+	maxTblStatsVerMu sync.RWMutex
 }
 
 // Len returns the number of tables in the cache.
@@ -93,6 +97,7 @@ func (sc *StatsCache) GetByQuery(id int64) (*statistics.Table, bool) {
 // Put puts the table statistics to the cache.
 func (sc *StatsCache) Put(id int64, t *statistics.Table) {
 	sc.c.Put(id, t)
+	sc.updateMaxTblStatsVer(t)
 }
 
 // Values returns all the cached statistics tables.
@@ -123,12 +128,24 @@ func (sc *StatsCache) SetCapacity(c int64) {
 // Version returns the version of the current cache, which is defined as
 // the max table stats version the cache has in its lifecycle.
 func (sc *StatsCache) Version() uint64 {
-	return sc.c.Version()
+	sc.maxTblStatsVerMu.RLock()
+	defer sc.maxTblStatsVerMu.RUnlock()
+	return sc.maxTblStatsVer
 }
 
 // Front returns the front element's owner tableID, only used for test.
 func (sc *StatsCache) Front() int64 {
 	return sc.c.Front()
+}
+
+func (sc *StatsCache) updateMaxTblStatsVer(tbls ...*statistics.Table) {
+	sc.maxTblStatsVerMu.Lock()
+	defer sc.maxTblStatsVerMu.Unlock()
+	for _, t := range tbls {
+		if t.Version > sc.maxTblStatsVer {
+			sc.maxTblStatsVer = t.Version
+		}
+	}
 }
 
 // Update updates the statistics table cache using Copy on write.
@@ -137,8 +154,9 @@ func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, opt
 	for _, opt := range opts {
 		opt(option)
 	}
-	newCache := &StatsCache{}
+	newCache := &StatsCache{maxTblStatsVer: sc.maxTblStatsVer}
 	newCache.c = CopyAndUpdateStatsCache(sc.c, tables, deletedIDs, option.byQuery)
+	newCache.updateMaxTblStatsVer(tables...)
 	return newCache
 }
 
