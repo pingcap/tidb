@@ -152,10 +152,6 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.infoSchema
 }
 
-func (p *baseTxnContextProvider) SetTxnInfoSchema(is infoschema.InfoSchema) {
-	p.infoSchema = is
-}
-
 // GetTxnScope returns the current txn scope
 func (p *baseTxnContextProvider) GetTxnScope() string {
 	return p.sctx.GetSessionVars().TxnCtx.TxnScope

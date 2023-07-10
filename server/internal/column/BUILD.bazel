@@ -11,7 +11,12 @@ go_library(
     deps = [
         "//parser/charset",
         "//parser/mysql",
+        "//server/err",
         "//server/internal/dump",
+        "//server/internal/util",
+        "//types",
+        "//util/chunk",
+        "//util/hack",
         "//util/logutil",
         "@org_uber_go_zap//:zap",
     ],
@@ -26,9 +31,14 @@ go_test(
     ],
     embed = [":column"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
+        "//parser/charset",
         "//parser/mysql",
+        "//server/internal/util",
+        "//types",
+        "//util/chunk",
+        "//util/mock",
         "@com_github_stretchr_testify//require",
     ],
 )

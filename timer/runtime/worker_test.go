@@ -105,6 +105,9 @@ func getAndCheckTriggeredTimer(
 	oldTimer.EventStatus = timer.EventStatus
 	oldTimer.EventStart = timer.EventStart
 	oldTimer.Version = timer.Version
+	oldTimer.EventExtra = api.EventExtra{
+		EventWatermark: oldTimer.Watermark,
+	}
 	require.Equal(t, oldTimer, timer)
 	return timer
 }
@@ -222,6 +225,9 @@ func TestWorkerProcessTriggeredTimerSuccess(t *testing.T) {
 		EventStatus: api.NewOptionalVal(api.SchedEventTrigger),
 		EventData:   api.NewOptionalVal([]byte("eventdata")),
 		EventStart:  api.NewOptionalVal(eventStart),
+		EventExtra: api.NewOptionalVal(api.EventExtra{
+			EventWatermark: timer.Watermark,
+		}),
 	})
 	require.NoError(t, err)
 	timer = getAndCheckTriggeredTimer(t, cli, timer, eventID, []byte("eventdata"), eventStart, eventStart)
@@ -522,6 +528,150 @@ func TestWorkerProcessDelayOrErr(t *testing.T) {
 		require.Nil(t, newTimer)
 	})
 
+	cancel()
+	waitDone(hook.stopped, time.Second)
+	hook.AssertExpectations(t)
+}
+
+func TestWorkerProcessManualRequest(t *testing.T) {
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store := api.NewMemoryTimerStore()
+	defer store.Close()
+	cli := api.NewDefaultTimerClient(store)
+	respChan := make(chan *triggerEventResponse)
+	timer := prepareTimer(t, cli)
+	require.NoError(t, store.Update(ctx, timer.ID, &api.TimerUpdate{
+		ManualRequest: api.NewOptionalVal(api.ManualRequest{
+			ManualRequestID:   "req1",
+			ManualRequestTime: time.Now().Add(-time.Minute),
+			ManualTimeout:     59 * time.Second,
+		}),
+	}))
+	timer, err := cli.GetTimerByID(ctx, timer.ID)
+	require.NoError(t, err)
+
+	hook := newMockHook()
+	hook.On("Start").Return().Once()
+	w := newHookWorker(ctx, &wg, "g1", "h1", hook, nil)
+
+	// manual trigger timeout and update api returns error
+	mockCore, mockStore := newMockStore()
+	mockCore.On("Update", mock.Anything, timer.ID, mock.Anything).Return(errors.New("mockErr")).Once()
+	eventID := uuid.NewString()
+	request := &triggerEventRequest{
+		eventID: eventID,
+		timer:   timer,
+		store:   mockStore,
+		resp:    respChan,
+	}
+	sendWorkerRequestAndCheckResp(t, w, request, respChan, func(resp *triggerEventResponse) {
+		require.False(t, resp.success)
+		require.Equal(t, timer.ID, resp.timerID)
+		require.Equal(t, eventID, resp.eventID)
+		retryAfter, ok := resp.retryAfter.Get()
+		require.True(t, ok)
+		require.Equal(t, workerEventDefaultRetryInterval, retryAfter)
+		_, ok = resp.newTimerRecord.Get()
+		require.False(t, ok)
+	})
+	hook.AssertExpectations(t)
+	mockCore.AssertExpectations(t)
+
+	// manual trigger timeout and list api returns error
+	eventID = uuid.NewString()
+	request.eventID = eventID
+	mockCore.On("Update", mock.Anything, timer.ID, mock.Anything).Return(nil).Once()
+	mockCore.On("List", mock.Anything, mock.Anything).Return([]*api.TimerRecord(nil), errors.New("mockErr")).Once()
+	sendWorkerRequestAndCheckResp(t, w, request, respChan, func(resp *triggerEventResponse) {
+		require.False(t, resp.success)
+		require.Equal(t, timer.ID, resp.timerID)
+		require.Equal(t, eventID, resp.eventID)
+		retryAfter, ok := resp.retryAfter.Get()
+		require.True(t, ok)
+		require.Equal(t, workerEventDefaultRetryInterval, retryAfter)
+		_, ok = resp.newTimerRecord.Get()
+		require.False(t, ok)
+	})
+	hook.AssertExpectations(t)
+	mockCore.AssertExpectations(t)
+
+	// manual trigger timeout
+	eventID = uuid.NewString()
+	request = &triggerEventRequest{
+		eventID: eventID,
+		timer:   timer,
+		store:   store,
+		resp:    respChan,
+	}
+	sendWorkerRequestAndCheckResp(t, w, request, respChan, func(resp *triggerEventResponse) {
+		require.False(t, resp.success)
+		require.Equal(t, timer.ID, resp.timerID)
+		require.Equal(t, eventID, resp.eventID)
+		_, ok := resp.retryAfter.Get()
+		require.False(t, ok)
+		r, ok := resp.newTimerRecord.Get()
+		require.True(t, ok)
+
+		got, err := cli.GetTimerByID(ctx, timer.ID)
+		require.NoError(t, err)
+		require.Equal(t, got, r)
+
+		timer.Version = got.Version
+		timer.ManualProcessed = true
+		require.Equal(t, got, timer)
+	})
+	hook.AssertExpectations(t)
+	mockCore.AssertExpectations(t)
+
+	// manual trigger success
+	reqID, err := cli.ManualTriggerEvent(ctx, timer.ID)
+	require.NoError(t, err)
+	timer, err = cli.GetTimerByID(ctx, timer.ID)
+	require.NoError(t, err)
+	eventID = uuid.NewString()
+	request = &triggerEventRequest{
+		eventID: eventID,
+		timer:   timer,
+		store:   store,
+		resp:    respChan,
+	}
+	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).
+		Return(api.PreSchedEventResult{}, nil).
+		Once()
+	hook.On("OnSchedEvent", mock.Anything, mock.Anything).
+		Return(nil).
+		Once()
+	sendWorkerRequestAndCheckResp(t, w, request, respChan, func(resp *triggerEventResponse) {
+		require.True(t, resp.success)
+		require.Equal(t, timer.ID, resp.timerID)
+		require.Equal(t, eventID, resp.eventID)
+		_, ok := resp.retryAfter.Get()
+		require.False(t, ok)
+		r, ok := resp.newTimerRecord.Get()
+		require.True(t, ok)
+
+		got, err := cli.GetTimerByID(ctx, timer.ID)
+		require.NoError(t, err)
+		require.Equal(t, got, r)
+
+		timer.Version = got.Version
+		timer.ManualProcessed = true
+		timer.ManualEventID = eventID
+		timer.EventID = eventID
+		timer.EventStart = got.EventStart
+		timer.EventStatus = api.SchedEventTrigger
+		timer.EventExtra = api.EventExtra{
+			EventManualRequestID: reqID,
+			EventWatermark:       timer.Watermark,
+		}
+		require.Equal(t, got, timer)
+	})
+	hook.AssertExpectations(t)
+
+	hook.On("Stop").Return().Once()
 	cancel()
 	waitDone(hook.stopped, time.Second)
 	hook.AssertExpectations(t)

@@ -241,19 +241,19 @@ type maxMin4Int struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinInt)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinIntSize
 }
 
-func (e *maxMin4Int) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinInt)(pr)
 	p.val = 0
 	p.isNull = true
 }
 
-func (e *maxMin4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *maxMin4Int) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinInt)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
@@ -285,7 +285,7 @@ func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 	return 0, nil
 }
 
-func (e *maxMin4Int) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Int) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4MaxMinInt)(src), (*partialResult4MaxMinInt)(dst)
 	if p1.isNull {
 		return 0, nil
@@ -382,19 +382,19 @@ type maxMin4Uint struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Uint) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Uint) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinUint)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinUintSize
 }
 
-func (e *maxMin4Uint) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Uint) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinUint)(pr)
 	p.val = 0
 	p.isNull = true
 }
 
-func (e *maxMin4Uint) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *maxMin4Uint) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinUint)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
@@ -427,7 +427,7 @@ func (e *maxMin4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	return 0, nil
 }
 
-func (e *maxMin4Uint) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Uint) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4MaxMinUint)(src), (*partialResult4MaxMinUint)(dst)
 	if p1.isNull {
 		return 0, nil
@@ -521,19 +521,19 @@ type maxMin4Float32 struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Float32) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Float32) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinFloat32)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinFloat32Size
 }
 
-func (e *maxMin4Float32) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Float32) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinFloat32)(pr)
 	p.val = 0
 	p.isNull = true
 }
 
-func (e *maxMin4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *maxMin4Float32) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinFloat32)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
@@ -566,7 +566,7 @@ func (e *maxMin4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 	return 0, nil
 }
 
-func (e *maxMin4Float32) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Float32) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4MaxMinFloat32)(src), (*partialResult4MaxMinFloat32)(dst)
 	if p1.isNull {
 		return 0, nil
@@ -659,19 +659,19 @@ type maxMin4Float64 struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinFloat64)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinFloat64Size
 }
 
-func (e *maxMin4Float64) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinFloat64)(pr)
 	p.val = 0
 	p.isNull = true
 }
 
-func (e *maxMin4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *maxMin4Float64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinFloat64)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
@@ -703,7 +703,7 @@ func (e *maxMin4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 	return 0, nil
 }
 
-func (e *maxMin4Float64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Float64) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4MaxMinFloat64)(src), (*partialResult4MaxMinFloat64)(dst)
 	if p1.isNull {
 		return 0, nil
@@ -796,18 +796,18 @@ type maxMin4Decimal struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinDecimal)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinDecimalSize
 }
 
-func (e *maxMin4Decimal) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinDecimal)(pr)
 	p.isNull = true
 }
 
-func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *maxMin4Decimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinDecimal)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
@@ -851,7 +851,7 @@ func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 	return 0, nil
 }
 
-func (e *maxMin4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Decimal) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4MaxMinDecimal)(src), (*partialResult4MaxMinDecimal)(dst)
 	if p1.isNull {
 		return 0, nil
@@ -958,18 +958,18 @@ type maxMin4String struct {
 	retTp *types.FieldType
 }
 
-func (e *maxMin4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinString)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinStringSize
 }
 
-func (e *maxMin4String) ResetPartialResult(pr PartialResult) {
+func (*maxMin4String) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinString)(pr)
 	p.isNull = true
 }
 
-func (e *maxMin4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *maxMin4String) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinString)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
@@ -1011,7 +1011,7 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	return memDelta, nil
 }
 
-func (e *maxMin4String) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *maxMin4String) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4MaxMinString)(src), (*partialResult4MaxMinString)(dst)
 	if p1.isNull {
 		return 0, nil
@@ -1107,18 +1107,18 @@ type maxMin4Time struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinTime)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinTimeSize
 }
 
-func (e *maxMin4Time) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Time) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinTime)(pr)
 	p.isNull = true
 }
 
-func (e *maxMin4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *maxMin4Time) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinTime)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
@@ -1151,7 +1151,7 @@ func (e *maxMin4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	return 0, nil
 }
 
-func (e *maxMin4Time) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Time) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4MaxMinTime)(src), (*partialResult4MaxMinTime)(dst)
 	if p1.isNull {
 		return 0, nil
@@ -1247,18 +1247,18 @@ type maxMin4Duration struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinDuration)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinDurationSize
 }
 
-func (e *maxMin4Duration) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Duration) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinDuration)(pr)
 	p.isNull = true
 }
 
-func (e *maxMin4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *maxMin4Duration) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinDuration)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
@@ -1291,7 +1291,7 @@ func (e *maxMin4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 	return 0, nil
 }
 
-func (e *maxMin4Duration) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Duration) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4MaxMinDuration)(src), (*partialResult4MaxMinDuration)(dst)
 	if p1.isNull {
 		return 0, nil
@@ -1387,18 +1387,18 @@ type maxMin4JSON struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4JSON) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4JSON) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinJSON)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinJSONSize
 }
 
-func (e *maxMin4JSON) ResetPartialResult(pr PartialResult) {
+func (*maxMin4JSON) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinJSON)(pr)
 	p.isNull = true
 }
 
-func (e *maxMin4JSON) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *maxMin4JSON) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinJSON)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
@@ -1435,7 +1435,7 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	return memDelta, nil
 }
 
-func (e *maxMin4JSON) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *maxMin4JSON) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4MaxMinJSON)(src), (*partialResult4MaxMinJSON)(dst)
 	if p1.isNull {
 		return 0, nil
@@ -1456,18 +1456,18 @@ type maxMin4Enum struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Enum) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Enum) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinEnum)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinEnumSize
 }
 
-func (e *maxMin4Enum) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Enum) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinEnum)(pr)
 	p.isNull = true
 }
 
-func (e *maxMin4Enum) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *maxMin4Enum) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinEnum)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
@@ -1477,7 +1477,7 @@ func (e *maxMin4Enum) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 	return nil
 }
 
-func (e *maxMin4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Enum) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinEnum)(pr)
 	for _, row := range rowsInGroup {
 		d, err := e.args[0].Eval(row)
@@ -1504,7 +1504,7 @@ func (e *maxMin4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	return memDelta, nil
 }
 
-func (e *maxMin4Enum) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Enum) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4MaxMinEnum)(src), (*partialResult4MaxMinEnum)(dst)
 	if p1.isNull {
 		return 0, nil
@@ -1523,18 +1523,18 @@ type maxMin4Set struct {
 	baseMaxMinAggFunc
 }
 
-func (e *maxMin4Set) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*maxMin4Set) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinSet)
 	p.isNull = true
 	return PartialResult(p), DefPartialResult4MaxMinSetSize
 }
 
-func (e *maxMin4Set) ResetPartialResult(pr PartialResult) {
+func (*maxMin4Set) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinSet)(pr)
 	p.isNull = true
 }
 
-func (e *maxMin4Set) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *maxMin4Set) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinSet)(pr)
 	if p.isNull {
 		chk.AppendNull(e.ordinal)
@@ -1544,7 +1544,7 @@ func (e *maxMin4Set) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partial
 	return nil
 }
 
-func (e *maxMin4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Set) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinSet)(pr)
 	for _, row := range rowsInGroup {
 		d, err := e.args[0].Eval(row)
@@ -1571,7 +1571,7 @@ func (e *maxMin4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 	return memDelta, nil
 }
 
-func (e *maxMin4Set) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Set) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4MaxMinSet)(src), (*partialResult4MaxMinSet)(dst)
 	if p1.isNull {
 		return 0, nil

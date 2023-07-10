@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikv"
@@ -97,6 +98,7 @@ type MPPTask struct {
 	Meta       MPPTaskMeta // on which store this task will execute
 	ID         int64       // mppTaskID
 	StartTs    uint64
+	GatherID   uint64
 	MppQueryID MPPQueryID
 	TableID    int64      // physical table id
 	MppVersion MppVersion // mpp version
@@ -109,6 +111,7 @@ type MPPTask struct {
 func (t *MPPTask) ToPB() *mpp.TaskMeta {
 	meta := &mpp.TaskMeta{
 		StartTs:      t.StartTs,
+		GatherId:     t.GatherID,
 		QueryTs:      t.MppQueryID.QueryTs,
 		LocalQueryId: t.MppQueryID.LocalQueryID,
 		ServerId:     t.MppQueryID.ServerID,
@@ -178,7 +181,7 @@ type DispatchMPPTaskParam struct {
 type MPPClient interface {
 	// ConstructMPPTasks schedules task for a plan fragment.
 	// TODO:: This interface will be refined after we support more executors.
-	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, time.Duration, tiflashcompute.DispatchPolicy) ([]MPPTaskMeta, error)
+	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, time.Duration, tiflashcompute.DispatchPolicy, tiflash.ReplicaRead, func(error)) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTask dispatch mpp task, and returns valid response when retry = false and err is nil.
 	DispatchMPPTask(DispatchMPPTaskParam) (resp *mpp.DispatchTaskResponse, retry bool, err error)

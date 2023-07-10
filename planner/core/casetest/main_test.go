@@ -34,18 +34,15 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "integration_partition_suite")
 	testDataMap.LoadTestSuiteData("testdata", "plan_normalized_suite")
 	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
-	testDataMap.LoadTestSuiteData("testdata", "ordered_result_mode_suite")
+
 	testDataMap.LoadTestSuiteData("testdata", "point_get_plan")
-	testDataMap.LoadTestSuiteData("testdata", "enforce_mpp_suite")
 	testDataMap.LoadTestSuiteData("testdata", "expression_rewriter_suite")
 	testDataMap.LoadTestSuiteData("testdata", "partition_pruner")
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
 	testDataMap.LoadTestSuiteData("testdata", "window_push_down_suite")
-	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
-	testDataMap.LoadTestSuiteData("testdata", "flat_plan_suite")
-	testDataMap.LoadTestSuiteData("testdata", "binary_plan_suite")
+
 	testDataMap.LoadTestSuiteData("testdata", "json_plan_suite")
-	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window")
+
 	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification")
 
 	opts := []goleak.Option{
@@ -77,20 +74,8 @@ func GetStatsSuiteData() testdata.TestData {
 	return testDataMap["stats_suite"]
 }
 
-func GetOrderedResultModeSuiteData() testdata.TestData {
-	return testDataMap["ordered_result_mode_suite"]
-}
-
-func GetJoinReorderSuiteData() testdata.TestData {
-	return testDataMap["join_reorder_suite"]
-}
-
 func GetPointGetPlanData() testdata.TestData {
 	return testDataMap["point_get_plan"]
-}
-
-func GetEnforceMPPSuiteData() testdata.TestData {
-	return testDataMap["enforce_mpp_suite"]
 }
 
 func GetExpressionRewriterSuiteData() testdata.TestData {
@@ -109,20 +94,8 @@ func GetWindowPushDownSuiteData() testdata.TestData {
 	return testDataMap["window_push_down_suite"]
 }
 
-func GetFlatPlanSuiteData() testdata.TestData {
-	return testDataMap["flat_plan_suite"]
-}
-
-func GetBinaryPlanSuiteData() testdata.TestData {
-	return testDataMap["binary_plan_suite"]
-}
-
 func GetJSONPlanSuiteData() testdata.TestData {
 	return testDataMap["json_plan_suite"]
-}
-
-func GetDerivedTopNSuiteData() testdata.TestData {
-	return testDataMap["derive_topn_from_window"]
 }
 
 func GetPredicateSimplificationTestData() testdata.TestData {

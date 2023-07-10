@@ -722,7 +722,7 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 
 				if isDupEntryError(err) {
 					// rowID is ignored in tidb backend
-					err = be.errorMgr.RecordConflictErrorV2(
+					err = be.errorMgr.RecordDuplicate(
 						ctx,
 						log.FromContext(ctx),
 						tableName,
