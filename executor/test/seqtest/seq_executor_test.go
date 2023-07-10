@@ -666,8 +666,9 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	require.NoError(t, err)
 	keyword := "pickAndExecTask"
 	require.NoError(t, rs.Close())
-	time.Sleep(time.Millisecond * 10)
-	require.False(t, checkGoroutineExists(keyword))
+	require.Eventually(t, func() bool {
+		return !checkGoroutineExists(keyword)
+	}, time.Millisecond*100, time.Millisecond*10)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
