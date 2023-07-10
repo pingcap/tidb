@@ -55,38 +55,85 @@ func WithTableStatsByQuery() TableStatsOpt {
 	}
 }
 
-// NewStatsCacheWrapper creates a new StatsCacheWrapper.
-func NewStatsCacheWrapper() *StatsCacheWrapper {
+// NewStatsCache creates a new StatsCacheWrapper.
+func NewStatsCache() *StatsCache {
 	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
 	if enableQuota {
 		capacity := variable.StatsCacheMemQuota.Load()
-		return &StatsCacheWrapper{
-			StatsCacheInner: lru.NewStatsLruCache(capacity),
+		return &StatsCache{
+			c: lru.NewStatsLruCache(capacity),
 		}
 	}
-	return &StatsCacheWrapper{
-		StatsCacheInner: mapcache.NewMapCache(),
+	return &StatsCache{
+		c: mapcache.NewMapCache(),
 	}
 }
 
-// StatsCacheWrapper caches the tables in memory for Handle.
-type StatsCacheWrapper struct {
-	internal.StatsCacheInner
+// StatsCache caches the tables in memory for Handle.
+type StatsCache struct {
+	c internal.StatsCacheInner
 }
 
 // Len returns the number of tables in the cache.
-func (sc *StatsCacheWrapper) Len() int {
-	return sc.StatsCacheInner.Len()
+func (sc *StatsCache) Len() int {
+	return sc.c.Len()
+}
+
+// Get returns the statistics of the specified Table ID.
+func (sc *StatsCache) Get(id int64) (*statistics.Table, bool) {
+	return sc.c.Get(id)
+}
+
+// GetByQuery returns the statistics of the specified Table ID.
+// TODO: combine this method with Get.
+func (sc *StatsCache) GetByQuery(id int64) (*statistics.Table, bool) {
+	return sc.c.GetByQuery(id)
+}
+
+// Put puts the table statistics to the cache.
+func (sc *StatsCache) Put(id int64, t *statistics.Table) {
+	sc.c.Put(id, t)
+}
+
+// Values returns all the cached statistics tables.
+func (sc *StatsCache) Values() []*statistics.Table {
+	return sc.c.Values()
+}
+
+// FreshMemUsage refreshes the memory usage of the cache.
+func (sc *StatsCache) FreshMemUsage() {
+	sc.c.FreshMemUsage()
+}
+
+// Cost returns the memory usage of the cache.
+func (sc *StatsCache) Cost() int64 {
+	return sc.c.Cost()
+}
+
+// SetCapacity sets the memory capacity of the cache.
+func (sc *StatsCache) SetCapacity(c int64) {
+	sc.c.SetCapacity(c)
+}
+
+// Version returns the version of the current cache, which is defined as
+// the max table stats version the cache has in its lifecycle.
+func (sc *StatsCache) Version() uint64 {
+	return sc.c.Version()
+}
+
+// Front returns the front element's owner tableID, only used for test.
+func (sc *StatsCache) Front() int64 {
+	return sc.c.Front()
 }
 
 // Update updates the statistics table cache using Copy on write.
-func (sc *StatsCacheWrapper) Update(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) StatsCacheWrapper {
+func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) *StatsCache {
 	option := &TableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
 	}
-	newCache := StatsCacheWrapper{}
-	newCache.StatsCacheInner = CopyAndUpdateStatsCache(sc.StatsCacheInner, tables, deletedIDs, option.byQuery)
+	newCache := &StatsCache{}
+	newCache.c = CopyAndUpdateStatsCache(sc.c, tables, deletedIDs, option.byQuery)
 	return newCache
 }
 

@@ -19,6 +19,10 @@ import (
 )
 
 // StatsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
+// TODO: this cache shouldn't be aware of *statistics.Table, e.g.
+//  1. change Put(int64, *stats.Table) to Put(k, v interface{}, vMem int64).
+//  2. remove XXXByQuery methods.
+//  3. remove remove the Version method.
 type StatsCacheInner interface {
 	// GetByQuery retrieves cache triggered by a query. Usually used in LRU.
 	// TODO: merge this method with Get.

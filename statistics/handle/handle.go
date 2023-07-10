@@ -447,7 +447,7 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 func (h *Handle) Clear() {
 	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
 	h.mu.Lock()
-	h.statsCache.Replace(cache.NewStatsCacheWrapper())
+	h.statsCache.Replace(cache.NewStatsCache())
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
@@ -1010,8 +1010,8 @@ func (h *Handle) statsCacheLen() int {
 // updateStatsCache overrides the global statsCache with a new one, it may fail
 // if the global statsCache has been modified by others already.
 // Callers should add retry loop if necessary.
-func (h *Handle) updateStatsCache(newCache cache.StatsCacheWrapper) (updated bool) {
-	h.statsCache.Replace(&newCache)
+func (h *Handle) updateStatsCache(newCache *cache.StatsCache) (updated bool) {
+	h.statsCache.Replace(newCache)
 	handle_metrics.CostGauge.Set(float64(newCache.Cost()))
 	return true
 }

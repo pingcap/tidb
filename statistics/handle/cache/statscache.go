@@ -20,23 +20,23 @@ import (
 
 // StatsCachePointer is used to cache the stats of a table.
 type StatsCachePointer struct {
-	atomic.Pointer[StatsCacheWrapper]
+	atomic.Pointer[StatsCache]
 }
 
 // NewStatsCachePointer creates a new StatsCache.
 func NewStatsCachePointer() *StatsCachePointer {
-	newCache := NewStatsCacheWrapper()
+	newCache := NewStatsCache()
 	result := StatsCachePointer{}
 	result.Store(newCache)
 	return &result
 }
 
 // Load loads the cached stats from the cache.
-func (s *StatsCachePointer) Load() *StatsCacheWrapper {
+func (s *StatsCachePointer) Load() *StatsCache {
 	return s.Pointer.Load()
 }
 
 // Replace replaces the cache with the new cache.
-func (s *StatsCachePointer) Replace(newCache *StatsCacheWrapper) {
+func (s *StatsCachePointer) Replace(newCache *StatsCache) {
 	s.Store(newCache)
 }
