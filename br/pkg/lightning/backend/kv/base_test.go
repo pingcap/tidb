@@ -16,6 +16,10 @@ package kv_test
 
 import (
 	"fmt"
+	"os"
+	"strings"
+	"testing"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -25,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
-	"os"
-	"testing"
 )
 
 func TestLogKVConvertFailed(t *testing.T) {
@@ -54,11 +56,11 @@ func TestLogKVConvertFailed(t *testing.T) {
 		},
 		Logger: log.L(),
 	})
-	newString := "test_test_test_test_test_test_test_test_test_test_test_test_test_test_test_test_test_test_test_test_test"
-	for i := 0; i < 10000; i++ {
-		newString = newString + "_test_test_test_test_test_test_test_test_test_test_test_test_test_test_test_test_test_test_test_test_test"
+	var newString strings.Builder
+	for i := 0; i < 100000; i++ {
+		newString.WriteString("test_test_test_test_")
 	}
-	newDatum := types.NewStringDatum(newString)
+	newDatum := types.NewStringDatum(newString.String())
 	rows := []types.Datum{}
 	for i := 0; i <= 10; i++ {
 		rows = append(rows, newDatum)

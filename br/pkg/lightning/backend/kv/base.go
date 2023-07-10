@@ -77,6 +77,7 @@ var kindStr = [...]string{
 
 // MarshalLogArray implements the zapcore.ArrayMarshaler interface
 func (row RowArrayMarshaller) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
+	var totalLength = 0
 	for _, datum := range row {
 		kind := datum.Kind()
 		var str string
@@ -93,13 +94,21 @@ func (row RowArrayMarshaller) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 			if err != nil {
 				return err
 			}
+			if len(str) > 512*1024 {
+				str = str[0:1024]
+			}
+			totalLength += len(str)
 		}
-		if err := encoder.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
-			enc.AddString("kind", kindStr[kind])
-			enc.AddString("val", redact.String(str))
+		if totalLength < 512*1024 {
+			if err := encoder.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
+				enc.AddString("kind", kindStr[kind])
+				enc.AddString("val", redact.String(str))
+				return nil
+			})); err != nil {
+				return err
+			}
+		} else {
 			return nil
-		})); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -299,35 +308,17 @@ func (e *BaseKVEncoder) LogKVConvertFailed(row []types.Datum, j int, colInfo *mo
 		row = row[j : j+1]
 	}
 
-	var rowPrefix string
-	var originalPrefix string
-	if len(row[0].GetString()) >= 512*1024 {
-		rowPrefix = row[0].GetString()[0:1024]
-		originalPrefix = original.GetString()[0:1024]
+	e.logger.Error("kv convert failed",
+		zap.Array("original", RowArrayMarshaller(row)),
+		zap.Int("originalCol", j),
+		zap.String("colName", colInfo.Name.O),
+		zap.Stringer("colType", &colInfo.FieldType),
+		log.ShortError(err),
+	)
 
-		e.logger.Error("kv convert failed",
-			zap.String("original", rowPrefix),
-			zap.Int("originalCol", j),
-			zap.String("colName", colInfo.Name.O),
-			zap.Stringer("colType", &colInfo.FieldType),
-			log.ShortError(err),
-		)
-		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", originalPrefix),
-			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
-			zap.Int("columnID", j+1))
-	} else {
-		e.logger.Error("kv convert failed",
-			zap.Array("original", RowArrayMarshaller(row)),
-			zap.Int("originalCol", j),
-			zap.String("colName", colInfo.Name.O),
-			zap.Stringer("colType", &colInfo.FieldType),
-			log.ShortError(err),
-		)
-		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
-			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
-			zap.Int("columnID", j+1))
-	}
-
+	e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
+		zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
+		zap.Int("columnID", j+1))
 	return errors.Annotatef(
 		err,
 		"failed to cast value as %s for column `%s` (#%d)", &colInfo.FieldType, colInfo.Name.O, j+1,
