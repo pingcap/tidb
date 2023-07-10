@@ -15,11 +15,13 @@
 package server
 
 import (
+	"archive/zip"
 	"bytes"
 	"database/sql"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
@@ -29,10 +31,9 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
-<<<<<<< HEAD
-=======
 var expectedFilesInReplayer = []string{
 	"config.toml",
 	"debug_trace/debug_trace0.json",
@@ -67,7 +68,6 @@ var expectedFilesInReplayerForCapture = []string{
 	"variables.toml",
 }
 
->>>>>>> c37eed0c183 (domain: fix missing stats file when using plan replayer capture (#44667))
 func TestDumpPlanReplayerAPI(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -90,17 +90,11 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 		require.NoError(t, err)
 	}()
 	client.waitUntilServerOnline()
-<<<<<<< HEAD
 
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
-	statsHandler := &StatsHandler{dom}
 
-	planReplayerHandler := &PlanReplayerHandler{}
-	filename := prepareData4PlanReplayer(t, client, statsHandler)
-=======
 	filename, fileNameFromCapture := prepareData4PlanReplayer(t, client, dom)
->>>>>>> c37eed0c183 (domain: fix missing stats file when using plan replayer capture (#44667))
 
 	router := mux.NewRouter()
 	planReplayerHandler := &PlanReplayerHandler{}
@@ -108,8 +102,6 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 
 	// 2. check the contents of the plan replayer zip files.
 
-<<<<<<< HEAD
-=======
 	var filesInReplayer []string
 	collectFileNameAndAssertFileSize := func(f *zip.File) {
 		// collect file name
@@ -149,7 +141,6 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	// 3. check plan replayer load
 
 	// 3-1. write the plan replayer file from manual command to a file
->>>>>>> c37eed0c183 (domain: fix missing stats file when using plan replayer capture (#44667))
 	path := "/tmp/plan_replayer.zip"
 	fp, err := os.Create(path)
 	require.NoError(t, err)
@@ -240,4 +231,13 @@ func prepareData4PlanReplayer(t *testing.T, client *testServerClient, dom *domai
 	require.NoError(t, rows.Close())
 
 	return filename, filename3
+}
+
+func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {
+	br := bytes.NewReader(b)
+	z, err := zip.NewReader(br, int64(len(b)))
+	require.NoError(t, err)
+	for _, f := range z.File {
+		fn(f)
+	}
 }
