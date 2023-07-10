@@ -877,19 +877,19 @@
     "Cases": [
       {
         "SQL": "select * from t union all select * from t",
-        "Best": "UnionAll{TableReader(Table(t))->TableReader(Table(t))}"
+        "Best": "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}"
       },
       {
         "SQL": "select * from t union all (select * from t) order by a ",
-        "Best": "UnionAll{TableReader(Table(t))->TableReader(Table(t))}->Sort"
+        "Best": "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}->Sort"
       },
       {
         "SQL": "select * from t union all (select * from t) limit 1",
-        "Best": "UnionAll{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t)->Limit)->Limit}->Limit"
+        "Best": "UnionAll{TableReader(Table(t)->Limit)->Limit->Projection->TableReader(Table(t)->Limit)->Limit->Projection}->Limit"
       },
       {
         "SQL": "select a from t union all (select c from t) order by a limit 1",
-        "Best": "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit}->TopN([Column#25],0,1)"
+        "Best": "UnionAll{TableReader(Table(t)->Limit)->Limit->Projection->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit->Projection}->TopN([Column#25],0,1)"
       }
     ]
   },
@@ -2162,8 +2162,10 @@
         "Plan": [
           "HashAgg 2.00 root  group by:Column#4, funcs:firstrow(Column#4)->Column#4",
           "└─Union 2.00 root  ",
-          "  ├─CTEFullScan 1.00 root CTE:cte data:CTE_0",
-          "  └─CTEFullScan 1.00 root CTE:cte data:CTE_0",
+          "  ├─Projection 1.00 root  Column#2",
+          "  │ └─CTEFullScan 1.00 root CTE:cte data:CTE_0",
+          "  └─Projection 1.00 root  Column#3",
+          "    └─CTEFullScan 1.00 root CTE:cte data:CTE_0",
           "CTE_0 1.00 root  Non-Recursive CTE",
           "└─Projection(Seed Part) 1.00 root  1->Column#1",
           "  └─TableDual 1.00 root  rows:1"
@@ -2225,11 +2227,12 @@
       {
         "SQL": "with recursive cte(a) as (select 1 union select a from cte) select * from cte; -- recursive cte cannot be inlined",
         "Plan": [
-          "CTEFullScan 1.00 root CTE:cte data:CTE_0",
-          "CTE_0 1.00 root  Recursive CTE",
+          "CTEFullScan 2.00 root CTE:cte data:CTE_0",
+          "CTE_0 2.00 root  Recursive CTE",
           "├─Projection(Seed Part) 1.00 root  1->Column#2",
           "│ └─TableDual 1.00 root  rows:1",
-          "└─CTETable(Recursive Part) 1.00 root  Scan on CTE_0"
+          "└─Projection(Recursive Part) 1.00 root  Column#3",
+          "  └─CTETable 1.00 root  Scan on CTE_0"
         ],
         "Warning": null
       },
@@ -2271,8 +2274,10 @@
         "Plan": [
           "HashAgg 2.00 root  group by:Column#4, funcs:firstrow(Column#4)->Column#4",
           "└─Union 2.00 root  ",
-          "  ├─CTEFullScan 1.00 root CTE:cte data:CTE_0",
-          "  └─CTEFullScan 1.00 root CTE:cte data:CTE_0",
+          "  ├─Projection 1.00 root  Column#2",
+          "  │ └─CTEFullScan 1.00 root CTE:cte data:CTE_0",
+          "  └─Projection 1.00 root  Column#3",
+          "    └─CTEFullScan 1.00 root CTE:cte data:CTE_0",
           "CTE_0 1.00 root  Non-Recursive CTE",
           "└─Projection(Seed Part) 1.00 root  1->Column#1",
           "  └─TableDual 1.00 root  rows:1"
@@ -2599,10 +2604,12 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:count(distinct Column#5)->Column#6",
           "└─Union 20000.00 root  ",
-          "  ├─TableReader 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
-          "  └─TableReader 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tb keep order:false, stats:pseudo"
+          "  ├─Projection 10000.00 root  test.ta.a",
+          "  │ └─TableReader 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
+          "  └─Projection 10000.00 root  test.tb.a",
+          "    └─TableReader 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:tb keep order:false, stats:pseudo"
         ],
         "Result": [
           "1"

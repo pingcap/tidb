@@ -850,10 +850,12 @@ func TestIndexRangeEliminatedProjection(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain format = 'brief' select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
 		"Union 2.00 root  ",
-		"├─IndexReader 1.00 root  index:IndexRangeScan",
-		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
-		"└─IndexReader 1.00 root  index:IndexRangeScan",
-		"  └─IndexRangeScan 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
+		"├─Projection 1.00 root  test.t.a, test.t.b",
+		"│ └─IndexReader 1.00 root  index:IndexRangeScan",
+		"│   └─IndexRangeScan 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
+		"└─Projection 1.00 root  test.t.a, test.t.b",
+		"  └─IndexReader 1.00 root  index:IndexRangeScan",
+		"    └─IndexRangeScan 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
 	))
 	testKit.MustQuery("select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
 		"1 2",
