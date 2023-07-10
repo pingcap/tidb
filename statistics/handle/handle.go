@@ -774,8 +774,6 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 			}
 			allPartitionStats[partitionID] = partitionStats
 		}
-		globalStats.Count += partitionStats.Count
-		globalStats.ModifyCount += partitionStats.ModifyCount
 		for i := 0; i < globalStats.Num; i++ {
 			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
 			if !analyzed {
