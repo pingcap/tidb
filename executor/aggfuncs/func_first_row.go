@@ -121,11 +121,11 @@ type firstRow4Int struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowInt)), DefPartialResult4FirstRowIntSize
 }
 
-func (e *firstRow4Int) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowInt)(pr)
 	p.val, p.isNull, p.gotFirstRow = 0, false, false
 }
@@ -145,7 +145,7 @@ func (e *firstRow4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	return memDelta, nil
 }
 
-func (*firstRow4Int) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*firstRow4Int) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4FirstRowInt)(src), (*partialResult4FirstRowInt)(dst)
 	if !p2.gotFirstRow {
 		*p2 = *p1
@@ -153,7 +153,7 @@ func (*firstRow4Int) MergePartialResult(sctx sessionctx.Context, src, dst Partia
 	return memDelta, nil
 }
 
-func (e *firstRow4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *firstRow4Int) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowInt)(pr)
 	if p.isNull || !p.gotFirstRow {
 		chk.AppendNull(e.ordinal)
@@ -167,11 +167,11 @@ type firstRow4Float32 struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Float32) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Float32) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowFloat32)), DefPartialResult4FirstRowFloat32Size
 }
 
-func (e *firstRow4Float32) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Float32) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowFloat32)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -191,7 +191,7 @@ func (e *firstRow4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 	return memDelta, nil
 }
 
-func (*firstRow4Float32) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*firstRow4Float32) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4FirstRowFloat32)(src), (*partialResult4FirstRowFloat32)(dst)
 	if !p2.gotFirstRow {
 		*p2 = *p1
@@ -199,7 +199,7 @@ func (*firstRow4Float32) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 	return memDelta, nil
 }
 
-func (e *firstRow4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *firstRow4Float32) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowFloat32)(pr)
 	if p.isNull || !p.gotFirstRow {
 		chk.AppendNull(e.ordinal)
@@ -213,11 +213,11 @@ type firstRow4Float64 struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowFloat64)), DefPartialResult4FirstRowFloat64Size
 }
 
-func (e *firstRow4Float64) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowFloat64)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -237,7 +237,7 @@ func (e *firstRow4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 	return memDelta, nil
 }
 
-func (*firstRow4Float64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*firstRow4Float64) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4FirstRowFloat64)(src), (*partialResult4FirstRowFloat64)(dst)
 	if !p2.gotFirstRow {
 		*p2 = *p1
@@ -245,7 +245,7 @@ func (*firstRow4Float64) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 	return memDelta, nil
 }
 
-func (e *firstRow4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *firstRow4Float64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowFloat64)(pr)
 	if p.isNull || !p.gotFirstRow {
 		chk.AppendNull(e.ordinal)
@@ -259,11 +259,11 @@ type firstRow4String struct {
 	baseAggFunc
 }
 
-func (e *firstRow4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowString)), DefPartialResult4FirstRowStringSize
 }
 
-func (e *firstRow4String) ResetPartialResult(pr PartialResult) {
+func (*firstRow4String) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowString)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -284,7 +284,7 @@ func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 	return memDelta, nil
 }
 
-func (*firstRow4String) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*firstRow4String) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4FirstRowString)(src), (*partialResult4FirstRowString)(dst)
 	if !p2.gotFirstRow {
 		*p2 = *p1
@@ -292,7 +292,7 @@ func (*firstRow4String) MergePartialResult(sctx sessionctx.Context, src, dst Par
 	return memDelta, nil
 }
 
-func (e *firstRow4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *firstRow4String) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowString)(pr)
 	if p.isNull || !p.gotFirstRow {
 		chk.AppendNull(e.ordinal)
@@ -306,11 +306,11 @@ type firstRow4Time struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowTime)), DefPartialResult4FirstRowTimeSize
 }
 
-func (e *firstRow4Time) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Time) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowTime)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -330,7 +330,7 @@ func (e *firstRow4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	return memDelta, nil
 }
 
-func (*firstRow4Time) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*firstRow4Time) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4FirstRowTime)(src), (*partialResult4FirstRowTime)(dst)
 	if !p2.gotFirstRow {
 		*p2 = *p1
@@ -338,7 +338,7 @@ func (*firstRow4Time) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	return memDelta, nil
 }
 
-func (e *firstRow4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *firstRow4Time) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowTime)(pr)
 	if p.isNull || !p.gotFirstRow {
 		chk.AppendNull(e.ordinal)
@@ -352,11 +352,11 @@ type firstRow4Duration struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowDuration)), DefPartialResult4FirstRowDurationSize
 }
 
-func (e *firstRow4Duration) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Duration) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowDuration)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -376,7 +376,7 @@ func (e *firstRow4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 	return memDelta, nil
 }
 
-func (*firstRow4Duration) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*firstRow4Duration) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4FirstRowDuration)(src), (*partialResult4FirstRowDuration)(dst)
 	if !p2.gotFirstRow {
 		*p2 = *p1
@@ -384,7 +384,7 @@ func (*firstRow4Duration) MergePartialResult(sctx sessionctx.Context, src, dst P
 	return memDelta, nil
 }
 
-func (e *firstRow4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *firstRow4Duration) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowDuration)(pr)
 	if p.isNull || !p.gotFirstRow {
 		chk.AppendNull(e.ordinal)
@@ -398,11 +398,11 @@ type firstRow4JSON struct {
 	baseAggFunc
 }
 
-func (e *firstRow4JSON) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4JSON) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowJSON)), DefPartialResult4FirstRowJSONSize
 }
 
-func (e *firstRow4JSON) ResetPartialResult(pr PartialResult) {
+func (*firstRow4JSON) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowJSON)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -422,7 +422,7 @@ func (e *firstRow4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	}
 	return memDelta, nil
 }
-func (*firstRow4JSON) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*firstRow4JSON) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4FirstRowJSON)(src), (*partialResult4FirstRowJSON)(dst)
 	if !p2.gotFirstRow {
 		*p2 = *p1
@@ -430,7 +430,7 @@ func (*firstRow4JSON) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	return memDelta, nil
 }
 
-func (e *firstRow4JSON) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *firstRow4JSON) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowJSON)(pr)
 	if p.isNull || !p.gotFirstRow {
 		chk.AppendNull(e.ordinal)
@@ -444,11 +444,11 @@ type firstRow4Decimal struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowDecimal)), DefPartialResult4FirstRowDecimalSize
 }
 
-func (e *firstRow4Decimal) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowDecimal)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
@@ -471,7 +471,7 @@ func (e *firstRow4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 	return memDelta, nil
 }
 
-func (e *firstRow4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *firstRow4Decimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowDecimal)(pr)
 	if p.isNull || !p.gotFirstRow {
 		chk.AppendNull(e.ordinal)
@@ -492,7 +492,7 @@ func (e *firstRow4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 	return nil
 }
 
-func (*firstRow4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*firstRow4Decimal) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4FirstRowDecimal)(src), (*partialResult4FirstRowDecimal)(dst)
 	if !p2.gotFirstRow {
 		*p2 = *p1
@@ -504,16 +504,16 @@ type firstRow4Enum struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Enum) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Enum) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowEnum)), DefPartialResult4FirstRowEnumSize
 }
 
-func (e *firstRow4Enum) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Enum) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowEnum)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
 
-func (e *firstRow4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4Enum) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowEnum)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil
@@ -529,7 +529,7 @@ func (e *firstRow4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	return memDelta, nil
 }
 
-func (*firstRow4Enum) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*firstRow4Enum) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4FirstRowEnum)(src), (*partialResult4FirstRowEnum)(dst)
 	if !p2.gotFirstRow {
 		*p2 = *p1
@@ -537,7 +537,7 @@ func (*firstRow4Enum) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	return memDelta, nil
 }
 
-func (e *firstRow4Enum) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *firstRow4Enum) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowEnum)(pr)
 	if p.isNull || !p.gotFirstRow {
 		chk.AppendNull(e.ordinal)
@@ -551,16 +551,16 @@ type firstRow4Set struct {
 	baseAggFunc
 }
 
-func (e *firstRow4Set) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*firstRow4Set) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(new(partialResult4FirstRowSet)), DefPartialResult4FirstRowSetSize
 }
 
-func (e *firstRow4Set) ResetPartialResult(pr PartialResult) {
+func (*firstRow4Set) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4FirstRowSet)(pr)
 	p.isNull, p.gotFirstRow = false, false
 }
 
-func (e *firstRow4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4Set) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowSet)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil
@@ -576,7 +576,7 @@ func (e *firstRow4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	return memDelta, nil
 }
 
-func (*firstRow4Set) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*firstRow4Set) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4FirstRowSet)(src), (*partialResult4FirstRowSet)(dst)
 	if !p2.gotFirstRow {
 		*p2 = *p1
@@ -584,7 +584,7 @@ func (*firstRow4Set) MergePartialResult(sctx sessionctx.Context, src, dst Partia
 	return memDelta, nil
 }
 
-func (e *firstRow4Set) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *firstRow4Set) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowSet)(pr)
 	if p.isNull || !p.gotFirstRow {
 		chk.AppendNull(e.ordinal)

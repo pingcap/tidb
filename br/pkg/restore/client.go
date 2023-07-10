@@ -3252,7 +3252,7 @@ func (rc *Client) generateRepairIngestIndexSQLs(
 				return sqls, false, errors.Trace(err)
 			}
 			sqls = checkpointSQLs.SQLs
-			log.Info("[ingest] load ingest index repair sqls from checkpoint", zap.Reflect("sqls", sqls))
+			log.Info("load ingest index repair sqls from checkpoint", zap.String("category", "ingest"), zap.Reflect("sqls", sqls))
 			return sqls, true, nil
 		}
 	}

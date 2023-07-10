@@ -1079,9 +1079,10 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 			}
 			newIdxHist, err := idxHist.newIndexBySelectivity(sctx.GetSessionVars().StmtCtx, node)
 			if err != nil {
-				logutil.BgLogger().Warn("[Histogram-in-plan]: something wrong happened when calculating row count, "+
+				logutil.BgLogger().Warn("something wrong happened when calculating row count, "+
 					"failed to build histogram for index %v of table %v",
-					zap.String("index", idxHist.Info.Name.O), zap.String("table", idxHist.Info.Table.O), zap.Error(err))
+					zap.String("category", "Histogram-in-plan"), zap.String("index", idxHist.Info.Name.O),
+					zap.String("table", idxHist.Info.Table.O), zap.Error(err))
 				continue
 			}
 			newColl.Indices[node.ID] = newIdxHist
@@ -1101,7 +1102,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 		var err error
 		splitRanges, ok := oldCol.Histogram.SplitRange(sctx.GetSessionVars().StmtCtx, node.Ranges, false)
 		if !ok {
-			logutil.BgLogger().Warn("[Histogram-in-plan]: the type of histogram and ranges mismatch")
+			logutil.BgLogger().Warn("the type of histogram and ranges mismatch", zap.String("category", "Histogram-in-plan"))
 			continue
 		}
 		// Deal with some corner case.
@@ -1122,7 +1123,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 			err = newHistogramBySelectivity(sctx, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, coll.GetRowCountByColumnRanges)
 		}
 		if err != nil {
-			logutil.BgLogger().Warn("[Histogram-in-plan]: something wrong happened when calculating row count",
+			logutil.BgLogger().Warn("something wrong happened when calculating row count", zap.String("category", "Histogram-in-plan"),
 				zap.Error(err))
 			continue
 		}
