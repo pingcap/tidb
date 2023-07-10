@@ -94,11 +94,11 @@ func (row RowArrayMarshaller) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 			if err != nil {
 				return err
 			}
-			if len(str) > 512*1024 {
-				str = str[0:1024]
-			}
-			totalLength += len(str)
 		}
+		if len(str) > 512*1024 {
+			str = str[0:1024] + " (truncated)"
+		}
+		totalLength += len(str)
 		if totalLength >= 512*1024 {
 			return nil
 		}
@@ -315,8 +315,8 @@ func (e *BaseKVEncoder) LogKVConvertFailed(row []types.Datum, j int, colInfo *mo
 		log.ShortError(err),
 	)
 
-	var originalPrefix string
-	if len(row[0].GetString()) >= 512*1024 {
+	if len(original.GetString()) >= 512*1024 {
+		var originalPrefix string
 		originalPrefix = original.GetString()[0:1024]
 		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", originalPrefix),
 			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),

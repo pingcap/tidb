@@ -12,16 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv_test
+package kv
 
 import (
-	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -32,13 +31,10 @@ import (
 )
 
 func TestLogKVConvertFailed(t *testing.T) {
-	dir := "/temp.txt"
-	dir = fmt.Sprintf("%s%s", t.TempDir(), dir)
-	logCfg := &log.Config{File: dir, FileMaxSize: 1}
+	tempPath := filepath.Join(t.TempDir(), "/temp.txt")
+	logCfg := &log.Config{File: tempPath, FileMaxSize: 1}
 	err := log.InitLogger(logCfg, "info")
 	require.NoError(t, err)
-	msg := "logger is initialized"
-	log.L().Info(msg)
 
 	modelName := model.NewCIStr("c1")
 	modelState := model.StatePublic
@@ -47,11 +43,11 @@ func TestLogKVConvertFailed(t *testing.T) {
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	var tbl table.Table
-	tbl, err = tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
+	tbl, err = tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
 
-	var baseKVEncoder *kv.BaseKVEncoder
-	baseKVEncoder, err = kv.NewBaseKVEncoder(&encode.EncodingConfig{
+	var baseKVEncoder *BaseKVEncoder
+	baseKVEncoder, err = NewBaseKVEncoder(&encode.EncodingConfig{
 		Table: tbl,
 		SessionOptions: encode.SessionOptions{
 			SQLMode:   mysql.ModeStrictAllTables,
@@ -72,7 +68,8 @@ func TestLogKVConvertFailed(t *testing.T) {
 	require.NoError(t, err)
 
 	var content []byte
-	content, err = os.ReadFile(dir)
+	content, err = os.ReadFile(tempPath)
 	require.NoError(t, err)
 	require.LessOrEqual(t, 500, len(string(content)))
+	require.NotContains(t, content, "exceeds maximum file size")
 }
