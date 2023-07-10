@@ -2766,6 +2766,11 @@ error = '''
 Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature
 '''
 
+["server:8057"]
+error = '''
+invalid type
+'''
+
 ["session:8002"]
 error = '''
 [%d] can not retry select for update statement

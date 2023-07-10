@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "error",
+    srcs = ["error.go"],
+    importpath = "github.com/pingcap/tidb/server/error",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//util/dbterror",
+    ],
+)
+
+go_library(
+    name = "err",
+    srcs = ["error.go"],
+    importpath = "github.com/pingcap/tidb/server/err",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//util/dbterror",
+    ],
+)
