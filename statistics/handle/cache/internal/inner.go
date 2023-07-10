@@ -42,7 +42,6 @@ type StatsCacheInner interface {
 	Values() []*statistics.Table
 	// Len returns the length of the cache.
 	Len() int
-	FreshMemUsage()
 	// Copy returns a copy of the cache
 	Copy() StatsCacheInner
 	// SetCapacity sets the capacity of the cache

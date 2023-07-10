@@ -136,15 +136,6 @@ func (m *MapCache) Len() int {
 	return len(m.tables)
 }
 
-// FreshMemUsage implements StatsCacheInner
-func (m *MapCache) FreshMemUsage() {
-	for _, v := range m.tables {
-		oldCost := v.cost
-		newCost := v.value.MemoryUsage().TotalMemUsage
-		m.memUsage += newCost - oldCost
-	}
-}
-
 // Copy implements StatsCacheInner
 func (m *MapCache) Copy() internal.StatsCacheInner {
 	newM := &MapCache{

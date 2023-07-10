@@ -270,15 +270,6 @@ func (s *StatsInnerCache) Len() int {
 	return len(s.elements)
 }
 
-// FreshMemUsage implements statsCacheInner
-func (s *StatsInnerCache) FreshMemUsage() {
-	s.Lock()
-	defer s.Unlock()
-	for tblID, element := range s.elements {
-		s.freshTableCost(tblID, element)
-	}
-}
-
 // Copy implements statsCacheInner
 func (s *StatsInnerCache) Copy() internal.StatsCacheInner {
 	s.RLock()

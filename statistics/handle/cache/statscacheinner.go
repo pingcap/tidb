@@ -101,8 +101,13 @@ func (sc *StatsCache) Values() []*statistics.Table {
 }
 
 // FreshMemUsage refreshes the memory usage of the cache.
+// Values in StatsCache should be read-only, but when initializing the cache, some values can be modified.
+// To make the memory cost more accurate, we need to refresh the memory usage of the cache.
 func (sc *StatsCache) FreshMemUsage() {
-	sc.c.FreshMemUsage()
+	values := sc.c.Values()
+	for _, v := range values {
+		sc.c.Put(v.PhysicalID, v)
+	}
 }
 
 // Cost returns the memory usage of the cache.
