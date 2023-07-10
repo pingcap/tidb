@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1307,6 +1308,7 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	now := time.Now().Unix()
 	interval := int64(1800)
 	beginTimeForCurInterval := now - now%interval
+	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk := newTestKitWithPlanCache(t, store)
 	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
 
