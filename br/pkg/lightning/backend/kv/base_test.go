@@ -40,7 +40,10 @@ func TestLogKVConvertFailed(t *testing.T) {
 	msg := "logger is initialized"
 	log.L().Info(msg)
 
-	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
+	modelName := model.NewCIStr("c1")
+	modelState := model.StatePublic
+	modelFieldType := *types.NewFieldType(mysql.TypeTiny)
+	c1 := &model.ColumnInfo{ID: 1, Name: modelName, State: modelState, Offset: 0, FieldType: modelFieldType}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	var tbl table.Table
