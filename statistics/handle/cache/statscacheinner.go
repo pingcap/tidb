@@ -150,7 +150,8 @@ func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int
 	for _, opt := range opts {
 		opt(option)
 	}
-	newCache := &StatsCache{c: sc.c.Copy(), maxTblStatsVer: sc.maxTblStatsVer}
+	newCache := &StatsCache{c: sc.c.Copy()}
+	newCache.maxTblStatsVer.Store(sc.maxTblStatsVer.Load())
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
 		if option.byQuery {
