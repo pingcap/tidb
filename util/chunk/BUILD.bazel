@@ -59,6 +59,7 @@ go_test(
     embed = [":chunk"],
     flaky = True,
     race = "on",
+    shard_count = 50,
     deps = [
         "//config",
         "//parser/mysql",
