@@ -60,3 +60,17 @@ func TestIssue45036(t *testing.T) {
 		"    └─TableReader_9 10000.00 root partition:all data:TableRangeScan_8",
 		"      └─TableRangeScan_8 10000.00 cop[tikv] table:s range:[1,100000], keep order:false, stats:pseudo"))
 }
+
+func TestIssue45112(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a varchar(20), b varchar(20), c varchar(20), primary key(a, b, c))")
+	tk.MustExec("create table t2(a varchar(20), b varchar(20), c varchar(20), primary key(a))")
+	tk.MustExec("create table t3(aa varchar (20), bb varchar (20), cc varchar(20), primary key(aa, bb))")
+	tk.MustExec("insert into t1 values('1','1','1');")
+	tk.MustExec("insert into t2 values('1','1','1');")
+	tk.MustExec("insert into t3 values('1','1','1');")
+
+	tk.MustQuery("select (select max(b) from t2 where t2.a = t1.a), (select cc from t3 where t3.bb = t1.b and t3.aa = '1'), a from t1 where t1.a = '1' group by t1.a,  t1.b").Check(testkit.Rows("1 1 1"))
+}
