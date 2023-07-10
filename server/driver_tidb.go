@@ -456,12 +456,7 @@ func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, sctx sessionctx.
 
 type tidbResultSet struct {
 	recordSet    sqlexec.RecordSet
-<<<<<<< HEAD
 	columns      []*ColumnInfo
-	rows         []chunk.Row
-=======
-	columns      []*column.Info
->>>>>>> 2ded2218768 (server: implement spill disk for cursorFetch result (#45163))
 	closed       int32
 	preparedStmt *core.PlanCacheStmt
 }
@@ -520,10 +515,6 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 	return trs.columns
 }
 
-<<<<<<< HEAD
-func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
-	ci = &ColumnInfo{
-=======
 func (trs *tidbResultSet) FieldTypes() []*types.FieldType {
 	fts := make([]*types.FieldType, 0, len(trs.recordSet.Fields()))
 	for _, f := range trs.recordSet.Fields() {
@@ -548,9 +539,8 @@ func (tcrs *tidbCursorResultSet) GetRowContainerReader() chunk.RowContainerReade
 	return tcrs.reader
 }
 
-func convertColumnInfo(fld *ast.ResultField) (ci *column.Info) {
-	ci = &column.Info{
->>>>>>> 2ded2218768 (server: implement spill disk for cursorFetch result (#45163))
+func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
+	ci = &ColumnInfo{
 		Name:         fld.ColumnAsName.O,
 		OrgName:      fld.Column.Name.O,
 		Table:        fld.TableAsName.O,

@@ -20,11 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/server/internal/column"
 	"github.com/pingcap/tidb/types"
->>>>>>> 2ded2218768 (server: implement spill disk for cursorFetch result (#45163))
 	"github.com/pingcap/tidb/util/chunk"
 )
 

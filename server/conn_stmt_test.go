@@ -28,12 +28,9 @@ import (
 	"syscall"
 	"testing"
 
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/expression"
-=======
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
->>>>>>> 2ded2218768 (server: implement spill disk for cursorFetch result (#45163))
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"

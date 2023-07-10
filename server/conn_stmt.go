@@ -54,24 +54,16 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-=======
-	"github.com/pingcap/tidb/server/internal/dump"
-	"github.com/pingcap/tidb/server/internal/parse"
 	"github.com/pingcap/tidb/sessionctx/variable"
->>>>>>> 2ded2218768 (server: implement spill disk for cursorFetch result (#45163))
 	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/util/hack"
-=======
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
->>>>>>> 2ded2218768 (server: implement spill disk for cursorFetch result (#45163))
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/util"
@@ -216,17 +208,12 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			paramValues = data[pos+1:]
 		}
 
-<<<<<<< HEAD
 		err = parseExecArgs(cc.ctx.GetSessionVars().StmtCtx, args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
-		stmt.Reset()
-=======
-		err = parse.ExecArgs(cc.ctx.GetSessionVars().StmtCtx, args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
 		// This `.Reset` resets the arguments, so it's fine to just ignore the error (and the it'll be reset again in the following routine)
 		errReset := stmt.Reset()
 		if errReset != nil {
 			logutil.Logger(ctx).Warn("fail to reset statement in EXECUTE command", zap.Error(errReset))
 		}
->>>>>>> 2ded2218768 (server: implement spill disk for cursorFetch result (#45163))
 		if err != nil {
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
