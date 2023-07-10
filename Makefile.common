@@ -123,3 +123,4 @@ ifneq ("$(CI)", "")
 	BAZEL_GLOBAL_CONFIG := --output_user_root=/home/jenkins/.tidb/tmp
 	BAZEL_CMD_CONFIG := --config=ci --repository_cache=/home/jenkins/.tidb/tmp
 endif
+BAZEL_TEST_CONFIG := --define gotags=deadlock,intest --@io_bazel_rules_go//go/config:failpoint=true

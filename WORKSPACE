@@ -1,4 +1,5 @@
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 
 http_archive(
     name = "bazel_skylib",
@@ -16,12 +17,12 @@ versions.check(minimum_bazel_version = "6.0.0")
 
 http_archive(
     name = "io_bazel_rules_go",
-    sha256 = "51dc53293afe317d2696d4d6433a4c33feedb7748a9e352072e2ec3c0dafd2c6",
+    sha256 = "d6f7f8844dc21647aa306c423ddb27174fcaa223592b950f7f75928921391036",
+    strip_prefix = "rules_go-304ca54e9d70081a889c1a15270ae43d38ae053b",
+    type = "zip",
     urls = [
-        "http://bazel-cache.pingcap.net:8080/bazelbuild/rules_go/releases/download/v0.40.1/rules_go-v0.40.1.zip",
-        "http://ats.apps.svc/bazelbuild/rules_go/releases/download/v0.40.1/rules_go-v0.40.1.zip",
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.40.1/rules_go-v0.40.1.zip",
-        "https://github.com/bazelbuild/rules_go/releases/download/v0.40.1/rules_go-v0.40.1.zip",
+        "http://bazel-cache.pingcap.net:8080/xhebox/rules_go/zip/304ca54e9d70081a889c1a15270ae43d38ae053b",
+        "https://codeload.github.com/xhebox/rules_go/zip/304ca54e9d70081a889c1a15270ae43d38ae053b",
     ],
 )
 
