@@ -1152,51 +1152,25 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 	return physicalUnionScan
 }
 
-<<<<<<< HEAD
-func getColsNDVLowerBoundFromHistColl(cols []*expression.Column, histColl *statistics.HistColl) int64 {
-	if len(cols) == 0 || histColl == nil {
-		return -1
-	}
-	colUIDs := make([]int64, len(cols))
-	for i, col := range cols {
-		colUIDs[i] = col.UniqueID
-	}
-
-	// Note that we don't need to specially handle prefix index in this function, because the NDV of a prefix index is
-	// equal or less than the corresponding normal index, and that's safe here since we want a lower bound.
-=======
 // getColsNDVLowerBoundFromHistColl tries to get a lower bound of the NDV of columns (whose uniqueIDs are colUIDs).
 func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.HistColl) int64 {
 	if len(colUIDs) == 0 || histColl == nil {
 		return -1
 	}
->>>>>>> bc80cf9024d (planner, sessionctx: reintroduce #41996 through optimizer fix control (#44865))
 
 	// 1. Try to get NDV from column stats if it's a single column.
 	if len(colUIDs) == 1 && histColl.Columns != nil {
 		uid := colUIDs[0]
-<<<<<<< HEAD
-		if colStats, ok := histColl.Columns[uid]; ok && colStats != nil {
-=======
 		if colStats, ok := histColl.Columns[uid]; ok && colStats != nil && colStats.IsStatsInitialized() {
->>>>>>> bc80cf9024d (planner, sessionctx: reintroduce #41996 through optimizer fix control (#44865))
 			return colStats.NDV
 		}
 	}
 
 	slices.Sort(colUIDs)
-<<<<<<< HEAD
-	if histColl.Indices == nil || histColl.Idx2ColumnIDs == nil {
-		return -1
-	}
-
-	// 2. Try to get NDV from index stats.
-=======
 
 	// 2. Try to get NDV from index stats.
 	// Note that we don't need to specially handle prefix index here, because the NDV of a prefix index is
 	// equal or less than the corresponding normal index, and that's safe here since we want a lower bound.
->>>>>>> bc80cf9024d (planner, sessionctx: reintroduce #41996 through optimizer fix control (#44865))
 	for idxID, idxCols := range histColl.Idx2ColumnIDs {
 		if len(idxCols) != len(colUIDs) {
 			continue
@@ -1207,11 +1181,7 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 		if !slices.Equal(orderedIdxCols, colUIDs) {
 			continue
 		}
-<<<<<<< HEAD
-		if idxStats, ok := histColl.Indices[idxID]; ok && idxStats != nil {
-=======
 		if idxStats, ok := histColl.Indices[idxID]; ok && idxStats != nil && idxStats.IsStatsInitialized() {
->>>>>>> bc80cf9024d (planner, sessionctx: reintroduce #41996 through optimizer fix control (#44865))
 			return idxStats.NDV
 		}
 	}
@@ -1219,25 +1189,6 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 	// TODO: if there's an index that contains the expected columns, we can also make use of its NDV.
 	// For example, NDV(a,b,c) / NDV(c) is a safe lower bound of NDV(a,b).
 
-<<<<<<< HEAD
-	// 3. If we still haven't got an NDV, we use the minimal NDV in the column stats as a lower bound.
-	// This would happen when len(cols) > 1 and no proper index stats are available.
-	minNDV := int64(-1)
-	for _, colStats := range histColl.Columns {
-		if colStats == nil || colStats.Info == nil {
-			continue
-		}
-		col := colStats.Info
-		if col.IsGenerated() && !col.GeneratedStored {
-			continue
-		}
-		if (colStats.NDV > 0 && minNDV <= 0) ||
-			colStats.NDV < minNDV {
-			minNDV = colStats.NDV
-		}
-	}
-	return minNDV
-=======
 	// 3. If we still haven't got an NDV, we use the maximum NDV in the column stats as a lower bound.
 	maxNDV := int64(-1)
 	for _, uid := range colUIDs {
@@ -1248,7 +1199,6 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 		maxNDV = mathutil.Max(maxNDV, colStats.NDV)
 	}
 	return maxNDV
->>>>>>> bc80cf9024d (planner, sessionctx: reintroduce #41996 through optimizer fix control (#44865))
 }
 
 // constructInnerIndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
@@ -1257,12 +1207,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	path *util.AccessPath,
 	ranges ranger.Ranges,
 	filterConds []expression.Expression,
-<<<<<<< HEAD
-	innerJoinKeys []*expression.Column,
-=======
 	_ []*expression.Column,
 	idxOffset2joinKeyOffset []int,
->>>>>>> bc80cf9024d (planner, sessionctx: reintroduce #41996 through optimizer fix control (#44865))
 	rangeInfo string,
 	keepOrder bool,
 	desc bool,
