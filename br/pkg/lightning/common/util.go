@@ -623,7 +623,7 @@ func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
 
 // GetExplicitRequestSourceTypeFromDB gets the explicit request source type from database.
 func GetExplicitRequestSourceTypeFromDB(ctx context.Context, db *sql.DB) (string, error) {
-	val, err := getSessionVariable(ctx, db, variable.TiDBExplicitRequestSourceType)
+	val, err := getSessionVariable(ctx, db, variable.TiDBRequestSourceType)
 	if err != nil {
 		return "", err
 	}

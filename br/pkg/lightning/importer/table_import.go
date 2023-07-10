@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/codec"
@@ -1258,7 +1259,21 @@ func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB) error {
 		DB:     db,
 		Logger: tr.logger,
 	}
-	err := exec.Exec(ctx, "analyze table", "ANALYZE TABLE "+tr.tableName)
+
+	explicitRequestSourceType, err := common.GetExplicitRequestSourceTypeFromDB(ctx, db)
+	if err == nil && explicitRequestSourceType != "lightning" {
+		if err := exec.Exec(ctx, "set tidb_request_source_type to lightning", fmt.Sprintf("SET SESSION %s = '%s';", variable.TiDBRequestSourceType, "lightning")); err != nil {
+			task.Warn("set tidb_request_source_type failed", zap.Error(err))
+		} else {
+			defer func() {
+				if err := exec.Exec(ctx, "recover tidb_request_source_type", fmt.Sprintf("SET SESSION %s = '%s';", variable.TiDBRequestSourceType, explicitRequestSourceType)); err != nil {
+					task.Warn("recover tidb_request_source_type failed", zap.Error(err))
+				}
+			}()
+		}
+	}
+
+	err = exec.Exec(ctx, "analyze table", "ANALYZE TABLE "+tr.tableName)
 	task.End(zap.ErrorLevel, err)
 	return err
 }

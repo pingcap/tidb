@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -245,8 +246,9 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			Context: &kvrpcpb.Context{
 				ResourceControlContext: &kvrpcpb.ResourceControlContext{
 					ResourceGroupName: local.ResourceGroupName,
-					IsBackground:      true,
-				}},
+				},
+				RequestSource: util.ExplicitTypeLightning,
+			},
 		}
 		if err = wstream.Send(req); err != nil {
 			return annotateErr(err, peer)
@@ -561,6 +563,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 				ResourceGroupName: local.ResourceGroupName,
 				IsBackground:      true,
 			},
+			RequestSource: util.ExplicitTypeLightning,
 		}
 
 		if supportMultiIngest {

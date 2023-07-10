@@ -57,6 +57,7 @@ go_library(
         "//parser/model",
         "//parser/mysql",
         "//planner/core",
+        "//sessionctx/variable",
         "//store/driver",
         "//store/driver/txn",
         "//store/pdtypes",

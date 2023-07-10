@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -168,8 +169,9 @@ func Compact(ctx context.Context, tls *common.TLS, tikvAddr string, level int32,
 			Context: &kvrpcpb.Context{
 				ResourceControlContext: &kvrpcpb.ResourceControlContext{
 					ResourceGroupName: resourceGroupName,
-					IsBackground:      true,
-				}},
+				},
+				RequestSource: util.ExplicitTypeLightning,
+			},
 		})
 		return ignoreUnimplementedError(err, task.Logger)
 	})

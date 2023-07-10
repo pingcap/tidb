@@ -949,8 +949,8 @@ def go_deps():
         name = "com_github_elastic_gosigar",
         build_file_proto_mode = "disable",
         importpath = "github.com/elastic/gosigar",
-        sum = "h1:Dg80n8cr90OZ7x+bAax/QjoW/XqTI11RmA79ZwIm9/4=",
-        version = "v0.14.2",
+        sum = "h1:ehdJWCzrtTHhYDmUAO6Zpu+uez4UB/dhH0oJSQ/o1Pk=",
+        version = "v0.9.0",
     )
     go_repository(
         name = "com_github_elazarl_go_bindata_assetfs",
@@ -3203,8 +3203,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:TN9FcS+r19rKyrsPJDPfcXWkztVHfbpZ9Xkic6kE+v0=",
-        version = "v0.0.0-20230703085931-3788ab4ee6b3",
+        sum = "h1:VM6INL8StTPYMKufyHRX2hPUMP7isHnkYvtRMA7Sdsc=",
+        version = "v0.0.0-20230705080816-a48f4fe282a2",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -3872,16 +3872,17 @@ def go_deps():
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
         replace = "github.com/HuSharp/client-go/v2",
-        sum = "h1:7vXzHwGaNIXiYYjNE9nxWoQi1wlSpwQ3jqxcIQXum94=",
-        version = "v2.0.0-20230705070627-72cdb3bd2081",
+        sum = "h1:5pWs7Op3gGUMTlOG5oc9V7S/c+QiEMy63pVKZCPIo4A=",
+        version = "v2.0.0-20230707070831-47f4a868300f",
     )
 
     go_repository(
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sum = "h1:a5SATBxu/0Z6qNnz4KXDN91gDA06waaYcHM6dkb6lz4=",
-        version = "v0.0.0-20230613052906-7158cb319935",
+        replace = "github.com/HuSharp/pd/client",
+        sum = "h1:deVJWCB/2NLKlVW+CYPgBhV1+ZvpToBN9IA2ZUe9rgg=",
+        version = "v0.0.0-20230707063511-5a34eab12c57",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
