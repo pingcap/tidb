@@ -69,7 +69,7 @@ func NewStatsCache() *StatsCache {
 	}
 }
 
-// StatsCacheWrapper caches the tables in memory for Handle.
+// StatsCache caches the tables in memory for Handle.
 type StatsCache struct {
 	c internal.StatsCacheInner
 }
