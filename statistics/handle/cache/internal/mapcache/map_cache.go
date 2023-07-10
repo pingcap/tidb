@@ -37,9 +37,9 @@ func (c cacheItem) copy() cacheItem {
 
 // MapCache is a cache based on map.
 type MapCache struct {
-	mu       sync.RWMutex
 	tables   map[int64]cacheItem
 	memUsage int64
+	mu       sync.RWMutex
 }
 
 // NewMapCache creates a new map cache.
