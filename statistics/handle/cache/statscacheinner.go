@@ -18,6 +18,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -72,6 +73,8 @@ func NewStatsCache() *StatsCache {
 // StatsCache caches the tables in memory for Handle.
 type StatsCache struct {
 	c internal.StatsCacheInner
+	// the max table stats version the cache has in its lifecycle.
+	maxTblStatsVer atomic.Uint64
 }
 
 // Len returns the number of tables in the cache.
@@ -80,6 +83,9 @@ func (sc *StatsCache) Len() int {
 }
 
 // Get returns the statistics of the specified Table ID.
+// The returned value should be read-only, if you update it, don't forget to use Put to put it back again, otherwise the memory trace can be inaccurate.
+//
+//	e.g. v := sc.Get(id); /* update the value */ v.Version = 123; sc.Put(id, v);
 func (sc *StatsCache) Get(id int64) (*statistics.Table, bool) {
 	return sc.c.Get(id)
 }
@@ -93,6 +99,13 @@ func (sc *StatsCache) GetByQuery(id int64) (*statistics.Table, bool) {
 // Put puts the table statistics to the cache.
 func (sc *StatsCache) Put(id int64, t *statistics.Table) {
 	sc.c.Put(id, t)
+
+	// update the maxTblStatsVer
+	for v := sc.maxTblStatsVer.Load(); v < t.Version; v = sc.maxTblStatsVer.Load() {
+		if sc.maxTblStatsVer.CompareAndSwap(v, t.Version) {
+			break
+		} // other goroutines have updated the sc.maxTblStatsVer, so we need to check again.
+	}
 }
 
 // Values returns all the cached statistics tables.
@@ -101,8 +114,13 @@ func (sc *StatsCache) Values() []*statistics.Table {
 }
 
 // FreshMemUsage refreshes the memory usage of the cache.
+// Values in StatsCache should be read-only, but when initializing the cache, some values can be modified.
+// To make the memory cost more accurate, we need to refresh the memory usage of the cache after finishing the initialization.
 func (sc *StatsCache) FreshMemUsage() {
-	sc.c.FreshMemUsage()
+	values := sc.c.Values()
+	for _, v := range values {
+		sc.c.Put(v.PhysicalID, v)
+	}
 }
 
 // Cost returns the memory usage of the cache.
@@ -118,7 +136,7 @@ func (sc *StatsCache) SetCapacity(c int64) {
 // Version returns the version of the current cache, which is defined as
 // the max table stats version the cache has in its lifecycle.
 func (sc *StatsCache) Version() uint64 {
-	return sc.c.Version()
+	return sc.maxTblStatsVer.Load()
 }
 
 // Front returns the front element's owner tableID, only used for test.
@@ -126,32 +144,33 @@ func (sc *StatsCache) Front() int64 {
 	return sc.c.Front()
 }
 
-// Update updates the statistics table cache using Copy on write.
-func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) *StatsCache {
+// CopyAndUpdate copies a new cache and updates the new statistics table cache.
+func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) *StatsCache {
 	option := &TableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
 	}
-	newCache := &StatsCache{}
-	newCache.c = CopyAndUpdateStatsCache(sc.c, tables, deletedIDs, option.byQuery)
-	return newCache
-}
-
-// CopyAndUpdateStatsCache copies the base cache and applies some updates to the new copied cache, the base cache should keep unchanged.
-func CopyAndUpdateStatsCache(base internal.StatsCacheInner, tables []*statistics.Table, deletedIDs []int64, byQuery bool) internal.StatsCacheInner {
-	c := base.Copy()
+	newCache := &StatsCache{c: sc.c.Copy()}
+	newCache.maxTblStatsVer.Store(sc.maxTblStatsVer.Load())
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
-		if byQuery {
-			c.PutByQuery(id, tbl)
+		if option.byQuery {
+			newCache.c.PutByQuery(id, tbl)
 		} else {
-			c.Put(id, tbl)
+			newCache.c.Put(id, tbl)
 		}
 	}
 	for _, id := range deletedIDs {
-		c.Del(id)
+		newCache.c.Del(id)
 	}
-	return c
+
+	// update the maxTblStatsVer
+	for _, t := range tables {
+		if t.Version > newCache.maxTblStatsVer.Load() {
+			newCache.maxTblStatsVer.Store(t.Version)
+		}
+	}
+	return newCache
 }
 
 // TableRowStatsCache is the cache of table row count.
