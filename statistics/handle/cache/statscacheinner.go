@@ -148,33 +148,26 @@ func (sc *StatsCache) updateMaxTblStatsVer(tbls ...*statistics.Table) {
 	}
 }
 
-// Update updates the statistics table cache using Copy on write.
-func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) *StatsCache {
+// CopyAndUpdate copies a new cache and updates the new statistics table cache.
+func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) *StatsCache {
 	option := &TableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
 	}
-	newCache := &StatsCache{maxTblStatsVer: sc.maxTblStatsVer}
-	newCache.c = CopyAndUpdateStatsCache(sc.c, tables, deletedIDs, option.byQuery)
-	newCache.updateMaxTblStatsVer(tables...)
-	return newCache
-}
-
-// CopyAndUpdateStatsCache copies the base cache and applies some updates to the new copied cache, the base cache should keep unchanged.
-func CopyAndUpdateStatsCache(base internal.StatsCacheInner, tables []*statistics.Table, deletedIDs []int64, byQuery bool) internal.StatsCacheInner {
-	c := base.Copy()
+	newCache := &StatsCache{c: sc.c.Copy(), maxTblStatsVer: sc.maxTblStatsVer}
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
-		if byQuery {
-			c.PutByQuery(id, tbl)
+		if option.byQuery {
+			newCache.c.PutByQuery(id, tbl)
 		} else {
-			c.Put(id, tbl)
+			newCache.c.Put(id, tbl)
 		}
 	}
 	for _, id := range deletedIDs {
-		c.Del(id)
+		newCache.c.Del(id)
 	}
-	return c
+	newCache.updateMaxTblStatsVer(tables...)
+	return newCache
 }
 
 // TableRowStatsCache is the cache of table row count.
