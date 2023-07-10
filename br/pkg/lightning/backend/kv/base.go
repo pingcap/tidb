@@ -99,16 +99,15 @@ func (row RowArrayMarshaller) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 			}
 			totalLength += len(str)
 		}
-		if totalLength < 512*1024 {
-			if err := encoder.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
-				enc.AddString("kind", kindStr[kind])
-				enc.AddString("val", redact.String(str))
-				return nil
-			})); err != nil {
-				return err
-			}
-		} else {
+		if totalLength >= 512*1024 {
 			return nil
+		}
+		if err := encoder.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
+			enc.AddString("kind", kindStr[kind])
+			enc.AddString("val", redact.String(str))
+			return nil
+		})); err != nil {
+			return err
 		}
 	}
 	return nil
