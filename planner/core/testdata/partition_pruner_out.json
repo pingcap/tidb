@@ -740,12 +740,14 @@
           "Sort 16.00 root  Column#10",
           "└─HashAgg 16.00 root  group by:Column#10, Column#11, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11",
           "  └─Union 20.00 root  ",
-          "    ├─TableReader 10.00 root partition:p1 data:Selection",
-          "    │ └─Selection 10.00 cop[tikv]  eq(test_partition.t1.a, 6)",
-          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "    └─TableReader 10.00 root partition:p0 data:Selection",
-          "      └─Selection 10.00 cop[tikv]  eq(test_partition.t1.a, 1)",
-          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "    ├─Projection 10.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b",
+          "    │ └─TableReader 10.00 root partition:p1 data:Selection",
+          "    │   └─Selection 10.00 cop[tikv]  eq(test_partition.t1.a, 6)",
+          "    │     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─Projection 10.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b",
+          "      └─TableReader 10.00 root partition:p0 data:Selection",
+          "        └─Selection 10.00 cop[tikv]  eq(test_partition.t1.a, 1)",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1901,22 +1903,26 @@
           "Sort 48.00 root  Column#10",
           "└─HashAgg 48.00 root  group by:Column#10, Column#11, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11",
           "  └─Union 60.00 root  ",
-          "    ├─TableReader 30.00 root partition:p0 data:Selection",
-          "    │ └─Selection 30.00 cop[tikv]  in(test_partition.t1.a, 1, 2, 3)",
-          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "    └─TableReader 30.00 root partition:p1 data:Selection",
-          "      └─Selection 30.00 cop[tikv]  in(test_partition.t1.b, 6, 7, 8)",
-          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "    ├─Projection 30.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b",
+          "    │ └─TableReader 30.00 root partition:p0 data:Selection",
+          "    │   └─Selection 30.00 cop[tikv]  in(test_partition.t1.a, 1, 2, 3)",
+          "    │     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─Projection 30.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b",
+          "      └─TableReader 30.00 root partition:p1 data:Selection",
+          "        └─Selection 30.00 cop[tikv]  in(test_partition.t1.b, 6, 7, 8)",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
           "Sort 48.00 root  Column#10",
           "└─HashAgg 48.00 root  group by:Column#10, Column#11, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11",
           "  └─Union 60.00 root  ",
-          "    ├─IndexReader 30.00 root partition:p0 index:IndexRangeScan",
-          "    │ └─IndexRangeScan 30.00 cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
-          "    └─IndexReader 30.00 root partition:p1 index:Selection",
-          "      └─Selection 30.00 cop[tikv]  in(test_partition_1.t1.b, 6, 7, 8)",
-          "        └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+          "    ├─Projection 30.00 root  test_partition_1.t1.id, test_partition_1.t1.a, test_partition_1.t1.b",
+          "    │ └─IndexReader 30.00 root partition:p0 index:IndexRangeScan",
+          "    │   └─IndexRangeScan 30.00 cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+          "    └─Projection 30.00 root  test_partition_1.t1.id, test_partition_1.t1.a, test_partition_1.t1.b",
+          "      └─IndexReader 30.00 root partition:p1 index:Selection",
+          "        └─Selection 30.00 cop[tikv]  in(test_partition_1.t1.b, 6, 7, 8)",
+          "          └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
         ]
       },
       {

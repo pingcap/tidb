@@ -357,11 +357,13 @@
         "Plan": [
           "Sort_11 6666.67 root  Column#9, Column#10, Column#11, Column#12",
           "└─Union_13 6666.67 root  ",
-          "  ├─TableReader_16 3333.33 root  data:TableRangeScan_15",
-          "  │ └─TableRangeScan_15 3333.33 cop[tikv] table:t1 range:(10,+inf], keep order:false, stats:pseudo",
-          "  └─TableReader_20 3333.33 root  data:Selection_19",
-          "    └─Selection_19 3333.33 cop[tikv]  gt(test.t2.b, 20)",
-          "      └─TableFullScan_18 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "  ├─Projection_14 3333.33 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
+          "  │ └─TableReader_16 3333.33 root  data:TableRangeScan_15",
+          "  │   └─TableRangeScan_15 3333.33 cop[tikv] table:t1 range:(10,+inf], keep order:false, stats:pseudo",
+          "  └─Projection_17 3333.33 root  test.t2.a, test.t2.b, test.t2.c, test.t2.d",
+          "    └─TableReader_20 3333.33 root  data:Selection_19",
+          "      └─Selection_19 3333.33 cop[tikv]  gt(test.t2.b, 20)",
+          "        └─TableFullScan_18 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -369,11 +371,13 @@
           "Sort_12 5333.33 root  Column#9, Column#10, Column#11, Column#12",
           "└─HashAgg_14 5333.33 root  group by:Column#10, Column#11, Column#12, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11, funcs:firstrow(Column#12)->Column#12",
           "  └─Union_15 6666.67 root  ",
-          "    ├─TableReader_18 3333.33 root  data:TableRangeScan_17",
-          "    │ └─TableRangeScan_17 3333.33 cop[tikv] table:t1 range:(10,+inf], keep order:false, stats:pseudo",
-          "    └─TableReader_22 3333.33 root  data:Selection_21",
-          "      └─Selection_21 3333.33 cop[tikv]  gt(test.t2.b, 20)",
-          "        └─TableFullScan_20 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "    ├─Projection_16 3333.33 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
+          "    │ └─TableReader_18 3333.33 root  data:TableRangeScan_17",
+          "    │   └─TableRangeScan_17 3333.33 cop[tikv] table:t1 range:(10,+inf], keep order:false, stats:pseudo",
+          "    └─Projection_19 3333.33 root  test.t2.a, test.t2.b, test.t2.c, test.t2.d",
+          "      └─TableReader_22 3333.33 root  data:Selection_21",
+          "        └─Selection_21 3333.33 cop[tikv]  gt(test.t2.b, 20)",
+          "          └─TableFullScan_20 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -418,12 +422,13 @@
       },
       {
         "Plan": [
-          "Sort_9 6400.00 root  Column#5, Column#6, Column#7",
-          "└─Selection_11 6400.00 root  lt(Column#6, 20)",
-          "  └─HashAgg_16 8000.00 root  group by:test.t1.d, funcs:min(Column#11)->Column#5, funcs:max(Column#12)->Column#6, funcs:sum(Column#13)->Column#7",
-          "    └─TableReader_17 8000.00 root  data:HashAgg_12",
-          "      └─HashAgg_12 8000.00 cop[tikv]  group by:test.t1.d, funcs:min(test.t1.a)->Column#11, funcs:max(test.t1.b)->Column#12, funcs:sum(test.t1.c)->Column#13",
-          "        └─TableFullScan_15 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Projection_8 6400.00 root  Column#5, Column#6, Column#7",
+          "└─Sort_9 6400.00 root  Column#5, Column#6, Column#7",
+          "  └─Selection_11 6400.00 root  lt(Column#6, 20)",
+          "    └─HashAgg_16 8000.00 root  group by:test.t1.d, funcs:min(Column#11)->Column#5, funcs:max(Column#12)->Column#6, funcs:sum(Column#13)->Column#7",
+          "      └─TableReader_17 8000.00 root  data:HashAgg_12",
+          "        └─HashAgg_12 8000.00 cop[tikv]  group by:test.t1.d, funcs:min(test.t1.a)->Column#11, funcs:max(test.t1.b)->Column#12, funcs:sum(test.t1.c)->Column#13",
+          "          └─TableFullScan_15 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {

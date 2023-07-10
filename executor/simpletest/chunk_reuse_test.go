@@ -122,7 +122,7 @@ func TestLongBlobReuse(t *testing.T) {
 	tk.MustExec("create table t4 (id1 int ,id2 char(10),id8 int ,id3 text,id4 blob,id5 json,id6 varchar(1000),id7 varchar(1001), PRIMARY KEY (`id1`),key id2(id2),key id8(id8,id2))")
 	tk.MustExec("insert into t4 (id1,id2,id8)values(1,1,1),(2,2,2),(3,3,3);")
 	res = tk.MustQuery("explain select id2 from t4 where id2 > '3' union (select id2 from t4 where id2 > '4');")
-	require.Regexp(t, ".*IndexReader*", res.Rows()[2][0])
+	require.Regexp(t, ".*IndexReader*", res.Rows()[3][0])
 	tk.MustQuery("select id2 from t4 where id2 > '3' union (select id2 from t4 where id2 > '4');").Sort().Check(testkit.Rows())
 	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
 

@@ -175,16 +175,18 @@
         "Plan": [
           "HashAgg 2.00 root  group by:Column#5, funcs:firstrow(Column#5)->Column#5",
           "└─Union 2.00 root  ",
-          "  ├─StreamAgg 1.00 root  funcs:max(test.t.a)->Column#2",
-          "  │ └─Limit 1.00 root  offset:0, count:1",
-          "  │   └─TableReader 1.00 root  data:Limit",
-          "  │     └─Limit 1.00 cop[tikv]  offset:0, count:1",
-          "  │       └─TableFullScan 1.00 cop[tikv] table:t keep order:true, desc, stats:pseudo",
-          "  └─StreamAgg 1.00 root  funcs:min(test.t.a)->Column#4",
-          "    └─Limit 1.00 root  offset:0, count:1",
-          "      └─TableReader 1.00 root  data:Limit",
-          "        └─Limit 1.00 cop[tikv]  offset:0, count:1",
-          "          └─TableFullScan 1.00 cop[tikv] table:t keep order:true, stats:pseudo"
+          "  ├─Projection 1.00 root  Column#2",
+          "  │ └─StreamAgg 1.00 root  funcs:max(test.t.a)->Column#2",
+          "  │   └─Limit 1.00 root  offset:0, count:1",
+          "  │     └─TableReader 1.00 root  data:Limit",
+          "  │       └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "  │         └─TableFullScan 1.00 cop[tikv] table:t keep order:true, desc, stats:pseudo",
+          "  └─Projection 1.00 root  Column#4",
+          "    └─StreamAgg 1.00 root  funcs:min(test.t.a)->Column#4",
+          "      └─Limit 1.00 root  offset:0, count:1",
+          "        └─TableReader 1.00 root  data:Limit",
+          "          └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "            └─TableFullScan 1.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ]
       },
       {
@@ -1777,10 +1779,12 @@
         "Plan": [
           "HashAgg 2.00 root  group by:Column#3, funcs:firstrow(Column#3)->Column#3",
           "└─Union 2.00 root  ",
-          "  ├─StreamAgg 1.00 root  funcs:count(1)->Column#1",
-          "  │ └─TableDual 1.00 root  rows:1",
-          "  └─StreamAgg 1.00 root  funcs:count(1)->Column#2",
-          "    └─TableDual 1.00 root  rows:1"
+          "  ├─Projection 1.00 root  Column#1",
+          "  │ └─StreamAgg 1.00 root  funcs:count(1)->Column#1",
+          "  │   └─TableDual 1.00 root  rows:1",
+          "  └─Projection 1.00 root  Column#2",
+          "    └─StreamAgg 1.00 root  funcs:count(1)->Column#2",
+          "      └─TableDual 1.00 root  rows:1"
         ]
       }
     ]
@@ -6136,12 +6140,14 @@
           "        └─ExchangeSender 3544.89 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#14, collate: binary], [name: Column#15, collate: binary]",
           "          └─HashAgg 3544.89 mpp[tiflash]  group by:Column#14, Column#15, ",
           "            └─Union 4431.11 mpp[tiflash]  ",
-          "              ├─Projection 3323.33 mpp[tiflash]  cast(test.t.a, int(11) BINARY)->Column#14, test.t.b",
-          "              │ └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 18), lt(test.t.a, 60)",
-          "              │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "              └─Projection 1107.78 mpp[tiflash]  cast(test.t.a, int(11) BINARY)->Column#14, test.t.b",
-          "                └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
-          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "              ├─Projection 3323.33 mpp[tiflash]  cast(Column#14, int(11) BINARY)->Column#14, Column#15",
+          "              │ └─Projection 3323.33 mpp[tiflash]  test.t.a, test.t.b",
+          "              │   └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 18), lt(test.t.a, 60)",
+          "              │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "              └─Projection 1107.78 mpp[tiflash]  cast(Column#14, int(11) BINARY)->Column#14, Column#15",
+          "                └─Projection 1107.78 mpp[tiflash]  test.t.a, test.t.b",
+          "                  └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -6150,12 +6156,14 @@
         "Plan": [
           "HashAgg 16000.00 root  group by:Column#21, funcs:firstrow(Column#21)->Column#21",
           "└─Union 1000000010000.00 root  ",
-          "  ├─HashJoin 1000000000000.00 root  CARTESIAN inner join",
-          "  │ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  │ └─CTEFullScan(Probe) 100000000.00 root CTE:cte2 data:CTE_1",
-          "  └─TableReader 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  ├─Projection 1000000000000.00 root  test.t1.b",
+          "  │ └─HashJoin 1000000000000.00 root  CARTESIAN inner join",
+          "  │   ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │   │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  │   └─CTEFullScan(Probe) 100000000.00 root CTE:cte2 data:CTE_1",
+          "  └─Projection 10000.00 root  test.t1.b",
+          "    └─TableReader 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "CTE_1 100000000.00 root  Non-Recursive CTE",
           "└─HashJoin(Seed Part) 100000000.00 root  CARTESIAN inner join",
           "  ├─CTEFullScan(Build) 10000.00 root CTE:cte4 data:CTE_3",
@@ -7258,10 +7266,12 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#12",
           "      └─Union 20000.00 mpp[tiflash]  ",
-          "        ├─Projection 10000.00 mpp[tiflash]  cast(test.t.a, int(11) BINARY)->Column#9, test.t.b",
-          "        │ └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─Projection 10000.00 mpp[tiflash]  test.t1.a, cast(test.t1.b, int(11) BINARY)->Column#10",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "        ├─Projection 10000.00 mpp[tiflash]  cast(Column#9, int(11) BINARY)->Column#9, Column#10",
+          "        │ └─Projection 10000.00 mpp[tiflash]  test.t.a, test.t.b",
+          "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─Projection 10000.00 mpp[tiflash]  Column#9, cast(Column#10, int(11) BINARY)->Column#10",
+          "          └─Projection 10000.00 mpp[tiflash]  test.t1.a, test.t1.b",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -7272,10 +7282,12 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#16",
           "      └─Union 20000.00 mpp[tiflash]  ",
-          "        ├─Projection 10000.00 mpp[tiflash]  cast(test.t.a, int(11) BINARY)->Column#13, test.t.b",
-          "        │ └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─Projection 10000.00 mpp[tiflash]  test.t1.a, cast(test.t1.b, int(11) BINARY)->Column#14",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "        ├─Projection 10000.00 mpp[tiflash]  cast(Column#13, int(11) BINARY)->Column#13, Column#14",
+          "        │ └─Projection 10000.00 mpp[tiflash]  test.t.a, test.t.b",
+          "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─Projection 10000.00 mpp[tiflash]  Column#13, cast(Column#14, int(11) BINARY)->Column#14",
+          "          └─Projection 10000.00 mpp[tiflash]  test.t1.a, test.t1.b",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -7674,13 +7686,14 @@
         "Plan": [
           "TableReader 6400.00 root  data:ExchangeSender",
           "└─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Selection 6400.00 mpp[tiflash]  gt(Column#4, 0)",
-          "    └─Projection 8000.00 mpp[tiflash]  div(Column#4, cast(case(eq(Column#19, 0), 1, Column#19), decimal(20,0) BINARY))->Column#4, test.t.id",
-          "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:sum(Column#20)->Column#19, funcs:sum(Column#21)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
-          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
-          "            └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#20, funcs:sum(test.t.value)->Column#21",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─Projection 6400.00 mpp[tiflash]  Column#4, test.t.id",
+          "    └─Selection 6400.00 mpp[tiflash]  gt(Column#4, 0)",
+          "      └─Projection 8000.00 mpp[tiflash]  div(Column#4, cast(case(eq(Column#19, 0), 1, Column#19), decimal(20,0) BINARY))->Column#4, test.t.id",
+          "        └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:sum(Column#20)->Column#19, funcs:sum(Column#21)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "          └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "            └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
+          "              └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#20, funcs:sum(test.t.value)->Column#21",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -9100,8 +9113,9 @@
           "  └─Union 20000.00 mpp[tiflash]  ",
           "    ├─Projection 10000.00 mpp[tiflash]  cast(test.t.id, bigint(20) BINARY)->Column#10",
           "    │ └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─Projection 10000.00 mpp[tiflash]  plus(test.t.id, 1)->Column#10",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─Projection 10000.00 mpp[tiflash]  Column#9",
+          "      └─Projection 10000.00 mpp[tiflash]  plus(test.t.id, 1)->Column#9",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {

@@ -174,10 +174,12 @@ CTE_0	1.00	root		Non-Recursive CTE
 └─Limit_20(Seed Part)	1.00	root		offset:0, count:1
   └─HashAgg_21	1.00	root		group by:Column#11, funcs:firstrow(Column#11)->Column#11
     └─Union_22	20000.00	root		
-      ├─TableReader_25	10000.00	root		data:TableFullScan_24
-      │ └─TableFullScan_24	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-      └─IndexReader_32	10000.00	root		index:IndexFullScan_31
-        └─IndexFullScan_31	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+      ├─Projection_23	10000.00	root		test.t1.c1
+      │ └─TableReader_25	10000.00	root		data:TableFullScan_24
+      │   └─TableFullScan_24	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─Projection_28	10000.00	root		test.t2.c1
+        └─IndexReader_32	10000.00	root		index:IndexFullScan_31
+          └─IndexFullScan_31	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 100 offset 100) select * from cte1;
 id	estRows	task	access object	operator info
 CTEFullScan_34	100.00	root	CTE:cte1	data:CTE_0
@@ -185,10 +187,12 @@ CTE_0	100.00	root		Non-Recursive CTE
 └─Limit_20(Seed Part)	100.00	root		offset:100, count:100
   └─HashAgg_21	200.00	root		group by:Column#11, funcs:firstrow(Column#11)->Column#11
     └─Union_22	20000.00	root		
-      ├─TableReader_25	10000.00	root		data:TableFullScan_24
-      │ └─TableFullScan_24	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-      └─IndexReader_32	10000.00	root		index:IndexFullScan_31
-        └─IndexFullScan_31	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+      ├─Projection_23	10000.00	root		test.t1.c1
+      │ └─TableReader_25	10000.00	root		data:TableFullScan_24
+      │   └─TableFullScan_24	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─Projection_28	10000.00	root		test.t2.c1
+        └─IndexReader_32	10000.00	root		index:IndexFullScan_31
+          └─IndexFullScan_31	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 0 offset 0) select * from cte1;
 id	estRows	task	access object	operator info
 CTEFullScan_18	0.00	root	CTE:cte1	data:CTE_0
