@@ -78,6 +78,7 @@ import (
 	"github.com/pingcap/tidb/server/internal/dump"
 	"github.com/pingcap/tidb/server/internal/handshake"
 	"github.com/pingcap/tidb/server/internal/parse"
+	"github.com/pingcap/tidb/server/internal/resultset"
 	util2 "github.com/pingcap/tidb/server/internal/util"
 	server_metrics "github.com/pingcap/tidb/server/metrics"
 	"github.com/pingcap/tidb/session"
@@ -2117,7 +2118,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 // retryable indicates whether the call of writeResultSet has no side effect and can be retried to correct error. The call
 // has side effect in cursor mode or once data has been sent to client. Currently retryable is used to fallback to TiKV when
 // TiFlash is down.
-func (cc *clientConn) writeResultSet(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (retryable bool, runErr error) {
+func (cc *clientConn) writeResultSet(ctx context.Context, rs resultset.ResultSet, binary bool, serverStatus uint16, fetchSize int) (retryable bool, runErr error) {
 	defer func() {
 		// close ResultSet when cursor doesn't exist
 		r := recover()
@@ -2134,7 +2135,7 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs ResultSet, binary b
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.Clean()
 	if mysql.HasCursorExistsFlag(serverStatus) {
-		crs, ok := rs.(cursorResultSet)
+		crs, ok := rs.(resultset.CursorResultSet)
 		if !ok {
 			// this branch is actually unreachable
 			return false, errors.New("this cursor is not a resultSet")
@@ -2171,7 +2172,7 @@ func (cc *clientConn) writeColumnInfo(columns []*column.Info) error {
 // binary specifies the way to dump data. It throws any error while dumping data.
 // serverStatus, a flag bit represents server information
 // The first return value indicates whether error occurs at the first call of ResultSet.Next.
-func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) (bool, error) {
+func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, binary bool, serverStatus uint16) (bool, error) {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk(cc.chunkAlloc)
 	gotColumnInfo := false
@@ -2273,7 +2274,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // binary specifies the way to dump data. It throws any error while dumping data.
 // serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
-func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs cursorResultSet, serverStatus uint16, fetchSize int) error {
+func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset.CursorResultSet, serverStatus uint16, fetchSize int) error {
 	var (
 		stmtDetail *execdetails.StmtExecDetails
 		err        error
@@ -2321,7 +2322,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs cursorRes
 		stmtDetail.WriteSQLRespDuration += time.Since(start)
 	}
 
-	if cl, ok := rs.(fetchNotifier); ok {
+	if cl, ok := rs.(resultset.FetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
 
