@@ -70,50 +70,58 @@ func (g *TTLTimersSyncer) SetDelayDeleteInterval(interval time.Duration) {
 	g.delayDelete = interval
 }
 
-func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.PhysicalTable) func() (bool, error) {
+// ManualTriggerTTLTimer triggers a TTL job for a physical table which returns a function to wait the job done.
+// This returned function returns a bool value to indicates whether the job is finished.
+func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.PhysicalTable) (func() (string, bool, error), error) {
 	se, err := getSession(g.pool)
 	if err != nil {
-		return func() (bool, error) {
-			return false, err
-		}
+		return nil, err
 	}
 	defer se.Close()
 
 	timer, err := g.syncOneTimer(ctx, se, tbl.Schema, tbl.TableInfo, tbl.PartitionDef, true)
 	if err != nil {
-		return func() (bool, error) {
-			return false, err
-		}
+		return nil, err
 	}
 
-	eventIDBeforeTrigger := timer.EventID
 	reqID, err := g.cli.ManualTriggerEvent(ctx, timer.ID)
 	if err != nil {
-		return func() (bool, error) {
-			return false, err
-		}
+		return nil, err
 	}
 
-	return func() (bool, error) {
+	return func() (string, bool, error) {
+		se, err = getSession(g.pool)
+		if err != nil {
+			return "", false, err
+		}
+		defer se.Close()
+
 		if err = ctx.Err(); err != nil {
-			return false, err
+			return "", false, err
 		}
 
 		timer, err = g.cli.GetTimerByID(ctx, timer.ID)
 		if err != nil {
-			return false, err
+			return "", false, err
 		}
 
-		if timer.EventStatus == timerapi.SchedEventTrigger && timer.EventID != eventIDBeforeTrigger {
-			return true, nil
+		if timer.ManualRequestID != reqID {
+			return "", false, errors.Errorf("manual request failed to trigger, request not found")
 		}
 
-		if timer.ManualRequestID == reqID && timer.ManualProcessed {
-			return timer.ManualEventID != "", nil
+		if timer.IsManualRequesting() {
+			if timeout := timer.ManualTimeout; timeout > 0 && time.Since(timer.ManualRequestTime) > timeout+5*time.Second {
+				return "", false, errors.New("manual request timeout")
+			}
+			return "", false, nil
 		}
 
-		return false, nil
-	}
+		if timer.ManualEventID == "" {
+			return "", false, errors.New("manual request failed to trigger, request cancelled")
+		}
+
+		return timer.ManualEventID, true, nil
+	}, nil
 }
 
 // SyncTimers syncs timers with TTL tables

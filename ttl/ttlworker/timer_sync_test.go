@@ -56,102 +56,109 @@ func TestTTLManualTriggerOneTimer(t *testing.T) {
 	_, err := cli.GetTimerByKey(context.TODO(), key)
 	require.True(t, errors.ErrorEqual(err, timerapi.ErrTimerNotExist))
 
-	// start trigger
-	check := sync.ManualTriggerTTLTimer(context.TODO(), physical)
-	timer := checkTimerWithTableMeta(t, do, cli, "test", "tp1", "p0", zeroWatermark)
-	require.True(t, timer.IsManualRequesting())
-	require.Equal(t, timerapi.SchedEventIdle, timer.EventStatus)
-	done, err := check()
-	require.NoError(t, err)
-	require.False(t, done)
+	startTrigger := func(ctx context.Context, expectErr string) (func() (string, bool, error), timerapi.ManualRequest) {
+		timer, err := cli.GetTimerByKey(context.TODO(), key)
+		if !errors.ErrorEqual(timerapi.ErrTimerNotExist, err) {
+			require.NoError(t, err)
+			require.False(t, timer.IsManualRequesting())
+		}
 
-	// event triggerred with event status to trigger
+		_, physical = getPhysicalTableInfo(t, do, "test", "tp1", "p0")
+		check, err := sync.ManualTriggerTTLTimer(ctx, physical)
+		timer = checkTimerWithTableMeta(t, do, cli, "test", "tp1", "p0", zeroWatermark)
+		if expectErr != "" {
+			require.EqualError(t, err, expectErr)
+			require.Nil(t, check)
+			require.False(t, timer.IsManualRequesting())
+			return nil, timer.ManualRequest
+		}
+
+		require.NoError(t, err)
+		require.True(t, timer.IsManualRequesting())
+		return check, timer.ManualRequest
+	}
+
+	testCheckFunc := func(check func() (string, bool, error), expectJobID string, expectErr string) {
+		jobID, ok, err := check()
+		if expectErr != "" {
+			require.Empty(t, expectJobID)
+			require.Empty(t, jobID)
+			require.False(t, ok)
+			require.EqualError(t, err, expectErr)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, ok, jobID != "")
+			require.Equal(t, expectJobID, jobID)
+		}
+	}
+
+	// start trigger -> not finished -> finished
+	check, manual := startTrigger(context.TODO(), "")
+	testCheckFunc(check, "", "")
+	timer, err := cli.GetTimerByKey(context.TODO(), key)
+	require.NoError(t, err)
+	manual.ManualEventID = "event123"
+	manual.ManualProcessed = true
 	require.NoError(t, timerStore.Update(context.TODO(), timer.ID, &timerapi.TimerUpdate{
-		EventStatus: timerapi.NewOptionalVal(timerapi.SchedEventTrigger),
-		EventID:     timerapi.NewOptionalVal("event1"),
-		EventStart:  timerapi.NewOptionalVal(time.Now()),
+		ManualRequest: timerapi.NewOptionalVal(manual),
 	}))
-	done, err = check()
-	require.NoError(t, err)
-	require.True(t, done)
+	testCheckFunc(check, "event123", "")
 
-	// start trigger
-	watermark := time.Unix(3600*123, 0)
-	require.NoError(t, cli.CloseTimerEvent(context.TODO(), timer.ID, "event1", timerapi.WithSetWatermark(watermark)))
-	check = sync.ManualTriggerTTLTimer(context.TODO(), physical)
-	timer = checkTimerWithTableMeta(t, do, cli, "test", "tp1", "p0", watermark)
-	require.True(t, timer.IsManualRequesting())
-	done, err = check()
-	require.NoError(t, err)
-	require.False(t, done)
-
-	// mark manual trigger done
+	// start trigger -> trigger done but no event id
+	check, manual = startTrigger(context.TODO(), "")
+	manual.ManualProcessed = true
 	require.NoError(t, timerStore.Update(context.TODO(), timer.ID, &timerapi.TimerUpdate{
-		ManualRequest: timerapi.NewOptionalVal(timerapi.ManualRequest{
-			ManualRequestID: timer.ManualRequestID,
-			ManualProcessed: true,
-			ManualEventID:   "event2",
-		}),
+		ManualRequest: timerapi.NewOptionalVal(manual),
 	}))
-	done, err = check()
-	require.NoError(t, err)
-	require.True(t, done)
+	testCheckFunc(check, "", "manual request failed to trigger, request cancelled")
 
-	// start trigger
-	check = sync.ManualTriggerTTLTimer(context.TODO(), physical)
-	timer = checkTimerWithTableMeta(t, do, cli, "test", "tp1", "p0", watermark)
-	require.True(t, timer.IsManualRequesting())
-	done, err = check()
-	require.NoError(t, err)
-	require.False(t, done)
-
-	// mark manual trigger done but not event related
+	// start trigger -> manual requestID not match
+	check, manual = startTrigger(context.TODO(), "")
+	manual.ManualRequestID = "anotherreqid"
 	require.NoError(t, timerStore.Update(context.TODO(), timer.ID, &timerapi.TimerUpdate{
-		ManualRequest: timerapi.NewOptionalVal(timerapi.ManualRequest{
-			ManualRequestID: timer.ManualRequestID,
-			ManualProcessed: true,
-		}),
+		ManualRequest: timerapi.NewOptionalVal(manual),
 	}))
-	done, err = check()
-	require.NoError(t, err)
-	require.False(t, done)
+	testCheckFunc(check, "", "manual request failed to trigger, request not found")
+	manual.ManualRequestID = "anotherreqid"
+	manual.ManualProcessed = true
+	require.NoError(t, timerStore.Update(context.TODO(), timer.ID, &timerapi.TimerUpdate{
+		ManualRequest: timerapi.NewOptionalVal(manual),
+	}))
+	testCheckFunc(check, "", "manual request failed to trigger, request not found")
+	require.NoError(t, timerStore.Update(context.TODO(), timer.ID, &timerapi.TimerUpdate{
+		ManualRequest: timerapi.NewOptionalVal(timerapi.ManualRequest{}),
+	}))
+	testCheckFunc(check, "", "manual request failed to trigger, request not found")
+
+	// start trigger -> trigger not done but timeout
+	check, manual = startTrigger(context.TODO(), "")
+	manual.ManualRequestTime = time.Now().Add(-time.Minute)
+	manual.ManualTimeout = 50 * time.Second
+	require.NoError(t, timerStore.Update(context.TODO(), timer.ID, &timerapi.TimerUpdate{
+		ManualRequest: timerapi.NewOptionalVal(manual),
+	}))
+	testCheckFunc(check, "", "manual request timeout")
 
 	// disable ttl
+	require.NoError(t, timerStore.Update(context.TODO(), timer.ID, &timerapi.TimerUpdate{
+		ManualRequest: timerapi.NewOptionalVal(timerapi.ManualRequest{}),
+	}))
 	tk.MustExec("alter table tp1 ttl_enable='OFF'")
-	key, physical = getPhysicalTableInfo(t, do, "test", "tp1", "p0")
-	check = sync.ManualTriggerTTLTimer(context.TODO(), physical)
-	done, err = check()
-	require.EqualError(t, err, "manual trigger is not allowed when timer is disabled")
-	require.False(t, done)
-
-	// start trigger
+	_, physical = getPhysicalTableInfo(t, do, "test", "tp1", "p0")
+	startTrigger(context.TODO(), "manual trigger is not allowed when timer is disabled")
 	tk.MustExec("alter table tp1 ttl_enable='ON'")
-	key, physical = getPhysicalTableInfo(t, do, "test", "tp1", "p0")
-	check = sync.ManualTriggerTTLTimer(context.TODO(), physical)
-	timer = checkTimerWithTableMeta(t, do, cli, "test", "tp1", "p0", watermark)
-	require.True(t, timer.IsManualRequesting())
-	done, err = check()
-	require.NoError(t, err)
-	require.False(t, done)
 
-	// timer deleted
+	// start trigger -> timer deleted
+	check, _ = startTrigger(context.TODO(), "")
 	_, err = cli.DeleteTimer(context.TODO(), timer.ID)
 	require.NoError(t, err)
-	done, err = check()
-	require.True(t, errors.ErrorEqual(err, timerapi.ErrTimerNotExist))
-	require.False(t, done)
+	testCheckFunc(check, "", "timer not exist")
 
 	// ctx timeout
 	ctx, cancel := context.WithCancel(context.TODO())
-	check = sync.ManualTriggerTTLTimer(ctx, physical)
-	done, err = check()
-	require.NoError(t, err)
-	require.False(t, done)
-
+	check, _ = startTrigger(ctx, "")
 	cancel()
-	done, err = check()
-	require.Same(t, err, ctx.Err())
-	require.False(t, done)
+	testCheckFunc(check, "", ctx.Err().Error())
 }
 
 func TestTTLTimerSync(t *testing.T) {

@@ -34,23 +34,23 @@ type mockJobAdapter struct {
 	mock.Mock
 }
 
-func (a *mockJobAdapter) IsTableTTLEnabled(tableID, physicalID int64) bool {
+func (a *mockJobAdapter) ShouldSubmitJob(tableID, physicalID int64) bool {
 	args := a.Called(tableID, physicalID)
 	return args.Bool(0)
 }
 
-func (a *mockJobAdapter) SubmitJob(ctx context.Context, tableID, physicalID int64, requestID string, watermark time.Time) (job *ttlJobTrace, _ error) {
+func (a *mockJobAdapter) SubmitJob(ctx context.Context, tableID, physicalID int64, requestID string, watermark time.Time) (job *TTLJobTrace, _ error) {
 	args := a.Called(ctx, tableID, physicalID, requestID, watermark)
 	if obj := args.Get(0); obj != nil {
-		job = obj.(*ttlJobTrace)
+		job = obj.(*TTLJobTrace)
 	}
 	return job, args.Error(1)
 }
 
-func (a *mockJobAdapter) GetJob(ctx context.Context, tableID, physicalID int64, requestID string) (job *ttlJobTrace, _ error) {
+func (a *mockJobAdapter) GetJob(ctx context.Context, tableID, physicalID int64, requestID string) (job *TTLJobTrace, _ error) {
 	args := a.Called(ctx, tableID, physicalID, requestID)
 	if obj := args.Get(0); obj != nil {
-		job = obj.(*ttlJobTrace)
+		job = obj.(*TTLJobTrace)
 	}
 	return job, args.Error(1)
 }
@@ -182,7 +182,7 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 	hook := newTTLTimerHook(adapter, cli)
 
 	// normal
-	adapter.On("IsTableTTLEnabled", data.TableID, data.PhysicalID).Return(true).Once()
+	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).Return(true).Once()
 	r, err := hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{}, r)
@@ -191,6 +191,7 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 	// global ttl job disabled
 	variable.EnableTTLJob.Store(false)
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
+	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{Delay: time.Minute}, r)
 	adapter.AssertExpectations(t)
 
@@ -202,28 +203,32 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 	clearTTLWindowAndEnable()
 	variable.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 15, 11, 0, 0, time.UTC))
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
+	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{Delay: time.Minute}, r)
 	adapter.AssertExpectations(t)
 
 	clearTTLWindowAndEnable()
 	variable.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 15, 9, 0, 0, time.UTC))
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
+	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{Delay: time.Minute}, r)
 	adapter.AssertExpectations(t)
 
 	// in window
 	clearTTLWindowAndEnable()
-	adapter.On("IsTableTTLEnabled", data.TableID, data.PhysicalID).Return(true).Once()
+	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).Return(true).Once()
 	variable.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 15, 9, 0, 0, time.UTC))
 	variable.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 15, 11, 0, 0, time.UTC))
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
+	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{}, r)
 	adapter.AssertExpectations(t)
 
-	// IsTableTTLEnabled returns false
+	// ShouldSubmitJob returns false
 	clearTTLWindowAndEnable()
-	adapter.On("IsTableTTLEnabled", data.TableID, data.PhysicalID).Return(false).Once()
+	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).Return(false).Once()
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
+	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{Delay: time.Minute}, r)
 	adapter.AssertExpectations(t)
 }
@@ -256,7 +261,7 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(nil, nil).
 		Once()
-	adapter.On("IsTableTTLEnabled", data.TableID, data.PhysicalID).
+	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).
 		Return(true).
 		Once()
 	adapter.On("SubmitJob", ctx, data.TableID, data.PhysicalID, timer.EventID, timer.EventStart).
@@ -291,14 +296,14 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(nil, nil).
 		Once()
-	adapter.On("IsTableTTLEnabled", data.TableID, data.PhysicalID).
+	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).
 		Return(true).
 		Once()
 	adapter.On("SubmitJob", ctx, data.TableID, data.PhysicalID, timer.EventID, timer.EventStart).
-		Return(&ttlJobTrace{RequestID: timer.EventID}, nil).
+		Return(&TTLJobTrace{RequestID: timer.EventID}, nil).
 		Once()
 	adapter.On("GetJob", hook.ctx, data.TableID, data.PhysicalID, timer.EventID).
-		Return(&ttlJobTrace{RequestID: timer.EventID, Finished: true, Summary: summary.LastJobSummary}, nil).
+		Return(&TTLJobTrace{RequestID: timer.EventID, Finished: true, Summary: summary.LastJobSummary}, nil).
 		Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
 	require.NoError(t, err)
@@ -316,10 +321,10 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	summary, summaryData = makeTTLSummary(t, timer.EventID)
 	eventStart = timer.EventStart
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
-		Return(&ttlJobTrace{RequestID: timer.EventID}, nil).
+		Return(&TTLJobTrace{RequestID: timer.EventID}, nil).
 		Once()
 	adapter.On("GetJob", hook.ctx, data.TableID, data.PhysicalID, timer.EventID).
-		Return(&ttlJobTrace{RequestID: timer.EventID, Finished: true, Summary: summary.LastJobSummary}, nil).
+		Return(&TTLJobTrace{RequestID: timer.EventID, Finished: true, Summary: summary.LastJobSummary}, nil).
 		Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
 	require.NoError(t, err)
@@ -339,7 +344,7 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(nil, nil).
 		Once()
-	adapter.On("IsTableTTLEnabled", data.TableID, data.PhysicalID).
+	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).
 		Return(false).
 		Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
@@ -347,6 +352,7 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.AssertExpectations(t)
 	oldSummary := timer.SummaryData
 	timer, err = cli.GetTimerByID(ctx, timer.ID)
+	require.NoError(t, err)
 	require.Equal(t, timerapi.SchedEventIdle, timer.EventStatus)
 	require.Empty(t, timer.EventID)
 	require.Equal(t, watermark, timer.Watermark)
@@ -365,6 +371,7 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.AssertExpectations(t)
 	oldSummary = timer.SummaryData
 	timer, err = cli.GetTimerByID(ctx, timer.ID)
+	require.NoError(t, err)
 	require.Equal(t, timerapi.SchedEventIdle, timer.EventStatus)
 	require.Empty(t, timer.EventID)
 	require.Equal(t, watermark, timer.Watermark)
@@ -381,7 +388,7 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(nil, nil).
 		Once()
-	adapter.On("IsTableTTLEnabled", data.TableID, data.PhysicalID).
+	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).
 		Return(true).
 		Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
@@ -389,6 +396,7 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.AssertExpectations(t)
 	oldSummary = timer.SummaryData
 	timer, err = cli.GetTimerByID(ctx, timer.ID)
+	require.NoError(t, err)
 	require.Equal(t, timerapi.SchedEventIdle, timer.EventStatus)
 	require.Empty(t, timer.EventID)
 	require.Equal(t, watermark, timer.Watermark)
@@ -482,10 +490,10 @@ func TestWaitTTLJobFinish(t *testing.T) {
 		Return(nil, errors.New("mockJobErr")).
 		Times(5)
 	adapter.On("GetJob", hook.ctx, data.TableID, data.PhysicalID, timer.EventID).
-		Return(&ttlJobTrace{RequestID: timer.EventID}, errors.New("mockJobErr")).
+		Return(&TTLJobTrace{RequestID: timer.EventID}, errors.New("mockJobErr")).
 		Times(2)
 	adapter.On("GetJob", hook.ctx, data.TableID, data.PhysicalID, timer.EventID).
-		Return(&ttlJobTrace{RequestID: timer.EventID, Finished: true, Summary: summary.LastJobSummary}, nil).
+		Return(&TTLJobTrace{RequestID: timer.EventID, Finished: true, Summary: summary.LastJobSummary}, nil).
 		Times(3)
 	mockCli.On("CloseTimerEvent", hook.ctx, timer.ID, timer.EventID, mock.Anything).
 		Return(errors.New("mockCloseErr")).

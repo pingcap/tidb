@@ -33,25 +33,33 @@ const (
 	defaultCheckTTLJobInterval = 10 * time.Second
 )
 
-type ttlJobTrace struct {
-	RequestID string
-	Finished  bool
-	Summary   *TTLSummary
-}
-
 type ttlTimerSummary struct {
 	LastJobRequestID string      `json:"last_job_request_id,omitempty"`
 	LastJobSummary   *TTLSummary `json:"last_job_summary,omitempty"`
 }
 
-type ttlJobAdapter interface {
-	IsTableTTLEnabled(tableID, physicalID int64) bool
-	SubmitJob(ctx context.Context, tableID, physicalID int64, requestID string, watermark time.Time) (*ttlJobTrace, error)
-	GetJob(ctx context.Context, tableID, physicalID int64, requestID string) (*ttlJobTrace, error)
+// TTLJobTrace contains some TTL job information to trace
+type TTLJobTrace struct {
+	// RequestID is the request id when job submitted, we can use it to trace a job
+	RequestID string
+	// Finished indicates whether the job is finished
+	Finished bool
+	// Summary indicates the summary of the job
+	Summary *TTLSummary
+}
+
+// TTLJobAdapter is used to submit TTL job and trace job status
+type TTLJobAdapter interface {
+	// ShouldSubmitJob returns whether a new job can be created for the specified table
+	ShouldSubmitJob(tableID, physicalID int64) bool
+	// SubmitJob submits a new job
+	SubmitJob(ctx context.Context, tableID, physicalID int64, requestID string, watermark time.Time) (*TTLJobTrace, error)
+	// GetJob returns the job to trace
+	GetJob(ctx context.Context, tableID, physicalID int64, requestID string) (*TTLJobTrace, error)
 }
 
 type ttlTimerHook struct {
-	adapter             ttlJobAdapter
+	adapter             TTLJobAdapter
 	cli                 timerapi.TimerClient
 	ctx                 context.Context
 	cancel              func()
@@ -62,7 +70,7 @@ type ttlTimerHook struct {
 	waitJobLoopCounter int64
 }
 
-func newTTLTimerHook(adapter ttlJobAdapter, cli timerapi.TimerClient) *ttlTimerHook {
+func newTTLTimerHook(adapter TTLJobAdapter, cli timerapi.TimerClient) *ttlTimerHook {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ttlTimerHook{
 		adapter:             adapter,
@@ -105,7 +113,7 @@ func (t *ttlTimerHook) OnPreSchedEvent(_ context.Context, event timerapi.TimerSh
 		return
 	}
 
-	if !t.adapter.IsTableTTLEnabled(data.TableID, data.PhysicalID) {
+	if !t.adapter.ShouldSubmitJob(data.TableID, data.PhysicalID) {
 		r.Delay = time.Minute
 		return
 	}
@@ -114,10 +122,6 @@ func (t *ttlTimerHook) OnPreSchedEvent(_ context.Context, event timerapi.TimerSh
 }
 
 func (t *ttlTimerHook) OnSchedEvent(ctx context.Context, event timerapi.TimerShedEvent) error {
-	if err := t.ctx.Err(); err != nil {
-		return err
-	}
-
 	timer := event.Timer()
 	eventID := event.EventID()
 	logger := logutil.BgLogger().With(
@@ -126,6 +130,11 @@ func (t *ttlTimerHook) OnSchedEvent(ctx context.Context, event timerapi.TimerShe
 		zap.Time("eventStart", timer.EventStart),
 		zap.Strings("tags", timer.Tags),
 	)
+
+	logger.Info("timer triggered to run TTL job", zap.String("manualRequest", timer.EventManualRequestID))
+	if err := t.ctx.Err(); err != nil {
+		return err
+	}
 
 	var data TTLTimerData
 	if err := json.Unmarshal(timer.Data, &data); err != nil {
@@ -140,7 +149,7 @@ func (t *ttlTimerHook) OnSchedEvent(ctx context.Context, event timerapi.TimerShe
 
 	if job == nil {
 		cancel := false
-		if !timer.Enable || !t.adapter.IsTableTTLEnabled(data.TableID, data.PhysicalID) {
+		if !timer.Enable || !t.adapter.ShouldSubmitJob(data.TableID, data.PhysicalID) {
 			cancel = true
 			logger.Warn("cancel current TTL timer event because table's ttl is not enabled")
 		}
@@ -160,17 +169,18 @@ func (t *ttlTimerHook) OnSchedEvent(ctx context.Context, event timerapi.TimerShe
 		}
 	}
 
-	logger.Info("waiting TTL job loop start")
+	logger = logger.With(zap.String("jobRequestID", job.RequestID))
+	logger.Info("start to wait TTL job")
 	t.wg.Add(1)
 	t.waitJobLoopCounter++
-	t.waitJobFinished(logger, &data, timer.ID, eventID, timer.EventStart)
+	go t.waitJobFinished(logger, &data, timer.ID, eventID, timer.EventStart)
 	return nil
 }
 
 func (t *ttlTimerHook) waitJobFinished(logger *zap.Logger, data *TTLTimerData, timerID string, eventID string, eventStart time.Time) {
 	defer func() {
 		t.wg.Done()
-		logger.Info("waiting TTL job loop exit")
+		logger.Info("stop to wait job")
 	}()
 
 	ticker := time.NewTicker(t.checkTTLJobInterval)
@@ -239,10 +249,10 @@ func (t *ttlTimerHook) waitJobFinished(logger *zap.Logger, data *TTLTimerData, t
 type ttlTimerRuntime struct {
 	rt      *timerrt.TimerGroupRuntime
 	store   *timerapi.TimerStore
-	adapter ttlJobAdapter
+	adapter TTLJobAdapter
 }
 
-func newTTLTimerRuntime(store *timerapi.TimerStore, adapter ttlJobAdapter) *ttlTimerRuntime {
+func newTTLTimerRuntime(store *timerapi.TimerStore, adapter TTLJobAdapter) *ttlTimerRuntime {
 	return &ttlTimerRuntime{
 		store:   store,
 		adapter: adapter,
