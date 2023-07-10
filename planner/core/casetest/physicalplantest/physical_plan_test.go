@@ -2593,8 +2593,9 @@ func TestIndexMergeOrderPushDown(t *testing.T) {
 func TestExplainNonEvaledSubquery(t *testing.T) {
 	var (
 		input []struct {
-			SQL    string
-			HasErr bool
+			SQL              string
+			IsExplainAnalyze bool
+			HasErr           bool
 		}
 		output []struct {
 			SQL   string
@@ -2613,24 +2614,46 @@ func TestExplainNonEvaledSubquery(t *testing.T) {
 	tk.MustExec("create table t3(a varchar(5), b varchar(5), c varchar(5))")
 	tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=true")
 
+	cutExecutionInfoFromExplainAnalyzeOutput := func(rows [][]interface{}) [][]interface{} {
+		// The columns are id, estRows, actRows, task type, access object, execution info, operator info, memory, disk
+		// We need to cut the unstable output of execution info, memory and disk.
+		for i := range rows {
+			rows[i] = rows[i][:6] // cut the final memory and disk.
+			rows[i] = append(rows[i][:5], rows[i][6:]...)
+		}
+		return rows
+	}
+
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts.SQL
 			if ts.HasErr {
-				err := tk.ExecToErr("explain format = 'brief' " + ts.SQL)
+				err := tk.ExecToErr(ts.SQL)
 				require.NotNil(t, err, fmt.Sprintf("Failed at case #%d", i))
 				output[i].Error = err.Error()
 				output[i].Plan = nil
 			} else {
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts.SQL).Rows())
+				rows := tk.MustQuery(ts.SQL).Rows()
+				if ts.IsExplainAnalyze {
+					rows = cutExecutionInfoFromExplainAnalyzeOutput(rows)
+				}
+				output[i].Plan = testdata.ConvertRowsToStrings(rows)
 				output[i].Error = ""
 			}
 		})
 		if ts.HasErr {
-			err := tk.ExecToErr("explain format = 'brief' " + ts.SQL)
+			err := tk.ExecToErr(ts.SQL)
 			require.NotNil(t, err, fmt.Sprintf("Failed at case #%d", i))
 		} else {
-			tk.MustQuery("explain format = 'brief' " + ts.SQL).Check(testkit.Rows(output[i].Plan...))
+			rows := tk.MustQuery(ts.SQL).Rows()
+			if ts.IsExplainAnalyze {
+				rows = cutExecutionInfoFromExplainAnalyzeOutput(rows)
+			}
+			require.Equal(t,
+				testdata.ConvertRowsToStrings(testkit.Rows(output[i].Plan...)),
+				testdata.ConvertRowsToStrings(rows),
+				fmt.Sprintf("Failed at case #%d, SQL: %v", i, ts.SQL),
+			)
 		}
 	}
 }

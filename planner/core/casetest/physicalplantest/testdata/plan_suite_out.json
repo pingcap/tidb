@@ -8670,7 +8670,7 @@
     "Name": "TestExplainNonEvaledSubquery",
     "Cases": [
       {
-        "SQL": "select * from t1 where a = (select a from t2 limit 1)",
+        "SQL": "explain format = 'brief' select * from t1 where a = (select a from t2 limit 1)",
         "Plan": [
           "Selection 8000.00 root  eq(test.t1.a, ScalarQuery#16)",
           "└─TableReader 10000.00 root  data:TableFullScan",
@@ -8685,7 +8685,14 @@
         "Error": ""
       },
       {
-        "SQL": "select * from t1 where exists(select 1 from t2 where a = 1)",
+        "SQL": "explain analyze format = 'brief' select * from t1 where a = (select a from t2 limit 1)",
+        "Plan": [
+          "TableDual 0.00 0 root "
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 where exists(select 1 from t2 where a = 1)",
         "Plan": [
           "Selection 8000.00 root  ScalarQuery#9",
           "└─TableReader 10000.00 root  data:TableFullScan",
@@ -8698,7 +8705,14 @@
         "Error": ""
       },
       {
-        "SQL": "select * from t1 where not exists(select 1 from t2 where a = 1)",
+        "SQL": "explain analyze format = 'brief' select * from t1 where exists(select 1 from t2 where a = 1)",
+        "Plan": [
+          "TableDual 0.00 0 root "
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 where not exists(select 1 from t2 where a = 1)",
         "Plan": [
           "Selection 8000.00 root  not(ScalarQuery#9)",
           "└─TableReader 10000.00 root  data:TableFullScan",
@@ -8711,7 +8725,15 @@
         "Error": ""
       },
       {
-        "SQL": "select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
+        "SQL": "explain analyze format = 'brief' select * from t1 where not exists(select 1 from t2 where a = 1)",
+        "Plan": [
+          "TableReader 10000.00 0 root ",
+          "└─TableFullScan 10000.00 0 cop[tikv] table:t1"
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
         "Plan": [
           "Selection 8000.00 root  ScalarQuery#24",
           "└─TableReader 10000.00 root  data:TableFullScan",
@@ -8731,9 +8753,23 @@
         "Error": ""
       },
       {
-        "SQL": "select * from t1 where (a, b) = (select a, b from t2 limit 1)",
+        "SQL": "explain analyze format = 'brief' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
+        "Plan": [
+          "TableDual 0.00 0 root "
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
         "Plan": null,
         "Error": "[expression:1241]Operand should contain 2 column(s)"
+      },
+      {
+        "SQL": "explain analyze format = 'brief' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
+        "Plan": [
+          "TableDual 0.00 0 root "
+        ],
+        "Error": ""
       }
     ]
   }

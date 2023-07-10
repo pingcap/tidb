@@ -875,7 +875,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 			er.err = err
 			return v, true
 		}
-		if er.b.ctx.GetSessionVars().StmtCtx.InExplainStmt && er.b.ctx.GetSessionVars().ExplainNonEvaledSubQuery {
+		if er.b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !er.b.ctx.GetSessionVars().StmtCtx.InExplainAnalyzeStmt && er.b.ctx.GetSessionVars().ExplainNonEvaledSubQuery {
 			scalarSubQ := ScalarSubQueryExpr{
 				ScalarSubQuery: physicalPlan,
 				ctx:            ctx,
@@ -1108,7 +1108,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		er.err = err
 		return v, true
 	}
-	if er.b.ctx.GetSessionVars().StmtCtx.InExplainStmt && er.b.ctx.GetSessionVars().ExplainNonEvaledSubQuery {
+	if er.b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !er.b.ctx.GetSessionVars().StmtCtx.InExplainAnalyzeStmt && er.b.ctx.GetSessionVars().ExplainNonEvaledSubQuery {
 		scalarSubQ := ScalarSubQueryExpr{
 			ScalarSubQuery: physicalPlan,
 			ctx:            ctx,
