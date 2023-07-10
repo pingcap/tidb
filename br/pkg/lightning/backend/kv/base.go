@@ -316,9 +316,17 @@ func (e *BaseKVEncoder) LogKVConvertFailed(row []types.Datum, j int, colInfo *mo
 		log.ShortError(err),
 	)
 
-	e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
-		zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
-		zap.Int("columnID", j+1))
+	var originalPrefix string
+	if len(row[0].GetString()) >= 512*1024 {
+		originalPrefix = original.GetString()[0:1024]
+		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", originalPrefix),
+			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
+			zap.Int("columnID", j+1))
+	} else {
+		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
+			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
+			zap.Int("columnID", j+1))
+	}
 	return errors.Annotatef(
 		err,
 		"failed to cast value as %s for column `%s` (#%d)", &colInfo.FieldType, colInfo.Name.O, j+1,
