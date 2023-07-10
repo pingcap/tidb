@@ -315,7 +315,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 			PartitionName: ttlTbl.Partition.O,
 		}
 
-		job, err := m.lockNewJob(m.ctx, se, ttlTbl, now, true)
+		job, err := m.lockJob(m.ctx, se, ttlTbl, now, true, false)
 		if err != nil {
 			firstError = err
 			tblResult.ErrorMessage = err.Error()
@@ -452,12 +452,12 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		return
 	}
 
-	newJobTables := m.readyForNewJobTables(now)
+	jobTables, isCreate := m.readyForLockJobTables(now)
 	// TODO: also consider to resume tables, but it's fine to left them there, as other nodes will take this job
 	// when the heart beat is not sent
-	for _, table := range newJobTables {
+	for i, table := range jobTables {
 		logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
-		job, err := m.lockNewJob(m.ctx, se, table, now, false)
+		job, err := m.lockJob(m.ctx, se, table, now, isCreate[i], isCreate[i])
 		if job != nil {
 			logutil.Logger(m.ctx).Info("append new running job", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
 			m.appendJob(job)
@@ -482,9 +482,10 @@ func (m *JobManager) localJobs() []*ttlJob {
 	return jobs
 }
 
-// readyForNewJobTables returns all tables which should spawn a TTL job according to cache
-func (m *JobManager) readyForNewJobTables(now time.Time) []*cache.PhysicalTable {
+// readyForLockJobTables returns all tables which should spawn a TTL job according to cache
+func (m *JobManager) readyForLockJobTables(now time.Time) ([]*cache.PhysicalTable, []bool) {
 	tables := make([]*cache.PhysicalTable, 0, len(m.infoSchemaCache.Tables))
+	isCreate := make([]bool, 0, cap(tables))
 
 tblLoop:
 	for _, table := range m.infoSchemaCache.Tables {
@@ -498,25 +499,53 @@ tblLoop:
 		}
 
 		status := m.tableStatusCache.Tables[table.ID]
-		ok := m.couldTrySchedule(status, table, now, false)
-		if ok {
+		if m.couldLockJob(status, table, now, true, true) {
 			tables = append(tables, table)
+			isCreate = append(isCreate, true)
+		} else if m.couldLockJob(status, table, now, false, false) {
+			tables = append(tables, table)
+			isCreate = append(isCreate, false)
 		}
 	}
 
-	return tables
+	return tables, isCreate
 }
 
-// couldTrySchedule returns whether a table should be tried to run TTL
-func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cache.PhysicalTable, now time.Time, ignoreScheduleInterval bool) bool {
-	if tableStatus == nil {
-		// if the table status hasn't been created, return true
-		return true
-	}
+// couldLockJob returns whether a table should be tried to run TTL
+func (m *JobManager) couldLockJob(tableStatus *cache.TableStatus, table *cache.PhysicalTable, now time.Time, isCreate bool, checkScheduleInterval bool) bool {
 	if table == nil {
 		// if the table is not recorded in info schema, return false
 		return false
 	}
+
+	if isCreate {
+		if tableStatus == nil {
+			return true
+		}
+
+		if tableStatus.CurrentJobID != "" {
+			return false
+		}
+
+		if !checkScheduleInterval {
+			return true
+		}
+
+		startTime := tableStatus.LastJobStartTime
+
+		interval, err := table.TTLInfo.GetJobInterval()
+		if err != nil {
+			logutil.Logger(m.ctx).Warn("illegal job interval", zap.Error(err))
+			return false
+		}
+		return startTime.Add(interval).Before(now)
+	}
+
+	// if isCreate is false, it means to take over an exist job
+	if tableStatus.CurrentJobID == "" {
+		return false
+	}
+
 	if tableStatus.CurrentJobOwnerID != "" {
 		// see whether it's heart beat time is expired
 		hbTime := tableStatus.CurrentJobOwnerHBTime
@@ -528,25 +557,12 @@ func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cac
 		}
 		return false
 	}
-
-	if ignoreScheduleInterval || tableStatus.LastJobStartTime.IsZero() {
-		return true
-	}
-
-	startTime := tableStatus.LastJobStartTime
-
-	interval, err := table.TTLInfo.GetJobInterval()
-	if err != nil {
-		logutil.Logger(m.ctx).Warn("illegal job interval", zap.Error(err))
-		return false
-	}
-	return startTime.Add(interval).Before(now)
+	return true
 }
 
-// occupyNewJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new
+// lockJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new
 // localJob and return it.
-// It could be nil, nil, if the table query doesn't return error but the job has been locked by other instances.
-func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, ignoreScheduleInterval bool) (*ttlJob, error) {
+func (m *JobManager) lockJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, isCreate bool, checkScheduleInterval bool) (*ttlJob, error) {
 	var expireTime time.Time
 	var jobID string
 
@@ -560,6 +576,10 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 		if len(rows) == 0 {
+			if !isCreate {
+				return errors.New("couldn't schedule ttl job")
+			}
+
 			// cannot find the row, insert the status row
 			sql, args := insertNewTableIntoStatusSQL(table.ID, table.TableInfo.ID)
 			_, err = se.ExecuteSQL(ctx, sql, args...)
@@ -579,7 +599,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 		if err != nil {
 			return err
 		}
-		if !m.couldTrySchedule(tableStatus, m.infoSchemaCache.Tables[tableStatus.TableID], now, ignoreScheduleInterval) {
+		if !m.couldLockJob(tableStatus, m.infoSchemaCache.Tables[tableStatus.TableID], now, isCreate, checkScheduleInterval) {
 			return errors.New("couldn't schedule ttl job")
 		}
 
