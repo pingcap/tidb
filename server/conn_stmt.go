@@ -54,6 +54,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/server/internal/dump"
 	"github.com/pingcap/tidb/server/internal/parse"
+	"github.com/pingcap/tidb/server/internal/resultset"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
@@ -321,19 +322,15 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		}
 		return false, cc.writeOK(ctx)
 	}
-	// since there are multiple implementations of ResultSet (the rs might be wrapped), we have to unwrap the rs before
-	// casting it to *tidbResultSet.
-	if result, ok := rs.(*tidbResultSet); ok {
-		if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
-			result.preparedStmt = planCacheStmt
-		}
+	if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
+		rs.SetPreparedStmt(planCacheStmt)
 	}
 
 	// if the client wants to use cursor
 	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
 	// Tell the client cursor exists in server by setting proper serverStatus.
 	if useCursor {
-		crs := wrapWithCursor(rs)
+		crs := resultset.WrapWithCursor(rs)
 
 		cc.initResultEncoder(ctx)
 		defer cc.rsEncoder.Clean()
@@ -392,7 +389,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		crs.StoreRowContainerReader(reader)
 		stmt.StoreResultSet(crs)
 		stmt.StoreRowContainer(rowContainer)
-		if cl, ok := crs.(fetchNotifier); ok {
+		if cl, ok := crs.(resultset.FetchNotifier); ok {
 			cl.OnFetchReturned()
 		}
 		stmt.SetCursorActive(true)

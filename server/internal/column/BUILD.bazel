@@ -4,11 +4,13 @@ go_library(
     name = "column",
     srcs = [
         "column.go",
+        "convert.go",
         "result_encoder.go",
     ],
     importpath = "github.com/pingcap/tidb/server/internal/column",
     visibility = ["//server:__subpackages__"],
     deps = [
+        "//parser/ast",
         "//parser/charset",
         "//parser/mysql",
         "//server/err",

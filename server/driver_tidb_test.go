@@ -57,7 +57,7 @@ func TestConvertColumnInfo(t *testing.T) {
 		TableAsName:  model.NewCIStr("dual"),
 		DBName:       model.NewCIStr("test"),
 	}
-	colInfo := convertColumnInfo(&resultField)
+	colInfo := column.ConvertColumnInfo(&resultField)
 	require.Equal(t, createColumnByTypeAndLen(mysql.TypeBit, 1), colInfo)
 
 	// Test "mysql.TypeTiny", for: https://github.com/pingcap/tidb/issues/5405.
@@ -75,7 +75,7 @@ func TestConvertColumnInfo(t *testing.T) {
 		TableAsName:  model.NewCIStr("dual"),
 		DBName:       model.NewCIStr("test"),
 	}
-	colInfo = convertColumnInfo(&resultField)
+	colInfo = column.ConvertColumnInfo(&resultField)
 	require.Equal(t, createColumnByTypeAndLen(mysql.TypeTiny, 1), colInfo)
 
 	ftpb1 := types.NewFieldTypeBuilder()
@@ -92,6 +92,6 @@ func TestConvertColumnInfo(t *testing.T) {
 		TableAsName:  model.NewCIStr("dual"),
 		DBName:       model.NewCIStr("test"),
 	}
-	colInfo = convertColumnInfo(&resultField)
+	colInfo = column.ConvertColumnInfo(&resultField)
 	require.Equal(t, uint32(4), colInfo.ColumnLength)
 }
