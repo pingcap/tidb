@@ -167,7 +167,7 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(
 	if pi == nil {
 		jt, fallback, err := h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
 		if fallback {
-			fallbackTbls = append(fallbackTbls, tableInfo.Name.O)
+			fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s", dbName, tableInfo.Name.O))
 		}
 		return jt, fallbackTbls, err
 	}
@@ -182,7 +182,7 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(
 			return nil, nil, errors.Trace(err)
 		}
 		if fallback {
-			fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s %s", tableInfo.Name.O, def.Name.O))
+			fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s %s", dbName, tableInfo.Name.O, def.Name.O))
 		}
 		jsonTbl.Partitions[def.Name.L] = tbl
 	}
@@ -191,7 +191,7 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(
 		return nil, nil, err
 	}
 	if fallback {
-		fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s global", tableInfo.Name.O))
+		fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s global", dbName, tableInfo.Name.O))
 	}
 	// dump its global-stats if existed
 	if tbl != nil {

@@ -395,7 +395,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.Equal(t, jsonTbls1[0], stats2)
 
 	// because we failed to get historical stats, there's an error message.
-	require.Equal(t, []string{"Historical stats for t are unavailable, fallback to latest stats", ""}, errMsg1)
+	require.Equal(t, []string{"Historical stats for test.t are unavailable, fallback to latest stats", ""}, errMsg1)
 
 	// 2-2. specify time2 to get the plan replayer
 	filename2 := tk.MustQuery(
