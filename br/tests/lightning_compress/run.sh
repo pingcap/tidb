@@ -2,6 +2,8 @@
 
 set -eu
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 for BACKEND in tidb local; do
   for compress in gzip snappy zstd; do
     if [ "$BACKEND" = 'local' ]; then
@@ -17,13 +19,13 @@ for BACKEND in tidb local; do
     run_sql 'DROP DATABASE IF EXISTS compress'
     run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_test'
     set +e
-    run_lightning --backend $BACKEND -d "tests/$TEST_NAME/data.$compress" --enable-checkpoint=1 2> /dev/null
+    run_lightning --backend $BACKEND -d "$CUR/data.$compress" --enable-checkpoint=1 2> /dev/null
     set -e
 
     # restart lightning from checkpoint, the second line should be written successfully
     export GO_FAILPOINTS=
     set +e
-    run_lightning --backend $BACKEND -d "tests/$TEST_NAME/data.$compress" --enable-checkpoint=1 2> /dev/null
+    run_lightning --backend $BACKEND -d "$CUR/data.$compress" --enable-checkpoint=1 2> /dev/null
     set -e
 
     run_sql 'SELECT count(*), sum(PROCESSLIST_TIME), sum(THREAD_OS_ID), count(PROCESSLIST_STATE) FROM compress.threads'
