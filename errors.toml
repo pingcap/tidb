@@ -1861,6 +1861,11 @@ error = '''
 Quarantined and interrupted because of being in runaway watch list
 '''
 
+["executor:8255"]
+error = '''
+Unknown background task name '%-.192s'
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp

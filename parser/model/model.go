@@ -1940,15 +1940,20 @@ type ResourceGroupRunawaySettings struct {
 	WatchDurationMs   uint64            `json:"watch_duration_ms"`
 }
 
+type ResourceGroupBackgroundSettings struct {
+	JobTypes []string `json:"job_types"`
+}
+
 // ResourceGroupSettings is the settings of the resource group
 type ResourceGroupSettings struct {
-	RURate           uint64                        `json:"ru_per_sec"`
-	Priority         uint64                        `json:"priority"`
-	CPULimiter       string                        `json:"cpu_limit"`
-	IOReadBandwidth  string                        `json:"io_read_bandwidth"`
-	IOWriteBandwidth string                        `json:"io_write_bandwidth"`
-	BurstLimit       int64                         `json:"burst_limit"`
-	Runaway          *ResourceGroupRunawaySettings `json:"runaway"`
+	RURate           uint64                           `json:"ru_per_sec"`
+	Priority         uint64                           `json:"priority"`
+	CPULimiter       string                           `json:"cpu_limit"`
+	IOReadBandwidth  string                           `json:"io_read_bandwidth"`
+	IOWriteBandwidth string                           `json:"io_write_bandwidth"`
+	BurstLimit       int64                            `json:"burst_limit"`
+	Runaway          *ResourceGroupRunawaySettings    `json:"runaway"`
+	Background       *ResourceGroupBackgroundSettings `json:"background"`
 }
 
 // NewResourceGroupSettings creates a new ResourceGroupSettings.
@@ -2014,6 +2019,9 @@ func (p *ResourceGroupSettings) String() string {
 			writeSettingDurationToBuilder(sb, "DURATION", time.Duration(p.Runaway.WatchDurationMs)*time.Millisecond)
 		}
 		sb.WriteString(")")
+	}
+	if p.Background != nil {
+		fmt.Fprintf(sb, ", BACKGROUND=(TASK_NAMES='%s')", strings.Join(p.Background.JobTypes, ","))
 	}
 
 	return sb.String()

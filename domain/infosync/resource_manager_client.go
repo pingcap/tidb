@@ -100,6 +100,7 @@ func (m *mockResourceManagerClient) AddResourceGroup(ctx context.Context, group 
 func (m *mockResourceManagerClient) ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
 	m.Lock()
 	defer m.Unlock()
+
 	m.groups[group.Name] = group
 	value, err := proto.Marshal(group)
 	if err != nil {

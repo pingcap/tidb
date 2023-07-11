@@ -71,7 +71,9 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -3166,7 +3168,8 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 }
 
 // SetDirectResourceGroupSettings tries to set the ResourceGroupSettings.
-func SetDirectResourceGroupSettings(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupOption) error {
+func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast.ResourceGroupOption) error {
+	resourceGroupSettings := groupInfo.ResourceGroupSettings
 	switch opt.Tp {
 	case ast.ResourceRURate:
 		resourceGroupSettings.RURate = opt.UintValue
@@ -3189,12 +3192,24 @@ func SetDirectResourceGroupSettings(resourceGroupSettings *model.ResourceGroupSe
 		}
 		resourceGroupSettings.BurstLimit = limit
 	case ast.ResourceGroupRunaway:
-		if len(opt.ResourceGroupRunawayOptionList) == 0 {
+		if len(opt.RunawayOptionList) == 0 {
 			resourceGroupSettings.Runaway = nil
 		}
-		for _, opt := range opt.ResourceGroupRunawayOptionList {
-			err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue)
-			if err != nil {
+		for _, opt := range opt.RunawayOptionList {
+			if err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt.Tp, opt.StrValue, opt.IntValue); err != nil {
+				return err
+			}
+		}
+	case ast.ResourceGroupBackground:
+		if groupInfo.Name.L != rg.DefaultResourceGroupName {
+			// FIXME: this is a temporary restriction, so we don't add a error-code for it.
+			return errors.New("unsupported operation. Currently, only the default resource group support change background settings")
+		}
+		if len(opt.BackgroundOptions) == 0 {
+			resourceGroupSettings.Background = nil
+		}
+		for _, opt := range opt.BackgroundOptions {
+			if err := SetDirectResourceGroupBackgroundOption(resourceGroupSettings, opt); err != nil {
 				return err
 			}
 		}
@@ -3231,6 +3246,43 @@ func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGr
 		return errors.Trace(errors.New("unknown runaway option type"))
 	}
 	return nil
+}
+
+// SetDirectResourceGroupBackgroundOption set background configs of the ResourceGroupSettings.
+func SetDirectResourceGroupBackgroundOption(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupBackgroundOption) error {
+	if resourceGroupSettings.Background == nil {
+		resourceGroupSettings.Background = &model.ResourceGroupBackgroundSettings{}
+	}
+	switch opt.Type {
+	case ast.BackgroundOptionTaskNames:
+		jobTypes, err := parseBackgroundJobTypes(opt.StrValue)
+		if err != nil {
+			return err
+		}
+		resourceGroupSettings.Background.JobTypes = jobTypes
+	default:
+		return errors.Trace(errors.New("unknown background option type"))
+	}
+	return nil
+}
+
+func parseBackgroundJobTypes(t string) ([]string, error) {
+	if len(t) == 0 {
+		return []string{}, nil
+	}
+
+	segs := strings.Split(t, ",")
+	res := make([]string, 0, len(segs))
+	for _, s := range segs {
+		ty := strings.ToLower(strings.TrimSpace(s))
+		if len(ty) > 0 {
+			if !slices.Contains(kvutil.ExplicitTypeList, ty) {
+				return nil, infoschema.ErrResourceGroupInvalidBackgroundTaskName.GenWithStackByArgs(ty)
+			}
+			res = append(res, ty)
+		}
+	}
+	return res, nil
 }
 
 // handleTableOptions updates tableInfo according to table options.
@@ -8284,7 +8336,7 @@ func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.Resour
 		*groupInfo.ResourceGroupSettings = *oldGroup.ResourceGroupSettings
 	}
 	for _, opt := range options {
-		err := SetDirectResourceGroupSettings(groupInfo.ResourceGroupSettings, opt)
+		err := SetDirectResourceGroupSettings(groupInfo, opt)
 		if err != nil {
 			return nil, err
 		}

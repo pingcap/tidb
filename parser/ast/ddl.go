@@ -1301,6 +1301,10 @@ type DropResourceGroupStmt struct {
 
 // Restore implements Restore interface.
 func (n *DropResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasTiDBSpecialCommentFlag() {
+		return restoreStmtInSpecialComment(ctx, n, tidb.FeatureIDResourceGroup)
+	}
+
 	ctx.WriteKeyWord("DROP RESOURCE GROUP ")
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
@@ -1589,6 +1593,10 @@ type CreateResourceGroupStmt struct {
 
 // Restore implements Node interface.
 func (n *CreateResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasTiDBSpecialCommentFlag() {
+		return restoreStmtInSpecialComment(ctx, n, tidb.FeatureIDResourceGroup)
+	}
+
 	ctx.WriteKeyWord("CREATE ")
 
 	ctx.WriteKeyWord("RESOURCE GROUP ")
@@ -2117,11 +2125,12 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 
 // ResourceGroupOption is used for parsing resource group option.
 type ResourceGroupOption struct {
-	Tp                             ResourceUnitType
-	StrValue                       string
-	UintValue                      uint64
-	BoolValue                      bool
-	ResourceGroupRunawayOptionList []*ResourceGroupRunawayOption
+	Tp                ResourceUnitType
+	StrValue          string
+	UintValue         uint64
+	BoolValue         bool
+	RunawayOptionList []*ResourceGroupRunawayOption
+	BackgroundOptions []*ResourceGroupBackgroundOption
 }
 
 type ResourceUnitType int
@@ -2138,59 +2147,73 @@ const (
 	// Options
 	ResourceBurstableOpiton
 	ResourceGroupRunaway
+	ResourceGroupBackground
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
-	fn := func() error {
-		switch n.Tp {
-		case ResourceRURate:
-			ctx.WriteKeyWord("RU_PER_SEC ")
-			ctx.WritePlain("= ")
-			ctx.WritePlainf("%d", n.UintValue)
-		case ResourcePriority:
-			ctx.WriteKeyWord("PRIORITY ")
-			ctx.WritePlain("= ")
-			ctx.WriteKeyWord(model.PriorityValueToName(n.UintValue))
-		case ResourceUnitCPU:
-			ctx.WriteKeyWord("CPU ")
-			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
-		case ResourceUnitIOReadBandwidth:
-			ctx.WriteKeyWord("IO_READ_BANDWIDTH ")
-			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
-		case ResourceUnitIOWriteBandwidth:
-			ctx.WriteKeyWord("IO_WRITE_BANDWIDTH ")
-			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
-		case ResourceBurstableOpiton:
-			ctx.WriteKeyWord("BURSTABLE ")
-			ctx.WritePlain("= ")
-			ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", n.BoolValue)))
-		case ResourceGroupRunaway:
-			ctx.WritePlain("QUERY_LIMIT ")
-			ctx.WritePlain("= ")
-			if len(n.ResourceGroupRunawayOptionList) > 0 {
-				ctx.WritePlain("(")
-				for i, option := range n.ResourceGroupRunawayOptionList {
-					if i > 0 {
-						ctx.WritePlain(" ")
-					}
-					if err := option.Restore(ctx); err != nil {
-						return errors.Annotatef(err, "An error occurred while splicing CreateResourceGroupStmt Option: [%v]", i)
-					}
+	switch n.Tp {
+	case ResourceRURate:
+		ctx.WriteKeyWord("RU_PER_SEC ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+	case ResourcePriority:
+		ctx.WriteKeyWord("PRIORITY ")
+		ctx.WritePlain("= ")
+		ctx.WriteKeyWord(model.PriorityValueToName(n.UintValue))
+	case ResourceUnitCPU:
+		ctx.WriteKeyWord("CPU ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case ResourceUnitIOReadBandwidth:
+		ctx.WriteKeyWord("IO_READ_BANDWIDTH ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case ResourceUnitIOWriteBandwidth:
+		ctx.WriteKeyWord("IO_WRITE_BANDWIDTH ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case ResourceBurstableOpiton:
+		ctx.WriteKeyWord("BURSTABLE ")
+		ctx.WritePlain("= ")
+		ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", n.BoolValue)))
+	case ResourceGroupRunaway:
+		ctx.WritePlain("QUERY_LIMIT ")
+		ctx.WritePlain("= ")
+		if len(n.RunawayOptionList) > 0 {
+			ctx.WritePlain("(")
+			for i, option := range n.RunawayOptionList {
+				if i > 0 {
+					ctx.WritePlain(" ")
 				}
-				ctx.WritePlain(")")
-			} else {
-				ctx.WritePlain("NULL")
+				if err := option.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while splicing ResourceGroupRunaway Option: [%v]", option)
+				}
 			}
-		default:
-			return errors.Errorf("invalid ResourceGroupOption: %d", n.Tp)
+			ctx.WritePlain(")")
+		} else {
+			ctx.WritePlain("NULL")
 		}
-		return nil
+	case ResourceGroupBackground:
+		ctx.WritePlain("BACKGROUND ")
+		ctx.WritePlain("= ")
+		if len(n.BackgroundOptions) > 0 {
+			ctx.WritePlain("(")
+			for i, option := range n.BackgroundOptions {
+				if i > 0 {
+					ctx.WritePlain(", ")
+				}
+				if err := option.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while splicing ResourceGroup Background Option: [%v]", option)
+				}
+			}
+			ctx.WritePlain(")")
+		} else {
+			ctx.WritePlain("NULL")
+		}
+	default:
+		return errors.Errorf("invalid ResourceGroupOption: %d", n.Tp)
 	}
-	// WriteSpecialComment
-	return ctx.WriteWithSpecialComments(tidb.FeatureIDResourceGroup, fn)
+	return nil
 }
 
 type RunawayOptionType int
@@ -2209,31 +2232,53 @@ type ResourceGroupRunawayOption struct {
 }
 
 func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
-	fn := func() error {
-		switch n.Tp {
-		case RunawayRule:
-			ctx.WriteKeyWord("EXEC_ELAPSED ")
-			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
-		case RunawayAction:
-			ctx.WriteKeyWord("ACTION ")
-			ctx.WritePlain("= ")
-			ctx.WriteKeyWord(model.RunawayActionType(n.IntValue).String())
-		case RunawayWatch:
-			ctx.WriteKeyWord("WATCH ")
-			ctx.WritePlain("= ")
-			ctx.WriteKeyWord(model.RunawayWatchType(n.IntValue).String())
-			ctx.WritePlain(" ")
-			ctx.WriteKeyWord("DURATION ")
-			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
-		default:
-			return errors.Errorf("invalid ResourceGroupRunawayOption: %d", n.Tp)
-		}
-		return nil
+	switch n.Tp {
+	case RunawayRule:
+		ctx.WriteKeyWord("EXEC_ELAPSED ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case RunawayAction:
+		ctx.WriteKeyWord("ACTION ")
+		ctx.WritePlain("= ")
+		ctx.WriteKeyWord(model.RunawayActionType(n.IntValue).String())
+	case RunawayWatch:
+		ctx.WriteKeyWord("WATCH ")
+		ctx.WritePlain("= ")
+		ctx.WriteKeyWord(model.RunawayWatchType(n.IntValue).String())
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord("DURATION ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	default:
+		return errors.Errorf("invalid ResourceGroupRunawayOption: %d", n.Tp)
 	}
-	// WriteSpecialComment
-	return ctx.WriteWithSpecialComments(tidb.FeatureIDResourceGroup, fn)
+	return nil
+}
+
+type BackgroundOptionType int
+
+const (
+	BackgroundOptionNone BackgroundOptionType = iota
+	BackgroundOptionTaskNames
+)
+
+// ResourceGroupBackgroundOption is used to config background job settings.
+type ResourceGroupBackgroundOption struct {
+	Type     BackgroundOptionType
+	StrValue string
+}
+
+func (n *ResourceGroupBackgroundOption) Restore(ctx *format.RestoreCtx) error {
+	switch n.Type {
+	case BackgroundOptionTaskNames:
+		ctx.WriteKeyWord("TASK_NAMES ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	default:
+		return errors.Errorf("unknown ResourceGroupBackgroundOption: %d", n.Type)
+	}
+
+	return nil
 }
 
 type StatsOptionType int
@@ -4548,6 +4593,15 @@ func CheckRunawayAppend(ops []*ResourceGroupRunawayOption, newOp *ResourceGroupR
 	return true
 }
 
+func CheckBackgroundAppend(ops []*ResourceGroupBackgroundOption, newOp *ResourceGroupBackgroundOption) bool {
+	for _, op := range ops {
+		if op.Type == newOp.Type {
+			return false
+		}
+	}
+	return true
+}
+
 // AlterResourceGroupStmt is a statement to alter placement policy option.
 type AlterResourceGroupStmt struct {
 	ddlNode
@@ -4558,6 +4612,10 @@ type AlterResourceGroupStmt struct {
 }
 
 func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasTiDBSpecialCommentFlag() {
+		return restoreStmtInSpecialComment(ctx, n, tidb.FeatureIDResourceGroup)
+	}
+
 	ctx.WriteKeyWord("ALTER RESOURCE GROUP ")
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
@@ -4627,13 +4685,17 @@ func (n *AlterSequenceStmt) Accept(v Visitor) (Node, bool) {
 }
 
 func restorePlacementStmtInSpecialComment(ctx *format.RestoreCtx, n DDLNode) error {
+	return restoreStmtInSpecialComment(ctx, n, tidb.FeatureIDPlacement)
+}
+
+func restoreStmtInSpecialComment(ctx *format.RestoreCtx, n DDLNode, feature string) error {
 	origFlags := ctx.Flags
 	defer func() {
 		ctx.Flags = origFlags
 	}()
 
 	ctx.Flags |= format.RestoreTiDBSpecialComment
-	return ctx.WriteWithSpecialComments(tidb.FeatureIDPlacement, func() error {
+	return ctx.WriteWithSpecialComments(feature, func() error {
 		ctx.Flags &= ^format.RestoreTiDBSpecialComment
 		return n.Restore(ctx)
 	})
