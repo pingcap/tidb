@@ -111,6 +111,7 @@ const (
 
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
+	// just add a random comment to trigger a new CI
 	return &clientConn{
 		server:       s,
 		connectionID: s.dom.NextConnID(),
