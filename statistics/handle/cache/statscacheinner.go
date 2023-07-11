@@ -82,7 +82,7 @@ func (sc *StatsCache) Len() int {
 	return sc.c.Len()
 }
 
-// Get returns the statistics of the specified Table ID.
+// GetFromUser returns the statistics of the specified Table ID.
 // The returned value should be read-only, if you update it, don't forget to use Put to put it back again, otherwise the memory trace can be inaccurate.
 //
 //	e.g. v := sc.Get(id); /* update the value */ v.Version = 123; sc.Put(id, v);
