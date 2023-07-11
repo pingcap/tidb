@@ -142,20 +142,6 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 		}
 	}
 
-	explicitRequestSourceType, err := common.GetExplicitRequestSourceTypeFromDB(ctx, e.db)
-	if err == nil && explicitRequestSourceType != "lightning" {
-		task.Info("set tidb_request_source_type", zap.String("original", explicitRequestSourceType), zap.String("new", "lightning"))
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%s';", variable.TiDBRequestSourceType, "lightning")); err != nil {
-			task.Warn("set tidb_request_source_type failed", zap.Error(err))
-		} else {
-			defer func() {
-				if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%s';", variable.TiDBRequestSourceType, explicitRequestSourceType)); err != nil {
-					task.Warn("recover tidb_request_source_type failed", zap.Error(err))
-				}
-			}()
-		}
-	}
-
 	cs := RemoteChecksum{}
 	err = common.SQLWithRetry{DB: conn, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
 		"ADMIN CHECKSUM TABLE "+tableName, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,

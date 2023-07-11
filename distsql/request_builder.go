@@ -353,15 +353,15 @@ func (builder *RequestBuilder) SetResourceGroupTagger(tagger tikvrpc.ResourceGro
 	return builder
 }
 
-// SetExplicitRequestSourceType sets the explicit request source type.
-func (builder *RequestBuilder) SetExplicitRequestSourceType(sourceType string) *RequestBuilder {
-	builder.RequestSource.ExplicitRequestSourceType = sourceType
-	return builder
-}
-
 // SetResourceGroupName sets the request resource group name.
 func (builder *RequestBuilder) SetResourceGroupName(name string) *RequestBuilder {
 	builder.Request.ResourceGroupName = name
+	return builder
+}
+
+// SetExplicitRequestSourceType sets the explicit request source type.
+func (builder *RequestBuilder) SetExplicitRequestSourceType(sourceType string) *RequestBuilder {
+	builder.RequestSource.ExplicitRequestSourceType = sourceType
 	return builder
 }
 

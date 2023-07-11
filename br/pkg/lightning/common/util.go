@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -209,7 +208,6 @@ outside:
 
 // QueryRow executes a query that is expected to return at most one row.
 func (t SQLWithRetry) QueryRow(ctx context.Context, purpose string, query string, dest ...interface{}) error {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnLightning)
 	logger := t.Logger
 	if !t.HideQueryLog {
 		logger = logger.With(zap.String("query", query))
@@ -223,7 +221,6 @@ func (t SQLWithRetry) QueryRow(ctx context.Context, purpose string, query string
 // whose every column is string.
 func (t SQLWithRetry) QueryStringRows(ctx context.Context, purpose string, query string) ([][]string, error) {
 	var res [][]string
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnLightning)
 	logger := t.Logger
 	if !t.HideQueryLog {
 		logger = logger.With(zap.String("query", query))
@@ -260,7 +257,6 @@ func (t SQLWithRetry) QueryStringRows(ctx context.Context, purpose string, query
 // Transact executes an action in a transaction, and retry if the
 // action failed with a retryable error.
 func (t SQLWithRetry) Transact(ctx context.Context, purpose string, action func(context.Context, *sql.Tx) error) error {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnLightning)
 	return t.perform(ctx, t.Logger, purpose, func() error {
 		txn, err := t.DB.BeginTx(ctx, nil)
 		if err != nil {
@@ -289,7 +285,6 @@ func (t SQLWithRetry) Transact(ctx context.Context, purpose string, action func(
 
 // Exec executes a single SQL with optional retry.
 func (t SQLWithRetry) Exec(ctx context.Context, purpose string, query string, args ...interface{}) error {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnLightning)
 	logger := t.Logger
 	if !t.HideQueryLog {
 		logger = logger.With(zap.String("query", query), zap.Reflect("args", args))
@@ -619,15 +614,6 @@ func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
 		return 0, err
 	}
 	return strconv.Atoi(val)
-}
-
-// GetExplicitRequestSourceTypeFromDB gets the explicit request source type from database.
-func GetExplicitRequestSourceTypeFromDB(ctx context.Context, db *sql.DB) (string, error) {
-	val, err := getSessionVariable(ctx, db, variable.TiDBRequestSourceType)
-	if err != nil {
-		return "", err
-	}
-	return val, nil
 }
 
 // copy from dbutil to avoid import cycle

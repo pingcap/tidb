@@ -1324,9 +1324,7 @@ type SessionVars struct {
 
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
-
-	// ExplicitRequestSourceType is set from the session variable `tidb_request_source_type`. it's a complement of RequestSourceType.
-	// The value maybe "lightning", "br", "dumpling" etc.
+	// ExplicitRequestSourceType is the type of origin external request.
 	ExplicitRequestSourceType string
 
 	// MemoryDebugModeMinHeapInUse indicated the minimum heapInUse threshold that triggers the memoryDebugMode.

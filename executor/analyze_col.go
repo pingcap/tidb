@@ -325,7 +325,7 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 	}
 
 	if hasPkHist(e.handleCols) {
-		PKresult := &statistics.AnalyzeResult{
+		pkResult := &statistics.AnalyzeResult{
 			Hist:  hists[:1],
 			Cms:   cms[:1],
 			TopNs: topNs[:1],
@@ -339,11 +339,11 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 		}
 		return &statistics.AnalyzeResults{
 			TableID:  e.tableID,
-			Ars:      []*statistics.AnalyzeResult{PKresult, restResult},
+			Ars:      []*statistics.AnalyzeResult{pkResult, restResult},
 			ExtStats: extStats,
 			Job:      e.job,
 			StatsVer: e.StatsVersion,
-			Count:    int64(PKresult.Hist[0].TotalRowCount()),
+			Count:    int64(pkResult.Hist[0].TotalRowCount()),
 			Snapshot: e.snapshot,
 		}
 	}

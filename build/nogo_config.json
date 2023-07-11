@@ -220,6 +220,7 @@
   "forcetypeassert": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
+      ".*test_/testmain\\.go$": "ignore generated code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     },
@@ -499,9 +500,8 @@
       "bindinfo/": "bindinfo",
       "br/pkg/lightning/": "br/pkg/lightning/",
       "executor/aggregate.go": "executor/aggregate.go",
-      "executor/analyze_utils.go": "executor/analyze_utils.go",
+      "executor/analyze": "executor/analyze",
       "executor/change.go": "executor/change.go",
-      "executor/analyze_fast.go": "executor/analyze_fast.go",
       "executor/internal/": "executor/internal/",
       "executor/aggfuncs/": "executor/aggfuncs/",
       "executor/asyncloaddata/": "executor/asyncloaddata/",
