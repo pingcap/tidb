@@ -158,7 +158,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	internal.AssertTableEqual(t, statsTbl1, statsTbl2)
 }
 
-func TestInitStatsMemTrace(t *testing.T) {
+func testInitStatsMemTrace(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -176,7 +176,7 @@ func TestInitStatsMemTrace(t *testing.T) {
 	require.NoError(t, h.InitStats(is))
 
 	var memCostTot int64
-	for i := 1; i <10; i++ {
+	for i := 1; i < 10; i++ {
 		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
 		require.NoError(t, err)
 		tStats := h.GetTableStats(tbl.Meta())
@@ -184,6 +184,17 @@ func TestInitStatsMemTrace(t *testing.T) {
 	}
 
 	require.Equal(t, h.GetMemConsumed(), memCostTot)
+}
+
+func TestInitStatsMemTrace(t *testing.T) {
+	originValue := config.GetGlobalConfig().Performance.LiteInitStats
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = originValue
+	}()
+	for _, v := range []bool{false, true} {
+		config.GetGlobalConfig().Performance.LiteInitStats = v
+		testInitStatsMemTrace(t)
+	}
 }
 
 func TestInitStats(t *testing.T) {
