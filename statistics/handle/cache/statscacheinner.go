@@ -86,19 +86,13 @@ func (sc *StatsCache) Len() int {
 // The returned value should be read-only, if you update it, don't forget to use Put to put it back again, otherwise the memory trace can be inaccurate.
 //
 //	e.g. v := sc.Get(id); /* update the value */ v.Version = 123; sc.Put(id, v);
-func (sc *StatsCache) Get(id int64) (*statistics.Table, bool) {
-	return sc.c.Get(id)
-}
-
-// GetByQuery returns the statistics of the specified Table ID.
-// TODO: combine this method with Get.
-func (sc *StatsCache) GetByQuery(id int64) (*statistics.Table, bool) {
-	return sc.c.GetByQuery(id)
+func (sc *StatsCache) Get(id int64, moveLRUFront bool) (*statistics.Table, bool) {
+	return sc.c.Get(id, moveLRUFront)
 }
 
 // Put puts the table statistics to the cache.
-func (sc *StatsCache) Put(id int64, t *statistics.Table) {
-	sc.c.Put(id, t)
+func (sc *StatsCache) Put(id int64, t *statistics.Table, moveLRUFront bool) {
+	sc.c.Put(id, t, moveLRUFront)
 
 	// update the maxTblStatsVer
 	for v := sc.maxTblStatsVer.Load(); v < t.Version; v = sc.maxTblStatsVer.Load() {
@@ -145,9 +139,9 @@ func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
 		if option.byQuery {
-			newCache.c.PutByQuery(id, tbl)
+			newCache.c.Put(id, tbl, true)
 		} else {
-			newCache.c.Put(id, tbl)
+			newCache.c.Put(id, tbl, false)
 		}
 	}
 	for _, id := range deletedIDs {

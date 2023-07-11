@@ -86,7 +86,7 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source
 		return
 	}
 	sc := v
-	tbl, ok := sc.Get(tableID)
+	tbl, ok := sc.Get(tableID, false)
 	if !ok {
 		return
 	}
