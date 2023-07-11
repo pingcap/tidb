@@ -123,7 +123,7 @@ require (
 	golang.org/x/sync v0.3.0
 	golang.org/x/sys v0.9.0
 	golang.org/x/term v0.9.0
-	golang.org/x/text v0.10.0
+	golang.org/x/text v0.11.0
 	golang.org/x/time v0.3.0
 	golang.org/x/tools v0.10.0
 	google.golang.org/api v0.114.0
@@ -303,7 +303,7 @@ replace (
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/parser => ./parser
-	github.com/tikv/client-go/v2 => github.com/HuSharp/client-go/v2 v2.0.0-20230707070831-47f4a868300f
+	github.com/tikv/client-go/v2 => github.com/HuSharp/client-go/v2 v2.0.0-20230711064528-0c0b6f694ace
 	github.com/tikv/pd/client => github.com/HuSharp/pd/client v0.0.0-20230707063511-5a34eab12c57
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )

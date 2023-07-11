@@ -3165,7 +3165,7 @@ def go_deps():
     )
     go_repository(
         name = "com_github_pingcap_check",
-        build_file_proto_mode = "disable_global",
+        build_file_proto_mode = "disable",
         importpath = "github.com/pingcap/check",
         sum = "h1:R8gStypOBmpnHEx1qi//SaqxJVI4inOqljg/Aj5/390=",
         version = "v0.0.0-20200212061837-5e12011dc712",
@@ -3872,8 +3872,8 @@ def go_deps():
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
         replace = "github.com/HuSharp/client-go/v2",
-        sum = "h1:5pWs7Op3gGUMTlOG5oc9V7S/c+QiEMy63pVKZCPIo4A=",
-        version = "v2.0.0-20230707070831-47f4a868300f",
+        sum = "h1:l74GmNm0skrX4t8JqDCsd/43I5vK64hYJAvSwc0K718=",
+        version = "v2.0.0-20230711063943-75aa9ec59471",
     )
 
     go_repository(
@@ -5682,8 +5682,8 @@ def go_deps():
         name = "org_golang_x_text",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/text",
-        sum = "h1:UpjohKhiEgNc0CSauXmwYftY1+LlaC75SJwh0SgCX58=",
-        version = "v0.10.0",
+        sum = "h1:LAntKIrcmeSKERyiOh0XMV39LXS8IE9UL2yP7+f5ij4=",
+        version = "v0.11.0",
     )
     go_repository(
         name = "org_golang_x_time",

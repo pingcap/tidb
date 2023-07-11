@@ -11,6 +11,7 @@ go_library(
         "//br/pkg/lightning/log",
         "//br/pkg/pdutil",
         "//br/pkg/version",
+        "//kv",
         "//parser/model",
         "@com_github_coreos_go_semver//semver",
         "@com_github_pingcap_errors//:errors",

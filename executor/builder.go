@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/executor/internal/builder"
+	"github.com/pingcap/tidb/executor/internal/calibrateresource"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/executor/internal/pdhelper"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
@@ -907,10 +908,10 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			}
 		}
 	case *ast.CalibrateResourceStmt:
-		return &calibrateResourceExec{
+		return &calibrateresource.Executor{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), 0),
-			workloadType: s.Tp,
-			optionList:   s.DynamicCalibrateResourceOptionList,
+			WorkloadType: s.Tp,
+			OptionList:   s.DynamicCalibrateResourceOptionList,
 		}
 	case *ast.LoadDataActionStmt:
 		return &LoadDataActionExec{

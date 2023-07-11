@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -170,7 +171,7 @@ func Compact(ctx context.Context, tls *common.TLS, tikvAddr string, level int32,
 				ResourceControlContext: &kvrpcpb.ResourceControlContext{
 					ResourceGroupName: resourceGroupName,
 				},
-				RequestSource: util.ExplicitTypeLightning,
+				RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
 			},
 		})
 		return ignoreUnimplementedError(err, task.Logger)

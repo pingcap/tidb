@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/util"
@@ -247,7 +248,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				ResourceControlContext: &kvrpcpb.ResourceControlContext{
 					ResourceGroupName: local.ResourceGroupName,
 				},
-				RequestSource: util.ExplicitTypeLightning,
+				RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
 			},
 		}
 		if err = wstream.Send(req); err != nil {
@@ -561,9 +562,8 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			Peer:        leader,
 			ResourceControlContext: &kvrpcpb.ResourceControlContext{
 				ResourceGroupName: local.ResourceGroupName,
-				IsBackground:      true,
 			},
-			RequestSource: util.ExplicitTypeLightning,
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
 		}
 
 		if supportMultiIngest {
