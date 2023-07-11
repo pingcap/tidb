@@ -3260,23 +3260,28 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			fillrate = strconv.FormatUint(group.RUSettings.RU.Settings.FillRate, 10)
 		}
 		// convert runaway settings
-		queryLimit := ""
+		limitBuilder := new(strings.Builder)
 		if setting := group.RunawaySettings; setting != nil {
-			runawayRule, runawayAction, runawayWatch := "", "", ""
 			if setting.Rule == nil {
 				return errors.Errorf("unexpected runaway config in resource group")
 			}
 			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
-			runawayRule = fmt.Sprintf("%s='%s'", "EXEC_ELAPSED", dur.String())
-			runawayAction = fmt.Sprintf("%s=%s", "ACTION", model.RunawayActionType(setting.Action+1).String())
+			fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
+			fmt.Fprintf(limitBuilder, ", ACTION=%s", model.RunawayActionType(setting.Action+1).String())
 			if setting.Watch != nil {
 				dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
-				runawayWatch = fmt.Sprintf("%s=%s %s='%s'", "WATCH", model.RunawayWatchType(setting.Watch.Type).String(), "DURATION", dur.String())
-				queryLimit = fmt.Sprintf("%s, %s, %s", runawayRule, runawayAction, runawayWatch)
-			} else {
-				queryLimit = fmt.Sprintf("%s, %s", runawayRule, runawayAction)
+				fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION='%s'", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())
 			}
 		}
+		queryLimit := limitBuilder.String()
+
+		// convert background settings
+		bgBuilder := new(strings.Builder)
+		if setting := group.BackgroundSettings; setting != nil {
+			fmt.Fprintf(bgBuilder, "TASK_NAMES='%s'", strings.Join(setting.JobTypes, ","))
+		}
+		background := bgBuilder.String()
+
 		switch group.Mode {
 		case rmpb.GroupMode_RUMode:
 			if group.RUSettings.RU.Settings.BurstLimit < 0 {
@@ -3288,15 +3293,20 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 				priority,
 				burstable,
 				queryLimit,
+				background,
 			)
 			if len(queryLimit) == 0 {
 				row[4].SetNull()
+			}
+			if len(background) == 0 {
+				row[5].SetNull()
 			}
 			rows = append(rows, row)
 		default:
 			//mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
 				group.Name,
+				nil,
 				nil,
 				nil,
 				nil,
