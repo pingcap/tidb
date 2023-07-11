@@ -100,22 +100,22 @@ func TestLRUPutGetDel(t *testing.T) {
 	require.Equal(t, capacity, lru.capacity())
 	mockTable := newMockStatisticsTable(1, 1, true, false, false)
 	mockTableID := int64(1)
-	lru.Put(mockTableID, mockTable)
-	v, ok := lru.Get(mockTableID)
+	lru.Put(mockTableID, mockTable, false)
+	v, ok := lru.Get(mockTableID, false)
 	require.True(t, ok)
 	require.Equal(t, mockTable, v)
 	lru.Del(mockTableID)
-	v, ok = lru.Get(mockTableID)
+	v, ok = lru.Get(mockTableID, false)
 	require.False(t, ok)
 	require.Nil(t, v)
 
 	// assert byQuery api
-	lru.PutByQuery(mockTableID, mockTable)
-	v, ok = lru.GetByQuery(mockTableID)
+	lru.Put(mockTableID, mockTable, true)
+	v, ok = lru.Get(mockTableID, true)
 	require.True(t, ok)
 	require.Equal(t, mockTable, v)
 	lru.Del(mockTableID)
-	v, ok = lru.Get(mockTableID)
+	v, ok = lru.Get(mockTableID, false)
 	require.False(t, ok)
 	require.Nil(t, v)
 }
@@ -128,18 +128,18 @@ func TestLRUEvict(t *testing.T) {
 	require.Equal(t, t1.MemoryUsage().TotalColTrackingMemUsage(), 2*mockCMSMemoryUsage)
 
 	// Put t1, assert TotalMemUsage and TotalColTrackingMemUsage
-	lru.Put(int64(1), t1)
+	lru.Put(int64(1), t1, false)
 	require.Equal(t, lru.TotalCost(), t1.MemoryUsage().TotalMemUsage)
 	require.Equal(t, lru.Cost(), t1.MemoryUsage().TotalTrackingMemUsage())
 
 	// Put t2, assert TotalMemUsage and TotalColTrackingMemUsage
 	t2 := newMockStatisticsTable(2, 1, true, false, false)
-	lru.Put(int64(2), t2)
+	lru.Put(int64(2), t2, false)
 	require.Equal(t, lru.Cost(), 4*mockCMSMemoryUsage+1*mockCMSMemoryUsage)
 
 	// Put t3, a column of t1 should be evicted
 	t3 := newMockStatisticsTable(1, 1, true, false, false)
-	lru.Put(int64(3), t3)
+	lru.Put(int64(3), t3, false)
 	require.Equal(t, lru.Len(), 3)
 	require.Equal(t, t1.MemoryUsage().TotalColTrackingMemUsage(), mockCMSMemoryUsage)
 	require.Equal(t, lru.TotalCost(), t1.MemoryUsage().TotalMemUsage+t2.MemoryUsage().TotalMemUsage+t3.MemoryUsage().TotalMemUsage)
@@ -147,7 +147,7 @@ func TestLRUEvict(t *testing.T) {
 
 	// Put t4, all indices' cmsketch of other tables should be evicted
 	t4 := newMockStatisticsTable(3, 3, true, false, false)
-	lru.Put(int64(4), t4)
+	lru.Put(int64(4), t4, false)
 	require.Equal(t, lru.Len(), 4)
 	require.Equal(t, t1.MemoryUsage().TotalTrackingMemUsage(), int64(0))
 	require.Equal(t, t2.MemoryUsage().TotalTrackingMemUsage(), int64(0))
@@ -170,8 +170,8 @@ func TestLRUCopy(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		mockTable := tables[i]
 		key := int64(i)
-		lru.Put(key, mockTable)
-		value, ok := lru.Get(key)
+		lru.Put(key, mockTable, false)
+		value, ok := lru.Get(key, false)
 		require.True(t, ok)
 		require.Equal(t, value, mockTable)
 	}
@@ -179,19 +179,19 @@ func TestLRUCopy(t *testing.T) {
 	// assert new lru has same elements as old lru
 	for i := 0; i < 3; i++ {
 		key := int64(i)
-		value, ok := newLRU.Get(key)
+		value, ok := newLRU.Get(key, false)
 		require.True(t, ok)
 		require.EqualValues(t, value, tables[i])
 	}
 	// delete new lru element
 	newLRU.Del(int64(1))
-	_, ok := newLRU.Get(int64(1))
+	_, ok := newLRU.Get(int64(1), false)
 	require.False(t, ok)
 
 	// old lru has no affect
 	for i := 0; i < 3; i++ {
 		key := int64(i)
-		value, ok := lru.Get(key)
+		value, ok := lru.Get(key, false)
 		require.True(t, ok)
 		require.Equal(t, value, tables[i])
 	}
@@ -202,23 +202,23 @@ func TestLRUFreshMemUsage(t *testing.T) {
 	t1 := newMockStatisticsTable(1, 1, true, false, false)
 	t2 := newMockStatisticsTable(2, 2, true, false, false)
 	t3 := newMockStatisticsTable(3, 3, true, false, false)
-	lru.Put(int64(1), t1)
-	lru.Put(int64(2), t2)
-	lru.Put(int64(3), t3)
+	lru.Put(int64(1), t1, false)
+	lru.Put(int64(2), t2, false)
+	lru.Put(int64(3), t3, false)
 	require.Equal(t, lru.Cost(), 6*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
 	mockTableAppendColumn(t1)
-	lru.Put(int64(1), t1)
+	lru.Put(int64(1), t1, false)
 	require.Equal(t, lru.Cost(), 6*mockCMSMemoryUsage+7*mockCMSMemoryUsage)
 	mockTableAppendIndex(t1)
-	lru.Put(int64(1), t1)
+	lru.Put(int64(1), t1, false)
 	require.Equal(t, lru.Cost(), 7*mockCMSMemoryUsage+7*mockCMSMemoryUsage)
 
 	mockTableRemoveColumn(t1)
-	lru.Put(int64(1), t1)
+	lru.Put(int64(1), t1, false)
 	require.Equal(t, lru.Cost(), 7*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
 
 	mockTableRemoveIndex(t1)
-	lru.Put(int64(1), t1)
+	lru.Put(int64(1), t1, false)
 	require.Equal(t, lru.Cost(), 6*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
 }
 
@@ -226,8 +226,8 @@ func TestLRUPutTooBig(t *testing.T) {
 	lru := NewStatsLruCache(1)
 	mockTable := newMockStatisticsTable(1, 1, true, false, false)
 	// put mockTable, the index should be evicted
-	lru.Put(int64(1), mockTable)
-	_, ok := lru.Get(int64(1))
+	lru.Put(int64(1), mockTable, false)
+	_, ok := lru.Get(int64(1), false)
 	require.True(t, ok)
 	require.Equal(t, lru.Cost(), int64(0))
 	require.Equal(t, mockTable.MemoryUsage().TotalTrackingMemUsage(), int64(0))
@@ -237,17 +237,17 @@ func TestCacheLen(t *testing.T) {
 	capacity := int64(12)
 	stats := NewStatsLruCache(capacity)
 	t1 := newMockStatisticsTable(2, 1, true, false, false)
-	stats.Put(int64(1), t1)
+	stats.Put(int64(1), t1, false)
 	t2 := newMockStatisticsTable(1, 1, true, false, false)
 	// put t2, t1 should be evicted 2 items and still exists in the list
-	stats.Put(int64(2), t2)
+	stats.Put(int64(2), t2, false)
 	require.Equal(t, stats.lru.cache.Len(), 3)
 	require.Equal(t, t1.MemoryUsage().TotalTrackingMemUsage(), int64(4))
 	require.Equal(t, stats.Len(), 2)
 
 	// put t3, t1/t2 should be evicted all items and disappeared from the list
 	t3 := newMockStatisticsTable(2, 1, true, false, false)
-	stats.Put(int64(3), t3)
+	stats.Put(int64(3), t3, false)
 	require.Equal(t, stats.lru.cache.Len(), 3)
 	require.Equal(t, t1.MemoryUsage().TotalTrackingMemUsage(), int64(0))
 	require.Equal(t, t2.MemoryUsage().TotalTrackingMemUsage(), int64(0))
@@ -261,13 +261,13 @@ func TestLRUMove(t *testing.T) {
 	t1ID := int64(1)
 	t2 := newMockStatisticsTable(1, 1, true, false, false)
 	t2ID := int64(2)
-	s.Put(t1ID, t1)
-	s.Put(t2ID, t2)
+	s.Put(t1ID, t1, false)
+	s.Put(t2ID, t2, false)
 	// assert t2 element should be front element
 	front := s.lru.cache.Front().Value.(*lruCacheItem)
 	require.Equal(t, t2ID, front.tblID)
 	// assert t1 element should be front element after GetByQuery
-	s.GetByQuery(t1ID)
+	s.Get(t1ID, true)
 	front = s.lru.cache.Front().Value.(*lruCacheItem)
 	require.Equal(t, t1ID, front.tblID)
 }
@@ -276,7 +276,7 @@ func TestLRUEvictPolicy(t *testing.T) {
 	capacity := int64(999)
 	s := NewStatsLruCache(capacity)
 	t1 := newMockStatisticsTable(1, 0, true, true, true)
-	s.Put(1, t1)
+	s.Put(1, t1, false)
 	require.Equal(t, s.TotalCost(), mockCMSMemoryUsage+mockTopNMemoryUsage+mockHistMemoryUsage)
 	require.Equal(t, s.Cost(), mockCMSMemoryUsage+mockTopNMemoryUsage+mockHistMemoryUsage)
 	cost := s.Cost()
@@ -309,7 +309,7 @@ func TestLRUEvictPolicy(t *testing.T) {
 
 	s = NewStatsLruCache(capacity)
 	t2 := newMockStatisticsTable(0, 1, true, true, true)
-	s.Put(2, t2)
+	s.Put(2, t2, false)
 	require.Equal(t, s.TotalCost(), mockCMSMemoryUsage+mockTopNMemoryUsage+mockHistMemoryUsage)
 	require.Equal(t, s.Cost(), mockCMSMemoryUsage+mockTopNMemoryUsage+mockHistMemoryUsage)
 	cost = s.Cost()
