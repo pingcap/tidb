@@ -154,3 +154,11 @@ export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/SetIOTotalBytes=re
 run_dumpling -B "test_db" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
 cnt=$(grep "IOTotalBytes=" ${DUMPLING_OUTPUT_DIR}/dumpling.log | grep -v "IOTotalBytes=0" | wc -l)
 [ "$cnt" -ge 1 ]
+
+export GO_FAILPOINTS=""
+export DUMPLING_TEST_PORT=4000
+echo "Test for empty query result, should success."
+run_sql "drop database if exists test_db;"
+run_sql "create database test_db;"
+run_sql "create table test_db.test_table (a int primary key);"
+run_dumpling --sql "select * from test_db.test_table" --filetype csv > ${DUMPLING_OUTPUT_DIR}/dumpling.log

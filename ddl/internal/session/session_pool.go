@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"go.uber.org/zap"
 )
 
 // Pool is used to new Session.
@@ -95,7 +96,7 @@ func (sg *Pool) Close() {
 	if sg.mu.closed || sg.resPool == nil {
 		return
 	}
-	logutil.BgLogger().Info("[ddl] closing session pool")
+	logutil.BgLogger().Info("closing session pool", zap.String("category", "ddl"))
 	sg.resPool.Close()
 	sg.mu.closed = true
 }

@@ -1861,6 +1861,11 @@ error = '''
 Quarantined and interrupted because of being in runaway watch list
 '''
 
+["executor:8255"]
+error = '''
+Unknown background task name '%-.192s'
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp
@@ -2764,6 +2769,11 @@ Unknown resource group '%-.192s'
 ["schema:8250"]
 error = '''
 Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature
+'''
+
+["server:8057"]
+error = '''
+invalid type
 '''
 
 ["session:8002"]

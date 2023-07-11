@@ -44,8 +44,9 @@ const (
 	syntaxErrorTableName = "syntax_error_v1"
 	typeErrorTableName   = "type_error_v1"
 	// ConflictErrorTableName is the table name for duplicate detection.
-	ConflictErrorTableName   = "conflict_error_v1"
-	conflictErrorV2TableName = "conflict_error_v2"
+	ConflictErrorTableName = "conflict_error_v1"
+	// DupRecordTable is the table name to record duplicate data that displayed to user.
+	DupRecordTable = "duplicate_records"
 
 	createSyntaxErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + syntaxErrorTableName + ` (
@@ -87,8 +88,8 @@ const (
 		);
 	`
 
-	createConflictErrorV2Table = `
-		CREATE TABLE IF NOT EXISTS %s.` + conflictErrorV2TableName + ` (
+	createDupRecordTable = `
+		CREATE TABLE IF NOT EXISTS %s.` + DupRecordTable + ` (
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -130,8 +131,8 @@ const (
 		ORDER BY _tidb_rowid LIMIT ?;
 	`
 
-	insertIntoConflictErrorV2 = `
-		INSERT INTO %s.` + conflictErrorV2TableName + `
+	insertIntoDupRecord = `
+		INSERT INTO %s.` + DupRecordTable + `
 		(task_id, table_name, path, offset, error, row_id, row_data)
 		VALUES (?, ?, ?, ?, ?, ?, ?);
 	`
@@ -139,13 +140,12 @@ const (
 
 // ErrorManager records errors during the import process.
 type ErrorManager struct {
-	db             *sql.DB
-	taskID         int64
-	schemaEscaped  string
-	configError    *config.MaxError
-	remainingError config.MaxError
-	maxErrRecords  *atomic.Int64
-	// conflictV1Enabled and conflictV2Enabled are mutually exclusive.
+	db                *sql.DB
+	taskID            int64
+	schemaEscaped     string
+	configError       *config.MaxError
+	remainingError    config.MaxError
+	maxErrRecords     *atomic.Int64
 	conflictV1Enabled bool
 	conflictV2Enabled bool
 	logger            log.Logger
@@ -154,6 +154,11 @@ type ErrorManager struct {
 // TypeErrorsRemain returns the number of type errors that can be recorded.
 func (em *ErrorManager) TypeErrorsRemain() int64 {
 	return em.remainingError.Type.Load()
+}
+
+// ConflictErrorsRemain returns the number of conflict errors that can be recorded.
+func (em *ErrorManager) ConflictErrorsRemain() int64 {
+	return em.remainingError.Conflict.Load()
 }
 
 // RemainRecord returns the number of errors that need be recorded.
@@ -170,10 +175,16 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 		configError:       &cfg.App.MaxError,
 		remainingError:    cfg.App.MaxError,
 		conflictV1Enabled: cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		// Currently, we only support local backend recording conflict errors.
-		conflictV2Enabled: cfg.TikvImporter.OnDuplicate != "" && cfg.TikvImporter.Backend == config.BackendLocal,
 		maxErrRecords:     maxErrRecords,
 		logger:            logger,
+	}
+	switch cfg.TikvImporter.Backend {
+	case config.BackendLocal:
+		if cfg.TikvImporter.OnDuplicate != "" {
+			em.conflictV2Enabled = true
+		}
+	case config.BackendTiDB:
+		em.conflictV2Enabled = true
 	}
 	if len(cfg.App.TaskInfoSchemaName) != 0 {
 		em.db = db
@@ -205,7 +216,7 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 		sqls = append(sqls, [2]string{"create conflict error v1 table", createConflictErrorTable})
 	}
 	if em.conflictV2Enabled && em.remainingError.Conflict.Load() > 0 {
-		sqls = append(sqls, [2]string{"create conflict error v2 table", createConflictErrorV2Table})
+		sqls = append(sqls, [2]string{"create duplicate records table", createDupRecordTable})
 	}
 
 	// No need to create task info schema if no error is allowed.
@@ -482,8 +493,8 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 	return errors.Trace(g.Wait())
 }
 
-// RecordConflictErrorV2 records a conflict error detected by the new conflict detector.
-func (em *ErrorManager) RecordConflictErrorV2(
+// RecordDuplicate records a "duplicate entry" error so user can query them later.
+func (em *ErrorManager) RecordDuplicate(
 	ctx context.Context,
 	logger log.Logger,
 	tableName string,
@@ -511,8 +522,8 @@ func (em *ErrorManager) RecordConflictErrorV2(
 		Logger:       logger,
 		HideQueryLog: redact.NeedRedact(),
 	}
-	return exec.Exec(ctx, "insert conflict error record",
-		fmt.Sprintf(insertIntoConflictErrorV2, em.schemaEscaped),
+	return exec.Exec(ctx, "insert duplicate record",
+		fmt.Sprintf(insertIntoDupRecord, em.schemaEscaped),
 		em.taskID,
 		tableName,
 		path,
@@ -582,7 +593,7 @@ func (em *ErrorManager) LogErrorDetails() {
 		if em.conflictV1Enabled {
 			em.logger.Warn(fmtErrMsg(errCnt, "data conflict", ConflictErrorTableName))
 		} else {
-			em.logger.Warn(fmtErrMsg(errCnt, "data conflict", conflictErrorV2TableName))
+			em.logger.Warn(fmtErrMsg(errCnt, "data conflict", DupRecordTable))
 		}
 	}
 }
@@ -628,7 +639,7 @@ func (em *ErrorManager) Output() string {
 		if em.conflictV1Enabled {
 			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(ConflictErrorTableName)})
 		} else {
-			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(conflictErrorV2TableName)})
+			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(DupRecordTable)})
 		}
 	}
 

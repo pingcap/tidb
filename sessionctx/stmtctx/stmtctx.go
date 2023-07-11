@@ -394,9 +394,10 @@ type StatementContext struct {
 
 	// MPPQueryInfo stores some id and timestamp of current MPP query statement.
 	MPPQueryInfo struct {
-		QueryID            atomic2.Uint64
-		QueryTS            atomic2.Uint64
-		AllocatedMPPTaskID atomic2.Int64
+		QueryID              atomic2.Uint64
+		QueryTS              atomic2.Uint64
+		AllocatedMPPTaskID   atomic2.Int64
+		AllocatedMPPGatherID atomic2.Uint64
 	}
 
 	// TableStats stores the visited runtime table stats by table id during query
