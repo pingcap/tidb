@@ -3164,14 +3164,6 @@ def go_deps():
         version = "v1.5.1-0.20230103063557-828f39b09b6d",
     )
     go_repository(
-        name = "com_github_pingcap_check",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/pingcap/check",
-        sum = "h1:R8gStypOBmpnHEx1qi//SaqxJVI4inOqljg/Aj5/390=",
-        version = "v0.0.0-20200212061837-5e12011dc712",
-    )
-
-    go_repository(
         name = "com_github_pingcap_errors",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/errors",
@@ -3189,8 +3181,8 @@ def go_deps():
         name = "com_github_pingcap_fn",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/fn",
-        sum = "h1:Pe2LbxRmbTfAoKJ65bZLmhahmvHm7n9DUxGRQT00208=",
-        version = "v0.0.0-20200306044125-d5540d389059",
+        sum = "h1:CyA6AxcOZkQh52wIqYlAmaVmF6EvrcqFywP463pjA8g=",
+        version = "v1.0.0",
     )
     go_repository(
         name = "com_github_pingcap_goleveldb",
