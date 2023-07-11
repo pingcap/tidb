@@ -170,6 +170,10 @@ func (d Checker) CreateExternalTable(sctx sessionctx.Context, stmt *ast.CreateEx
 	return nil
 }
 
+func (d Checker) CreateETL(sctx sessionctx.Context, stmt *ast.CreateETLStmt) error {
+	return nil
+}
+
 func (d Checker) CreateCatalog(ctx sessionctx.Context, stmt *ast.CreateCatalogStmt) error {
 	return nil
 }

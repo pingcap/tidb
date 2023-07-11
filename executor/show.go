@@ -981,6 +981,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, ")")
 		return nil
 	}
+	if tableInfo.IsETL {
+		fmt.Fprintf(buf, "CREATE ETL %s AS \"%s\" \n # etl storage path: %s", tableName, tableInfo.ETLQuery, tableInfo.ETLStoragePath)
+		fmt.Fprintf(buf, ")")
+		return nil
+	}
 	switch tableInfo.TempTableType {
 	case model.TempTableGlobal:
 		fmt.Fprintf(buf, "CREATE GLOBAL TEMPORARY TABLE %s (\n", tableName)

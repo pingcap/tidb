@@ -58,6 +58,12 @@ func (name *FieldName) String() string {
 	return builder.String()
 }
 
+func (name *FieldName) ColNameString() string {
+	builder := strings.Builder{}
+	builder.WriteString(name.ColName.L)
+	return builder.String()
+}
+
 // MemoryUsage return the memory usage of FieldName
 func (name *FieldName) MemoryUsage() (sum int64) {
 	if name == nil {

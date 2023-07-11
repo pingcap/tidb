@@ -517,12 +517,19 @@ type TableInfo struct {
 
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
-	TTLInfo    *TTLInfo `json:"ttl_info"`
-	IsExternalTbl bool `json:"is_external_tbl"`
-	Properties []*Property `json:"properties"`
+	TTLInfo        *TTLInfo    `json:"ttl_info"`
+	IsExternalTbl  bool        `json:"is_external_tbl"`
+	Properties     []*Property `json:"properties"`
+	IsETL          bool
+	ETLQuery string
+	ETLStoragePath string
+	ETLOutputNames []string
+	ETLOutputFieldTypes  []*types.FieldType 
 }
 
-func (t *TableInfo) GetProperty(propName string) (propValue []byte){
+
+
+func (t *TableInfo) GetProperty(propName string) (propValue []byte) {
 	for _, p := range t.Properties {
 		if p.Name == propName {
 			return []byte(p.Value)
@@ -999,6 +1006,10 @@ func (t *TableInfo) IsView() bool {
 
 func (t *TableInfo) IsExternalTable() bool {
 	return t.IsExternalTbl
+}
+
+func (t *TableInfo) IsETLTable() bool {
+	return t.IsETL
 }
 
 // IsSequence checks if TableInfo is a sequence.

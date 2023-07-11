@@ -131,6 +131,46 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type CreateETLStmt struct {
+	ddlNode
+
+	IfNotExists bool
+	Table 	 *TableName
+	ETLSelect StmtNode 
+
+	OutputNames []string
+	OutputFieldTypes []*types.FieldType
+	DataSourceNames []string
+
+}
+
+func (n *CreateETLStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE ETL ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while splicing CreateETLStmt Table")
+	}
+	ctx.WriteKeyWord(" AS ")
+	ctx.WritePlain(n.ETLSelect.Text())
+	return nil
+}
+
+func (n *CreateETLStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n = newNode.(*CreateETLStmt)
+	n.Table = node.(*TableName)
+	return v.Leave(n)
+}
+
 type CreateExternalTableStmt struct {
 	ddlNode
 

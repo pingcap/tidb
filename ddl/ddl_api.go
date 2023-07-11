@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/ioutil"
 	"math"
 	"strconv"
 	"strings"
@@ -89,6 +90,161 @@ const (
 	tiflashCheckPendingTablesLimit = 100
 	tiflashCheckPendingTablesRetry = 7
 )
+
+const etlPathPrefix = "/pingcap/etl/"
+
+func (d *ddl) CreateETL(ctx sessionctx.Context, s *ast.CreateETLStmt) error {
+	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(0, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tableCharset, tableCollate, err = ResolveCharsetCollation(
+		ast.CharsetOpt{Chs: tableCharset, Col: tableCollate},
+		ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tblInfo, err := BuildTableInfo(ctx, s.Table.Name, nil, nil, tableCharset, tableCollate)
+	if err != nil {
+		return err
+	}
+	tblInfo.IsETL = true
+	tblInfo.ETLQuery = s.ETLSelect.Text()
+	tblInfo.ETLStoragePath = etlPathPrefix + s.Table.Schema.String() + "/" + s.Table.Name.String()
+	tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	tblInfo.ETLOutputNames = s.OutputNames
+	tblInfo.ETLOutputFieldTypes = s.OutputFieldTypes
+
+	onExist := OnExistError
+	if s.IfNotExists {
+		onExist = OnExistIgnore
+	}
+
+	// 1. 创建 demo_flink.t_file 表写入 csv
+	// 2. 创建 demo_hudi.t 表
+	// 3. 创建 demo_flink.t 表
+	// 4. 创建 demo_flink.t_inc 表
+	// 5. insert into demo_hudi.t (select * from demo_flink.t)
+	// 6. insert into demo_flink.t (select * from demo_fink.t_file)
+	// 7. insert into demo_flink.t (select * from demo_flink.t_inc)
+
+	sb := new(strings.Builder)
+	sb = writeDemoFlinkTFile(sb, tblInfo)
+	sb = writeDemoHudiT(sb, tblInfo)
+	sb = writeDemoFlinkT(sb, tblInfo)
+	sb = writeDemoFlinkTInc(sb, tblInfo)
+	sb = writeDemoHudiTInsert(sb, tblInfo)
+	writeTemplateFile(sb)
+
+	return d.CreateTableWithInfo(ctx, schema.Name, tblInfo, onExist)
+}
+
+func writeTableDefinition(sb *strings.Builder, tblInfo *model.TableInfo, engineType string) *strings.Builder {
+	for i, name := range tblInfo.ETLOutputNames {
+		tpStr := tblInfo.ETLOutputFieldTypes[i].CompactStr()
+		if engineType == "flink" {
+			if strings.Contains(tpStr, "char") {
+				tpStr = "string"
+			}
+		}
+		s := fmt.Sprintf("  %s %s,\n", name, tpStr)
+		if i == len(tblInfo.ETLOutputNames)-1 {
+			s = fmt.Sprintf("  %s %s\n", name, tpStr)
+		}
+		sb.WriteString(s)
+	}
+
+	return sb
+}
+
+func writeDemoFlinkTFile(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Builder {
+	sb.WriteString("set execution.checkpointing.interval=2sec;\n")
+	sb.WriteString("create database demo_flink;\n")
+	sb.WriteString("create database demo_hudi;\n")
+	sb.WriteString("create table demo_flink.t_file (\n")
+	sb = writeTableDefinition(sb, tblInfo, "flink")
+	sb.WriteString(")\n")
+	sb.WriteString("with (\n")
+	sb.WriteString("  'connector' = 'filesystem',\n")
+	sb.WriteString("  'path' = 'file://${csv_file_path}',\n")
+	sb.WriteString("  'format' = 'csv'\n")
+	sb.WriteString(");\n")
+	return sb
+}
+
+func writeDemoHudiT(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Builder {
+	sb.WriteString("create table demo_hudi.t (\n")
+	sb = writeTableDefinition(sb, tblInfo, "hudi")
+	sb.WriteString(")\n")
+	sb.WriteString("With (\n")
+	sb.WriteString("  'connector' = 'hudi',\n")
+	sb.WriteString("  'path' = '${hudi_address}',\n")
+	sb.WriteString("  'table.type' = 'COPY_ON_WRITE'\n")
+	sb.WriteString(");\n")
+	return sb
+}
+
+func writeDemoFlinkT(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Builder {
+	sb.WriteString("create table demo_flink.t (\n")
+	sb = writeTableDefinition(sb, tblInfo, "flink")
+	sb.WriteString(")\n")
+	sb.WriteString("with (\n")
+	sb.WriteString("  'connector' = 'kafka',\n")
+	sb.WriteString("  'topic' = '${kafka_topic}_base',\n")
+	sb.WriteString("  'properties.bootstrap.servers' = '${kafka_address}',\n")
+	sb.WriteString("  'properties.group.id' = 'pingcap-demo-group',\n")
+	sb.WriteString("  'format' = 'canal-json',\n")
+	sb.WriteString("  'scan.startup.mode' = 'earliest-offset'\n")
+	sb.WriteString(");\n")
+
+	return sb
+}
+
+func writeDemoFlinkTInc(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Builder {
+	sb.WriteString("create table demo_flink.t_inc (\n")
+	sb = writeTableDefinition(sb, tblInfo, "flink")
+	sb.WriteString(")\n")
+	sb.WriteString("with (\n")
+	sb.WriteString("  'connector' = 'kafka',\n")
+	sb.WriteString("  'topic' = '${kafka_topic}',\n")
+	sb.WriteString("  'properties.bootstrap.servers' = '${kafka_address}',\n")
+	sb.WriteString("  'properties.group.id' = 'pingcap-demo-group',\n")
+	sb.WriteString("  'format' = 'canal-json',\n")
+	sb.WriteString("  'scan.startup.mode' = 'earliest-offset'\n")
+	sb.WriteString(");\n")
+	return sb
+}
+
+func writeDemoHudiTInsert(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Builder {
+	sb.WriteString("insert into demo_hudi.t (select * from demo_flink.t);\n")
+	sb.WriteString("SET table.dml-sync=true;\n")
+	sb.WriteString("insert into demo_flink.t (select * from demo_flink.t_file);\n")
+	sb.WriteString("RESET table.dml-sync;\n")
+	sb.WriteString("insert into demo_flink.t (select * from demo_flink.t_inc);\n")
+	return sb
+}
+
+func writeTemplateFile(sb *strings.Builder) error {
+	filePath := "./flink.sql.template"
+	text := sb.String()
+
+	// 将文本内容写入文件
+	err := ioutil.WriteFile(filePath, []byte(text), 0644)
+	if err != nil {
+		return err
+	}
+	logutil.BgLogger().Warn("write template file success")
+
+	return nil
+}
 
 func (d *ddl) CreateExternalTable(ctx sessionctx.Context, s *ast.CreateExternalTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}

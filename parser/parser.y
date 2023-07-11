@@ -696,6 +696,7 @@ import (
 	predicate             "PREDICATE"
 	properties            "PROPERTIES"
 	external              "EXTERNAL"
+	etl                   "ETL"
 	primaryRegion         "PRIMARY_REGION"
 	recent                "RECENT"
 	replayer              "REPLAYER"
@@ -896,6 +897,7 @@ import (
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
 	CreateExternalTableStmt    "Create external table statement"
+	CreateETLStmt              "Create ETL statement"
 	CreateViewStmt             "CREATE VIEW  statement"
 	CreateUserStmt             "CREATE User statement"
 	CreateRoleStmt             "CREATE Role statement"
@@ -4045,6 +4047,19 @@ DatabaseOptionList:
 		$$ = append($1.([]*ast.DatabaseOption), $2.(*ast.DatabaseOption))
 	}
 
+CreateETLStmt:
+	"CREATE" "ETL" IfNotExists TableName "AS" CreateViewSelectOpt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		selStmt := $6.(ast.StmtNode)
+		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))	
+		$$ = &ast.CreateETLStmt{
+			IfNotExists: $3.(bool),
+			Table:       $4.(*ast.TableName),
+			ETLSelect:   selStmt,
+		}
+	}
+
 CreateExternalTableStmt:
 	"CREATE" "EXTERNAL" "TABLE" IfNotExists TableName "PROPERTIES" '(' PropertiesList ')'
 	{
@@ -6475,6 +6490,7 @@ TiDBKeyword:
 |	"RUN"
 |	"CATALOG"
 |	"EXTERNAL"
+|	"ETL"
 
 NotKeywordToken:
 	"ADDDATE"
@@ -11411,6 +11427,7 @@ Statement:
 |	CreateCatalogStmt
 |	CreateIndexStmt
 |	CreateExternalTableStmt
+|	CreateETLStmt
 |	CreateTableStmt
 |	CreateViewStmt
 |	CreateUserStmt

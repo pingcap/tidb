@@ -4600,6 +4600,40 @@ func newHDFSClient(address string) (client *hdfs.Client, err error) {
 	return hdfs.NewClient(options)
 }
 
+func FetchColumnInfoFromETLTable(tbl *model.TableInfo) (columns []*table.Column, parquetFileUris []string, err error) {
+	var host, scheme string
+	host = "namenode:8020"
+	scheme = "hdfs"
+	hdfsClient, err := newHDFSClient(host)
+	if err != nil {
+		logutil.BgLogger().Error("newHDFSClient failed")
+		return nil, nil, err
+	}
+
+	// parquetFiles, err := getParquetFiles(hdfsClient, u.Path)
+	parquetFiles, err := getParquetFiles(hdfsClient, tbl.ETLStoragePath)
+	if err != nil {
+		logutil.BgLogger().Error("getParquetFiles failed")
+		return nil, nil, err
+	}
+	if len(parquetFiles) == 0 {
+		logutil.BgLogger().Error("no parquet file found")
+		return nil, nil, errors.New("No Parquet files found")
+	}
+	for i, pf := range parquetFiles {
+		logutil.BgLogger().Error(fmt.Sprintf("parquetFile[%d]: %s", i, pf))
+	}
+
+	metaData, err := readSchemaFromParquetFile(hdfsClient, parquetFiles[0])
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, f := range parquetFiles {
+		parquetFileUris = append(parquetFileUris, scheme+"://"+host+f)
+	}
+	return parquetSchemaToColumnInfo(metaData.Schema), parquetFileUris, nil
+}
+
 func FetchColumnInfoFromExternalTable(tbl *model.TableInfo) (columns []*table.Column, parquetFileUris []string, err error) {
 	tableLocation, err := getTableLocation(tbl)
 	if err != nil {
@@ -4639,6 +4673,7 @@ func FetchColumnInfoFromExternalTable(tbl *model.TableInfo) (columns []*table.Co
 	for _, f := range parquetFiles {
 		parquetFileUris = append(parquetFileUris, u.Scheme+"://"+u.Host+f)
 	}
+	logutil.BgLogger().Error(u.Host + " " + u.Scheme + " " + u.Path)
 	return parquetSchemaToColumnInfo(metaData.Schema), parquetFileUris, nil
 }
 
@@ -4882,6 +4917,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		columns = tbl.DeletableCols()
 	} else if tableInfo.IsExternalTable() {
 		columns, parquetFileUris, err = FetchColumnInfoFromExternalTable(tableInfo)
+	} else if tableInfo.IsETLTable() {
+		columns, parquetFileUris, err = FetchColumnInfoFromETLTable(tableInfo)
 	} else {
 		columns = tbl.Cols()
 	}

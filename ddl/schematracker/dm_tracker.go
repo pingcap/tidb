@@ -67,6 +67,10 @@ func (d SchemaTracker) CreateExternalTable(sctx sessionctx.Context, stmt *ast.Cr
 	return nil
 }
 
+func (d SchemaTracker) CreateETL(sctx sessionctx.Context, stmt *ast.CreateETLStmt) error {
+	return nil
+}
+
 func (d SchemaTracker) CreateCatalog(ctx sessionctx.Context, stmt *ast.CreateCatalogStmt) error {
 	return nil
 }

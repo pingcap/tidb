@@ -435,6 +435,7 @@ func (ft *FieldType) InfoSchemaStr() string {
 	return ft.CompactStr() + suffix
 }
 
+
 // String joins the information of FieldType and returns a string.
 // Note: when flen or decimal is unspecified, this function will use the default value instead of -1.
 func (ft *FieldType) String() string {

@@ -259,6 +259,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.CreateExternalTableStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
+	case *ast.CreateETLStmt:
+		p.stmtTp = TypeCreate
+		p.flag |= inCreateOrDropTable
 	case *ast.CreateViewStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -554,6 +557,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.checkAutoIncrement(x)
 		p.checkContainDotColumn(x)
 	case *ast.CreateExternalTableStmt:
+		p.flag &= ^inCreateOrDropTable
+	case *ast.CreateETLStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *ast.CreateViewStmt:
 		p.flag &= ^inCreateOrDropTable

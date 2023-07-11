@@ -4608,6 +4608,25 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.IndexPriv, v.Table.Schema.L,
 			v.Table.Name.L, "", authErr)
+	case *ast.CreateETLStmt:
+		plan, err := b.Build(ctx, v.ETLSelect)
+		if err != nil {
+			return nil, err
+		}
+		// schema := plan.Schema()
+		outputNames := plan.OutputNames()
+		for _, name := range outputNames {
+			v.OutputNames = append(v.OutputNames, name.ColNameString())
+		}
+		for _, col := range plan.Schema().Columns {
+			v.OutputFieldTypes = append(v.OutputFieldTypes, col.RetType)
+		}
+
+		dsNames := make(map[string]struct{})
+		dsNames = getDataSourceNames(dsNames, plan.(LogicalPlan))
+		for name := range dsNames {
+			v.DataSourceNames = append(v.DataSourceNames, name)
+		}
 	case *ast.CreateTableStmt:
 		if v.TemporaryKeyword != ast.TemporaryNone {
 			for _, cons := range v.Constraints {
@@ -4825,6 +4844,21 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 	}
 	p := &DDL{Statement: node}
 	return p, nil
+}
+
+func getDataSourceNames(dsNames map[string]struct{}, plan LogicalPlan) map[string]struct{} {
+	children := plan.Children()
+	if len(children) == 0 {
+		return dsNames
+	}
+	for _, child := range children {
+		if ds, ok := child.(*DataSource); ok {
+			dsNames[ds.DBName.O+"."+ds.tableInfo.Name.O] = struct{}{}
+		} else {
+			dsNames = getDataSourceNames(dsNames, child)
+		}
+	}
+	return dsNames
 }
 
 const (
