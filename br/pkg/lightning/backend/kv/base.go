@@ -316,8 +316,7 @@ func (e *BaseKVEncoder) LogKVConvertFailed(row []types.Datum, j int, colInfo *mo
 	)
 
 	if len(original.GetString()) >= 512*1024 {
-		var originalPrefix string
-		originalPrefix = original.GetString()[0:1024]
+		originalPrefix := original.GetString()[0:1024]
 		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", originalPrefix),
 			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
 			zap.Int("columnID", j+1))
