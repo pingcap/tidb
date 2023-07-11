@@ -988,7 +988,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 		opt(option)
 	}
 	if option.ByQuery() {
-		tbl, ok = statsCache.GetFromQuery(pid)
+		tbl, ok = statsCache.GetFromUser(pid)
 	} else {
 		tbl, ok = statsCache.GetFromInternal(pid)
 	}
