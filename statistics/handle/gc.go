@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -82,7 +83,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		TableRowStatsCache.Invalidate(physicalID)
+		cache.TableRowStatsCache.Invalidate(physicalID)
 	}
 	tbl, ok := h.getTableByPhysicalID(is, physicalID)
 	if !ok {

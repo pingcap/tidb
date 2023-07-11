@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/tls"
@@ -51,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	tikvcliutil "github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -383,6 +385,12 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeSession, Name: TiDBUseAlloc, Value: BoolToOnOff(DefTiDBUseAlloc), Type: TypeBool, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(s.preUseChunkAlloc), nil
+	}},
+	{Scope: ScopeSession, Name: TiDBExplicitRequestSourceType, Value: "", Type: TypeEnum, PossibleValues: tikvcliutil.ExplicitTypeList, GetSession: func(s *SessionVars) (string, error) {
+		return s.ExplicitRequestSourceType, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.ExplicitRequestSourceType = val
+		return nil
 	}},
 	/* The system variables below have INSTANCE scope  */
 	{Scope: ScopeInstance, Name: TiDBLogFileMaxDays, Value: strconv.Itoa(config.GetGlobalConfig().Log.File.MaxDays), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
@@ -1294,7 +1302,7 @@ var defaultSysVars = []*SysVar{
 			return s, nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(true), Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(DefTiDBEnablePlanReplayerCapture), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnablePlanReplayerCapture = TiDBOptOn(val)
 			return nil
@@ -2286,7 +2294,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return strconv.Itoa(int(ts)), err
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableExternalTSRead, Value: BoolToOnOff(false), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableExternalTSRead, Value: BoolToOnOff(DefTiDBEnableExternalTSRead), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableExternalTSRead = TiDBOptOn(val)
 		return nil
 	}},
@@ -2542,6 +2550,15 @@ var defaultSysVars = []*SysVar{
 		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashReplicaRead, Value: DefTiFlashReplicaRead, Type: TypeEnum, PossibleValues: []string{DefTiFlashReplicaRead, tiflash.ClosestAdaptiveStr, tiflash.ClosestReplicasStr},
+		SetSession: func(s *SessionVars, val string) error {
+			s.TiFlashReplicaRead = tiflash.GetTiFlashReplicaReadByStr(val)
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return tiflash.GetTiFlashReplicaRead(s.TiFlashReplicaRead), nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBFastCheckTable, Value: BoolToOnOff(DefTiDBEnableFastCheckTable), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.FastCheckTable = TiDBOptOn(val)
 		return nil

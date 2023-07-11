@@ -319,13 +319,35 @@ func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, states .
 	return row2SubTask(rs[0]), nil
 }
 
+// UpdateErrorToSubtask updates the error to subtask.
+func (stm *TaskManager) UpdateErrorToSubtask(tidbID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	_, err1 := stm.executeSQLWithNewSession(stm.ctx,
+		"update mysql.tidb_background_subtask set state = %?, error = %? where exec_id = %? and state = %? limit 1;",
+		proto.TaskStateFailed, serializeErr(err), tidbID, proto.TaskStatePending)
+	return err1
+}
+
 // PrintSubtaskInfo log the subtask info by taskKey.
 func (stm *TaskManager) PrintSubtaskInfo(taskKey int) {
 	rs, _ := stm.executeSQLWithNewSession(stm.ctx,
 		"select * from mysql.tidb_background_subtask where task_key = %?", taskKey)
 
 	for _, r := range rs {
-		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", row2SubTask(r)))
+		errBytes := r.GetBytes(13)
+		var err error
+		if len(errBytes) > 0 {
+			stdErr := errors.Normalize("")
+			err1 := stdErr.UnmarshalJSON(errBytes)
+			if err1 != nil {
+				err = err1
+			} else {
+				err = stdErr
+			}
+		}
+		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", row2SubTask(r)), zap.Error(err))
 	}
 }
 
@@ -446,7 +468,7 @@ func (stm *TaskManager) GetSchedulerIDsByTaskID(taskID int64) ([]string, error) 
 }
 
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
-func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, isSubtaskRevert bool) error {
+func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask) error {
 	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
 		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %? where id = %?",
 			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.ID)
@@ -461,7 +483,7 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 		})
 
 		subtaskState := proto.TaskStatePending
-		if isSubtaskRevert {
+		if gTask.State == proto.TaskStateReverting {
 			subtaskState = proto.TaskStateRevertPending
 		}
 
