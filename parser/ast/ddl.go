@@ -2186,7 +2186,7 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 					ctx.WritePlain(" ")
 				}
 				if err := option.Restore(ctx); err != nil {
-					return errors.Annotatef(err, "An error occurred while splicing CreateResourceGroupStmt Option: [%v]", i)
+					return errors.Annotatef(err, "An error occurred while splicing ResourceGroupRunaway Option: [%v]", option)
 				}
 			}
 			ctx.WritePlain(")")
@@ -2203,7 +2203,7 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 					ctx.WritePlain(", ")
 				}
 				if err := option.Restore(ctx); err != nil {
-					return errors.Annotatef(err, "An error occurred while splicing ResourceGroup Background Option")
+					return errors.Annotatef(err, "An error occurred while splicing ResourceGroup Background Option: [%v]", option)
 				}
 			}
 			ctx.WritePlain(")")
