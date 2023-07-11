@@ -495,6 +495,18 @@ func TestSessionCtx(t *testing.T) {
 					`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
+		{
+			// check request source
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec(`set @@tidb_request_source_type="lightning"`)
+				require.Equal(t, "lightning", tk.Session().GetSessionVars().ExplicitRequestSourceType)
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustExec(`select count(*) from test.t1`)
+				tk.MustQuery(`select @@tidb_request_source_type`).Check(testkit.Rows("lightning"))
+			},
+		},
 	}
 
 	for _, tt := range tests {

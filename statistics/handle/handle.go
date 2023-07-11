@@ -447,7 +447,7 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 func (h *Handle) Clear() {
 	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
 	h.mu.Lock()
-	h.statsCache.Replace(cache.NewStatsCacheWrapper())
+	h.statsCache.Replace(cache.NewStatsCache())
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
@@ -617,7 +617,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
-	h.updateStatsCache(oldCache.Update(tables, deletedTableIDs, opts...))
+	h.updateStatsCache(oldCache.CopyAndUpdate(tables, deletedTableIDs, opts...))
 	return nil
 }
 
@@ -996,7 +996,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
 		if tblInfo.GetPartitionInfo() == nil || h.statsCacheLen() < 64 {
-			h.updateStatsCache(statsCache.Update([]*statistics.Table{tbl}, nil))
+			h.updateStatsCache(statsCache.CopyAndUpdate([]*statistics.Table{tbl}, nil))
 		}
 		return tbl
 	}
@@ -1010,8 +1010,8 @@ func (h *Handle) statsCacheLen() int {
 // updateStatsCache overrides the global statsCache with a new one, it may fail
 // if the global statsCache has been modified by others already.
 // Callers should add retry loop if necessary.
-func (h *Handle) updateStatsCache(newCache cache.StatsCacheWrapper) (updated bool) {
-	h.statsCache.Replace(&newCache)
+func (h *Handle) updateStatsCache(newCache *cache.StatsCache) (updated bool) {
+	h.statsCache.Replace(newCache)
 	handle_metrics.CostGauge.Set(float64(newCache.Cost()))
 	return true
 }
@@ -1102,7 +1102,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 	}
 	tbl = tbl.Copy()
 	tbl.Columns[c.ID] = colHist
-	if h.updateStatsCache(oldCache.Update([]*statistics.Table{tbl}, nil)) {
+	if h.updateStatsCache(oldCache.CopyAndUpdate([]*statistics.Table{tbl}, nil)) {
 		statistics.HistogramNeededItems.Delete(col)
 	}
 	return nil
@@ -1155,7 +1155,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 	}
 	tbl = tbl.Copy()
 	tbl.Indices[idx.ID] = idxHist
-	if h.updateStatsCache(oldCache.Update([]*statistics.Table{tbl}, nil)) {
+	if h.updateStatsCache(oldCache.CopyAndUpdate([]*statistics.Table{tbl}, nil)) {
 		statistics.HistogramNeededItems.Delete(idx)
 	}
 	return nil
@@ -1798,7 +1798,7 @@ func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 		}
 		newTbl := tbl.Copy()
 		delete(newTbl.ExtendedStats.Stats, statsName)
-		if h.updateStatsCache(oldCache.Update([]*statistics.Table{newTbl}, nil)) {
+		if h.updateStatsCache(oldCache.CopyAndUpdate([]*statistics.Table{newTbl}, nil)) {
 			return
 		}
 		if retry == 1 {
@@ -1831,7 +1831,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 			}
 			tables = append(tables, t)
 		}
-		if h.updateStatsCache(oldCache.Update(tables, nil)) {
+		if h.updateStatsCache(oldCache.CopyAndUpdate(tables, nil)) {
 			return nil
 		}
 	}

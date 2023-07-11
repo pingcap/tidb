@@ -368,6 +368,11 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		ds.Columns = append(ds.Columns, handleColInfo)
 		ds.schema.Append(handleCol)
 	}
+	// ref: https://github.com/pingcap/tidb/issues/44579
+	// when first entering columnPruner, we kept a column-a in datasource since upper agg function count(a) is used.
+	//		then we mark the handleCols as nil here.
+	// when second entering columnPruner, the count(a) is eliminated since it always not null. we should fill another
+	// 		extra col, in this way, handle col is useful again, otherwise, _tidb_rowid will be filled.
 	if ds.handleCols != nil && ds.handleCols.IsInt() && ds.schema.ColumnIndex(ds.handleCols.GetCol(0)) == -1 {
 		ds.handleCols = nil
 	}
@@ -683,6 +688,11 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 	} else {
 		if dataSource.handleCols != nil {
 			resultColumn = dataSource.handleCols.GetCol(0)
+			resultColumnInfo = resultColumn.ToInfo()
+		} else if dataSource.table.Meta().PKIsHandle {
+			// dataSource.handleCols = nil doesn't mean datasource doesn't have a intPk handle.
+			// since datasource.handleCols will be cleared in the first columnPruner.
+			resultColumn = dataSource.unMutableHandleCols.GetCol(0)
 			resultColumnInfo = resultColumn.ToInfo()
 		} else {
 			resultColumn = dataSource.newExtraHandleSchemaCol()
