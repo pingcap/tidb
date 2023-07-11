@@ -14,7 +14,7 @@ require (
 	github.com/Shopify/sarama v1.29.0
 	github.com/akolb1/gometastore v0.0.0-20221218020403-aaa7217ecd00
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
-	github.com/apache/arrow/go/v12 v12.0.0-20230309200115-ad44e8e4e669
+	github.com/apache/arrow/go/v12 v12.0.1
 	github.com/apache/skywalking-eyes v0.4.0
 	github.com/ashanbrown/makezero v1.1.1
 	github.com/aws/aws-sdk-go v1.44.48

@@ -113,8 +113,8 @@ github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581/go.mod h1:RcDobYh8k5VP6TNybz9m
 github.com/andybalholm/brotli v1.0.4 h1:V7DdXeJtZscaqfNuAdSRuRFzuiKlHSC/Zh3zl9qY3JY=
 github.com/andybalholm/brotli v1.0.4/go.mod h1:fO7iG3H7G2nSZ7m0zPUDn85XEX2GTukHGRSepvi9Eig=
 github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kdvxnR2qWY=
-github.com/apache/arrow/go/v12 v12.0.0-20230309200115-ad44e8e4e669 h1:nQfjItiakzFOKbz4S+MQGS7fr6DLeJefnJlsYZMhtB0=
-github.com/apache/arrow/go/v12 v12.0.0-20230309200115-ad44e8e4e669/go.mod h1:3bzD+tSb3xP8RI3JKK27LNicpbINL7Pvx0mtOxQnSD8=
+github.com/apache/arrow/go/v12 v12.0.1 h1:JsR2+hzYYjgSUkBSaahpqCetqZMr76djX80fF/DiJbg=
+github.com/apache/arrow/go/v12 v12.0.1/go.mod h1:weuTY7JvTG/HDPtMQxEUp7pU73vkLWMLpY67QwZ/WWw=
 github.com/apache/skywalking-eyes v0.4.0 h1:O13kdRU6FCEZevfD01mdhTgCZLLfPZIQ0GXZrLl7FpQ=
 github.com/apache/skywalking-eyes v0.4.0/go.mod h1:WblDbBgOLsLN0FJEBa9xj6PhuUA/J6spKYVTG4/F8Ls=
 github.com/apache/thrift v0.0.0-20181112125854-24918abba929/go.mod h1:cp2SuWMxlEZw2r+iP2GNCdIi4C1qmUzdZFSVb+bacwQ=

@@ -155,6 +155,9 @@ func writeTableDefinition(sb *strings.Builder, tblInfo *model.TableInfo, engineT
 				tpStr = "string"
 			}
 		}
+		if strings.Contains(tpStr, "int") {
+			tpStr = "int"
+		}
 		s := fmt.Sprintf("  %s %s,\n", name, tpStr)
 		if i == len(tblInfo.ETLOutputNames)-1 {
 			s = fmt.Sprintf("  %s %s\n", name, tpStr)
@@ -186,7 +189,7 @@ func writeDemoHudiT(sb *strings.Builder, tblInfo *model.TableInfo) *strings.Buil
 	sb.WriteString(")\n")
 	sb.WriteString("With (\n")
 	sb.WriteString("  'connector' = 'hudi',\n")
-	sb.WriteString("  'path' = '${hudi_address}',\n")
+	sb.WriteString("  'path' = '${hdfs_address}',\n")
 	sb.WriteString("  'table.type' = 'COPY_ON_WRITE'\n")
 	sb.WriteString(");\n")
 	return sb
