@@ -15711,13 +15711,13 @@ DynamicCalibrateOptionList:
 	}
 
 DynamicCalibrateResourceOption:
-	"START_TIME" EqOpt stringLit
+	"START_TIME" EqOpt Expression
 	{
-		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateStartTime, Ts: ast.NewValueExpr($3, "", "")}
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateStartTime, Ts: $3.(ast.ExprNode)}
 	}
-|	"END_TIME" EqOpt stringLit
+|	"END_TIME" EqOpt Expression
 	{
-		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateEndTime, Ts: ast.NewValueExpr($3, "", "")}
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateEndTime, Ts: $3.(ast.ExprNode)}
 	}
 |	"DURATION" EqOpt stringLit
 	{
@@ -15727,6 +15727,10 @@ DynamicCalibrateResourceOption:
 			return 1
 		}
 		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateDuration, StrValue: $3}
+	}
+|	"DURATION" EqOpt "INTERVAL" Expression TimeUnit
+	{
+		$$ = &ast.DynamicCalibrateResourceOption{Tp: ast.CalibrateDuration, Ts: $4.(ast.ExprNode), Unit: $5.(ast.TimeUnitType)}
 	}
 
 CalibrateResourceWorkloadOption:
