@@ -55,6 +55,13 @@ const (
 	MetaV2
 )
 
+type BackupItem struct {
+	// File represents the backup file generated with scan entries.
+	File *backuppb.File
+	// Ragne is for File backup, including a region range and all related SST files.
+	Range *backuppb.BackupRange
+}
+
 // PitrIDMapsFilename is filename that used to save id maps in pitr.
 func PitrIDMapsFilename(clusterID, restoreTS uint64) string {
 	return fmt.Sprintf("%s/pitr_id_map.cluster_id:%d.restored_ts:%d", "pitr_id_maps", clusterID, restoreTS)
@@ -210,22 +217,20 @@ func (reader *MetaReader) readSchemas(ctx context.Context, output func(*backuppb
 	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.SchemaIndex, reader.cipher, outputFn)
 }
 
-func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backuppb.File)) error {
+func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*BackupItem)) error {
 	// Read backupmeta v1 data files.
 	for _, f := range reader.backupMeta.Files {
-		output(f)
+		output(&BackupItem{File: f})
 	}
 	// Read backupmeta range files for file-copy.
 	for _, r := range reader.backupMeta.Ranges {
-		for _, f := range r.Files {
-			output(f)
-		}
+		output(&BackupItem{Range: r})
 	}
 
 	// Read backupmeta v2 data files.
 	outputFn := func(m *backuppb.MetaFile) {
 		for _, f := range m.DataFiles {
-			output(f)
+			output(&BackupItem{File: f})
 		}
 	}
 	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.FileIndex, reader.cipher, outputFn)
@@ -318,15 +323,25 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 
 	// It's not easy to balance memory and time costs for current structure.
 	// put all files in memory due to https://github.com/pingcap/br/issues/705
-	var fileMap map[int64][]*backuppb.File
+	var itemMap map[int64][]*BackupItem
 	if !cfg.skipFiles {
-		fileMap = make(map[int64][]*backuppb.File)
-		outputFn := func(file *backuppb.File) {
-			tableID := tablecodec.DecodeTableID(file.GetStartKey())
-			if tableID == 0 {
-				log.Panic("tableID must not equal to 0", logutil.File(file))
+		itemMap = make(map[int64][]*BackupItem)
+		outputFn := func(item *BackupItem) {
+			if item.File != nil {
+				file := item.File
+				tableID := tablecodec.DecodeTableID(file.GetStartKey())
+				if tableID == 0 {
+					log.Panic("tableID must not equal to 0", logutil.File(file))
+				}
+				itemMap[tableID] = append(itemMap[tableID], item)
 			}
-			fileMap[tableID] = append(fileMap[tableID], file)
+			if item.Range != nil {
+				tableID := tablecodec.DecodeTableID(item.Range.GetStartKey())
+				if tableID == 0 {
+					log.Panic("tableID must not equal to 0", zap.Any("item", item))
+				}
+				itemMap[tableID] = append(itemMap[tableID], item)
+			}
 		}
 		err := reader.readDataFiles(ctx, outputFn)
 		if err != nil {
@@ -369,8 +384,8 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 				Stats:           stats,
 			}
 			if tableInfo != nil {
-				if fileMap != nil {
-					if files, ok := fileMap[tableInfo.ID]; ok {
+				if itemMap != nil {
+					if files, ok := itemMap[tableInfo.ID]; ok {
 						table.Files = append(table.Files, files...)
 					}
 					if tableInfo.Partition != nil {
