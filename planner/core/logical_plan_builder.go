@@ -5032,6 +5032,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	ds.handleCols = handleCols
+	ds.unMutableHandleCols = handleCols
 	handleMap := make(map[int64][]HandleCols)
 	handleMap[tableInfo.ID] = []HandleCols{handleCols}
 	b.handleHelper.pushMap(handleMap)

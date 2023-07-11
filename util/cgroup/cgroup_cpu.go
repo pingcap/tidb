@@ -32,7 +32,7 @@ func getCgroupCPU(root string) (CPUUsage, error) {
 
 	// No CPU controller detected
 	if path == "" {
-		return CPUUsage{}, errNoCPUControllerDetected
+		return CPUUsage{}, errors.New("no cpu controller detected")
 	}
 
 	mount, ver, err := getCgroupDetails(filepath.Join(root, procPathMountInfo), path, "cpu,cpuacct")
@@ -81,7 +81,7 @@ func getCgroupCPU(root string) (CPUUsage, error) {
 				return res, err
 			}
 		default:
-			return CPUUsage{}, fmt.Errorf("detected unknown cgroup version index: %d", ver)
+			return CPUUsage{}, fmt.Errorf("detected unknown cgroup version index: %d", ver[0])
 		}
 	}
 

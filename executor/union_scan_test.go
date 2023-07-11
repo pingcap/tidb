@@ -575,6 +575,19 @@ func TestIssue36903(t *testing.T) {
 	tk.MustQuery("select pkey from t_vwvgdc where 0 <> 0 union select pkey from t_vwvgdc;").Sort().Check(testkit.Rows("15000", "228000"))
 }
 
+func TestIssue41827(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a year(4), b enum('2','k','4','nsy','wmlgy','alkr7'), primary key (a), key idx(b))")
+
+	tk.MustExec("insert into t values (2033, 'alkr7')")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t set a = '2011', b = '4'")
+	tk.MustExec("select /*+ USE_INDEX_MERGE(t, primary, idx) */b from t where not( b in ( 'alkr7' ) ) or not( a in ( '1989' ,'1970' ) )")
+}
+
 func BenchmarkUnionScanRead(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 
