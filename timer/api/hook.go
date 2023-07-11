@@ -19,15 +19,15 @@ import (
 	"time"
 )
 
-// TimerShedEvent is an interface which gives the timer's schedule event's information
+// TimerShedEvent is an interface which gives the timer's schedule event's information.
 type TimerShedEvent interface {
-	// EventID returns the event ID the current event
+	// EventID returns the event ID the current event.
 	EventID() string
-	// Timer returns the timer record object of the current event
+	// Timer returns the timer record object of the current event.
 	Timer() *TimerRecord
 }
 
-// PreSchedEventResult is the result of `OnPreSchedEvent`
+// PreSchedEventResult is the result of `OnPreSchedEvent`.
 type PreSchedEventResult struct {
 	// Delay indicates to delay the event after a while.
 	// If `Delay` is 0, it means no delay, and then `OnSchedEvent` will be called.
@@ -35,16 +35,16 @@ type PreSchedEventResult struct {
 	// check whether to trigger the event.
 	Delay time.Duration
 	// EventData indicates the data should be passed to the event that should be triggered.
-	// EventData can be used to store some pre-computed configurations of the next event
+	// EventData can be used to store some pre-computed configurations of the next event.
 	EventData []byte
 }
 
-// Hook is an interface which should be implemented by user to tell framework how to trigger an event
-// Several timers with a same hook class can share one hook in a runtime
+// Hook is an interface which should be implemented by user to tell framework how to trigger an event.
+// Several timers with a same hook class can share one hook in a runtime.
 type Hook interface {
-	// Start starts the hook
+	// Start starts the hook.
 	Start()
-	// Stop stops the hook. When it is called, this means the framework is shutting down
+	// Stop stops the hook. When it is called, this means the framework is shutting down.
 	Stop()
 	// OnPreSchedEvent will be called before triggering a new event. It's return value tells the next action of the triggering.
 	// For example, if `TimerShedEvent.Delay` is a non-zero value, the event triggering will be postponed.
@@ -55,5 +55,5 @@ type Hook interface {
 	OnSchedEvent(ctx context.Context, event TimerShedEvent) error
 }
 
-// HookFactory is the factory function to construct a new Hook object with `hookClass`
+// HookFactory is the factory function to construct a new Hook object with `hookClass`.
 type HookFactory func(hookClass string, cli TimerClient) Hook

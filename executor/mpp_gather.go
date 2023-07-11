@@ -20,7 +20,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/executor/internal/mpp"
+	"github.com/pingcap/tidb/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -55,11 +57,12 @@ func getMPPQueryTS(ctx sessionctx.Context) uint64 {
 // MPPGather dispatch MPP tasks and read data from root tasks.
 type MPPGather struct {
 	// following fields are construct needed
-	baseExecutor
+	exec.BaseExecutor
 	is           infoschema.InfoSchema
 	originalPlan plannercore.PhysicalPlan
 	startTS      uint64
 	mppQueryID   kv.MPPQueryID
+	gatherID     uint64 // used for mpp_gather level retry, since each time should use different gatherIDs
 	respIter     distsql.SelectResult
 
 	memTracker *memory.Tracker
@@ -83,6 +86,13 @@ func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 	return ids
 }
 
+// allocMPPGatherID allocates mpp gather id for mpp gathers. It will reset the gather id when the query finished.
+// To support mpp_gather level cancel/retry and mpp_gather under apply executors, need to generate incremental ids when Open function is invoked
+func allocMPPGatherID(ctx sessionctx.Context) uint64 {
+	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
+	return mppQueryInfo.AllocatedMPPGatherID.Add(1)
+}
+
 // Open builds coordinator and invoke coordinator's Execute function to execute physical plan
 // If any task fails, it would cancel the rest tasks.
 func (e *MPPGather) Open(ctx context.Context) (err error) {
@@ -91,23 +101,28 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		if !ok {
 			return errors.Errorf("unexpected plan type, expect: PhysicalExchangeSender, got: %s", e.originalPlan.TP())
 		}
-		_, e.kvRanges, err = plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, e.mppQueryID, sender, e.is)
+		_, e.kvRanges, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, e.gatherID, e.mppQueryID, sender, e.is)
 		return err
 	}
-	coord := e.buildCoordinator()
+	planIDs := collectPlanIDS(e.originalPlan, nil)
+	e.gatherID = allocMPPGatherID(e.Ctx())
+	coord := e.buildCoordinator(planIDs)
+	err = mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID}, coord)
+	if err != nil {
+		return err
+	}
 	var resp kv.Response
 	resp, e.kvRanges, err = coord.Execute(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	planIDs := collectPlanIDS(e.originalPlan, nil)
-	e.respIter = distsql.GenSelectResultFromResponse(e.ctx, e.retFieldTypes, planIDs, e.id, resp)
+	e.respIter = distsql.GenSelectResultFromResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), resp)
 	return nil
 }
 
-func (e *MPPGather) buildCoordinator() kv.MppCoordinator {
-	coord := mpp.NewLocalMPPCoordinator(e.ctx, e.is, e.originalPlan, e.startTS, e.mppQueryID, e.memTracker)
+func (e *MPPGather) buildCoordinator(planIDs []int) kv.MppCoordinator {
+	_, serverAddr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
+	coord := mpp.NewLocalMPPCoordinator(e.Ctx(), e.is, e.originalPlan, planIDs, e.startTS, e.mppQueryID, e.gatherID, serverAddr, e.memTracker)
 	return coord
 }
 
@@ -121,7 +136,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema.Columns, e.columns, e.ctx, chk)
+	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), chk)
 	if err != nil {
 		return err
 	}
@@ -130,11 +145,16 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // Close and release the used resources.
 func (e *MPPGather) Close() error {
+	var err error
 	if e.dummy {
 		return nil
 	}
 	if e.respIter != nil {
-		return e.respIter.Close()
+		err = e.respIter.Close()
+	}
+	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID})
+	if err != nil {
+		return err
 	}
 	return nil
 }

@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -141,10 +143,11 @@ func NewTargetInfoGetter(db *sql.DB) backend.TargetInfoGetter {
 // TODO: refactor
 func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	var err error
-	tables := []*model.TableInfo{}
+	results := []*model.TableInfo{}
+	logger := log.FromContext(ctx)
 	s := common.SQLWithRetry{
 		DB:     b.db,
-		Logger: log.FromContext(ctx),
+		Logger: logger,
 	}
 
 	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {
@@ -170,6 +173,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 			curColOffset int
 			curTable     *model.TableInfo
 		)
+		tables := []*model.TableInfo{}
 		for rows.Next() {
 			var tableName, columnName, columnType, generationExpr, columnExtra string
 			if e := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); e != nil {
@@ -212,15 +216,24 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 		// shard_row_id/auto random is only available after tidb v4.0.0
 		// `show table next_row_id` is also not available before tidb v4.0.0
 		if serverInfo.ServerType != version.ServerTypeTiDB || serverInfo.ServerVersion.Major < 4 {
+			results = tables
 			return nil
 		}
+
+		failpoint.Inject(
+			"FetchRemoteTableModels_BeforeFetchTableAutoIDInfos",
+			func() {
+				fmt.Println("failpoint: FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")
+			},
+		)
 
 		// init auto id column for each table
 		for _, tbl := range tables {
 			tblName := common.UniqueTable(schemaName, tbl.Name.O)
 			autoIDInfos, err := FetchTableAutoIDInfos(ctx, tx, tblName)
 			if err != nil {
-				return errors.Trace(err)
+				logger.Warn("fetch table auto ID infos error. Ignore this table and continue.", zap.String("table_name", tblName), zap.Error(err))
+				continue
 			}
 			for _, info := range autoIDInfos {
 				for _, col := range tbl.Columns {
@@ -237,10 +250,11 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 					}
 				}
 			}
+			results = append(results, tbl)
 		}
 		return nil
 	})
-	return tables, err
+	return results, err
 }
 
 // CheckRequirements performs the check whether the backend satisfies the version requirements.
@@ -584,7 +598,7 @@ rowLoop:
 				continue rowLoop
 			case common.IsRetryableError(err):
 				// retry next loop
-			case be.errorMgr.TypeErrorsRemain() > 0:
+			case be.errorMgr.TypeErrorsRemain() > 0 || be.errorMgr.ConflictErrorsRemain() > 0:
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
 				// we need to redo the writing row-by-row to find where the error locates (and skip it correctly in future).
 				if err = be.WriteRowsToDB(ctx, tableName, columnNames, r); err != nil {
@@ -705,7 +719,30 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 					continue
 				}
 				firstRow := stmtTask.rows[0]
-				err = be.errorMgr.RecordTypeError(ctx, log.FromContext(ctx), tableName, firstRow.path, firstRow.offset, firstRow.insertStmt, err)
+
+				if isDupEntryError(err) {
+					// rowID is ignored in tidb backend
+					err = be.errorMgr.RecordDuplicate(
+						ctx,
+						log.FromContext(ctx),
+						tableName,
+						firstRow.path,
+						firstRow.offset,
+						err.Error(),
+						0,
+						firstRow.insertStmt,
+					)
+				} else {
+					err = be.errorMgr.RecordTypeError(
+						ctx,
+						log.FromContext(ctx),
+						tableName,
+						firstRow.path,
+						firstRow.offset,
+						firstRow.insertStmt,
+						err,
+					)
+				}
 				if err == nil {
 					// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
 					break
@@ -720,6 +757,14 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
 	})
 	return nil
+}
+
+func isDupEntryError(err error) bool {
+	merr, ok := errors.Cause(err).(*gmysql.MySQLError)
+	if !ok {
+		return false
+	}
+	return merr.Number == errno.ErrDupEntry
 }
 
 // FlushEngine flushes the data in the engine to the underlying storage.

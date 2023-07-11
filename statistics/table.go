@@ -410,16 +410,16 @@ func (t *Table) ColumnByName(colName string) *Column {
 }
 
 // GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
-func (t *Table) GetStatsInfo(ID int64, isIndex bool) (*Histogram, *CMSketch, *TopN, *FMSketch, bool) {
+func (t *Table) GetStatsInfo(id int64, isIndex bool) (*Histogram, *CMSketch, *TopN, *FMSketch, bool) {
 	if isIndex {
-		if idxStatsInfo, ok := t.Indices[ID]; ok {
+		if idxStatsInfo, ok := t.Indices[id]; ok {
 			return idxStatsInfo.Histogram.Copy(),
 				idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy(), true
 		}
 		// newly added index which is not analyzed yet
 		return nil, nil, nil, nil, false
 	}
-	if colStatsInfo, ok := t.Columns[ID]; ok {
+	if colStatsInfo, ok := t.Columns[id]; ok {
 		return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(),
 			colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy(), true
 	}
@@ -739,19 +739,19 @@ func CETraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ran
 	}
 	expr, err := ranger.RangesToString(sc, ranges, colNames)
 	if err != nil {
-		logutil.BgLogger().Debug("[OptimizerTrace] Failed to trace CE of ranges", zap.Error(err))
+		logutil.BgLogger().Debug("Failed to trace CE of ranges", zap.String("category", "OptimizerTrace"), zap.Error(err))
 	}
 	// We don't need to record meaningless expressions.
 	if expr == "" || expr == "true" || expr == "false" {
 		return
 	}
-	CERecord := tracing.CETraceRecord{
+	ceRecord := tracing.CETraceRecord{
 		TableID:  tableID,
 		Type:     tp,
 		Expr:     expr,
 		RowCount: rowCount,
 	}
-	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &CERecord)
+	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &ceRecord)
 }
 
 func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID int64) (isIndex bool, idx int64) {

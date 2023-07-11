@@ -119,7 +119,7 @@ go_library(
         "//sessiontxn",
         "//sessiontxn/staleread",
         "//statistics",
-        "//statistics/handle",
+        "//statistics/handle/cache",
         "//table",
         "//table/tables",
         "//table/temptable",

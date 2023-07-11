@@ -327,7 +327,7 @@ func (s *Service) Close() {
 			if v.base > 0 {
 				err := v.forceRebase(context.Background(), s.store, k.dbID, k.tblID, v.base, v.isUnsigned)
 				if err != nil {
-					logutil.BgLogger().Warn("[autoid service] save cached ID fail when service exit",
+					logutil.BgLogger().Warn("save cached ID fail when service exit", zap.String("category", "autoid service"),
 						zap.Int64("db id", k.dbID),
 						zap.Int64("table id", k.tblID),
 						zap.Int64("value", v.base),
@@ -407,7 +407,7 @@ func (s *Service) getAlloc(dbID, tblID int64, isUnsigned bool) *autoIDValue {
 
 func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 	if s.leaderShip != nil && !s.leaderShip.IsOwner() {
-		logutil.BgLogger().Info("[autoid service] Alloc AutoID fail, not leader")
+		logutil.BgLogger().Info("Alloc AutoID fail, not leader", zap.String("category", "autoid service"))
 		return nil, errors.New("not leader")
 	}
 
@@ -497,7 +497,7 @@ func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbI
 // req.N = 0 is handled specially, it is used to return the current auto ID value.
 func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
 	if s.leaderShip != nil && !s.leaderShip.IsOwner() {
-		logutil.BgLogger().Info("[autoid service] Rebase() fail, not leader")
+		logutil.BgLogger().Info("Rebase() fail, not leader", zap.String("category", "autoid service"))
 		return nil, errors.New("not leader")
 	}
 

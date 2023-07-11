@@ -210,26 +210,26 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		sqls = append(sqls, execStmt.Text())
 	}
 	if task.IsCapture {
-		logutil.BgLogger().Info("[plan-replayer-dump] start to dump plan replayer result",
+		logutil.BgLogger().Info("start to dump plan replayer result", zap.String("category", "plan-replayer-dump"),
 			zap.String("sql-digest", task.SQLDigest),
 			zap.String("plan-digest", task.PlanDigest),
 			zap.Strings("sql", sqls),
 			zap.Bool("isContinues", task.IsContinuesCapture))
 	} else {
-		logutil.BgLogger().Info("[plan-replayer-dump] start to dump plan replayer result",
+		logutil.BgLogger().Info("start to dump plan replayer result", zap.String("category", "plan-replayer-dump"),
 			zap.Strings("sqls", sqls))
 	}
 	defer func() {
 		errMsg := ""
 		if err != nil {
 			if task.IsCapture {
-				logutil.BgLogger().Info("[plan-replayer-dump] dump file failed",
+				logutil.BgLogger().Info("dump file failed", zap.String("category", "plan-replayer-dump"),
 					zap.String("sql-digest", task.SQLDigest),
 					zap.String("plan-digest", task.PlanDigest),
 					zap.Strings("sql", sqls),
 					zap.Bool("isContinues", task.IsContinuesCapture))
 			} else {
-				logutil.BgLogger().Info("[plan-replayer-dump] start to dump plan replayer result",
+				logutil.BgLogger().Info("start to dump plan replayer result", zap.String("category", "plan-replayer-dump"),
 					zap.Strings("sqls", sqls))
 			}
 			errMsg = err.Error()
@@ -239,12 +239,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		}
 		err1 := zw.Close()
 		if err1 != nil {
-			logutil.BgLogger().Error("[plan-replayer-dump] Closing zip writer failed", zap.Error(err), zap.String("filename", fileName))
+			logutil.BgLogger().Error("Closing zip writer failed", zap.String("category", "plan-replayer-dump"), zap.Error(err), zap.String("filename", fileName))
 			errMsg = errMsg + "," + err1.Error()
 		}
 		err2 := zf.Close()
 		if err2 != nil {
-			logutil.BgLogger().Error("[plan-replayer-dump] Closing zip file failed", zap.Error(err), zap.String("filename", fileName))
+			logutil.BgLogger().Error("Closing zip file failed", zap.String("category", "plan-replayer-dump"), zap.Error(err), zap.String("filename", fileName))
 			errMsg = errMsg + "," + err2.Error()
 		}
 		if len(errMsg) > 0 {

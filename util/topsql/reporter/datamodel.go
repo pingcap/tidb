@@ -723,7 +723,7 @@ func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc, compressPla
 			protoMeta.NormalizedPlan, err = decodePlan(originalMeta.binaryNormalizedPlan)
 		}
 		if err != nil {
-			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(err))
+			logutil.BgLogger().Warn("decode plan failed", zap.String("category", "top-sql"), zap.Error(err))
 			return true
 		}
 
