@@ -26,7 +26,6 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-tipb",
-        "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_zap//:zap",
     ],
 )

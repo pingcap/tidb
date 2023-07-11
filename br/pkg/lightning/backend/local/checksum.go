@@ -268,31 +268,34 @@ func updateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 
 // TiKVChecksumManager is a manager that can compute checksum of a table using TiKV.
 type TiKVChecksumManager struct {
-	client                 kv.Client
-	manager                gcTTLManager
-	distSQLScanConcurrency uint
-	backoffWeight          int
-	resourceGroupName      string
+	client                    kv.Client
+	manager                   gcTTLManager
+	distSQLScanConcurrency    uint
+	backoffWeight             int
+	resourceGroupName         string
+	explicitRequestSourceType string
 }
 
 var _ ChecksumManager = &TiKVChecksumManager{}
 
 // NewTiKVChecksumManager return a new tikv checksum manager
-func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint, backoffWeight int, resourceGroupName string) *TiKVChecksumManager {
+func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint, backoffWeight int, resourceGroupName, explicitRequestSourceType string) *TiKVChecksumManager {
 	return &TiKVChecksumManager{
-		client:                 client,
-		manager:                newGCTTLManager(pdClient),
-		distSQLScanConcurrency: distSQLScanConcurrency,
-		backoffWeight:          backoffWeight,
-		resourceGroupName:      resourceGroupName,
+		client:                    client,
+		manager:                   newGCTTLManager(pdClient),
+		distSQLScanConcurrency:    distSQLScanConcurrency,
+		backoffWeight:             backoffWeight,
+		resourceGroupName:         resourceGroupName,
+		explicitRequestSourceType: explicitRequestSourceType,
 	}
 }
 
 func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, ts uint64) (*RemoteChecksum, error) {
 	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, ts).
 		SetConcurrency(e.distSQLScanConcurrency).
-		SetResourceGroupName(e.resourceGroupName).
 		SetBackoffWeight(e.backoffWeight).
+		SetResourceGroupName(e.resourceGroupName).
+		SetExplicitRequestSourceType(e.explicitRequestSourceType).
 		Build()
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -35,7 +34,8 @@ type ExecutorBuilder struct {
 	oldKeyspace []byte
 	newKeyspace []byte
 
-	resourceGroupName string
+	resourceGroupName         string
+	explicitRequestSourceType string
 }
 
 // NewExecutorBuilder returns a new executor builder.
@@ -81,6 +81,11 @@ func (builder *ExecutorBuilder) SetResourceGroupName(name string) *ExecutorBuild
 	return builder
 }
 
+func (builder *ExecutorBuilder) SetExplicitRequestSourceType(name string) *ExecutorBuilder {
+	builder.explicitRequestSourceType = name
+	return builder
+}
+
 // Build builds a checksum executor.
 func (builder *ExecutorBuilder) Build() (*Executor, error) {
 	reqs, err := buildChecksumRequest(
@@ -91,6 +96,7 @@ func (builder *ExecutorBuilder) Build() (*Executor, error) {
 		builder.oldKeyspace,
 		builder.newKeyspace,
 		builder.resourceGroupName,
+		builder.explicitRequestSourceType,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -105,7 +111,7 @@ func buildChecksumRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName string,
+	resourceGroupName, explicitRequestSourceType string,
 ) ([]*kv.Request, error) {
 	var partDefs []model.PartitionDefinition
 	if part := newTable.Partition; part != nil {
@@ -118,7 +124,7 @@ func buildChecksumRequest(
 		oldTableID = oldTable.Info.ID
 	}
 	rs, err := buildRequest(newTable, newTable.ID, oldTable, oldTableID, startTS, concurrency,
-		oldKeyspace, newKeyspace, resourceGroupName)
+		oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -134,7 +140,7 @@ func buildChecksumRequest(
 			}
 		}
 		rs, err := buildRequest(newTable, partDef.ID, oldTable, oldPartID, startTS, concurrency,
-			oldKeyspace, newKeyspace, resourceGroupName)
+			oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -153,11 +159,11 @@ func buildRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName string,
+	resourceGroupName, explicitRequestSourceType string,
 ) ([]*kv.Request, error) {
 	reqs := make([]*kv.Request, 0)
 	req, err := buildTableRequest(tableInfo, tableID, oldTable, oldTableID, startTS, concurrency,
-		oldKeyspace, newKeyspace, resourceGroupName)
+		oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -187,7 +193,7 @@ func buildRequest(
 		}
 		req, err = buildIndexRequest(
 			tableID, indexInfo, oldTableID, oldIndexInfo, startTS, concurrency,
-			oldKeyspace, newKeyspace, resourceGroupName)
+			oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -206,7 +212,7 @@ func buildTableRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName string,
+	resourceGroupName, explicitRequestSourceType string,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldTable != nil {
@@ -237,7 +243,7 @@ func buildTableRequest(
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
 		SetResourceGroupName(resourceGroupName).
-		SetExplicitRequestSourceType(util.ExplicitTypeLightning).
+		SetExplicitRequestSourceType(explicitRequestSourceType).
 		Build()
 }
 
@@ -250,7 +256,7 @@ func buildIndexRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName string,
+	resourceGroupName, ExplicitRequestSourceType string,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldIndexInfo != nil {
@@ -277,7 +283,7 @@ func buildIndexRequest(
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
 		SetResourceGroupName(resourceGroupName).
-		SetExplicitRequestSourceType(util.ExplicitTypeLightning).
+		SetExplicitRequestSourceType(ExplicitRequestSourceType).
 		Build()
 }
 
