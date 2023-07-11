@@ -1340,8 +1340,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			worker.sendToRespCh(resp, ch, true)
 			return nil, nil
 		}
-		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
-			task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
+		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, bucket_ver:%v store_type:%s, peer_addr:%s, error:%s",
+			task.region.GetID(), task.region.GetVer(), task.bucketsVer, task.storeType.Name(), task.storeAddr, regionErr.String())
 		if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1467,8 +1467,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			batchResp.RegionError = &errorpb.Error{}
 		})
 		if regionErr := batchResp.GetRegionError(); regionErr != nil {
-			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
-				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
+			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, bucket_ver:%v store_type:%s, peer_addr:%s, error:%s",
+				task.region.GetID(), task.region.GetVer(), task.bucketsVer, task.storeType.Name(), task.storeAddr, regionErr.String())
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 				return nil, errors.Trace(err)
 			}
