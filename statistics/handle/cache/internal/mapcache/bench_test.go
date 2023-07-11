@@ -41,3 +41,30 @@ func BenchmarkMapCachePut(b *testing.B) {
 	wg.Wait()
 	b.StopTimer()
 }
+
+func BenchmarkMapCachePutGet(b *testing.B) {
+	var (
+		wg sync.WaitGroup
+		c  = NewMapCache()
+	)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+			c.Put(int64(i), t1)
+		}(i)
+	}
+	for i := 0; i < b.N; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			c.Get(int64(i))
+		}(i)
+	}
+	wg.Wait()
+
+	b.StopTimer()
+}
