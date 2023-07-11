@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,6 +61,137 @@ type BackupItem struct {
 	File *backuppb.File
 	// Ragne is for File backup, including a region range and all related SST files.
 	Range *backuppb.BackupRange
+}
+type BackupItems []*BackupItem
+
+func (i *BackupItem) Size() uint64 {
+	if i.File != nil {
+		return i.File.Size_
+	}
+	if i.Range != nil {
+		s := uint64(0)
+		for _, f := range i.Range.Files {
+			s += f.Size_
+		}
+		return s
+	}
+	log.Panic("BackupItem not supported in Size() ", zap.Any("item", i))
+	return 0
+}
+
+func (i *BackupItem) GetStartKey() []byte {
+	if i.File != nil {
+		return i.File.GetStartKey()
+	}
+	if i.Range != nil {
+		return i.Range.GetStartKey()
+	}
+	log.Panic("BackupItem not supported in GetStartKey() ", zap.Any("item", i))
+	return nil
+}
+
+func (i *BackupItem) GetEndKey() []byte {
+	if i.File != nil {
+		return i.File.GetEndKey()
+	}
+	if i.Range != nil {
+		return i.Range.GetEndKey()
+	}
+	log.Panic("BackupItem not supported in GetEndKey() ", zap.Any("item", i))
+	return nil
+}
+
+// only for log
+func (i *BackupItem) GetName() string {
+	if i.File != nil {
+		return i.File.GetName()
+	}
+	if i.Range != nil {
+		if len(i.Range.Files) <= 1 {
+			return "Range: start " + i.Range.Files[0].GetName()
+		}
+		return "Range: start " + i.Range.Files[0].GetName() + " end " + i.Range.Files[len(i.Range.Files)-1].GetName()
+	}
+	log.Panic("BackupItem not supported in GetName() ", zap.Any("item", i))
+	return ""
+}
+
+// GetOriginFiles return the backuppb.File, usually these files were generate by scan kv entries.
+func (is BackupItems) GetOriginFiles() []*backuppb.File {
+	files := make([]*backuppb.File, 0, len(is))
+	for _, i := range is {
+		if i.File != nil {
+			files = append(files, i.File)
+		}
+	}
+	return files
+}
+
+// GetOriginRanges return the backuppb.BackupRange, usually these ranges were generate by file-copy .
+func (is BackupItems) GetOriginRanges() []*backuppb.BackupRange {
+	ranges := make([]*backuppb.BackupRange, 0, len(is))
+	for _, i := range is {
+		if i.Range != nil {
+			ranges = append(ranges, i.Range)
+		}
+	}
+	return ranges
+}
+
+// ArchiveSize return the size of Archive data
+func (is BackupItems) ArchiveSize() uint64 {
+	total := uint64(0)
+	for _, i := range is {
+		if i.File != nil {
+			total += i.File.Size_
+		}
+		if i.Range != nil {
+			for _, f := range i.Range.Files {
+				total += f.Size_
+			}
+		}
+	}
+	return total
+}
+
+// EstimateCount estimates the total range count by file or range.
+func (is BackupItems) EstimateCount() int {
+	result := 0
+	for _, i := range is {
+		if i.File != nil {
+			if strings.HasSuffix(i.File.GetName(), "_write.sst") {
+				result++
+			}
+		}
+		if i.Range != nil {
+			result++
+		}
+	}
+	return result
+}
+
+// GetTableMap makes a map that mapping table ID to its backup items.
+// aware that one file or range can and only can hold one table.
+func (is BackupItems) GetTableMap() map[int64][]*BackupItem {
+	result := make(map[int64][]*BackupItem)
+	for _, item := range is {
+		tableID := tablecodec.DecodeTableID(item.GetStartKey())
+		tableEndID := tablecodec.DecodeTableID(item.GetEndKey())
+		if tableID != tableEndID {
+			log.Panic("key range spread between many files.",
+				zap.String("file name", item.GetName()),
+				logutil.Key("startKey", item.GetStartKey()),
+				logutil.Key("endKey", item.GetEndKey()))
+		}
+		if tableID == 0 {
+			log.Panic("invalid table key of file",
+				zap.String("file name", item.GetName()),
+				logutil.Key("startKey", item.GetStartKey()),
+				logutil.Key("endKey", item.GetEndKey()))
+		}
+		result[tableID] = append(result[tableID], item)
+	}
+	return result
 }
 
 // PitrIDMapsFilename is filename that used to save id maps in pitr.
@@ -158,7 +290,7 @@ type Table struct {
 	Crc64Xor        uint64
 	TotalKvs        uint64
 	TotalBytes      uint64
-	Files           []*backuppb.File
+	Items           []*BackupItem
 	TiFlashReplicas int
 	Stats           *handle.JSONTable
 }
@@ -239,8 +371,8 @@ func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*Backup
 // ArchiveSize return the size of Archive data
 func (*MetaReader) ArchiveSize(_ context.Context, files []*backuppb.File) uint64 {
 	total := uint64(0)
-	for _, file := range files {
-		total += file.Size_
+	for _, i := range files {
+		total += i.Size_
 	}
 	return total
 }
@@ -327,21 +459,11 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	if !cfg.skipFiles {
 		itemMap = make(map[int64][]*BackupItem)
 		outputFn := func(item *BackupItem) {
-			if item.File != nil {
-				file := item.File
-				tableID := tablecodec.DecodeTableID(file.GetStartKey())
-				if tableID == 0 {
-					log.Panic("tableID must not equal to 0", logutil.File(file))
-				}
-				itemMap[tableID] = append(itemMap[tableID], item)
+			tableID := tablecodec.DecodeTableID(item.GetStartKey())
+			if tableID == 0 {
+				log.Panic("tableID must not equal to 0", zap.Any("item", item))
 			}
-			if item.Range != nil {
-				tableID := tablecodec.DecodeTableID(item.Range.GetStartKey())
-				if tableID == 0 {
-					log.Panic("tableID must not equal to 0", zap.Any("item", item))
-				}
-				itemMap[tableID] = append(itemMap[tableID], item)
-			}
+			itemMap[tableID] = append(itemMap[tableID], item)
 		}
 		err := reader.readDataFiles(ctx, outputFn)
 		if err != nil {
@@ -385,14 +507,14 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 			}
 			if tableInfo != nil {
 				if itemMap != nil {
-					if files, ok := itemMap[tableInfo.ID]; ok {
-						table.Files = append(table.Files, files...)
+					if items, ok := itemMap[tableInfo.ID]; ok {
+						table.Items = append(table.Items, items...)
 					}
 					if tableInfo.Partition != nil {
 						// Partition table can have many table IDs (partition IDs).
 						for _, p := range tableInfo.Partition.Definitions {
-							if files, ok := fileMap[p.ID]; ok {
-								table.Files = append(table.Files, files...)
+							if items, ok := itemMap[p.ID]; ok {
+								table.Items = append(table.Items, items...)
 							}
 						}
 					}

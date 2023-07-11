@@ -20,6 +20,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
@@ -280,52 +281,17 @@ func makeDBPool(size uint, dbFactory func() (*DB, error)) ([]*DB, error) {
 	return dbPool, nil
 }
 
-// EstimateRangeSize estimates the total range count by file.
-func EstimateRangeSize(files []*backuppb.File) int {
-	result := 0
-	for _, f := range files {
-		if strings.HasSuffix(f.GetName(), "_write.sst") {
-			result++
-		}
-	}
-	return result
-}
-
-// MapTableToFiles makes a map that mapping table ID to its backup files.
-// aware that one file can and only can hold one table.
-func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
-	result := map[int64][]*backuppb.File{}
-	for _, file := range files {
-		tableID := tablecodec.DecodeTableID(file.GetStartKey())
-		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
-		if tableID != tableEndID {
-			log.Panic("key range spread between many files.",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-		if tableID == 0 {
-			log.Panic("invalid table key of file",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-		result[tableID] = append(result[tableID], file)
-	}
-	return result
-}
-
 // GoValidateFileRanges validate files by a stream of tables and yields
 // tables with range.
 func GoValidateFileRanges(
 	ctx context.Context,
 	tableStream <-chan CreatedTable,
-	fileOfTable map[int64][]*backuppb.File,
+	itemsOfTable map[int64][]*metautil.BackupItem,
 	splitSizeBytes, splitKeyCount uint64,
 	errCh chan<- error,
 ) <-chan TableWithRange {
 	// Could we have a smaller outCh size?
-	outCh := make(chan TableWithRange, len(fileOfTable))
+	outCh := make(chan TableWithRange, len(itemsOfTable))
 	go func() {
 		defer close(outCh)
 		defer log.Info("all range generated")
@@ -338,7 +304,7 @@ func GoValidateFileRanges(
 				if !ok {
 					return
 				}
-				files := fileOfTable[t.OldTable.Info.ID]
+				items := itemsOfTable[t.OldTable.Info.ID]
 				if partitions := t.OldTable.Info.Partition; partitions != nil {
 					log.Debug("table partition",
 						zap.Stringer("database", t.OldTable.DB.Name),
@@ -346,16 +312,45 @@ func GoValidateFileRanges(
 						zap.Any("partition info", partitions),
 					)
 					for _, partition := range partitions.Definitions {
-						files = append(files, fileOfTable[partition.ID]...)
+						items = append(items, itemsOfTable[partition.ID]...)
 					}
 				}
-				for _, file := range files {
-					err := ValidateFileRewriteRule(file, t.RewriteRule)
-					if err != nil {
-						errCh <- err
-						return
+				for _, item := range items {
+					if item.File != nil {
+						err := ValidateFileRewriteRule(item.File, t.RewriteRule)
+						if err != nil {
+							errCh <- err
+							return
+						}
+					}
+					if item.Range != nil {
+						for _, f := range item.Range.Files {
+							err := ValidateFileRewriteRule(f, t.RewriteRule)
+							if err != nil {
+								errCh <- err
+								return
+							}
+						}
 					}
 				}
+				// for now we cannot have originFiles and originRanges at same time
+				// but we need consider whether we will support both in future.
+				rgs := metautil.BackupItems(items).GetOriginRanges()
+				brgs := make([]rtree.Range, 0, len(rgs))
+				for _, rg := range rgs {
+					brgs = append(brgs, rtree.Range{
+						StartKey: rg.StartKey,
+						EndKey:   rg.EndKey,
+						Files:    rg.Files,
+					})
+				}
+				tableWithRange := TableWithRange{
+					CreatedTable: t,
+					Ranges:       brgs,
+				}
+				outCh <- tableWithRange
+
+				files := metautil.BackupItems(items).GetOriginFiles()
 				// Merge small ranges to reduce split and scatter regions.
 				ranges, stat, err := MergeFileRanges(
 					files, splitSizeBytes, splitKeyCount)
@@ -376,7 +371,7 @@ func GoValidateFileRanges(
 					zap.Int("Merged(keys avg)", stat.MergedRegionKeysAvg),
 					zap.Int("Merged(bytes avg)", stat.MergedRegionBytesAvg))
 
-				tableWithRange := TableWithRange{
+				tableWithRange = TableWithRange{
 					CreatedTable: t,
 					Ranges:       ranges,
 				}

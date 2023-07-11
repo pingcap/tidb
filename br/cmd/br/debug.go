@@ -104,7 +104,7 @@ func newCheckSumCommand() *cobra.Command {
 				var calCRC64 uint64
 				var totalKVs uint64
 				var totalBytes uint64
-				for _, file := range tbl.Files {
+				for _, file := range metautil.BackupItems(tbl.Items).GetOriginFiles() {
 					calCRC64 ^= file.Crc64Xor
 					totalKVs += file.GetTotalKvs()
 					totalBytes += file.GetTotalBytes()
@@ -191,7 +191,7 @@ func newBackupMetaValidateCommand() *cobra.Command {
 			tables := make([]*metautil.Table, 0)
 			for _, db := range dbs {
 				for _, table := range db.Tables {
-					files = append(files, table.Files...)
+					files = append(files, metautil.BackupItems(table.Items).GetOriginFiles()...)
 				}
 				tables = append(tables, db.Tables...)
 			}

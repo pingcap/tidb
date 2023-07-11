@@ -692,7 +692,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		client.InitFullClusterRestore(cfg.ExplicitFilter)
 	}
 
-	files, tables, dbs := filterRestoreFiles(client, cfg)
+	items, tables, dbs := filterRestoreItems(client, cfg)
 	if len(dbs) == 0 && len(tables) != 0 {
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
@@ -704,7 +704,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	archiveSize := reader.ArchiveSize(ctx, files)
+	archiveSize := items.ArchiveSize()
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
@@ -837,12 +837,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	tableStream := client.GoCreateTables(ctx, mgr.GetDomain(), tables, newTS, errCh)
 
-	if len(files) == 0 {
-		log.Info("no files, empty databases and tables are restored")
+	if len(items) == 0 {
+		log.Info("no items, empty databases and tables are restored")
 		summary.SetSuccessStatus(true)
 		// don't return immediately, wait all pipeline done.
 	} else {
-		oldKeyspace, _, err := tikv.DecodeKey(files[0].GetStartKey(), backupMeta.ApiVersion)
+		oldKeyspace, _, err := tikv.DecodeKey(items[0].GetStartKey(), backupMeta.ApiVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -877,15 +877,15 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		})
 	}
 
-	tableFileMap := restore.MapTableToFiles(files)
-	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
+	tableItemMap := items.GetTableMap()
+	log.Debug("mapped table to files", zap.Any("result map", tableItemMap))
 
 	rangeStream := restore.GoValidateFileRanges(
-		ctx, tableStream, tableFileMap, mergeRegionSize, mergeRegionCount, errCh)
+		ctx, tableStream, tableItemMap, mergeRegionSize, mergeRegionCount, errCh)
 
-	rangeSize := restore.EstimateRangeSize(files)
+	rangeSize := items.EstimateCount()
 	summary.CollectInt("restore ranges", rangeSize)
-	log.Info("range and file prepared", zap.Int("file count", len(files)), zap.Int("range count", rangeSize))
+	log.Info("range and file prepared", zap.Int("file count", len(items)), zap.Int("range count", rangeSize))
 
 	// Do not reset timestamp if we are doing incremental restore, because
 	// we are not allowed to decrease timestamp.
@@ -904,7 +904,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	})
 
 	// Split/Scatter + Download/Ingest
-	progressLen := int64(rangeSize + len(files))
+	progressLen := int64(rangeSize + len(items))
 	if cfg.Checksum {
 		progressLen += int64(len(tables))
 	}
@@ -1015,12 +1015,12 @@ func dropToBlackhole(
 	return outCh
 }
 
-// filterRestoreFiles filters tables that can't be processed after applying cfg.TableFilter.MatchTable.
+// filterRestoreItems filters tables that can't be processed after applying cfg.TableFilter.MatchTable.
 // if the db has no table that can be processed, the db will be filtered too.
-func filterRestoreFiles(
+func filterRestoreItems(
 	client *restore.Client,
 	cfg *RestoreConfig,
-) (files []*backuppb.File, tables []*metautil.Table, dbs []*utils.Database) {
+) (items metautil.BackupItems, tables []*metautil.Table, dbs []*utils.Database) {
 	for _, db := range client.GetDatabases() {
 		dbName := db.Info.Name.O
 		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
@@ -1034,7 +1034,7 @@ func filterRestoreFiles(
 			if table.Info == nil || !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
 				continue
 			}
-			files = append(files, table.Files...)
+			items = append(items, table.Items...)
 			tables = append(tables, table)
 		}
 	}
