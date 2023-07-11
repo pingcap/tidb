@@ -100,6 +100,7 @@ func (row RowArrayMarshaller) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 		}
 		totalLength += len(str)
 		if totalLength >= 512*1024 {
+			encoder.AppendString("The row has been truncated, and the log has exited early.")
 			return nil
 		}
 		if err := encoder.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
@@ -316,7 +317,7 @@ func (e *BaseKVEncoder) LogKVConvertFailed(row []types.Datum, j int, colInfo *mo
 	)
 
 	if len(original.GetString()) >= 512*1024 {
-		originalPrefix := original.GetString()[0:1024]
+		originalPrefix := original.GetString()[0:1024] + " (truncated)"
 		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", originalPrefix),
 			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
 			zap.Int("columnID", j+1))
