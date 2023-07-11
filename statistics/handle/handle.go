@@ -647,10 +647,10 @@ type GlobalStats struct {
 	Cms                   []*statistics.CMSketch
 	TopN                  []*statistics.TopN
 	Fms                   []*statistics.FMSketch
+	MissingPartitionStats []string
 	Num                   int
 	Count                 int64
 	ModifyCount           int64
-	MissingPartitionStats []string
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
