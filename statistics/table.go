@@ -430,17 +430,17 @@ func (t *Table) GetStatsInfo(id int64, isIndex bool) (*Histogram, *CMSketch, *To
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (coll *HistColl) GetAnalyzeRowCount() float64 {
-	IDs := maps.Keys(coll.Columns)
-	slices.Sort(IDs)
-	for _, id := range IDs {
+	ids := maps.Keys(coll.Columns)
+	slices.Sort(ids)
+	for _, id := range ids {
 		col := coll.Columns[id]
 		if col != nil && col.IsFullLoad() {
 			return col.TotalRowCount()
 		}
 	}
-	IDs = maps.Keys(coll.Indices)
-	slices.Sort(IDs)
-	for _, id := range IDs {
+	ids = maps.Keys(coll.Indices)
+	slices.Sort(ids)
+	for _, id := range ids {
 		idx := coll.Indices[id]
 		if idx != nil && idx.IsFullLoad() {
 			return idx.TotalRowCount()
