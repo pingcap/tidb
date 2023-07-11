@@ -41,10 +41,10 @@ go_test(
         "config_test.go",
         "configlist_test.go",
     ],
+    embed = [":config"],
     flaky = True,
     shard_count = 47,
     deps = [
-        ":config",
         "//br/pkg/lightning/common",
         "@com_github_burntsushi_toml//:toml",
         "@com_github_stretchr_testify//require",

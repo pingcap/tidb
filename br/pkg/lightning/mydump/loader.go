@@ -240,13 +240,7 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config,
 		}
 	}
 
-	// use the legacy black-white-list if defined. otherwise use the new filter.
-	var f filter.Filter
-	if cfg.HasLegacyBlackWhiteList() {
-		f, err = filter.ParseMySQLReplicationRules(&cfg.BWList)
-	} else {
-		f, err = filter.Parse(cfg.Mydumper.Filter)
-	}
+	f, err := filter.Parse(cfg.Mydumper.Filter)
 	if err != nil {
 		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse filter failed")
 	}
