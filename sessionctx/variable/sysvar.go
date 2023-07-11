@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	tikvcliutil "github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -384,6 +385,12 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeSession, Name: TiDBUseAlloc, Value: BoolToOnOff(DefTiDBUseAlloc), Type: TypeBool, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(s.preUseChunkAlloc), nil
+	}},
+	{Scope: ScopeSession, Name: TiDBExplicitRequestSourceType, Value: "", Type: TypeEnum, PossibleValues: tikvcliutil.ExplicitTypeList, GetSession: func(s *SessionVars) (string, error) {
+		return s.ExplicitRequestSourceType, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.ExplicitRequestSourceType = val
+		return nil
 	}},
 	/* The system variables below have INSTANCE scope  */
 	{Scope: ScopeInstance, Name: TiDBLogFileMaxDays, Value: strconv.Itoa(config.GetGlobalConfig().Log.File.MaxDays), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
