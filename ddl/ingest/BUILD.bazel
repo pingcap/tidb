@@ -30,7 +30,6 @@ go_library(
         "//config",
         "//ddl/internal/session",
         "//ddl/util",
-        "//domain/resourcegroup",
         "//kv",
         "//meta",
         "//parser/mysql",

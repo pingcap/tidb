@@ -116,7 +116,7 @@ const (
 var (
 	minTiKVVersionForDuplicateResolution = *semver.New("5.2.0")
 	maxTiKVVersionForDuplicateResolution = version.NextMajorVersion()
-	minTiDBCurrentResourceGroupVersion   = *semver.New("6.6.0")
+	minTiDBCurrentResourceGroupVersion   = *semver.New("7.0.0")
 	maxTiDBCurrentResourceGroupVersion   = version.NextMajorVersion()
 )
 
