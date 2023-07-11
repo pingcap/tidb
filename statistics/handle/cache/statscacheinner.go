@@ -86,12 +86,27 @@ func (sc *StatsCache) Len() int {
 // The returned value should be read-only, if you update it, don't forget to use Put to put it back again, otherwise the memory trace can be inaccurate.
 //
 //	e.g. v := sc.Get(id); /* update the value */ v.Version = 123; sc.Put(id, v);
-func (sc *StatsCache) Get(id int64, moveLRUFront bool) (*statistics.Table, bool) {
-	return sc.c.Get(id, moveLRUFront)
+func (sc *StatsCache) GetFromQuery(id int64) (*statistics.Table, bool) {
+	return sc.c.Get(id, true)
+}
+
+// GetFromInternal returns the statistics of the specified Table ID.
+func (sc *StatsCache) GetFromInternal(id int64) (*statistics.Table, bool) {
+	return sc.c.Get(id, false)
+}
+
+// PutFromQuery puts the table statistics to the cache from query.
+func (sc *StatsCache) PutFromQuery(id int64, t *statistics.Table) {
+	sc.put(id, t, false)
+}
+
+// PutFromInternal puts the table statistics to the cache from internal.
+func (sc *StatsCache) PutFromInternal(id int64, t *statistics.Table) {
+	sc.put(id, t, false)
 }
 
 // Put puts the table statistics to the cache.
-func (sc *StatsCache) Put(id int64, t *statistics.Table, moveLRUFront bool) {
+func (sc *StatsCache) put(id int64, t *statistics.Table, moveLRUFront bool) {
 	sc.c.Put(id, t, moveLRUFront)
 
 	// update the maxTblStatsVer
