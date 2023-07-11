@@ -290,6 +290,7 @@ func (*Handle) initStatsTopN4Chunk(cache *cache.StatsCache, iter *chunk.Iterator
 		data := make([]byte, len(row.GetBytes(2)))
 		copy(data, row.GetBytes(2))
 		idx.TopN.AppendTopN(data, row.GetUint64(3))
+		cache.Put(table.PhysicalID, table)
 	}
 	for idx := range affectedIndexes {
 		idx.TopN.Sort()
@@ -342,6 +343,7 @@ func (*Handle) initStatsFMSketch4Chunk(cache *cache.StatsCache, iter *chunk.Iter
 				colStats.FMSketch = fms
 			}
 		}
+		cache.Put(table.PhysicalID, table)
 	}
 }
 
@@ -413,6 +415,7 @@ func (*Handle) initStatsBuckets4Chunk(cache *cache.StatsCache, iter *chunk.Itera
 			}
 		}
 		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(3), row.GetInt64(4), row.GetInt64(7))
+		cache.Put(tableID, table)
 	}
 }
 
@@ -436,7 +439,8 @@ func (h *Handle) initStatsBuckets(cache *cache.StatsCache) error {
 		}
 		h.initStatsBuckets4Chunk(cache, iter)
 	}
-	for _, table := range cache.Values() {
+	tables := cache.Values()
+	for _, table := range tables {
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
 				idx.Buckets[i].Count += idx.Buckets[i-1].Count
@@ -449,6 +453,7 @@ func (h *Handle) initStatsBuckets(cache *cache.StatsCache) error {
 			}
 			col.PreCalculateScalar()
 		}
+		cache.Put(table.PhysicalID, table)
 	}
 	return nil
 }
@@ -475,7 +480,6 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cache.FreshMemUsage()
 	h.updateStatsCache(cache)
 	return nil
 }
@@ -530,7 +534,6 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 			}
 		}
 	}
-	cache.FreshMemUsage()
 	h.updateStatsCache(cache)
 	return nil
 }
