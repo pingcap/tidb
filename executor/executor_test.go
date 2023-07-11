@@ -79,6 +79,7 @@ import (
 func checkFileName(s string) bool {
 	files := []string{
 		"config.toml",
+		"debug_trace/debug_trace0.json",
 		"meta.txt",
 		"stats/test.t_dump_single.json",
 		"schema/test.t_dump_single.schema.txt",
