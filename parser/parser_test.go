@@ -870,7 +870,9 @@ func TestDMLStmt(t *testing.T) {
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
+		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c:=VALUES(a)+VALUES(b);", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
 		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT IGNORE INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
+		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c:=VALUES(a)+VALUES(b);", true, "INSERT IGNORE INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
 
 		// for insert ... set
 		{"INSERT INTO t SET a=1,b=2", true, "INSERT INTO `t` SET `a`=1,`b`=2"},
@@ -1089,14 +1091,23 @@ AAAAAAAAAAAA5gm5Mg==
 
 		// for calibrate resource
 		{"calibrate resource", true, "CALIBRATE RESOURCE"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00'"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00' DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' DURATION '20m'"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00',END_TIME='2023-04-01 16:00:00'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00',DURATION='20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' DURATION '20m'"},
-		{"calibrate resource DURATION='20m' START_TIME '2023-04-01 13:00:00'", true, "CALIBRATE RESOURCE DURATION '20m' START_TIME '2023-04-01 13:00:00'"},
-		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME='2023-04-01 16:00:00',DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'"},
+		{"calibrate resource START_TIME '2021-04-15 00:00:00'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2021-04-15 00:00:00'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2023-04-01 13:00:00' END_TIME _UTF8MB4'2023-04-01 16:00:00'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00' DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2023-04-01 13:00:00' DURATION '20m'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00' END_TIME '2023-04-01 16:00:00' DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2023-04-01 13:00:00' END_TIME _UTF8MB4'2023-04-01 16:00:00' DURATION '20m'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00',END_TIME='2023-04-01 16:00:00'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2023-04-01 13:00:00' END_TIME _UTF8MB4'2023-04-01 16:00:00'"},
+		{"calibrate resource START_TIME '2023-04-01 13:00:00',DURATION='20m'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2023-04-01 13:00:00' DURATION '20m'"},
+		{"calibrate resource DURATION='20m' START_TIME '2023-04-01 13:00:00'", true, "CALIBRATE RESOURCE DURATION '20m' START_TIME _UTF8MB4'2023-04-01 13:00:00'"},
+		{"calibrate resource   START_TIME '2023-04-01 13:00:00' END_TIME='2023-04-01 16:00:00',DURATION '20m'", true, "CALIBRATE RESOURCE START_TIME _UTF8MB4'2023-04-01 13:00:00' END_TIME _UTF8MB4'2023-04-01 16:00:00' DURATION '20m'"},
+		{"calibrate resource START_TIME CURRENT_TIMESTAMP() END_TIME current_timestamp()", true, "CALIBRATE RESOURCE START_TIME CURRENT_TIMESTAMP() END_TIME CURRENT_TIMESTAMP()"},
+		{"calibrate resource END_TIME now()", true, "CALIBRATE RESOURCE END_TIME NOW()"},
+		{"calibrate resource START_TIME now()", true, "CALIBRATE RESOURCE START_TIME NOW()"},
+		{"calibrate resource START_TIME NOW() END_TIME now()", true, "CALIBRATE RESOURCE START_TIME NOW() END_TIME NOW()"},
+		{"calibrate resource START_TIME CURRENT_TIMESTAMP() - interval 10 minute END_TIME now()", true, "CALIBRATE RESOURCE START_TIME DATE_SUB(CURRENT_TIMESTAMP(), INTERVAL 10 MINUTE) END_TIME NOW()"},
+		{"calibrate resource START_TIME now() - 1000 END_TIME current_timestamp()", true, "CALIBRATE RESOURCE START_TIME NOW()-1000 END_TIME CURRENT_TIMESTAMP()"},
+		{"calibrate resource START_TIME CURRENT_TIMESTAMP() - interval 20 minute DURATION interval 15 minute", true, "CALIBRATE RESOURCE START_TIME DATE_SUB(CURRENT_TIMESTAMP(), INTERVAL 20 MINUTE) DURATION INTERVAL 15 MINUTE"},
+		{"calibrate resource START_TIME CURRENT_TIMESTAMP() - interval 20 minute DURATION '15m'", true, "CALIBRATE RESOURCE START_TIME DATE_SUB(CURRENT_TIMESTAMP(), INTERVAL 20 MINUTE) DURATION '15m'"},
+		{"calibrate resource END_TIME now() START_TIME CURRENT_TIMESTAMP() - interval 20 minute", true, "CALIBRATE RESOURCE END_TIME NOW() START_TIME DATE_SUB(CURRENT_TIMESTAMP(), INTERVAL 20 MINUTE)"},
 		{"calibrate resource workload", false, ""},
 		{"calibrate resource workload tpcc", true, "CALIBRATE RESOURCE WORKLOAD TPCC"},
 		{"calibrate resource workload oltp_read_write", true, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_WRITE"},
@@ -3505,6 +3516,7 @@ func TestDDL(t *testing.T) {
 
 		// for issue 549
 		{"insert into t set a = default", true, "INSERT INTO `t` SET `a`=DEFAULT"},
+		{"insert into t set a := default", true, "INSERT INTO `t` SET `a`=DEFAULT"},
 		{"replace t set a = default", true, "REPLACE INTO `t` SET `a`=DEFAULT"},
 		{"update t set a = default", true, "UPDATE `t` SET `a`=DEFAULT"},
 		{"insert into t set a = default on duplicate key update a = default", true, "INSERT INTO `t` SET `a`=DEFAULT ON DUPLICATE KEY UPDATE `a`=DEFAULT"},
@@ -3713,6 +3725,7 @@ func TestDDL(t *testing.T) {
 		{"create resource group x burstable=false ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = FALSE, RU_PER_SEC = 4000"},
 		{"create resource group x burstable = true ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 4000"},
 		{"create resource group x ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = TRUE"},
+		{"create resource group default ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `default` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = TRUE"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' ACTION DRYRUN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = DRYRUN)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10m' ACTION COOLDOWN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10m' ACTION = COOLDOWN)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(ACTION KILL EXEC_ELAPSED='10m')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (ACTION = KILL EXEC_ELAPSED = '10m')"},
@@ -3729,6 +3742,7 @@ func TestDDL(t *testing.T) {
 
 		{"alter resource group x cpu ='8c'", false, ""},
 		{"alter resource group x region ='us, 3'", false, ""},
+		{"alter resource group default priority = high", true, "ALTER RESOURCE GROUP `default` PRIORITY = HIGH"},
 		{"alter resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", false, ""},
 		{"alter resource group x ru_per_sec=1000", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000"},
 		{"alter resource group x ru_per_sec=2000, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = TRUE"},
@@ -3758,11 +3772,15 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s' ACTION DRYRUN WATCH SIMILAR DURATION '10m' ACTION COOLDOWN)", false, ""},
 
 		{"drop resource group x;", true, "DROP RESOURCE GROUP `x`"},
+		{"drop resource group DEFAULT;", true, "DROP RESOURCE GROUP `DEFAULT`"},
 		{"drop resource group if exists x;", true, "DROP RESOURCE GROUP IF EXISTS `x`"},
 		{"drop resource group x,y", false, ""},
 		{"drop resource group if exists x,y", false, ""},
 
 		{"set resource group x;", true, "SET RESOURCE GROUP `x`"},
+		{"set resource group ``;", true, "SET RESOURCE GROUP ``"},
+		{"set resource group `default`;", true, "SET RESOURCE GROUP `default`"},
+		{"set resource group default;", true, "SET RESOURCE GROUP `default`"},
 		{"set resource group x y", false, ""},
 
 		{"CREATE ROLE `RESOURCE`", true, "CREATE ROLE `RESOURCE`@`%`"},

@@ -27,6 +27,7 @@ go_library(
         "//meta/autoid",
         "//parser/model",
         "//parser/mysql",
+        "//sessionctx/variable",
         "//store/driver/error",
         "//table/tables",
         "//types",

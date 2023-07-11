@@ -489,13 +489,11 @@ func (p *Percentile[valueType]) MergePercentile(p2 *Percentile[valueType]) {
 	p.sumVal += p2.sumVal
 	p.size += p2.size
 	if p.dt == nil {
-		p.dt = p2.dt
-		p2.dt = nil
+		p.dt = tdigest.New()
 		for _, v := range p.values {
 			p.dt.Add(v.GetFloat64(), 1)
 		}
 		p.values = nil
-		return
 	}
 	p.dt.AddCentroidList(p2.dt.Centroids())
 }
@@ -762,7 +760,7 @@ func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 
 // Empty check whether TiFlashScanContext is Empty, if scan no pack and skip no pack, we regard it as empty
 func (context *TiFlashScanContext) Empty() bool {
-	res := context.totalDmfileScannedPacks == 0 && context.totalDmfileSkippedPacks == 0
+	res := context.totalDmfileScannedPacks == 0 && context.totalDmfileSkippedPacks == 0 && context.totalLocalRegionNum == 0 && context.totalRemoteRegionNum == 0
 	return res
 }
 

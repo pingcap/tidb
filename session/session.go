@@ -644,6 +644,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+	s.txn.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
@@ -1578,6 +1579,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		DiskTracker:           s.sessionVars.DiskTracker,
 		StatsInfo:             plannercore.GetStatsInfo,
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
+		TableIDs:              s.sessionVars.StmtCtx.TableIDs,
+		IndexNames:            s.sessionVars.StmtCtx.IndexNames,
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ResourceGroupName:     s.sessionVars.ResourceGroupName,
@@ -1807,13 +1810,35 @@ func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
 		return err
 	}
 	infosync.StoreInternalSession(sess)
-	lock := &advisoryLock{session: sess, ctx: context.TODO()}
+	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.ShowProcess().ID}
 	err = lock.GetLock(lockName, timeout)
 	if err != nil {
 		return err
 	}
 	s.advisoryLocks[lockName] = lock
 	return nil
+}
+
+// IsUsedAdvisoryLock checks if a lockName is already in use
+func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
+	// Same session
+	if lock, ok := s.advisoryLocks[lockName]; ok {
+		return lock.owner
+	}
+
+	// Check for transaction on advisory_locks table
+	sess, err := createSession(s.store)
+	if err != nil {
+		return 0
+	}
+	lock := &advisoryLock{session: sess, ctx: context.TODO(), owner: s.ShowProcess().ID}
+	err = lock.IsUsedLock(lockName)
+	if err != nil {
+		// TODO: Return actual owner pid
+		// TODO: Check for mysql.ErrLockWaitTimeout and DeadLock
+		return 1
+	}
+	return 0
 }
 
 // ReleaseAdvisoryLock releases an advisory locks held by the session.
@@ -3857,11 +3882,26 @@ func GetStartTSFromSession(se interface{}) (startTS, processInfoID uint64) {
 // if variable.ProcessGeneralLog is set.
 func logStmt(execStmt *executor.ExecStmt, s *session) {
 	vars := s.GetSessionVars()
+	isCrucial := false
 	switch stmt := execStmt.StmtNode.(type) {
+	case *ast.DropIndexStmt:
+		isCrucial = true
+		if stmt.IsHypo {
+			isCrucial = false
+		}
+	case *ast.CreateIndexStmt:
+		isCrucial = true
+		if stmt.IndexOption != nil && stmt.IndexOption.Tp == model.IndexTypeHypo {
+			isCrucial = false
+		}
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
-		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
-		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
+		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateTableStmt,
+		*ast.DropDatabaseStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
 		*ast.RenameUserStmt:
+		isCrucial = true
+	}
+
+	if isCrucial {
 		user := vars.User
 		schemaVersion := s.GetInfoSchema().SchemaMetaVersion()
 		if ss, ok := execStmt.StmtNode.(ast.SensitiveStmtNode); ok {
@@ -3875,10 +3915,10 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("cur_db", vars.CurrentDB),
-				zap.String("sql", stmt.Text()),
+				zap.String("sql", execStmt.StmtNode.Text()),
 				zap.Stringer("user", user))
 		}
-	default:
+	} else {
 		logGeneralQuery(execStmt, s, false)
 	}
 }

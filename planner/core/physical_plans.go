@@ -17,6 +17,7 @@ package core
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -780,6 +782,24 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	return
 }
 
+// AddExtraPhysTblIDColumn for partition table.
+// For keepOrder with partition table,
+// we need use partitionHandle to distinct two handles,
+// the `_tidb_rowid` in different partitions can have the same value.
+func AddExtraPhysTblIDColumn(sctx sessionctx.Context, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
+	// Not adding the ExtraPhysTblID if already exists
+	if FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
+		return columns, schema, false
+	}
+	columns = append(columns, model.NewExtraPhysTblIDColInfo())
+	schema.Append(&expression.Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraPhysTblID,
+	})
+	return columns, schema, true
+}
+
 // PhysicalMemTable reads memory table.
 type PhysicalMemTable struct {
 	physicalSchemaProducer
@@ -1039,11 +1059,11 @@ type PhysicalProjection struct {
 func (p *PhysicalProjection) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalProjection)
 	*cloned = *p
-	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalPlan = *base
+	cloned.physicalSchemaProducer = *base
 	cloned.Exprs = util.CloneExprs(p.Exprs)
 	return cloned, err
 }
@@ -1597,12 +1617,15 @@ func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, 
 
 // Clone implements PhysicalPlan interface.
 func (p *PhysicalExpand) Clone() (PhysicalPlan, error) {
+	if len(p.LevelExprs) > 0 {
+		return p.cloneV2()
+	}
 	np := new(PhysicalExpand)
-	base, err := p.basePhysicalPlan.cloneWithSelf(np)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(np)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	np.basePhysicalPlan = *base
+	np.physicalSchemaProducer = *base
 	// clone ID cols.
 	np.GroupingIDCol = p.GroupingIDCol.Clone().(*expression.Column)
 
@@ -1612,6 +1635,25 @@ func (p *PhysicalExpand) Clone() (PhysicalPlan, error) {
 		clonedGroupingSets = append(clonedGroupingSets, one.Clone())
 	}
 	np.GroupingSets = p.GroupingSets
+	return np, nil
+}
+
+func (p *PhysicalExpand) cloneV2() (PhysicalPlan, error) {
+	np := new(PhysicalExpand)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.physicalSchemaProducer = *base
+	// clone level projection expressions.
+	for _, oneLevelProjExprs := range p.LevelExprs {
+		np.LevelExprs = append(np.LevelExprs, util.CloneExprs(oneLevelProjExprs))
+	}
+
+	// clone generated column names.
+	for _, name := range p.ExtraGroupingColNames {
+		np.ExtraGroupingColNames = append(np.ExtraGroupingColNames, strings.Clone(name))
+	}
 	return np, nil
 }
 

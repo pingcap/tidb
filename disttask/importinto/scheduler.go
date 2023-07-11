@@ -17,6 +17,7 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -77,7 +78,9 @@ func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	}
 	s.tableImporter = tableImporter
 
-	s.importCtx, s.importCancel = context.WithCancel(context.Background())
+	// we need this sub context since CleanupSubtaskExecEnv which wait on this routine is called
+	// before parent context is canceled in normal flow.
+	s.importCtx, s.importCancel = context.WithCancel(ctx)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -223,7 +226,7 @@ func init() {
 		logger.Info("create step scheduler")
 		return &taskMeta, logger, nil
 	}
-	scheduler.RegisterTaskType(proto.ImportInto)
+	scheduler.RegisterTaskType(proto.ImportInto, scheduler.WithPoolSize(int32(runtime.GOMAXPROCS(0))))
 	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepImport,
 		func(taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
 			taskMeta, logger, err := prepareFn(taskID, bs, step)

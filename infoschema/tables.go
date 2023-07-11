@@ -998,6 +998,9 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "FAIL_REASON", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 512},
 	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "REMAINING_SECONDS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22, decimal: 6},
+	{name: "ESTIMATED_TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 }
 
 // TableTiKVRegionStatusCols is TiKV region status mem table columns.
@@ -1767,7 +1770,7 @@ func FormatTiDBVersion(TiDBVersion string, isDefaultVersion bool) string {
 		if len(nodeVersion) > 0 && nodeVersion[0] == 'v' {
 			nodeVersion = nodeVersion[1:]
 		}
-		nodeVersions := strings.Split(nodeVersion, "-")
+		nodeVersions := strings.SplitN(nodeVersion, "-", 2)
 		if len(nodeVersions) == 1 {
 			version = nodeVersions[0]
 		} else if len(nodeVersions) >= 2 {

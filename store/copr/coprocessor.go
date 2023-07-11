@@ -54,6 +54,7 @@ import (
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
@@ -88,6 +89,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
+	ctx = interceptor.WithRPCInterceptor(ctx, interceptor.GetRPCInterceptorFromCtx(ctx))
 	enabledRateLimitAction := option.EnabledRateLimitAction
 	sessionMemTracker := option.SessionMemTracker
 	it, errRes := c.BuildCopIterator(ctx, req, vars, option)

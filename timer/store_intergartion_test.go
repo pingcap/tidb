@@ -16,6 +16,7 @@ package timer_test
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/timer/runtime"
 	"github.com/pingcap/tidb/timer/tablestore"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -161,14 +163,25 @@ func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *api.TimerStor
 	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
 		Tags:            api.NewOptionalVal([]string{"l1", "l2"}),
 		SchedPolicyExpr: api.NewOptionalVal("2h"),
-		EventStatus:     api.NewOptionalVal(api.SchedEventTrigger),
-		EventID:         api.NewOptionalVal(eventID),
-		EventData:       api.NewOptionalVal([]byte("eventdata1")),
-		EventStart:      api.NewOptionalVal(eventStart),
-		Watermark:       api.NewOptionalVal(watermark),
-		SummaryData:     api.NewOptionalVal([]byte("summary1")),
-		CheckVersion:    api.NewOptionalVal(orgRecord.Version),
-		CheckEventID:    api.NewOptionalVal(""),
+		ManualRequest: api.NewOptionalVal(api.ManualRequest{
+			ManualRequestID:   "req1",
+			ManualRequestTime: time.Unix(123, 0),
+			ManualTimeout:     time.Minute,
+			ManualProcessed:   true,
+			ManualEventID:     "event1",
+		}),
+		EventStatus: api.NewOptionalVal(api.SchedEventTrigger),
+		EventID:     api.NewOptionalVal(eventID),
+		EventData:   api.NewOptionalVal([]byte("eventdata1")),
+		EventStart:  api.NewOptionalVal(eventStart),
+		EventExtra: api.NewOptionalVal(api.EventExtra{
+			EventManualRequestID: "req2",
+			EventWatermark:       time.Unix(456, 0),
+		}),
+		Watermark:    api.NewOptionalVal(watermark),
+		SummaryData:  api.NewOptionalVal([]byte("summary1")),
+		CheckVersion: api.NewOptionalVal(orgRecord.Version),
+		CheckEventID: api.NewOptionalVal(""),
 	})
 	require.NoError(t, err)
 	record, err := store.GetByID(ctx, tpl.ID)
@@ -186,6 +199,17 @@ func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *api.TimerStor
 	require.Equal(t, watermark.Unix(), record.Watermark.Unix())
 	tpl.Watermark = record.Watermark
 	tpl.SummaryData = []byte("summary1")
+	tpl.ManualRequest = api.ManualRequest{
+		ManualRequestID:   "req1",
+		ManualRequestTime: time.Unix(123, 0),
+		ManualTimeout:     time.Minute,
+		ManualProcessed:   true,
+		ManualEventID:     "event1",
+	}
+	tpl.EventExtra = api.EventExtra{
+		EventManualRequestID: "req2",
+		EventWatermark:       time.Unix(456, 0),
+	}
 	require.Equal(t, *tpl, *record)
 
 	// tags full update again
@@ -199,26 +223,60 @@ func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *api.TimerStor
 	tpl.Tags = []string{"l3"}
 	require.Equal(t, *tpl, *record)
 
+	// update manual request
+	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
+		ManualRequest: api.NewOptionalVal(api.ManualRequest{
+			ManualRequestID: "req3",
+		}),
+	})
+	require.NoError(t, err)
+	record, err = store.GetByID(ctx, tpl.ID)
+	require.NoError(t, err)
+	tpl.Version = record.Version
+	tpl.ManualRequest = api.ManualRequest{
+		ManualRequestID: "req3",
+	}
+	require.Equal(t, *tpl, *record)
+
+	// update event extra
+	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
+		EventExtra: api.NewOptionalVal(api.EventExtra{
+			EventManualRequestID: "req4",
+		}),
+	})
+	require.NoError(t, err)
+	record, err = store.GetByID(ctx, tpl.ID)
+	require.NoError(t, err)
+	tpl.Version = record.Version
+	tpl.EventExtra = api.EventExtra{
+		EventManualRequestID: "req4",
+	}
+	require.Equal(t, *tpl, *record)
+
 	// set some to empty
 	var zeroTime time.Time
 	err = store.Update(ctx, tpl.ID, &api.TimerUpdate{
-		Tags:        api.NewOptionalVal([]string(nil)),
-		EventStatus: api.NewOptionalVal(api.SchedEventIdle),
-		EventID:     api.NewOptionalVal(""),
-		EventData:   api.NewOptionalVal([]byte(nil)),
-		EventStart:  api.NewOptionalVal(zeroTime),
-		Watermark:   api.NewOptionalVal(zeroTime),
-		SummaryData: api.NewOptionalVal([]byte(nil)),
+		Tags:          api.NewOptionalVal([]string(nil)),
+		ManualRequest: api.NewOptionalVal(api.ManualRequest{}),
+		EventStatus:   api.NewOptionalVal(api.SchedEventIdle),
+		EventID:       api.NewOptionalVal(""),
+		EventData:     api.NewOptionalVal([]byte(nil)),
+		EventStart:    api.NewOptionalVal(zeroTime),
+		EventExtra:    api.NewOptionalVal(api.EventExtra{}),
+		Watermark:     api.NewOptionalVal(zeroTime),
+		SummaryData:   api.NewOptionalVal([]byte(nil)),
 	})
 	require.NoError(t, err)
 	record, err = store.GetByID(ctx, tpl.ID)
 	require.NoError(t, err)
 	tpl.Version = record.Version
 	tpl.Tags = nil
+	tpl.ManualRequest = api.ManualRequest{}
 	tpl.EventStatus = api.SchedEventIdle
 	tpl.EventID = ""
 	tpl.EventData = nil
 	tpl.EventStart = zeroTime
+	tpl.EventExtra = api.EventExtra{}
 	tpl.Watermark = zeroTime
 	tpl.SummaryData = nil
 	require.Equal(t, *tpl, *record)
@@ -632,4 +690,117 @@ func runNotifierTest(t *testing.T, notifier api.TimerWatchEventNotifier) {
 	checkWatcherClosed(watcher2, false)
 	checkWatcherClosed(watcher3, true)
 	checkWatcherClosed(watcher4, true)
+}
+
+type mockHook struct {
+	preFunc   func(ctx context.Context, event api.TimerShedEvent) (api.PreSchedEventResult, error)
+	schedFunc func(ctx context.Context, event api.TimerShedEvent) error
+}
+
+func (h *mockHook) Start() {}
+
+func (h *mockHook) Stop() {}
+
+func (h *mockHook) OnPreSchedEvent(ctx context.Context, event api.TimerShedEvent) (r api.PreSchedEventResult, err error) {
+	if h.preFunc != nil {
+		return h.preFunc(ctx, event)
+	}
+	return
+}
+
+func (h *mockHook) OnSchedEvent(ctx context.Context, event api.TimerShedEvent) error {
+	if h.schedFunc != nil {
+		return h.schedFunc(ctx, event)
+	}
+	return nil
+}
+
+func TestTableStoreManualTrigger(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dbName := "test"
+	tblName := "timerstore"
+	tk.MustExec("use test")
+	tk.MustExec(tablestore.CreateTimerTableSQL(dbName, tblName))
+
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+
+	timerStore := tablestore.NewTableTimerStore(1, pool, dbName, tblName, nil)
+	defer timerStore.Close()
+
+	var hookReqID atomic.Pointer[string]
+	hook := &mockHook{
+		preFunc: func(ctx context.Context, event api.TimerShedEvent) (r api.PreSchedEventResult, err error) {
+			timer := event.Timer()
+			require.False(t, timer.ManualProcessed)
+			require.Empty(t, timer.ManualEventID)
+			return
+		},
+		schedFunc: func(ctx context.Context, event api.TimerShedEvent) error {
+			timer := event.Timer()
+			require.Equal(t, timer.ManualRequestID, timer.EventManualRequestID)
+			require.Equal(t, timer.Watermark.Unix(), timer.EventWatermark.Unix())
+			require.True(t, timer.ManualProcessed)
+			require.Equal(t, timer.EventID, timer.ManualEventID)
+			hookReqID.Store(&timer.EventManualRequestID)
+			return nil
+		},
+	}
+
+	rt := runtime.NewTimerRuntimeBuilder("test", timerStore).
+		RegisterHookFactory("hook1", func(hookClass string, cli api.TimerClient) api.Hook { return hook }).
+		Build()
+
+	rt.Start()
+	defer rt.Stop()
+
+	cli := api.NewDefaultTimerClient(timerStore)
+	timer, err := cli.CreateTimer(context.TODO(), api.TimerSpec{
+		Key:             "key1",
+		HookClass:       "hook1",
+		SchedPolicyType: api.SchedEventInterval,
+		SchedPolicyExpr: "1h",
+		Watermark:       time.Now(),
+		Enable:          true,
+	})
+	require.NoError(t, err)
+
+	reqID, err := cli.ManualTriggerEvent(context.TODO(), timer.ID)
+	require.NoError(t, err)
+	start := time.Now()
+	eventID := ""
+	for eventID == "" {
+		if time.Since(start) > time.Minute {
+			require.FailNow(t, "timeout")
+		}
+		time.Sleep(100 * time.Millisecond)
+		timer, err = cli.GetTimerByID(context.TODO(), timer.ID)
+		require.NoError(t, err)
+		require.Equal(t, reqID, timer.ManualRequestID)
+		eventID = timer.EventID
+	}
+
+	require.Equal(t, reqID, timer.ManualRequestID)
+	require.Equal(t, eventID, timer.ManualEventID)
+	require.True(t, timer.ManualProcessed)
+	require.Equal(t, reqID, timer.EventManualRequestID)
+	start = time.Now()
+	for hookReqID.Load() == nil {
+		if time.Since(start) > time.Minute {
+			require.FailNow(t, "timeout")
+		}
+		time.Sleep(100 * time.Microsecond)
+	}
+	require.Equal(t, reqID, *hookReqID.Load())
+
+	require.NoError(t, cli.CloseTimerEvent(context.TODO(), timer.ID, timer.EventID))
+	timer, err = cli.GetTimerByID(context.TODO(), timer.ID)
+	require.NoError(t, err)
+	require.Equal(t, reqID, timer.ManualRequestID)
+	require.Equal(t, eventID, timer.ManualEventID)
+	require.True(t, timer.ManualProcessed)
+	require.Equal(t, api.EventExtra{}, timer.EventExtra)
 }
