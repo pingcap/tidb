@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "cache",
-    srcs = [
-        "statscache.go",
-        "statscacheinner.go",
-    ],
+    srcs = ["statscacheinner.go"],
     importpath = "github.com/pingcap/tidb/statistics/handle/cache",
     visibility = ["//visibility:public"],
     deps = [
