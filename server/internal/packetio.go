@@ -57,18 +57,18 @@ const defaultWriterSize = 16 * 1024
 // PacketIO is a helper to read and write data in packet format.
 // MySQL Packets: https://dev.mysql.com/doc/internals/en/mysql-packet.html
 type PacketIO struct {
-	bufReadConn *util.BufferedReadConn
-	bufWriter   *bufio.Writer
-	sequence    uint8
-	readTimeout time.Duration
+	bufReadConn      *util.BufferedReadConn
+	bufWriter        *bufio.Writer
+	compressedWriter *compressedWriter
+	readTimeout      time.Duration
 	// maxAllowedPacket is the maximum size of one packet in ReadPacket.
 	maxAllowedPacket uint64
 	// accumulatedLength count the length of totally received 'payload' in ReadPacket.
 	accumulatedLength    uint64
 	compressionAlgorithm int
-	compressedSequence   uint8
 	zstdLevel            zstd.EncoderLevel
-	compressedWriter     *compressedWriter
+	sequence             uint8
+	compressedSequence   uint8
 }
 
 func NewPacketIO(bufReadConn *util.BufferedReadConn) *PacketIO {

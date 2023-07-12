@@ -49,9 +49,9 @@ func New(recordSet sqlexec.RecordSet, preparedStmt *core.PlanCacheStmt) ResultSe
 
 type tidbResultSet struct {
 	recordSet    sqlexec.RecordSet
+	preparedStmt *core.PlanCacheStmt
 	columns      []*column.Info
 	closed       int32
-	preparedStmt *core.PlanCacheStmt
 }
 
 func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {

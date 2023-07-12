@@ -186,6 +186,7 @@ go_test(
         "//server/internal/handshake",
         "//server/internal/parse",
         "//server/internal/resultset",
+        "//server/internal/testutil",
         "//server/internal/util",
         "//session",
         "//sessionctx",

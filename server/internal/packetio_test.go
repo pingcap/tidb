@@ -19,12 +19,11 @@ import (
 	"bytes"
 	"compress/zlib"
 	"io"
-	"net"
 	"testing"
-	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/internal/testutil"
 	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/stretchr/testify/require"
 )
@@ -69,7 +68,7 @@ func TestPacketIORead(t *testing.T) {
 		_, err := inBuffer.Write([]byte{0x01, 0x00, 0x00, 0x00, 0x01})
 		require.NoError(t, err)
 		// Test read one packet
-		brc := util.NewBufferedReadConn(&bytesConn{inBuffer})
+		brc := util.NewBufferedReadConn(&testutil.BytesConn{inBuffer})
 		pkt := NewPacketIO(brc)
 		readBytes, err := pkt.ReadPacket()
 		require.NoError(t, err)
@@ -91,7 +90,7 @@ func TestPacketIORead(t *testing.T) {
 		_, err = inBuffer.Write(buf)
 		require.NoError(t, err)
 		// Test read multiple packets
-		brc = util.NewBufferedReadConn(&bytesConn{inBuffer})
+		brc = util.NewBufferedReadConn(&testutil.BytesConn{inBuffer})
 		pkt = NewPacketIO(brc)
 		readBytes, err = pkt.ReadPacket()
 		require.NoError(t, err)
@@ -109,7 +108,7 @@ func TestPacketIORead(t *testing.T) {
 
 		require.NoError(t, err)
 		// Test read one packet
-		brc := util.NewBufferedReadConn(&bytesConn{inBuffer})
+		brc := util.NewBufferedReadConn(&testutil.BytesConn{inBuffer})
 		pkt := NewPacketIO(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
 		readBytes, err := pkt.ReadPacket()
@@ -141,7 +140,7 @@ func TestPacketIORead(t *testing.T) {
 
 		require.NoError(t, err)
 		// Test read one packet
-		brc := util.NewBufferedReadConn(&bytesConn{inBuffer})
+		brc := util.NewBufferedReadConn(&testutil.BytesConn{inBuffer})
 		pkt := NewPacketIO(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
 		readBytes, err := pkt.ReadPacket()
@@ -178,7 +177,7 @@ func TestPacketIORead(t *testing.T) {
 
 		require.NoError(t, err)
 		// Test read one packet
-		brc := util.NewBufferedReadConn(&bytesConn{inBuffer})
+		brc := util.NewBufferedReadConn(&testutil.BytesConn{inBuffer})
 		pkt := NewPacketIO(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZstd)
 		readBytes, err := pkt.ReadPacket()
@@ -201,42 +200,6 @@ func TestPacketIORead(t *testing.T) {
 
 		require.Equal(t, expected, readBytes)
 	})
-}
-
-type bytesConn struct {
-	b bytes.Buffer
-}
-
-func (c *bytesConn) Read(b []byte) (n int, err error) {
-	return c.b.Read(b)
-}
-
-func (c *bytesConn) Write(b []byte) (n int, err error) {
-	return 0, nil
-}
-
-func (c *bytesConn) Close() error {
-	return nil
-}
-
-func (c *bytesConn) LocalAddr() net.Addr {
-	return nil
-}
-
-func (c *bytesConn) RemoteAddr() net.Addr {
-	return nil
-}
-
-func (c *bytesConn) SetDeadline(t time.Time) error {
-	return nil
-}
-
-func (c *bytesConn) SetReadDeadline(t time.Time) error {
-	return nil
-}
-
-func (c *bytesConn) SetWriteDeadline(t time.Time) error {
-	return nil
 }
 
 // Small payloads of less than minCompressLength (50 bytes) don't get actually

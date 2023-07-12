@@ -26,6 +26,7 @@ go_test(
     shard_count = 4,
     deps = [
         "//parser/mysql",
+        "//server/internal/testutil",
         "//server/internal/util",
         "@com_github_klauspost_compress//zstd",
         "@com_github_stretchr_testify//require",
