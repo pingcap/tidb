@@ -25,16 +25,8 @@ import (
 	"github.com/pingcap/tidb/util/benchdaily"
 )
 
-func BenchmarkStatsCacheLRUCopyAndUpdate(b *testing.B) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
-	var (
-		wg sync.WaitGroup
-		c  = NewStatsCachePointer()
-	)
+func benchCopyAndUpdate(b *testing.B, c *StatsCachePointer) {
+	var wg sync.WaitGroup
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		wg.Add(1)
@@ -50,29 +42,22 @@ func BenchmarkStatsCacheLRUCopyAndUpdate(b *testing.B) {
 	b.StopTimer()
 }
 
+func BenchmarkStatsCacheLRUCopyAndUpdate(b *testing.B) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	benchCopyAndUpdate(b, NewStatsCachePointer())
+}
+
 func BenchmarkStatsCacheMapCacheCopyAndUpdate(b *testing.B) {
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = false
 	})
-	var (
-		wg sync.WaitGroup
-		c  = NewStatsCachePointer()
-	)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
-			t1.PhysicalID = rand.Int63()
-			cache := c.Load()
-			c.Replace(cache.CopyAndUpdate([]*statistics.Table{t1}, nil))
-		}()
-	}
-	wg.Wait()
-	b.StopTimer()
+	benchCopyAndUpdate(b, NewStatsCachePointer())
 }
 
 func TestBenchDaily(t *testing.T) {
