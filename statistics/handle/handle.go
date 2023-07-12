@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -89,6 +90,10 @@ type Handle struct {
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
 	statsCache *cache.StatsCachePointer
+
+	// lastUpdateVersion stores the last table version when updating statistics last time.
+	// This variable is used to filter unnecessary data when reading statistics from the storage.
+	lastUpdateVersion atomic.Uint64
 
 	// feedback is used to store query feedback info.
 	feedback struct {
@@ -562,14 +567,14 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) error {
 	oldCache := h.statsCache.Load()
-	lastVersion := oldCache.Version()
+	lastVersion := h.lastUpdateVersion.Load()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than three lease.
 	offset := DurationToTS(3 * h.Lease())
-	if oldCache.Version() >= offset {
+	if lastVersion >= offset {
 		lastVersion = lastVersion - offset
 	} else {
 		lastVersion = 0
@@ -587,6 +592,9 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		version := row.GetUint64(0)
+		if version > lastVersion {
+			lastVersion = version
+		}
 		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
@@ -617,6 +625,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
+	h.lastUpdateVersion.Store(lastVersion)
 	h.updateStatsCache(oldCache.CopyAndUpdate(tables, deletedTableIDs, opts...))
 	return nil
 }
@@ -1163,7 +1172,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 
 // LastUpdateVersion gets the last update version.
 func (h *Handle) LastUpdateVersion() uint64 {
-	return h.statsCache.Load().Version()
+	return h.lastUpdateVersion.Load()
 }
 
 // FlushStats flushes the cached stats update into store.

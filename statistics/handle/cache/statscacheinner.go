@@ -18,7 +18,6 @@ import (
 	"context"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -73,8 +72,6 @@ func NewStatsCache() *StatsCache {
 // StatsCache caches the tables in memory for Handle.
 type StatsCache struct {
 	c internal.StatsCacheInner
-	// the max table stats version the cache has in its lifecycle.
-	maxTblStatsVer atomic.Uint64
 }
 
 // Len returns the number of tables in the cache.
@@ -108,13 +105,6 @@ func (sc *StatsCache) PutFromInternal(id int64, t *statistics.Table) {
 // Put puts the table statistics to the cache.
 func (sc *StatsCache) put(id int64, t *statistics.Table, moveLRUFront bool) {
 	sc.c.Put(id, t, moveLRUFront)
-
-	// update the maxTblStatsVer
-	for v := sc.maxTblStatsVer.Load(); v < t.Version; v = sc.maxTblStatsVer.Load() {
-		if sc.maxTblStatsVer.CompareAndSwap(v, t.Version) {
-			break
-		} // other goroutines have updated the sc.maxTblStatsVer, so we need to check again.
-	}
 }
 
 // Values returns all the cached statistics tables.
@@ -132,12 +122,6 @@ func (sc *StatsCache) SetCapacity(c int64) {
 	sc.c.SetCapacity(c)
 }
 
-// Version returns the version of the current cache, which is defined as
-// the max table stats version the cache has in its lifecycle.
-func (sc *StatsCache) Version() uint64 {
-	return sc.maxTblStatsVer.Load()
-}
-
 // Front returns the front element's owner tableID, only used for test.
 func (sc *StatsCache) Front() int64 {
 	return sc.c.Front()
@@ -150,7 +134,6 @@ func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int
 		opt(option)
 	}
 	newCache := &StatsCache{c: sc.c.Copy()}
-	newCache.maxTblStatsVer.Store(sc.maxTblStatsVer.Load())
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
 		if option.byQuery {
@@ -161,13 +144,6 @@ func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int
 	}
 	for _, id := range deletedIDs {
 		newCache.c.Del(id)
-	}
-
-	// update the maxTblStatsVer
-	for _, t := range tables {
-		if t.Version > newCache.maxTblStatsVer.Load() {
-			newCache.maxTblStatsVer.Store(t.Version)
-		}
 	}
 	return newCache
 }
