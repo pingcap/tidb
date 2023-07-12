@@ -81,7 +81,7 @@ func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 }
 
 func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source string) {
-	v := h.statsCache.Load()
+	v := h.statsCache
 	if v == nil {
 		return
 	}

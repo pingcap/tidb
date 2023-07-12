@@ -117,6 +117,7 @@ func (sc *StatsCache) PutFromInternal(id int64, t *statistics.Table) {
 
 // Put puts the table statistics to the cache.
 func (sc *StatsCache) put(id int64, t *statistics.Table, moveLRUFront bool) {
+	// NOTE: put is only used when initializing the cache, so don't need to use COW here.
 	sc.innerCache().Put(id, t, moveLRUFront)
 
 	// update the maxTblStatsVer

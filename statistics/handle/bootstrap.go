@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -480,7 +481,8 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h.updateStatsCache(cache)
+	h.statsCache = cache
+	handle_metrics.CostGauge.Set(float64(h.statsCache.Cost()))
 	return nil
 }
 
@@ -534,7 +536,8 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 			}
 		}
 	}
-	h.updateStatsCache(cache)
+	h.statsCache = cache
+	handle_metrics.CostGauge.Set(float64(h.statsCache.Cost()))
 	return nil
 }
 
