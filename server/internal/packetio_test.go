@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package internal
 
 import (
 	"bufio"
@@ -25,7 +25,6 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/server/internal"
 	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/stretchr/testify/require"
 )
@@ -34,28 +33,28 @@ func BenchmarkPacketIOWrite(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var outBuffer bytes.Buffer
-		pkt := &internal.packetIO{bufWriter: bufio.NewWriter(&outBuffer)}
-		_ = pkt.writePacket([]byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe})
+		pkt := &PacketIO{bufWriter: bufio.NewWriter(&outBuffer)}
+		_ = pkt.WritePacket([]byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe})
 	}
 }
 
 func TestPacketIOWrite(t *testing.T) {
 	// Test write one packet
 	var outBuffer bytes.Buffer
-	pkt := &internal.packetIO{bufWriter: bufio.NewWriter(&outBuffer)}
-	err := pkt.writePacket([]byte{0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03})
+	pkt := &PacketIO{bufWriter: bufio.NewWriter(&outBuffer)}
+	err := pkt.WritePacket([]byte{0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03})
 	require.NoError(t, err)
-	err = pkt.flush()
+	err = pkt.Flush()
 	require.NoError(t, err)
 	require.Equal(t, []byte{0x03, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03}, outBuffer.Bytes())
 
 	// Test write more than one packet
 	outBuffer.Reset()
 	largeInput := make([]byte, mysql.MaxPayloadLen+4)
-	pkt = &internal.packetIO{bufWriter: bufio.NewWriter(&outBuffer)}
-	err = pkt.writePacket(largeInput)
+	pkt = &PacketIO{bufWriter: bufio.NewWriter(&outBuffer)}
+	err = pkt.WritePacket(largeInput)
 	require.NoError(t, err)
-	err = pkt.flush()
+	err = pkt.Flush()
 	require.NoError(t, err)
 	res := outBuffer.Bytes()
 	require.Equal(t, byte(0xff), res[0])
@@ -71,8 +70,8 @@ func TestPacketIORead(t *testing.T) {
 		require.NoError(t, err)
 		// Test read one packet
 		brc := util.NewBufferedReadConn(&bytesConn{inBuffer})
-		pkt := internal.newPacketIO(brc)
-		readBytes, err := pkt.readPacket()
+		pkt := NewPacketIO(brc)
+		readBytes, err := pkt.ReadPacket()
 		require.NoError(t, err)
 		require.Equal(t, uint8(1), pkt.sequence)
 		require.Equal(t, []byte{0x01}, readBytes)
@@ -93,8 +92,8 @@ func TestPacketIORead(t *testing.T) {
 		require.NoError(t, err)
 		// Test read multiple packets
 		brc = util.NewBufferedReadConn(&bytesConn{inBuffer})
-		pkt = internal.newPacketIO(brc)
-		readBytes, err = pkt.readPacket()
+		pkt = NewPacketIO(brc)
+		readBytes, err = pkt.ReadPacket()
 		require.NoError(t, err)
 		require.Equal(t, uint8(2), pkt.sequence)
 		require.Equal(t, mysql.MaxPayloadLen+1, len(readBytes))
@@ -111,9 +110,9 @@ func TestPacketIORead(t *testing.T) {
 		require.NoError(t, err)
 		// Test read one packet
 		brc := util.NewBufferedReadConn(&bytesConn{inBuffer})
-		pkt := internal.newPacketIO(brc)
+		pkt := NewPacketIO(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
-		readBytes, err := pkt.readPacket()
+		readBytes, err := pkt.ReadPacket()
 		require.NoError(t, err)
 		require.Equal(t, uint8(1), pkt.sequence)
 
@@ -143,9 +142,9 @@ func TestPacketIORead(t *testing.T) {
 		require.NoError(t, err)
 		// Test read one packet
 		brc := util.NewBufferedReadConn(&bytesConn{inBuffer})
-		pkt := internal.newPacketIO(brc)
+		pkt := NewPacketIO(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
-		readBytes, err := pkt.readPacket()
+		readBytes, err := pkt.ReadPacket()
 		require.NoError(t, err)
 		require.Equal(t, uint8(1), pkt.sequence)
 
@@ -180,9 +179,9 @@ func TestPacketIORead(t *testing.T) {
 		require.NoError(t, err)
 		// Test read one packet
 		brc := util.NewBufferedReadConn(&bytesConn{inBuffer})
-		pkt := internal.newPacketIO(brc)
+		pkt := NewPacketIO(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZstd)
-		readBytes, err := pkt.readPacket()
+		readBytes, err := pkt.ReadPacket()
 		require.NoError(t, err)
 		require.Equal(t, uint8(1), pkt.sequence)
 
@@ -254,7 +253,7 @@ func TestCompressedWriterShort(t *testing.T) {
 	var testdata bytes.Buffer
 	payload := []byte("test_short")
 
-	cw := internal.newCompressedWriter(&testdata, mysql.CompressionZlib)
+	cw := newCompressedWriter(&testdata, mysql.CompressionZlib)
 	cw.Write(payload)
 	cw.Flush()
 
@@ -275,7 +274,7 @@ func TestCompressedWriterLong(t *testing.T) {
 		var testdata, decoded bytes.Buffer
 		payload := []byte("test_zlib test_zlib test_zlib test_zlib test_zlib test_zlib test_zlib")
 
-		cw := internal.newCompressedWriter(&testdata, mysql.CompressionZlib)
+		cw := newCompressedWriter(&testdata, mysql.CompressionZlib)
 		cw.Write(payload)
 		cw.Flush()
 
@@ -301,7 +300,7 @@ func TestCompressedWriterLong(t *testing.T) {
 		var testdata bytes.Buffer
 		payload := []byte("test_zstd test_zstd test_zstd test_zstd test_zstd test_zstd test_zstd")
 
-		cw := internal.newCompressedWriter(&testdata, mysql.CompressionZstd)
+		cw := newCompressedWriter(&testdata, mysql.CompressionZstd)
 		cw.Write(payload)
 		cw.Flush()
 
