@@ -828,9 +828,7 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 
 	req.Reset()
 	for {
-		ctx1, cancel := context.WithCancel(ctx)
-		resultTask, err := e.getResultTask(ctx1)
-		cancel()
+		resultTask, err := e.getResultTask(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
