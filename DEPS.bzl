@@ -3881,8 +3881,8 @@ def go_deps():
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
         replace = "github.com/HuSharp/pd/client",
-        sum = "h1:deVJWCB/2NLKlVW+CYPgBhV1+ZvpToBN9IA2ZUe9rgg=",
-        version = "v0.0.0-20230707063511-5a34eab12c57",
+        sum = "h1:X6EEz9pAsCP/pwlsXs1zuFxPO7RJpO4Yu89K0Yw/1bg=",
+        version = "v0.0.0-20230712084312-c6edabc30fc6",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
@@ -5604,8 +5604,8 @@ def go_deps():
         name = "org_golang_x_exp",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/exp",
-        sum = "h1:3xJIFvzUFbu4ls0BTBYcgbCGhA63eAOEMxIHugyXJqA=",
-        version = "v0.0.0-20230519143937-03e91628a987",
+        sum = "h1:QLureRX3moex6NVu/Lr4MGakp9FdA7sBHGBmvRW7NaM=",
+        version = "v0.0.0-20230711005742-c3f37128e5a4",
     )
     go_repository(
         name = "org_golang_x_exp_typeparams",

@@ -117,7 +117,7 @@ require (
 	go.uber.org/goleak v1.2.1
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.24.0
-	golang.org/x/exp v0.0.0-20230519143937-03e91628a987
+	golang.org/x/exp v0.0.0-20230711005742-c3f37128e5a4
 	golang.org/x/net v0.11.0
 	golang.org/x/oauth2 v0.8.0
 	golang.org/x/sync v0.3.0
@@ -303,6 +303,6 @@ replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/parser => ./parser
 	github.com/tikv/client-go/v2 => github.com/HuSharp/client-go/v2 v2.0.0-20230711090949-a30ce371a330
-	github.com/tikv/pd/client => github.com/HuSharp/pd/client v0.0.0-20230707063511-5a34eab12c57
+	github.com/tikv/pd/client => github.com/HuSharp/pd/client v0.0.0-20230712084312-c6edabc30fc6
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
