@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/internal"
 	"github.com/pingcap/tidb/server/internal/column"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -50,7 +51,7 @@ func TestCursorExistsFlag(t *testing.T) {
 	ctx := context.Background()
 	c := CreateMockConn(t, srv).(*mockConn)
 	out := new(bytes.Buffer)
-	c.pkt.bufWriter.Reset(out)
+	c.pkt.ResetBufWriter(out)
 	c.capability |= mysql.ClientDeprecateEOF | mysql.ClientProtocol41
 	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
 	tk.MustExec("use test")
@@ -394,11 +395,9 @@ func getExpectOutput(t *testing.T, originalConn *mockConn, writeFn func(conn *cl
 	conn := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		capability: originalConn.capability,
-		pkt: &packetIO{
-			sequence:  originalConn.pkt.sequence,
-			bufWriter: bufio.NewWriter(buf),
-		},
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(buf)),
 	}
+	conn.pkt.SetSequence(originalConn.pkt.Sequence())
 	conn.setCtx(originalConn.getCtx())
 	writeFn(conn)
 	require.NoError(t, conn.flush(context.Background()))

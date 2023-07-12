@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "internal",
+    srcs = ["packetio.go"],
+    importpath = "github.com/pingcap/tidb/server/internal",
+    visibility = ["//server:__subpackages__"],
+    deps = [
+        "//parser/mysql",
+        "//parser/terror",
+        "//server/err",
+        "//server/internal/util",
+        "//server/metrics",
+        "//sessionctx/variable",
+        "@com_github_klauspost_compress//zstd",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
