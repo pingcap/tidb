@@ -842,7 +842,7 @@ func (e *IndexMergeReaderExecutor) getResultTask(ctx context.Context) (*indexMer
 
 	select {
 	case <-ctx.Done():
-		return nil, nil
+		return nil, errors.Trace(ctx.Err())
 	case err := <-task.doneCh:
 		if err != nil {
 			return nil, errors.Trace(err)
