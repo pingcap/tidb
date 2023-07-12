@@ -973,25 +973,11 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 
 					partitionMethod := table.Partition.Type.String()
 					partitionExpr := table.Partition.Expr
-<<<<<<< HEAD
 					if table.Partition.Type == model.PartitionTypeRange && len(table.Partition.Columns) > 0 {
 						partitionMethod = "RANGE COLUMNS"
 						partitionExpr = table.Partition.Columns[0].String()
 					} else if table.Partition.Type == model.PartitionTypeList && len(table.Partition.Columns) > 0 {
 						partitionMethod = "LIST COLUMNS"
-=======
-					if len(table.Partition.Columns) > 0 {
-						switch table.Partition.Type {
-						case model.PartitionTypeRange:
-							partitionMethod = "RANGE COLUMNS"
-						case model.PartitionTypeList:
-							partitionMethod = "LIST COLUMNS"
-						case model.PartitionTypeKey:
-							partitionMethod = "KEY"
-						default:
-							return errors.Errorf("Inconsistent partition type, have type %v, but with COLUMNS > 0 (%d)", table.Partition.Type, len(table.Partition.Columns))
-						}
->>>>>>> 179e34da1a2 (executor: fix privilege issue on table `information_schema.tiflash_replica` (#45319))
 						buf := bytes.NewBuffer(nil)
 						for i, col := range table.Partition.Columns {
 							if i > 0 {
@@ -2088,7 +2074,9 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 			if tbl.TiFlashReplica == nil {
 				continue
 			}
-<<<<<<< HEAD
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
 			progress := 1.0
 			if !tbl.TiFlashReplica.Available {
 				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
@@ -2099,17 +2087,6 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 						} else {
 							progress += progressMap[p.ID]
 						}
-=======
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-			var progress float64
-			if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-				for _, p := range pi.Definitions {
-					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
-					if err != nil {
-						logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
->>>>>>> 179e34da1a2 (executor: fix privilege issue on table `information_schema.tiflash_replica` (#45319))
 					}
 					progress = progress / float64(len(pi.Definitions))
 				} else {
