@@ -775,7 +775,7 @@ var tokenMap = map[string]int{
 	"SYSTEM":                   system,
 	"SYSTEM_TIME":              systemTime,
 	"TARGET":                   target,
-	"TASK_NAMES":               taskNames,
+	"TASK_TYPES":               taskNames,
 	"TABLE_CHECKSUM":           tableChecksum,
 	"TABLE":                    tableKwd,
 	"TABLES":                   tables,
