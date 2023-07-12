@@ -20,6 +20,7 @@ import (
 	"time"
 )
 
+// BytesConn is a net.Conn implementation, which reads data from a bytes.Buffer.
 type BytesConn struct {
 	bytes.Buffer
 }
