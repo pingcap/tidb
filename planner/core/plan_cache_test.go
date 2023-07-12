@@ -52,6 +52,18 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 	require.NotNil(t, lru)
 }
 
+func TestIssue45086(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL)`)
+	tk.MustExec(`INSERT INTO t VALUES (1, current_date())`)
+
+	tk.MustExec(`PREPARE stmt FROM 'SELECT * FROM t WHERE b=current_date()'`)
+	require.Equal(t, len(tk.MustQuery(`EXECUTE stmt`).Rows()), 1)
+}
+
 func TestIssue43311(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -638,24 +650,25 @@ func TestPreparedPlanCacheLongInList(t *testing.T) {
 		return "(" + strings.Join(elements, ",") + ")"
 	}
 
-	tk.MustExec(fmt.Sprintf(`prepare st_99 from 'select * from t where a in %v'`, genInList(99)))
-	tk.MustExec(`execute st_99`)
-	tk.MustExec(`execute st_99`)
+	// the limitation is 200
+	tk.MustExec(fmt.Sprintf(`prepare st_199 from 'select * from t where a in %v'`, genInList(199)))
+	tk.MustExec(`execute st_199`)
+	tk.MustExec(`execute st_199`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
-	tk.MustExec(fmt.Sprintf(`prepare st_101 from 'select * from t where a in %v'`, genInList(101)))
-	tk.MustExec(`execute st_101`)
-	tk.MustExec(`execute st_101`)
+	tk.MustExec(fmt.Sprintf(`prepare st_201 from 'select * from t where a in %v'`, genInList(201)))
+	tk.MustExec(`execute st_201`)
+	tk.MustExec(`execute st_201`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
-	tk.MustExec(fmt.Sprintf(`prepare st_49_50 from 'select * from t where a in %v and b in %v'`, genInList(49), genInList(50)))
-	tk.MustExec(`execute st_49_50`)
-	tk.MustExec(`execute st_49_50`)
+	tk.MustExec(fmt.Sprintf(`prepare st_99_100 from 'select * from t where a in %v and b in %v'`, genInList(99), genInList(100)))
+	tk.MustExec(`execute st_99_100`)
+	tk.MustExec(`execute st_99_100`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
-	tk.MustExec(fmt.Sprintf(`prepare st_49_52 from 'select * from t where a in %v and b in %v'`, genInList(49), genInList(52)))
-	tk.MustExec(`execute st_49_52`)
-	tk.MustExec(`execute st_49_52`)
+	tk.MustExec(fmt.Sprintf(`prepare st_100_101 from 'select * from t where a in %v and b in %v'`, genInList(100), genInList(101)))
+	tk.MustExec(`execute st_100_101`)
+	tk.MustExec(`execute st_100_101`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
@@ -888,7 +901,7 @@ func TestIssue43852(t *testing.T) {
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
 	tk.MustQuery(`select * from t6 where a in (2015, '8')`).Check(testkit.Rows())
 	tk.MustQuery(`select * from t6 where a in (2009, '2023-01-21')`).Check(testkit.Rows(`2023-01-21 2023-01-05`))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestNonPreparedPlanTypeRandomly(t *testing.T) {
@@ -1210,7 +1223,7 @@ func TestLongInsertStmt(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
 	tk.MustExec(`prepare inert201 from 'insert into t values (1)` + strings.Repeat(", (1)", 200) + "'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: too many values (more than 200) in the insert statement"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: too many values in the insert statement"))
 	tk.MustExec(`execute inert201`)
 	tk.MustExec(`execute inert201`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))

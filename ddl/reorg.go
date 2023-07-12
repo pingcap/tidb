@@ -284,7 +284,6 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
 
-		// TODO: should we do this if dbterror.ErrPausedDDLJob ???
 		d.removeReorgCtx(job.ID)
 
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
@@ -461,7 +460,7 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 
 	if dc.isReorgPaused(jobID) {
 		logutil.BgLogger().Warn("[ddl] job paused by user", zap.String("ID", dc.uuid))
-		return dbterror.ErrPausedDDLJob
+		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(jobID)
 	}
 
 	// If isDistReorg is true, we needn't check if it is owner.

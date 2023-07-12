@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//disttask/framework/proto",
         "//kv",
+        "//parser/terror",
         "//sessionctx",
         "//util/chunk",
         "//util/logutil",

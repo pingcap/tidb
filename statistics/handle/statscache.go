@@ -73,6 +73,10 @@ type statsCache struct {
 	statsCacheInner
 }
 
+func (sc statsCache) len() int {
+	return sc.statsCacheInner.Len()
+}
+
 func (sc statsCache) copy() statsCache {
 	newCache := statsCache{
 		version:      sc.version,
