@@ -453,6 +453,7 @@ func (h *Handle) Clear() {
 	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
 	h.mu.Lock()
 	h.statsCache.Replace(cache.NewStatsCache())
+	h.latestUpdateTableVersion.Store(0)
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
