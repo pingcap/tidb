@@ -269,9 +269,8 @@ func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err
 	}
-	if cloned.TablePlans, err = clonePhysicalPlan(p.TablePlans); err != nil {
-		return nil, err
-	}
+	// TablePlans are actually the flattened plans in tablePlan, so can't copy them, just need to extract from tablePlan
+	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
 	return cloned, nil
 }
 
