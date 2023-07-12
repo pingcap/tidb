@@ -116,8 +116,6 @@ const (
 var (
 	minTiKVVersionForDuplicateResolution = *semver.New("5.2.0")
 	maxTiKVVersionForDuplicateResolution = version.NextMajorVersion()
-	minTiDBCurrentResourceGroupVersion   = *semver.New("7.0.0")
-	maxTiDBCurrentResourceGroupVersion   = version.NextMajorVersion()
 )
 
 // DeliverPauser is a shared pauser to pause progress to (*chunkProcessor).encodeLoop
@@ -363,21 +361,14 @@ func NewImportControllerWithPauser(
 			DB: db,
 		}
 
-		versionStr, _ := version.FetchVersion(ctx, db)
-		if err := version.CheckTiDBVersion(versionStr, minTiDBCurrentResourceGroupVersion, maxTiDBCurrentResourceGroupVersion); err != nil {
-			if !berrors.Is(err, berrors.ErrVersionMismatch) {
-				return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()
-			}
-			log.FromContext(ctx).Debug("TiDB version doesn't support get current resource group.", zap.Error(err))
-		} else {
-			// get resource group name.
-			exec := common.SQLWithRetry{
-				DB:     db,
-				Logger: log.FromContext(ctx),
-			}
-
-			if err := exec.QueryRow(ctx, "", "select current_resource_group();", &p.ResourceGroupName); err != nil {
-				return nil, err
+		// get resource group name.
+		exec := common.SQLWithRetry{
+			DB:     db,
+			Logger: log.FromContext(ctx),
+		}
+		if err := exec.QueryRow(ctx, "", "select current_resource_group();", &p.ResourceGroupName); err != nil {
+			if common.IsFunctionMatchErr(err, "current_resource_group") {
+				log.FromContext(ctx).Debug("current_resource_group() not supported, ignore this error", zap.Error(err))
 			}
 		}
 

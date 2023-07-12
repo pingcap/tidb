@@ -657,3 +657,9 @@ func getSessionVariable(ctx context.Context, db *sql.DB, variable string) (value
 
 	return value, nil
 }
+
+func IsFunctionMatchErr(err error, functionName string) bool {
+	return err != nil &&
+		(strings.Contains(err.Error(), "No database selected") ||
+			strings.Contains(err.Error(), fmt.Sprintf("%s does not exist", functionName)))
+}
