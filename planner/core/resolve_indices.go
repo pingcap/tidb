@@ -121,12 +121,33 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 			return err
 		}
 	}
+
+	mergedSchema := expression.MergeSchema(lSchema, rSchema)
+
 	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], err = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
+		p.OtherConditions[i], err = expr.ResolveIndices(mergedSchema)
 		if err != nil {
 			return err
 		}
 	}
+
+	colsNeedResolving := p.schema.Len()
+	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
+	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		colsNeedResolving--
+	}
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, p.schema.Len())
+	copy(shallowColSlice, p.schema.Columns)
+	p.schema = expression.NewSchema(shallowColSlice...)
+	for i := 0; i < colsNeedResolving; i++ {
+		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
+		if err != nil {
+			return err
+		}
+		p.schema.Columns[i] = newCol.(*expression.Column)
+	}
+
 	return
 }
 
@@ -173,11 +194,31 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 			return err
 		}
 	}
+
+	mergedSchema := expression.MergeSchema(lSchema, rSchema)
+
 	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], err = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
+		p.OtherConditions[i], err = expr.ResolveIndices(mergedSchema)
 		if err != nil {
 			return err
 		}
+	}
+
+	colsNeedResolving := p.schema.Len()
+	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
+	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		colsNeedResolving--
+	}
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, p.schema.Len())
+	copy(shallowColSlice, p.schema.Columns)
+	p.schema = expression.NewSchema(shallowColSlice...)
+	for i := 0; i < colsNeedResolving; i++ {
+		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
+		if err != nil {
+			return err
+		}
+		p.schema.Columns[i] = newCol.(*expression.Column)
 	}
 	return
 }
@@ -245,6 +286,24 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 		}
 		p.OuterHashKeys[i], p.InnerHashKeys[i] = outerKey.(*expression.Column), innerKey.(*expression.Column)
 	}
+
+	colsNeedResolving := p.schema.Len()
+	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
+	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		colsNeedResolving--
+	}
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, p.schema.Len())
+	copy(shallowColSlice, p.schema.Columns)
+	p.schema = expression.NewSchema(shallowColSlice...)
+	for i := 0; i < colsNeedResolving; i++ {
+		newCol, err := p.schema.Columns[i].ResolveIndices(mergedSchema)
+		if err != nil {
+			return err
+		}
+		p.schema.Columns[i] = newCol.(*expression.Column)
+	}
+
 	return
 }
 
@@ -559,6 +618,43 @@ func (p *PhysicalTopN) ResolveIndices() (err error) {
 			return err
 		}
 	}
+<<<<<<< HEAD
+=======
+	for i, item := range p.PartitionBy {
+		newCol, err := item.Col.ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.PartitionBy[i].Col = newCol.(*expression.Column)
+	}
+	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalLimit) ResolveIndices() (err error) {
+	err = p.basePhysicalPlan.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	for i, item := range p.PartitionBy {
+		newCol, err := item.Col.ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.PartitionBy[i].Col = newCol.(*expression.Column)
+	}
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, p.schema.Len())
+	copy(shallowColSlice, p.schema.Columns)
+	p.schema = expression.NewSchema(shallowColSlice...)
+	for i, col := range p.schema.Columns {
+		newCol, err := col.ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.schema.Columns[i] = newCol.(*expression.Column)
+	}
+>>>>>>> a84c1e875b1 (planner, executor: fix the logic for inline projection of executors (#45158))
 	return
 }
 
