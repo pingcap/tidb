@@ -26,6 +26,7 @@ go_library(
         "//kv",
         "//meta/autoid",
         "//parser/model",
+        "//sessionctx/variable",
         "//store/driver/error",
         "//table/tables",
         "//util",
