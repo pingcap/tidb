@@ -61,26 +61,20 @@ go_test(
     ],
     embed = [":ingest"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 11,
+    shard_count = 12,
     deps = [
         "//config",
-=======
-    race = "on",
-    shard_count = 13,
-    deps = [
-        "//config",
-        "//ddl",
         "//ddl/internal/callback",
->>>>>>> f13419846cf (ddl/ingest: unregister backend after job cancelled (#44206))
         "//ddl/internal/session",
         "//errno",
         "//kv",
+        "//parser/model",
         "//sessionctx",
         "//testkit",
         "//tests/realtikvtest",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

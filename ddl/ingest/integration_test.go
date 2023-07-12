@@ -21,17 +21,14 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/ingest"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/ddl/internal/callback"
-	"github.com/pingcap/tidb/ddl/testutil"
-	"github.com/pingcap/tidb/domain"
->>>>>>> f13419846cf (ddl/ingest: unregister backend after job cancelled (#44206))
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
