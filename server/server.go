@@ -100,7 +100,6 @@ func init() {
 
 var (
 	errInvalidSequence         = dbterror.ClassServer.NewStd(errno.ErrInvalidSequence)
-	errInvalidType             = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
 	errNotAllowedCommand       = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
 	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
 	errAccessDeniedNoPassword  = dbterror.ClassServer.NewStd(errno.ErrAccessDeniedNoPassword)
@@ -890,7 +889,7 @@ func (s *Server) KillSysProcesses() {
 // KillAllConnections implements the SessionManager interface.
 // KillAllConnections kills all connections.
 func (s *Server) KillAllConnections() {
-	logutil.BgLogger().Info("[server] kill all connections.")
+	logutil.BgLogger().Info("kill all connections.", zap.String("category", "server"))
 
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()

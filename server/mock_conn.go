@@ -45,6 +45,8 @@ type MockConn interface {
 	Close()
 	// ID returns the connection ID.
 	ID() uint64
+	// GetOutbound replaces the internal outbound endpoint with a empty buffer, and return it
+	GetOutput() *bytes.Buffer
 }
 
 type mockConn struct {
@@ -75,6 +77,14 @@ func (mc *mockConn) Close() {
 // ID implements MockConn.ID
 func (mc *mockConn) ID() uint64 {
 	return mc.clientConn.connectionID
+}
+
+// GetOutput implements MockConn.GetOutbound
+func (mc *mockConn) GetOutput() *bytes.Buffer {
+	buf := bytes.NewBuffer([]byte{})
+	mc.clientConn.pkt.bufWriter = bufio.NewWriter(buf)
+
+	return buf
 }
 
 // CreateMockServer creates a mock server.
