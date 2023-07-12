@@ -1000,8 +1000,6 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-=======
 func TestIssue41572(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1029,7 +1027,6 @@ func TestIssue41572(t *testing.T) {
 	}
 }
 
->>>>>>> 85d6323e3a3 (util/ranger: consider good non-point ranges from CNF item (#44384))
 func TestPrefixIndexMultiColDNF(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

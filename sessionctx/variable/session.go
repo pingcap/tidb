@@ -1477,8 +1477,6 @@ type SessionVars struct {
 
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
-<<<<<<< HEAD
-=======
 
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
@@ -1507,7 +1505,6 @@ func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exi
 	}
 	value, exist = s.OptimizerFixControl[key]
 	return
->>>>>>> 85d6323e3a3 (util/ranger: consider good non-point ranges from CNF item (#44384))
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
