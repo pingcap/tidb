@@ -18,6 +18,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -63,12 +64,12 @@ func NewStatsCache() *StatsCache {
 		capacity := variable.StatsCacheMemQuota.Load()
 		var innerCache internal.StatsCacheInner = lru.NewStatsLruCache(capacity)
 		sc := &StatsCache{}
-		sc.c.Store(&innerCache)
+		sc.swapCache(0, innerCache)
 		return sc
 	}
 	var innerCache internal.StatsCacheInner = mapcache.NewMapCache()
 	sc := &StatsCache{}
-	sc.c.Store(&innerCache)
+	sc.swapCache(0, innerCache)
 	return sc
 }
 
@@ -78,13 +79,36 @@ type StatsCache struct {
 	// so to eliminate these read/write conflicts, we update the cache in a COW manner, which is:
 	// 1: copy and create a new cache; 2: update on the new cache; 3: swap it with the new cache pointer.
 	// TODO: remove this COW implementation and support in-place updates.
-	c atomic.Pointer[internal.StatsCacheInner]
+	pointer struct { // atomic.Pointer cannot support interface, so we have to implement a pointer wrapper.
+		lastUpdateTime int64
+		cache          internal.StatsCacheInner
+		mu             sync.RWMutex
+	}
 	// the max table stats version the cache has in its lifecycle.
 	maxTblStatsVer atomic.Uint64
 }
 
 func (sc *StatsCache) innerCache() internal.StatsCacheInner {
-	return *sc.c.Load()
+	sc.pointer.mu.RLock()
+	defer sc.pointer.mu.RUnlock()
+	return sc.pointer.cache
+}
+
+func (sc *StatsCache) innerCacheWithTS() (internal.StatsCacheInner, int64) {
+	sc.pointer.mu.RLock()
+	defer sc.pointer.mu.RUnlock()
+	return sc.pointer.cache, sc.pointer.lastUpdateTime
+}
+
+func (sc *StatsCache) swapCache(ts int64, cache internal.StatsCacheInner) (swapped bool) {
+	sc.pointer.mu.Lock()
+	defer sc.pointer.mu.Unlock()
+	if ts != sc.pointer.lastUpdateTime {
+		return false
+	}
+	sc.pointer.lastUpdateTime = time.Now().UnixNano()
+	sc.pointer.cache = cache
+	return true
 }
 
 // Len returns the number of tables in the cache.
@@ -159,12 +183,12 @@ func (sc *StatsCache) BatchUpdate(tables []*statistics.Table, deletedIDs []int64
 	// current implementation of StatsCacheInner cannot handle concurrent read/write with high performance,
 	// so we update it in a COW manner here to eliminate read/write conflicts.
 	// TODO: remove this COW implementation and support in-place updates.
-	cowUpdate := func() (oldCache, newCache internal.StatsCacheInner) {
+	cowUpdate := func() (ts int64, newCache internal.StatsCacheInner) {
 		option := &TableStatsOption{}
 		for _, opt := range opts {
 			opt(option)
 		}
-		oldCache = sc.innerCache()
+		oldCache, ts := sc.innerCacheWithTS()
 		newCache = oldCache.Copy()
 		for _, tbl := range tables {
 			id := tbl.PhysicalID
@@ -177,12 +201,12 @@ func (sc *StatsCache) BatchUpdate(tables []*statistics.Table, deletedIDs []int64
 		for _, id := range deletedIDs {
 			newCache.Del(id)
 		}
-		return oldCache, newCache
+		return ts, newCache
 	}
 
 	for {
-		oldCache, newCache := cowUpdate()
-		if sc.c.CompareAndSwap(&oldCache, &newCache) {
+		ts, newCache := cowUpdate()
+		if sc.swapCache(ts, newCache) {
 			break
 		} // sc.c has been updated by some other thread, so we need to update it again.
 	}
