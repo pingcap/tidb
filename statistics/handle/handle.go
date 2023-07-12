@@ -91,9 +91,9 @@ type Handle struct {
 	// written only after acquiring the lock.
 	statsCache *cache.StatsCachePointer
 
-	// lastUpdateVersion stores the last table version when updating statistics last time.
+	// latestUpdateTableVersion stores the lastest table version when updating statistics last time.
 	// This variable is used to filter unnecessary data when reading statistics from the storage.
-	lastUpdateVersion atomic.Uint64
+	latestUpdateTableVersion atomic.Uint64
 
 	// feedback is used to store query feedback info.
 	feedback struct {
@@ -567,7 +567,7 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) error {
 	oldCache := h.statsCache.Load()
-	lastVersion := h.lastUpdateVersion.Load()
+	lastVersion := h.latestUpdateTableVersion.Load()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
@@ -625,7 +625,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
-	h.lastUpdateVersion.Store(lastVersion)
+	h.latestUpdateTableVersion.Store(lastVersion)
 	h.updateStatsCache(oldCache.CopyAndUpdate(tables, deletedTableIDs, opts...))
 	return nil
 }
@@ -1172,7 +1172,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 
 // LastUpdateVersion gets the last update version.
 func (h *Handle) LastUpdateVersion() uint64 {
-	return h.lastUpdateVersion.Load()
+	return h.latestUpdateTableVersion.Load()
 }
 
 // FlushStats flushes the cached stats update into store.
