@@ -3052,6 +3052,14 @@ func mustRecv[T interface{}](t *testing.T, ch <-chan T) T {
 	panic("unreachable")
 }
 
+func mustLocked(t *testing.T, store kv.Storage, stmt string) {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("begin pessimistic")
+	tk.MustGetErrCode(stmt, errno.ErrLockAcquireFailAndNoWaitSet)
+	tk.MustExec("rollback")
+}
+
 func TestFairLockingBasic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3212,11 +3220,7 @@ func TestFairLockingRetry(t *testing.T) {
 	tk2.MustExec("use test")
 
 	mustLocked := func(stmt string) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("begin pessimistic")
-		tk.MustGetErrCode(stmt, errno.ErrLockAcquireFailAndNoWaitSet)
-		tk.MustExec("rollback")
+		mustLocked(t, store, stmt)
 	}
 
 	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 1")
@@ -3388,7 +3392,7 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 	tk.MustExec("commit")
 }
 
-func TestIssue43243(t *testing.T) {
+func TestIssueBatchResolveLocks(t *testing.T) {
 	store, domain := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 
 	if *realtikvtest.WithRealTiKV {
@@ -3412,8 +3416,10 @@ func TestIssue43243(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int primary key, v int)")
 	tk.MustExec("create table t2 (id int primary key, v int)")
+	tk.MustExec("create table t3 (id int primary key, v int)")
 	tk.MustExec("insert into t1 values (1, 1), (2, 2)")
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
+	tk.MustExec("insert into t3 values (1, 1)")
 	tk.MustExec("set @@tidb_enable_async_commit=0")
 	tk.MustExec("set @@tidb_enable_1pc=0")
 
@@ -3434,11 +3440,16 @@ func TestIssue43243(t *testing.T) {
 	require.NoError(t, failpoint.Enable("tikvclient/beforeAsyncPessimisticRollback", `return("skip")`))
 	require.NoError(t, failpoint.Enable("tikvclient/beforeCommitSecondaries", `return("skip")`))
 	require.NoError(t, failpoint.Enable("tikvclient/twoPCRequestBatchSizeLimit", `return`))
+	require.NoError(t, failpoint.Enable("tikvclient/onRollback", `return("skipRollbackPessimisticLock")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("tikvclient/beforeAsyncPessimisticRollback"))
 		require.NoError(t, failpoint.Disable("tikvclient/beforeCommitSecondaries"))
 		require.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
+		require.NoError(t, failpoint.Disable("tikvclient/onRollback"))
 	}()
+
+	// ----------------
+	// Simulate issue https://github.com/pingcap/tidb/issues/43243
 
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
@@ -3465,11 +3476,24 @@ func TestIssue43243(t *testing.T) {
 	tk.MustExec("update t2 set v = v + 10 where id = 3")
 	tk.MustExec("commit")
 
+	// ----------------
+	// Simulate issue https://github.com/pingcap/tidb/issues/45134
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t3 where id = 1 for update").Check(testkit.Rows("1 1"))
+	tk.MustExec("rollback")
+	// tk leaves a pessimistic lock on row 6. Try to ensure it.
+	mustLocked(t, store, "select * from t3 where id = 1 for update nowait")
+
 	// Simulate a later GC that should resolve all stale lock produced in above steps.
 	currentTS, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
-	_, err = gcworker.RunResolveLocks(context.Background(), store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-issue43243", 1, false)
+	_, err = gcworker.RunResolveLocks(context.Background(), store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-batch-resolve-locks", 1, false)
 	require.NoError(t, err)
+
+	// Check row 6 unlocked
+	tk3.MustExec("begin pessimistic")
+	tk3.MustQuery("select * from t3 where id = 1 for update nowait").Check(testkit.Rows("1 1"))
+	tk3.MustExec("rollback")
 
 	// Check data consistency
 	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 1", "2 3", "3 13", "4 14", "5 15"))
