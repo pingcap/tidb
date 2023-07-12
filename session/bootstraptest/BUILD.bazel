@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//config",
         "//ddl",
+        "//ddl/util/callback",
         "//kv",
         "//meta",
         "//parser/model",

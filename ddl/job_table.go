@@ -213,6 +213,10 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		logutil.BgLogger().Warn("[ddl-upgrading] normal cluster state, resume the job successfully", zap.Stringer("job", job))
 	}
 
+	if job.IsPaused() {
+		return false, nil
+	}
+
 	return true, nil
 }
 

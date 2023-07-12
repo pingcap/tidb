@@ -2193,8 +2193,8 @@ def go_deps():
         name = "com_github_inconshreveable_mousetrap",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/inconshreveable/mousetrap",
-        sum = "h1:U3uMjPSQEBMNp1lFxmllqCPM6P5u/Xq7Pgzkat/bFNc=",
-        version = "v1.0.1",
+        sum = "h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=",
+        version = "v1.1.0",
     )
     go_repository(
         name = "com_github_influxdata_influxdb",
@@ -2202,6 +2202,13 @@ def go_deps():
         importpath = "github.com/influxdata/influxdb",
         sum = "h1:O08dwjOwv9CYlJJEUZKAazSoQDKlsN34Bq3dnhqhyVI=",
         version = "v0.0.0-20170331210902-15e594fc09f1",
+    )
+    go_repository(
+        name = "com_github_influxdata_tdigest",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/influxdata/tdigest",
+        sum = "h1:XpFptwYmnEKUqmkcDjrzffswZ3nvNeevbUSLPP/ZzIY=",
+        version = "v0.0.1",
     )
 
     go_repository(
@@ -4164,8 +4171,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:7JvBwc+e1x4AXHtwXp9IK1X04Iokol+HgrWdukU5iqM=",
-        version = "v2.0.8-0.20230605085112-28247160f497",
+        sum = "h1:vgcLrfGffcHRPtgXWEeBgmnNcbz1t6XuYTPjPro35zQ=",
+        version = "v2.0.8-0.20230712065349-ef92db18a1dc",
     )
     go_repository(
         name = "com_github_tikv_pd",

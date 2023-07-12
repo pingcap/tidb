@@ -325,16 +325,19 @@ func TestMeetTTLRunningTasks(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	// -1, the default value, means the count of TiKV
-	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(2))
-	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3))
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(2, cache.TaskStatusWaiting))
+	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3, cache.TaskStatusWaiting))
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(2, cache.TaskStatusRunning))
 
 	// positive number means the limitation
 	tk.MustExec("set global tidb_ttl_running_tasks = 32")
-	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(32))
-	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(31))
+	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(32, cache.TaskStatusWaiting))
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(31, cache.TaskStatusWaiting))
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(32, cache.TaskStatusRunning))
 
 	// set it back to auto value
 	tk.MustExec("set global tidb_ttl_running_tasks = -1")
-	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(2))
-	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3))
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(2, cache.TaskStatusWaiting))
+	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3, cache.TaskStatusWaiting))
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3, cache.TaskStatusRunning))
 }
