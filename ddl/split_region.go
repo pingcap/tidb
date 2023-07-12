@@ -30,18 +30,18 @@ import (
 	"go.uber.org/zap"
 )
 
-func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, pi *model.PartitionInfo, scatter bool) {
+func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatter bool) {
 	// Max partition count is 8192, should we sample and just choose some partitions to split?
-	regionIDs := make([]uint64, 0, len(pi.Definitions))
+	regionIDs := make([]uint64, 0, len(parts))
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
 	if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
-		for _, def := range pi.Definitions {
+		for _, def := range parts {
 			regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, def.ID, scatter)...)
 		}
 	} else {
-		for _, def := range pi.Definitions {
+		for _, def := range parts {
 			regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, def.ID, scatter))
 		}
 	}
