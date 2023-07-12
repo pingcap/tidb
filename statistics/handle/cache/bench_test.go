@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/testutil"
+	"github.com/pingcap/tidb/util/benchdaily"
 )
 
 func BenchmarkStatsCacheLRUCopyAndUpdate(b *testing.B) {
@@ -72,4 +73,11 @@ func BenchmarkStatsCacheMapCacheCopyAndUpdate(b *testing.B) {
 	}
 	wg.Wait()
 	b.StopTimer()
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkStatsCacheLRUCopyAndUpdate,
+		BenchmarkStatsCacheMapCacheCopyAndUpdate,
+	)
 }

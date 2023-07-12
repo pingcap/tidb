@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/testutil"
+	"github.com/pingcap/tidb/util/benchdaily"
 )
 
 const defaultSize int64 = 1000
@@ -69,4 +70,11 @@ func BenchmarkLruPutGet(b *testing.B) {
 	wg.Wait()
 
 	b.StopTimer()
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkLruPut,
+		BenchmarkLruPutGet,
+	)
 }
