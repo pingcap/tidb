@@ -72,8 +72,9 @@ type Handle struct {
 	// sysProcTracker is used to track sys process like analyze
 	sysProcTracker sessionctx.SysProcTracker
 
-	// autoAnalyzeProcIDGetter is used to generate auto analyze ID.
-	autoAnalyzeProcIDGetter func() uint64
+	// It can be read by multiple readers at the same time without acquiring lock, but it can be
+	// written only after acquiring the lock.
+	statsCache *cache.StatsCachePointer
 
 	InitStatsDone chan struct{}
 
@@ -87,13 +88,8 @@ type Handle struct {
 	// listHead contains all the stats collector required by session.
 	listHead *SessionStatsCollector
 
-	// It can be read by multiple readers at the same time without acquiring lock, but it can be
-	// written only after acquiring the lock.
-	statsCache *cache.StatsCachePointer
-
-	// latestUpdateTableVersion stores the lastest table version when updating statistics last time.
-	// This variable is used to filter unnecessary data when reading statistics from the storage.
-	latestUpdateTableVersion atomic.Uint64
+	// autoAnalyzeProcIDGetter is used to generate auto analyze ID.
+	autoAnalyzeProcIDGetter func() uint64
 
 	// feedback is used to store query feedback info.
 	feedback struct {
@@ -133,6 +129,10 @@ type Handle struct {
 		schemaVersion int64
 		sync.RWMutex
 	}
+
+	// latestUpdateTableVersion stores the lastest table version when updating statistics last time.
+	// This variable is used to filter unnecessary data when reading statistics from the storage.
+	latestUpdateTableVersion atomic.Uint64
 
 	lease atomic2.Duration
 }
