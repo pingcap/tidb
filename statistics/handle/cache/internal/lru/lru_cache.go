@@ -244,17 +244,6 @@ func (s *StatsInnerCache) Values() []*statistics.Table {
 	return r
 }
 
-// Map implements statsCacheInner
-func (s *StatsInnerCache) Map() map[int64]*statistics.Table {
-	s.RLock()
-	defer s.RUnlock()
-	r := make(map[int64]*statistics.Table, len(s.elements))
-	for k, v := range s.elements {
-		r[k] = v.tbl
-	}
-	return r
-}
-
 // Len implements statsCacheInner
 func (s *StatsInnerCache) Len() int {
 	s.RLock()

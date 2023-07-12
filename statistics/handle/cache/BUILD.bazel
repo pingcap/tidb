@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "cache",
@@ -22,5 +22,19 @@ go_library(
         "//util/chunk",
         "//util/sqlexec",
         "//util/syncutil",
+    ],
+)
+
+go_test(
+    name = "cache_test",
+    timeout = "short",
+    srcs = ["bench_test.go"],
+    embed = [":cache"],
+    flaky = True,
+    deps = [
+        "//config",
+        "//statistics",
+        "//statistics/handle/cache/internal/testutil",
+        "//util/benchdaily",
     ],
 )
