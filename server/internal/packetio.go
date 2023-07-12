@@ -71,6 +71,7 @@ type PacketIO struct {
 	compressedSequence   uint8
 }
 
+// NewPacketIO creates a new PacketIO with given net.Conn.
 func NewPacketIO(bufReadConn *util.BufferedReadConn) *PacketIO {
 	p := &PacketIO{sequence: 0, compressionAlgorithm: mysql.CompressionNone, compressedSequence: 0, zstdLevel: 3}
 	p.SetBufferedReadConn(bufReadConn)
@@ -78,36 +79,44 @@ func NewPacketIO(bufReadConn *util.BufferedReadConn) *PacketIO {
 	return p
 }
 
+// NewPacketIOForTest creates a new PacketIO with given bufio.Writer.
 func NewPacketIOForTest(bufWriter *bufio.Writer) *PacketIO {
 	p := &PacketIO{}
 	p.SetBufWriter(bufWriter)
 	return p
 }
 
+// SetZstdLevel sets the zstd compression level.
 func (p *PacketIO) SetZstdLevel(level zstd.EncoderLevel) {
 	p.zstdLevel = level
 }
 
+// Sequence returns the sequence of PacketIO.
 func (p *PacketIO) Sequence() uint8 {
 	return p.sequence
 }
 
+// SetSequence sets the sequence of PacketIO.
 func (p *PacketIO) SetSequence(s uint8) {
 	p.sequence = s
 }
 
+// SetCompressedSequence sets the compressed sequence of PacketIO.
 func (p *PacketIO) SetCompressedSequence(s uint8) {
 	p.compressedSequence = s
 }
 
+// SetBufWriter sets the bufio.Writer of PacketIO.
 func (p *PacketIO) SetBufWriter(bufWriter *bufio.Writer) {
 	p.bufWriter = bufWriter
 }
 
+// ResetBufWriter resets the bufio.Writer of PacketIO.
 func (p *PacketIO) ResetBufWriter(w io.Writer) {
 	p.bufWriter.Reset(w)
 }
 
+// SetCompressionAlgorithm sets the compression algorithm of PacketIO.
 func (p *PacketIO) SetCompressionAlgorithm(ca int) {
 	p.compressionAlgorithm = ca
 	p.compressedWriter = newCompressedWriter(p.bufReadConn, ca)
@@ -115,11 +124,13 @@ func (p *PacketIO) SetCompressionAlgorithm(ca int) {
 	p.bufWriter.Flush()
 }
 
+// SetBufferedReadConn sets the BufferedReadConn of PacketIO.
 func (p *PacketIO) SetBufferedReadConn(bufReadConn *util.BufferedReadConn) {
 	p.bufReadConn = bufReadConn
 	p.bufWriter = bufio.NewWriterSize(bufReadConn, defaultWriterSize)
 }
 
+// SetReadTimeout sets the read timeout of PacketIO.
 func (p *PacketIO) SetReadTimeout(timeout time.Duration) {
 	p.readTimeout = timeout
 }
@@ -200,10 +211,12 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 	return data, nil
 }
 
+// SetMaxAllowedPacket sets the max allowed packet size of PacketIO.
 func (p *PacketIO) SetMaxAllowedPacket(maxAllowedPacket uint64) {
 	p.maxAllowedPacket = maxAllowedPacket
 }
 
+// ReadPacket reads a packet from the connection.
 func (p *PacketIO) ReadPacket() ([]byte, error) {
 	p.accumulatedLength = 0
 	if p.readTimeout == 0 {
@@ -300,6 +313,7 @@ func (p *PacketIO) WritePacket(data []byte) error {
 	}
 }
 
+// Flush flushes buffered data to network.
 func (p *PacketIO) Flush() error {
 	var err error
 	if p.compressionAlgorithm != mysql.CompressionNone {
