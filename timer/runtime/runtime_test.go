@@ -121,19 +121,25 @@ func TestTryTriggerTimer(t *testing.T) {
 		return now
 	})
 	runtime.initCtx()
+
+	// t1: idle timer
 	t1 := newTestTimer("t1", "1m", now.Add(-time.Hour))
 	runtime.cache.updateTimer(t1)
 
-	t2 := newTestTimer("t2", "2m", now.Add(-time.Hour))
+	// t2: not idle timer, it will be triggered event timer disabled
+	t2 := newTestTimer("t2", "1h", now)
 	t2.EventStatus = api.SchedEventTrigger
 	t2.EventID = "event2"
 	t2.EventStart = now.Add(-time.Hour)
+	t2.Enable = false
 	runtime.cache.updateTimer(t2)
 
+	// t3: next event time after now
 	t3 := newTestTimer("t3", "10m", now)
 	runtime.cache.updateTimer(t3)
 	runtime.cache.updateNextTryTriggerTime(t3.ID, now.Add(-10*time.Minute))
 
+	// t4: next try trigger time after now
 	t4 := newTestTimer("t4", "1m", now.Add(-time.Hour))
 	runtime.cache.updateTimer(t4)
 	runtime.cache.updateNextTryTriggerTime(t4.ID, now.Add(time.Second))
@@ -141,21 +147,25 @@ func TestTryTriggerTimer(t *testing.T) {
 	t5 := newTestTimer("t5", "5m", now.Add(-10*time.Minute))
 	runtime.cache.updateTimer(t5)
 
+	// t6: worker chan will full when emit t6
 	t6 := newTestTimer("t6", "6m", now.Add(-10*time.Minute))
 	runtime.cache.updateTimer(t6)
 
+	// t6: worker chan will full when emit t7
 	t7 := newTestTimer("t7", "6m", now.Add(-10*time.Minute))
 	runtime.cache.updateTimer(t7)
 
+	// t8: triggering
 	t8 := newTestTimer("t8", "1m", now.Add(-2*time.Hour))
 	runtime.cache.updateTimer(t8)
 	runtime.cache.setTimerProcStatus(t8.ID, procTriggering, "event8")
 
+	// t9: wait close
 	t9 := newTestTimer("t9", "1m", now.Add(-2*time.Hour))
-	runtime.cache.updateTimer(t9)
 	t9.EventStatus = api.SchedEventTrigger
 	t9.EventID = "event9"
 	t9.EventStart = now.Add(-2 * time.Hour)
+	runtime.cache.updateTimer(t9)
 	runtime.cache.setTimerProcStatus(t9.ID, procWaitTriggerClose, "event9")
 
 	ch := make(chan *triggerEventRequest, 3)
@@ -211,6 +221,41 @@ func TestTryTriggerTimer(t *testing.T) {
 	consumeAndVerify(t1)
 	consumeAndVerify(t5)
 	consumeAndVerify(nil)
+
+	// t3: has a processed manual request
+	t3 = t3.Clone()
+	t3.Version++
+	t3.ManualRequest = api.ManualRequest{
+		ManualRequestID:   "req1",
+		ManualRequestTime: now,
+		ManualTimeout:     time.Minute,
+		ManualProcessed:   true,
+		ManualEventID:     "event1",
+	}
+	runtime.cache.updateTimer(t3)
+	runtime.tryTriggerTimerEvents()
+	consumeAndVerify(nil)
+
+	// t3: has a not processed manual request but timer is disabled
+	t3 = t3.Clone()
+	t3.Enable = false
+	t3.ManualRequest = api.ManualRequest{
+		ManualRequestID:   "req2",
+		ManualRequestTime: now,
+		ManualTimeout:     time.Minute,
+	}
+	t3.Version++
+	runtime.cache.updateTimer(t3)
+	runtime.tryTriggerTimerEvents()
+	consumeAndVerify(nil)
+
+	// t3: has a not processed manual request
+	t3 = t3.Clone()
+	t3.Enable = true
+	t3.Version++
+	runtime.cache.updateTimer(t3)
+	runtime.tryTriggerTimerEvents()
+	consumeAndVerify(t3)
 }
 
 func TestHandleHookWorkerResponse(t *testing.T) {
@@ -333,7 +378,11 @@ func TestNextTryTriggerDuration(t *testing.T) {
 	require.Equal(t, time.Second, interval)
 
 	interval = runtime.getNextTryTriggerDuration(now.Add(100 * time.Millisecond))
-	require.Equal(t, 1100*time.Millisecond, interval)
+	require.Equal(t, time.Second, interval)
+
+	now = now.Add(time.Hour)
+	interval = runtime.getNextTryTriggerDuration(time.UnixMilli(0))
+	require.Equal(t, time.Duration(0), interval)
 }
 
 func TestFullRefreshTimers(t *testing.T) {
