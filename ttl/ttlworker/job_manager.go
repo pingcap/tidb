@@ -24,7 +24,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
@@ -315,7 +314,8 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 			PartitionName: ttlTbl.Partition.O,
 		}
 
-		job, err := m.lockJob(m.ctx, se, ttlTbl, now, true, false)
+		jobID := uuid.NewString()
+		job, err := m.lockJob(m.ctx, se, ttlTbl, now, jobID, false)
 		if err != nil {
 			firstError = err
 			tblResult.ErrorMessage = err.Error()
@@ -457,7 +457,11 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 	// when the heart beat is not sent
 	for i, table := range jobTables {
 		logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
-		job, err := m.lockJob(m.ctx, se, table, now, isCreate[i], isCreate[i])
+		jobID := ""
+		if isCreate[i] {
+			jobID = uuid.NewString()
+		}
+		job, err := m.lockJob(m.ctx, se, table, now, jobID, isCreate[i])
 		if job != nil {
 			logutil.Logger(m.ctx).Info("append new running job", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
 			m.appendJob(job)
@@ -562,9 +566,10 @@ func (m *JobManager) couldLockJob(tableStatus *cache.TableStatus, table *cache.P
 
 // lockJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new
 // localJob and return it.
-func (m *JobManager) lockJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, isCreate bool, checkScheduleInterval bool) (*ttlJob, error) {
+func (m *JobManager) lockJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, createJobID string, checkScheduleInterval bool) (*ttlJob, error) {
 	var expireTime time.Time
-	var jobID string
+	jobID := createJobID
+	isCreate := jobID != ""
 
 	err := se.RunInTxn(ctx, func() error {
 		sql, args := cache.SelectFromTTLTableStatusWithID(table.ID)
@@ -608,7 +613,6 @@ func (m *JobManager) lockJob(ctx context.Context, se session.Session, table *cac
 			return err
 		}
 
-		jobID = uuid.New().String()
 		jobStart := now
 		jobExist := false
 		if len(tableStatus.CurrentJobID) > 0 {
@@ -619,9 +623,6 @@ func (m *JobManager) lockJob(ctx context.Context, se session.Session, table *cac
 			jobStart = tableStatus.CurrentJobStartTime
 			jobExist = true
 		}
-		failpoint.Inject("set-job-uuid", func(val failpoint.Value) {
-			jobID = val.(string)
-		})
 
 		sql, args = setTableStatusOwnerSQL(jobID, table.ID, jobStart, now, expireTime, m.id)
 		_, err = se.ExecuteSQL(ctx, sql, args...)

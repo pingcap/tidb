@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -142,8 +141,8 @@ var updateStatusSQL = "SELECT LOW_PRIORITY table_id,parent_table_id,table_statis
 type TTLJob = ttlJob
 
 // LockJob is an exported version of lockNewJob for test
-func (m *JobManager) LockJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, isCreate, checkInterval bool) (*TTLJob, error) {
-	return m.lockJob(ctx, se, table, now, isCreate, checkInterval)
+func (m *JobManager) LockJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, createJobID string, checkInterval bool) (*TTLJob, error) {
+	return m.lockJob(ctx, se, table, now, createJobID, checkInterval)
 }
 
 // RunningJobs returns the running jobs inside ttl job manager
@@ -283,8 +282,6 @@ func TestLockTable(t *testing.T) {
 			args,
 		}
 	}
-	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/set-job-uuid", `return("test-job-id")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/set-job-uuid")
 
 	type sqlExecute struct {
 		executeInfo
@@ -307,15 +304,15 @@ func TestLockTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("new-job-id", 1, now, now, expireTime, "test-id")),
 				nil, nil,
 			},
 			{
-				getExecuteInfo(createJobHistorySQL("test-job-id", testPhysicalTable, expireTime, now)),
+				getExecuteInfo(createJobHistorySQL("new-job-id", testPhysicalTable, expireTime, now)),
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "test-job-id", 1, 0, nil, nil, expireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, expireTime, now)),
 				nil, nil,
 			},
 			{
@@ -329,15 +326,15 @@ func TestLockTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("new-job-id", 1, now, now, expireTime, "test-id")),
 				nil, nil,
 			},
 			{
-				getExecuteInfo(createJobHistorySQL("test-job-id", testPhysicalTable, expireTime, now)),
+				getExecuteInfo(createJobHistorySQL("new-job-id", testPhysicalTable, expireTime, now)),
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "test-job-id", 1, 0, nil, nil, expireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, expireTime, now)),
 				nil, nil,
 			},
 			{
@@ -365,15 +362,15 @@ func TestLockTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("new-job-id", 1, now, now, expireTime, "test-id")),
 				nil, nil,
 			},
 			{
-				getExecuteInfo(createJobHistorySQL("test-job-id", testPhysicalTable, expireTime, now)),
+				getExecuteInfo(createJobHistorySQL("new-job-id", testPhysicalTable, expireTime, now)),
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "test-job-id", 1, 0, nil, nil, expireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, expireTime, now)),
 				nil, nil,
 			},
 			{
@@ -395,15 +392,15 @@ func TestLockTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("new-job-id", 1, now, now, expireTime, "test-id")),
 				nil, nil,
 			},
 			{
-				getExecuteInfo(createJobHistorySQL("test-job-id", testPhysicalTable, expireTime, now)),
+				getExecuteInfo(createJobHistorySQL("new-job-id", testPhysicalTable, expireTime, now)),
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "test-job-id", 1, 0, nil, nil, expireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, expireTime, now)),
 				nil, nil,
 			},
 			{
@@ -459,7 +456,7 @@ func TestLockTable(t *testing.T) {
 				nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now.Add(-30*time.Minute), now, now.Add(-time.Hour), "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("job1", 1, now.Add(-30*time.Minute), now, now.Add(-time.Hour), "test-id")),
 				nil, nil,
 			},
 			{
@@ -473,7 +470,7 @@ func TestLockTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("new-job-id", 1, now, now, expireTime, "test-id")),
 				nil, errors.New("test error message"),
 			},
 		}, true, false, false, true},
@@ -497,7 +494,11 @@ func TestLockTable(t *testing.T) {
 			}
 			se.evalExpire = now
 
-			job, err := m.lockJob(context.Background(), se, c.table, now, c.isCreate, c.checkInterval)
+			jobID := ""
+			if c.isCreate {
+				jobID = "new-job-id"
+			}
+			job, err := m.lockJob(context.Background(), se, c.table, now, jobID, c.checkInterval)
 			require.Equal(t, len(c.sqls), sqlCounter)
 			if c.hasJob {
 				assert.NotNil(t, job)

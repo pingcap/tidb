@@ -72,7 +72,7 @@ func TestParallelLockNewJob(t *testing.T) {
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
 	se := sessionFactory()
-	job, err := m.LockJob(context.Background(), se, testTable, time.Now(), true, false)
+	job, err := m.LockJob(context.Background(), se, testTable, time.Now(), uuid.NewString(), false)
 	require.NoError(t, err)
 	job.Finish(se, time.Now(), &ttlworker.TTLSummary{})
 
@@ -95,7 +95,7 @@ func TestParallelLockNewJob(t *testing.T) {
 				m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
 				se := sessionFactory()
-				job, err := m.LockJob(context.Background(), se, testTable, now, true, false)
+				job, err := m.LockJob(context.Background(), se, testTable, now, uuid.NewString(), false)
 				if err == nil {
 					successCounter.Add(1)
 					successJob = job
@@ -129,7 +129,7 @@ func TestFinishJob(t *testing.T) {
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable
 	se := sessionFactory()
 	startTime := time.Now()
-	job, err := m.LockJob(context.Background(), se, testTable, startTime, true, false)
+	job, err := m.LockJob(context.Background(), se, testTable, startTime, uuid.NewString(), false)
 	require.NoError(t, err)
 
 	expireTime, err := testTable.EvalExpireTime(context.Background(), se, startTime)
