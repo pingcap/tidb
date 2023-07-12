@@ -367,8 +367,8 @@ func NewImportControllerWithPauser(
 			Logger: log.FromContext(ctx),
 		}
 		if err := exec.QueryRow(ctx, "", "select current_resource_group();", &p.ResourceGroupName); err != nil {
-			if common.IsFunctionMatchErr(err, "current_resource_group") {
-				log.FromContext(ctx).Debug("current_resource_group() not supported, ignore this error", zap.Error(err))
+			if common.IsFunctionExistErr(err, "current_resource_group") {
+				log.FromContext(ctx).Warn("current_resource_group() not supported, ignore this error", zap.Error(err))
 			}
 		}
 

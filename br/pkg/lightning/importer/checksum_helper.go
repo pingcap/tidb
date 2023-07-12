@@ -63,6 +63,7 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 
 		explicitRequestSourceType, err := common.GetExplicitRequestSourceTypeFromDB(ctx, rc.db)
 		if err != nil {
+			log.FromContext(ctx).Warn("get tidb_request_source_type failed", zap.Error(err), zap.String("tidb_request_source_type", explicitRequestSourceType))
 			return nil, errors.Trace(err)
 		}
 		manager = local.NewTiKVChecksumManager(store.GetClient(), pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency), backoffWeight, rc.resourceGroupName, explicitRequestSourceType)

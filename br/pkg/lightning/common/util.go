@@ -618,11 +618,7 @@ func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
 
 // GetExplicitRequestSourceTypeFromDB gets the explicit request source type from database.
 func GetExplicitRequestSourceTypeFromDB(ctx context.Context, db *sql.DB) (string, error) {
-	val, err := getSessionVariable(ctx, db, variable.TiDBExplicitRequestSourceType)
-	if err != nil {
-		return "", err
-	}
-	return val, nil
+	return getSessionVariable(ctx, db, variable.TiDBExplicitRequestSourceType)
 }
 
 // copy from dbutil to avoid import cycle
@@ -658,7 +654,8 @@ func getSessionVariable(ctx context.Context, db *sql.DB, variable string) (value
 	return value, nil
 }
 
-func IsFunctionMatchErr(err error, functionName string) bool {
+// IsFunctionExistErr checks if err is a function not exist error.
+func IsFunctionExistErr(err error, functionName string) bool {
 	return err != nil &&
 		(strings.Contains(err.Error(), "No database selected") ||
 			strings.Contains(err.Error(), fmt.Sprintf("%s does not exist", functionName)))
