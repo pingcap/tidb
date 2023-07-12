@@ -17,5 +17,8 @@ go_test(
     srcs = ["bench_test.go"],
     embed = [":mapcache"],
     flaky = True,
-    deps = ["//statistics/handle/cache/internal/testutil"],
+    deps = [
+        "//statistics/handle/cache/internal/testutil",
+        "//util/benchdaily",
+    ],
 )

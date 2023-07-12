@@ -21,10 +21,11 @@ go_test(
     ],
     embed = [":lru"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//statistics",
         "//statistics/handle/cache/internal/testutil",
+        "//util/benchdaily",
         "@com_github_stretchr_testify//require",
     ],
 )
