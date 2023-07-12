@@ -19,23 +19,21 @@ import (
 	"crypto/tls"
 	"fmt"
 	"strings"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/server/internal/column"
+	"github.com/pingcap/tidb/server/internal/resultset"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
@@ -70,7 +68,7 @@ type TiDBStatement struct {
 	// this result set should have been closed before stored here. Only the `rowIterator` are used here. This field is
 	// not moved out to reuse the logic inside functions `writeResultSet...`
 	// TODO: move the `fetchedRows` into the statement, and remove the `ResultSet` from statement.
-	rs cursorResultSet
+	rs resultset.CursorResultSet
 	// the `rowContainer` should contain all pre-fetched results of the statement in `EXECUTE` command.
 	// it's stored here to be closed in RESET and CLOSE command
 	rowContainer *chunk.RowContainer
@@ -85,7 +83,7 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements PreparedStatement Execute method.
-func (ts *TiDBStatement) Execute(ctx context.Context, args []expression.Expression) (rs ResultSet, err error) {
+func (ts *TiDBStatement) Execute(ctx context.Context, args []expression.Expression) (rs resultset.ResultSet, err error) {
 	tidbRecordset, err := ts.ctx.ExecutePreparedStmt(ctx, ts.id, args)
 	if err != nil {
 		return nil, err
@@ -93,10 +91,7 @@ func (ts *TiDBStatement) Execute(ctx context.Context, args []expression.Expressi
 	if tidbRecordset == nil {
 		return
 	}
-	rs = &tidbResultSet{
-		recordSet:    tidbRecordset,
-		preparedStmt: ts.ctx.GetSessionVars().PreparedStmts[ts.id].(*core.PlanCacheStmt),
-	}
+	rs = resultset.New(tidbRecordset, ts.ctx.GetSessionVars().PreparedStmts[ts.id].(*core.PlanCacheStmt))
 	return
 }
 
@@ -135,14 +130,14 @@ func (ts *TiDBStatement) GetParamsType() []byte {
 }
 
 // StoreResultSet stores ResultSet for stmt fetching
-func (ts *TiDBStatement) StoreResultSet(rs cursorResultSet) {
+func (ts *TiDBStatement) StoreResultSet(rs resultset.CursorResultSet) {
 	// the original reset set should have been closed, and it's only used to store the iterator through the rowContainer
 	// so it's fine to just overwrite it.
 	ts.rs = rs
 }
 
 // GetResultSet gets ResultSet associated this statement
-func (ts *TiDBStatement) GetResultSet() cursorResultSet {
+func (ts *TiDBStatement) GetResultSet() resultset.CursorResultSet {
 	return ts.rs
 }
 
@@ -283,7 +278,7 @@ func (tc *TiDBContext) checkSandBoxMode(stmt ast.StmtNode) error {
 }
 
 // ExecuteStmt implements QueryCtx interface.
-func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
+func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (resultset.ResultSet, error) {
 	var rs sqlexec.RecordSet
 	var err error
 	if err = tc.checkSandBoxMode(stmt); err != nil {
@@ -301,9 +296,7 @@ func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (Resu
 	if rs == nil {
 		return nil, nil
 	}
-	return &tidbResultSet{
-		recordSet: rs,
-	}, nil
+	return resultset.New(rs, nil), nil
 }
 
 // Close implements QueryCtx Close method.
@@ -325,7 +318,7 @@ func (tc *TiDBContext) FieldList(table string) (columns []*column.Info, err erro
 	}
 	columns = make([]*column.Info, 0, len(fields))
 	for _, f := range fields {
-		columns = append(columns, convertColumnInfo(f))
+		columns = append(columns, column.ConvertColumnInfo(f))
 	}
 	return columns, nil
 }
@@ -355,7 +348,7 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 	statement = stmt
 	columns = make([]*column.Info, len(fields))
 	for i := range fields {
-		columns[i] = convertColumnInfo(fields[i])
+		columns[i] = column.ConvertColumnInfo(fields[i])
 	}
 	params = make([]*column.Info, paramCount)
 	for i := range params {
@@ -453,157 +446,4 @@ func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, sctx sessionctx.
 		}
 	}
 	return nil
-}
-
-type tidbResultSet struct {
-	recordSet    sqlexec.RecordSet
-	columns      []*column.Info
-	closed       int32
-	preparedStmt *core.PlanCacheStmt
-}
-
-func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
-	return trs.recordSet.NewChunk(alloc)
-}
-
-func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.Chunk) error {
-	return trs.recordSet.Next(ctx, req)
-}
-
-func (trs *tidbResultSet) Close() error {
-	if !atomic.CompareAndSwapInt32(&trs.closed, 0, 1) {
-		return nil
-	}
-	err := trs.recordSet.Close()
-	trs.recordSet = nil
-	return err
-}
-
-// IsClosed implements ResultSet.IsClosed interface.
-func (trs *tidbResultSet) IsClosed() bool {
-	return atomic.LoadInt32(&trs.closed) == 1
-}
-
-// OnFetchReturned implements fetchNotifier#OnFetchReturned
-func (trs *tidbResultSet) OnFetchReturned() {
-	if cl, ok := trs.recordSet.(fetchNotifier); ok {
-		cl.OnFetchReturned()
-	}
-}
-
-func (trs *tidbResultSet) Columns() []*column.Info {
-	if trs.columns != nil {
-		return trs.columns
-	}
-	// for prepare statement, try to get cached columnInfo array
-	if trs.preparedStmt != nil {
-		ps := trs.preparedStmt
-		if colInfos, ok := ps.ColumnInfos.([]*column.Info); ok {
-			trs.columns = colInfos
-		}
-	}
-	if trs.columns == nil {
-		fields := trs.recordSet.Fields()
-		for _, v := range fields {
-			trs.columns = append(trs.columns, convertColumnInfo(v))
-		}
-		if trs.preparedStmt != nil {
-			// if Info struct has allocated object,
-			// here maybe we need deep copy Info to do caching
-			trs.preparedStmt.ColumnInfos = trs.columns
-		}
-	}
-	return trs.columns
-}
-
-func (trs *tidbResultSet) FieldTypes() []*types.FieldType {
-	fts := make([]*types.FieldType, 0, len(trs.recordSet.Fields()))
-	for _, f := range trs.recordSet.Fields() {
-		fts = append(fts, &f.Column.FieldType)
-	}
-	return fts
-}
-
-var _ cursorResultSet = &tidbCursorResultSet{}
-
-type tidbCursorResultSet struct {
-	ResultSet
-
-	reader chunk.RowContainerReader
-}
-
-func (tcrs *tidbCursorResultSet) StoreRowContainerReader(reader chunk.RowContainerReader) {
-	tcrs.reader = reader
-}
-
-func (tcrs *tidbCursorResultSet) GetRowContainerReader() chunk.RowContainerReader {
-	return tcrs.reader
-}
-
-func convertColumnInfo(fld *ast.ResultField) (ci *column.Info) {
-	ci = &column.Info{
-		Name:         fld.ColumnAsName.O,
-		OrgName:      fld.Column.Name.O,
-		Table:        fld.TableAsName.O,
-		Schema:       fld.DBName.O,
-		Flag:         uint16(fld.Column.GetFlag()),
-		Charset:      uint16(mysql.CharsetNameToID(fld.Column.GetCharset())),
-		Type:         fld.Column.GetType(),
-		DefaultValue: fld.Column.GetDefaultValue(),
-	}
-
-	if fld.EmptyOrgName {
-		ci.OrgName = ""
-	}
-	if fld.Table != nil {
-		ci.OrgTable = fld.Table.Name.O
-	}
-	if fld.Column.GetFlen() != types.UnspecifiedLength {
-		ci.ColumnLength = uint32(fld.Column.GetFlen())
-	}
-	if fld.Column.GetType() == mysql.TypeNewDecimal {
-		// Consider the negative sign.
-		ci.ColumnLength++
-		if fld.Column.GetDecimal() > types.DefaultFsp {
-			// Consider the decimal point.
-			ci.ColumnLength++
-		}
-	} else if types.IsString(fld.Column.GetType()) ||
-		fld.Column.GetType() == mysql.TypeEnum || fld.Column.GetType() == mysql.TypeSet { // issue #18870
-		// Fix issue #4540.
-		// The flen is a hint, not a precise value, so most client will not use the value.
-		// But we found in rare MySQL client, like Navicat for MySQL(version before 12) will truncate
-		// the `show create table` result. To fix this case, we must use a large enough flen to prevent
-		// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
-		// For examples:
-		// * latin, the multiple is 1
-		// * gb2312, the multiple is 2
-		// * Utf-8, the multiple is 3
-		// * utf8mb4, the multiple is 4
-		// We used to check non-string types to avoid the truncation problem in some MySQL
-		// client such as Navicat. Now we only allow string type enter this branch.
-		charsetDesc, err := charset.GetCharsetInfo(fld.Column.GetCharset())
-		if err != nil {
-			ci.ColumnLength *= 4
-		} else {
-			ci.ColumnLength *= uint32(charsetDesc.Maxlen)
-		}
-	}
-
-	if fld.Column.GetDecimal() == types.UnspecifiedLength {
-		if fld.Column.GetType() == mysql.TypeDuration {
-			ci.Decimal = uint8(types.DefaultFsp)
-		} else {
-			ci.Decimal = mysql.NotFixedDec
-		}
-	} else {
-		ci.Decimal = uint8(fld.Column.GetDecimal())
-	}
-
-	// Keep things compatible for old clients.
-	// Refer to mysql-server/sql/protocol.cc send_result_set_metadata()
-	if ci.Type == mysql.TypeVarchar {
-		ci.Type = mysql.TypeVarString
-	}
-	return
 }

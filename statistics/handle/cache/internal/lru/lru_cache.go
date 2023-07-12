@@ -30,7 +30,6 @@ type StatsInnerCache struct {
 	// lru maintains item lru cache
 	lru *innerItemLruCache
 	sync.RWMutex
-	maxTableStatsVersion uint64
 }
 
 // NewStatsLruCache creates a new LRU cache for statistics.
@@ -84,8 +83,8 @@ func (l *lruMapElement) copy() *lruMapElement {
 	}
 }
 
-// GetByQuery implements statsCacheInner
-func (s *StatsInnerCache) GetByQuery(tblID int64) (*statistics.Table, bool) {
+// getByQuery implements statsCacheInner
+func (s *StatsInnerCache) getByQuery(tblID int64) (*statistics.Table, bool) {
 	s.Lock()
 	defer s.Unlock()
 	element, ok := s.elements[tblID]
@@ -104,7 +103,10 @@ func (s *StatsInnerCache) GetByQuery(tblID int64) (*statistics.Table, bool) {
 }
 
 // Get implements statsCacheInner
-func (s *StatsInnerCache) Get(tblID int64) (*statistics.Table, bool) {
+func (s *StatsInnerCache) Get(tblID int64, moveLRUFront bool) (*statistics.Table, bool) {
+	if moveLRUFront {
+		return s.getByQuery(tblID)
+	}
 	s.RLock()
 	defer s.RUnlock()
 	element, ok := s.elements[tblID]
@@ -114,24 +116,14 @@ func (s *StatsInnerCache) Get(tblID int64) (*statistics.Table, bool) {
 	return element.tbl, true
 }
 
-// PutByQuery implements statsCacheInner
-func (s *StatsInnerCache) PutByQuery(tblID int64, tbl *statistics.Table) {
-	s.Lock()
-	defer s.Unlock()
-	s.put(tblID, tbl, tbl.MemoryUsage(), true)
-}
-
 // Put implements statsCacheInner
-func (s *StatsInnerCache) Put(tblID int64, tbl *statistics.Table) {
+func (s *StatsInnerCache) Put(tblID int64, tbl *statistics.Table, moveLRUFront bool) {
 	s.Lock()
 	defer s.Unlock()
-	s.put(tblID, tbl, tbl.MemoryUsage(), false)
+	s.put(tblID, tbl, tbl.MemoryUsage(), moveLRUFront)
 }
 
 func (s *StatsInnerCache) put(tblID int64, tbl *statistics.Table, tblMemUsage *statistics.TableMemoryUsage, needMove bool) {
-	if tbl.Version > s.maxTableStatsVersion {
-		s.maxTableStatsVersion = tbl.Version
-	}
 	element, exist := s.elements[tblID]
 	if exist {
 		s.updateColumns(tblID, tbl, tblMemUsage, needMove)
@@ -270,15 +262,6 @@ func (s *StatsInnerCache) Len() int {
 	return len(s.elements)
 }
 
-// FreshMemUsage implements statsCacheInner
-func (s *StatsInnerCache) FreshMemUsage() {
-	s.Lock()
-	defer s.Unlock()
-	for tblID, element := range s.elements {
-		s.freshTableCost(tblID, element)
-	}
-}
-
 // Copy implements statsCacheInner
 func (s *StatsInnerCache) Copy() internal.StatsCacheInner {
 	s.RLock()
@@ -289,15 +272,7 @@ func (s *StatsInnerCache) Copy() internal.StatsCacheInner {
 		newCache.elements[tblID] = element.copy()
 	}
 	newCache.lru.onEvict = newCache.onEvict
-	newCache.maxTableStatsVersion = s.maxTableStatsVersion
 	return newCache
-}
-
-// Version implements statsCacheInner
-func (s *StatsInnerCache) Version() uint64 {
-	s.RLock()
-	defer s.RUnlock()
-	return s.maxTableStatsVersion
 }
 
 // SetCapacity implements statsCacheInner

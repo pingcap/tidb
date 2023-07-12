@@ -46,7 +46,7 @@ type HandleCols interface {
 	BuildPartitionHandleFromIndexRow(row chunk.Row) (kv.PartitionHandle, error)
 	// ResolveIndices resolves handle column indices.
 	ResolveIndices(schema *expression.Schema) (HandleCols, error)
-	// IsInt returns if the HandleCols is a single tnt column.
+	// IsInt returns if the HandleCols is a single int column.
 	IsInt() bool
 	// String implements the fmt.Stringer interface.
 	String() string

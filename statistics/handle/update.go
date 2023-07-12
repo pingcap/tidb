@@ -652,7 +652,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 			if fb.Tp == statistics.PkType {
 				err = h.DumpFeedbackToKV(fb)
 			} else {
-				t, ok := h.statsCache.Load().Get(fb.PhysicalID)
+				t, ok := h.statsCache.Load().GetFromInternal(fb.PhysicalID)
 				if !ok {
 					continue
 				}
@@ -760,7 +760,7 @@ OUTER:
 			}
 			for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 				oldCache := h.statsCache.Load()
-				if h.updateStatsCache(oldCache.Update([]*statistics.Table{newTblStats}, nil)) {
+				if h.updateStatsCache(oldCache.CopyAndUpdate([]*statistics.Table{newTblStats}, nil)) {
 					break
 				}
 			}
@@ -797,7 +797,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 	h.mu.Unlock()
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 		oldCache := h.statsCache.Load()
-		if h.updateStatsCache(oldCache.Update(tbls, nil)) {
+		if h.updateStatsCache(oldCache.CopyAndUpdate(tbls, nil)) {
 			break
 		}
 	}
@@ -1420,7 +1420,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 }
 
 func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
-	t, ok := h.statsCache.Load().Get(q.PhysicalID)
+	t, ok := h.statsCache.Load().GetFromInternal(q.PhysicalID)
 	if !ok {
 		return
 	}
@@ -1461,7 +1461,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback, enablePseudoForOutdatedStats bool) error {
-	t, ok := h.statsCache.Load().Get(q.PhysicalID)
+	t, ok := h.statsCache.Load().GetFromInternal(q.PhysicalID)
 	if !ok {
 		return nil
 	}

@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server/internal/column"
+	"github.com/pingcap/tidb/server/internal/resultset"
 	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -988,7 +989,7 @@ func TestCreateTableFlen(t *testing.T) {
 	rs.Close()
 }
 
-func Execute(ctx context.Context, qc *TiDBContext, sql string) (ResultSet, error) {
+func Execute(ctx context.Context, qc *TiDBContext, sql string) (resultset.ResultSet, error) {
 	stmts, err := qc.Parse(ctx, sql)
 	if err != nil {
 		return nil, err
