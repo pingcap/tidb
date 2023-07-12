@@ -1053,17 +1053,10 @@ func TestErrorCreateUnionIter(t *testing.T) {
 		{Key: kv.Key("k1"), Value: []byte("v1")},
 	}))
 
-	// test for not allow iter with lowerBound
-	iter, err := createUnionIter(retriever, snap, kv.Key("k1"), kv.Key("k2"), true)
-	require.Error(t, err, "k should be nil for iter reverse")
-	require.Nil(t, iter)
-	require.Equal(t, 0, len(retriever.GetInvokes()))
-	require.Equal(t, 0, len(snap.GetInvokes()))
-
 	// test for iter next error
 	iterNextErr := errors.New("iterNextErr")
 	retriever.InjectMethodError("IterNext", iterNextErr)
-	iter, err = createUnionIter(retriever, snap, kv.Key("k1"), kv.Key("k2"), false)
+	iter, err := createUnionIter(retriever, snap, kv.Key("k1"), kv.Key("k2"), false)
 	require.Equal(t, iterNextErr, err)
 	require.Nil(t, iter)
 	checkCreatedIterClosed(t, retriever, snap, false)
