@@ -1483,6 +1483,28 @@ type SessionVars struct {
 	LockUnchangedKeys bool
 }
 
+var (
+	// variables below are for the optimizer fix control.
+
+	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
+	TiDBOptFixControl44262 uint64 = 44262
+
+	// TiDBOptFixControl44823 controls the maximum number of parameters for a query that can be cached in the Plan Cache.
+	TiDBOptFixControl44823 uint64 = 44823
+	// TiDBOptFixControl44855 controls whether to use a more accurate upper bound when estimating row count of index
+	// range scan under inner side of index join.
+	TiDBOptFixControl44855 uint64 = 44855
+)
+
+// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
+	if s.OptimizerFixControl == nil {
+		return "", false
+	}
+	value, exist = s.OptimizerFixControl[key]
+	return
+}
+
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
 // in order to control the used memory
 const planReplayerSessionFinishedTaskKeyLen = 128

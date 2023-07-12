@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -73,15 +74,8 @@ func execSQL(ctx context.Context, se sessionctx.Context, sql string, args ...int
 		return nil, err
 	}
 	if rs != nil {
-		rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-		if err != nil {
-			return nil, err
-		}
-		err = rs.Close()
-		if err != nil {
-			return nil, err
-		}
-		return rows, err
+		defer terror.Call(rs.Close)
+		return sqlexec.DrainRecordSet(ctx, rs, 1024)
 	}
 	return nil, nil
 }

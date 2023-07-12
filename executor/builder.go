@@ -108,6 +108,7 @@ type executorBuilder struct {
 type CTEStorages struct {
 	ResTbl    cteutil.Storage
 	IterInTbl cteutil.Storage
+	Producer  *cteProducer
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
@@ -3843,20 +3844,24 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 	}
 
 	indexReq.OutputOffsets = []uint32{}
-	if len(plans[0].(*plannercore.PhysicalIndexScan).ByItems) != 0 {
-		idxScan := plans[0].(*plannercore.PhysicalIndexScan)
-		tblInfo := idxScan.Table
+	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
+	if len(idxScan.ByItems) != 0 {
+		schema := idxScan.Schema()
 		for _, item := range idxScan.ByItems {
 			c, ok := item.Expr.(*expression.Column)
 			if !ok {
 				return nil, errors.Errorf("Not support non-column in orderBy pushed down")
 			}
-			column := model.FindColumnInfoByID(tblInfo.Columns, c.ID)
-			for i, idxColumn := range columns {
-				if idxColumn.Name.L == column.Name.L {
+			find := false
+			for i, schemaColumn := range schema.Columns {
+				if schemaColumn.ID == c.ID {
 					indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
+					find = true
 					break
 				}
+			}
+			if !find {
+				return nil, errors.Errorf("Not found order by related columns in indexScan.schema")
 			}
 		}
 	}
@@ -5297,33 +5302,44 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 }
 
 func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
-	// 1. Build seedPlan.
 	if b.Ti != nil {
 		b.Ti.UseNonRecursive = true
 	}
-	seedExec := b.build(v.SeedPlan)
-	if b.err != nil {
-		return nil
+	if v.RecurPlan != nil && b.Ti != nil {
+		b.Ti.UseRecursive = true
 	}
-
-	// 2. Build tables to store intermediate results.
-	chkSize := b.ctx.GetSessionVars().MaxChunkSize
-	tps := seedExec.base().retFieldTypes
-	// iterOutTbl will be constructed in CTEExec.Open().
-	var resTbl cteutil.Storage
-	var iterInTbl cteutil.Storage
 
 	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
 	if !ok {
 		b.err = errors.New("type assertion for CTEStorageMap failed")
 		return nil
 	}
+
+	chkSize := b.ctx.GetSessionVars().MaxChunkSize
+	// iterOutTbl will be constructed in CTEExec.Open().
+	var resTbl cteutil.Storage
+	var iterInTbl cteutil.Storage
+	var producer *cteProducer
 	storages, ok := storageMap[v.CTE.IDForStorage]
 	if ok {
 		// Storage already setup.
 		resTbl = storages.ResTbl
 		iterInTbl = storages.IterInTbl
+		producer = storages.Producer
 	} else {
+		if v.SeedPlan == nil {
+			b.err = errors.New("cte.seedPlan cannot be nil")
+			return nil
+		}
+		// Build seed part.
+		corCols := plannercore.ExtractOuterApplyCorrelatedCols(v.SeedPlan)
+		seedExec := b.build(v.SeedPlan)
+		if b.err != nil {
+			return nil
+		}
+
+		// Setup storages.
+		tps := seedExec.base().retFieldTypes
 		resTbl = cteutil.NewStorageRowContainer(tps, chkSize)
 		if err := resTbl.OpenAndRef(); err != nil {
 			b.err = err
@@ -5335,38 +5351,50 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 			return nil
 		}
 		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl}
-	}
 
-	// 3. Build recursive part.
-	if v.RecurPlan != nil && b.Ti != nil {
-		b.Ti.UseRecursive = true
-	}
-	recursiveExec := b.build(v.RecurPlan)
-	if b.err != nil {
-		return nil
-	}
-
-	var sel []int
-	if v.CTE.IsDistinct {
-		sel = make([]int, chkSize)
-		for i := 0; i < chkSize; i++ {
-			sel[i] = i
+		// Build recursive part.
+		var recursiveExec Executor
+		if v.RecurPlan != nil {
+			recursiveExec = b.build(v.RecurPlan)
+			if b.err != nil {
+				return nil
+			}
+			corCols = append(corCols, plannercore.ExtractOuterApplyCorrelatedCols(v.RecurPlan)...)
 		}
+
+		var sel []int
+		if v.CTE.IsDistinct {
+			sel = make([]int, chkSize)
+			for i := 0; i < chkSize; i++ {
+				sel[i] = i
+			}
+		}
+
+		var corColHashCodes [][]byte
+		for _, corCol := range corCols {
+			corColHashCodes = append(corColHashCodes, getCorColHashCode(corCol))
+		}
+
+		producer = &cteProducer{
+			ctx:             b.ctx,
+			seedExec:        seedExec,
+			recursiveExec:   recursiveExec,
+			resTbl:          resTbl,
+			iterInTbl:       iterInTbl,
+			isDistinct:      v.CTE.IsDistinct,
+			sel:             sel,
+			hasLimit:        v.CTE.HasLimit,
+			limitBeg:        v.CTE.LimitBeg,
+			limitEnd:        v.CTE.LimitEnd,
+			corCols:         corCols,
+			corColHashCodes: corColHashCodes,
+		}
+		storageMap[v.CTE.IDForStorage].Producer = producer
 	}
 
 	return &CTEExec{
-		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		seedExec:      seedExec,
-		recursiveExec: recursiveExec,
-		resTbl:        resTbl,
-		iterInTbl:     iterInTbl,
-		chkIdx:        0,
-		isDistinct:    v.CTE.IsDistinct,
-		sel:           sel,
-		hasLimit:      v.CTE.HasLimit,
-		limitBeg:      v.CTE.LimitBeg,
-		limitEnd:      v.CTE.LimitEnd,
-		isInApply:     v.CTE.IsInApply,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		producer:     producer,
 	}
 }
 

@@ -542,6 +542,9 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	}
 
 	processInfo := s.ShowProcess()
+	if processInfo == nil {
+		return nil
+	}
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
@@ -1572,6 +1575,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		DiskTracker:           s.sessionVars.DiskTracker,
 		StatsInfo:             plannercore.GetStatsInfo,
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
+		TableIDs:              s.sessionVars.StmtCtx.TableIDs,
+		IndexNames:            s.sessionVars.StmtCtx.IndexNames,
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ResourceGroupName:     s.sessionVars.ResourceGroupName,
@@ -3798,13 +3803,10 @@ func GetStartTSFromSession(se interface{}) (uint64, uint64) {
 		logutil.BgLogger().Error("GetStartTSFromSession failed, can't transform to session struct")
 		return 0, 0
 	}
-	processInfo := tmp.ShowProcess()
-	if processInfo != nil {
-		processInfoID = processInfo.ID
-	}
 	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
 		startTS = txnInfo.StartTS
+		processInfoID = txnInfo.ConnectionID
 	}
 
 	logutil.BgLogger().Debug(
