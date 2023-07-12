@@ -40,7 +40,7 @@ func (m *mockErrInterceptor) OnIter(_ kv.Snapshot, _ kv.Key, _ kv.Key) (kv.Itera
 	return nil, m.err
 }
 
-func (m *mockErrInterceptor) OnIterReverse(_ kv.Snapshot, _ kv.Key) (kv.Iterator, error) {
+func (m *mockErrInterceptor) OnIterReverse(_ kv.Snapshot, _ kv.Key, _ kv.Key) (kv.Iterator, error) {
 	return nil, m.err
 }
 

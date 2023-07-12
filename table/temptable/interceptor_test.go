@@ -16,7 +16,6 @@ package temptable
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -1698,9 +1697,6 @@ func TestOnIterReverse(t *testing.T) {
 		}
 
 		iter, err := inter.OnIterReverse(snap, c.args[0], c.args[1])
-		if err != nil {
-			fmt.Sprintln(err)
-		}
 		require.NoError(t, err, i)
 		require.NotNil(t, iter, i)
 		result := make([]kv.Entry, 0, i)
