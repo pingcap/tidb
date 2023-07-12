@@ -5,7 +5,6 @@ go_test(
     timeout = "short",
     srcs = ["planner_issue_test.go"],
     flaky = True,
-    race = "on",
-    shard_count = 4,
+    shard_count = 5,
     deps = ["//testkit"],
 )
