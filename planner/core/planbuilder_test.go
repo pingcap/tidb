@@ -216,7 +216,41 @@ func (s *testPlanBuilderSuite) TestDeepClone(c *C) {
 	c.Assert(checkDeepClone(sort1, sort2), IsNil)
 }
 
+<<<<<<< HEAD
 func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
+=======
+func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
+	ctx := mock.NewContext()
+	col, cst := &expression.Column{RetType: types.NewFieldType(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldType(mysql.TypeLonglong)}
+	schema := expression.NewSchema(col)
+	tblInfo := &model.TableInfo{}
+	hist := &statistics.Histogram{Bounds: chunk.New(nil, 0, 0)}
+
+	// table scan
+	tableScan := &PhysicalTableScan{
+		AccessCondition: []expression.Expression{col, cst},
+		Table:           tblInfo,
+		Hist:            hist,
+	}
+	tableScan = tableScan.Init(ctx, 0)
+	tableScan.SetSchema(schema)
+
+	// table reader
+	tableReader := &PhysicalTableReader{
+		tablePlan:  tableScan,
+		TablePlans: []PhysicalPlan{tableScan},
+		StoreType:  kv.TiFlash,
+	}
+	tableReader = tableReader.Init(ctx, 0)
+	clonedPlan, err := tableReader.Clone()
+	require.NoError(t, err)
+	newTableReader, ok := clonedPlan.(*PhysicalTableReader)
+	require.True(t, ok)
+	require.True(t, newTableReader.tablePlan == newTableReader.TablePlans[0])
+}
+
+func TestPhysicalPlanClone(t *testing.T) {
+>>>>>>> bbae44bdb31 (planner: fix bug in `PhysicalTableReader::Clone()` (#45302))
 	ctx := mock.NewContext()
 	col, cst := &expression.Column{RetType: types.NewFieldType(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldType(mysql.TypeLonglong)}
 	stats := &property.StatsInfo{RowCount: 1000}
