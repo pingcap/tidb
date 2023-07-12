@@ -200,6 +200,15 @@ func (sc *StatsCache) BatchUpdate(tables []*statistics.Table, deletedIDs []int64
 	}
 }
 
+// Clear removes all cached statistics tables.
+// Only for test.
+func (sc *StatsCache) Clear() {
+	values := sc.Values()
+	for _, tbl := range values {
+		sc.innerCache().Del(tbl.PhysicalID)
+	}
+}
+
 // TableRowStatsCache is the cache of table row count.
 var TableRowStatsCache = &StatsTableRowCache{}
 
