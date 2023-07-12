@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/executor/internal/builder"
+	"github.com/pingcap/tidb/executor/internal/calibrateresource"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/executor/internal/pdhelper"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
@@ -907,10 +908,10 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			}
 		}
 	case *ast.CalibrateResourceStmt:
-		return &calibrateResourceExec{
+		return &calibrateresource.Executor{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), 0),
-			workloadType: s.Tp,
-			optionList:   s.DynamicCalibrateResourceOptionList,
+			WorkloadType: s.Tp,
+			OptionList:   s.DynamicCalibrateResourceOptionList,
 		}
 	case *ast.LoadDataActionStmt:
 		return &LoadDataActionExec{
@@ -1366,7 +1367,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 	}
 	us := &UnionScanExec{BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), reader)}
 	// Get the handle column index of the below Plan.
-	us.belowHandleCols = v.HandleCols
+	us.handleCols = v.HandleCols
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
 
 	// If the push-downed condition contains virtual column, we may build a selection upon reader
@@ -1390,6 +1391,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 	switch x := reader.(type) {
 	case *MPPGather:
 		us.desc = false
+		us.keepOrder = false
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -1397,6 +1399,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *TableReaderExecutor:
 		us.desc = x.desc
+		us.keepOrder = x.keepOrder
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -1404,6 +1407,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexReaderExecutor:
 		us.desc = x.desc
+		us.keepOrder = x.keepOrder
 		for _, ic := range x.index.Columns {
 			for i, col := range x.columns {
 				if col.Name.L == ic.Name.L {
@@ -1418,6 +1422,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
+		us.keepOrder = x.keepOrder
 		for _, ic := range x.index.Columns {
 			for i, col := range x.columns {
 				if col.Name.L == ic.Name.L {
@@ -1432,7 +1437,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexMergeReaderExecutor:
-		// IndexMergeReader doesn't care order for now. So we will not set desc and useIndex.
+		// IndexMergeReader doesn't care order for now. So we will not set desc, useIndex and keepOrder.
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -5140,6 +5145,13 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
+		if reqCols[i].ID < 0 {
+			// model.ExtraHandleID, ExtraPidColID, ExtraPhysTblID... etc
+			// Don't set the default value for that column.
+			chk.AppendNull(i)
+			return nil
+		}
+
 		ci := getColInfoByID(tbl, reqCols[i].ID)
 		d, err := table.GetColOriginDefaultValue(ctx, ci)
 		if err != nil {

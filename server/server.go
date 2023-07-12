@@ -100,7 +100,6 @@ func init() {
 
 var (
 	errInvalidSequence         = dbterror.ClassServer.NewStd(errno.ErrInvalidSequence)
-	errInvalidType             = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
 	errNotAllowedCommand       = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
 	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
 	errAccessDeniedNoPassword  = dbterror.ClassServer.NewStd(errno.ErrAccessDeniedNoPassword)

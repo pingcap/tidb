@@ -192,7 +192,7 @@ type baseAggFunc struct {
 	retTp *types.FieldType
 }
 
-func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*baseAggFunc) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
 	return 0, nil
 }
 

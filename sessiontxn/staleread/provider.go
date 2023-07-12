@@ -53,11 +53,6 @@ func (p *StalenessTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.is
 }
 
-// SetTxnInfoSchema sets the information schema used by txn.
-func (p *StalenessTxnContextProvider) SetTxnInfoSchema(is infoschema.InfoSchema) {
-	p.is = is
-}
-
 // GetTxnScope returns the current txn scope
 func (p *StalenessTxnContextProvider) GetTxnScope() string {
 	return p.sctx.GetSessionVars().TxnCtx.TxnScope

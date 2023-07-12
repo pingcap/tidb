@@ -37,25 +37,25 @@ type partialResult4CumeDist struct {
 	rows     []chunk.Row
 }
 
-func (r *cumeDist) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*cumeDist) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4CumeDist{}), DefPartialResult4CumeDistSize
 }
 
-func (r *cumeDist) ResetPartialResult(pr PartialResult) {
+func (*cumeDist) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CumeDist)(pr)
 	p.curIdx = 0
 	p.lastRank = 0
 	p.rows = p.rows[:0]
 }
 
-func (r *cumeDist) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (*cumeDist) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4CumeDist)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
 	memDelta += int64(len(rowsInGroup)) * DefRowSize
 	return memDelta, nil
 }
 
-func (r *cumeDist) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (r *cumeDist) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CumeDist)(pr)
 	numRows := len(p.rows)
 	for p.lastRank < numRows && r.compareRows(p.rows[p.curIdx], p.rows[p.lastRank]) == 0 {

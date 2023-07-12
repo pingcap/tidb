@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -369,6 +370,27 @@ const (
 )
 
 func TestCgroupsGetCPU(t *testing.T) {
+	for i := 0; i < 2; i++ {
+		if i == 1 {
+			// The field in /proc/self/cgroup and /proc/self/meminfo may appear as "cpuacct,cpu" or "rw,cpuacct,cpu"
+			// while the input controller is "cpu,cpuacct"
+			v1CgroupWithCPUController = strings.ReplaceAll(v1CgroupWithCPUController, "cpu,cpuacct", "cpuacct,cpu")
+			v1CgroupWithCPUControllerNS = strings.ReplaceAll(v1CgroupWithCPUControllerNS, "cpu,cpuacct", "cpuacct,cpu")
+			v1CgroupWithCPUControllerNSMountRel = strings.ReplaceAll(v1CgroupWithCPUControllerNSMountRel, "cpu,cpuacct", "cpuacct,cpu")
+			v1CgroupWithCPUControllerNSMountRelRemount = strings.ReplaceAll(v1CgroupWithCPUControllerNSMountRelRemount, "cpu,cpuacct", "cpuacct,cpu")
+			v1CgroupWithCPUControllerNS2 = strings.ReplaceAll(v1CgroupWithCPUControllerNS2, "cpu,cpuacct", "cpuacct,cpu")
+
+			v1MountsWithCPUController = strings.ReplaceAll(v1MountsWithCPUController, "rw,cpu,cpuacct", "rw,cpuacct,cpu")
+			v1MountsWithCPUControllerNS = strings.ReplaceAll(v1MountsWithCPUControllerNS, "rw,cpu,cpuacct", "rw,cpuacct,cpu")
+			v1MountsWithCPUControllerNSMountRel = strings.ReplaceAll(v1MountsWithCPUControllerNSMountRel, "rw,cpu,cpuacct", "rw,cpuacct,cpu")
+			v1MountsWithCPUControllerNSMountRelRemount = strings.ReplaceAll(v1MountsWithCPUControllerNSMountRelRemount, "rw,cpu,cpuacct", "rw,cpuacct,cpu")
+			v1MountsWithCPUControllerNS2 = strings.ReplaceAll(v1MountsWithCPUControllerNS2, "rw,cpu,cpuacct", "rw,cpuacct,cpu")
+		}
+		testCgroupsGetCPU(t)
+	}
+}
+
+func testCgroupsGetCPU(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		paths  map[string]string
@@ -562,7 +584,7 @@ func createFiles(t *testing.T, paths map[string]string) (dir string) {
 	return dir
 }
 
-const (
+var (
 	v1CgroupWithMemoryController = `11:blkio:/kubepods/besteffort/pod1bf924dd-3f6f-11ea-983d-0abc95f90166/c17eb535a47774285717e40bbda777ee72e81471272a5b8ebffd51fdf7f624e3
 10:devices:/kubepods/besteffort/podcbfx2j5d-3f6f-11ea-983d-0abc95f90166/c17eb535a47774285717e40bbda777ee72e81471272a5b8ebffd51fdf7f624e3
 9:perf_event:/kubepods/besteffort/podcbfx2j5d-3f6f-11ea-983d-0abc95f90166/c17eb535a47774285717e40bbda777ee72e81471272a5b8ebffd51fdf7f624e3

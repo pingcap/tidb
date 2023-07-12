@@ -57,6 +57,12 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		group.RunawaySettings = runaway
 	}
 
+	if options.Background != nil {
+		group.BackgroundSettings = &rmpb.BackgroundSettings{
+			JobTypes: options.Background.JobTypes,
+		}
+	}
+
 	if options.RURate > 0 {
 		group.Mode = rmpb.GroupMode_RUMode
 		group.RUSettings = &rmpb.GroupRequestUnitSettings{
@@ -72,6 +78,7 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		}
 		return group, nil
 	}
+
 	// Only support RU mode now
 	return nil, ErrUnknownResourceGroupMode
 }
