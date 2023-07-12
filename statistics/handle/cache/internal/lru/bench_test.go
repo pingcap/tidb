@@ -35,7 +35,7 @@ func BenchmarkLruPut(b *testing.B) {
 		go func(i int) {
 			defer wg.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
-			c.Put(int64(i), t1)
+			c.Put(int64(i), t1, true)
 		}(i)
 	}
 
@@ -56,14 +56,14 @@ func BenchmarkLruPutGet(b *testing.B) {
 		go func(i int) {
 			defer wg.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
-			c.Put(int64(i), t1)
+			c.Put(int64(i), t1, true)
 		}(i)
 	}
 	for i := 0; i < b.N; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			c.Get(int64(i))
+			c.Get(int64(i), true)
 		}(i)
 	}
 	wg.Wait()
