@@ -24,34 +24,42 @@ type BytesConn struct {
 	bytes.Buffer
 }
 
+// Read implements the net.Conn interface.
 func (c *BytesConn) Read(b []byte) (n int, err error) {
-	return c.Read(b)
+	return c.Buffer.Read(b)
 }
 
-func (c *BytesConn) Write(b []byte) (n int, err error) {
+// Write implements the net.Conn interface.
+func (*BytesConn) Write([]byte) (n int, err error) {
 	return 0, nil
 }
 
-func (c *BytesConn) Close() error {
+// Close implements the net.Conn interface.
+func (*BytesConn) Close() error {
 	return nil
 }
 
-func (c *BytesConn) LocalAddr() net.Addr {
+// LocalAddr implements the net.Conn interface.
+func (*BytesConn) LocalAddr() net.Addr {
 	return nil
 }
 
-func (c *BytesConn) RemoteAddr() net.Addr {
+// RemoteAddr implements the net.Conn interface.
+func (*BytesConn) RemoteAddr() net.Addr {
 	return nil
 }
 
-func (c *BytesConn) SetDeadline(_ time.Time) error {
+// SetDeadline implements the net.Conn interface.
+func (*BytesConn) SetDeadline(time.Time) error {
 	return nil
 }
 
-func (c *BytesConn) SetReadDeadline(_ time.Time) error {
+// SetReadDeadline implements the net.Conn interface.
+func (*BytesConn) SetReadDeadline(time.Time) error {
 	return nil
 }
 
-func (c *BytesConn) SetWriteDeadline(_ time.Time) error {
+// SetWriteDeadline implements the net.Conn interface.
+func (*BytesConn) SetWriteDeadline(time.Time) error {
 	return nil
 }
