@@ -1537,6 +1537,39 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
+func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`CREATE TABLE t1 (id int, c varchar(128), key c(c)) partition by range (id) (
+		partition p0 values less than (10), 
+		partition p1 values less than MAXVALUE)`)
+	re := tk.MustQuery("show table t1 regions")
+	rows := re.Rows()
+	require.Len(t, rows, 2)
+	tk.MustExec(`alter table t1 truncate partition p0`)
+	re = tk.MustQuery("show table t1 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 2)
+
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec(`CREATE TABLE t2(id bigint(20) NOT NULL AUTO_INCREMENT, PRIMARY KEY (id) NONCLUSTERED) SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 PARTITION BY RANGE (id) (
+		PARTITION p1 VALUES LESS THAN (10),
+		PARTITION p2 VALUES LESS THAN (20),
+		PARTITION p3 VALUES LESS THAN (MAXVALUE))`)
+	re = tk.MustQuery("show table t2 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 24)
+	tk.MustExec(`alter table t2 truncate partition p3`)
+	re = tk.MustQuery("show table t2 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 24)
+}
+
 func TestCreateTableWithKeyPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
@@ -2649,6 +2682,7 @@ func TestTiDBEnableExchangePartition(t *testing.T) {
         PARTITION p2 values less than (9)
 		);`)
 	// default
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
 	tk.MustExec(`create table nt(a int primary key auto_increment);`)
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
@@ -2656,12 +2690,14 @@ func TestTiDBEnableExchangePartition(t *testing.T) {
 	// set tidb_enable_exchange_partition = 0
 	tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
 
 	// set tidb_enable_exchange_partition = 1
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))

@@ -27,7 +27,9 @@
       "select 1 from t A, t B where A.f <> 3 and B.f in (1,2,3) and A.f <> 1 and A.f <> 2 -- on different columns. No simplification should be done.",
       "select 1 from t A, t B where B.f <> 2 and A.f <> 3 and B.f in (1,2,3) and A.f in (3,1,4) and A.f <> 1 and A.f <> 2 -- simplification for two columns.",
       "select f from ts use index() where f <> '1' and f in ('1','2','3') -- Simple case with string type",
-      "select count(*) cnt from ts where f <> '1' and f in ('1','2','3') group by a having cnt > 100  -- aggregate  "
+      "select count(*) cnt from ts where f <> '1' and f in ('1','2','3') group by a having cnt > 100  -- aggregate  ",
+      "select f from t where f <> NULL  and f in (1,2,3) -- Special case of NULL with no simplification.",
+      "select f from t where f != NULL  and f in (NULL,2,3) -- Special case of NULL with no simplification."
     ]
   }
 ]

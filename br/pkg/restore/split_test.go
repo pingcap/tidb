@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -479,12 +480,10 @@ func initRewriteRules() *restore.RewriteRules {
 
 // expected regions after split:
 //
-//	[aa, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
-//	[bbj, cca), [cca, xx), [xx, xxe), [xxe, xxz), [xxz, )
-//
-// Please note that "aa" has been rewritten to "xx", so the "bb" rewrite rule split point won't be included.
+//	[, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
+//	[bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func validateRegions(regions map[uint64]*split.RegionInfo) bool {
-	keys := [...]string{"", "aay", "bba", "bbf", "bbh", "bbj", "cca", "xx", "xxe", "xxz", ""}
+	keys := [...]string{"", "aay", "bba", "bbf", "bbh", "bbj", "cca", "xxe", "xxz", ""}
 	return validateRegionsExt(regions, keys[:], false)
 }
 
@@ -557,10 +556,11 @@ func TestRegionConsistency(t *testing.T) {
 		{
 			codec.EncodeBytes([]byte{}, []byte("a")),
 			codec.EncodeBytes([]byte{}, []byte("a")),
-			"first region's startKey > startKey, startKey: (.*?), regionStartKey: (.*?)",
+			"first region 1's startKey(.*?) > startKey(.*?)",
 			[]*split.RegionInfo{
 				{
 					Region: &metapb.Region{
+						Id:       1,
 						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
 						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
 					},
@@ -570,10 +570,11 @@ func TestRegionConsistency(t *testing.T) {
 		{
 			codec.EncodeBytes([]byte{}, []byte("b")),
 			codec.EncodeBytes([]byte{}, []byte("e")),
-			"last region's endKey < endKey, endKey: (.*?), regionEndKey: (.*?)",
+			"last region 100's endKey(.*?) < endKey(.*?)",
 			[]*split.RegionInfo{
 				{
 					Region: &metapb.Region{
+						Id:       100,
 						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
 						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
 					},
@@ -583,16 +584,19 @@ func TestRegionConsistency(t *testing.T) {
 		{
 			codec.EncodeBytes([]byte{}, []byte("c")),
 			codec.EncodeBytes([]byte{}, []byte("e")),
-			"region endKey not equal to next region startKey(.*?)",
+			"region 6's endKey not equal to next region 8's startKey(.*?)",
 			[]*split.RegionInfo{
 				{
 					Region: &metapb.Region{
-						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+						Id:          6,
+						StartKey:    codec.EncodeBytes([]byte{}, []byte("b")),
+						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
+						RegionEpoch: nil,
 					},
 				},
 				{
 					Region: &metapb.Region{
+						Id:       8,
 						StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
 						EndKey:   codec.EncodeBytes([]byte{}, []byte("f")),
 					},
@@ -610,9 +614,10 @@ func TestRegionConsistency(t *testing.T) {
 type fakeRestorer struct {
 	mu sync.Mutex
 
-	errorInSplit  bool
-	splitRanges   []rtree.Range
-	restoredFiles []*backuppb.File
+	errorInSplit        bool
+	splitRanges         []rtree.Range
+	restoredFiles       []*backuppb.File
+	tableIDIsInsequence bool
 }
 
 func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, rewriteRules *restore.RewriteRules, updateCh glue.Progress, isRawKv bool) error {
@@ -632,14 +637,19 @@ func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, re
 	return nil
 }
 
-func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, files []*backuppb.File, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
+func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, tableIDWithFiles []restore.TableIDWithFiles, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	f.restoredFiles = append(f.restoredFiles, files...)
+	for i, tableIDWithFile := range tableIDWithFiles {
+		if int64(i) != tableIDWithFile.TableID {
+			f.tableIDIsInsequence = false
+		}
+		f.restoredFiles = append(f.restoredFiles, tableIDWithFile.Files...)
+	}
 	err := errors.Annotatef(berrors.ErrRestoreWriteAndIngest, "the files to restore are taken by a hijacker, meow :3")
 	log.Error("error happens :3", logutil.ShortError(err))
 	return err
@@ -654,6 +664,12 @@ func fakeRanges(keys ...string) (r restore.DrainResult) {
 			StartKey: []byte(keys[i]),
 			EndKey:   []byte(keys[i+1]),
 			Files:    []*backuppb.File{{Name: "fake.sst"}},
+		})
+		r.TableEndOffsetInRanges = append(r.TableEndOffsetInRanges, len(r.Ranges))
+		r.TablesToSend = append(r.TablesToSend, restore.CreatedTable{
+			Table: &model.TableInfo{
+				ID: int64(i),
+			},
 		})
 	}
 	return
@@ -697,8 +713,10 @@ func TestRestoreFailed(t *testing.T) {
 		fakeRanges("abz", "bbz", "bcy"),
 		fakeRanges("bcy", "cad", "xxy"),
 	}
-	r := &fakeRestorer{}
-	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1, nil)
+	r := &fakeRestorer{
+		tableIDIsInsequence: true,
+	}
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -711,6 +729,7 @@ func TestRestoreFailed(t *testing.T) {
 	sink.Close()
 	sender.Close()
 	require.GreaterOrEqual(t, len(r.restoredFiles), 1)
+	require.True(t, r.tableIDIsInsequence)
 }
 
 func TestSplitFailed(t *testing.T) {
@@ -719,8 +738,8 @@ func TestSplitFailed(t *testing.T) {
 		fakeRanges("abz", "bbz", "bcy"),
 		fakeRanges("bcy", "cad", "xxy"),
 	}
-	r := &fakeRestorer{errorInSplit: true}
-	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1, nil)
+	r := &fakeRestorer{errorInSplit: true, tableIDIsInsequence: true}
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -733,6 +752,7 @@ func TestSplitFailed(t *testing.T) {
 	sender.Close()
 	require.GreaterOrEqual(t, len(r.splitRanges), 2)
 	require.Len(t, r.restoredFiles, 0)
+	require.True(t, r.tableIDIsInsequence)
 }
 
 func keyWithTablePrefix(tableID int64, key string) []byte {
@@ -761,7 +781,7 @@ func TestSplitPoint(t *testing.T) {
 	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "b"), EndKey: keyWithTablePrefix(oldTableID, "c")}, Value: split.Value{Size: 100, Number: 100}})
 	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "d"), EndKey: keyWithTablePrefix(oldTableID, "e")}, Value: split.Value{Size: 200, Number: 200}})
 	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "g"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: split.Value{Size: 300, Number: 300}})
-	client := NewFakeSplitClient()
+	client := newFakeSplitClient()
 	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "f"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "f"), keyWithTablePrefix(tableID, "h"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "h"), keyWithTablePrefix(tableID, "j"))
@@ -813,7 +833,7 @@ func TestSplitPoint2(t *testing.T) {
 	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "f"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: split.Value{Size: 300, Number: 300}})
 	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "j"), EndKey: keyWithTablePrefix(oldTableID, "k")}, Value: split.Value{Size: 200, Number: 200}})
 	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "l"), EndKey: keyWithTablePrefix(oldTableID, "n")}, Value: split.Value{Size: 200, Number: 200}})
-	client := NewFakeSplitClient()
+	client := newFakeSplitClient()
 	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "g"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "g"), keyWithTablePrefix(tableID, getCharFromNumber("g", 0)))
 	for i := 0; i < 256; i++ {
@@ -864,7 +884,7 @@ type fakeSplitClient struct {
 	regions []*split.RegionInfo
 }
 
-func NewFakeSplitClient() *fakeSplitClient {
+func newFakeSplitClient() *fakeSplitClient {
 	return &fakeSplitClient{
 		regions: make([]*split.RegionInfo, 0),
 	}
@@ -997,7 +1017,7 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	}
 	mockIter := &mockLogIter{}
 	ctx := context.Background()
-	logIter := restore.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, NewFakeSplitClient(), 144*1024*1024, 1440000)
+	logIter := restore.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, newFakeSplitClient(), 144*1024*1024, 1440000)
 	next := 0
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		require.NoError(t, r.Err)

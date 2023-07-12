@@ -1507,8 +1507,8 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			err       error
 		)
 
-		if !rc.taskMgr.CanPauseSchedulerByKeyRange() {
-			logTask.Info("removing PD leader&region schedulers")
+		if rc.cfg.TikvImporter.PausePDSchedulerScope == config.PausePDSchedulerScopeGlobal {
+			logTask.Info("pause pd scheduler of global scope")
 
 			restoreFn, err = rc.taskMgr.CheckAndPausePdSchedulers(ctx)
 			if err != nil {
@@ -1627,6 +1627,9 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 
 				needPostProcess, err := task.tr.importTable(ctx, rc, task.cp)
+				if err != nil && !common.IsContextCanceledError(err) {
+					task.tr.logger.Error("failed to import table", zap.Error(err))
+				}
 
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
@@ -2179,6 +2182,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			if err = rc.taskMgr.InitTask(ctx, estimatedDataSizeWithIndex, estimatedTiflashDataSize); err != nil {
 				return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 			}
+		}
+		if rc.cfg.TikvImporter.PausePDSchedulerScope == config.PausePDSchedulerScopeTable &&
+			!rc.taskMgr.CanPauseSchedulerByKeyRange() {
+			return errors.New("target cluster don't support pause-pd-scheduler-scope=table, the minimal version required is 6.1.0")
 		}
 		if rc.cfg.App.CheckRequirements {
 			needCheck := true

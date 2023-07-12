@@ -478,7 +478,7 @@ func TestIndexJoin31494(t *testing.T) {
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("set @@tidb_mem_quota_query=2097152;")
 	// This bug will be reproduced in 10 times.
 	for i := 0; i < 10; i++ {
@@ -1424,7 +1424,7 @@ func TestIssue42662(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().ConnectionID = 12345
 	tk.Session().GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
-	tk.Session().GetSessionVars().MemTracker.SessionID = 12345
+	tk.Session().GetSessionVars().MemTracker.SessionID.Store(12345)
 	tk.Session().GetSessionVars().MemTracker.IsRootTrackerOfSess = true
 
 	sm := &testkit.MockSessionManager{

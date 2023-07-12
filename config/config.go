@@ -719,6 +719,11 @@ type Performance struct {
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
 
 	LiteInitStats bool `toml:"lite-init-stats" json:"lite-init-stats"`
+
+	// If ForceInitStats is true, when tidb starts up, it doesn't provide service until init stats is finished.
+	// If ForceInitStats is false, tidb can provide service before init stats is finished. Note that during the period
+	// of init stats the optimizer may make bad decisions due to pseudo stats.
+	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -985,6 +990,7 @@ var defaultConf = Config{
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     false,
+		ForceInitStats:                    false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

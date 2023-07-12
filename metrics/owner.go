@@ -25,6 +25,7 @@ var (
 	WatcherClosed     = "watcher_closed"
 	Cancelled         = "cancelled"
 	Deleted           = "deleted"
+	PutValue          = "put_value"
 	SessionDone       = "session_done"
 	CtxDone           = "context_done"
 	WatchOwnerCounter *prometheus.CounterVec

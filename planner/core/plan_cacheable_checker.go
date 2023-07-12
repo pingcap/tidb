@@ -16,6 +16,8 @@ package core
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
@@ -26,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/filter"
@@ -56,6 +59,7 @@ func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.Info
 		cacheable:    true,
 		schema:       is,
 		sumInListLen: 0,
+		maxNumParam:  getMaxParamLimit(sctx),
 	}
 	node.Accept(&checker)
 	return checker.cacheable, checker.reason
@@ -69,6 +73,7 @@ type cacheableChecker struct {
 	reason    string // reason why cannot use plan-cache
 
 	sumInListLen int // the accumulated number of elements in all in-lists
+	maxNumParam  int
 }
 
 // Enter implements Visitor interface.
@@ -105,9 +110,9 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if len(node.Lists) > 0 { // avoid index-out-of-range
 				nCols = len(node.Lists[0])
 			}
-			if nRows*nCols > 200 { // to save memory
+			if nRows*nCols > checker.maxNumParam { // to save memory
 				checker.cacheable = false
-				checker.reason = "too many values (more than 200) in the insert statement"
+				checker.reason = "too many values in the insert statement"
 				return in, true
 			}
 		}
@@ -120,9 +125,9 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.PatternInExpr:
 		checker.sumInListLen += len(node.List)
-		if checker.sumInListLen > 100 { // to save memory
+		if checker.sumInListLen > checker.maxNumParam { // to save memory
 			checker.cacheable = false
-			checker.reason = "too many values in in-list (more than 100)"
+			checker.reason = "too many values in in-list"
 			return in, true
 		}
 	case *ast.VariableExpr:
@@ -223,6 +228,7 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 		return false, "not a SELECT statement"
 	}
 
+	maxNumParam := getMaxParamLimit(sctx)
 	var tableNames []*ast.TableName
 	switch x := node.(type) {
 	case *ast.SelectStmt:
@@ -251,8 +257,8 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 			if len(x.Lists) > 0 { // avoid index-out-of-range
 				nCols = len(x.Lists[0])
 			}
-			if nRows*nCols > 200 { // to save memory
-				return false, "too many values (more than 200) in the insert statement"
+			if nRows*nCols > maxNumParam { // to save memory
+				return false, "too many values in the insert statement"
 			}
 			tableNames, ok, reason = extractTableNames(x.Table.TableRefs, tableNames)
 			if !ok {
@@ -289,7 +295,7 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 
 	// allocate and init the checker
 	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
-	checker.reset(sctx, is, tableNames)
+	checker.reset(sctx, is, tableNames, maxNumParam)
 
 	node.Accept(checker)
 	cacheable, reason := checker.cacheable, checker.reason
@@ -382,9 +388,11 @@ type nonPreparedPlanCacheableChecker struct {
 
 	constCnt  int // the number of constants/parameters in this query
 	filterCnt int // the number of filters in the current node
+
+	maxNumberParam int // the maximum number of parameters for a query to be cached.
 }
 
-func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema, tableNodes []*ast.TableName) {
+func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema, tableNodes []*ast.TableName, maxNumberParam int) {
 	checker.sctx = sctx
 	checker.cacheable = true
 	checker.schema = schema
@@ -392,6 +400,7 @@ func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, s
 	checker.tableNodes = tableNodes
 	checker.constCnt = 0
 	checker.filterCnt = 0
+	checker.maxNumberParam = maxNumberParam
 }
 
 // Enter implements Visitor interface.
@@ -458,9 +467,9 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			checker.reason = "query has null constants"
 		}
 		checker.constCnt++
-		if checker.constCnt > 200 { // just for safety and reduce memory cost
+		if checker.maxNumberParam > 0 && checker.constCnt > checker.maxNumberParam { // just for safety and reduce memory cost
 			checker.cacheable = false
-			checker.reason = "query has more than 200 constants"
+			checker.reason = "query has too many constants"
 		}
 		return in, !checker.cacheable
 	case *ast.GroupByClause:
@@ -671,4 +680,24 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 		}
 	}
 	return true, ""
+}
+
+// getMaxParamLimit returns the maximum number of parameters for a query that can be cached in the Plan Cache.
+func getMaxParamLimit(sctx sessionctx.Context) int {
+	v := 200
+	if sctx == nil || sctx.GetSessionVars() == nil || sctx.GetSessionVars().OptimizerFixControl == nil {
+		return v
+	}
+	if sctx.GetSessionVars().OptimizerFixControl[variable.TiDBOptFixControl44823] != "" {
+		n, err := strconv.Atoi(sctx.GetSessionVars().OptimizerFixControl[variable.TiDBOptFixControl44823])
+		if err != nil {
+			return v
+		}
+		if n == 0 {
+			v = math.MaxInt32 // no limitation
+		} else if n > 0 {
+			v = n
+		}
+	}
+	return v
 }

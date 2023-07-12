@@ -305,7 +305,7 @@ func TestCreateTableWithForeignKeyPrivilegeCheck(t *testing.T) {
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
-	tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 	err := tk2.ExecToErr("create table t2 (a int, foreign key fk(a) references t1(id));")
 	require.Error(t, err)
 	require.Equal(t, "[planner:1142]REFERENCES command denied to user 'u1'@'%' for table 't1'", err.Error())
@@ -330,7 +330,7 @@ func TestAlterTableWithForeignKeyPrivilegeCheck(t *testing.T) {
 	tk.MustExec("create table t1 (id int key);")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
-	tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 	tk2.MustExec("create table t2 (a int)")
 	err := tk2.ExecToErr("alter table t2 add foreign key (a) references t1 (id) on update cascade")
 	require.Error(t, err)
@@ -427,7 +427,7 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	// check the schema diff
 	diff = getLatestSchemaDiff(t, tk)
 	require.Equal(t, model.ActionRenameTable, diff.Type)
-	require.Equal(t, 1, len(diff.AffectedOpts))
+	require.Equal(t, 0, len(diff.AffectedOpts))
 	require.Equal(t, model.ReferredFKInfo{
 		Cols:        []model.CIStr{model.NewCIStr("id")},
 		ChildSchema: model.NewCIStr("test2"),

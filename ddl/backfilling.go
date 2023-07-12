@@ -285,8 +285,8 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	rc := d.getReorgCtx(jobID)
 
 	for {
-		// Give job chance to be canceled, if we not check it here,
-		// if there is panic in bf.BackfillData we will never cancel the job.
+		// Give job chance to be canceled or paused, if we not check it here,
+		// we will never cancel the job once there is panic in bf.BackfillData.
 		// Because reorgRecordTask may run a long time,
 		// we should check whether this ddl job is still runnable.
 		err := d.isReorgRunnable(jobID, false)
@@ -721,7 +721,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 		if len(kvRanges) == 0 {
 			break
 		}
-
 		logutil.BgLogger().Info("[ddl] start backfill workers to reorg record",
 			zap.Stringer("type", bfWorkerType),
 			zap.Int("workerCnt", scheduler.currentWorkerSize()),

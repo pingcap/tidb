@@ -265,21 +265,11 @@
             {
               "Depth": 2,
               "Label": 0,
-              "IsRoot": true,
-              "StoreType": 2,
-              "ReqType": 0,
-              "IsPhysicalPlan": true,
-              "TextTreeIndent": "  │ ",
-              "IsLastChild": true
-            },
-            {
-              "Depth": 3,
-              "Label": 0,
               "IsRoot": false,
               "StoreType": 0,
               "ReqType": 0,
               "IsPhysicalPlan": true,
-              "TextTreeIndent": "    │ ",
+              "TextTreeIndent": "  │ ",
               "IsLastChild": true
             }
           ],
@@ -307,21 +297,11 @@
             {
               "Depth": 2,
               "Label": 0,
-              "IsRoot": true,
-              "StoreType": 2,
-              "ReqType": 0,
-              "IsPhysicalPlan": true,
-              "TextTreeIndent": "  │ ",
-              "IsLastChild": true
-            },
-            {
-              "Depth": 3,
-              "Label": 0,
               "IsRoot": false,
               "StoreType": 0,
               "ReqType": 0,
               "IsPhysicalPlan": true,
-              "TextTreeIndent": "    │ ",
+              "TextTreeIndent": "  │ ",
               "IsLastChild": true
             }
           ]

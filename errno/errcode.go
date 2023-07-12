@@ -1112,6 +1112,11 @@ const (
 	ErrColumnInChange                     = 8245
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
+
+	ErrCannotPauseDDLJob  = 8260
+	ErrCannotResumeDDLJob = 8261
+	ErrPausedDDLJob       = 8262
+
 	// Resource group errors.
 	ErrResourceGroupExists            = 8248
 	ErrResourceGroupNotExists         = 8249

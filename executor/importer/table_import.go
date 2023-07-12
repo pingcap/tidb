@@ -21,6 +21,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -110,13 +111,14 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 	}
 
 	backendConfig := local.BackendConfig{
-		PDAddr:            tidbCfg.Path,
-		LocalStoreDir:     dir,
-		MaxConnPerStore:   config.DefaultRangeConcurrency,
-		ConnCompressType:  config.CompressionNone,
-		RangeConcurrency:  config.DefaultRangeConcurrency,
-		WorkerConcurrency: config.DefaultRangeConcurrency * 2,
-		KVWriteBatchSize:  config.KVWriteBatchSize,
+		PDAddr:                 tidbCfg.Path,
+		LocalStoreDir:          dir,
+		MaxConnPerStore:        config.DefaultRangeConcurrency,
+		ConnCompressType:       config.CompressionNone,
+		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
+		KVWriteBatchSize:       config.KVWriteBatchSize,
+		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
+		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
 		// todo: local backend report error when the sort-dir already exists & checkpoint disabled.
 		// set to false when we fix it.
 		CheckpointEnabled:       true,
@@ -130,6 +132,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController) (ti *TableIm
 		ShouldCheckWriteStall: true,
 		MaxOpenFiles:          int(util.GenRLimit()),
 		KeyspaceName:          keySpaceName,
+		PausePDSchedulerScope: config.PausePDSchedulerScopeTable,
 	}
 
 	tableMeta := &mydump.MDTableMeta{

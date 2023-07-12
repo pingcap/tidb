@@ -3097,6 +3097,49 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	tk0.MustExec(sql)
 }
 
+func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_mem_quota_query = 209715200 ") // 200MB
+	tk0.MustExec("set global tidb_server_memory_limit = 5GB")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
+	}
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tk0.MustExec("use test")
+	tk0.MustExec("create table t(a int)")
+	tk0.MustExec("insert into t select 1")
+	for i := 1; i <= 8; i++ {
+		tk0.MustExec("insert into t select * from t") // 256 Lines
+	}
+	sqlPrepare := "prepare stmt from 'analyze table t with 1.0 samplerate';"
+	sqlExecute := "execute stmt;"                                                                                 // Need about 100MB
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`)) // 512MB
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
+	// won't be killed by tidb_mem_quota_query
+	tk0.MustExec(sqlPrepare)
+	tk0.MustExec(sqlExecute)
+	runtime.GC()
+	// killed by tidb_server_memory_limit
+	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
+	_, err0 := tk0.Exec(sqlPrepare)
+	require.NoError(t, err0)
+	_, err1 := tk0.Exec(sqlExecute)
+	// Killed and the WarnMsg is WarnMsgSuffixForInstance instead of WarnMsgSuffixForSingleQuery
+	require.True(t, strings.Contains(err1.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
+	runtime.GC()
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
+	tk0.MustExec(sqlPrepare)
+	tk0.MustExec(sqlExecute)
+}
+
 func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3175,4 +3218,35 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 
 	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
 	require.Len(t, childTrackers, 0)
+}
+
+func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t (a int, b int, c json, index idx_b(b), index idx_c((cast(json_extract(c, _utf8mb4'$') as char(32) array))))")
+	tk.MustExec(`insert into t values (1, 1, '["a1", "a2"]'), (2, 2, '["b1", "b2"]'), (3, 3, '["c1", "c2"]'), (2, 2, '["c1", "c2"]')`)
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+
+	tk.MustExec("analyze table t columns a")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(""+
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+		"Warning 1105 Columns b are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
+		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx_c"))
+	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Check(testkit.Rows(
+		"analyze table columns a, b with 256 buckets, 500 topn, 1 samplerate"))
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	stats := h.GetTableStats(tblInfo)
+	require.True(t, stats.Columns[tblInfo.Columns[0].ID].IsStatsInitialized())
+	require.True(t, stats.Columns[tblInfo.Columns[1].ID].IsStatsInitialized())
+	require.False(t, stats.Columns[tblInfo.Columns[2].ID].IsStatsInitialized())
+	require.True(t, stats.Indices[tblInfo.Indices[0].ID].IsStatsInitialized())
+	require.False(t, stats.Indices[tblInfo.Indices[1].ID].IsStatsInitialized())
 }

@@ -183,6 +183,8 @@ const (
 	AuthSocket              = "auth_socket"
 	AuthTiDBSessionToken    = "tidb_session_token"
 	AuthTiDBAuthToken       = "tidb_auth_token"
+	AuthLDAPSimple          = "authentication_ldap_simple"
+	AuthLDAPSASL            = "authentication_ldap_sasl"
 )
 
 // MySQL database and tables.
@@ -408,6 +410,16 @@ func (m SQLMode) HasNoAutoCreateUserMode() bool {
 // HasAllowInvalidDatesMode detects if 'ALLOW_INVALID_DATES' mode is set in SQLMode
 func (m SQLMode) HasAllowInvalidDatesMode() bool {
 	return m&ModeAllowInvalidDates == ModeAllowInvalidDates
+}
+
+// DelSQLMode delete sql mode from ori
+func DelSQLMode(ori SQLMode, del SQLMode) SQLMode {
+	return ori & (^del)
+}
+
+// SetSQLMode add sql mode to ori
+func SetSQLMode(ori SQLMode, add SQLMode) SQLMode {
+	return ori | add
 }
 
 // consts for sql modes.

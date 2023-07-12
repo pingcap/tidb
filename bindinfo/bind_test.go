@@ -762,11 +762,11 @@ func TestPrivileges(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	tk.MustExec("create user test@'%'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 }
