@@ -15,8 +15,6 @@
 package mapcache
 
 import (
-	"sync"
-
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 )
@@ -39,7 +37,6 @@ func (c cacheItem) copy() cacheItem {
 type MapCache struct {
 	tables   map[int64]cacheItem
 	memUsage int64
-	mu       sync.RWMutex
 }
 
 // NewMapCache creates a new map cache.
@@ -52,16 +49,12 @@ func NewMapCache() *MapCache {
 
 // Get implements StatsCacheInner
 func (m *MapCache) Get(k int64, _ bool) (*statistics.Table, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	v, ok := m.tables[k]
 	return v.value, ok
 }
 
 // Put implements StatsCacheInner
 func (m *MapCache) Put(k int64, v *statistics.Table, _ bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	item, ok := m.tables[k]
 	if ok {
 		oldCost := item.cost
@@ -84,8 +77,6 @@ func (m *MapCache) Put(k int64, v *statistics.Table, _ bool) {
 
 // Del implements StatsCacheInner
 func (m *MapCache) Del(k int64) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	item, ok := m.tables[k]
 	if !ok {
 		return
@@ -96,15 +87,11 @@ func (m *MapCache) Del(k int64) {
 
 // Cost implements StatsCacheInner
 func (m *MapCache) Cost() int64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	return m.memUsage
 }
 
 // Keys implements StatsCacheInner
 func (m *MapCache) Keys() []int64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	ks := make([]int64, 0, len(m.tables))
 	for k := range m.tables {
 		ks = append(ks, k)
@@ -114,8 +101,6 @@ func (m *MapCache) Keys() []int64 {
 
 // Values implements StatsCacheInner
 func (m *MapCache) Values() []*statistics.Table {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	vs := make([]*statistics.Table, 0, len(m.tables))
 	for _, v := range m.tables {
 		vs = append(vs, v.value)

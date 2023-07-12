@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "mapcache",
@@ -8,17 +8,5 @@ go_library(
     deps = [
         "//statistics",
         "//statistics/handle/cache/internal",
-    ],
-)
-
-go_test(
-    name = "mapcache_test",
-    timeout = "short",
-    srcs = ["bench_test.go"],
-    embed = [":mapcache"],
-    flaky = True,
-    deps = [
-        "//statistics/handle/cache/internal/testutil",
-        "//util/benchdaily",
     ],
 )

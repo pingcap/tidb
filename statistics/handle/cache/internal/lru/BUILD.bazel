@@ -15,17 +15,13 @@ go_library(
 go_test(
     name = "lru_test",
     timeout = "short",
-    srcs = [
-        "bench_test.go",
-        "lru_cache_test.go",
-    ],
+    srcs = ["lru_cache_test.go"],
     embed = [":lru"],
     flaky = True,
-    shard_count = 9,
+    shard_count = 8,
     deps = [
         "//statistics",
         "//statistics/handle/cache/internal/testutil",
-        "//util/benchdaily",
         "@com_github_stretchr_testify//require",
     ],
 )
