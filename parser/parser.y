@@ -788,6 +788,8 @@ import (
 	watch                 "WATCH"
 	similar               "SIMILAR"
 	queryLimit            "QUERY_LIMIT"
+	background            "BACKGROUND"
+	taskNames             "TASK_NAMES"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -1448,7 +1450,9 @@ import (
 	PlacementPolicyOption                  "Anonymous or placement policy option"
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
+	DirectResourceGroupBackgroundOption    "Subset of direct resource group background option"
 	DirectResourceGroupRunawayOption       "Subset of anonymous or direct resource group runaway option"
+	ResourceGroupBackgroundOptionList      "Direct resource group background option list"
 	ResourceGroupRunawayActionOption       "Resource group runaway action option"
 	ResourceGroupRunawayWatchOption        "Resource group runaway watch option"
 	ResourceGroupRunawayOptionList         "Anomymous or direct resource group runaway option list"
@@ -1823,15 +1827,55 @@ DirectResourceGroupOption:
 	}
 |	"QUERY_LIMIT" EqOpt '(' ResourceGroupRunawayOptionList ')'
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: $4.([]*ast.ResourceGroupRunawayOption)}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, RunawayOptionList: $4.([]*ast.ResourceGroupRunawayOption)}
 	}
 |	"QUERY_LIMIT" EqOpt '(' ')'
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: nil}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, RunawayOptionList: nil}
 	}
 |	"QUERY_LIMIT" EqOpt "NULL"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, ResourceGroupRunawayOptionList: nil}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupRunaway, RunawayOptionList: nil}
+	}
+|	"BACKGROUND" EqOpt '(' ResourceGroupBackgroundOptionList ')'
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupBackground, BackgroundOptions: $4.([]*ast.ResourceGroupBackgroundOption)}
+	}
+|	"BACKGROUND" EqOpt '(' ')'
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupBackground, BackgroundOptions: nil}
+	}
+|	"BACKGROUND" EqOpt "NULL"
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceGroupBackground, BackgroundOptions: nil}
+	}
+
+ResourceGroupBackgroundOptionList:
+	DirectResourceGroupBackgroundOption
+	{
+		$$ = []*ast.ResourceGroupBackgroundOption{$1.(*ast.ResourceGroupBackgroundOption)}
+	}
+|	ResourceGroupBackgroundOptionList DirectResourceGroupBackgroundOption
+	{
+		if !ast.CheckBackgroundAppend($1.([]*ast.ResourceGroupBackgroundOption), $2.(*ast.ResourceGroupBackgroundOption)) {
+			yylex.AppendError(yylex.Errorf("Dupliated background options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.ResourceGroupBackgroundOption), $2.(*ast.ResourceGroupBackgroundOption))
+	}
+|	ResourceGroupBackgroundOptionList ',' DirectResourceGroupBackgroundOption
+	{
+		if !ast.CheckBackgroundAppend($1.([]*ast.ResourceGroupBackgroundOption), $3.(*ast.ResourceGroupBackgroundOption)) {
+			yylex.AppendError(yylex.Errorf("Dupliated background options specified"))
+			return 1
+		}
+		$$ = append($1.([]*ast.ResourceGroupBackgroundOption), $3.(*ast.ResourceGroupBackgroundOption))
+	}
+
+DirectResourceGroupBackgroundOption:
+	"TASK_NAMES" EqOpt stringLit
+	{
+		$$ = &ast.ResourceGroupBackgroundOption{Type: ast.BackgroundOptionTaskNames, StrValue: $3}
 	}
 
 PlacementOptionList:
@@ -4160,7 +4204,7 @@ PolicyName:
 
 ResourceGroupName:
 	Identifier
-| 	"DEFAULT"
+|	"DEFAULT"
 
 DatabaseOption:
 	DefaultKwdOpt CharsetKw EqOpt CharsetName
@@ -6934,6 +6978,8 @@ NotKeywordToken:
 |	"WATCH"
 |	"SIMILAR"
 |	"QUERY_LIMIT"
+|	"BACKGROUND"
+|	"TASK_NAMES"
 
 /************************************************************************************
  *

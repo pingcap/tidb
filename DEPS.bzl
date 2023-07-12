@@ -3189,8 +3189,8 @@ def go_deps():
         name = "com_github_pingcap_fn",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/fn",
-        sum = "h1:Pe2LbxRmbTfAoKJ65bZLmhahmvHm7n9DUxGRQT00208=",
-        version = "v0.0.0-20200306044125-d5540d389059",
+        sum = "h1:CyA6AxcOZkQh52wIqYlAmaVmF6EvrcqFywP463pjA8g=",
+        version = "v1.0.0",
     )
     go_repository(
         name = "com_github_pingcap_goleveldb",
