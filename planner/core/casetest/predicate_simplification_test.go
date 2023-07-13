@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/tidb/testkit/testdata"
 )
 
+type Input []string
+
 func TestRemoveRedundantPredicates(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package casetest
+package partition
 
 import (
 	"bytes"
@@ -54,7 +54,7 @@ func TestHashPartitionPruner(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	partitionPrunerData := GetPartitionPrunerData()
+	partitionPrunerData := getPartitionPrunerData()
 	partitionPrunerData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -118,7 +118,7 @@ func TestListPartitionPruner(t *testing.T) {
 		Result []string
 		Plan   []string
 	}
-	partitionPrunerData := GetPartitionPrunerData()
+	partitionPrunerData := getPartitionPrunerData()
 	partitionPrunerData.LoadTestCases(t, &input, &output)
 	valid := false
 	for i, tt := range input {
@@ -247,7 +247,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 		Plan      []string
 		IndexPlan []string
 	}
-	partitionPrunerData := GetPartitionPrunerData()
+	partitionPrunerData := getPartitionPrunerData()
 	partitionPrunerData.LoadTestCases(t, &input, &output)
 	valid := false
 	for i, tt := range input {
@@ -310,7 +310,7 @@ func TestRangePartitionPredicatePruner(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	partitionPrunerData := GetPartitionPrunerData()
+	partitionPrunerData := getPartitionPrunerData()
 	partitionPrunerData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {

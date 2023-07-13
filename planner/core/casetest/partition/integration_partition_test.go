@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package casetest
+package partition
 
 import (
 	"strings"
@@ -45,7 +45,7 @@ func TestListPartitionPushDown(t *testing.T) {
 		SQL  string
 		Plan []string
 	}
-	integrationPartitionSuiteData := GetIntegrationPartitionSuiteData()
+	integrationPartitionSuiteData := getIntegrationPartitionSuiteData()
 	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -89,7 +89,7 @@ func TestListColVariousTypes(t *testing.T) {
 		SQL     string
 		Results []string
 	}
-	integrationPartitionSuiteData := GetIntegrationPartitionSuiteData()
+	integrationPartitionSuiteData := getIntegrationPartitionSuiteData()
 	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -130,7 +130,7 @@ func TestListPartitionPruning(t *testing.T) {
 		DynamicPlan []string
 		StaticPlan  []string
 	}
-	integrationPartitionSuiteData := GetIntegrationPartitionSuiteData()
+	integrationPartitionSuiteData := getIntegrationPartitionSuiteData()
 	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -161,7 +161,7 @@ func TestListPartitionFunctions(t *testing.T) {
 		SQL     string
 		Results []string
 	}
-	integrationPartitionSuiteData := GetIntegrationPartitionSuiteData()
+	integrationPartitionSuiteData := getIntegrationPartitionSuiteData()
 	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -209,7 +209,7 @@ func TestEstimationForTopNPushToDynamicPartition(t *testing.T) {
 		SQL  string
 		Plan []string
 	}
-	integrationPartitionSuiteData := GetIntegrationPartitionSuiteData()
+	integrationPartitionSuiteData := getIntegrationPartitionSuiteData()
 	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
