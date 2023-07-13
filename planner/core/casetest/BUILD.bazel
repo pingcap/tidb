@@ -7,7 +7,6 @@ go_test(
         "expression_rewriter_test.go",
         "integration_test.go",
         "main_test.go",
-        "partition_pruner_test.go",
         "plan_test.go",
         "point_get_plan_test.go",
         "predicate_simplification_test.go",

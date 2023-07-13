@@ -6,11 +6,14 @@ go_test(
     srcs = [
         "integration_partition_test.go",
         "main_test.go",
+        "partition_pruner_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 5,
+    shard_count = 10,
     deps = [
+        "//planner/core/internal",
+        "//sessionctx/variable",
         "//testkit",
         "//testkit/testdata",
         "//testkit/testmain",

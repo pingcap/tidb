@@ -72,10 +72,6 @@ func GetExpressionRewriterSuiteData() testdata.TestData {
 	return testDataMap["expression_rewriter_suite"]
 }
 
-func GetPartitionPrunerData() testdata.TestData {
-	return testDataMap["partition_pruner"]
-}
-
 func GetIntegrationSuiteData() testdata.TestData {
 	return testDataMap["integration_suite"]
 }

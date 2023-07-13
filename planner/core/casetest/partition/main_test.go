@@ -50,3 +50,7 @@ func TestMain(m *testing.M) {
 func getIntegrationPartitionSuiteData() testdata.TestData {
 	return testDataMap["integration_partition_suite"]
 }
+
+func getPartitionPrunerData() testdata.TestData {
+	return testDataMap["partition_pruner"]
+}
