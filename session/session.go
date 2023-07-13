@@ -2241,7 +2241,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			}()
 		}
 	}
-	s.GetDomainInfoSchema()
 	if err != nil {
 		s.rollbackOnError(ctx)
 
