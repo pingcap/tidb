@@ -217,10 +217,10 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 	if em.remainingError.Type.Load() > 0 {
 		sqls = append(sqls, [2]string{"create type error table", createTypeErrorTable})
 	}
-	if em.conflictV1Enabled && em.remainingError.Conflict.Load() > 0 {
+	if em.conflictV1Enabled {
 		sqls = append(sqls, [2]string{"create conflict error v1 table", createConflictErrorTable})
 	}
-	if em.conflictV2Enabled && em.remainingError.Conflict.Load() > 0 {
+	if em.conflictV2Enabled && em.conflictErrRemain.Load() > 0 {
 		sqls = append(sqls, [2]string{"create duplicate records table", createDupRecordTable})
 	}
 
@@ -313,12 +313,12 @@ func (em *ErrorManager) RecordDataConflictError(
 		return nil
 	}
 
-	if em.remainingError.Conflict.Sub(int64(len(conflictInfos))) < 0 {
-		threshold := em.configError.Conflict.Load()
+	if em.conflictErrRemain.Sub(int64(len(conflictInfos))) < 0 {
+		threshold := em.configConflict.Threshold
 		// Still need to record this batch of conflict records, and then return this error at last.
 		// Otherwise, if the max-error.conflict is set a very small value, non of the conflict errors will be recorded
 		gerr = errors.Errorf(
-			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			"The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '%d'",
 			threshold)
 	}
 
@@ -371,12 +371,12 @@ func (em *ErrorManager) RecordIndexConflictError(
 		return nil
 	}
 
-	if em.remainingError.Conflict.Sub(int64(len(conflictInfos))) < 0 {
-		threshold := em.configError.Conflict.Load()
+	if em.conflictErrRemain.Sub(int64(len(conflictInfos))) < 0 {
+		threshold := em.configConflict.Threshold
 		// Still need to record this batch of conflict records, and then return this error at last.
 		// Otherwise, if the max-error.conflict is set a very small value, non of the conflict errors will be recorded
 		gerr = errors.Errorf(
-			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			"The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '%d'",
 			threshold)
 	}
 

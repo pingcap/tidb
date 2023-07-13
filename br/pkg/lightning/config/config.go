@@ -509,6 +509,7 @@ type MaxError struct {
 	// The default value is zero, which means that such errors are not tolerated.
 	Type atomic.Int64 `toml:"type" json:"type"`
 
+	// deprecated, use `conflict.threshold` instead.
 	// Conflict is the maximum number of unique key conflicts in local backend accepted.
 	// When tolerated, every pair of conflict adds 1 to the counter.
 	// Those pairs will NOT be deleted from the target. Conflict resolution is performed separately.
@@ -1348,10 +1349,15 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 
 	if c.Threshold < 0 {
 		switch c.Strategy {
-		case ErrorOnDup, "":
+		case ErrorOnDup:
 			c.Threshold = 0
 		case IgnoreOnDup, ReplaceOnDup:
 			c.Threshold = math.MaxInt64
+		case "":
+			c.Threshold = 0
+			if i.DuplicateResolution != DupeResAlgNone {
+				c.Threshold = math.MaxInt64
+			}
 		}
 	}
 	if c.Threshold > 0 && c.Strategy == ErrorOnDup {

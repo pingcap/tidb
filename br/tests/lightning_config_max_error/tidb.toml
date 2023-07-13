@@ -5,4 +5,4 @@ threshold = 20
 header = true
 
 [tikv-importer]
-on-duplicate = "error"
+on-duplicate = "ignore"
