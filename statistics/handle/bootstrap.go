@@ -16,6 +16,7 @@ package handle
 
 import (
 	"context"
+	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"strconv"
 	"time"
 
@@ -480,7 +481,8 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h.updateStatsCache(cache)
+	h.statsCache.Replace(cache)
+	handle_metrics.CostGauge.Set(float64(cache.Cost()))
 	return nil
 }
 
@@ -534,7 +536,8 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 			}
 		}
 	}
-	h.updateStatsCache(cache)
+	h.statsCache.Replace(cache)
+	handle_metrics.CostGauge.Set(float64(cache.Cost()))
 	return nil
 }
 

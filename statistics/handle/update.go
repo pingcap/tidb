@@ -759,8 +759,7 @@ OUTER:
 				newTblStats.Columns[fb.Hist.ID] = &newCol
 			}
 			for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-				oldCache := h.statsCache.Load()
-				if h.updateStatsCache(oldCache.CopyAndUpdate([]*statistics.Table{newTblStats}, nil)) {
+				if h.updateStatsCache([]*statistics.Table{newTblStats}, nil) {
 					break
 				}
 			}
@@ -796,8 +795,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 	}
 	h.mu.Unlock()
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-		oldCache := h.statsCache.Load()
-		if h.updateStatsCache(oldCache.CopyAndUpdate(tbls, nil)) {
+		if h.updateStatsCache(tbls, nil) {
 			break
 		}
 	}
