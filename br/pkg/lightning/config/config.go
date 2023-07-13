@@ -544,8 +544,7 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 			return iVal
 		}
 		for k, v := range val {
-			switch k {
-			case "type":
+			if k == "type" {
 				cfg.Type.Store(getVal(k, v))
 			}
 		}
