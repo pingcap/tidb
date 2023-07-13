@@ -30,6 +30,7 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "integration_partition_suite")
+	testDataMap.LoadTestSuiteData("testdata", "partition_pruner")
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),

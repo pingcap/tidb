@@ -34,7 +34,6 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
 	testDataMap.LoadTestSuiteData("testdata", "point_get_plan")
 	testDataMap.LoadTestSuiteData("testdata", "expression_rewriter_suite")
-	testDataMap.LoadTestSuiteData("testdata", "partition_pruner")
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
 	testDataMap.LoadTestSuiteData("testdata", "json_plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification")
