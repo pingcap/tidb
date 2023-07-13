@@ -84,16 +84,16 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 		m.memRoot.RefreshConsumption()
 		ok := m.memRoot.CheckConsume(StructSizeBackendCtx)
 		if !ok {
-			return nil, genBackendAllocMemFailedErr(m.memRoot, jobID)
+			return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
 		}
-		cfg, err := genConfig(m.memRoot, jobID, unique)
+		cfg, err := genConfig(ctx, m.memRoot, jobID, unique)
 		if err != nil {
-			logutil.BgLogger().Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
+			logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
 		}
 		bd, err := createLocalBackend(ctx, cfg)
 		if err != nil {
-			logutil.BgLogger().Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
+			logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
 		}
 
@@ -101,7 +101,7 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 		m.Store(jobID, bcCtx)
 
 		m.memRoot.Consume(StructSizeBackendCtx)
-		logutil.BgLogger().Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
+		logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
 			zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 			zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()),
 			zap.Bool("is unique index", unique))
@@ -113,7 +113,7 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error) {
 	tls, err := cfg.Lightning.ToTLS()
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCreateBackendFail, zap.Error(err))
+		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))
 		return nil, err
 	}
 
@@ -159,7 +159,7 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 	m.memRoot.Release(StructSizeBackendCtx)
 	m.Delete(jobID)
 	m.memRoot.ReleaseWithTag(EncodeBackendTag(jobID))
-	logutil.BgLogger().Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),
+	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()))
 }
