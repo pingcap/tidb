@@ -20,10 +20,8 @@ go_test(
     flaky = True,
     shard_count = 8,
     deps = [
-        "//parser/model",
-        "//parser/mysql",
         "//statistics",
-        "//types",
+        "//statistics/handle/cache/internal/testutil",
         "@com_github_stretchr_testify//require",
     ],
 )
