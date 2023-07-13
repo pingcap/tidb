@@ -74,6 +74,8 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/conn"
 	"github.com/pingcap/tidb/privilege/privileges/ldap"
+	servererr "github.com/pingcap/tidb/server/err"
+	"github.com/pingcap/tidb/server/internal"
 	"github.com/pingcap/tidb/server/internal/column"
 	"github.com/pingcap/tidb/server/internal/dump"
 	"github.com/pingcap/tidb/server/internal/handshake"
@@ -130,7 +132,7 @@ func newClientConn(s *Server) *clientConn {
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
 type clientConn struct {
-	pkt          *packetIO               // a helper to read and write data in packet format.
+	pkt          *internal.PacketIO      // a helper to read and write data in packet format.
 	bufReadConn  *util2.BufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
 	tlsConn      *tls.Conn               // TLS connection, nil if not TLS.
 	server       *Server                 // a reference of server instance.
@@ -285,7 +287,7 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	// The query must return a non-error or the client is disconnected.
 	if err := cc.initConnect(ctx); err != nil {
 		logutil.Logger(ctx).Warn("init_connect failed", zap.Error(err))
-		initErr := errNewAbortingConnection.FastGenByArgs(cc.connectionID, "unconnected", cc.user, cc.peerHost, "init_connect command failed")
+		initErr := servererr.ErrNewAbortingConnection.FastGenByArgs(cc.connectionID, "unconnected", cc.user, cc.peerHost, "init_connect command failed")
 		if err1 := cc.writeError(ctx, initErr); err1 != nil {
 			terror.Log(err1)
 		}
@@ -301,7 +303,7 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	}
 
 	err := cc.writePacket(data)
-	cc.pkt.sequence = 0
+	cc.pkt.SetSequence(0)
 	if err != nil {
 		err = errors.SuspendStack(err)
 		logutil.Logger(ctx).Debug("write response to client failed", zap.Error(err))
@@ -421,9 +423,9 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 
 func (cc *clientConn) readPacket() ([]byte, error) {
 	if cc.getCtx() != nil {
-		cc.pkt.setMaxAllowedPacket(cc.ctx.GetSessionVars().MaxAllowedPacket)
+		cc.pkt.SetMaxAllowedPacket(cc.ctx.GetSessionVars().MaxAllowedPacket)
 	}
-	return cc.pkt.readPacket()
+	return cc.pkt.ReadPacket()
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
@@ -432,7 +434,7 @@ func (cc *clientConn) writePacket(data []byte) error {
 			failpoint.Return(nil)
 		}
 	})
-	return cc.pkt.writePacket(data)
+	return cc.pkt.WritePacket(data)
 }
 
 // getSessionVarsWaitTimeout get session variable wait_timeout
@@ -474,7 +476,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	capability := uint32(binary.LittleEndian.Uint16(data[:2]))
 	if capability&mysql.ClientProtocol41 <= 0 {
 		logutil.Logger(ctx).Error("ClientProtocol41 flag is not set, please upgrade client")
-		return errNotSupportedAuthMode
+		return servererr.ErrNotSupportedAuthMode
 	}
 	pos, err = parse.HandshakeResponseHeader(ctx, &resp, data)
 	if err != nil {
@@ -519,7 +521,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	} else if tlsutil.RequireSecureTransport.Load() && !cc.isUnixSocket {
 		// If it's not a socket connection, we should reject the connection
 		// because TLS is required.
-		err := errSecureTransportRequired.FastGenByArgs()
+		err := servererr.ErrSecureTransportRequired.FastGenByArgs()
 		terror.Log(err)
 		return err
 	}
@@ -536,7 +538,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.dbname = resp.DBName
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
-	cc.pkt.zstdLevel = resp.ZstdLevel
+	cc.pkt.SetZstdLevel(resp.ZstdLevel)
 
 	err = cc.handleAuthPlugin(ctx, &resp)
 	if err != nil {
@@ -726,7 +728,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	}
 
 	if !cc.isUnixSocket && authPlugin == mysql.AuthSocket {
-		return errAccessDeniedNoPassword.FastGenByArgs(cc.user, host)
+		return servererr.ErrAccessDeniedNoPassword.FastGenByArgs(cc.user, host)
 	}
 
 	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host, AuthPlugin: authPlugin}
@@ -771,7 +773,7 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 	// Find the identity of the user based on username and peer host.
 	identity, err := cc.ctx.MatchIdentity(cc.user, host)
 	if err != nil {
-		return nil, errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+		return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 	}
 	// Get the plugin for the identity.
 	userplugin, err := cc.ctx.AuthPluginForUser(identity)
@@ -785,7 +787,7 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 	})
 	if userplugin == mysql.AuthSocket {
 		if !cc.isUnixSocket {
-			return nil, errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+			return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 		}
 		resp.AuthPlugin = mysql.AuthSocket
 		user, err := user.LookupId(fmt.Sprint(cc.socketCredUID))
@@ -829,7 +831,7 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 			return authData, nil
 		} else if userplugin != mysql.AuthNativePassword {
 			// MySQL 5.1 and older don't support authentication plugins yet
-			return nil, errNotSupportedAuthMode
+			return nil, servererr.ErrNotSupportedAuthMode
 		}
 	}
 
@@ -857,7 +859,7 @@ func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port stri
 	addr := cc.bufReadConn.RemoteAddr().String()
 	host, port, err = net.SplitHostPort(addr)
 	if err != nil {
-		err = errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword)
+		err = servererr.ErrAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword)
 		return
 	}
 	cc.peerHost = host
@@ -866,7 +868,7 @@ func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port stri
 	serverAddr := cc.bufReadConn.LocalAddr().String()
 	serverHost, _, err := net.SplitHostPort(serverAddr)
 	if err != nil {
-		err = errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword)
+		err = servererr.ErrAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword)
 		return
 	}
 	cc.serverHost = serverHost
@@ -995,7 +997,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		// close connection when idle time is more than wait_timeout
 		// default 28800(8h), FIXME: should not block at here when we kill the connection.
 		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
-		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
+		cc.pkt.SetReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
 		data, err := cc.readPacket()
 		if err != nil {
@@ -1011,7 +1013,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 							zap.Error(err),
 						)
 					}
-				} else if errors.ErrorEqual(err, errNetPacketTooLarge) {
+				} else if errors.ErrorEqual(err, servererr.ErrNetPacketTooLarge) {
 					err := cc.writeError(ctx, err)
 					if err != nil {
 						terror.Log(err)
@@ -1085,8 +1087,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err1)
 		}
 		cc.addMetrics(data[0], startTime, err)
-		cc.pkt.sequence = 0
-		cc.pkt.compressedSequence = 0
+		cc.pkt.SetSequence(0)
+		cc.pkt.SetCompressedSequence(0)
 	}
 }
 
@@ -1376,7 +1378,7 @@ func (cc *clientConn) flush(ctx context.Context) error {
 			failpoint.Return(nil)
 		}
 	})
-	return cc.pkt.flush()
+	return cc.pkt.Flush()
 }
 
 func (cc *clientConn) writeOK(ctx context.Context) error {
@@ -1499,7 +1501,7 @@ func (cc *clientConn) writeReq(ctx context.Context, filePath string) error {
 func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *executor.LoadDataWorker) error {
 	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
 	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return errNotAllowedCommand
+		return servererr.ErrNotAllowedCommand
 	}
 	if loadDataWorker == nil {
 		return errors.New("load data info is empty")
@@ -1606,7 +1608,7 @@ func (cc *clientConn) getDataFromPath(ctx context.Context, path string) ([]byte,
 func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *executor.LoadStatsInfo) error {
 	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
 	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return errNotAllowedCommand
+		return servererr.ErrNotAllowedCommand
 	}
 	if loadStatsInfo == nil {
 		return errors.New("load stats: info is empty")
@@ -1624,7 +1626,7 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 // handleIndexAdvise does the index advise work and returns the advise result for index.
 func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *executor.IndexAdviseInfo) error {
 	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return errNotAllowedCommand
+		return servererr.ErrNotAllowedCommand
 	}
 	if indexAdviseInfo == nil {
 		return errors.New("Index Advise: info is empty")
@@ -1648,7 +1650,7 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 
 func (cc *clientConn) handlePlanReplayerLoad(ctx context.Context, planReplayerLoadInfo *executor.PlanReplayerLoadInfo) error {
 	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return errNotAllowedCommand
+		return servererr.ErrNotAllowedCommand
 	}
 	if planReplayerLoadInfo == nil {
 		return errors.New("plan replayer load: info is empty")
@@ -1665,7 +1667,7 @@ func (cc *clientConn) handlePlanReplayerLoad(ctx context.Context, planReplayerLo
 
 func (cc *clientConn) handlePlanReplayerDump(ctx context.Context, e *executor.PlanReplayerDumpInfo) error {
 	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return errNotAllowedCommand
+		return servererr.ErrNotAllowedCommand
 	}
 	if e == nil {
 		return errors.New("plan replayer dump: executor is empty")
@@ -1732,12 +1734,12 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			// how to handle an unsafe situation based on the multiStmt sysvar.
 			switch cc.ctx.GetSessionVars().MultiStatementMode {
 			case variable.OffInt:
-				err = errMultiStatementDisabled
+				err = servererr.ErrMultiStatementDisabled
 				return err
 			case variable.OnInt:
 				// multi statement is fully permitted, do nothing
 			default:
-				warn := stmtctx.SQLWarn{Level: stmtctx.WarnLevelWarning, Err: errMultiStatementDisabled}
+				warn := stmtctx.SQLWarn{Level: stmtctx.WarnLevelWarning, Err: servererr.ErrMultiStatementDisabled}
 				parserWarns = append(parserWarns, warn)
 			}
 		}
@@ -2337,10 +2339,10 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 func (cc *clientConn) setConn(conn net.Conn) {
 	cc.bufReadConn = util2.NewBufferedReadConn(conn)
 	if cc.pkt == nil {
-		cc.pkt = newPacketIO(cc.bufReadConn)
+		cc.pkt = internal.NewPacketIO(cc.bufReadConn)
 	} else {
 		// Preserve current sequence number.
-		cc.pkt.setBufferedReadConn(cc.bufReadConn)
+		cc.pkt.SetBufferedReadConn(cc.bufReadConn)
 	}
 }
 
