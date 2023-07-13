@@ -2063,6 +2063,7 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
 func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) {
+	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
 	progressMap, err := infosync.GetTiFlashTableSyncProgress(context.Background())
 	if err != nil {
@@ -2071,6 +2072,9 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
 			if tbl.TiFlashReplica == nil {
+				continue
+			}
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			progress := 1.0
