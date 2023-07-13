@@ -71,6 +71,7 @@ go_library(
         "//tablecodec",
         "//telemetry",
         "//testkit/testenv",
+        "//timer/tablestore",
         "//ttl/ttlworker",
         "//types",
         "//types/parser_driver",
@@ -129,7 +130,7 @@ go_test(
     embed = [":session"],
     flaky = True,
     race = "on",
-    shard_count = 49,
+    shard_count = 50,
     deps = [
         "//autoid_service",
         "//bindinfo",
