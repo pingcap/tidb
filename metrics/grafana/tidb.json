@@ -10488,7 +10488,7 @@
           "yaxes": [
             {
               "$$hashKey": "object:327",
-              "format": "bytes",
+              "format": "Bps",
               "label": null,
               "logBase": 1,
               "max": null,
@@ -10497,7 +10497,7 @@
             },
             {
               "$$hashKey": "object:328",
-              "format": "bytes",
+              "format": "Bps",
               "label": null,
               "logBase": 1,
               "max": null,
