@@ -878,8 +878,6 @@ func TestMDLView(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD:infoschema/cluster_tables_test.go
-=======
 func TestQuickBinding(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
@@ -1044,7 +1042,6 @@ func TestQuickBinding(t *testing.T) {
 	}
 }
 
->>>>>>> 0f7cae3afd5 (planner: support `limit_to_cop` for quick binding (#44611)):infoschema/test/clustertablestest/cluster_tables_test.go
 func TestCreateBindingFromHistory(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)

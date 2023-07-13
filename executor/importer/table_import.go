@@ -309,7 +309,7 @@ func (ti *TableImporter) checksumTable(ctx context.Context) error {
 		}
 	}
 	ti.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
-	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), uint(ti.distSQLScanConcurrency))
+	manager := local.NewTiKVChecksumManager(ti.kvStore.GetClient(), ti.backend.GetPDClient(), uint(ti.distSQLScanConcurrency), local.DefaultBackoffWeight)
 	remoteChecksum, err := manager.Checksum(ctx, ti.tableInfo)
 	if err != nil {
 		return err

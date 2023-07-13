@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
+	"sort"
 	"testing"
 	"time"
 
@@ -186,4 +188,88 @@ func TestMarshalSQLWarn(t *testing.T) {
 	require.NoError(t, err)
 	tk.Session().GetSessionVars().StmtCtx.SetWarnings(newWarns)
 	tk.MustQuery("show warnings").Check(rows)
+}
+
+func TestApproxRuntimeInfo(t *testing.T) {
+	var n = rand.Intn(19000) + 1000
+	var valRange = rand.Int31n(10000) + 1000
+	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
+	details := []*execdetails.ExecDetails{}
+	for i := 0; i < n; i++ {
+		d := &execdetails.ExecDetails{
+			DetailsNeedP90: execdetails.DetailsNeedP90{
+				CalleeAddress: fmt.Sprintf("%v", i+1),
+				BackoffSleep:  make(map[string]time.Duration),
+				BackoffTimes:  make(map[string]int),
+				TimeDetail: util.TimeDetail{
+					ProcessTime: time.Second * time.Duration(rand.Int31n(valRange)),
+					WaitTime:    time.Millisecond * time.Duration(rand.Int31n(valRange)),
+				},
+			},
+		}
+		details = append(details, d)
+		for _, backoff := range backoffs {
+			d.BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(rand.Int31n(valRange))
+			d.BackoffTimes[backoff] = rand.Intn(int(valRange))
+		}
+	}
+
+	// Make CalleeAddress for each max value is deterministic.
+	details[rand.Intn(n)].DetailsNeedP90.TimeDetail.ProcessTime = time.Second * time.Duration(valRange)
+	details[rand.Intn(n)].DetailsNeedP90.TimeDetail.WaitTime = time.Millisecond * time.Duration(valRange)
+	for _, backoff := range backoffs {
+		details[rand.Intn(n)].BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(valRange)
+	}
+
+	ctx := new(stmtctx.StatementContext)
+	for i := 0; i < n; i++ {
+		ctx.MergeExecDetails(details[i], nil)
+	}
+	d := ctx.CopTasksDetails()
+
+	require.Equal(t, d.NumCopTasks, n)
+	sort.Slice(details, func(i, j int) bool {
+		return details[i].TimeDetail.ProcessTime.Nanoseconds() < details[j].TimeDetail.ProcessTime.Nanoseconds()
+	})
+	var timeSum time.Duration
+	for _, detail := range details {
+		timeSum += detail.TimeDetail.ProcessTime
+	}
+	require.Equal(t, d.AvgProcessTime, timeSum/time.Duration(n))
+	require.InEpsilon(t, d.P90ProcessTime.Nanoseconds(), details[n*9/10].TimeDetail.ProcessTime.Nanoseconds(), 0.05)
+	require.Equal(t, d.MaxProcessTime, details[n-1].TimeDetail.ProcessTime)
+	require.Equal(t, d.MaxProcessAddress, details[n-1].CalleeAddress)
+
+	sort.Slice(details, func(i, j int) bool {
+		return details[i].TimeDetail.WaitTime.Nanoseconds() < details[j].TimeDetail.WaitTime.Nanoseconds()
+	})
+	timeSum = 0
+	for _, detail := range details {
+		timeSum += detail.TimeDetail.WaitTime
+	}
+	require.Equal(t, d.AvgWaitTime, timeSum/time.Duration(n))
+	require.InEpsilon(t, d.P90WaitTime.Nanoseconds(), details[n*9/10].TimeDetail.WaitTime.Nanoseconds(), 0.05)
+	require.Equal(t, d.MaxWaitTime, details[n-1].TimeDetail.WaitTime)
+	require.Equal(t, d.MaxWaitAddress, details[n-1].CalleeAddress)
+
+	fields := d.ToZapFields()
+	require.Equal(t, 9, len(fields))
+	for _, backoff := range backoffs {
+		sort.Slice(details, func(i, j int) bool {
+			return details[i].BackoffSleep[backoff].Nanoseconds() < details[j].BackoffSleep[backoff].Nanoseconds()
+		})
+		timeSum = 0
+		var timesSum = 0
+		for _, detail := range details {
+			timeSum += detail.BackoffSleep[backoff]
+			timesSum += detail.BackoffTimes[backoff]
+		}
+		require.Equal(t, d.MaxBackoffAddress[backoff], details[n-1].CalleeAddress)
+		require.Equal(t, d.MaxBackoffTime[backoff], details[n-1].BackoffSleep[backoff])
+		require.InEpsilon(t, d.P90BackoffTime[backoff], details[n*9/10].BackoffSleep[backoff], 0.1)
+		require.Equal(t, d.AvgBackoffTime[backoff], timeSum/time.Duration(n))
+
+		require.Equal(t, d.TotBackoffTimes[backoff], timesSum)
+		require.Equal(t, d.TotBackoffTime[backoff], timeSum)
+	}
 }
