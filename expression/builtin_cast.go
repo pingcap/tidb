@@ -2149,7 +2149,7 @@ func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
 	tp.SetFlen(expr.GetType().GetFlen())
 	tp.SetDecimal(0)
 	types.SetBinChsClnFlag(tp)
-	tp.AddFlag(expr.GetType().GetFlag() & mysql.UnsignedFlag)
+	tp.AddFlag(expr.GetType().GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
 	return BuildCastFunction(ctx, expr, tp)
 }
 
@@ -2163,7 +2163,7 @@ func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
 	tp.SetFlen(mysql.MaxRealWidth)
 	tp.SetDecimal(types.UnspecifiedLength)
 	types.SetBinChsClnFlag(tp)
-	tp.AddFlag(expr.GetType().GetFlag() & mysql.UnsignedFlag)
+	tp.AddFlag(expr.GetType().GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
 	return BuildCastFunction(ctx, expr, tp)
 }
 
@@ -2204,7 +2204,7 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 		tp.SetFlen(mysql.MaxDecimalWidth)
 	}
 	types.SetBinChsClnFlag(tp)
-	tp.AddFlag(expr.GetType().GetFlag() & mysql.UnsignedFlag)
+	tp.AddFlag(expr.GetType().GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
 	castExpr := BuildCastFunction(ctx, expr, tp)
 	// For const item, we can use find-grained precision and scale by the result.
 	if castExpr.ConstItem(ctx.GetSessionVars().StmtCtx) {
