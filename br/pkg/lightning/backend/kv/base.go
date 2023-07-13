@@ -37,6 +37,10 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+const (
+	maxFileSize = 512 * 1024
+)
+
 // ExtraHandleColumnInfo is the column info of extra handle column.
 var ExtraHandleColumnInfo = model.NewExtraHandleColInfo()
 
@@ -95,11 +99,11 @@ func (row RowArrayMarshaller) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 				return err
 			}
 		}
-		if len(str) > 512*1024 {
+		if len(str) > maxFileSize {
 			str = str[0:1024] + " (truncated)"
 		}
 		totalLength += len(str)
-		if totalLength >= 512*1024 {
+		if totalLength >= maxFileSize {
 			encoder.AppendString("The row has been truncated, and the log has exited early.")
 			return nil
 		}
@@ -316,7 +320,7 @@ func (e *BaseKVEncoder) LogKVConvertFailed(row []types.Datum, j int, colInfo *mo
 		log.ShortError(err),
 	)
 
-	if len(original.GetString()) >= 512*1024 {
+	if len(original.GetString()) >= maxFileSize {
 		originalPrefix := original.GetString()[0:1024] + " (truncated)"
 		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", originalPrefix),
 			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
