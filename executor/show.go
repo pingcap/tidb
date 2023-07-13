@@ -79,6 +79,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"golang.org/x/exp/slices"
 )
 
@@ -1898,7 +1899,7 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 		if n.State == node.Offline {
 			continue
 		}
-		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, util.TSOToRoughTime(n.UpdateTS).Format(types.TimeFormat)})
+		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, oracle.GetTimeFromTS(uint64(n.UpdateTS)).Format(types.TimeFormat)})
 	}
 
 	return nil
