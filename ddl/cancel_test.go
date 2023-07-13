@@ -22,10 +22,11 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/stretchr/testify/require"
 	atomicutil "go.uber.org/atomic"
 )
@@ -335,4 +336,41 @@ func TestCancel(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestCancelForAddUniqueIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tkCancel := testkit.NewTestKit(t, store)
+
+	// Prepare schema.
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
+	tk.MustExec("insert into t values(1, 1, 1)")
+	tk.MustExec("insert into t values(2, 2, 2)")
+	tk.MustExec("insert into t values(1, 1, 1)")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	var testCancelState model.SchemaState
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState == testCancelState && job.State == model.JobStateRollingback {
+			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
+		}
+	}
+	dom.DDL().SetHook(hook.Clone())
+
+	testCancelState = model.StateWriteOnly
+	tk.MustGetErrCode("alter table t add unique index idx1(c1)", errno.ErrDupEntry)
+	tbl := external.GetTableByName(t, tk, "test", "t")
+	require.Equal(t, 0, len(tbl.Meta().Indices))
+
+	testCancelState = model.StateDeleteOnly
+	tk.MustGetErrCode("alter table t add unique index idx1(c1)", errno.ErrDupEntry)
+	tbl = external.GetTableByName(t, tk, "test", "t")
+	require.Equal(t, 0, len(tbl.Meta().Indices))
+
+	testCancelState = model.StateDeleteReorganization
+	tk.MustGetErrCode("alter table t add unique index idx1(c1)", errno.ErrDupEntry)
+	tbl = external.GetTableByName(t, tk, "test", "t")
+	require.Equal(t, 0, len(tbl.Meta().Indices))
 }

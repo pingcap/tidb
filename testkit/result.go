@@ -133,14 +133,22 @@ func (res *Result) CheckAt(cols []int, expected [][]interface{}) {
 
 // CheckContain checks whether the result contains the expected string
 func (res *Result) CheckContain(expected string) {
-	for _, row := range res.rows {
-		for _, colValue := range row {
+	var result strings.Builder
+	for i, row := range res.rows {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+		for j, colValue := range row {
+			if j > 0 {
+				result.WriteString(" ")
+			}
+			result.WriteString(colValue)
 			if strings.Contains(colValue, expected) {
 				return
 			}
 		}
 	}
-	comment := fmt.Sprintf("the result doesn't contain the exepected %s", expected)
+	comment := fmt.Sprintf("the result doesn't contain the exepected %s\n%s", expected, result.String())
 	res.require.Equal(true, false, comment)
 }
 

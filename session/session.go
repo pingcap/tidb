@@ -542,6 +542,9 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	}
 
 	processInfo := s.ShowProcess()
+	if processInfo == nil {
+		return nil
+	}
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
@@ -640,7 +643,6 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
-	s.txn.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
@@ -1573,6 +1575,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		DiskTracker:           s.sessionVars.DiskTracker,
 		StatsInfo:             plannercore.GetStatsInfo,
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
+		TableIDs:              s.sessionVars.StmtCtx.TableIDs,
+		IndexNames:            s.sessionVars.StmtCtx.IndexNames,
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ResourceGroupName:     s.sessionVars.ResourceGroupName,
@@ -1603,6 +1607,16 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		pi.Host = s.sessionVars.User.Hostname
 	}
 	s.processInfo.Store(&pi)
+}
+
+// UpdateProcessInfo updates the session's process info for the running statement.
+func (s *session) UpdateProcessInfo() {
+	pi := s.ShowProcess()
+	if pi == nil || pi.CurTxnStartTS != 0 {
+		return
+	}
+	// Update the current transaction start timestamp.
+	pi.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
 }
 
 func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
@@ -2425,38 +2439,7 @@ func (rs *execStmtResult) Close() error {
 	if err := rs.RecordSet.Close(); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
-	if err := resetCTEStorageMap(se); err != nil {
-		return finishStmt(context.Background(), se, err, rs.sql)
-	}
 	return finishStmt(context.Background(), se, nil, rs.sql)
-}
-
-func resetCTEStorageMap(se *session) error {
-	tmp := se.GetSessionVars().StmtCtx.CTEStorageMap
-	if tmp == nil {
-		// Close() is already called, so no need to reset. Such as TraceExec.
-		return nil
-	}
-	storageMap, ok := tmp.(map[int]*executor.CTEStorages)
-	if !ok {
-		return errors.New("type assertion for CTEStorageMap failed")
-	}
-	for _, v := range storageMap {
-		v.ResTbl.Lock()
-		err1 := v.ResTbl.DerefAndClose()
-		// Make sure we do not hold the lock for longer than necessary.
-		v.ResTbl.Unlock()
-		// No need to lock IterInTbl.
-		err2 := v.IterInTbl.DerefAndClose()
-		if err1 != nil {
-			return err1
-		}
-		if err2 != nil {
-			return err2
-		}
-	}
-	se.GetSessionVars().StmtCtx.CTEStorageMap = nil
-	return nil
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -2468,6 +2451,11 @@ func (s *session) rollbackOnError(ctx context.Context) {
 
 // PrepareStmt is used for executing prepare statement in binary protocol
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
+	defer func() {
+		if s.sessionVars.StmtCtx != nil {
+			s.sessionVars.StmtCtx.DetachMemDiskTracker()
+		}
+	}()
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
 		s.sessionVars.TxnCtx.InfoSchema = domain.GetDomain(s).InfoSchema()
@@ -3815,13 +3803,10 @@ func GetStartTSFromSession(se interface{}) (uint64, uint64) {
 		logutil.BgLogger().Error("GetStartTSFromSession failed, can't transform to session struct")
 		return 0, 0
 	}
-	processInfo := tmp.ShowProcess()
-	if processInfo != nil {
-		processInfoID = processInfo.ID
-	}
 	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
 		startTS = txnInfo.StartTS
+		processInfoID = txnInfo.ConnectionID
 	}
 
 	logutil.BgLogger().Debug(

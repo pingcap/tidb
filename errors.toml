@@ -3041,6 +3041,11 @@ error = '''
 invalid year
 '''
 
+["types:8034"]
+error = '''
+Incorrect datetime value: '%s'
+'''
+
 ["types:8037"]
 error = '''
 invalid week mode format: '%v'

@@ -170,13 +170,13 @@ func hasSysDB(job *model.Job) bool {
 
 func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
 	if d.stateSyncer.IsUpgradingState() {
+		if job.IsPaused() {
+			return false, nil
+		}
 		// We need to turn the 'pausing' job to be 'paused' in ddl worker,
 		// and stop the reorganization workers
 		if job.IsPausing() || hasSysDB(job) {
 			return true, nil
-		}
-		if job.IsPaused() {
-			return false, nil
 		}
 		var errs []error
 		// During binary upgrade, pause all running DDL jobs
@@ -199,7 +199,7 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 		return false, nil
 	}
 
-	if job.IsPausedBySystem() && !hasSysDB(job) {
+	if job.IsPausedBySystem() {
 		var errs []error
 		errs, err = ResumeJobsBySystem(sess.Session(), []int64{job.ID})
 		if len(errs) > 0 {
@@ -211,6 +211,10 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 			return false, err
 		}
 		logutil.BgLogger().Warn("[ddl-upgrading] normal cluster state, resume the job successfully", zap.Stringer("job", job))
+	}
+
+	if job.IsPaused() {
+		return false, nil
 	}
 
 	return true, nil
@@ -545,8 +549,7 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 }
 
 func job2SchemaNames(job *model.Job) []string {
-	switch job.Type {
-	case model.ActionRenameTable:
+	if job.Type == model.ActionRenameTable {
 		var oldSchemaID int64
 		var oldSchemaName model.CIStr
 		var tableName model.CIStr
@@ -557,11 +560,9 @@ func job2SchemaNames(job *model.Job) []string {
 		names = append(names, strings.ToLower(job.SchemaName))
 		names = append(names, oldSchemaName.O)
 		return names
-	case model.ActionRenameTables:
-		// TODO: Get this action's schema names.
-	case model.ActionExchangeTablePartition:
-		// TODO: Get this action's schema names.
 	}
+	// TODO: consider about model.ActionRenameTables and model.ActionExchangeTablePartition, which need to get the schema names.
+
 	return []string{job.SchemaName}
 }
 
@@ -606,6 +607,7 @@ func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
 }
 
 func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (startKey, endKey kv.Key, physicalTableID int64, err error) {
+	startKey, endKey = kv.Key{}, kv.Key{}
 	sql := fmt.Sprintf("select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
 	rows, err := se.Execute(ctx, sql, "get_handle")
@@ -629,8 +631,12 @@ func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (startKey, endKe
 				zap.String("end", hex.EncodeToString(cp.EndKey)),
 				zap.Int64("checkpoint physical ID", cp.PhysicalID))
 			physicalTableID = cp.PhysicalID
-			startKey = cp.StartKey
-			endKey = cp.EndKey
+			if len(cp.StartKey) > 0 {
+				startKey = cp.StartKey
+			}
+			if len(cp.EndKey) > 0 {
+				endKey = cp.EndKey
+			}
 		}
 	}
 	return
