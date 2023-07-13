@@ -39,6 +39,9 @@ const (
 	LitErrIngestDataErr     string = "ingest data into storage error"
 	LitErrRemoteDupExistErr string = "remote duplicate index key exist"
 	LitErrExceedConcurrency string = "the concurrency is greater than ingest limit"
+	LitErrCloseWriterErr    string = "close writer error"
+	LitErrReadSortPath      string = "cannot read sort path"
+	LitErrCleanSortPath     string = "cannot cleanup sort path"
 	LitWarnEnvInitFail      string = "initialize environment failed"
 	LitWarnConfigError      string = "build config for backend failed"
 	LitInfoEnvInitSucc      string = "init global ingest backend environment finished"
@@ -54,7 +57,6 @@ const (
 	LitInfoChgMemSetting    string = "change memory setting for ingest"
 	LitInfoInitMemSetting   string = "initial memory setting for ingest"
 	LitInfoUnsafeImport     string = "do a partial import data into the storage"
-	LitErrCloseWriterErr    string = "close writer error"
 )
 
 func genBackendAllocMemFailedErr(ctx context.Context, memRoot MemRoot, jobID int64) error {

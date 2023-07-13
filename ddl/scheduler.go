@@ -97,9 +97,9 @@ func NewBackfillSchedulerHandle(taskMeta []byte, d *ddl, stepForImport bool) (sc
 
 	indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleID)
 	if indexInfo == nil {
-		logutil.BgLogger().Warn("cannot init cop request sender", zap.String("category", "ddl-ingest"),
+		logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
 			zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", bgm.EleID))
-		return nil, errors.New("cannot find index info")
+		return nil, errors.New("index info not found")
 	}
 	bh.index = indexInfo
 
@@ -249,6 +249,7 @@ func (b *backfillSchedulerHandle) SplitSubtask(ctx context.Context, subtask []by
 	mockReorgInfo.elements = elements
 	mockReorgInfo.currElement = mockReorgInfo.elements[0]
 
+	ctx = logutil.WithCategory(ctx, "ddl-ingest")
 	ingestScheduler := newIngestBackfillScheduler(ctx, mockReorgInfo, d.sessPool, tbl, true)
 	defer ingestScheduler.close(true)
 

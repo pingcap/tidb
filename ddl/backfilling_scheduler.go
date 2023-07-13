@@ -398,11 +398,11 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult]
 			b.poolErr <- err
 			return nil
 		}
-		logutil.BgLogger().Warn("cannot create new writer", zap.String("category", "ddl-ingest"), zap.Error(err),
+		logutil.Logger(b.ctx).Warn("cannot create new writer", zap.Error(err),
 			zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
 		return nil
 	}
-	worker, err := newAddIndexIngestWorker(b.tbl, reorgInfo.d, ei, b.resultCh, job.ID,
+	worker, err := newAddIndexIngestWorker(b.ctx, b.tbl, reorgInfo.d, ei, b.resultCh, job.ID,
 		reorgInfo.SchemaName, b.reorgInfo.currElement.ID, b.writerMaxID,
 		b.copReqSenderPool, sessCtx, b.checkpointMgr, b.distribute)
 	if err != nil {
@@ -411,7 +411,7 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult]
 			b.poolErr <- err
 			return nil
 		}
-		logutil.BgLogger().Warn("cannot create new writer", zap.String("category", "ddl-ingest"), zap.Error(err),
+		logutil.Logger(b.ctx).Warn("cannot create new writer", zap.Error(err),
 			zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
 		return nil
 	}
@@ -422,18 +422,18 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[idxRecResult]
 func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, error) {
 	indexInfo := model.FindIndexInfoByID(b.tbl.Meta().Indices, b.reorgInfo.currElement.ID)
 	if indexInfo == nil {
-		logutil.BgLogger().Warn("cannot init cop request sender", zap.String("category", "ddl-ingest"),
+		logutil.Logger(b.ctx).Warn("cannot init cop request sender",
 			zap.Int64("table ID", b.tbl.Meta().ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
 		return nil, errors.New("cannot find index info")
 	}
 	sessCtx, err := newSessCtx(b.reorgInfo)
 	if err != nil {
-		logutil.BgLogger().Warn("cannot init cop request sender", zap.String("category", "ddl-ingest"), zap.Error(err))
+		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err
 	}
 	copCtx, err := newCopContext(b.tbl.Meta(), indexInfo, sessCtx)
 	if err != nil {
-		logutil.BgLogger().Warn("cannot init cop request sender", zap.String("category", "ddl-ingest"), zap.Error(err))
+		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err
 	}
 	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.sessPool, b.checkpointMgr), nil
@@ -457,7 +457,7 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		err:    rs.err,
 	}
 	if result.err != nil {
-		logutil.BgLogger().Error("encounter error when handle index chunk", zap.String("category", "ddl-ingest"),
+		logutil.Logger(w.ctx).Error("encounter error when handle index chunk",
 			zap.Int("id", rs.id), zap.Error(rs.err))
 		w.resultCh <- result
 		return
@@ -477,7 +477,7 @@ func (w *addIndexIngestWorker) HandleTask(rs idxRecResult) {
 		return
 	}
 	if count == 0 {
-		logutil.BgLogger().Info("finish a cop-request task", zap.String("category", "ddl-ingest"), zap.Int("id", rs.id))
+		logutil.Logger(w.ctx).Info("finish a cop-request task", zap.Int("id", rs.id))
 		return
 	}
 	if w.checkpointMgr != nil {
