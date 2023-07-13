@@ -16,7 +16,6 @@ package handle
 
 import (
 	"context"
-	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"strconv"
 	"time"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"

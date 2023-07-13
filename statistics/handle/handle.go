@@ -593,9 +593,6 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		version := row.GetUint64(0)
-		if version > lastVersion {
-			lastVersion = version
-		}
 		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
@@ -626,7 +623,6 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
-	h.latestUpdateTableVersion.Store(lastVersion)
 	h.updateStatsCache(tables, deletedTableIDs, opts...)
 	return nil
 }
