@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package casetest
+package windows
 
 import (
 	"strings"
@@ -67,7 +67,7 @@ func TestWindowFunctionDescCanPushDown(t *testing.T) {
 
 	var input Input
 	var output Output
-	suiteData := GetWindowPushDownSuiteData()
+	suiteData := getWindowPushDownSuiteData()
 	suiteData.LoadTestCases(t, &input, &output)
 	testWithData(t, tk, input, output)
 }
@@ -84,7 +84,7 @@ func TestWindowPushDownPlans(t *testing.T) {
 
 	var input Input
 	var output Output
-	suiteData := GetWindowPushDownSuiteData()
+	suiteData := getWindowPushDownSuiteData()
 	suiteData.LoadTestCases(t, &input, &output)
 	testWithData(t, tk, input, output)
 }
@@ -102,7 +102,7 @@ func TestWindowPlanWithOtherOperators(t *testing.T) {
 
 	var input Input
 	var output Output
-	suiteData := GetWindowPushDownSuiteData()
+	suiteData := getWindowPushDownSuiteData()
 	suiteData.LoadTestCases(t, &input, &output)
 	testWithData(t, tk, input, output)
 }

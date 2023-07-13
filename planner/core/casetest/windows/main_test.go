@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package casetest
+package windows
 
 import (
 	"flag"
@@ -28,16 +28,8 @@ var testDataMap = make(testdata.BookKeeper)
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
-
 	flag.Parse()
-	testDataMap.LoadTestSuiteData("testdata", "plan_normalized_suite")
-	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
-	testDataMap.LoadTestSuiteData("testdata", "point_get_plan")
-	testDataMap.LoadTestSuiteData("testdata", "expression_rewriter_suite")
-	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
-	testDataMap.LoadTestSuiteData("testdata", "json_plan_suite")
-	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification")
-
+	testDataMap.LoadTestSuiteData("testdata", "window_push_down_suite")
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
@@ -55,30 +47,6 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
-func GetPlanNormalizedSuiteData() testdata.TestData {
-	return testDataMap["plan_normalized_suite"]
-}
-
-func GetStatsSuiteData() testdata.TestData {
-	return testDataMap["stats_suite"]
-}
-
-func GetPointGetPlanData() testdata.TestData {
-	return testDataMap["point_get_plan"]
-}
-
-func GetExpressionRewriterSuiteData() testdata.TestData {
-	return testDataMap["expression_rewriter_suite"]
-}
-
-func GetIntegrationSuiteData() testdata.TestData {
-	return testDataMap["integration_suite"]
-}
-
-func GetJSONPlanSuiteData() testdata.TestData {
-	return testDataMap["json_plan_suite"]
-}
-
-func GetPredicateSimplificationTestData() testdata.TestData {
-	return testDataMap["predicate_simplification"]
+func getWindowPushDownSuiteData() testdata.TestData {
+	return testDataMap["window_push_down_suite"]
 }
