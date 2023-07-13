@@ -81,6 +81,7 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.P
 	tp backfillerType, tbl table.PhysicalTable, sessCtx sessionctx.Context,
 	jobCtx *JobContext) (backfillScheduler, error) {
 	if tp == typeAddIndexWorker && info.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		ctx = logutil.WithCategory(ctx, "ddl-ingest")
 		return newIngestBackfillScheduler(ctx, info, sessPool, tbl, false), nil
 	}
 	return newTxnBackfillScheduler(ctx, info, sessPool, tp, tbl, sessCtx, jobCtx)
@@ -292,7 +293,7 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	job := b.reorgInfo.Job
 	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
 	if !ok {
-		logutil.BgLogger().Error(ingest.LitErrGetBackendFail, zap.Int64("job ID", job.ID))
+		logutil.Logger(b.ctx).Error(ingest.LitErrGetBackendFail, zap.Int64("job ID", job.ID))
 		return errors.Trace(errors.New("cannot get lightning backend"))
 	}
 	b.backendCtx = bc
