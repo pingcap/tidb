@@ -261,9 +261,6 @@ func (em *ErrorManager) RecordTypeError(
 		}
 		return encodeErr
 	}
-	if em.conflictRecordsRemain.Add(-1) < 0 {
-		return nil
-	}
 
 	if em.db != nil {
 		errMsg := encodeErr.Error()
@@ -561,9 +558,11 @@ func (em *ErrorManager) syntaxError() int64 {
 }
 
 func (em *ErrorManager) conflictError() int64 {
-	return em.errorCount(func(maxError *config.MaxError) int64 {
-		return maxError.Conflict.Load()
-	})
+	val := em.conflictErrRemain.Load()
+	if val < 0 {
+		val = 0
+	}
+	return em.configConflict.Threshold - val
 }
 
 func (em *ErrorManager) charsetError() int64 {
