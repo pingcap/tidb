@@ -329,15 +329,6 @@ func (l *Lightning) adjust(i *TikvImporter) {
 			l.RegionConcurrency = cpuCount
 		}
 	}
-	if l.MaxError.Conflict.Load() == -1 {
-		if i.Backend == BackendTiDB {
-			// in versions before v7.3, tidb backend will treat "duplicate entry"
-			// as type error which default is 0. So we set it to 0 to keep compatible.
-			l.MaxError.Conflict.Store(0)
-		} else {
-			l.MaxError.Conflict.Store(math.MaxInt64)
-		}
-	}
 }
 
 // PostOpLevel represents the level of post-operation.
@@ -523,16 +514,14 @@ type MaxError struct {
 // UnmarshalTOML implements toml.Unmarshaler interface.
 func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 	defaultValMap := map[string]int64{
-		"syntax":   0,
-		"charset":  math.MaxInt64,
-		"type":     0,
-		"conflict": -1,
+		"syntax":  0,
+		"charset": math.MaxInt64,
+		"type":    0,
 	}
 	// set default value first
 	cfg.Syntax.Store(defaultValMap["syntax"])
 	cfg.Charset.Store(defaultValMap["charset"])
 	cfg.Type.Store(defaultValMap["type"])
-	cfg.Conflict.Store(defaultValMap["conflict"])
 	switch val := v.(type) {
 	case int64:
 		// ignore val that is smaller than 0
@@ -558,8 +547,6 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 			switch k {
 			case "type":
 				cfg.Type.Store(getVal(k, v))
-			case "conflict":
-				cfg.Conflict.Store(getVal(k, v))
 			}
 		}
 		return nil
@@ -1368,12 +1355,7 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 	if c.MaxRecordRows < 0 {
 		maxErr := l.MaxError
 		// Compatible with the old behavior that records all syntax,charset,type errors.
-		maxAccepted := mathutil.Max(
-			maxErr.Syntax.Load(),
-			maxErr.Charset.Load(),
-			maxErr.Type.Load(),
-			maxErr.Conflict.Load(),
-		)
+		maxAccepted := mathutil.Max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
 		if maxAccepted < defaultMaxRecordRows {
 			maxAccepted = defaultMaxRecordRows
 		}
@@ -1404,14 +1386,11 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
-			RegionConcurrency: runtime.NumCPU(),
-			TableConcurrency:  0,
-			IndexConcurrency:  0,
-			IOConcurrency:     5,
-			CheckRequirements: true,
-			MaxError: MaxError{
-				Conflict: *atomic.NewInt64(-1),
-			},
+			RegionConcurrency:  runtime.NumCPU(),
+			TableConcurrency:   0,
+			IndexConcurrency:   0,
+			IOConcurrency:      5,
+			CheckRequirements:  true,
 			TaskInfoSchemaName: defaultTaskInfoSchemaName,
 		},
 		Checkpoint: Checkpoint{
