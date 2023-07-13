@@ -2228,10 +2228,20 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// session resource-group might be changed by query hint, ensure restore it back when
 	// the execution finished.
 	if sessVars.ResourceGroupName != originalResourceGroup {
-		defer func() {
-			// Restore the resource group for the session
+		// if target resource group doesn't exist, fallback to the origin resource group.
+		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(model.NewCIStr(sessVars.ResourceGroupName)); !ok {
+			logutil.Logger(ctx).Warn("Unknown resource group from hint", zap.String("name", sessVars.ResourceGroupName))
 			sessVars.ResourceGroupName = originalResourceGroup
-		}()
+			// if we are in a txn, should also reset the txn resource group.
+			if txn, err := s.Txn(false); err == nil && txn != nil && txn.Valid() {
+				kv.SetTxnResourceGroup(txn, originalResourceGroup)
+			}
+		} else {
+			defer func() {
+				// Restore the resource group for the session
+				sessVars.ResourceGroupName = originalResourceGroup
+			}()
+		}
 	}
 	if err != nil {
 		s.rollbackOnError(ctx)
