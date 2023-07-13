@@ -21,7 +21,6 @@ import (
 	"math"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -140,15 +140,18 @@ const (
 
 // ErrorManager records errors during the import process.
 type ErrorManager struct {
-	db                *sql.DB
-	taskID            int64
-	schemaEscaped     string
-	configError       *config.MaxError
-	remainingError    config.MaxError
-	maxErrRecords     *atomic.Int64
-	conflictV1Enabled bool
-	conflictV2Enabled bool
-	logger            log.Logger
+	db             *sql.DB
+	taskID         int64
+	schemaEscaped  string
+	configError    *config.MaxError
+	remainingError config.MaxError
+
+	configConflict        *config.Conflict
+	conflictErrRemain     *atomic.Int64
+	conflictRecordsRemain *atomic.Int64
+	conflictV1Enabled     bool
+	conflictV2Enabled     bool
+	logger                log.Logger
 }
 
 // TypeErrorsRemain returns the number of type errors that can be recorded.
@@ -161,22 +164,24 @@ func (em *ErrorManager) ConflictErrorsRemain() int64 {
 	return em.remainingError.Conflict.Load()
 }
 
-// RemainRecord returns the number of errors that need be recorded.
-func (em *ErrorManager) RemainRecord() int64 {
-	return em.maxErrRecords.Load()
+// ConflictRecordsRemain returns the number of errors that need be recorded.
+func (em *ErrorManager) ConflictRecordsRemain() int64 {
+	return em.conflictRecordsRemain.Load()
 }
 
 // New creates a new error manager.
 func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
-	maxErrRecords := &atomic.Int64{}
-	maxErrRecords.Store(cfg.App.MaxErrorRecords)
+	conflictErrRemain := atomic.NewInt64(cfg.Conflict.Threshold)
+	conflictRecordsRemain := atomic.NewInt64(cfg.Conflict.MaxRecordRows)
 	em := &ErrorManager{
-		taskID:            cfg.TaskID,
-		configError:       &cfg.App.MaxError,
-		remainingError:    cfg.App.MaxError,
-		conflictV1Enabled: cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		maxErrRecords:     maxErrRecords,
-		logger:            logger,
+		taskID:                cfg.TaskID,
+		configError:           &cfg.App.MaxError,
+		remainingError:        cfg.App.MaxError,
+		conflictV1Enabled:     cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		configConflict:        &cfg.Conflict,
+		conflictErrRemain:     conflictErrRemain,
+		conflictRecordsRemain: conflictRecordsRemain,
+		logger:                logger,
 	}
 	switch cfg.TikvImporter.Backend {
 	case config.BackendLocal:
@@ -195,7 +200,7 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 
 // Init creates the schemas and tables to store the task information.
 func (em *ErrorManager) Init(ctx context.Context) error {
-	if em.db == nil || em.maxErrRecords.Load() == 0 {
+	if em.db == nil {
 		return nil
 	}
 
@@ -256,7 +261,7 @@ func (em *ErrorManager) RecordTypeError(
 		}
 		return encodeErr
 	}
-	if em.maxErrRecords.Add(-1) < 0 {
+	if em.conflictRecordsRemain.Add(-1) < 0 {
 		return nil
 	}
 
@@ -504,16 +509,16 @@ func (em *ErrorManager) RecordDuplicate(
 	rowID int64,
 	rowData string,
 ) error {
-	if em.remainingError.Conflict.Dec() < 0 {
-		threshold := em.configError.Conflict.Load()
+	if em.conflictErrRemain.Dec() < 0 {
+		threshold := em.configConflict.Threshold
 		return errors.Errorf(
-			"The number of conflict errors exceeds the threshold configured by `max-error.conflict`: '%d'",
+			"The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '%d'",
 			threshold)
 	}
 	if em.db == nil {
 		return nil
 	}
-	if em.maxErrRecords.Add(-1) < 0 {
+	if em.conflictRecordsRemain.Add(-1) < 0 {
 		return nil
 	}
 

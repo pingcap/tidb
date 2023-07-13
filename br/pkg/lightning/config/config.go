@@ -742,6 +742,7 @@ func (p *PostRestore) adjust(i *TikvImporter) {
 	p.Checksum = OpLevelOff
 	p.Analyze = OpLevelOff
 	p.Compact = false
+	p.ChecksumViaSQL = false
 }
 
 // StringOrStringSlice can unmarshal a TOML string as string slice with one element.
@@ -1361,7 +1362,12 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 	if c.MaxRecordRows < 0 {
 		maxErr := l.MaxError
 		// Compatible with the old behavior that records all syntax,charset,type errors.
-		maxAccepted := mathutil.Max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
+		maxAccepted := mathutil.Max(
+			maxErr.Syntax.Load(),
+			maxErr.Charset.Load(),
+			maxErr.Type.Load(),
+			maxErr.Conflict.Load(),
+		)
 		if maxAccepted < defaultMaxRecordRows {
 			maxAccepted = defaultMaxRecordRows
 		}
