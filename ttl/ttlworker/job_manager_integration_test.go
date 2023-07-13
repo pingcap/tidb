@@ -72,7 +72,7 @@ func TestParallelLockNewJob(t *testing.T) {
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
 	se := sessionFactory()
-	job, err := m.LockNewJob(context.Background(), se, testTable, time.Now(), false)
+	job, err := m.LockJob(context.Background(), se, testTable, time.Now(), uuid.NewString(), false)
 	require.NoError(t, err)
 	job.Finish(se, time.Now(), &ttlworker.TTLSummary{})
 
@@ -95,7 +95,7 @@ func TestParallelLockNewJob(t *testing.T) {
 				m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
 				se := sessionFactory()
-				job, err := m.LockNewJob(context.Background(), se, testTable, now, false)
+				job, err := m.LockJob(context.Background(), se, testTable, now, uuid.NewString(), false)
 				if err == nil {
 					successCounter.Add(1)
 					successJob = job
@@ -129,7 +129,7 @@ func TestFinishJob(t *testing.T) {
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable
 	se := sessionFactory()
 	startTime := time.Now()
-	job, err := m.LockNewJob(context.Background(), se, testTable, startTime, false)
+	job, err := m.LockJob(context.Background(), se, testTable, startTime, uuid.NewString(), false)
 	require.NoError(t, err)
 
 	expireTime, err := testTable.EvalExpireTime(context.Background(), se, startTime)
@@ -405,6 +405,7 @@ func TestRescheduleJobs(t *testing.T) {
 	m := ttlworker.NewJobManager("manager-1", nil, store, nil)
 	m.TaskManager().ResizeWorkersWithSysVar()
 	require.NoError(t, m.InfoSchemaCache().Update(se))
+	require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
 	// schedule jobs
 	m.RescheduleJobs(se, now)
 	sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
@@ -423,6 +424,7 @@ func TestRescheduleJobs(t *testing.T) {
 	anotherManager := ttlworker.NewJobManager("manager-2", nil, store, nil)
 	anotherManager.TaskManager().ResizeWorkersWithSysVar()
 	require.NoError(t, anotherManager.InfoSchemaCache().Update(se))
+	require.NoError(t, anotherManager.TableStatusCache().Update(context.Background(), se))
 	anotherManager.RescheduleJobs(se, now.Add(time.Hour))
 	sql, args = cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
 	rows, err = se.ExecuteSQL(ctx, sql, args...)
@@ -459,6 +461,7 @@ func TestJobTimeout(t *testing.T) {
 	m := ttlworker.NewJobManager("manager-1", nil, store, nil)
 	m.TaskManager().ResizeWorkersWithSysVar()
 	require.NoError(t, m.InfoSchemaCache().Update(se))
+	require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
 	// schedule jobs
 	m.RescheduleJobs(se, now)
 	// set the worker to be empty, so none of the tasks will be scheduled
@@ -478,6 +481,7 @@ func TestJobTimeout(t *testing.T) {
 	m2 := ttlworker.NewJobManager("manager-2", nil, store, nil)
 	m2.TaskManager().ResizeWorkersWithSysVar()
 	require.NoError(t, m2.InfoSchemaCache().Update(se))
+	require.NoError(t, m2.TableStatusCache().Update(context.Background(), se))
 	// schedule jobs
 	now = now.Add(10 * time.Minute)
 	m2.RescheduleJobs(se, now)
