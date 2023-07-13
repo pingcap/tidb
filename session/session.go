@@ -689,6 +689,10 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	sessVars := s.sessionVars
 	txnTempTables := sessVars.TxnCtx.TemporaryTables
 	if len(txnTempTables) == 0 {
+		failpoint.Inject("mockSleepBeforeTxnCommit", func(v failpoint.Value) {
+			ms := v.(int)
+			time.Sleep(time.Millisecond * time.Duration(ms))
+		})
 		return txn.Commit(ctx)
 	}
 
@@ -1311,7 +1315,12 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 
 	p := parserPool.Get().(*parser.Parser)
 	defer parserPool.Put(p)
-	p.SetSQLMode(s.sessionVars.SQLMode)
+
+	sqlMode := s.sessionVars.SQLMode
+	if s.isInternal() {
+		sqlMode = mysql.DelSQLMode(sqlMode, mysql.ModeNoBackslashEscapes)
+	}
+	p.SetSQLMode(sqlMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
@@ -1840,6 +1849,14 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
+		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
+			if !sessVars.InTxn() {
+				se.StmtCommit()
+				if err := se.CommitTxn(ctx); err != nil {
+					return nil, err
+				}
+			}
+		}
 		return &execStmtResult{
 			RecordSet: rs,
 			sql:       s,
@@ -2140,6 +2157,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	} else if s.sessionVars.IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
+		is = domain.GetDomain(s).InfoSchema()
+		is = temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}

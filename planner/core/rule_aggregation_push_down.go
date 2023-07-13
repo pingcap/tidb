@@ -404,6 +404,16 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 	if pushedAgg == nil {
 		return nil
 	}
+
+	// Update the agg mode for the pushed down aggregation.
+	for _, aggFunc := range pushedAgg.AggFuncs {
+		if aggFunc.Mode == aggregation.CompleteMode {
+			aggFunc.Mode = aggregation.Partial1Mode
+		} else if aggFunc.Mode == aggregation.FinalMode {
+			aggFunc.Mode = aggregation.Partial2Mode
+		}
+	}
+
 	newChildren := make([]LogicalPlan, 0, len(union.Children()))
 	for _, child := range union.Children() {
 		newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
@@ -492,6 +502,17 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 							break
 						}
 						newAggFuncsArgs = append(newAggFuncsArgs, newArgs)
+					}
+				}
+				for i, funcsArgs := range oldAggFuncsArgs {
+					for j := range funcsArgs {
+						if oldAggFuncsArgs[i][j].GetType().EvalType() != newAggFuncsArgs[i][j].GetType().EvalType() {
+							noSideEffects = false
+							break
+						}
+					}
+					if !noSideEffects {
+						break
 					}
 				}
 				if noSideEffects {

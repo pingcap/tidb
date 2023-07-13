@@ -150,6 +150,349 @@ func TestPreparedStmtWithHint(t *testing.T) {
 	require.Equal(t, int32(1), atomic.LoadInt32(&sm.killed))
 }
 
+func TestIssue38710(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+		dom.Close()
+	}()
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists UK_NO_PRECISION_19392;")
+	tk.MustExec("CREATE TABLE `UK_NO_PRECISION_19392` (\n  `COL1` bit(1) DEFAULT NULL,\n  `COL2` varchar(20) COLLATE utf8mb4_bin DEFAULT NULL,\n  `COL4` datetime DEFAULT NULL,\n  `COL3` bigint DEFAULT NULL,\n  `COL5` float DEFAULT NULL,\n  UNIQUE KEY `UK_COL1` (`COL1`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("INSERT INTO `UK_NO_PRECISION_19392` VALUES (0x00,'缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈','9294-12-26 06:50:40',-3088380202191555887,-3.33294e38),(NULL,'仲膩蕦圓猴洠飌镂喵疎偌嫺荂踖Ƕ藨蜿諪軁笞','1746-08-30 18:04:04',-4016793239832666288,-2.52633e38),(0x01,'冑溜畁脊乤纊繳蟥哅稐奺躁悼貘飗昹槐速玃沮','1272-01-19 23:03:27',-8014797887128775012,1.48868e38);\n")
+	tk.MustExec(`prepare stmt from 'select * from UK_NO_PRECISION_19392 where col1 between ? and ? or col3 = ? or col2 in (?, ?, ?);';`)
+	tk.MustExec("set @a=0x01, @b=0x01, @c=-3088380202191555887, @d=\"缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈\", @e=\"缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈\", @f=\"缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈\";")
+	rows := tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f;`) // can not be cached because @a = @b
+	require.Equal(t, 2, len(rows.Rows()))
+
+	tk.MustExec(`set @a=NULL, @b=NULL, @c=-4016793239832666288, @d="缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈", @e="仲膩蕦圓猴洠飌镂喵疎偌嫺荂踖Ƕ藨蜿諪軁笞", @f="缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈";`)
+	rows = tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f;`)
+	require.Equal(t, 2, len(rows.Rows()))
+
+	rows = tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f;`)
+	require.Equal(t, 2, len(rows.Rows()))
+
+	tk.MustExec(`set @a=0x01, @b=0x01, @c=-3088380202191555887, @d="缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈", @e="缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈", @f="缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈";`)
+	rows = tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f;`)
+	require.Equal(t, 2, len(rows.Rows()))
+}
+
+func TestIssue41626(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+		dom.Close()
+	}()
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a year)`)
+	tk.MustExec(`insert into t values (2000)`)
+	tk.MustExec(`prepare st from 'select * from t where a<?'`)
+	tk.MustExec(`set @a=12`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows("2000"))
+}
+
+func TestIssue41828(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+		dom.Close()
+	}()
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE IDT_MULTI15840STROBJSTROBJ (
+  COL1 enum('aa', 'zzz') DEFAULT NULL,
+  COL2 smallint(6) DEFAULT NULL,
+  COL3 date DEFAULT NULL,
+  KEY U_M_COL4 (COL1,COL2),
+  KEY U_M_COL5 (COL3,COL2))`)
+
+	tk.MustExec(`INSERT INTO IDT_MULTI15840STROBJSTROBJ VALUES ('zzz',1047,'6115-06-05'),('zzz',-23221,'4250-09-03'),('zzz',27138,'1568-07-30'),('zzz',-30903,'6753-08-21'),('zzz',-26875,'6117-10-10')`)
+	tk.MustExec(`prepare stmt from 'select * from IDT_MULTI15840STROBJSTROBJ where col3 <=> ? or col1 in (?, ?, ?) and col2 not between ? and ?'`)
+	tk.MustExec(`set @a="0051-12-23", @b="none", @c="none", @d="none", @e=-32757, @f=-32757`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
+	tk.MustExec(`set @a="9795-01-10", @b="aa", @c="aa", @d="aa", @e=31928, @f=31928`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
+}
+
+func TestIssue40679(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+		dom.Close()
+	}()
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a));")
+	tk.MustExec("prepare st from 'select * from t use index(a) where a < ?'")
+	tk.MustExec("set @a1=1.1")
+	tk.MustExec("execute st using @a1")
+
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.True(t, strings.Contains(rows[1][0].(string), "RangeScan")) // RangeScan not FullScan
+}
+
+func TestIssue41032(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+		dom.Close()
+	}()
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE PK_SIGNED_10087 (
+	 COL1 mediumint(8) unsigned NOT NULL,
+	 COL2 varchar(20) DEFAULT NULL,
+	 COL4 datetime DEFAULT NULL,
+	 COL3 bigint(20) DEFAULT NULL,
+	 COL5 float DEFAULT NULL,
+	 PRIMARY KEY (COL1) )`)
+	tk.MustExec(`insert into PK_SIGNED_10087 values(0, "痥腜蟿鮤枓欜喧檕澙姭袐裄钭僇剕焍哓閲疁櫘", "0017-11-14 05:40:55", -4504684261333179273, 7.97449e37)`)
+	tk.MustExec(`prepare stmt from 'SELECT/*+ HASH_JOIN(t1, t2) */ t2.* FROM PK_SIGNED_10087 t1 JOIN PK_SIGNED_10087 t2 ON t1.col1 = t2.col1 WHERE t2.col1 >= ? AND t1.col1 >= ?;'`)
+	tk.MustExec(`set @a=0, @b=0`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows("0 痥腜蟿鮤枓欜喧檕澙姭袐裄钭僇剕焍哓閲疁櫘 0017-11-14 05:40:55 -4504684261333179273 79744900000000000000000000000000000000"))
+	tk.MustExec(`set @a=8950167, @b=16305982`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestInvalidRange(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+		dom.Close()
+	}()
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a))")
+	tk.MustExec("prepare st from 'select * from t where a>? and a<?'")
+	tk.MustExec("set @l=100, @r=10")
+	tk.MustExec("execute st using @l, @r")
+
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+
+	// use TableDual directly instead of TableFullScan
+	var plan []interface{}
+	for _, r := range tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows() {
+		plan = append(plan, r[0])
+	}
+	require.Equal(t, plan, []interface{}{"TableDual_5"})
+
+	tk.MustExec("execute st using @l, @r")
+	tk.MustExec("execute st using @l, @r")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestIssue40093(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+		dom.Close()
+	}()
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (a int, b int, key(b, a))")
+	tk.MustExec("prepare st from 'select * from t1 left join t2 on t1.a=t2.a where t2.b in (?)'")
+	tk.MustExec("set @b=1")
+	tk.MustExec("execute st using @b")
+
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+
+	// RangeScan instead of FullScan
+	var plan []interface{}
+	for _, r := range tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows() {
+		plan = append(plan, r[0])
+	}
+	require.Equal(t, plan, []interface{}{
+		"Projection_9",
+		"└─HashJoin_21",
+		"  ├─IndexReader_26(Build)",
+		"  │ └─IndexRangeScan_25", // range scan
+		"  └─TableReader_24(Probe)",
+		"    └─Selection_23",
+		"      └─TableFullScan_22",
+	})
+
+	tk.MustExec("execute st using @b")
+	tk.MustExec("execute st using @b")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestIssue38205(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+		dom.Close()
+	}()
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `item` (`id` int, `vid` varbinary(16), `sid` int)")
+	tk.MustExec("CREATE TABLE `lv` (`item_id` int, `sid` int, KEY (`sid`,`item_id`))")
+
+	tk.MustExec("prepare stmt from 'SELECT /*+ TIDB_INLJ(lv, item) */ * FROM lv LEFT JOIN item ON lv.sid = item.sid AND lv.item_id = item.id WHERE item.sid = ? AND item.vid IN (?, ?)'")
+	tk.MustExec("set @a=1, @b='1', @c='3'")
+	tk.MustExec("execute stmt using @a, @b, @c")
+
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+
+	// IndexJoin
+	var plan []interface{}
+	for _, r := range tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows() {
+		plan = append(plan, r[0])
+	}
+	require.Equal(t, plan, []interface{}{
+		"IndexJoin_10",
+		"├─TableReader_19(Build)",
+		"│ └─Selection_18",
+		"│   └─TableFullScan_17",
+		"└─IndexReader_9(Probe)",
+		"  └─Selection_8",
+		"    └─IndexRangeScan_7",
+	})
+
+	tk.MustExec("execute stmt using @a, @b, @c")
+	tk.MustExec("execute stmt using @a, @b, @c")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestIssue38533(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+		dom.Close()
+	}()
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key (a))")
+	tk.MustExec(`prepare st from "select /*+ use_index(t, a) */ a from t where a=? and a=?"`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st using @a, @a`)
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.True(t, strings.Contains(plan[1][0].(string), "RangeScan")) // range-scan instead of full-scan
+
+	tk.MustExec(`execute st using @a, @a`)
+	tk.MustExec(`execute st using @a, @a`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestIssue40224(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a))")
+	tk.MustExec("prepare st from 'select a from t where a in (?, ?)'")
+	tk.MustExec("set @a=1.0, @b=2.0")
+	tk.MustExec("execute st using @a, @b")
+	tk.MustExec("execute st using @a, @b")
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	rs := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	require.True(t, strings.Contains(rs.Rows()[1][0].(string), "RangeScan")) // range-scan instead of full-scan
+
+	tk.MustExec("set @a=1, @b=2")
+	tk.MustExec("execute st using @a, @b")
+	tk.MustExec("execute st using @a, @b")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // cacheable for INT
+	tk.MustExec("execute st using @a, @b")
+	rs = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	require.True(t, strings.Contains(rs.Rows()[1][0].(string), "RangeScan")) // range-scan instead of full-scan
+}
+
 func TestIssue29850(t *testing.T) {
 	store, dom, err := newStoreWithBootstrap()
 	require.NoError(t, err)
@@ -209,11 +552,9 @@ func TestIssue29850(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a range condition
-		`Selection_7 1.00 root  ge(test.t.a, 1), le(test.t.a, 1)`,
-		`└─TableReader_6 1.00 root  data:TableRangeScan_5`,
-		`  └─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+		`Point_Get_5 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
 	tk.MustExec(`prepare stmt from 'select * from t where a=? or a=?'`)
 	tk.MustQuery(`execute stmt using @a1, @a1`).Check(testkit.Rows("1"))
@@ -221,9 +562,7 @@ func TestIssue29850(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a or condition
-		`Selection_7 1.00 root  or(eq(test.t.a, 1), eq(test.t.a, 1))`,
-		`└─TableReader_6 1.00 root  data:TableRangeScan_5`,
-		`  └─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+		`Point_Get_5 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
 }
 
@@ -272,6 +611,60 @@ func TestIssue28064(t *testing.T) {
 		"└─IndexLookUp_7 0.00 root  ",
 		"  ├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+}
+
+func TestIssue42125(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, unique key(a, b))")
+
+	// should use BatchPointGet
+	tk.MustExec("prepare st from 'select * from t where a=1 and b in (?, ?)'")
+	tk.MustExec("set @a=1, @b=2")
+	tk.MustExec("execute st using @a, @b")
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Equal(t, rows[0][0], "Batch_Point_Get_5") // use BatchPointGet
+	tk.MustExec("execute st using @a, @b")
+
+	// should use PointGet: unsafe PointGet
+	tk.MustExec("prepare st from 'select * from t where a=1 and b>=? and b<=?'")
+	tk.MustExec("set @a=1, @b=1")
+	tk.MustExec("execute st using @a, @b")
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Equal(t, rows[0][0], "Point_Get_5") // use Point_Get_5
+	tk.MustExec("execute st using @a, @b")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot hit
+
+	// safe PointGet
+	tk.MustExec("prepare st from 'select * from t where a=1 and b=? and c<?'")
+	tk.MustExec("set @a=1, @b=1")
+	tk.MustExec("execute st using @a, @b")
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Contains(t, rows[0][0], "Selection") // PointGet -> Selection
+	require.Contains(t, rows[1][0], "Point_Get")
+	tk.MustExec("execute st using @a, @b")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // can hit
 }
 
 func TestPreparePlanCache4Blacklist(t *testing.T) {
@@ -1425,4 +1818,60 @@ func TestIssue31141(t *testing.T) {
 
 	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
 	tk.MustExec("prepare stmt1 from 'do 1'")
+}
+
+func TestIssue38335(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true) // requires plan cache enable
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE PK_LP9463 (
+  COL1 mediumint NOT NULL DEFAULT '77' COMMENT 'NUMERIC PK',
+  COL2 varchar(20) COLLATE utf8mb4_bin DEFAULT NULL,
+  COL4 datetime DEFAULT NULL,
+  COL3 bigint DEFAULT NULL,
+  COL5 float DEFAULT NULL,
+  PRIMARY KEY (COL1))`)
+	tk.MustExec(`
+INSERT INTO PK_LP9463 VALUES (-7415279,'笚綷想摻癫梒偆荈湩窐曋繾鏫蘌憬稁渣½隨苆','1001-11-02 05:11:33',-3745331437675076296,-3.21618e38),
+(-7153863,'鯷氤衡椻闍饑堀鱟垩啵緬氂哨笂序鉲秼摀巽茊','6800-06-20 23:39:12',-7871155140266310321,-3.04829e38),
+(77,'娥藨潰眤徕菗柢礥蕶浠嶲憅榩椻鍙鑜堋ᛀ暵氎','4473-09-13 01:18:59',4076508026242316746,-1.9525e38),
+(16614,'阖旕雐盬皪豧篣哙舄糗悄蟊鯴瞶珧赺潴嶽簤彉','2745-12-29 00:29:06',-4242415439257105874,2.71063e37)`)
+	tk.MustExec(`prepare stmt from 'SELECT *, rank() OVER (PARTITION BY col2 ORDER BY COL1) FROM PK_LP9463 WHERE col1 != ? AND col1 < ?'`)
+	tk.MustExec(`set @a=-8414766051197, @b=-8388608`)
+	tk.MustExec(`execute stmt using @a,@b`)
+	tk.MustExec(`set @a=16614, @b=16614`)
+	rows := tk.MustQuery(`execute stmt using @a,@b`).Sort()
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT *, rank() OVER (PARTITION BY col2 ORDER BY COL1) FROM PK_LP9463 WHERE col1 != 16614 and col1 < 16614`).Sort().Check(rows.Rows())
+}
+
+func TestIssue42150(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true) // requires plan cache enable
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("CREATE TABLE `t1` (`c_int` int(11) NOT NULL,  `c_str` varchar(40) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,  `c_datetime` datetime DEFAULT NULL,  `c_timestamp` timestamp NULL DEFAULT NULL,  `c_double` double DEFAULT NULL,  `c_decimal` decimal(12,6) DEFAULT NULL,  `c_enum` enum('blue','green','red','yellow','white','orange','purple') NOT NULL,  PRIMARY KEY (`c_int`,`c_enum`) /*T![clustered_index] CLUSTERED */,  KEY `c_decimal` (`c_decimal`),  UNIQUE KEY `c_datetime` (`c_datetime`),  UNIQUE KEY `c_timestamp` (`c_timestamp`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("create table t (a int, b int, primary key(a), key(b))")
+
+	tk.MustExec("prepare stmt from 'select c_enum from t1'")
+	tk.MustExec("execute stmt;")
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare st from 'select a from t use index(b)'")
+	tk.MustExec("execute st")
+	tk.MustExec("execute st")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }

@@ -816,7 +816,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		return v, true
 	}
 	np = er.popExistsSubPlan(np)
-	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not)
 		if er.err != nil || !er.asScalar {
 			return v, true
@@ -991,7 +991,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		return v, true
 	}
 	np = er.b.buildMaxOneRow(np)
-	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
@@ -1473,16 +1473,10 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
 				if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{c}) {
-					if c.GetType().EvalType() == types.ETString {
-						// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
-						// here and skip this refine operation in all other cases for safety.
-						er.sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
-						expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
-					} else {
-						continue
+					if c.GetType().EvalType() == types.ETInt {
+						continue // no need to refine it
 					}
-				} else if er.sctx.GetSessionVars().StmtCtx.SkipPlanCache {
-					// We should remove the mutable constant for correctness, because its value may be changed.
+					er.sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)

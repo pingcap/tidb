@@ -1885,7 +1885,8 @@ func (e *ShowExec) fetchShowBuiltins() error {
 func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName model.CIStr, tbl *model.TableInfo) error {
 	if tbl.IsView() {
 		// Retrieve view columns info.
-		planBuilder, _ := plannercore.NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
+		planBuilder, _ := plannercore.NewPlanBuilder(
+			plannercore.PlanBuilderOptNoExecution{}).Init(sctx, is, &hint.BlockHintProcessor{})
 		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
 			viewSchema := viewLogicalPlan.Schema()
 			viewOutputNames := viewLogicalPlan.OutputNames()

@@ -626,7 +626,10 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		if task.keepOuterOrder {
 			if err != nil {
 				joinResult.err = err
-				resultCh <- joinResult
+				select {
+				case <-ctx.Done():
+				case resultCh <- joinResult:
+				}
 			}
 			close(resultCh)
 		}

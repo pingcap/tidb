@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -215,4 +216,38 @@ func (s *testSuite1) TestRevokeOnNonExistTable(c *C) {
 	// REVOKE ON non-existent table success
 	tk.MustExec("DROP TABLE t1;")
 	tk.MustExec("REVOKE ALTER ON d1.t1 FROM issue28533;")
+}
+
+// Check https://github.com/pingcap/tidb/issues/41773.
+func (s *testSuite1) TestIssue41773(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists xx (id int)")
+	tk.MustExec("CREATE USER 't1234'@'%' IDENTIFIED BY 'sNGNQo12fEHe0n3vU';")
+	tk.MustExec("GRANT USAGE ON * TO 't1234'@'%';")
+	tk.MustExec("GRANT USAGE ON test.* TO 't1234'@'%';")
+	tk.MustExec("GRANT USAGE ON test.xx TO 't1234'@'%';")
+	tk.MustExec("REVOKE USAGE ON * FROM 't1234'@'%';")
+	tk.MustExec("REVOKE USAGE ON test.* FROM 't1234'@'%';")
+	tk.MustExec("REVOKE USAGE ON test.xx FROM 't1234'@'%';")
+}
+
+// Check https://github.com/pingcap/tidb/issues/41048
+func (s *testSuite1) TestCaseInsensitiveSchemaNames(c *C) {
+	defer collate.SetNewCollationEnabledForTest(false)
+	collate.SetNewCollationEnabledForTest(true)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test.TABLE_PRIV(id int, name varchar(20));`)
+	// Verify the case-insensitive updates for mysql.tables_priv table.
+	tk.MustExec(`GRANT SELECT ON test.table_priv TO 'root'@'%';`)
+	tk.MustExec(`revoke SELECT ON test.TABLE_PRIV from 'root'@'%';;`)
+
+	// Verify the case-insensitive updates for mysql.db table.
+	tk.MustExec(`GRANT SELECT ON test.* TO 'root'@'%';`)
+	tk.MustExec(`revoke SELECT ON tESt.* from 'root'@'%';;`)
+
+	// Verify the case-insensitive updates for mysql.columns_priv table.
+	tk.MustExec(`GRANT SELECT (id), INSERT (ID, name) ON tEst.TABLE_PRIV TO 'root'@'%';`)
+	tk.MustExec(`REVOKE SELECT (ID) ON test.taBle_priv from 'root'@'%';;`)
 }

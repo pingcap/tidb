@@ -75,6 +75,7 @@ type StatementContext struct {
 	InLoadDataStmt         bool
 	InExplainStmt          bool
 	InCreateOrAlterStmt    bool
+	InPreparedPlanBuilding bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
 	NoZeroDate             bool
@@ -179,7 +180,12 @@ type StatementContext struct {
 	TaskMapBakTS          uint64 // counter for
 
 	// stmtCache is used to store some statement-related values.
-	stmtCache map[StmtCacheKey]interface{}
+	// add mutex to protect stmtCache concurrent access
+	// https://github.com/pingcap/tidb/issues/36159
+	stmtCache struct {
+		mu   sync.Mutex
+		data map[StmtCacheKey]interface{}
+	}
 
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
@@ -234,6 +240,12 @@ type StatementContext struct {
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
 	}
+	// ColRefFromPlan mark the column ref used by assignment in update statement.
+	ColRefFromUpdatePlan []int64
+
+	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
+	// results to the client, the transaction should be committed first. See issue #37373 for more details.
+	IsExplainAnalyzeDML bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -277,23 +289,29 @@ const (
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
 func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interface{}) interface{} {
-	if sc.stmtCache == nil {
-		sc.stmtCache = make(map[StmtCacheKey]interface{})
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
+	if sc.stmtCache.data == nil {
+		sc.stmtCache.data = make(map[StmtCacheKey]interface{})
 	}
-	if _, ok := sc.stmtCache[key]; !ok {
-		sc.stmtCache[key] = value
+	if _, ok := sc.stmtCache.data[key]; !ok {
+		sc.stmtCache.data[key] = value
 	}
-	return sc.stmtCache[key]
+	return sc.stmtCache.data[key]
 }
 
 // ResetInStmtCache resets the cache of given key.
 func (sc *StatementContext) ResetInStmtCache(key StmtCacheKey) {
-	delete(sc.stmtCache, key)
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
+	delete(sc.stmtCache.data, key)
 }
 
 // ResetStmtCache resets all cached values.
 func (sc *StatementContext) ResetStmtCache() {
-	sc.stmtCache = make(map[StmtCacheKey]interface{})
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
+	sc.stmtCache.data = make(map[StmtCacheKey]interface{})
 }
 
 // SQLDigest gets normalized and digest for provided sql.
