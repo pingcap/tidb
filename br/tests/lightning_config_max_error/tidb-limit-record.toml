@@ -1,6 +1,6 @@
 [conflict]
 threshold = 20
-max-error-records = 1
+max-record-rows = 1
 
 [mydumper.csv]
 header = true
