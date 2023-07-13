@@ -1,4 +1,9 @@
+<div align="center">
+
+<a href='https://www.pingcap.com/?utm_source=github&utm_medium=tidb'>
 <img src="docs/tidb-logo-with-text.png" alt="TiDB, a distributed SQL database" height=100></img>
+</a>
+<br></br>
 
 [![LICENSE](https://img.shields.io/github/license/pingcap/tidb.svg)](https://github.com/pingcap/tidb/blob/master/LICENSE)
 [![Language](https://img.shields.io/badge/Language-Go-blue.svg)](https://golang.org/)
@@ -8,6 +13,29 @@
 [![GitHub release date](https://img.shields.io/github/release-date/pingcap/tidb.svg)](https://github.com/pingcap/tidb/releases)
 [![Coverage Status](https://codecov.io/gh/pingcap/tidb/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/tidb)
 [![GoDoc](https://img.shields.io/badge/Godoc-reference-blue.svg)](https://godoc.org/github.com/pingcap/tidb)
+
+<div>  
+  
+[![Official Website](<https://img.shields.io/badge/-Visit%20the%20Official%20Website%20%E2%86%92-rgb(21,204,116)?style=for-the-badge>)](https://www.pingcap.com/?utm_source=github&utm_medium=tidb_readme)
+[![Playground](<https://img.shields.io/badge/-Try%20It%20Online%20%E2%86%92-rgb(84,56,255)?style=for-the-badge>)](https://play.tidbcloud.com/?utm_source=github&utm_medium=tidb_readme)
+
+</div>
+
+---
+
+<div>
+    <a href="https://twitter.com/tidb_developer"><img src="https://img.shields.io/badge/- @TiDB__Developer -424549?style=social&logo=twitter" height=25></a>
+    &nbsp;
+    <a href="https://ask.pingcap.com/"><img src="https://img.shields.io/badge/- Forum -red?style=social&logo=discourse" height=25></a>
+    &nbsp;
+    <a href="https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb"><img src="https://img.shields.io/badge/-Slack-red?style=social&logo=slack" height=25></a>
+    &nbsp;
+    <a href="https://stackoverflow.com/questions/tagged/tidb"><img src="https://img.shields.io/badge/-Stack Overflow-red?style=social&logo=stackoverflow" height=25></a>
+</div>
+
+<br />
+
+</div> 
 
 ## What is TiDB?
 

@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -37,11 +38,11 @@ import (
 )
 
 var (
-	_ Executor = &UpdateExec{}
-	_ Executor = &DeleteExec{}
-	_ Executor = &InsertExec{}
-	_ Executor = &ReplaceExec{}
-	_ Executor = &LoadDataExec{}
+	_ exec.Executor = &UpdateExec{}
+	_ exec.Executor = &DeleteExec{}
+	_ exec.Executor = &InsertExec{}
+	_ exec.Executor = &ReplaceExec{}
+	_ exec.Executor = &LoadDataExec{}
 )
 
 // updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.

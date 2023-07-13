@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -27,13 +28,13 @@ import (
 
 // ReloadOptRuleBlacklistExec indicates ReloadOptRuleBlacklist executor.
 type ReloadOptRuleBlacklistExec struct {
-	baseExecutor
+	exec.BaseExecutor
 }
 
 // Next implements the Executor Next interface.
 func (e *ReloadOptRuleBlacklistExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	return LoadOptRuleBlacklist(internalCtx, e.ctx)
+	return LoadOptRuleBlacklist(internalCtx, e.Ctx())
 }
 
 // LoadOptRuleBlacklist loads the latest data from table mysql.opt_rule_blacklist.

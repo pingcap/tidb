@@ -115,7 +115,7 @@ var statusListener = func(_ BinlogStatus) error {
 // NOTE: it is used *ONLY* for test.
 func EnableSkipBinlogFlag() {
 	atomic.StoreUint32(&skipBinlog, 1)
-	logutil.BgLogger().Warn("[binloginfo] enable the skipBinlog flag")
+	logutil.BgLogger().Warn("enable the skipBinlog flag", zap.String("category", "binloginfo"))
 }
 
 // DisableSkipBinlogFlag disable the skipBinlog flag.
@@ -126,7 +126,7 @@ func DisableSkipBinlogFlag() error {
 	}
 
 	atomic.StoreUint32(&skipBinlog, 0)
-	logutil.BgLogger().Warn("[binloginfo] disable the skipBinlog flag")
+	logutil.BgLogger().Warn("disable the skipBinlog flag", zap.String("category", "binloginfo"))
 	return nil
 }
 
@@ -153,18 +153,18 @@ var skippedCommitterCounter int32
 
 // WaitBinlogRecover returns when all committing transaction finished.
 func WaitBinlogRecover(timeout time.Duration) error {
-	logutil.BgLogger().Warn("[binloginfo] start waiting for binlog recovering")
+	logutil.BgLogger().Warn("start waiting for binlog recovering", zap.String("category", "binloginfo"))
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	start := time.Now()
 	for {
 		<-ticker.C
 		if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
-			logutil.BgLogger().Warn("[binloginfo] binlog recovered")
+			logutil.BgLogger().Warn("binlog recovered", zap.String("category", "binloginfo"))
 			return nil
 		}
 		if time.Since(start) > timeout {
-			logutil.BgLogger().Warn("[binloginfo] waiting for binlog recovering timed out",
+			logutil.BgLogger().Warn("waiting for binlog recovering timed out", zap.String("category", "binloginfo"),
 				zap.Duration("duration", timeout))
 			return errors.New("timeout")
 		}
@@ -179,7 +179,7 @@ func SkippedCommitterCount() int32 {
 // ResetSkippedCommitterCounter is used to reset the skippedCommitterCounter.
 func ResetSkippedCommitterCounter() {
 	atomic.StoreInt32(&skippedCommitterCounter, 0)
-	logutil.BgLogger().Warn("[binloginfo] skippedCommitterCounter is reset to 0")
+	logutil.BgLogger().Warn("skippedCommitterCounter is reset to 0", zap.String("category", "binloginfo"))
 }
 
 // AddOneSkippedCommitter adds one committer to skippedCommitterCounter.

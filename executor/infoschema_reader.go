@@ -36,7 +36,8 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
-	internalutil "github.com/pingcap/tidb/executor/internal/util"
+	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/executor/internal/pdhelper"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -52,7 +53,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -483,7 +484,7 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 }
 
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	err := handle.TableRowStatsCache.Update(ctx, sctx)
+	err := cache.TableRowStatsCache.Update(ctx, sctx)
 	if err != nil {
 		return err
 	}
@@ -525,7 +526,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					}
 				}
 
-				cache := handle.TableRowStatsCache
+				cache := cache.TableRowStatsCache
 				var rowCount, dataLength, indexLength uint64
 				if table.GetPartitionInfo() == nil {
 					rowCount = cache.GetTableRows(table.ID)
@@ -867,7 +868,7 @@ func calcCharOctLength(lenInChar int, cs string) int {
 }
 
 func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	cache := handle.TableRowStatsCache
+	cache := cache.TableRowStatsCache
 	err := cache.Update(ctx, sctx)
 	if err != nil {
 		return err
@@ -968,7 +969,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 						case model.PartitionTypeKey:
 							partitionMethod = "KEY"
 						default:
-							return fmt.Errorf("Inconsistent partition type, have type %v, but with COLUMNS > 0 (%d)", table.Partition.Type, len(table.Partition.Columns))
+							return errors.Errorf("Inconsistent partition type, have type %v, but with COLUMNS > 0 (%d)", table.Partition.Type, len(table.Partition.Columns))
 						}
 						buf := bytes.NewBuffer(nil)
 						for i, col := range table.Partition.Columns {
@@ -1208,7 +1209,7 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 
 // DDLJobsReaderExec executes DDLJobs information retrieving.
 type DDLJobsReaderExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	DDLJobRetriever
 
 	cacheJobs []*model.Job
@@ -1218,12 +1219,12 @@ type DDLJobsReaderExec struct {
 
 // Open implements the Executor Next interface.
 func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
 	e.DDLJobRetriever.is = e.is
-	e.activeRoles = e.ctx.GetSessionVars().ActiveRoles
-	sess, err := e.getSysSession()
+	e.activeRoles = e.Ctx().GetSessionVars().ActiveRoles
+	sess, err := e.GetSysSession()
 	if err != nil {
 		return err
 	}
@@ -1246,8 +1247,8 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.maxChunkSize)
-	checker := privilege.GetPrivilegeManager(e.ctx)
+	req.GrowAndReset(e.MaxChunkSize())
+	checker := privilege.GetPrivilegeManager(e.Ctx())
 	count := 0
 
 	// Append running DDL jobs.
@@ -1289,8 +1290,8 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *DDLJobsReaderExec) Close() error {
-	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), e.sess)
-	return e.baseExecutor.Close()
+	e.ReleaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), e.sess)
+	return e.BaseExecutor.Close()
 }
 
 func (e *memtableRetriever) setDataFromEngines() {
@@ -2096,7 +2097,7 @@ func getRemainDurationForAnalyzeStatusHelper(
 			}
 		}
 		if tid > 0 && totalCnt == 0 {
-			totalCnt, _ = internalutil.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
+			totalCnt, _ = pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
 		}
 		RemainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
 	}
@@ -2221,11 +2222,15 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
 func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) {
+	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
 	var tiFlashStores map[int64]helper.StoreStat
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
 			if tbl.TiFlashReplica == nil {
+				continue
+			}
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			var progress float64
@@ -3259,23 +3264,28 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			fillrate = strconv.FormatUint(group.RUSettings.RU.Settings.FillRate, 10)
 		}
 		// convert runaway settings
-		queryLimit := ""
+		limitBuilder := new(strings.Builder)
 		if setting := group.RunawaySettings; setting != nil {
-			runawayRule, runawayAction, runawayWatch := "", "", ""
 			if setting.Rule == nil {
 				return errors.Errorf("unexpected runaway config in resource group")
 			}
 			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
-			runawayRule = fmt.Sprintf("%s='%s'", "EXEC_ELAPSED", dur.String())
-			runawayAction = fmt.Sprintf("%s=%s", "ACTION", model.RunawayActionType(setting.Action+1).String())
+			fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
+			fmt.Fprintf(limitBuilder, ", ACTION=%s", model.RunawayActionType(setting.Action+1).String())
 			if setting.Watch != nil {
 				dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
-				runawayWatch = fmt.Sprintf("%s=%s %s='%s'", "WATCH", model.RunawayWatchType(setting.Watch.Type).String(), "DURATION", dur.String())
-				queryLimit = fmt.Sprintf("%s, %s, %s", runawayRule, runawayAction, runawayWatch)
-			} else {
-				queryLimit = fmt.Sprintf("%s, %s", runawayRule, runawayAction)
+				fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION='%s'", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())
 			}
 		}
+		queryLimit := limitBuilder.String()
+
+		// convert background settings
+		bgBuilder := new(strings.Builder)
+		if setting := group.BackgroundSettings; setting != nil {
+			fmt.Fprintf(bgBuilder, "TASK_TYPES='%s'", strings.Join(setting.JobTypes, ","))
+		}
+		background := bgBuilder.String()
+
 		switch group.Mode {
 		case rmpb.GroupMode_RUMode:
 			if group.RUSettings.RU.Settings.BurstLimit < 0 {
@@ -3287,15 +3297,20 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 				priority,
 				burstable,
 				queryLimit,
+				background,
 			)
 			if len(queryLimit) == 0 {
 				row[4].SetNull()
+			}
+			if len(background) == 0 {
+				row[5].SetNull()
 			}
 			rows = append(rows, row)
 		default:
 			//mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
 				group.Name,
+				nil,
 				nil,
 				nil,
 				nil,
