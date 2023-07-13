@@ -751,6 +751,7 @@ import (
 	substring             "SUBSTRING"
 	survivalPreferences   "SURVIVAL_PREFERENCES"
 	target                "TARGET"
+	taskTypes             "TASK_TYPES"
 	tidbJson              "TIDB_JSON"
 	timestampAdd          "TIMESTAMPADD"
 	timestampDiff         "TIMESTAMPDIFF"
@@ -789,7 +790,6 @@ import (
 	similar               "SIMILAR"
 	queryLimit            "QUERY_LIMIT"
 	background            "BACKGROUND"
-	taskNames             "TASK_NAMES"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -1873,7 +1873,7 @@ ResourceGroupBackgroundOptionList:
 	}
 
 DirectResourceGroupBackgroundOption:
-	"TASK_NAMES" EqOpt stringLit
+	"TASK_TYPES" EqOpt stringLit
 	{
 		$$ = &ast.ResourceGroupBackgroundOption{Type: ast.BackgroundOptionTaskNames, StrValue: $3}
 	}
@@ -6979,7 +6979,7 @@ NotKeywordToken:
 |	"SIMILAR"
 |	"QUERY_LIMIT"
 |	"BACKGROUND"
-|	"TASK_NAMES"
+|	"TASK_TYPES"
 
 /************************************************************************************
  *
