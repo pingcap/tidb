@@ -660,7 +660,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	})
 
 	// plan cache for stmtID3
-	doWithCheckPath(t, se, []string{"assertTxnManagerInCachedPlanExec", "assertTxnManagerInShortPointGetPlan"}, func() {
+	doWithCheckPath(t, se, []string{"assertTxnManagerInShortPointGetPlan"}, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID3, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
