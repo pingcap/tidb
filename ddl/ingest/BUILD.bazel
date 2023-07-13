@@ -65,8 +65,8 @@ go_test(
     shard_count = 12,
     deps = [
         "//config",
-        "//ddl/internal/callback",
         "//ddl/internal/session",
+        "//ddl/util/callback",
         "//errno",
         "//kv",
         "//parser/model",
