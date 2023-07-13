@@ -3282,7 +3282,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 		// convert background settings
 		bgBuilder := new(strings.Builder)
 		if setting := group.BackgroundSettings; setting != nil {
-			fmt.Fprintf(bgBuilder, "TASK_NAMES='%s'", strings.Join(setting.JobTypes, ","))
+			fmt.Fprintf(bgBuilder, "TASK_TYPES='%s'", strings.Join(setting.JobTypes, ","))
 		}
 		background := bgBuilder.String()
 

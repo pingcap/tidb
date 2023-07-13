@@ -2021,7 +2021,7 @@ func (p *ResourceGroupSettings) String() string {
 		sb.WriteString(")")
 	}
 	if p.Background != nil {
-		fmt.Fprintf(sb, ", BACKGROUND=(TASK_NAMES='%s')", strings.Join(p.Background.JobTypes, ","))
+		fmt.Fprintf(sb, ", BACKGROUND=(TASK_TYPES='%s')", strings.Join(p.Background.JobTypes, ","))
 	}
 
 	return sb.String()

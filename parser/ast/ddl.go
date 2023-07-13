@@ -2271,7 +2271,7 @@ type ResourceGroupBackgroundOption struct {
 func (n *ResourceGroupBackgroundOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Type {
 	case BackgroundOptionTaskNames:
-		ctx.WriteKeyWord("TASK_NAMES ")
+		ctx.WriteKeyWord("TASK_TYPES ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.StrValue)
 	default:
