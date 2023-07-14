@@ -15,6 +15,7 @@
 package ingest
 
 import (
+	"math"
 	"path/filepath"
 	"sync/atomic"
 
@@ -54,6 +55,8 @@ func genConfig(memRoot MemRoot, jobID int64, unique bool) (*Config, error) {
 	cfg.Checkpoint.Enable = true
 	if unique {
 		cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgErr
+		// TODO(lance6716): will introduce fail-fast for DDL usage later
+		cfg.Conflict.Threshold = math.MaxInt64
 	} else {
 		cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgNone
 	}
