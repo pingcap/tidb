@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
+	timertable "github.com/pingcap/tidb/timer/tablestore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -661,6 +662,9 @@ const (
 		KEY (status));`
 )
 
+// CreateTimers is a table to store all timers for tidb
+var CreateTimers = timertable.CreateTimerTableSQL("mysql", "tidb_timers")
+
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
 	startTime := time.Now()
@@ -953,11 +957,12 @@ const (
 	version168 = 168
 	version169 = 169
 	version170 = 170
+	version171 = 171
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version170
+var currentBootstrapVersion int64 = version171
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1096,6 +1101,7 @@ var (
 		upgradeToVer168,
 		upgradeToVer169,
 		upgradeToVer170,
+		upgradeToVer171,
 	}
 )
 
@@ -2747,6 +2753,13 @@ func upgradeToVer170(s Session, ver int64) {
 	if ver >= version170 {
 		return
 	}
+	mustExecute(s, CreateTimers)
+}
+
+func upgradeToVer171(s Session, ver int64) {
+	if ver >= version171 {
+		return
+	}
 	doReentrantDDL(s, `ALTER TABLE mysql.user
 	ADD COLUMN ssl_type enum('','ANY','X509','SPECIFIED') NOT NULL DEFAULT '',
 	ADD COLUMN ssl_cipher blob NOT NULL,
@@ -2893,6 +2906,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateRunawayQuarantineWatchTable)
 	// create runaway_queries
 	mustExecute(s, CreateRunawayTable)
+	// create tidb_timers
+	mustExecute(s, CreateTimers)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

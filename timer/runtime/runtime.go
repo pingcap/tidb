@@ -221,7 +221,7 @@ func (rt *TimerGroupRuntime) tryTriggerTimerEvents() {
 			return false
 		}
 
-		if nextEventTime == nil || nextEventTime.After(now) {
+		if timer.EventStatus == api.SchedEventIdle && (!timer.Enable || nextEventTime == nil || nextEventTime.After(now)) {
 			return true
 		}
 
@@ -289,8 +289,23 @@ func (rt *TimerGroupRuntime) setTryTriggerTimer(t *time.Timer, lastTryTriggerTim
 }
 
 func (rt *TimerGroupRuntime) getNextTryTriggerDuration(lastTryTriggerTime time.Time) time.Duration {
-	duration := maxTriggerEventInterval
 	now := rt.nowFunc()
+	sinceLastTrigger := now.Sub(lastTryTriggerTime)
+	if sinceLastTrigger < 0 {
+		sinceLastTrigger = 0
+	}
+
+	maxDuration := maxTriggerEventInterval - sinceLastTrigger
+	if maxDuration <= 0 {
+		return time.Duration(0)
+	}
+
+	minDuration := minTriggerEventInterval - sinceLastTrigger
+	if minDuration < 0 {
+		minDuration = 0
+	}
+
+	duration := maxDuration
 	rt.cache.iterTryTriggerTimers(func(timer *api.TimerRecord, tryTriggerTime time.Time, _ *time.Time) bool {
 		if interval := tryTriggerTime.Sub(now); interval < duration {
 			duration = interval
@@ -298,7 +313,6 @@ func (rt *TimerGroupRuntime) getNextTryTriggerDuration(lastTryTriggerTime time.T
 		return false
 	})
 
-	minDuration := minTriggerEventInterval - now.Sub(lastTryTriggerTime)
 	if duration < minDuration {
 		duration = minDuration
 	}
