@@ -49,7 +49,7 @@ func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
 	oldRecord := h.ch.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 	err := h.ch.SetBindRecord(hash, meta)
 	if err != nil {
-		logutil.BgLogger().Warn("[sql-bind] SessionHandle.appendBindRecord", zap.Error(err))
+		logutil.BgLogger().Warn("SessionHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err))
 	}
 	updateMetrics(metrics.ScopeSession, oldRecord, meta, false)
 }
@@ -122,7 +122,7 @@ func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
-func (h *SessionHandle) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (h *SessionHandle) EncodeSessionStates(_ context.Context, _ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	bindRecords := h.ch.GetAllBindRecords()
 	if len(bindRecords) == 0 {
 		return nil
@@ -136,7 +136,7 @@ func (h *SessionHandle) EncodeSessionStates(ctx context.Context, sctx sessionctx
 }
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
-func (h *SessionHandle) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (h *SessionHandle) DecodeSessionStates(_ context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	if len(sessionStates.Bindings) == 0 {
 		return nil
 	}
@@ -165,7 +165,7 @@ func (h *SessionHandle) Close() {
 type sessionBindInfoKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k sessionBindInfoKeyType) String() string {
+func (sessionBindInfoKeyType) String() string {
 	return "session_bindinfo"
 }
 

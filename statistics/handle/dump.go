@@ -39,24 +39,24 @@ import (
 
 // JSONTable is used for dumping statistics.
 type JSONTable struct {
-	IsHistoricalStats bool                   `json:"is_historical_stats"`
-	DatabaseName      string                 `json:"database_name"`
-	TableName         string                 `json:"table_name"`
 	Columns           map[string]*jsonColumn `json:"columns"`
 	Indices           map[string]*jsonColumn `json:"indices"`
+	Partitions        map[string]*JSONTable  `json:"partitions"`
+	DatabaseName      string                 `json:"database_name"`
+	TableName         string                 `json:"table_name"`
 	ExtStats          []*jsonExtendedStats   `json:"ext_stats"`
 	Count             int64                  `json:"count"`
 	ModifyCount       int64                  `json:"modify_count"`
-	Partitions        map[string]*JSONTable  `json:"partitions"`
 	Version           uint64                 `json:"version"`
+	IsHistoricalStats bool                   `json:"is_historical_stats"`
 }
 
 type jsonExtendedStats struct {
 	StatsName  string  `json:"stats_name"`
-	ColIDs     []int64 `json:"cols"`
-	Tp         uint8   `json:"type"`
-	ScalarVals float64 `json:"scalar_vals"`
 	StringVals string  `json:"string_vals"`
+	ColIDs     []int64 `json:"cols"`
+	ScalarVals float64 `json:"scalar_vals"`
+	Tp         uint8   `json:"type"`
 }
 
 func dumpJSONExtendedStats(statsColl *statistics.ExtendedStatsColl) []*jsonExtendedStats {
@@ -95,18 +95,18 @@ func extendedStatsFromJSON(statsColl []*jsonExtendedStats) *statistics.ExtendedS
 }
 
 type jsonColumn struct {
-	Histogram         *tipb.Histogram `json:"histogram"`
-	CMSketch          *tipb.CMSketch  `json:"cm_sketch"`
-	FMSketch          *tipb.FMSketch  `json:"fm_sketch"`
-	NullCount         int64           `json:"null_count"`
-	TotColSize        int64           `json:"tot_col_size"`
-	LastUpdateVersion uint64          `json:"last_update_version"`
-	Correlation       float64         `json:"correlation"`
+	Histogram *tipb.Histogram `json:"histogram"`
+	CMSketch  *tipb.CMSketch  `json:"cm_sketch"`
+	FMSketch  *tipb.FMSketch  `json:"fm_sketch"`
 	// StatsVer is a pointer here since the old version json file would not contain version information.
-	StatsVer *int64 `json:"stats_ver"`
+	StatsVer          *int64  `json:"stats_ver"`
+	NullCount         int64   `json:"null_count"`
+	TotColSize        int64   `json:"tot_col_size"`
+	LastUpdateVersion uint64  `json:"last_update_version"`
+	Correlation       float64 `json:"correlation"`
 }
 
-func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn *statistics.TopN, FMSketch *statistics.FMSketch, statsVer *int64) *jsonColumn {
+func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) *jsonColumn {
 	jsonCol := &jsonColumn{
 		Histogram:         statistics.HistogramToProto(hist),
 		NullCount:         hist.NullCount,
@@ -115,11 +115,11 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn
 		Correlation:       hist.Correlation,
 		StatsVer:          statsVer,
 	}
-	if CMSketch != nil || topn != nil {
-		jsonCol.CMSketch = statistics.CMSketchToProto(CMSketch, topn)
+	if cmsketch != nil || topn != nil {
+		jsonCol.CMSketch = statistics.CMSketchToProto(cmsketch, topn)
 	}
-	if FMSketch != nil {
-		jsonCol.FMSketch = statistics.FMSketchToProto(FMSketch)
+	if fmsketch != nil {
+		jsonCol.FMSketch = statistics.FMSketchToProto(fmsketch)
 	}
 	return jsonCol
 }
@@ -421,11 +421,13 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			hist := statistics.HistogramFromProto(jsonIdx.Histogram)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.Correlation = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion, jsonIdx.Correlation
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonIdx.CMSketch)
-			// If the statistics is loaded from a JSON without stats version,
-			// we set it to 1.
-			statsVer := int64(statistics.Version1)
+			statsVer := int64(statistics.Version0)
 			if jsonIdx.StatsVer != nil {
 				statsVer = *jsonIdx.StatsVer
+			} else if jsonIdx.Histogram.Ndv > 0 || jsonIdx.NullCount > 0 {
+				// If the statistics are collected without setting stats version(which happens in v4.0 and earlier versions),
+				// we set it to 1.
+				statsVer = int64(statistics.Version1)
 			}
 			idx := &statistics.Index{
 				Histogram:         *hist,
@@ -465,11 +467,13 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
 			fms := statistics.FMSketchFromProto(jsonCol.FMSketch)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
-			// If the statistics is loaded from a JSON without stats version,
-			// we set it to 1.
-			statsVer := int64(statistics.Version1)
+			statsVer := int64(statistics.Version0)
 			if jsonCol.StatsVer != nil {
 				statsVer = *jsonCol.StatsVer
+			} else if jsonCol.Histogram.Ndv > 0 || jsonCol.NullCount > 0 {
+				// If the statistics are collected without setting stats version(which happens in v4.0 and earlier versions),
+				// we set it to 1.
+				statsVer = int64(statistics.Version1)
 			}
 			col := &statistics.Column{
 				PhysicalID:        physicalID,
@@ -482,7 +486,6 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				StatsVer:          statsVer,
 				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
-			col.Count = int64(col.TotalRowCount())
 			tbl.Columns[col.ID] = col
 		}
 	}

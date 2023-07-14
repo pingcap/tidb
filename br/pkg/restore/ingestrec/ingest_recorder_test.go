@@ -30,7 +30,8 @@ const (
 	TableID    int64  = 80
 )
 
-func fakeJob(reorgTp model.ReorgType, jobTp model.ActionType, state model.JobState, rowCnt int64, indices []*model.IndexInfo, rawArgs json.RawMessage) *model.Job {
+func fakeJob(reorgTp model.ReorgType, jobTp model.ActionType, state model.JobState,
+	rowCnt int64, indices []*model.IndexInfo, rawArgs json.RawMessage) *model.Job {
 	return &model.Job{
 		SchemaName: SchemaName,
 		TableName:  TableName,
@@ -311,7 +312,7 @@ func TestIndexesKind(t *testing.T) {
 	require.Equal(t, 1, count)
 	require.Equal(t, TableID, tableID)
 	require.Equal(t, int64(1), indexID)
-	require.Equal(t, SchemaName, info.SchemaName)
+	require.Equal(t, model.NewCIStr(SchemaName), info.SchemaName)
 	require.Equal(t, "%n,(`x` * 2),%n(4)", info.ColumnList)
 	require.Equal(t, []interface{}{"x", "z"}, info.ColumnArgs)
 	require.Equal(t, TableName, info.IndexInfo.Table.O)

@@ -890,6 +890,10 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: `pd_region_syncer_status{$LABEL_CONDITIONS}`,
 		Labels: []string{"instance", "type"},
 	},
+	"resource_manager_resource_unit": {
+		PromQL:  `sum(rate(resource_manager_resource_unit_read_request_unit_sum[$RANGE_DURATION])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum[$RANGE_DURATION]))`,
+		Comment: "The Total RU consumption per second",
+	},
 	"tikv_engine_size": {
 		PromQL:  `sum(tikv_engine_size_bytes{$LABEL_CONDITIONS}) by (instance, type, db)`,
 		Labels:  []string{"instance", "type", "db"},

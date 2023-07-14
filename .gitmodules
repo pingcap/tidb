@@ -1,0 +1,3 @@
+[submodule "extension/enterprise"]
+	path = extension/enterprise
+	url = git@github.com:pingcap-inc/enterprise-extensions.git

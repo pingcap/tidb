@@ -16,20 +16,20 @@
 
 set -eux
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownWriteRows=sleep(100);github.com/pingcap/tidb/br/pkg/lightning/importer/SetMinDeliverBytes=return(1)'
 
 for CFG in chunk engine; do
   rm -f "$TEST_DIR/lightning-tidb.log"
   run_sql 'DROP DATABASE IF EXISTS fail_fast;'
 
-  ! run_lightning --backend tidb --enable-checkpoint=0 --log-file "$TEST_DIR/lightning-tidb.log" --config "tests/$TEST_NAME/$CFG.toml"
+  ! run_lightning --backend tidb --enable-checkpoint=0 --log-file "$TEST_DIR/lightning-tidb.log" --config "$CUR/$CFG.toml"
   [ $? -eq 0 ]
 
   tail -n 10 $TEST_DIR/lightning-tidb.log | grep "ERROR" | tail -n 1 | grep -Fq "Error 1062 (23000): Duplicate entry '1-1' for key 'tb.uq'"
 
-  ! grep -Fq "restore file completed" $TEST_DIR/lightning-tidb.log
-  [ $? -eq 0 ]
+  check_not_contains "restore file completed" $TEST_DIR/lightning-tidb.log
 
-  ! grep -Fq "restore engine completed" $TEST_DIR/lightning-tidb.log
-  [ $? -eq 0 ]
+  check_not_contains "restore engine completed" $TEST_DIR/lightning-tidb.log
 done

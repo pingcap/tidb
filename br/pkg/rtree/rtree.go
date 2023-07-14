@@ -185,17 +185,19 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 		return []Range{}
 	}
 	incomplete := make([]Range, 0, 64)
-	requsetRange := Range{StartKey: startKey, EndKey: endKey}
+	requestRange := Range{StartKey: startKey, EndKey: endKey}
 	lastEndKey := startKey
 	pviot := &Range{StartKey: startKey}
 	if first := rangeTree.Find(pviot); first != nil {
 		pviot.StartKey = first.StartKey
 	}
+	pviotNotFound := true
 	rangeTree.AscendGreaterOrEqual(pviot, func(i btree.Item) bool {
+		pviotNotFound = false
 		rg := i.(*Range)
 		if bytes.Compare(lastEndKey, rg.StartKey) < 0 {
 			start, end, isIntersect :=
-				requsetRange.Intersect(lastEndKey, rg.StartKey)
+				requestRange.Intersect(lastEndKey, rg.StartKey)
 			if isIntersect {
 				// There is a gap between the last item and the current item.
 				incomplete =
@@ -207,9 +209,10 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 	})
 
 	// Check whether we need append the last range
-	if !bytes.Equal(lastEndKey, endKey) && len(lastEndKey) != 0 &&
-		(len(endKey) == 0 || bytes.Compare(lastEndKey, endKey) < 0) {
-		start, end, isIntersect := requsetRange.Intersect(lastEndKey, endKey)
+	if pviotNotFound ||
+		(!bytes.Equal(lastEndKey, endKey) && len(lastEndKey) != 0 &&
+			(len(endKey) == 0 || bytes.Compare(lastEndKey, endKey) < 0)) {
+		start, end, isIntersect := requestRange.Intersect(lastEndKey, endKey)
 		if isIntersect {
 			incomplete =
 				append(incomplete, Range{StartKey: start, EndKey: end})

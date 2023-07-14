@@ -214,18 +214,6 @@ func (*mergeIndexWorker) String() string {
 	return typeAddIndexMergeTmpWorker.String()
 }
 
-func (*mergeIndexWorker) GetTasks() ([]*BackfillJob, error) {
-	panic("[ddl] merge index worker GetTask function doesn't implement")
-}
-
-func (*mergeIndexWorker) UpdateTask(*BackfillJob) error {
-	panic("[ddl] merge index worker UpdateTask function doesn't implement")
-}
-
-func (*mergeIndexWorker) FinishTask(*BackfillJob) error {
-	panic("[ddl] merge index worker FinishTask function doesn't implement")
-}
-
 func (w *mergeIndexWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
@@ -308,7 +296,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 		nextKey = lastKey
 	}
 
-	logutil.BgLogger().Debug("[ddl] merge temp index txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()),
+	logutil.BgLogger().Debug("merge temp index txn fetches handle info", zap.String("category", "ddl"), zap.Uint64("txnStartTS", txn.StartTS()),
 		zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
 	return w.tmpIdxRecords, nextKey.Next(), taskDone, errors.Trace(err)
 }

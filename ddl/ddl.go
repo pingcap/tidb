@@ -20,7 +20,6 @@ package ddl
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -39,6 +38,9 @@ import (
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -49,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	rmutil "github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -60,7 +61,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/gpool/spmc"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/syncutil"
@@ -84,9 +84,8 @@ const (
 
 	batchAddingJobs = 10
 
-	reorgWorkerCnt    = 10
-	generalWorkerCnt  = 1
-	backfillWorkerCnt = 32
+	reorgWorkerCnt   = 10
+	generalWorkerCnt = 1
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
@@ -183,7 +182,7 @@ type DDL interface {
 	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 	UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error
-	RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error
+	RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStmt) error
 	CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error
 	DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error)
 	AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error
@@ -241,6 +240,8 @@ type DDL interface {
 	RegisterStatsHandle(*handle.Handle)
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() syncer.SchemaSyncer
+	// StateSyncer gets the cluster state syncer.
+	StateSyncer() syncer.StateSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
@@ -260,8 +261,9 @@ type DDL interface {
 }
 
 type limitJobTask struct {
-	job *model.Job
-	err chan error
+	job      *model.Job
+	err      chan error
+	cacheErr error
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
@@ -277,8 +279,6 @@ type ddl struct {
 	// used in the concurrency ddl.
 	reorgWorkerPool      *workerPool
 	generalDDLWorkerPool *workerPool
-	backfillCtxPool      *backfillCtxPool
-	backfillWorkerPool   *spmc.Pool[*reorgBackfillTask, *backfillResult, int, *backfillWorker, *backfillWorkerContext]
 	// get notification if any DDL coming.
 	ddlJobCh chan struct{}
 }
@@ -326,6 +326,7 @@ type ddlCtx struct {
 	store        kv.Storage
 	ownerManager owner.Manager
 	schemaSyncer syncer.SchemaSyncer
+	stateSyncer  syncer.StateSyncer
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
@@ -418,7 +419,7 @@ func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
 
 func (dc *ddlCtx) isOwner() bool {
 	isOwner := dc.ownerManager.IsOwner()
-	logutil.BgLogger().Debug("[ddl] check whether is the DDL owner", zap.Bool("isOwner", isOwner), zap.String("selfID", dc.uuid))
+	logutil.BgLogger().Debug("check whether is the DDL owner", zap.String("category", "ddl"), zap.Bool("isOwner", isOwner), zap.String("selfID", dc.uuid))
 	if isOwner {
 		metrics.DDLCounter.WithLabelValues(metrics.DDLOwner + "_" + mysql.TiDBReleaseVersion).Inc()
 	}
@@ -509,20 +510,13 @@ type reorgContexts struct {
 	reorgCtxMap map[int64]*reorgCtx
 }
 
-func getReorgCtx(reorgCtxs *reorgContexts, jobID int64) *reorgCtx {
-	reorgCtxs.RLock()
-	defer reorgCtxs.RUnlock()
-	return reorgCtxs.reorgCtxMap[jobID]
-}
-
-// TODO: Using getReorgCtx instead of dc.getReorgCtx.
 func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
 	dc.reorgCtx.RLock()
 	defer dc.reorgCtx.RUnlock()
 	return dc.reorgCtx.reorgCtxMap[jobID]
 }
 
-func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx {
+func (dc *ddlCtx) newReorgCtx(jobID int64, rowCount int64) *reorgCtx {
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()
 	existedRC, ok := dc.reorgCtx.reorgCtxMap[jobID]
@@ -534,16 +528,11 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.El
 	rc.doneCh = make(chan error, 1)
 	// initial reorgCtx
 	rc.setRowCount(rowCount)
-	rc.setCurrentElement(currElement)
 	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
 	rc.mu.warningsCount = make(map[errors.ErrorID]int64)
 	rc.references.Add(1)
 	dc.reorgCtx.reorgCtxMap[jobID] = rc
 	return rc
-}
-
-func genBackfillJobReorgCtxID(jobID int64) int64 {
-	return -jobID
 }
 
 func (dc *ddlCtx) removeReorgCtx(jobID int64) {
@@ -558,12 +547,16 @@ func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 	}
 }
 
-func (dc *ddlCtx) notifyReorgCancel(job *model.Job) {
+func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc := dc.getReorgCtx(job.ID)
 	if rc == nil {
+		logutil.BgLogger().Warn("cannot find reorgCtx", zap.Int64("Job ID", job.ID))
 		return
 	}
-	rc.notifyReorgCancel()
+	logutil.BgLogger().Info("notify reorg worker the job's state",
+		zap.Int64("Job ID", job.ID), zap.String("Job State", job.State.String()),
+		zap.String("Schema State", job.SchemaState.String()), zap.String("category", "ddl"))
+	rc.notifyJobState(job.State)
 }
 
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
@@ -611,7 +604,7 @@ func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
 				time.Sleep(time.Microsecond * 10)
 			}
 		}
-		logutil.BgLogger().Warn("[ddl] fail to notify DDL event", zap.String("event", e.String()))
+		logutil.BgLogger().Warn("fail to notify DDL event", zap.String("category", "ddl"), zap.String("event", e.String()))
 	}
 }
 
@@ -631,15 +624,18 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	id := uuid.New().String()
 	var manager owner.Manager
 	var schemaSyncer syncer.SchemaSyncer
+	var stateSyncer syncer.StateSyncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
-		manager = owner.NewMockManager(ctx, id)
+		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
 		schemaSyncer = NewMockSchemaSyncer()
+		stateSyncer = NewMockStateSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
 		schemaSyncer = syncer.NewSchemaSyncer(etcdCli, id)
+		stateSyncer = syncer.NewStateSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
@@ -659,6 +655,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobDoneCh:               make(chan struct{}, 1),
 		ownerManager:               manager,
 		schemaSyncer:               schemaSyncer,
+		stateSyncer:                stateSyncer,
 		binlogCli:                  binloginfo.GetPumpsClient(),
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
@@ -682,6 +679,27 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
+	scheduler.RegisterTaskType("backfill")
+	scheduler.RegisterSchedulerConstructor("backfill", proto.StepOne,
+		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
+		})
+
+	scheduler.RegisterSchedulerConstructor("backfill", proto.StepTwo,
+		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
+		})
+
+	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
+	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
+		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
+			return &scheduler.EmptyExecutor{}, nil
+		})
+	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
+		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
+			return &scheduler.EmptyExecutor{}, nil
+		})
+
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
@@ -696,7 +714,7 @@ func (d *ddl) Stop() error {
 	defer d.m.Unlock()
 
 	d.close()
-	logutil.BgLogger().Info("[ddl] stop DDL", zap.String("ID", d.uuid))
+	logutil.BgLogger().Info("stop DDL", zap.String("category", "ddl"), zap.String("ID", d.uuid))
 	return nil
 }
 
@@ -704,7 +722,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	var delRangeMgr delRangeManager
 	if !mock {
 		delRangeMgr = newDelRangeManager(d.store, d.sessPool)
-		logutil.BgLogger().Info("[ddl] start delRangeManager OK", zap.Bool("is a emulator", !d.store.SupportDeleteRange()))
+		logutil.BgLogger().Info("start delRangeManager OK", zap.String("category", "ddl"), zap.Bool("is a emulator", !d.store.SupportDeleteRange()))
 	} else {
 		delRangeMgr = newMockDelRangeManager()
 	}
@@ -739,32 +757,16 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	d.wg.Run(d.startDispatchLoop)
 }
 
-func (d *ddl) prepareBackfillWorkers() error {
-	workerFactory := func() (pools.Resource, error) {
-		bk := newBackfillWorker(context.Background(), nil)
-		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_backfill_worker", metrics.CreateDDL)).Inc()
-		return bk, nil
-	}
-	d.backfillCtxPool = newBackfillContextPool(pools.NewResourcePool(workerFactory, backfillWorkerCnt, backfillWorkerCnt, 0))
-	var err error
-	d.backfillWorkerPool, err = spmc.NewSPMCPool[*reorgBackfillTask, *backfillResult, int, *backfillWorker,
-		*backfillWorkerContext]("backfill", int32(backfillWorkerCnt), rmutil.DDL)
-	if err != nil {
-		return err
-	}
-	d.backfillJobCh = make(chan struct{}, 1)
-	d.wg.Run(d.startDispatchBackfillJobsLoop)
-	return nil
-}
-
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
-	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
+	logutil.BgLogger().Info("start DDL", zap.String("category", "ddl"), zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
 	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
 	d.ownerManager.SetBeOwnerHook(func() {
 		var err error
+		d.ddlSeqNumMu.Lock()
+		defer d.ddlSeqNumMu.Unlock()
 		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
 		if err != nil {
 			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
@@ -772,6 +774,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	})
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
+
+	if err := d.stateSyncer.Init(d.ctx); err != nil {
+		logutil.BgLogger().Warn("start DDL init state syncer failed", zap.String("category", "ddl"), zap.Error(err))
+		return errors.Trace(err)
+	}
 
 	d.prepareWorkers4ConcurrencyDDL()
 
@@ -784,11 +791,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// Otherwise, we needn't do that.
 	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		if err := d.EnableDDL(); err != nil {
-			return err
-		}
-
-		// TODO: Currently, it is only processed during initialization and is expected to be added to EnableDDL later.
-		if err := d.prepareBackfillWorkers(); err != nil {
 			return err
 		}
 	}
@@ -820,7 +822,7 @@ func (d *ddl) DisableDDL() error {
 		// If there is only one node, we should NOT disable ddl.
 		serverInfo, err := infosync.GetAllServerInfo(d.ctx)
 		if err != nil {
-			logutil.BgLogger().Error("[ddl] error when GetAllServerInfo", zap.Error(err))
+			logutil.BgLogger().Error("error when GetAllServerInfo", zap.String("category", "ddl"), zap.Error(err))
 			return err
 		}
 		if len(serverInfo) <= 1 {
@@ -863,12 +865,6 @@ func (d *ddl) close() {
 	if d.generalDDLWorkerPool != nil {
 		d.generalDDLWorkerPool.close()
 	}
-	if d.backfillCtxPool != nil {
-		d.backfillCtxPool.close()
-	}
-	if d.backfillWorkerPool != nil {
-		d.backfillWorkerPool.ReleaseAndWait()
-	}
 
 	// d.delRangeMgr using sessions from d.sessPool.
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
@@ -880,7 +876,7 @@ func (d *ddl) close() {
 	}
 	variable.UnregisterStatistics(d)
 
-	logutil.BgLogger().Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
+	logutil.BgLogger().Info("DDL closed", zap.String("category", "ddl"), zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
 }
 
 // GetLease implements DDL.GetLease interface.
@@ -935,6 +931,11 @@ func (d *ddl) genPlacementPolicyID() (int64, error) {
 // SchemaSyncer implements DDL.SchemaSyncer interface.
 func (d *ddl) SchemaSyncer() syncer.SchemaSyncer {
 	return d.schemaSyncer
+}
+
+// StateSyncer implements DDL.StateSyncer interface.
+func (d *ddl) StateSyncer() syncer.StateSyncer {
+	return d.stateSyncer
 }
 
 // OwnerManager implements DDL.OwnerManager interface.
@@ -1037,16 +1038,16 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
-	task := &limitJobTask{job, make(chan error)}
+	task := &limitJobTask{job, make(chan error), nil}
 	d.limitJobCh <- task
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
+			<-task.err
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
-			task1 := &limitJobTask{job, make(chan error)}
+			task1 := &limitJobTask{job, make(chan error), nil}
 			d.limitJobCh <- task1
-			<-task.err
 			// The second job result is used for test.
 			task = task1
 		}
@@ -1064,7 +1065,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	// Notice worker that we push a new job and wait the job done.
 	d.asyncNotifyWorker(d.ddlJobCh, addingDDLJobConcurrent, job.ID, job.Type.String())
-	logutil.BgLogger().Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
+	logutil.BgLogger().Info("start DDL job", zap.String("category", "ddl"), zap.String("job", job.String()), zap.String("query", job.Query))
 
 	var historyJob *model.Job
 	jobID := job.ID
@@ -1098,20 +1099,24 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			i++
 			ticker = updateTickerInterval(ticker, 10*d.lease, job, i)
 		case <-d.ctx.Done():
-			logutil.BgLogger().Info("[ddl] DoDDLJob will quit because context done")
+			logutil.BgLogger().Info("DoDDLJob will quit because context done", zap.String("category", "ddl"))
 			return context.Canceled
 		}
 
 		// If the connection being killed, we need to CANCEL the DDL job.
 		if atomic.LoadUint32(&sessVars.Killed) == 1 {
+			if atomic.LoadInt32(&sessVars.ConnectionStatus) == variable.ConnStatusShutdown {
+				logutil.BgLogger().Info("DoDDLJob will quit because context done", zap.String("category", "ddl"))
+				return context.Canceled
+			}
 			if sessVars.StmtCtx.DDLJobID != 0 {
 				se, err := d.sessPool.Get()
 				if err != nil {
-					logutil.BgLogger().Error("[ddl] get session failed, check again", zap.Error(err))
+					logutil.BgLogger().Error("get session failed, check again", zap.String("category", "ddl"), zap.Error(err))
 					continue
 				}
 				sessVars.StmtCtx.DDLJobID = 0 // Avoid repeat.
-				errs, err := CancelJobs(se, []int64{jobID})
+				errs, err := CancelJobsBySystem(se, []int64{jobID})
 				d.sessPool.Put(se)
 				if len(errs) > 0 {
 					logutil.BgLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
@@ -1125,17 +1130,17 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 		se, err := d.sessPool.Get()
 		if err != nil {
-			logutil.BgLogger().Error("[ddl] get session failed, check again", zap.Error(err))
+			logutil.BgLogger().Error("get session failed, check again", zap.String("category", "ddl"), zap.Error(err))
 			continue
 		}
 		historyJob, err = GetHistoryJobByID(se, jobID)
 		d.sessPool.Put(se)
 		if err != nil {
-			logutil.BgLogger().Error("[ddl] get history DDL job failed, check again", zap.Error(err))
+			logutil.BgLogger().Error("get history DDL job failed, check again", zap.String("category", "ddl"), zap.Error(err))
 			continue
 		}
 		if historyJob == nil {
-			logutil.BgLogger().Debug("[ddl] DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
+			logutil.BgLogger().Debug("DDL job is not in history, maybe not run", zap.String("category", "ddl"), zap.Int64("jobID", jobID))
 			continue
 		}
 
@@ -1146,7 +1151,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			// Judge whether there are some warnings when executing DDL under the certain SQL mode.
 			if historyJob.ReorgMeta != nil && len(historyJob.ReorgMeta.Warnings) != 0 {
 				if len(historyJob.ReorgMeta.Warnings) != len(historyJob.ReorgMeta.WarningsCount) {
-					logutil.BgLogger().Info("[ddl] DDL warnings doesn't match the warnings count", zap.Int64("jobID", jobID))
+					logutil.BgLogger().Info("DDL warnings doesn't match the warnings count", zap.String("category", "ddl"), zap.Int64("jobID", jobID))
 				} else {
 					for key, warning := range historyJob.ReorgMeta.Warnings {
 						keyCount := historyJob.ReorgMeta.WarningsCount[key]
@@ -1162,12 +1167,12 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			}
 			appendMultiChangeWarningsToOwnerCtx(ctx, historyJob)
 
-			logutil.BgLogger().Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
+			logutil.BgLogger().Info("DDL job is finished", zap.String("category", "ddl"), zap.Int64("jobID", jobID))
 			return nil
 		}
 
 		if historyJob.Error != nil {
-			logutil.BgLogger().Info("[ddl] DDL job is failed", zap.Int64("jobID", jobID))
+			logutil.BgLogger().Info("DDL job is failed", zap.String("category", "ddl"), zap.Int64("jobID", jobID))
 			return errors.Trace(historyJob.Error)
 		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
@@ -1209,9 +1214,10 @@ func (d *ddl) SetHook(h Callback) {
 
 func (d *ddl) startCleanDeadTableLock() {
 	defer func() {
-		tidbutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 		d.wg.Done()
 	}()
+
+	defer tidbutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()
@@ -1223,13 +1229,13 @@ func (d *ddl) startCleanDeadTableLock() {
 			}
 			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoCache.GetLatest().AllSchemas())
 			if err != nil {
-				logutil.BgLogger().Info("[ddl] get dead table lock failed.", zap.Error(err))
+				logutil.BgLogger().Info("get dead table lock failed.", zap.String("category", "ddl"), zap.Error(err))
 				continue
 			}
 			for se, tables := range deadLockTables {
 				err := d.CleanDeadTableLock(tables, se)
 				if err != nil {
-					logutil.BgLogger().Info("[ddl] clean dead table lock failed.", zap.Error(err))
+					logutil.BgLogger().Info("clean dead table lock failed.", zap.String("category", "ddl"), zap.Error(err))
 				}
 			}
 		case <-d.ctx.Done():
@@ -1277,10 +1283,10 @@ func (d *ddl) SwitchMDL(enable bool) error {
 		return err
 	})
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl] switch metadata lock feature", zap.Bool("enable", enable), zap.Error(err))
+		logutil.BgLogger().Warn("switch metadata lock feature", zap.String("category", "ddl"), zap.Bool("enable", enable), zap.Error(err))
 		return err
 	}
-	logutil.BgLogger().Info("[ddl] switch metadata lock feature", zap.Bool("enable", enable))
+	logutil.BgLogger().Info("switch metadata lock feature", zap.String("category", "ddl"), zap.Bool("enable", enable))
 	return nil
 }
 
@@ -1445,89 +1451,249 @@ func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
 	return generalJob, reorgJob, nil
 }
 
-// CancelJobs cancels the DDL jobs.
-func CancelJobs(se sessionctx.Context, ids []int64) (errs []error, err error) {
-	return cancelConcurrencyJobs(se, ids)
+// cancelRunningJob cancel a DDL job that is in the concurrent state.
+func cancelRunningJob(_ *sess.Session, job *model.Job,
+	byWho model.AdminCommandOperator) (err error) {
+	// These states can't be cancelled.
+	if job.IsDone() || job.IsSynced() {
+		return dbterror.ErrCancelFinishedDDLJob.GenWithStackByArgs(job.ID)
+	}
+
+	// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
+	if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
+		return nil
+	}
+
+	if !job.IsRollbackable() {
+		return dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+	}
+	job.State = model.JobStateCancelling
+	job.AdminOperator = byWho
+	return nil
 }
 
-// cancelConcurrencyJobs cancels the DDL jobs that are in the concurrent state.
-func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) {
-	failpoint.Inject("mockCancelConcurencyDDL", func(val failpoint.Value) {
+// pauseRunningJob check and pause the running Job
+func pauseRunningJob(_ *sess.Session, job *model.Job,
+	byWho model.AdminCommandOperator) (err error) {
+	if job.IsPausing() || job.IsPaused() {
+		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
+	}
+	if !job.IsPausable() {
+		errMsg := fmt.Sprintf("state [%s] or schema state [%s]", job.State.String(), job.SchemaState.String())
+		err = dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID, errMsg)
+		if err != nil {
+			return err
+		}
+	}
+
+	job.State = model.JobStatePausing
+	job.AdminOperator = byWho
+	return nil
+}
+
+// resumePausedJob check and resume the Paused Job
+func resumePausedJob(_ *sess.Session, job *model.Job,
+	byWho model.AdminCommandOperator) (err error) {
+	if !job.IsResumable() {
+		errMsg := fmt.Sprintf("job has not been paused, job state:%s, schema state:%s",
+			job.State, job.SchemaState)
+		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
+	}
+	// The Paused job should only be resumed by who paused it
+	if job.AdminOperator != byWho {
+		errMsg := fmt.Sprintf("job has been paused by [%s], should not resumed by [%s]",
+			job.AdminOperator.String(), byWho.String())
+		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
+	}
+
+	job.State = model.JobStateQueueing
+
+	return nil
+}
+
+// processJobs command on the Job according to the process
+func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+	sessCtx sessionctx.Context,
+	ids []int64,
+	byWho model.AdminCommandOperator) (jobErrs []error, err error) {
+	failpoint.Inject("mockFailedCommandOnConcurencyDDL", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("mock commit error"))
+			failpoint.Return(nil, errors.New("mock failed admin command on ddl jobs"))
 		}
 	})
+
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	var jobMap = make(map[int64]int) // jobID -> error index
 
-	sessCtx := sess.NewSession(se)
-	err := sessCtx.Begin()
-	if err != nil {
-		return nil, err
-	}
-
-	idsStr := make([]string, 0, len(ids))
-	for idx, id := range ids {
-		jobMap[id] = idx
-		idsStr = append(idsStr, strconv.FormatInt(id, 10))
-	}
-
-	jobs, err := getJobsBySQL(sessCtx, JobTable, fmt.Sprintf("job_id in (%s) order by job_id", strings.Join(idsStr, ", ")))
-	if err != nil {
-		sessCtx.Rollback()
-		return nil, err
-	}
-
-	errs := make([]error, len(ids))
-
-	for _, job := range jobs {
-		i, ok := jobMap[job.ID]
-		if !ok {
-			logutil.BgLogger().Debug("the job that needs to be canceled isn't equal to current job",
-				zap.Int64("need to canceled job ID", job.ID),
-				zap.Int64("current job ID", job.ID))
-			continue
+	ns := sess.NewSession(sessCtx)
+	// We should process (and try) all the jobs in one Transaction.
+	for tryN := uint(0); tryN < 3; tryN++ {
+		jobErrs = make([]error, len(ids))
+		// Need to figure out which one could not be paused
+		jobMap := make(map[int64]int, len(ids))
+		idsStr := make([]string, 0, len(ids))
+		for idx, id := range ids {
+			jobMap[id] = idx
+			idsStr = append(idsStr, strconv.FormatInt(id, 10))
 		}
-		delete(jobMap, job.ID)
-		// These states can't be cancelled.
-		if job.IsDone() || job.IsSynced() {
-			errs[i] = dbterror.ErrCancelFinishedDDLJob.GenWithStackByArgs(job.ID)
-			continue
-		}
-		// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
-		if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
-			continue
-		}
-		if !job.IsRollbackable() {
-			errs[i] = dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
-			continue
-		}
-		job.State = model.JobStateCancelling
-		// Make sure RawArgs isn't overwritten.
-		err := json.Unmarshal(job.RawArgs, &job.Args)
+
+		err = ns.Begin()
 		if err != nil {
-			errs[i] = errors.Trace(err)
+			return nil, err
+		}
+		jobs, err := getJobsBySQL(ns, JobTable, fmt.Sprintf("job_id in (%s) order by job_id", strings.Join(idsStr, ", ")))
+		if err != nil {
+			ns.Rollback()
+			return nil, err
+		}
+
+		for _, job := range jobs {
+			i, ok := jobMap[job.ID]
+			if !ok {
+				logutil.BgLogger().Debug("Job ID from meta is not consistent with requested job id,",
+					zap.Int64("fetched job ID", job.ID))
+				jobErrs[i] = dbterror.ErrInvalidDDLJob.GenWithStackByArgs(job.ID)
+				continue
+			}
+			delete(jobMap, job.ID)
+
+			err = process(ns, job, byWho)
+			if err != nil {
+				jobErrs[i] = err
+				continue
+			}
+
+			err = updateDDLJob2Table(ns, job, false)
+			if err != nil {
+				jobErrs[i] = err
+				continue
+			}
+		}
+
+		failpoint.Inject("mockCommitFailedOnDDLCommand", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(jobErrs, errors.New("mock commit failed on admin command on ddl jobs"))
+			}
+		})
+
+		// There may be some conflict during the update, try it again
+		if err = ns.Commit(); err != nil {
 			continue
 		}
-		err = updateDDLJob2Table(sessCtx, job, true)
-		if err != nil {
-			errs[i] = errors.Trace(err)
+
+		for id, idx := range jobMap {
+			jobErrs[idx] = dbterror.ErrDDLJobNotFound.GenWithStackByArgs(id)
 		}
+
+		return jobErrs, nil
 	}
-	err = sessCtx.Commit()
+
+	return jobErrs, err
+}
+
+// CancelJobs cancels the DDL jobs according to user command.
+func CancelJobs(se sessionctx.Context, ids []int64) (errs []error, err error) {
+	return processJobs(cancelRunningJob, se, ids, model.AdminCommandByEndUser)
+}
+
+// PauseJobs pause all the DDL jobs according to user command.
+func PauseJobs(se sessionctx.Context, ids []int64) ([]error, error) {
+	return processJobs(pauseRunningJob, se, ids, model.AdminCommandByEndUser)
+}
+
+// ResumeJobs resume all the DDL jobs according to user command.
+func ResumeJobs(se sessionctx.Context, ids []int64) ([]error, error) {
+	return processJobs(resumePausedJob, se, ids, model.AdminCommandByEndUser)
+}
+
+// CancelJobsBySystem cancels Jobs because of internal reasons.
+func CancelJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
+	return processJobs(cancelRunningJob, se, ids, model.AdminCommandBySystem)
+}
+
+// PauseJobsBySystem pauses Jobs because of internal reasons.
+func PauseJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
+	return processJobs(pauseRunningJob, se, ids, model.AdminCommandBySystem)
+}
+
+// ResumeJobsBySystem resumes Jobs that are paused by TiDB itself.
+func ResumeJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
+	return processJobs(resumePausedJob, se, ids, model.AdminCommandBySystem)
+}
+
+// pprocessAllJobs processes all the jobs in the job table, 100 jobs at a time in case of high memory usage.
+func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+	se sessionctx.Context, byWho model.AdminCommandOperator) (map[int64]error, error) {
+	var err error
+	var jobErrs = make(map[int64]error)
+
+	ns := sess.NewSession(se)
+	err = ns.Begin()
 	if err != nil {
 		return nil, err
 	}
-	for id, idx := range jobMap {
-		errs[idx] = dbterror.ErrDDLJobNotFound.GenWithStackByArgs(id)
+
+	var jobID int64
+	var jobIDMax int64
+	var limit = 100
+	for {
+		var jobs []*model.Job
+		jobs, err = getJobsBySQL(ns, JobTable,
+			fmt.Sprintf("job_id >= %s order by job_id asc limit %s",
+				strconv.FormatInt(jobID, 10),
+				strconv.FormatInt(int64(limit), 10)))
+		if err != nil {
+			ns.Rollback()
+			return nil, err
+		}
+
+		for _, job := range jobs {
+			err = process(ns, job, byWho)
+			if err != nil {
+				jobErrs[job.ID] = err
+				continue
+			}
+
+			err = updateDDLJob2Table(ns, job, false)
+			if err != nil {
+				jobErrs[job.ID] = err
+				continue
+			}
+		}
+
+		// Just in case the job ID is not sequential
+		if len(jobs) > 0 && jobs[len(jobs)-1].ID > jobIDMax {
+			jobIDMax = jobs[len(jobs)-1].ID
+		}
+
+		// If rows returned is smaller than $limit, then there is no more records
+		if len(jobs) < limit {
+			break
+		}
+
+		jobID = jobIDMax + 1
 	}
-	return errs, nil
+
+	err = ns.Commit()
+	if err != nil {
+		return nil, err
+	}
+	return jobErrs, nil
+}
+
+// PauseAllJobsBySystem pauses all running Jobs because of internal reasons.
+func PauseAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
+	return processAllJobs(pauseRunningJob, se, model.AdminCommandBySystem)
+}
+
+// ResumeAllJobsBySystem resumes all paused Jobs because of internal reasons.
+func ResumeAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
+	return processAllJobs(resumePausedJob, se, model.AdminCommandBySystem)
 }
 
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
-func GetAllDDLJobs(se sessionctx.Context, t *meta.Meta) ([]*model.Job, error) {
+func GetAllDDLJobs(se sessionctx.Context) ([]*model.Job, error) {
 	return getJobsBySQL(sess.NewSession(se), JobTable, "1 order by job_id")
 }
 
@@ -1569,7 +1735,7 @@ func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, e
 // IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
 // then iterates history DDL jobs until the `finishFn` return true or error.
 func IterAllDDLJobs(ctx sessionctx.Context, txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
-	jobs, err := GetAllDDLJobs(ctx, meta.NewMeta(txn))
+	jobs, err := GetAllDDLJobs(ctx)
 	if err != nil {
 		return err
 	}
@@ -1653,7 +1819,7 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 func AddHistoryDDLJob(sess *sess.Session, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
 	err := addHistoryDDLJob2Table(sess, job, updateRawArgs)
 	if err != nil {
-		logutil.BgLogger().Info("[ddl] failed to add DDL job to history table", zap.Error(err))
+		logutil.BgLogger().Info("failed to add DDL job to history table", zap.String("category", "ddl"), zap.Error(err))
 	}
 	// we always add history DDL job to job list at this moment.
 	return t.AddHistoryDDLJob(job, updateRawArgs)
@@ -1667,7 +1833,7 @@ func addHistoryDDLJob2Table(sess *sess.Session, job *model.Job, updateRawArgs bo
 	}
 	_, err = sess.Execute(context.Background(),
 		fmt.Sprintf("insert ignore into mysql.tidb_ddl_history(job_id, job_meta, db_name, table_name, schema_ids, table_ids, create_time) values (%d, %s, %s, %s, %s, %s, %v)",
-			job.ID, wrapKey2String(b), strconv.Quote(job.SchemaName), strconv.Quote(job.TableName),
+			job.ID, util.WrapKey2String(b), strconv.Quote(job.SchemaName), strconv.Quote(job.TableName),
 			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)),
 			strconv.Quote(strconv.FormatInt(job.TableID, 10)),
 			strconv.Quote(model.TSConvert2Time(job.StartTS).String())),

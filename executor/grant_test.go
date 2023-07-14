@@ -471,7 +471,7 @@ func TestGrantOnNonExistTable(t *testing.T) {
 	tk.MustExec("GRANT CREATE, DROP, INSERT ON t29268 TO u29268")
 
 	// check privilege
-	tk.Session().Auth(&auth.UserIdentity{Username: "u29268", Hostname: "localhost"}, nil, nil)
+	tk.Session().Auth(&auth.UserIdentity{Username: "u29268", Hostname: "localhost"}, nil, nil, nil)
 	tk.MustExec("USE d29268")
 	tk.MustExec("CREATE TABLE t29268 (c1 int)")
 	tk.MustExec("INSERT INTO t29268 VALUES (1), (2)")
@@ -479,7 +479,7 @@ func TestGrantOnNonExistTable(t *testing.T) {
 	tk.MustExec("DROP TABLE t29268")
 
 	// check grant all
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil)
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
 	tk.MustExec("GRANT ALL ON t29268 TO u29268")
 }
 
@@ -505,7 +505,7 @@ func TestPerformanceSchemaPrivGrant(t *testing.T) {
 	defer func() {
 		tk.MustExec("drop user issue27867;")
 	}()
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustGetErrCode("grant all on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
 	// Check case insensitivity
 	tk.MustGetErrCode("grant all on PERFormanCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)

@@ -29,8 +29,11 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
@@ -42,6 +45,11 @@ import (
 	"github.com/pingcap/tidb/util/size"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
+)
+
+const (
+	// MaxCacheableLimitCount is the max limit count for cacheable query.
+	MaxCacheableLimitCount = 10000
 )
 
 var (
@@ -56,7 +64,7 @@ type paramMarkerExtractor struct {
 	markers []ast.ParamMarkerExpr
 }
 
-func (e *paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
+func (*paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
@@ -82,7 +90,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	switch paramStmt.(type) {
-	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
+	case *ast.ImportIntoStmt, *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
 		return nil, nil, 0, ErrUnsupportedPs
 	}
 
@@ -104,8 +112,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) bool {
 		return i.(*driver.ParamMarkerExpr).Offset < j.(*driver.ParamMarkerExpr).Offset
 	})
-	ParamCount := len(extractor.markers)
-	for i := 0; i < ParamCount; i++ {
+	paramCount := len(extractor.markers)
+	for i := 0; i < paramCount; i++ {
 		extractor.markers[i].SetOrder(i)
 	}
 
@@ -161,6 +169,9 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, err
 	}
 
+	features := new(PlanCacheQueryFeatures)
+	paramStmt.Accept(features)
+
 	preparedObj := &PlanCacheStmt{
 		PreparedAst:         prepared,
 		StmtDB:              vars.CurrentDB,
@@ -174,17 +185,19 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SQLDigest4PC:        digest4PC,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
+		QueryFeatures:       features,
 	}
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
 	}
-	return preparedObj, p, ParamCount, nil
+	return preparedObj, p, paramCount, nil
 }
 
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
 // Put the parameters that may affect the plan in planCacheValue.
 // However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
 // At the same time, because these variables have a small impact on plan, we will move them to PlanCacheValue later if necessary.
+// TODO: maintain a sync.pool for this structure.
 type planCacheKey struct {
 	database      string
 	connID        uint64
@@ -213,14 +226,10 @@ type planCacheKey struct {
 // Hash implements Key interface.
 func (key *planCacheKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		var (
-			dbBytes    = hack.Slice(key.database)
-			bufferSize = len(dbBytes) + 8*6 + 3*8
-		)
 		if key.hash == nil {
-			key.hash = make([]byte, 0, bufferSize)
+			key.hash = make([]byte, 0, len(key.stmtText)*2)
 		}
-		key.hash = append(key.hash, dbBytes...)
+		key.hash = append(key.hash, hack.Slice(key.database)...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
@@ -330,10 +339,6 @@ type PlanCacheValue struct {
 	matchOpts *utilpc.PlanCacheMatchOpts
 }
 
-func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
-	return checkTypesCompatibility4PC(v.matchOpts.ParamTypes, txtVarTps)
-}
-
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
 // 100 KiB is approximate consumption of a plan from our internal tests
 const unKnownMemoryUsage = int64(50 * size.KB)
@@ -395,6 +400,31 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 	}
 }
 
+// PlanCacheQueryFeatures records all query features which may affect plan selection.
+type PlanCacheQueryFeatures struct {
+	limits      []*ast.Limit
+	hasSubquery bool
+	tables      []*ast.TableName // to capture table stats changes
+}
+
+// Enter implements Visitor interface.
+func (f *PlanCacheQueryFeatures) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch node := in.(type) {
+	case *ast.Limit:
+		f.limits = append(f.limits, node)
+	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
+		f.hasSubquery = true
+	case *ast.TableName:
+		f.tables = append(f.tables, node)
+	}
+	return in, false
+}
+
+// Leave implements Visitor interface.
+func (*PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
@@ -408,6 +438,7 @@ type PlanCacheStmt struct {
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
+	QueryFeatures     *PlanCacheQueryFeatures
 
 	NormalizedSQL       string
 	NormalizedPlan      string
@@ -442,93 +473,75 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 	return nil, ErrStmtNotFound
 }
 
-type matchOptsExtractor struct {
-	cacheable         bool // For safety considerations, check if limit count less than 10000
-	offsetAndCount    []uint64
-	unCacheableReason string
-	paramTypeErr      error
-	hasSubQuery       bool
-}
-
-// Enter implements Visitor interface.
-func (checker *matchOptsExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch node := in.(type) {
-	case *ast.Limit:
-		if node.Count != nil {
-			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
-				typeExpected, val := CheckParamTypeInt64orUint64(count)
-				if typeExpected {
-					if val > 10000 {
-						checker.cacheable = false
-						checker.unCacheableReason = "limit count more than 10000"
-						return in, !checker.cacheable
-					}
-					checker.offsetAndCount = append(checker.offsetAndCount, val)
-				} else {
-					checker.cacheable = false
-					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
-					return in, !checker.cacheable
-				}
-			}
+func tableStatsVersionForPlanCache(tStats *statistics.Table) (tableStatsVer uint64) {
+	if tStats == nil {
+		return 0
+	}
+	// use the max version of all columns and indices as the table stats version
+	for _, col := range tStats.Columns {
+		if col.LastUpdateVersion > tableStatsVer {
+			tableStatsVer = col.LastUpdateVersion
 		}
-		if node.Offset != nil {
-			if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
-				typeExpected, val := CheckParamTypeInt64orUint64(offset)
-				if typeExpected {
-					checker.offsetAndCount = append(checker.offsetAndCount, val)
-				} else {
-					checker.cacheable = false
-					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
-					return in, !checker.cacheable
-				}
-			}
+	}
+	for _, idx := range tStats.Indices {
+		if idx.LastUpdateVersion > tableStatsVer {
+			tableStatsVer = idx.LastUpdateVersion
 		}
-	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
-		checker.hasSubQuery = true
 	}
-	return in, false
-}
-
-// Leave implements Visitor interface.
-func (checker *matchOptsExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, checker.cacheable
-}
-
-// ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
-func extractMatchOptsFromAST(node ast.Node, sctx sessionctx.Context) (*utilpc.PlanCacheMatchOpts, error) {
-	if node == nil {
-		return nil, errors.New("AST node is nil")
-	}
-	checker := matchOptsExtractor{
-		cacheable:      true,
-		offsetAndCount: []uint64{},
-		hasSubQuery:    false,
-	}
-	node.Accept(&checker)
-	if checker.paramTypeErr != nil {
-		return nil, checker.paramTypeErr
-	}
-	if sctx != nil && !checker.cacheable {
-		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New(checker.unCacheableReason))
-	}
-
-	return &utilpc.PlanCacheMatchOpts{
-		LimitOffsetAndCount: checker.offsetAndCount,
-		HasSubQuery:         checker.hasSubQuery,
-	}, nil
+	return tableStatsVer
 }
 
 // GetMatchOpts get options to fetch plan or generate new plan
 // we can add more options here
-func GetMatchOpts(sctx sessionctx.Context, node ast.Node, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
-	// get limit params and has sub query indicator
-	matchOpts, err := extractMatchOptsFromAST(node, sctx)
-	if err != nil {
-		return nil, err
+func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
+	var statsVerHash uint64
+	var limitOffsetAndCount []uint64
+
+	if stmt.QueryFeatures != nil {
+		for _, node := range stmt.QueryFeatures.tables {
+			t, err := is.TableByName(node.Schema, node.Name)
+			if err != nil { // CTE in this case
+				continue
+			}
+			tStats := getStatsTable(sctx, t.Meta(), t.Meta().ID)
+			statsVerHash += tableStatsVersionForPlanCache(tStats) // use '+' as the hash function for simplicity
+		}
+
+		for _, node := range stmt.QueryFeatures.limits {
+			if node.Count != nil {
+				if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
+					typeExpected, val := CheckParamTypeInt64orUint64(count)
+					if !typeExpected {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("unexpected value after LIMIT"))
+						break
+					}
+					if val > MaxCacheableLimitCount {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("limit count is too large"))
+						break
+					}
+					limitOffsetAndCount = append(limitOffsetAndCount, val)
+				}
+			}
+			if node.Offset != nil {
+				if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
+					typeExpected, val := CheckParamTypeInt64orUint64(offset)
+					if !typeExpected {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("unexpected value after LIMIT"))
+						break
+					}
+					limitOffsetAndCount = append(limitOffsetAndCount, val)
+				}
+			}
+		}
 	}
-	// get param types
-	matchOpts.ParamTypes = parseParamTypes(sctx, params)
-	return matchOpts, nil
+
+	return &utilpc.PlanCacheMatchOpts{
+		LimitOffsetAndCount: limitOffsetAndCount,
+		HasSubQuery:         stmt.QueryFeatures.hasSubquery,
+		StatsVersionHash:    statsVerHash,
+		ParamTypes:          parseParamTypes(sctx, params),
+		ForeignKeyChecks:    sctx.GetSessionVars().ForeignKeyChecks,
+	}, nil
 }
 
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
@@ -553,6 +566,93 @@ func checkTypesCompatibility4PC(tpsExpected, tpsActual []*types.FieldType) bool 
 		// We can only use the plan when both Flen and Decimal should less equal than the cached one.
 		// We assume here that there is no correctness problem when the precision of the parameters is less than the precision of the parameters in the cache.
 		if tpEqual && tpsExpected[i].GetType() == mysql.TypeNewDecimal && !(tpsExpected[i].GetFlen() >= tpsActual[i].GetFlen() && tpsExpected[i].GetDecimal() >= tpsActual[i].GetDecimal()) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSafePointGetPath4PlanCache(sctx sessionctx.Context, path *util.AccessPath) bool {
+	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
+	// these assumptions may be broken after parameters change.
+
+	if isSafePointGetPath4PlanCacheScenario1(path) {
+		return true
+	}
+
+	// TODO: enable this fix control switch by default after more test cases are added.
+	if sctx != nil && sctx.GetSessionVars() != nil && sctx.GetSessionVars().OptimizerFixControl != nil {
+		fixControlOK := fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44830, false)
+		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) || isSafePointGetPath4PlanCacheScenario3(path)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isSafePointGetPath4PlanCacheScenario1(path *util.AccessPath) bool {
+	// safe scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
+	if len(path.Ranges) <= 0 || path.Ranges[0].Width() != len(path.AccessConds) {
+		return false
+	}
+	for _, accessCond := range path.AccessConds {
+		f, ok := accessCond.(*expression.ScalarFunction)
+		if !ok || f.FuncName.L != ast.EQ { // column = constant
+			return false
+		}
+	}
+	return true
+}
+
+func isSafePointGetPath4PlanCacheScenario2(path *util.AccessPath) bool {
+	// safe scenario 2: this Batch or PointGet is simply from a single IN predicate, `key in (...)`
+	if len(path.Ranges) <= 0 || len(path.AccessConds) != 1 {
+		return false
+	}
+	f, ok := path.AccessConds[0].(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.In {
+		return false
+	}
+	return len(path.Ranges) == len(f.GetArgs())-1 // no duplicated values in this in-list for safety.
+}
+
+func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
+	// safe scenario 3: this Batch or PointGet is simply from a simple DNF like `key=? or key=? or key=?`
+	if len(path.Ranges) <= 0 || len(path.AccessConds) != 1 {
+		return false
+	}
+	f, ok := path.AccessConds[0].(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.LogicOr {
+		return false
+	}
+
+	dnfExprs := expression.FlattenDNFConditions(f)
+	if len(path.Ranges) != len(dnfExprs) {
+		// no duplicated values in this in-list for safety.
+		// e.g. `k=1 or k=2 or k=1` --> [[1, 1], [2, 2]]
+		return false
+	}
+
+	for _, expr := range dnfExprs {
+		f, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		switch f.FuncName.L {
+		case ast.EQ: // (k=1 or k=2) --> [k=1, k=2]
+		case ast.LogicAnd: // ((k1=1 and k2=1) or (k1=2 and k2=2)) --> [k1=1 and k2=1, k2=2 and k2=2]
+			cnfExprs := expression.FlattenCNFConditions(f)
+			if path.Ranges[0].Width() != len(cnfExprs) { // not all key columns are specified
+				return false
+			}
+			for _, expr := range cnfExprs { // k1=1 and k2=1
+				f, ok := expr.(*expression.ScalarFunction)
+				if !ok || f.FuncName.L != ast.EQ {
+					return false
+				}
+			}
+		default:
 			return false
 		}
 	}

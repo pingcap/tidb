@@ -27,7 +27,8 @@ const (
 	DefaultBatchImportRatio = 0.75
 
 	ReadBlockSize ByteSize = 64 * units.KiB
-	// SplitRegionSize See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
+	// SplitRegionSize See:
+	// 	https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
 	// lower the max-key-count to avoid tikv trigger region auto split
 	SplitRegionSize         ByteSize = 96 * units.MiB
 	SplitRegionKeys         int      = 1_280_000

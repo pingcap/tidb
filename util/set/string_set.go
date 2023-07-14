@@ -14,6 +14,8 @@
 
 package set
 
+import "golang.org/x/exp/maps"
+
 // StringSet is a string set.
 type StringSet map[string]struct{}
 
@@ -56,4 +58,9 @@ func (s StringSet) Count() int {
 // Empty returns whether s is empty.
 func (s StringSet) Empty() bool {
 	return len(s) == 0
+}
+
+// Clear clears the set.
+func (s StringSet) Clear() {
+	maps.Clear(s)
 }

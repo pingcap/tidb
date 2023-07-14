@@ -51,6 +51,8 @@ const (
 	CheckpointStatusMaxInvalid      CheckpointStatus = 25
 	CheckpointStatusLoaded          CheckpointStatus = 30
 	CheckpointStatusAllWritten      CheckpointStatus = 60
+	CheckpointStatusDupDetected     CheckpointStatus = 70
+	CheckpointStatusIndexDropped    CheckpointStatus = 80
 	CheckpointStatusClosed          CheckpointStatus = 90
 	CheckpointStatusImported        CheckpointStatus = 120
 	CheckpointStatusIndexImported   CheckpointStatus = 140
@@ -686,7 +688,7 @@ func (*NullCheckpointsDB) Initialize(context.Context, *config.Config, map[string
 }
 
 // TaskCheckpoint implements the DB interface.
-func (*NullCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error) {
+func (*NullCheckpointsDB) TaskCheckpoint(context.Context) (*TaskCheckpoint, error) {
 	return nil, nil
 }
 
@@ -1183,11 +1185,10 @@ func createExstorageByCompletePath(ctx context.Context, completePath string) (st
 }
 
 // separateCompletePath separates fileName from completePath, returns fileName and newPath.
-func separateCompletePath(completePath string) (string, string, error) {
+func separateCompletePath(completePath string) (fileName string, newPath string, err error) {
 	if completePath == "" {
 		return "", "", nil
 	}
-	var fileName, newPath string
 	purl, err := storage.ParseRawURL(completePath)
 	if err != nil {
 		return "", "", errors.Trace(err)
@@ -1220,7 +1221,7 @@ func (cpdb *FileCheckpointsDB) save() error {
 }
 
 // Initialize implements CheckpointsDB.Initialize.
-func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
+func (cpdb *FileCheckpointsDB) Initialize(_ context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
@@ -1811,7 +1812,7 @@ func (cpdb *FileCheckpointsDB) RemoveCheckpoint(_ context.Context, tableName str
 }
 
 // MoveCheckpoints implements CheckpointsDB.MoveCheckpoints.
-func (cpdb *FileCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64) error {
+func (cpdb *FileCheckpointsDB) MoveCheckpoints(_ context.Context, taskID int64) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 

@@ -23,6 +23,9 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/executor/internal/builder"
+	"github.com/pingcap/tidb/executor/internal/exec"
+	internalutil "github.com/pingcap/tidb/executor/internal/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -45,7 +48,7 @@ import (
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
-var _ Executor = &TableReaderExecutor{}
+var _ exec.Executor = &TableReaderExecutor{}
 
 // selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
 type selectResultHook struct {
@@ -68,7 +71,7 @@ type kvRangeBuilder interface {
 
 // TableReaderExecutor sends DAG request and reads table data from kv layer.
 type TableReaderExecutor struct {
-	baseExecutor
+	exec.BaseExecutor
 
 	table table.Table
 
@@ -148,26 +151,26 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if e.memTracker != nil {
 		e.memTracker.Reset()
 	} else {
-		e.memTracker = memory.NewTracker(e.id, -1)
+		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
 	var err error
 	if e.corColInFilter {
 		if e.storeType == kv.TiFlash {
-			execs, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)
+			execs, err := builder.ConstructTreeBasedDistExec(e.Ctx(), e.tablePlan)
 			if err != nil {
 				return err
 			}
 			e.dagPB.RootExecutor = execs[0]
 		} else {
-			e.dagPB.Executors, err = constructDistExec(e.ctx, e.plans)
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.Ctx(), e.plans)
 			if err != nil {
 				return err
 			}
 		}
 	}
-	if e.runtimeStats != nil {
+	if e.RuntimeStats() != nil {
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
@@ -261,7 +264,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
-	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema.Columns, e.columns, e.ctx, req)
+	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), req)
 	if err != nil {
 		return err
 	}
@@ -279,7 +282,7 @@ func (e *TableReaderExecutor) Close() error {
 	if e.dummy {
 		return nil
 	}
-	e.ctx.StoreQueryFeedback(e.feedback)
+	e.Ctx().StoreQueryFeedback(e.feedback)
 	return err
 }
 
@@ -295,7 +298,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 			}
 			var results []distsql.SelectResult
 			for _, kvReq := range kvReqs {
-				result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+				result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.ID())
 				if err != nil {
 					return nil, err
 				}
@@ -308,7 +311,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		if err != nil {
 			return nil, err
 		}
-		result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+		result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.ID())
 		if err != nil {
 			return nil, err
 		}
@@ -323,7 +326,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		}
 		var results []distsql.SelectResult
 		for _, kvReq := range kvReqs {
-			result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+			result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.ID())
 			if err != nil {
 				return nil, err
 			}
@@ -332,7 +335,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		if len(results) == 1 {
 			return results[0], nil
 		}
-		return distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker), nil
+		return distsql.NewSortedSelectResults(results, e.Schema(), e.byItems, e.memTracker), nil
 	}
 
 	kvReq, err := e.buildKVReq(ctx, ranges)
@@ -344,7 +347,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	})
 	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 
-	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+	result, err := e.SelectResult(ctx, e.Ctx(), kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.ID())
 	if err != nil {
 		return nil, err
 	}
@@ -359,7 +362,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
-		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
+		if err := internalutil.UpdateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
 			return nil, err
 		}
 		var builder distsql.RequestBuilder
@@ -371,14 +374,14 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetKeepOrder(e.keepOrder).
 			SetTxnScope(e.txnScope).
 			SetReadReplicaScope(e.readReplicaScope).
-			SetFromSessionVars(e.ctx.GetSessionVars()).
-			SetFromInfoSchema(e.ctx.GetInfoSchema()).
+			SetFromSessionVars(e.Ctx().GetSessionVars()).
+			SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 			SetMemTracker(e.memTracker).
 			SetStoreType(e.storeType).
 			SetPaging(e.paging).
 			SetAllowBatchCop(e.batchCop).
-			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
-			SetConnID(e.ctx.GetSessionVars().ConnectionID).
+			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &reqBuilder.Request, e.netDataSize)).
+			SetConnID(e.Ctx().GetSessionVars().ConnectionID).
 			Build()
 		if err != nil {
 			return nil, err
@@ -401,7 +404,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 			KeyRanges: kvRange,
 		})
 	}
-	if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, pids); err != nil {
+	if err := internalutil.UpdateExecutorTableID(ctx, e.dagPB.RootExecutor, true, pids); err != nil {
 		return nil, err
 	}
 	var builder distsql.RequestBuilder
@@ -413,14 +416,14 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetFromSessionVars(e.Ctx().GetSessionVars()).
+		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetPaging(e.paging).
 		SetAllowBatchCop(e.batchCop).
-		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
-		SetConnID(e.ctx.GetSessionVars().ConnectionID).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &reqBuilder.Request, e.netDataSize)).
+		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
 		Build()
 	if err != nil {
 		return nil, err
@@ -438,12 +441,12 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		}
 		reqBuilder = builder.SetPartitionKeyRanges(kvRange)
 	} else {
-		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
+		reqBuilder = builder.SetHandleRanges(e.Ctx().GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
 	}
 	if e.table != nil && e.table.Type().IsClusterTable() {
 		copDestination := infoschema.GetClusterTableCopDestination(e.table.Meta().Name.L)
 		if copDestination == infoschema.DDLOwner {
-			ownerManager := domain.GetDomain(e.ctx).DDL().OwnerManager()
+			ownerManager := domain.GetDomain(e.Ctx()).DDL().OwnerManager()
 			ddlOwnerID, err := ownerManager.GetOwnerID(ctx)
 			if err != nil {
 				return nil, err
@@ -463,14 +466,14 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetFromInfoSchema(sessiontxn.GetTxnManager(e.ctx).GetTxnInfoSchema()).
+		SetFromSessionVars(e.Ctx().GetSessionVars()).
+		SetFromInfoSchema(sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
-		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &reqBuilder.Request, e.netDataSize)).
 		SetPaging(e.paging).
-		SetConnID(e.ctx.GetSessionVars().ConnectionID)
+		SetConnID(e.Ctx().GetSessionVars().ConnectionID)
 	return reqBuilder.Build()
 }
 

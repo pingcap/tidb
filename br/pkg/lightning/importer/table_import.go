@@ -15,11 +15,11 @@
 package importer
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
-	"strconv"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
@@ -45,12 +44,12 @@ import (
 	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/extsort"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -68,6 +67,9 @@ type TableImporter struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 	kvStore   tidbkv.Storage
+
+	// dupIgnoreRows tracks the rowIDs of rows that are duplicated and should be ignored.
+	dupIgnoreRows extsort.ExternalSorter
 
 	ignoreColumns map[string]struct{}
 }
@@ -137,8 +139,7 @@ func (tr *TableImporter) importTable(
 				rowIDMax = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
 			}
 		}
-		db, _ := rc.tidbGlue.GetDB()
-		versionStr, err := version.FetchVersion(ctx, db)
+		versionStr, err := version.FetchVersion(ctx, rc.db)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -196,7 +197,49 @@ func (tr *TableImporter) importTable(
 		}
 	}
 
-	// 2. Restore engines (if still needed)
+	// 2. Do duplicate detection if needed
+	if isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.OnDuplicate != "" {
+		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
+		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)
+		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupResultDirSuffix)
+
+		dupIgnoreRows, err := extsort.OpenDiskSorter(resultDir, &extsort.DiskSorterOptions{
+			Concurrency: rc.cfg.App.RegionConcurrency,
+		})
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		tr.dupIgnoreRows = dupIgnoreRows
+
+		if cp.Status < checkpoints.CheckpointStatusDupDetected {
+			err := tr.preDeduplicate(ctx, rc, cp, workingDir)
+			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusDupDetected)
+			if err := firstErr(err, saveCpErr); err != nil {
+				return false, errors.Trace(err)
+			}
+		}
+
+		if !dupIgnoreRows.IsSorted() {
+			if err := dupIgnoreRows.Sort(ctx); err != nil {
+				return false, errors.Trace(err)
+			}
+		}
+
+		failpoint.Inject("FailAfterDuplicateDetection", func() {
+			panic("forcing failure after duplicate detection")
+		})
+	}
+
+	// 3. Drop indexes if add-index-by-sql is enabled
+	if cp.Status < checkpoints.CheckpointStatusIndexDropped && isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.AddIndexBySQL {
+		err := tr.dropIndexes(ctx, rc.db)
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexDropped)
+		if err := firstErr(err, saveCpErr); err != nil {
+			return false, errors.Trace(err)
+		}
+	}
+
+	// 4. Restore engines (if still needed)
 	err := tr.importEngines(ctx, rc, cp)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -207,13 +250,16 @@ func (tr *TableImporter) importTable(
 		return false, errors.Trace(err)
 	}
 
-	// 3. Post-process. With the last parameter set to false, we can allow delay analyze execute latter
+	// 5. Post-process. With the last parameter set to false, we can allow delay analyze execute latter
 	return tr.postProcess(ctx, rc, cp, false /* force-analyze */, metaMgr)
 }
 
 // Close implements the Importer interface.
 func (tr *TableImporter) Close() {
 	tr.encTable = nil
+	if tr.dupIgnoreRows != nil {
+		_ = tr.dupIgnoreRows.Close()
+	}
 	tr.logger.Info("restore done")
 }
 
@@ -269,7 +315,7 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 }
 
 // RebaseChunkRowIDs rebase the row id of the chunks.
-func (tr *TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
+func (*TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
 	if rowIDBase == 0 {
 		return
 	}
@@ -391,7 +437,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 				continue
 			}
 			if engine.Status < checkpoints.CheckpointStatusAllWritten {
-				indexEngine, err = rc.backend.OpenEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
+				indexEngine, err = rc.engineMgr.OpenEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -482,7 +528,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 		if indexEngine != nil {
 			closedIndexEngine, restoreErr = indexEngine.Close(ctx)
 		} else {
-			closedIndexEngine, restoreErr = rc.backend.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
+			closedIndexEngine, restoreErr = rc.engineMgr.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
 		}
 
 		if err = rc.saveStatusCheckpoint(ctx, tr.tableName, common.IndexEngineID, restoreErr, checkpoints.CheckpointStatusClosed); err != nil {
@@ -491,7 +537,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 	} else if indexEngineCp.Status == checkpoints.CheckpointStatusClosed {
 		// If index engine file has been closed but not imported only if context cancel occurred
 		// when `importKV()` execution, so `UnsafeCloseEngine` and continue import it.
-		closedIndexEngine, restoreErr = rc.backend.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
+		closedIndexEngine, restoreErr = rc.engineMgr.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
 	}
 	if restoreErr != nil {
 		return errors.Trace(restoreErr)
@@ -552,7 +598,7 @@ func (tr *TableImporter) preprocessEngine(
 		engineCfg := &backend.EngineConfig{
 			TableInfo: tr.tableInfo,
 		}
-		closedEngine, err := rc.backend.UnsafeCloseEngine(ctx, engineCfg, tr.tableName, engineID)
+		closedEngine, err := rc.engineMgr.UnsafeCloseEngine(ctx, engineCfg, tr.tableName, engineID)
 		// If any error occurred, recycle worker immediately
 		if err != nil {
 			return closedEngine, errors.Trace(err)
@@ -577,6 +623,7 @@ func (tr *TableImporter) preprocessEngine(
 		tr.tableInfo.Core.Partition == nil
 	dataWriterCfg := &backend.LocalWriterConfig{
 		IsKVSorted: hasAutoIncrementAutoID,
+		TableName:  tr.tableName,
 	}
 
 	logTask := tr.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
@@ -588,7 +635,7 @@ func (tr *TableImporter) preprocessEngine(
 		dataEngineCfg.Local.CompactConcurrency = 4
 		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
 	}
-	dataEngine, err := rc.backend.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)
+	dataEngine, err := rc.engineMgr.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -641,12 +688,11 @@ ChunkLoop:
 		checkFlushLock.Lock()
 		finished := 0
 		for _, c := range flushPendingChunks {
-			if c.indexStatus.Flushed() && c.dataStatus.Flushed() {
-				chunkCpChan <- c.chunkCp
-				finished++
-			} else {
+			if !(c.indexStatus.Flushed() && c.dataStatus.Flushed()) {
 				break
 			}
+			chunkCpChan <- c.chunkCp
+			finished++
 		}
 		if finished > 0 {
 			flushPendingChunks = flushPendingChunks[finished:]
@@ -688,13 +734,13 @@ ChunkLoop:
 			break
 		}
 
-		indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
+		indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: tr.tableName})
 		if err != nil {
 			_, _ = dataWriter.Close(ctx)
 			setError(err)
 			break
 		}
-		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
+		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo.Core)
 		if err != nil {
 			setError(err)
 			break
@@ -776,12 +822,11 @@ ChunkLoop:
 		checkFlushLock.Lock()
 		cnt := 0
 		for _, chunk := range flushPendingChunks {
-			if chunk.dataStatus.Flushed() && chunk.indexStatus.Flushed() {
-				saveCheckpoint(rc, tr, engineID, chunk.chunkCp)
-				cnt++
-			} else {
+			if !(chunk.dataStatus.Flushed() && chunk.indexStatus.Flushed()) {
 				break
 			}
+			saveCheckpoint(rc, tr, engineID, chunk.chunkCp)
+			cnt++
 		}
 		flushPendingChunks = flushPendingChunks[cnt:]
 		checkFlushLock.Unlock()
@@ -882,10 +927,10 @@ func (tr *TableImporter) postProcess(
 			ft := &common.GetAutoRandomColumn(tblInfo).FieldType
 			shardFmt := autoid.NewShardIDFormat(ft, tblInfo.AutoRandomBits, tblInfo.AutoRandomRangeBits)
 			maxCap := shardFmt.IncrementalBitsCapacity()
-			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
+			err = AlterAutoRandom(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
 			// only alter auto increment id iff table contains auto-increment column or generated handle
-			err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.RowIDAllocType).Base())+1)
+			err = AlterAutoIncrement(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.RowIDAllocType).Base())+1)
 		}
 		rc.alterTableLock.Unlock()
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
@@ -924,7 +969,7 @@ func (tr *TableImporter) postProcess(
 		// if we came here, it must be a local backend.
 		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
 		// try to abstract it with logical mode.
-		localBackend := rc.backend.Inner().(*local.Local)
+		localBackend := rc.backend.(*local.Backend)
 		dupeController := localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
 		hasDupe := false
 		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
@@ -987,7 +1032,7 @@ func (tr *TableImporter) postProcess(
 				tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
 			}
 
-			var remoteChecksum *RemoteChecksum
+			var remoteChecksum *local.RemoteChecksum
 			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
 			if err != nil {
 				return false, err
@@ -1030,13 +1075,9 @@ func (tr *TableImporter) postProcess(
 	if cp.Status < checkpoints.CheckpointStatusIndexAdded {
 		var err error
 		if rc.cfg.TikvImporter.AddIndexBySQL {
-			var db *sql.DB
-			db, err = rc.tidbGlue.GetDB()
-			if err == nil {
-				w := rc.addIndexLimit.Apply()
-				err = tr.addIndexes(ctx, db)
-				rc.addIndexLimit.Recycle(w)
-			}
+			w := rc.addIndexLimit.Apply()
+			err = tr.addIndexes(ctx, rc.db)
+			rc.addIndexLimit.Recycle(w)
 			// Analyze will be automatically triggered after indexes are added by SQL. We can skip manual analyze.
 			shouldSkipAnalyze = true
 		}
@@ -1057,7 +1098,7 @@ func (tr *TableImporter) postProcess(
 			}
 			cp.Status = checkpoints.CheckpointStatusAnalyzeSkipped
 		case forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast:
-			err := tr.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
+			err := tr.analyzeTable(ctx, rc.db)
 			// witch post restore level 'optional', we will skip analyze error
 			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
 				if err != nil {
@@ -1196,7 +1237,7 @@ func (tr *TableImporter) importKV(
 }
 
 // do checksum for each table.
-func (tr *TableImporter) compareChecksum(remoteChecksum *RemoteChecksum, localChecksum verify.KVChecksum) error {
+func (tr *TableImporter) compareChecksum(remoteChecksum *local.RemoteChecksum, localChecksum verify.KVChecksum) error {
 	if remoteChecksum.Checksum != localChecksum.Sum() ||
 		remoteChecksum.TotalKVs != localChecksum.SumKVS() ||
 		remoteChecksum.TotalBytes != localChecksum.SumSize() {
@@ -1211,11 +1252,57 @@ func (tr *TableImporter) compareChecksum(remoteChecksum *RemoteChecksum, localCh
 	return nil
 }
 
-func (tr *TableImporter) analyzeTable(ctx context.Context, g glue.SQLExecutor) error {
+func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB) error {
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
-	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger)
+	exec := common.SQLWithRetry{
+		DB:     db,
+		Logger: tr.logger,
+	}
+	err := exec.Exec(ctx, "analyze table", "ANALYZE TABLE "+tr.tableName)
 	task.End(zap.ErrorLevel, err)
 	return err
+}
+
+func (tr *TableImporter) dropIndexes(ctx context.Context, db *sql.DB) error {
+	logger := log.FromContext(ctx).With(zap.String("table", tr.tableName))
+
+	tblInfo := tr.tableInfo
+	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
+	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo.Core)
+	for _, idxInfo := range dropIndexes {
+		sqlStr := common.BuildDropIndexSQL(tableName, idxInfo)
+
+		logger.Info("drop index", zap.String("sql", sqlStr))
+
+		s := common.SQLWithRetry{
+			DB:     db,
+			Logger: logger,
+		}
+		if err := s.Exec(ctx, "drop index", sqlStr); err != nil {
+			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
+				switch merr.Number {
+				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
+					remainIndexes = append(remainIndexes, idxInfo)
+					logger.Info("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
+					continue
+				}
+			}
+			return common.ErrDropIndexFailed.Wrap(err).GenWithStackByArgs(common.EscapeIdentifier(idxInfo.Name.O), tr.tableName)
+		}
+	}
+	if len(remainIndexes) < len(tblInfo.Core.Indices) {
+		// Must clone (*model.TableInfo) before modifying it, since it may be referenced in other place.
+		tblInfo.Core = tblInfo.Core.Clone()
+		tblInfo.Core.Indices = remainIndexes
+
+		// Rebuild encTable.
+		encTable, err := tables.TableFromMeta(tr.alloc, tblInfo.Core)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tr.encTable = encTable
+	}
+	return nil
 }
 
 func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr error) {
@@ -1228,7 +1315,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	tblInfo := tr.tableInfo
 	tableName := tr.tableName
 
-	singleSQL, multiSQLs := buildAddIndexSQL(tableName, tblInfo.Core, tblInfo.Desired)
+	singleSQL, multiSQLs := common.BuildAddIndexSQL(tableName, tblInfo.Core, tblInfo.Desired)
 	if len(multiSQLs) == 0 {
 		return nil
 	}
@@ -1270,7 +1357,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	if err == nil {
 		return nil
 	}
-	if !isDupKeyError(err) {
+	if !common.IsDupKeyError(err) {
 		return err
 	}
 	if len(multiSQLs) == 1 {
@@ -1288,7 +1375,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 				logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 			}
 		})
-		if err != nil && !isDupKeyError(err) {
+		if err != nil && !common.IsDupKeyError(err) {
 			return err
 		}
 		baseProgress += 1.0 / float64(len(multiSQLs))
@@ -1297,7 +1384,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	return nil
 }
 
-func (tr *TableImporter) executeDDL(
+func (*TableImporter) executeDDL(
 	ctx context.Context,
 	db *sql.DB,
 	ddl string,
@@ -1374,79 +1461,6 @@ func (tr *TableImporter) executeDDL(
 			}
 		}
 	}
-}
-
-// buildAddIndexSQL builds the SQL statement to create missing indexes.
-// It returns both a single SQL statement that creates all indexes at once,
-// and a list of SQL statements that creates each index individually.
-func buildAddIndexSQL(tableName string, curTblInfo, desiredTblInfo *model.TableInfo) (singleSQL string, multiSQLs []string) {
-	addIndexSpecs := make([]string, 0, len(desiredTblInfo.Indices))
-	for _, desiredIdxInfo := range desiredTblInfo.Indices {
-		present := false
-		for _, curIdxInfo := range curTblInfo.Indices {
-			if curIdxInfo.Name.L == desiredIdxInfo.Name.L {
-				present = true
-			}
-		}
-		if present {
-			continue
-		}
-
-		var buf bytes.Buffer
-		if desiredIdxInfo.Primary {
-			buf.WriteString("ADD PRIMARY KEY ")
-		} else if desiredIdxInfo.Unique {
-			buf.WriteString("ADD UNIQUE KEY ")
-		} else {
-			buf.WriteString("ADD KEY ")
-		}
-		// "primary" is a special name for primary key, we should not use it as index name.
-		if desiredIdxInfo.Name.L != "primary" {
-			buf.WriteString(common.EscapeIdentifier(desiredIdxInfo.Name.O))
-		}
-
-		colStrs := make([]string, 0, len(desiredIdxInfo.Columns))
-		for _, col := range desiredIdxInfo.Columns {
-			var colStr string
-			if desiredTblInfo.Columns[col.Offset].Hidden {
-				colStr = fmt.Sprintf("(%s)", desiredTblInfo.Columns[col.Offset].GeneratedExprString)
-			} else {
-				colStr = common.EscapeIdentifier(col.Name.O)
-				if col.Length != types.UnspecifiedLength {
-					colStr = fmt.Sprintf("%s(%s)", colStr, strconv.Itoa(col.Length))
-				}
-			}
-			colStrs = append(colStrs, colStr)
-		}
-		fmt.Fprintf(&buf, "(%s)", strings.Join(colStrs, ","))
-
-		if desiredIdxInfo.Invisible {
-			fmt.Fprint(&buf, " INVISIBLE")
-		}
-		if desiredIdxInfo.Comment != "" {
-			fmt.Fprintf(&buf, ` COMMENT '%s'`, format.OutputFormat(desiredIdxInfo.Comment))
-		}
-		addIndexSpecs = append(addIndexSpecs, buf.String())
-	}
-	if len(addIndexSpecs) == 0 {
-		return "", nil
-	}
-
-	singleSQL = fmt.Sprintf("ALTER TABLE %s %s", tableName, strings.Join(addIndexSpecs, ", "))
-	for _, spec := range addIndexSpecs {
-		multiSQLs = append(multiSQLs, fmt.Sprintf("ALTER TABLE %s %s", tableName, spec))
-	}
-	return singleSQL, multiSQLs
-}
-
-func isDupKeyError(err error) bool {
-	if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
-		switch merr.Number {
-		case errno.ErrDupKeyName, errno.ErrMultiplePriKey, errno.ErrDupUnique:
-			return true
-		}
-	}
-	return false
 }
 
 func isDeterminedError(err error) bool {
@@ -1555,4 +1569,107 @@ func getDDLJobIDByQuery(ctx context.Context, db *sql.DB, wantQuery string) (int6
 		}
 	}
 	return 0, errors.Trace(rows.Err())
+}
+
+func (tr *TableImporter) preDeduplicate(
+	ctx context.Context,
+	rc *Controller,
+	cp *checkpoints.TableCheckpoint,
+	workingDir string,
+) error {
+	d := &dupDetector{
+		tr:     tr,
+		rc:     rc,
+		cp:     cp,
+		logger: tr.logger,
+	}
+	originalErr := d.run(ctx, workingDir, tr.dupIgnoreRows)
+	if originalErr == nil {
+		return nil
+	}
+
+	if !ErrDuplicateKey.Equal(originalErr) {
+		return errors.Trace(originalErr)
+	}
+
+	var (
+		idxName                          string
+		oneConflictMsg, otherConflictMsg string
+	)
+
+	// provide a more friendly error message
+
+	dupErr := errors.Cause(originalErr).(*errors.Error)
+	conflictIdxID := dupErr.Args()[0].(int64)
+	if conflictIdxID == conflictOnHandle {
+		idxName = "PRIMARY"
+	} else {
+		for _, idxInfo := range tr.tableInfo.Core.Indices {
+			if idxInfo.ID == conflictIdxID {
+				idxName = idxInfo.Name.O
+				break
+			}
+		}
+	}
+	if idxName == "" {
+		tr.logger.Error("cannot find index name", zap.Int64("conflictIdxID", conflictIdxID))
+		return errors.Trace(originalErr)
+	}
+	if !rc.cfg.Checkpoint.Enable {
+		return errors.Errorf("duplicate key in table %s caused by index `%s`, you can turn on checkpoint and re-run to see the conflicting rows",
+			tr.tableName, idxName)
+	}
+	conflictEncodedRowIDs := dupErr.Args()[1].([][]byte)
+	if len(conflictEncodedRowIDs) < 2 {
+		tr.logger.Error("invalid conflictEncodedRowIDs", zap.Int("len", len(conflictEncodedRowIDs)))
+		return errors.Trace(originalErr)
+	}
+	rowID := make([]int64, 2)
+	var err error
+	_, rowID[0], err = codec.DecodeComparableVarint(conflictEncodedRowIDs[0])
+	if err != nil {
+		rowIDHex := hex.EncodeToString(conflictEncodedRowIDs[0])
+		tr.logger.Error("failed to decode rowID",
+			zap.String("rowID", rowIDHex),
+			zap.Error(err))
+		return errors.Trace(originalErr)
+	}
+	_, rowID[1], err = codec.DecodeComparableVarint(conflictEncodedRowIDs[1])
+	if err != nil {
+		rowIDHex := hex.EncodeToString(conflictEncodedRowIDs[1])
+		tr.logger.Error("failed to decode rowID",
+			zap.String("rowID", rowIDHex),
+			zap.Error(err))
+		return errors.Trace(originalErr)
+	}
+
+	tableCp, err := rc.checkpointsDB.Get(ctx, tr.tableName)
+	if err != nil {
+		tr.logger.Error("failed to get table checkpoint", zap.Error(err))
+		return errors.Trace(err)
+	}
+	for _, engineCp := range tableCp.Engines {
+		for _, chunkCp := range engineCp.Chunks {
+			if chunkCp.Chunk.PrevRowIDMax <= rowID[0] && rowID[0] < chunkCp.Chunk.RowIDMax {
+				oneConflictMsg = fmt.Sprintf("row %d counting from offset %d in file %s",
+					rowID[0]-chunkCp.Chunk.PrevRowIDMax,
+					chunkCp.Chunk.Offset,
+					chunkCp.FileMeta.Path)
+			}
+			if chunkCp.Chunk.PrevRowIDMax <= rowID[1] && rowID[1] < chunkCp.Chunk.RowIDMax {
+				otherConflictMsg = fmt.Sprintf("row %d counting from offset %d in file %s",
+					rowID[1]-chunkCp.Chunk.PrevRowIDMax,
+					chunkCp.Chunk.Offset,
+					chunkCp.FileMeta.Path)
+			}
+		}
+	}
+	if oneConflictMsg == "" || otherConflictMsg == "" {
+		tr.logger.Error("cannot find conflict rows by rowID",
+			zap.Int64("rowID[0]", rowID[0]),
+			zap.Int64("rowID[1]", rowID[1]))
+		return errors.Trace(originalErr)
+	}
+	return errors.Errorf("duplicate entry for key '%s', a pair of conflicting rows are (%s, %s)",
+		idxName, oneConflictMsg, otherConflictMsg)
 }

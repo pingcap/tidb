@@ -309,7 +309,7 @@ func GetTimeZoneOffset(ctx context.Context, db QueryExecutor) (time.Duration, er
 		}
 		timeStr = timeStr[1:]
 	}
-	t, err := time.Parse("15:04:05", timeStr)
+	t, err := time.Parse(time.TimeOnly, timeStr)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -606,7 +606,7 @@ func GetTidbLatestTSO(ctx context.Context, db QueryExecutor) (int64, error) {
 	}
 	defer rows.Close()
 
-	for rows.Next() {
+	if rows.Next() {
 		fields, err1 := ScanRow(rows)
 		if err1 != nil {
 			return 0, errors.Trace(err1)
@@ -648,12 +648,11 @@ func GetDBVersion(ctx context.Context, db QueryExecutor) (string, error) {
 	defer result.Close()
 
 	var version sql.NullString
-	for result.Next() {
+	if result.Next() {
 		err := result.Scan(&version)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		break
 	}
 
 	if version.Valid {
@@ -730,7 +729,7 @@ func ColumnName(column string) string {
 }
 
 func escapeName(name string) string {
-	return strings.Replace(name, "`", "``", -1)
+	return strings.ReplaceAll(name, "`", "``")
 }
 
 // ReplacePlaceholder will use args to replace '?', used for log.
@@ -741,7 +740,7 @@ func ReplacePlaceholder(str string, args []string) string {
 		str is "a > ? AND a < ?", args is {'1', '2'},
 		this function will return "a > '1' AND a < '2'"
 	*/
-	newStr := strings.Replace(str, "?", "'%s'", -1)
+	newStr := strings.ReplaceAll(str, "?", "'%s'")
 	return fmt.Sprintf(newStr, util.StringsToInterfaces(args)...)
 }
 

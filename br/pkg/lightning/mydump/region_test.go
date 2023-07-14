@@ -221,6 +221,13 @@ func TestMakeTableRegionsSplitLargeFile(t *testing.T) {
 	assert.Equal(t, int64(0), regions[0].Chunk.Offset)
 	assert.Equal(t, TableFileSizeINF, regions[0].Chunk.EndOffset)
 	assert.Len(t, regions[0].Chunk.Columns, 0)
+
+	// test canceled context will not panic
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for i := 0; i < 20; i++ {
+		_, _ = MakeTableRegions(ctx, divideConfig)
+	}
 }
 
 func TestCompressedMakeSourceFileRegion(t *testing.T) {

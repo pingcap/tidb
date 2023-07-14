@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/multierr"
+	"go.uber.org/zap"
 )
 
 // Iter abstract iterator method for Ingester.
@@ -60,7 +61,7 @@ func (p pebbleIter) Seek(key []byte) bool {
 	return p.SeekGE(key)
 }
 
-func (p pebbleIter) OpType() sst.Pair_OP {
+func (pebbleIter) OpType() sst.Pair_OP {
 	return sst.Pair_Put
 }
 
@@ -126,7 +127,7 @@ func (d *dupDetectIter) flush() {
 }
 
 func (d *dupDetectIter) record(rawKey, key, val []byte) {
-	d.logger.Debug("[detect-dupe] local duplicate key detected",
+	d.logger.Debug("local duplicate key detected", zap.String("category", "detect-dupe"),
 		logutil.Key("key", key),
 		logutil.Key("value", val),
 		logutil.Key("rawKey", rawKey))
@@ -194,7 +195,7 @@ func (d *dupDetectIter) Close() error {
 	return d.iter.Close()
 }
 
-func (d *dupDetectIter) OpType() sst.Pair_OP {
+func (*dupDetectIter) OpType() sst.Pair_OP {
 	return sst.Pair_Put
 }
 
@@ -281,7 +282,7 @@ func (d *dupDBIter) Close() error {
 	return d.iter.Close()
 }
 
-func (d *dupDBIter) OpType() sst.Pair_OP {
+func (*dupDBIter) OpType() sst.Pair_OP {
 	return sst.Pair_Put
 }
 

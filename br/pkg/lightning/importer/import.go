@@ -27,11 +27,9 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
-	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -41,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
@@ -53,11 +50,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -75,10 +71,6 @@ import (
 const (
 	FullLevelCompact = -1
 	Level1Compact    = 1
-)
-
-const (
-	defaultGCLifeTime = 100 * time.Hour
 )
 
 const (
@@ -202,8 +194,9 @@ type Controller struct {
 	ioWorkers     *worker.Pool
 	checksumWorks *worker.Pool
 	pauser        *common.Pauser
+	engineMgr     backend.EngineManager
 	backend       backend.Backend
-	tidbGlue      glue.Glue
+	db            *sql.DB
 
 	alterTableLock sync.Mutex
 	sysVars        map[string]string
@@ -234,6 +227,7 @@ type Controller struct {
 	preInfoGetter       PreImportInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
 	encBuilder          encode.EncodingBuilder
+	tikvModeSwitcher    local.TiKVModeSwitcher
 
 	keyspaceName string
 }
@@ -263,8 +257,8 @@ type ControllerParam struct {
 	OwnExtStorage bool
 	// used by lightning server mode to pause tasks
 	Pauser *common.Pauser
-	// lightning via SQL will implement its glue, to let lightning use host TiDB's environment
-	Glue glue.Glue
+	// DB is a connection pool to TiDB
+	DB *sql.DB
 	// storage interface to write file checkpoints
 	CheckpointStorage storage.ExternalStorage
 	// when CheckpointStorage is not nil, save file checkpoint to it with this name
@@ -304,7 +298,7 @@ func NewImportControllerWithPauser(
 			return nil, common.ErrOpenCheckpoint.Wrap(err).GenWithStackByArgs()
 		}
 	} else {
-		cpdb, err = p.Glue.OpenCheckpointsDB(ctx, cfg)
+		cpdb, err = checkpoints.OpenCheckpointsDB(ctx, cfg)
 		if err != nil {
 			if berrors.Is(err, common.ErrUnknownCheckpointDriver) {
 				return nil, err
@@ -325,11 +319,7 @@ func NewImportControllerWithPauser(
 		cfg.TaskID = taskCp.TaskID
 	}
 
-	// TODO: support Lightning via SQL
-	db, err := p.Glue.GetDB()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	db := p.DB
 	errorMgr := errormanager.New(db, cfg, log.FromContext(ctx))
 	if err := errorMgr.Init(ctx); err != nil {
 		return nil, common.ErrInitErrManager.Wrap(err).GenWithStackByArgs()
@@ -355,12 +345,11 @@ func NewImportControllerWithPauser(
 
 		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			if err := tikv.CheckTiKVVersion(ctx, tls, cfg.TiDB.PdAddr, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
-				if berrors.Is(err, berrors.ErrVersionMismatch) {
-					log.FromContext(ctx).Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
-					cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
-				} else {
+				if !berrors.Is(err, berrors.ErrVersionMismatch) {
 					return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()
 				}
+				log.FromContext(ctx).Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
+				cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
 			}
 		}
 
@@ -369,7 +358,7 @@ func NewImportControllerWithPauser(
 			DB: db,
 		}
 		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName)
-		backendObj, err = local.NewLocalBackend(ctx, tls, backendConfig, regionSizeGetter)
+		backendObj, err = local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -402,16 +391,16 @@ func NewImportControllerWithPauser(
 
 	var wrapper backend.TargetInfoGetter
 	if cfg.TikvImporter.Backend == config.BackendLocal {
-		wrapper = local.NewTargetInfoGetter(tls, p.Glue, cfg.TiDB.PdAddr)
+		wrapper = local.NewTargetInfoGetter(tls, db, cfg.TiDB.PdAddr)
 	} else {
 		wrapper = tidb.NewTargetInfoGetter(db)
 	}
 	ioWorkers := worker.NewPool(ctx, cfg.App.IOConcurrency, "io")
 	targetInfoGetter := &TargetInfoGetterImpl{
-		cfg:          cfg,
-		targetDBGlue: p.Glue,
-		tls:          tls,
-		backend:      wrapper,
+		cfg:     cfg,
+		db:      db,
+		tls:     tls,
+		backend: wrapper,
 	}
 	preInfoGetter, err := NewPreImportInfoGetter(
 		cfg,
@@ -439,8 +428,9 @@ func NewImportControllerWithPauser(
 		ioWorkers:     ioWorkers,
 		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
 		pauser:        p.Pauser,
+		engineMgr:     backend.MakeEngineManager(backendObj),
 		backend:       backendObj,
-		tidbGlue:      p.Glue,
+		db:            db,
 		sysVars:       common.DefaultImportantVariables,
 		tls:           tls,
 		checkTemplate: NewSimpleTemplate(),
@@ -464,6 +454,7 @@ func NewImportControllerWithPauser(
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
 		encBuilder:          encodingBuilder,
+		tikvModeSwitcher:    local.NewTiKVModeSwitcher(tls, cfg.TiDB.PdAddr, log.FromContext(ctx).Logger),
 
 		keyspaceName: p.KeyspaceName,
 	}
@@ -474,7 +465,7 @@ func NewImportControllerWithPauser(
 // Close closes the controller.
 func (rc *Controller) Close() {
 	rc.backend.Close()
-	rc.tidbGlue.GetSQLExecutor().Close()
+	_ = rc.db.Close()
 }
 
 // Run starts the restore task.
@@ -559,12 +550,13 @@ type restoreSchemaWorker struct {
 	jobCh  chan *schemaJob
 	errCh  chan error
 	wg     sync.WaitGroup
-	glue   glue.Glue
+	db     *sql.DB
+	parser *parser.Parser
 	store  storage.ExternalStorage
 }
 
 func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
-	stmts, err := createIfNotExistsStmt(worker.glue.GetParser(), sqlStr, job.dbName, job.tblName)
+	stmts, err := createIfNotExistsStmt(worker.parser, sqlStr, job.dbName, job.tblName)
 	if err != nil {
 		worker.logger.Warn("failed to rewrite statement, will use raw input instead",
 			zap.String("db", job.dbName),
@@ -690,11 +682,7 @@ loop:
 			if session == nil {
 				session, err = func() (*sql.Conn, error) {
 					// TODO: support lightning in SQL
-					db, err := worker.glue.GetDB()
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					return db.Conn(worker.ctx)
+					return worker.db.Conn(worker.ctx)
 				}()
 				if err != nil {
 					worker.wg.Done()
@@ -801,13 +789,16 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	logTask := log.FromContext(ctx).Begin(zap.InfoLevel, "restore all schema")
 	concurrency := mathutil.Min(rc.cfg.App.RegionConcurrency, 8)
 	childCtx, cancel := context.WithCancel(ctx)
+	p := parser.New()
+	p.SetSQLMode(rc.cfg.TiDB.SQLMode)
 	worker := restoreSchemaWorker{
 		ctx:    childCtx,
 		quit:   cancel,
 		logger: log.FromContext(ctx),
 		jobCh:  make(chan *schemaJob, concurrency),
 		errCh:  make(chan error),
-		glue:   rc.tidbGlue,
+		db:     rc.db,
+		parser: p,
 		store:  rc.store,
 	}
 	for i := 0; i < concurrency; i++ {
@@ -917,18 +908,6 @@ func verifyCheckpoint(cfg *config.Config, taskCp *checkpoints.TaskCheckpoint) er
 		if cfg.TikvImporter.Backend == config.BackendLocal && cfg.TikvImporter.SortedKVDir != taskCp.SortedKVDir {
 			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "mydumper.sorted-kv-dir", cfg.TikvImporter.SortedKVDir, taskCp.SortedKVDir)
 		}
-
-		if cfg.TiDB.Host != taskCp.TiDBHost {
-			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "tidb.host", cfg.TiDB.Host, taskCp.TiDBHost)
-		}
-
-		if cfg.TiDB.Port != taskCp.TiDBPort {
-			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "tidb.port", cfg.TiDB.Port, taskCp.TiDBPort)
-		}
-
-		if cfg.TiDB.PdAddr != taskCp.PdAddr {
-			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "tidb.pd-addr", cfg.TiDB.PdAddr, taskCp.PdAddr)
-		}
 	}
 
 	return nil
@@ -1018,7 +997,6 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 		m.ProcessedEngineCounter.WithLabelValues(metric.ChunkStateEstimated, metric.TableResultSuccess).
 			Add(float64(estimatedEngineCnt))
 	}
-	rc.tidbGlue.Record(glue.RecordEstimatedChunk, uint64(estimatedChunkCount))
 	return nil
 }
 
@@ -1188,19 +1166,14 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 		logProgressChan = logProgressTicker.C
 	}
 
-	glueProgressTicker := time.NewTicker(3 * time.Second)
-	closeFuncs = append(closeFuncs, func() {
-		glueProgressTicker.Stop()
-	})
-
 	var switchModeChan <-chan time.Time
 	// tidb backend don't need to switch tikv to import mode
-	if rc.cfg.TikvImporter.Backend != config.BackendTiDB && rc.cfg.Cron.SwitchMode.Duration > 0 {
+	if isLocalBackend(rc.cfg) && rc.cfg.Cron.SwitchMode.Duration > 0 {
 		switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 		cancelFuncs = append(cancelFuncs, func(bool) { switchModeTicker.Stop() })
 		cancelFuncs = append(cancelFuncs, func(do bool) {
 			if do {
-				rc.switchToNormalMode(ctx)
+				rc.tikvModeSwitcher.ToNormalMode(ctx)
 			}
 		})
 		switchModeChan = switchModeTicker.C
@@ -1220,8 +1193,8 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					f()
 				}
 			}()
-			if rc.cfg.Cron.SwitchMode.Duration > 0 {
-				rc.switchToImportMode(ctx)
+			if rc.cfg.Cron.SwitchMode.Duration > 0 && isLocalBackend(rc.cfg) {
+				rc.tikvModeSwitcher.ToImportMode(ctx)
 			}
 			start := time.Now()
 			for {
@@ -1235,7 +1208,8 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 
 				case <-switchModeChan:
 					// periodically switch to import mode, as requested by TiKV 3.0
-					rc.switchToImportMode(ctx)
+					// TiKV will switch back to normal mode if we didn't call this again within 10 minutes
+					rc.tikvModeSwitcher.ToImportMode(ctx)
 
 				case <-logProgressChan:
 					metrics, ok := metric.FromContext(ctx)
@@ -1371,12 +1345,6 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					// verify the total space occupied by sorted-kv-dir is below the quota,
 					// otherwise we perform an emergency import.
 					rc.enforceDiskQuota(ctx)
-
-				case <-glueProgressTicker.C:
-					if m, ok := metric.FromContext(ctx); ok {
-						finished := metric.ReadCounter(m.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
-						rc.tidbGlue.Record(glue.RecordFinishedChunk, uint64(finished))
-					}
 				}
 			}
 		}, func(do bool) {
@@ -1525,8 +1493,8 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			err       error
 		)
 
-		if !rc.taskMgr.CanPauseSchedulerByKeyRange() {
-			logTask.Info("removing PD leader&region schedulers")
+		if rc.cfg.TikvImporter.PausePDSchedulerScope == config.PausePDSchedulerScopeGlobal {
+			logTask.Info("pause pd scheduler of global scope")
 
 			restoreFn, err = rc.taskMgr.CheckAndPausePdSchedulers(ctx)
 			if err != nil {
@@ -1566,7 +1534,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		manager, err := newChecksumManager(ctx, rc, kvStore)
+		manager, err := NewChecksumManager(ctx, rc, kvStore)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1577,13 +1545,6 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			return errors.Trace(err)
 		}
 		defer undo()
-
-		// Drop all secondary indexes before restore.
-		if rc.cfg.TikvImporter.AddIndexBySQL {
-			if err := rc.dropAllIndexes(ctx); err != nil {
-				return err
-			}
-		}
 	}
 
 	type task struct {
@@ -1645,6 +1606,9 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 
 				needPostProcess, err := task.tr.importTable(ctx, rc, task.cp)
+				if err != nil && !common.IsContextCanceledError(err) {
+					task.tr.logger.Error("failed to import table", zap.Error(err))
+				}
 
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
@@ -1794,73 +1758,6 @@ func (rc *Controller) registerTaskToPD(ctx context.Context) (undo func(), _ erro
 	return undo, nil
 }
 
-func (rc *Controller) dropAllIndexes(ctx context.Context) error {
-	for _, dbInfo := range rc.dbInfos {
-		for _, tblInfo := range dbInfo.Tables {
-			if err := rc.dropTableIndexes(ctx, tblInfo); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (rc *Controller) dropTableIndexes(ctx context.Context, tblInfo *checkpoints.TidbTableInfo) error {
-	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
-	logger := log.FromContext(ctx).With(zap.String("table", tableName))
-
-	var remainIndexes []*model.IndexInfo
-	cols := tblInfo.Core.Columns
-loop:
-	for _, idxInfo := range tblInfo.Core.Indices {
-		if idxInfo.State != model.StatePublic {
-			remainIndexes = append(remainIndexes, idxInfo)
-			continue
-		}
-		// Primary key is a cluster index.
-		if idxInfo.Primary && tblInfo.Core.HasClusteredIndex() {
-			remainIndexes = append(remainIndexes, idxInfo)
-			continue
-		}
-		// Skip index that contains auto-increment column.
-		// Because auto colum must be defined as a key.
-		for _, idxCol := range idxInfo.Columns {
-			flag := cols[idxCol.Offset].GetFlag()
-			if mysql.HasAutoIncrementFlag(flag) {
-				remainIndexes = append(remainIndexes, idxInfo)
-				continue loop
-			}
-		}
-
-		var sqlStr string
-		if idxInfo.Primary {
-			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tableName)
-		} else {
-			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tableName, common.EscapeIdentifier(idxInfo.Name.O))
-		}
-
-		db := rc.tidbGlue.GetSQLExecutor()
-		logger.Info("drop index", zap.String("sql", sqlStr))
-		if err := db.ExecuteWithLog(ctx, sqlStr, "drop index", logger); err != nil {
-			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
-				switch merr.Number {
-				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
-					remainIndexes = append(remainIndexes, idxInfo)
-					logger.Info("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
-					continue loop
-				}
-			}
-			return common.ErrDropIndexFailed.Wrap(err).GenWithStackByArgs(common.EscapeIdentifier(idxInfo.Name.O), tableName)
-		}
-	}
-	if len(remainIndexes) < len(tblInfo.Core.Indices) {
-		// Must clone (*model.TableInfo) before modifying it, since it may be referenced in other place.
-		tblInfo.Core = tblInfo.Core.Clone()
-		tblInfo.Core.Indices = remainIndexes
-	}
-	return nil
-}
-
 func addExtendDataForCheckpoint(
 	ctx context.Context,
 	cfg *config.Config,
@@ -1943,45 +1840,6 @@ func (rc *Controller) doCompact(ctx context.Context, level int32) error {
 	)
 }
 
-func (rc *Controller) switchToImportMode(ctx context.Context) {
-	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import)
-}
-
-func (rc *Controller) switchToNormalMode(ctx context.Context) {
-	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
-}
-
-func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
-	// // tidb backend don't need to switch tikv to import mode
-	if isTiDBBackend(rc.cfg) {
-		return
-	}
-
-	log.FromContext(ctx).Info("switch import mode", zap.Stringer("mode", mode))
-
-	// It is fine if we miss some stores which did not switch to Import mode,
-	// since we're running it periodically, so we exclude disconnected stores.
-	// But it is essential all stores be switched back to Normal mode to allow
-	// normal operation.
-	var minState tikv.StoreState
-	if mode == sstpb.SwitchMode_Import {
-		minState = tikv.StoreStateOffline
-	} else {
-		minState = tikv.StoreStateDisconnected
-	}
-	tls := rc.tls.WithHost(rc.cfg.TiDB.PdAddr)
-	// we ignore switch mode failure since it is not fatal.
-	// no need log the error, it is done in kv.SwitchMode already.
-	_ = tikv.ForAllStores(
-		ctx,
-		tls,
-		minState,
-		func(c context.Context, store *tikv.Store) error {
-			return tikv.SwitchMode(c, tls, store.Address, mode)
-		},
-	)
-}
-
 func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 	if !rc.diskQuotaState.CompareAndSwap(diskQuotaStateIdle, diskQuotaStateChecking) {
 		// do not run multiple the disk quota check / import simultaneously.
@@ -1989,6 +1847,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 		return
 	}
 
+	localBackend := rc.backend.(*local.Backend)
 	go func() {
 		// locker is assigned when we detect the disk quota is exceeded.
 		// before the disk quota is confirmed exceeded, we keep the diskQuotaLock
@@ -2016,7 +1875,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			}
 
 			quota := int64(rc.cfg.TikvImporter.DiskQuota)
-			largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := rc.backend.CheckDiskQuota(quota)
+			largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := local.CheckDiskQuota(localBackend, quota)
 			if m, ok := metric.FromContext(ctx); ok {
 				m.LocalStorageUsageBytesGauge.WithLabelValues("disk").Set(float64(totalDiskSize))
 				m.LocalStorageUsageBytesGauge.WithLabelValues("mem").Set(float64(totalMemSize))
@@ -2047,7 +1906,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			}
 
 			// flush all engines so that checkpoints can be updated.
-			if err := rc.backend.FlushAll(ctx); err != nil {
+			if err := rc.backend.FlushAllEngines(ctx); err != nil {
 				logger.Error("flush engine for disk quota failed, check again later", log.ShortError(err))
 				return
 			}
@@ -2060,7 +1919,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			var importErr error
 			for _, engine := range largeEngines {
 				// Use a larger split region size to avoid split the same region by many times.
-				if err := rc.backend.UnsafeImportAndReset(ctx, engine, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio)); err != nil {
+				if err := localBackend.UnsafeImportAndReset(ctx, engine, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio)); err != nil {
 					importErr = multierr.Append(importErr, err)
 				}
 			}
@@ -2076,7 +1935,7 @@ func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 		return nil
 	}
 	// set new collation flag base on tidb config
-	enabled, err := ObtainNewCollationEnabled(ctx, rc.tidbGlue.GetSQLExecutor())
+	enabled, err := ObtainNewCollationEnabled(ctx, rc.db)
 	if err != nil {
 		return err
 	}
@@ -2193,6 +2052,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 			}
 		}
+		if rc.cfg.TikvImporter.PausePDSchedulerScope == config.PausePDSchedulerScopeTable &&
+			!rc.taskMgr.CanPauseSchedulerByKeyRange() {
+			return errors.New("target cluster don't support pause-pd-scheduler-scope=table, the minimal version required is 6.1.0")
+		}
 		if rc.cfg.App.CheckRequirements {
 			needCheck := true
 			if rc.cfg.Checkpoint.Enable {
@@ -2226,7 +2089,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		}
 	}
 
-	if rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements {
+	if rc.cfg.App.CheckRequirements {
 		fmt.Println(rc.checkTemplate.Output())
 	}
 	if !rc.checkTemplate.Success() {

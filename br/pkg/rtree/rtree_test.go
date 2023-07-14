@@ -47,6 +47,10 @@ func TestRangeTree(t *testing.T) {
 		}
 	}
 
+	assertIncomplete([]byte(""), []byte("b"), []rtree.Range{{StartKey: []byte(""), EndKey: []byte("b")}})
+	assertIncomplete([]byte(""), []byte(""), []rtree.Range{{StartKey: []byte(""), EndKey: []byte("")}})
+	assertIncomplete([]byte("b"), []byte(""), []rtree.Range{{StartKey: []byte("b"), EndKey: []byte("")}})
+
 	range0 := newRange([]byte(""), []byte("a"))
 	rangeA := newRange([]byte("a"), []byte("b"))
 	rangeB := newRange([]byte("b"), []byte("c"))
@@ -61,6 +65,7 @@ func TestRangeTree(t *testing.T) {
 			{StartKey: []byte(""), EndKey: []byte("a")},
 			{StartKey: []byte("b"), EndKey: []byte("")},
 		})
+	assertIncomplete([]byte("b"), []byte(""), []rtree.Range{{StartKey: []byte("b"), EndKey: []byte("")}})
 
 	rangeTree.Update(*rangeC)
 	require.Equal(t, 2, rangeTree.Len())

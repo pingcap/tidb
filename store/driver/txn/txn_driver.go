@@ -261,7 +261,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.CommitTSUpperBoundCheck:
 		txn.KVTxn.SetCommitTSUpperBoundCheck(val.(func(commitTS uint64) bool))
 	case kv.RPCInterceptor:
-		txn.KVTxn.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
+		txn.KVTxn.AddRPCInterceptor(val.(interceptor.RPCInterceptor))
 	case kv.AssertionLevel:
 		txn.KVTxn.SetAssertionLevel(val.(kvrpcpb.AssertionLevel))
 	case kv.TableToColumnMaps:
@@ -270,6 +270,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetRequestSourceInternal(val.(bool))
 	case kv.RequestSourceType:
 		txn.KVTxn.SetRequestSourceType(val.(string))
+	case kv.ExplicitRequestSourceType:
+		txn.KVTxn.SetExplicitRequestSourceType(val.(string))
 	case kv.ReplicaReadAdjuster:
 		txn.KVTxn.GetSnapshot().SetReplicaReadAdjuster(val.(txnkv.ReplicaReadAdjuster))
 	case kv.TxnSource:
@@ -333,9 +335,9 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	}
 
 	if isRecord {
-		return extractKeyExistsErrFromHandle(key, value, tblInfo)
+		return ExtractKeyExistsErrFromHandle(key, value, tblInfo)
 	}
-	return extractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
+	return ExtractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
 }
 
 // SetAssertion sets an assertion for the key operation.

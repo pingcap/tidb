@@ -17,13 +17,17 @@ package stmtctx
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -40,6 +44,7 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
@@ -221,7 +226,7 @@ type StatementContext struct {
 		extraWarnings []SQLWarn
 
 		execDetails    execdetails.ExecDetails
-		allExecDetails []*execdetails.DetailsNeedP90
+		detailsSummary execdetails.P90Summary
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
@@ -241,6 +246,7 @@ type StatementContext struct {
 	NotFillCache     bool
 	MemTracker       *memory.Tracker
 	DiskTracker      *disk.Tracker
+	RunawayChecker   *resourcegroup.RunawayChecker
 	IsTiFlash        atomic2.Bool
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
@@ -315,10 +321,14 @@ type StatementContext struct {
 	EnableOptimizeTrace bool
 	// OptimizeTracer indicates the tracer for optimize
 	OptimizeTracer *tracing.OptimizeTracer
+
 	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
 	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
 	EnableOptimizerCETrace bool
 	OptimizerCETrace       []*tracing.CETraceRecord
+
+	EnableOptimizerDebugTrace bool
+	OptimizerDebugTrace       interface{}
 
 	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
 	WaitLockLeaseTime time.Duration
@@ -355,8 +365,9 @@ type StatementContext struct {
 	IsSQLAndPlanRegistered atomic2.Bool
 	// IsReadOnly uses to indicate whether the SQL is read-only.
 	IsReadOnly bool
-	// StatsLoadStatus records StatsLoadedStatus for the index/column which is used in query
-	StatsLoadStatus map[model.TableItemID]string
+	// usedStatsInfo records version of stats of each table used in the query.
+	// It's a map of table physical id -> *UsedStatsInfoForTable
+	usedStatsInfo map[int64]*UsedStatsInfoForTable
 	// IsSyncStatsFailed indicates whether any failure happened during sync stats
 	IsSyncStatsFailed bool
 	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
@@ -383,15 +394,26 @@ type StatementContext struct {
 
 	// MPPQueryInfo stores some id and timestamp of current MPP query statement.
 	MPPQueryInfo struct {
-		QueryID            atomic2.Uint64
-		QueryTS            atomic2.Uint64
-		AllocatedMPPTaskID atomic2.Int64
+		QueryID              atomic2.Uint64
+		QueryTS              atomic2.Uint64
+		AllocatedMPPTaskID   atomic2.Int64
+		AllocatedMPPGatherID atomic2.Uint64
 	}
 
 	// TableStats stores the visited runtime table stats by table id during query
 	TableStats map[int64]interface{}
 	// useChunkAlloc indicates whether statement use chunk alloc
 	useChunkAlloc bool
+	// Check if TiFlash read engine is removed due to strict sql mode.
+	TiFlashEngineRemovedDueToStrictSQLMode bool
+	// CanonicalHashCode try to get the canonical hash code from expression.
+	CanonicalHashCode bool
+	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
+	StaleTSOProvider struct {
+		sync.Mutex
+		value *uint64
+		eval  func() (uint64, error)
+	}
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -918,7 +940,8 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 			e.Code() != errno.ErrBadNumber &&
 			e.Code() != errno.ErrWrongValueForType &&
 			e.Code() != errno.ErrDatetimeFunctionOverflow &&
-			e.Code() != errno.WarnDataTruncated) {
+			e.Code() != errno.WarnDataTruncated &&
+			e.Code() != errno.ErrIncorrectDatetimeValue) {
 		return err
 	}
 
@@ -959,7 +982,7 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.message = ""
 	sc.mu.warnings = nil
 	sc.mu.execDetails = execdetails.ExecDetails{}
-	sc.mu.allExecDetails = make([]*execdetails.DetailsNeedP90, 0, 4)
+	sc.mu.detailsSummary.Reset()
 }
 
 // ResetForRetry resets the changed states during execution.
@@ -983,13 +1006,13 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.RequestCount++
 		sc.MergeScanDetail(details.ScanDetail)
 		sc.MergeTimeDetail(details.TimeDetail)
-		sc.mu.allExecDetails = append(sc.mu.allExecDetails,
-			&execdetails.DetailsNeedP90{
-				BackoffSleep:  details.BackoffSleep,
-				BackoffTimes:  details.BackoffTimes,
-				CalleeAddress: details.CalleeAddress,
-				TimeDetail:    details.TimeDetail,
-			})
+		detail := &execdetails.DetailsNeedP90{
+			BackoffSleep:  details.BackoffSleep,
+			BackoffTimes:  details.BackoffTimes,
+			CalleeAddress: details.CalleeAddress,
+			TimeDetail:    details.TimeDetail,
+		}
+		sc.mu.detailsSummary.Merge(detail)
 	}
 	if commitDetails != nil {
 		if sc.mu.execDetails.CommitDetail == nil {
@@ -1092,7 +1115,7 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	n := len(sc.mu.allExecDetails)
+	n := sc.mu.detailsSummary.NumCopTasks
 	d := &CopTasksDetails{
 		NumCopTasks:       n,
 		MaxBackoffTime:    make(map[string]time.Duration),
@@ -1108,57 +1131,26 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
 	d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
 
-	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.DetailsNeedP90) bool {
-		return i.TimeDetail.ProcessTime < j.TimeDetail.ProcessTime
-	})
-	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].TimeDetail.ProcessTime
-	d.MaxProcessTime = sc.mu.allExecDetails[n-1].TimeDetail.ProcessTime
-	d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
+	d.P90ProcessTime = time.Duration((sc.mu.detailsSummary.ProcessTimePercentile.GetPercentile(0.9)))
+	d.MaxProcessTime = sc.mu.detailsSummary.ProcessTimePercentile.GetMax().D
+	d.MaxProcessAddress = sc.mu.detailsSummary.ProcessTimePercentile.GetMax().Addr
 
-	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.DetailsNeedP90) bool {
-		return i.TimeDetail.WaitTime < j.TimeDetail.WaitTime
-	})
-	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].TimeDetail.WaitTime
-	d.MaxWaitTime = sc.mu.allExecDetails[n-1].TimeDetail.WaitTime
-	d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
+	d.P90WaitTime = time.Duration((sc.mu.detailsSummary.WaitTimePercentile.GetPercentile(0.9)))
+	d.MaxWaitTime = sc.mu.detailsSummary.WaitTimePercentile.GetMax().D
+	d.MaxWaitAddress = sc.mu.detailsSummary.WaitTimePercentile.GetMax().Addr
 
-	// calculate backoff details
-	type backoffItem struct {
-		callee    string
-		sleepTime time.Duration
-		times     int
-	}
-	backoffInfo := make(map[string][]backoffItem)
-	for _, ed := range sc.mu.allExecDetails {
-		for backoff := range ed.BackoffTimes {
-			backoffInfo[backoff] = append(backoffInfo[backoff], backoffItem{
-				callee:    ed.CalleeAddress,
-				sleepTime: ed.BackoffSleep[backoff],
-				times:     ed.BackoffTimes[backoff],
-			})
-		}
-	}
-	for backoff, items := range backoffInfo {
-		if len(items) == 0 {
+	for backoff, items := range sc.mu.detailsSummary.BackoffInfo {
+		if items == nil {
 			continue
 		}
-		slices.SortFunc(items, func(i, j backoffItem) bool {
-			return i.sleepTime < j.sleepTime
-		})
-		n := len(items)
-		d.MaxBackoffAddress[backoff] = items[n-1].callee
-		d.MaxBackoffTime[backoff] = items[n-1].sleepTime
-		d.P90BackoffTime[backoff] = items[n*9/10].sleepTime
+		n := items.ReqTimes
+		d.MaxBackoffAddress[backoff] = items.BackoffPercentile.GetMax().Addr
+		d.MaxBackoffTime[backoff] = items.BackoffPercentile.GetMax().D
+		d.P90BackoffTime[backoff] = time.Duration(items.BackoffPercentile.GetPercentile(0.9))
 
-		var totalTime time.Duration
-		totalTimes := 0
-		for _, it := range items {
-			totalTime += it.sleepTime
-			totalTimes += it.times
-		}
-		d.AvgBackoffTime[backoff] = totalTime / time.Duration(n)
-		d.TotBackoffTime[backoff] = totalTime
-		d.TotBackoffTimes[backoff] = totalTimes
+		d.AvgBackoffTime[backoff] = items.TotBackoffTime / time.Duration(n)
+		d.TotBackoffTime[backoff] = items.TotBackoffTime
+		d.TotBackoffTimes[backoff] = items.TotBackoffTimes
 	}
 	return d
 }
@@ -1202,6 +1194,45 @@ func (sc *StatementContext) UseDynamicPartitionPrune() bool {
 	return sc.UseDynamicPruneMode
 }
 
+// DetachMemDiskTracker detaches the memory and disk tracker from the sessionTracker.
+func (sc *StatementContext) DetachMemDiskTracker() {
+	if sc == nil {
+		return
+	}
+	if sc.MemTracker != nil {
+		sc.MemTracker.Detach()
+	}
+	if sc.DiskTracker != nil {
+		sc.DiskTracker.Detach()
+	}
+}
+
+// SetStaleTSOProvider sets the stale TSO provider.
+func (sc *StatementContext) SetStaleTSOProvider(eval func() (uint64, error)) {
+	sc.StaleTSOProvider.Lock()
+	defer sc.StaleTSOProvider.Unlock()
+	sc.StaleTSOProvider.value = nil
+	sc.StaleTSOProvider.eval = eval
+}
+
+// GetStaleTSO returns the TSO for stale-read usage which calculate from PD's last response.
+func (sc *StatementContext) GetStaleTSO() (uint64, error) {
+	sc.StaleTSOProvider.Lock()
+	defer sc.StaleTSOProvider.Unlock()
+	if sc.StaleTSOProvider.value != nil {
+		return *sc.StaleTSOProvider.value, nil
+	}
+	if sc.StaleTSOProvider.eval == nil {
+		return 0, nil
+	}
+	tso, err := sc.StaleTSOProvider.eval()
+	if err != nil {
+		return 0, err
+	}
+	sc.StaleTSOProvider.value = &tso
+	return tso, nil
+}
+
 // CopTasksDetails collects some useful information of cop-tasks during execution.
 type CopTasksDetails struct {
 	NumCopTasks int
@@ -1240,6 +1271,142 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
 	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
 	return fields
+}
+
+// GetUsedStatsInfo returns the map for recording the used stats during query.
+// If initIfNil is true, it will initialize it when this map is nil.
+func (sc *StatementContext) GetUsedStatsInfo(initIfNil bool) map[int64]*UsedStatsInfoForTable {
+	if sc.usedStatsInfo == nil && initIfNil {
+		sc.usedStatsInfo = make(map[int64]*UsedStatsInfoForTable)
+	}
+	return sc.usedStatsInfo
+}
+
+// RecordedStatsLoadStatusCnt returns the total number of recorded column/index stats status, which is not full loaded.
+func (sc *StatementContext) RecordedStatsLoadStatusCnt() (cnt int) {
+	allStatus := sc.GetUsedStatsInfo(false)
+	for _, status := range allStatus {
+		if status == nil {
+			continue
+		}
+		cnt += status.recordedColIdxCount()
+	}
+	return
+}
+
+// UsedStatsInfoForTable records stats that are used during query and their information.
+type UsedStatsInfoForTable struct {
+	Name                  string
+	TblInfo               *model.TableInfo
+	Version               uint64
+	RealtimeCount         int64
+	ModifyCount           int64
+	ColumnStatsLoadStatus map[int64]string
+	IndexStatsLoadStatus  map[int64]string
+}
+
+// FormatForExplain format the content in the format expected to be printed in the execution plan.
+// case 1: if stats version is 0, print stats:pseudo.
+// case 2: if stats version is not 0, and there are column/index stats that are not full loaded,
+// print stats:partial, then print status of 3 column/index status at most. For the rest, only
+// the count will be printed, in the format like (more: 1 onlyCmsEvicted, 2 onlyHistRemained).
+func (s *UsedStatsInfoForTable) FormatForExplain() string {
+	// statistics.PseudoVersion == 0
+	if s.Version == 0 {
+		return "stats:pseudo"
+	}
+	var b strings.Builder
+	if len(s.ColumnStatsLoadStatus)+len(s.IndexStatsLoadStatus) == 0 {
+		return ""
+	}
+	b.WriteString("stats:partial")
+	outputNumsLeft := 3
+	statusCnt := make(map[string]uint64, 1)
+	var strs []string
+	strs = append(strs, s.collectFromColOrIdxStatus(false, &outputNumsLeft, statusCnt)...)
+	strs = append(strs, s.collectFromColOrIdxStatus(true, &outputNumsLeft, statusCnt)...)
+	b.WriteString("[")
+	b.WriteString(strings.Join(strs, ", "))
+	if len(statusCnt) > 0 {
+		b.WriteString("...(more: ")
+		keys := maps.Keys(statusCnt)
+		slices.Sort(keys)
+		var cntStrs []string
+		for _, key := range keys {
+			cntStrs = append(cntStrs, strconv.FormatUint(statusCnt[key], 10)+" "+key)
+		}
+		b.WriteString(strings.Join(cntStrs, ", "))
+		b.WriteString(")")
+	}
+	b.WriteString("]")
+	return b.String()
+}
+
+// WriteToSlowLog format the content in the format expected to be printed to the slow log, then write to w.
+// The format is table name partition name:version[realtime row count;modify count][index load status][column load status].
+func (s *UsedStatsInfoForTable) WriteToSlowLog(w io.Writer) {
+	ver := "pseudo"
+	// statistics.PseudoVersion == 0
+	if s.Version != 0 {
+		ver = strconv.FormatUint(s.Version, 10)
+	}
+	fmt.Fprintf(w, "%s:%s[%d;%d]", s.Name, ver, s.RealtimeCount, s.ModifyCount)
+	if ver == "pseudo" {
+		return
+	}
+	if len(s.ColumnStatsLoadStatus)+len(s.IndexStatsLoadStatus) > 0 {
+		fmt.Fprintf(w,
+			"[%s][%s]",
+			strings.Join(s.collectFromColOrIdxStatus(false, nil, nil), ","),
+			strings.Join(s.collectFromColOrIdxStatus(true, nil, nil), ","),
+		)
+	}
+}
+
+// collectFromColOrIdxStatus prints the status of column or index stats to a slice
+// of the string in the format of "col/idx name:status".
+// If outputNumsLeft is not nil, this function will output outputNumsLeft column/index
+// status at most, the rest will be counted in statusCnt, which is a map of status->count.
+func (s *UsedStatsInfoForTable) collectFromColOrIdxStatus(
+	forColumn bool,
+	outputNumsLeft *int,
+	statusCnt map[string]uint64,
+) []string {
+	var status map[int64]string
+	if forColumn {
+		status = s.ColumnStatsLoadStatus
+	} else {
+		status = s.IndexStatsLoadStatus
+	}
+	keys := maps.Keys(status)
+	slices.Sort(keys)
+	strs := make([]string, 0, len(status))
+	for _, id := range keys {
+		if outputNumsLeft == nil || *outputNumsLeft > 0 {
+			var name string
+			if s.TblInfo != nil {
+				if forColumn {
+					name = s.TblInfo.FindColumnNameByID(id)
+				} else {
+					name = s.TblInfo.FindIndexNameByID(id)
+				}
+			}
+			if len(name) == 0 {
+				name = "ID " + strconv.FormatInt(id, 10)
+			}
+			strs = append(strs, name+":"+status[id])
+			if outputNumsLeft != nil {
+				*outputNumsLeft--
+			}
+		} else if statusCnt != nil {
+			statusCnt[status[id]] = statusCnt[status[id]] + 1
+		}
+	}
+	return strs
+}
+
+func (s *UsedStatsInfoForTable) recordedColIdxCount() int {
+	return len(s.IndexStatsLoadStatus) + len(s.ColumnStatsLoadStatus)
 }
 
 // StatsLoadResult indicates result for StatsLoad

@@ -272,6 +272,7 @@ func TestExpBackoffEstimation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // estRows won't be updated if hit cache.
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table exp_backoff(a int, b int, c int, d int, index idx(a, b, c, d))")
 	tk.MustExec("insert into exp_backoff values(1, 1, 1, 1), (1, 1, 1, 2), (1, 1, 2, 3), (1, 2, 2, 4), (1, 2, 3, 5)")
@@ -666,11 +667,7 @@ func TestShowHistogramsLoadStatus(t *testing.T) {
 	require.NoError(t, h.Update(dom.InfoSchema()))
 	rows := tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Rows()
 	for _, row := range rows {
-		if row[3] == "a" || row[3] == "idx" {
-			require.Equal(t, "allLoaded", row[10].(string))
-		} else {
-			require.Equal(t, "allEvicted", row[10].(string))
-		}
+		require.Equal(t, "allEvicted", row[10].(string))
 	}
 }
 
@@ -770,7 +767,6 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 	require.NoError(t, err)
 	for i := 1; i <= 2; i++ {
 		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
-			Count:             500000,
 			Histogram:         *mockStatsHistogram(int64(i), colValues, 1000, types.NewFieldType(mysql.TypeLonglong)),
 			Info:              tblInfo.Columns[i-1],
 			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
@@ -781,19 +777,33 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 	stat := h.GetTableStats(tblInfo)
 	stat.HistColl = mockStatsTbl.HistColl
 
-	testKit.MustQuery("explain format = 'brief' " +
-		"select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b").
-		Check(testkit.Rows(
-			"IndexJoin 1000000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
-			"├─TableReader(Build) 1000.00 root  data:Selection",
-			"│ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
-			"│   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-			"└─IndexLookUp(Probe) 1000000.00 root  ",
-			"  ├─Selection(Build) 500000000.00 cop[tikv]  not(isnull(test.t.b))",
-			"  │ └─IndexRangeScan 500000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
-			"  └─Selection(Probe) 1000000.00 cop[tikv]  eq(test.t.a, 0)",
-			"    └─TableRowIDScan 500000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		))
+	query := "explain format = 'brief' " +
+		"select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b"
+
+	testKit.MustQuery(query).Check(testkit.Rows(
+		"IndexJoin 1000000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+		"├─TableReader(Build) 1000.00 root  data:Selection",
+		"│ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+		"│   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─IndexLookUp(Probe) 1000000.00 root  ",
+		"  ├─Selection(Build) 500000000.00 cop[tikv]  not(isnull(test.t.b))",
+		"  │ └─IndexRangeScan 500000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+		"  └─Selection(Probe) 1000000.00 cop[tikv]  eq(test.t.a, 0)",
+		"    └─TableRowIDScan 500000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+	))
+
+	testKit.MustExec("set @@tidb_opt_fix_control = '44855:ON'")
+	testKit.MustQuery(query).Check(testkit.Rows(
+		"IndexJoin 1000000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+		"├─TableReader(Build) 1000.00 root  data:Selection",
+		"│ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+		"│   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─IndexLookUp(Probe) 1000000.00 root  ",
+		"  ├─Selection(Build) 1000000.00 cop[tikv]  not(isnull(test.t.b))",
+		"  │ └─IndexRangeScan 1000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+		"  └─Selection(Probe) 1000000.00 cop[tikv]  eq(test.t.a, 0)",
+		"    └─TableRowIDScan 1000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+	))
 }
 
 func TestOrderingIdxSelectivityThreshold(t *testing.T) {
@@ -820,7 +830,6 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	pkColValues, err := generateIntDatum(1, 100000)
 	require.NoError(t, err)
 	mockStatsTbl.Columns[1] = &statistics.Column{
-		Count:             100000,
 		Histogram:         *mockStatsHistogram(1, pkColValues, 1, types.NewFieldType(mysql.TypeLonglong)),
 		Info:              tblInfo.Columns[0],
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
@@ -837,7 +846,6 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 
 	for i := 2; i <= 3; i++ {
 		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
-			Count:             100000,
 			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
 			Info:              tblInfo.Columns[i-1],
 			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
@@ -878,4 +886,20 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 		})
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func TestIssue44369(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index iab(a,b));")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t value(1,1);")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t;")
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	tk.MustExec("alter table t rename column b to bb;")
+	tk.MustExec("select * from t where a = 10 and bb > 20;")
 }

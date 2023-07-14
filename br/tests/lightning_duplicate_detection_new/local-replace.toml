@@ -1,0 +1,8 @@
+[conflict]
+max-record-rows = 1000
+
+[checkpoint]
+driver = "mysql"
+
+[tikv-importer]
+on-duplicate = "replace"

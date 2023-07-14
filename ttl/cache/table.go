@@ -107,20 +107,14 @@ type PhysicalTable struct {
 	TimeColumn *model.ColumnInfo
 }
 
-// NewPhysicalTable create a new PhysicalTable
-func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.CIStr) (*PhysicalTable, error) {
+// NewBasePhysicalTable create a new PhysicalTable with specific timeColunm.
+func NewBasePhysicalTable(schema model.CIStr,
+	tbl *model.TableInfo,
+	partition model.CIStr,
+	timeColumn *model.ColumnInfo,
+) (*PhysicalTable, error) {
 	if tbl.State != model.StatePublic {
 		return nil, errors.Errorf("table '%s.%s' is not a public table", schema, tbl.Name)
-	}
-
-	ttlInfo := tbl.TTLInfo
-	if ttlInfo == nil {
-		return nil, errors.Errorf("table '%s.%s' is not a ttl table", schema, tbl.Name)
-	}
-
-	timeColumn := tbl.FindPublicColumnByName(ttlInfo.ColumnName.L)
-	if timeColumn == nil {
-		return nil, errors.Errorf("time column '%s' is not public in ttl table '%s.%s'", ttlInfo.ColumnName, schema, tbl.Name)
 	}
 
 	keyColumns, keyColumTypes, err := getTableKeyColumns(tbl)
@@ -166,6 +160,21 @@ func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.
 	}, nil
 }
 
+// NewPhysicalTable create a new PhysicalTable
+func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.CIStr) (*PhysicalTable, error) {
+	ttlInfo := tbl.TTLInfo
+	if ttlInfo == nil {
+		return nil, errors.Errorf("table '%s.%s' is not a ttl table", schema, tbl.Name)
+	}
+
+	timeColumn := tbl.FindPublicColumnByName(ttlInfo.ColumnName.L)
+	if timeColumn == nil {
+		return nil, errors.Errorf("time column '%s' is not public in ttl table '%s.%s'", ttlInfo.ColumnName, schema, tbl.Name)
+	}
+
+	return NewBasePhysicalTable(schema, tbl, partition, timeColumn)
+}
+
 // ValidateKeyPrefix validates a key prefix
 func (t *PhysicalTable) ValidateKeyPrefix(key []types.Datum) error {
 	if len(key) > len(t.KeyColumns) {
@@ -175,7 +184,8 @@ func (t *PhysicalTable) ValidateKeyPrefix(key []types.Datum) error {
 }
 
 // EvalExpireTime returns the expired time
-func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session, now time.Time) (expire time.Time, err error) {
+func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
+	now time.Time) (expire time.Time, err error) {
 	tz := se.GetSessionVars().Location()
 
 	expireExpr := t.TTLInfo.IntervalExprStr
@@ -184,7 +194,8 @@ func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session, 
 	var rows []chunk.Row
 	rows, err = se.ExecuteSQL(
 		ctx,
-		// FROM_UNIXTIME does not support negative value, so we use `FROM_UNIXTIME(0) + INTERVAL <current_ts>` to present current time
+		// FROM_UNIXTIME does not support negative value, so we use `FROM_UNIXTIME(0) + INTERVAL <current_ts>`
+		// to present current time
 		fmt.Sprintf("SELECT FROM_UNIXTIME(0) + INTERVAL %d SECOND - INTERVAL %s %s", now.Unix(), expireExpr, unit.String()),
 	)
 
@@ -319,9 +330,11 @@ func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storag
 	return scanRanges, nil
 }
 
-func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storage, startKey, endKey kv.Key, splitCnt int) ([]kv.KeyRange, error) {
+func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storage,
+	startKey, endKey kv.Key, splitCnt int) ([]kv.KeyRange, error) {
 	regionCache := store.GetRegionCache()
-	regionIDs, err := regionCache.ListRegionIDsInKeyRange(tikv.NewBackofferWithVars(ctx, 20000, nil), startKey, endKey)
+	regionIDs, err := regionCache.ListRegionIDsInKeyRange(
+		tikv.NewBackofferWithVars(ctx, 20000, nil), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +343,8 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 	oversizeCnt := len(regionIDs) % splitCnt
 	ranges := make([]kv.KeyRange, 0, mathutil.Min(len(regionIDs), splitCnt))
 	for len(regionIDs) > 0 {
-		startRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil), regionIDs[0])
+		startRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil),
+			regionIDs[0])
 		if err != nil {
 			return nil, err
 		}
@@ -340,7 +354,8 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 			endRegionIdx++
 		}
 
-		endRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil), regionIDs[endRegionIdx])
+		endRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil),
+			regionIDs[endRegionIdx])
 		if err != nil {
 			return nil, err
 		}
@@ -370,7 +385,8 @@ func init() {
 	emptyBytesHandleKey = key
 }
 
-// GetNextIntHandle is used for int handle tables. It returns the min handle whose encoded key is or after argument `key`
+// GetNextIntHandle is used for int handle tables.
+// It returns the min handle whose encoded key is or after argument `key`
 // If it cannot find a valid value, a null datum will be returned.
 func GetNextIntHandle(key kv.Key, recordPrefix []byte) kv.Handle {
 	if key.Cmp(recordPrefix) > 0 && !key.HasPrefix(recordPrefix) {

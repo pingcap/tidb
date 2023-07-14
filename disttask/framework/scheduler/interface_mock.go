@@ -63,9 +63,15 @@ func (t *MockTaskTable) GetSubtaskInStates(instanceID string, taskID int64, stat
 	}
 }
 
-// UpdateSubtaskState implements SubtaskTable.UpdateSubtaskState.
-func (t *MockTaskTable) UpdateSubtaskState(id int64, state string) error {
+// UpdateSubtaskStateAndError implements SubtaskTable.UpdateSubtaskState.
+func (t *MockTaskTable) UpdateSubtaskStateAndError(id int64, state string, _ error) error {
 	args := t.Called(id, state)
+	return args.Error(0)
+}
+
+// FinishSubtask implements SubtaskTable.FinishSubtask
+func (t *MockTaskTable) FinishSubtask(id int64, meta []byte) error {
+	args := t.Called(id, meta)
 	return args.Error(0)
 }
 
@@ -73,6 +79,11 @@ func (t *MockTaskTable) UpdateSubtaskState(id int64, state string) error {
 func (t *MockTaskTable) HasSubtasksInStates(instanceID string, taskID int64, states ...interface{}) (bool, error) {
 	args := t.Called(instanceID, taskID, states)
 	return args.Bool(0), args.Error(1)
+}
+
+// UpdateErrorToSubtask implements SubtaskTable.UpdateErrorToSubtask.
+func (*MockTaskTable) UpdateErrorToSubtask(_ string, err error) error {
+	return err
 }
 
 // MockPool is a mock of Pool.
@@ -124,9 +135,21 @@ func (m *MockScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 }
 
 // SplitSubtask implements Scheduler.SplitSubtask.
-func (m *MockScheduler) SplitSubtask(subtask []byte) []proto.MinimalTask {
-	args := m.Called(subtask)
-	return args.Get(0).([]proto.MinimalTask)
+func (m *MockScheduler) SplitSubtask(ctx context.Context, subtask []byte) ([]proto.MinimalTask, error) {
+	args := m.Called(ctx, subtask)
+	if args.Error(1) != nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]proto.MinimalTask), nil
+}
+
+// OnSubtaskFinished implements Scheduler.OnSubtaskFinished.
+func (m *MockScheduler) OnSubtaskFinished(ctx context.Context, subtask []byte) ([]byte, error) {
+	args := m.Called(ctx, subtask)
+	if args.Error(1) != nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]byte), nil
 }
 
 // CleanupSubtaskExecEnv implements Scheduler.CleanupSubtaskExecEnv.
@@ -184,3 +207,8 @@ type MockMinimalTask struct{}
 
 // IsMinimalTask implements MinimalTask.IsMinimalTask.
 func (MockMinimalTask) IsMinimalTask() {}
+
+// String is used to implement the fmt.Stringer interface.
+func (MockMinimalTask) String() string {
+	return "mock minimal task"
+}

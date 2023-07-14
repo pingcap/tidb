@@ -1321,7 +1321,7 @@ func TestCurrentDate(t *testing.T) {
 
 func TestCurrentTime(t *testing.T) {
 	ctx := createContext(t)
-	tfStr := "15:04:05"
+	tfStr := time.TimeOnly
 
 	last := time.Now()
 	fc := funcs[ast.CurrentTime]
@@ -1852,11 +1852,11 @@ func TestUnixTimestamp(t *testing.T) {
 		{0, types.NewIntDatum(20151113102019), types.KindInt64, "1447410019"},                                                          // YYYYMMDDHHMMSS
 		{0, types.NewStringDatum("2015-11-13 10:20:19"), types.KindInt64, "1447410019"},
 		{0, types.NewStringDatum("2015-11-13 10:20:19.012"), types.KindMysqlDecimal, "1447410019.012"},
-		{0, types.NewStringDatum("1970-01-01 00:00:00"), types.KindInt64, "0"},                               // Min timestamp
-		{0, types.NewStringDatum("2038-01-19 03:14:07.999999"), types.KindMysqlDecimal, "2147483647.999999"}, // Max timestamp
-		{0, types.NewStringDatum("2017-00-02"), types.KindInt64, "0"},                                        // Invalid date
-		{0, types.NewStringDatum("1969-12-31 23:59:59.999999"), types.KindMysqlDecimal, "0"},                 // Invalid timestamp
-		{0, types.NewStringDatum("2038-01-19 03:14:08"), types.KindInt64, "0"},                               // Invalid timestamp
+		{0, types.NewStringDatum("1970-01-01 00:00:00"), types.KindInt64, "0"},                                // Min timestamp
+		{0, types.NewStringDatum("3001-01-18 23:59:59.999999"), types.KindMysqlDecimal, "32536771199.999999"}, // Max timestamp
+		{0, types.NewStringDatum("2017-00-02"), types.KindInt64, "0"},                                         // Invalid date
+		{0, types.NewStringDatum("1969-12-31 23:59:59.999999"), types.KindMysqlDecimal, "0"},                  // Invalid timestamp
+		{0, types.NewStringDatum("3001-01-19 00:00:00.000000"), types.KindMysqlDecimal, "0"},                  // Invalid timestamp
 		// Below tests irregular inputs.
 		// {0, types.NewIntDatum(0), types.KindInt64, "0"},
 		// {0, types.NewIntDatum(-1), types.KindInt64, "0"},

@@ -40,7 +40,6 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -93,25 +92,6 @@ func WithPDClientConfig(client config.PDClient) Option {
 	return func(c *TiKVDriver) {
 		c.pdConfig = client
 	}
-}
-
-// TrySetupGlobalResourceController tries to setup global resource controller.
-func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv.Storage) error {
-	var (
-		store *tikvStore
-		ok    bool
-	)
-	if store, ok = s.(*tikvStore); !ok {
-		return errors.New("cannot setup up resource controller, should use tikv storage")
-	}
-
-	control, err := rmclient.NewResourceGroupController(ctx, serverID, store.GetPDClient(), nil, rmclient.WithMaxWaitDuration(time.Second*30))
-	if err != nil {
-		return err
-	}
-	tikv.SetResourceControlInterceptor(control)
-	control.Start(ctx)
-	return nil
 }
 
 func getKVStore(path string, tls config.Security) (kv.Storage, error) {
@@ -188,11 +168,10 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		),
 		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
 		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
-	pdCli = util.InterceptedPDClient{Client: pdCli}
-
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	pdCli = util.InterceptedPDClient{Client: pdCli}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
 	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
@@ -234,7 +213,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		tikv.WithCodec(codec),
 	)
 
-	s, err = tikv.NewKVStore(uuid, pdClient, spkv, rpcClient)
+	s, err = tikv.NewKVStore(uuid, pdClient, spkv, rpcClient, tikv.WithPDHTTPClient(tlsConfig, etcdAddrs))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

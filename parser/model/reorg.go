@@ -83,7 +83,8 @@ const (
 	// BackfillStateReadyToMerge is the state that the temporary index's records are ready to be merged back
 	// to the origin index.
 	// In this state, the index's write and delete operations are copied to a temporary index.
-	// This state is used to make sure that all the TiDB instances are aware of the copy during the merge(BackfillStateMerging).
+	// This state is used to make sure that all the TiDB instances are aware of the copy
+	// during the merge(BackfillStateMerging).
 	BackfillStateReadyToMerge
 	// BackfillStateMerging is the state that the temp index is merging back to the origin index.
 	// In this state, the index's write and delete operations are copied to a temporary index.

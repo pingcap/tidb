@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -88,7 +89,7 @@ var (
 			Priority:   model.MediumPriorityValue,
 		},
 		ID:    defaultGroupID,
-		Name:  model.NewCIStr("default"),
+		Name:  model.NewCIStr(resourcegroup.DefaultResourceGroupName),
 		State: model.StatePublic,
 	}
 )
@@ -872,6 +873,32 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	return errors.Trace(err)
 }
 
+// IterTables iterates all the table at once, in order to avoid oom.
+func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) error {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	err := m.txn.HGetIter(dbKey, func(r structure.HashPair) error {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			return nil
+		}
+
+		tbInfo := &model.TableInfo{}
+		err := json.Unmarshal(r.Value, tbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		err = fn(tbInfo)
+		return errors.Trace(err)
+	})
+	return errors.Trace(err)
+}
+
 // ListTables shows all tables in database.
 func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
@@ -1000,7 +1027,7 @@ func (m *Meta) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		groups = append(groups, group)
-		hasDefault = hasDefault || (group.Name.L == "default")
+		hasDefault = hasDefault || (group.Name.L == resourcegroup.DefaultResourceGroupName)
 	}
 	if !hasDefault {
 		groups = append(groups, defaultRGroupMeta)

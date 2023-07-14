@@ -16,6 +16,7 @@ go_library(
         "pool.go",
         "row.go",
         "row_container.go",
+        "row_container_reader.go",
     ],
     importpath = "github.com/pingcap/tidb/util/chunk",
     visibility = ["//visibility:public"],
@@ -58,6 +59,7 @@ go_test(
     embed = [":chunk"],
     flaky = True,
     race = "on",
+    shard_count = 50,
     deps = [
         "//config",
         "//parser/mysql",

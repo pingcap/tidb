@@ -99,7 +99,8 @@ func (c *CheckpointAdvancer) Config() config.Config {
 
 // GetCheckpointInRange scans the regions in the range,
 // collect them to the collector.
-func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte, collector *clusterCollector) error {
+func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte,
+	collector *clusterCollector) error {
 	log.Debug("scanning range", logutil.Key("start", start), logutil.Key("end", end))
 	iter := IterateRegion(c.env, start, end)
 	for !iter.Done() {
@@ -131,7 +132,8 @@ func (c *CheckpointAdvancer) recordTimeCost(message string, fields ...zap.Field)
 }
 
 // tryAdvance tries to advance the checkpoint ts of a set of ranges which shares the same checkpoint.
-func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int, getRange func(int) kv.KeyRange) (err error) {
+func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
+	getRange func(int) kv.KeyRange) (err error) {
 	defer c.recordTimeCost("try advance", zap.Int("len", length))()
 	defer utils.PanicToErr(&err)
 
@@ -177,7 +179,8 @@ func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValueSortedFull)) {
 	f(c.checkpoints)
 }
 
-func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context, threshold time.Duration) (uint64, error) {
+func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
+	threshold time.Duration) (uint64, error) {
 	var targets []spans.Valued
 	var minValue spans.Valued
 	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
@@ -187,7 +190,7 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 		})
 		minValue = vsf.Min()
 	})
-	log.Info("[log backup advancer hint] current last region",
+	log.Info("current last region", zap.String("category", "log backup advancer hint"),
 		zap.Stringer("min", minValue), zap.Int("for-polling", len(targets)),
 		zap.String("min-ts", oracle.GetTimeFromTS(minValue.Value).Format(time.RFC3339)))
 	if len(targets) == 0 {
@@ -263,16 +266,17 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 				return
 			case e, ok := <-ch:
 				if !ok {
-					log.Info("[log backup advancer] Task watcher exits due to stream ends.")
+					log.Info("Task watcher exits due to stream ends.", zap.String("category", "log backup advancer"))
 					return
 				}
-				log.Info("[log backup advancer] Meet task event", zap.Stringer("event", &e))
+				log.Info("Meet task event", zap.String("category", "log backup advancer"), zap.Stringer("event", &e))
 				if err := c.onTaskEvent(ctx, e); err != nil {
 					if errors.Cause(e.Err) != context.Canceled {
 						log.Error("listen task meet error, would reopen.", logutil.ShortError(err))
 						time.AfterFunc(c.cfg.BackoffTime, func() { c.StartTaskListener(ctx) })
 					}
-					log.Info("[log backup advancer] Task watcher exits due to some error.", logutil.ShortError(err))
+					log.Info("Task watcher exits due to some error.", zap.String("category", "log backup advancer"),
+						logutil.ShortError(err))
 					return
 				}
 			}
@@ -294,7 +298,8 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		if err != nil {
 			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
 		}
-		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)), zap.Uint64("current-checkpoint", p))
+		log.Info("added event", zap.Stringer("task", e.Info),
+			zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)), zap.Uint64("current-checkpoint", p))
 	case EventDel:
 		utils.LogBackupTaskCountDec()
 		c.task = nil
@@ -320,7 +325,8 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 
 func (c *CheckpointAdvancer) setCheckpoint(cp uint64) bool {
 	if cp < c.lastCheckpoint {
-		log.Warn("failed to update global checkpoint: stale", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
+		log.Warn("failed to update global checkpoint: stale",
+			zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
 		return false
 	}
 	if cp <= c.lastCheckpoint {
@@ -332,7 +338,8 @@ func (c *CheckpointAdvancer) setCheckpoint(cp uint64) bool {
 }
 
 // advanceCheckpointBy advances the checkpoint by a checkpoint getter function.
-func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpoint func(context.Context) (uint64, error)) error {
+func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context,
+	getCheckpoint func(context.Context) (uint64, error)) error {
 	start := time.Now()
 	cp, err := getCheckpoint(ctx)
 	if err != nil {
@@ -387,7 +394,8 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 		return nil
 	}
 	if err := c.subscriber.UpdateStoreTopology(ctx); err != nil {
-		log.Warn("[log backup advancer] Error when updating store topology.", logutil.ShortError(err))
+		log.Warn("Error when updating store topology.",
+			zap.String("category", "log backup advancer"), logutil.ShortError(err))
 	}
 	c.subscriber.HandleErrors(ctx)
 	return c.subscriber.PendingErrors()
@@ -407,10 +415,12 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 			c.lastCheckpoint-1, p)
 	}
 	if p <= c.lastCheckpoint-1 {
-		log.Info("updated log backup GC safe point.", zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint-1))
+		log.Info("updated log backup GC safe point.",
+			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint-1))
 	}
 	if p > c.lastCheckpoint-1 {
-		log.Warn("update log backup GC safe point failed: stale.", zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint-1))
+		log.Warn("update log backup GC safe point failed: stale.",
+			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint-1))
 	}
 	return nil
 }
@@ -418,7 +428,8 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
 	threshold := c.Config().GetDefaultStartPollThreshold()
 	if err := c.subscribeTick(cx); err != nil {
-		log.Warn("[log backup advancer] Subscriber meet error, would polling the checkpoint.", logutil.ShortError(err))
+		log.Warn("Subscriber meet error, would polling the checkpoint.", zap.String("category", "log backup advancer"),
+			logutil.ShortError(err))
 		threshold = c.Config().GetSubscriberErrorStartPollThreshold()
 	}
 
@@ -445,13 +456,13 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	defer cancel()
 	err := c.optionalTick(cx)
 	if err != nil {
-		log.Warn("[log backup advancer] option tick failed.", logutil.ShortError(err))
+		log.Warn("option tick failed.", zap.String("category", "log backup advancer"), logutil.ShortError(err))
 		errs = multierr.Append(errs, err)
 	}
 
 	err = c.importantTick(ctx)
 	if err != nil {
-		log.Warn("[log backup advancer] important tick failed.", logutil.ShortError(err))
+		log.Warn("important tick failed.", zap.String("category", "log backup advancer"), logutil.ShortError(err))
 		errs = multierr.Append(errs, err)
 	}
 

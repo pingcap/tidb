@@ -6,6 +6,7 @@ header:
     - "docs/"
     - "br/"
     - ".gitignore"
+    - ".gitmodules"
     - ".dockerignore"
     - ".gitattributes"
     - ".cilinter.yaml"
@@ -14,6 +15,7 @@ header:
     - "LICENSES/"
     - "**/BUILD.bazel"
     - "WORKSPACE"
+    - "WORKSPACE.patchgo"
     - ".bazelrc"
     - "**/*.key"
     - "**/*.md"
@@ -44,4 +46,6 @@ header:
     - "**/*.zst"
     - ".bazelversion"
     - "build/image/.ci_bazel"
+    - "**/OWNERS"
+    - "OWNERS_ALIASES"
   comment: on-failure

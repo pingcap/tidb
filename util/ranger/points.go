@@ -171,7 +171,7 @@ func FullRange() Ranges {
 
 // FullNotNullRange is (-∞, +∞) for Range.
 func FullNotNullRange() Ranges {
-	return Ranges{{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+	return Ranges{{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)}}
 }
 
 // NullRange is [null, null] for Range.

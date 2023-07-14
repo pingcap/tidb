@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/testkit"
@@ -30,7 +32,7 @@ import (
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 	}
@@ -41,8 +43,11 @@ func TestGlobalTaskTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-
-	gm := storage.NewTaskManager(context.Background(), tk.Session())
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	gm := storage.NewTaskManager(context.Background(), pool)
 
 	storage.SetTaskManager(gm)
 	gm, err := storage.GetTaskManager()
@@ -76,7 +81,7 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.Equal(t, task, task4[0])
 
 	task.State = proto.TaskStateRunning
-	err = gm.UpdateGlobalTask(task)
+	err = gm.UpdateGlobalTaskAndAddSubTasks(task, nil)
 	require.NoError(t, err)
 
 	task5, err := gm.GetGlobalTasksInStates(proto.TaskStateRunning)
@@ -91,20 +96,36 @@ func TestGlobalTaskTable(t *testing.T) {
 	// test cannot insert task with dup key
 	_, err = gm.AddNewGlobalTask("key1", "test2", 4, []byte("test2"))
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'key1' for key 'tidb_global_task.task_key'")
+
+	// test cancel global task
+	id, err = gm.AddNewGlobalTask("key2", "test", 4, []byte("test"))
+	require.NoError(t, err)
+
+	cancelling, err := gm.IsGlobalTaskCancelling(id)
+	require.NoError(t, err)
+	require.False(t, cancelling)
+
+	require.NoError(t, gm.CancelGlobalTask(id))
+	cancelling, err = gm.IsGlobalTaskCancelling(id)
+	require.NoError(t, err)
+	require.True(t, cancelling)
 }
 
 func TestSubTaskTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-
-	sm := storage.NewTaskManager(context.Background(), tk.Session())
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	sm := storage.NewTaskManager(context.Background(), pool)
 
 	storage.SetTaskManager(sm)
 	sm, err := storage.GetTaskManager()
 	require.NoError(t, err)
 
-	err = sm.AddNewSubTask(1, "tidb1", []byte("test"), proto.TaskTypeExample, false)
+	err = sm.AddNewSubTask(1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false)
 	require.NoError(t, err)
 
 	nilTask, err := sm.GetSubtaskInStates("tidb2", 1, proto.TaskStatePending)
@@ -147,7 +168,7 @@ func TestSubTaskTable(t *testing.T) {
 	err = sm.UpdateSubtaskHeartbeat("tidb1", 1, time.Now())
 	require.NoError(t, err)
 
-	err = sm.UpdateSubtaskState(1, proto.TaskStateRunning)
+	err = sm.UpdateSubtaskStateAndError(1, proto.TaskStateRunning, nil)
 	require.NoError(t, err)
 
 	task, err = sm.GetSubtaskInStates("tidb1", 1, proto.TaskStatePending)
@@ -177,10 +198,134 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	err = sm.AddNewSubTask(2, "tidb1", []byte("test"), proto.TaskTypeExample, true)
+	err = sm.AddNewSubTask(2, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, true)
 	require.NoError(t, err)
 
 	cnt, err = sm.GetSubtaskInStatesCnt(2, proto.TaskStateRevertPending)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), cnt)
+
+	subtasks, err := sm.GetSucceedSubtasksByStep(2, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subtasks, 0)
+	err = sm.FinishSubtask(2, []byte{})
+	require.NoError(t, err)
+	subtasks, err = sm.GetSucceedSubtasksByStep(2, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subtasks, 1)
+}
+
+func TestBothGlobalAndSubTaskTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	sm := storage.NewTaskManager(context.Background(), pool)
+
+	storage.SetTaskManager(sm)
+	sm, err := storage.GetTaskManager()
+	require.NoError(t, err)
+
+	id, err := sm.AddNewGlobalTask("key1", "test", 4, []byte("test"))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), id)
+
+	task, err := sm.GetNewGlobalTask()
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStatePending, task.State)
+
+	// isSubTaskRevert: false
+	task.State = proto.TaskStateRunning
+	subTasks := []*proto.Subtask{
+		{
+			Type:        proto.TaskTypeExample,
+			SchedulerID: "instance1",
+			Meta:        []byte("m1"),
+		},
+		{
+			Type:        proto.TaskTypeExample,
+			SchedulerID: "instance2",
+			Meta:        []byte("m2"),
+		},
+	}
+	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks)
+	require.NoError(t, err)
+
+	task, err = sm.GetGlobalTaskByID(1)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateRunning, task.State)
+
+	subtask1, err := sm.GetSubtaskInStates("instance1", 1, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), subtask1.ID)
+	require.Equal(t, proto.TaskTypeExample, subtask1.Type)
+	require.Equal(t, []byte("m1"), subtask1.Meta)
+
+	subtask2, err := sm.GetSubtaskInStates("instance2", 1, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), subtask2.ID)
+	require.Equal(t, proto.TaskTypeExample, subtask2.Type)
+	require.Equal(t, []byte("m2"), subtask2.Meta)
+
+	cnt, err := sm.GetSubtaskInStatesCnt(1, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), cnt)
+
+	// isSubTaskRevert: true
+	task.State = proto.TaskStateReverting
+	subTasks = []*proto.Subtask{
+		{
+			Type:        proto.TaskTypeExample,
+			SchedulerID: "instance3",
+			Meta:        []byte("m3"),
+		},
+		{
+			Type:        proto.TaskTypeExample,
+			SchedulerID: "instance4",
+			Meta:        []byte("m4"),
+		},
+	}
+	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks)
+	require.NoError(t, err)
+
+	task, err = sm.GetGlobalTaskByID(1)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateReverting, task.State)
+
+	subtask1, err = sm.GetSubtaskInStates("instance3", 1, proto.TaskStateRevertPending)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), subtask1.ID)
+	require.Equal(t, proto.TaskTypeExample, subtask1.Type)
+	require.Equal(t, []byte("m3"), subtask1.Meta)
+
+	subtask2, err = sm.GetSubtaskInStates("instance4", 1, proto.TaskStateRevertPending)
+	require.NoError(t, err)
+	require.Equal(t, int64(4), subtask2.ID)
+	require.Equal(t, proto.TaskTypeExample, subtask2.Type)
+	require.Equal(t, []byte("m4"), subtask2.Meta)
+
+	cnt, err = sm.GetSubtaskInStatesCnt(1, proto.TaskStateRevertPending)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), cnt)
+
+	// test transactional
+	require.NoError(t, sm.DeleteSubtasksByTaskID(1))
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
+	}()
+	task.State = proto.TaskStateFailed
+	err = sm.UpdateGlobalTaskAndAddSubTasks(task, subTasks)
+	require.EqualError(t, err, "updateTaskErr")
+
+	task, err = sm.GetGlobalTaskByID(1)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateReverting, task.State)
+
+	cnt, err = sm.GetSubtaskInStatesCnt(1, proto.TaskStateRevertPending)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), cnt)
 }

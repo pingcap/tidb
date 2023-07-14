@@ -79,7 +79,6 @@ func TestGetPreInfoGenerateTableInfo(t *testing.T) {
 	createTblSQL := fmt.Sprintf("create table `%s`.`%s` (a varchar(16) not null, b varchar(8) default 'DEFA')", schemaName, tblName)
 	tblInfo, err := newTableInfo(createTblSQL, 1)
 	require.Nil(t, err)
-	t.Logf("%+v", tblInfo)
 	require.Equal(t, model.NewCIStr(tblName), tblInfo.Name)
 	require.Equal(t, len(tblInfo.Columns), 2)
 	require.Equal(t, model.NewCIStr("a"), tblInfo.Columns[0].Name)
@@ -404,7 +403,6 @@ INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`
 		theDataInfo := testDataInfos[i]
 		cols, rowDatums, err := ig.ReadFirstNRowsByFileMeta(ctx, dataFile.FileMeta, theDataInfo.FirstN)
 		require.Nil(t, err)
-		t.Logf("%v, %v", cols, rowDatums)
 		require.Equal(t, theDataInfo.ExpectColumns, cols)
 		require.Equal(t, theDataInfo.ExpectFirstRowDatums, rowDatums)
 	}

@@ -132,6 +132,12 @@ autoscaler-cluster-id = ""
 # use-autoscaler indicates whether use AutoScaler or PD for tiflash_compute nodes, only meaningful when disaggregated-tiflash is true.
 use-autoscaler = false
 
+# in-mem-slow-query-topn-num indicates the number of TopN slow queries stored in memory.
+in-mem-slow-query-topn-num = 30
+
+# in-mem-slow-query-recent-num indicates the number of recent slow queries stored in memory.
+in-mem-slow-query-recent-num = 500
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -278,6 +284,12 @@ max-txn-ttl = 3600000
 # If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.
 # If you find the CPU used by GC is too high or GC is too frequent and impact your business you can increase this value.
 gogc = 100
+
+# Whether to use the lite mode of init stats.
+lite-init-stats = true
+
+# Whether to wait for init stats to finish before providing service during startup
+force-init-stats = true
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
