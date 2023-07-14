@@ -1,11 +1,9 @@
-[lightning]
-max-error-records = 1
-
-[lightning.max-error]
-conflict = 20
+[conflict]
+threshold = 20
+max-record-rows = 1
 
 [mydumper.csv]
 header = true
 
 [tikv-importer]
-on-duplicate = "error"
+on-duplicate = "ignore"
