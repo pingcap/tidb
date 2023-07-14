@@ -733,7 +733,7 @@ func NewConfig() *Config {
 			Checksum:          OpLevelRequired,
 			Analyze:           OpLevelOptional,
 			PostProcessAtLast: true,
-			ChecksumViaSQL:    true,
+			ChecksumViaSQL:    false,
 		},
 	}
 }
