@@ -329,15 +329,6 @@ func (l *Lightning) adjust(i *TikvImporter) {
 			l.RegionConcurrency = cpuCount
 		}
 	}
-	if l.MaxError.Conflict.Load() == -1 {
-		if i.Backend == BackendTiDB {
-			// in versions before v7.3, tidb backend will treat "duplicate entry"
-			// as type error which default is 0. So we set it to 0 to keep compatible.
-			l.MaxError.Conflict.Store(0)
-		} else {
-			l.MaxError.Conflict.Store(math.MaxInt64)
-		}
-	}
 }
 
 // PostOpLevel represents the level of post-operation.
@@ -509,6 +500,7 @@ type MaxError struct {
 	// The default value is zero, which means that such errors are not tolerated.
 	Type atomic.Int64 `toml:"type" json:"type"`
 
+	// deprecated, use `conflict.threshold` instead.
 	// Conflict is the maximum number of unique key conflicts in local backend accepted.
 	// When tolerated, every pair of conflict adds 1 to the counter.
 	// Those pairs will NOT be deleted from the target. Conflict resolution is performed separately.
@@ -522,16 +514,14 @@ type MaxError struct {
 // UnmarshalTOML implements toml.Unmarshaler interface.
 func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 	defaultValMap := map[string]int64{
-		"syntax":   0,
-		"charset":  math.MaxInt64,
-		"type":     0,
-		"conflict": -1,
+		"syntax":  0,
+		"charset": math.MaxInt64,
+		"type":    0,
 	}
 	// set default value first
 	cfg.Syntax.Store(defaultValMap["syntax"])
 	cfg.Charset.Store(defaultValMap["charset"])
 	cfg.Type.Store(defaultValMap["type"])
-	cfg.Conflict.Store(defaultValMap["conflict"])
 	switch val := v.(type) {
 	case int64:
 		// ignore val that is smaller than 0
@@ -554,11 +544,8 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 			return iVal
 		}
 		for k, v := range val {
-			switch k {
-			case "type":
+			if k == "type" {
 				cfg.Type.Store(getVal(k, v))
-			case "conflict":
-				cfg.Conflict.Store(getVal(k, v))
 			}
 		}
 		return nil
@@ -742,6 +729,7 @@ func (p *PostRestore) adjust(i *TikvImporter) {
 	p.Checksum = OpLevelOff
 	p.Analyze = OpLevelOff
 	p.Compact = false
+	p.ChecksumViaSQL = false
 }
 
 // StringOrStringSlice can unmarshal a TOML string as string slice with one element.
@@ -1347,10 +1335,15 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 
 	if c.Threshold < 0 {
 		switch c.Strategy {
-		case ErrorOnDup, "":
+		case ErrorOnDup:
 			c.Threshold = 0
 		case IgnoreOnDup, ReplaceOnDup:
 			c.Threshold = math.MaxInt64
+		case "":
+			c.Threshold = 0
+			if i.DuplicateResolution != DupeResAlgNone {
+				c.Threshold = math.MaxInt64
+			}
 		}
 	}
 	if c.Threshold > 0 && c.Strategy == ErrorOnDup {
@@ -1392,14 +1385,11 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
-			RegionConcurrency: runtime.NumCPU(),
-			TableConcurrency:  0,
-			IndexConcurrency:  0,
-			IOConcurrency:     5,
-			CheckRequirements: true,
-			MaxError: MaxError{
-				Conflict: *atomic.NewInt64(-1),
-			},
+			RegionConcurrency:  runtime.NumCPU(),
+			TableConcurrency:   0,
+			IndexConcurrency:   0,
+			IOConcurrency:      5,
+			CheckRequirements:  true,
 			TaskInfoSchemaName: defaultTaskInfoSchemaName,
 		},
 		Checkpoint: Checkpoint{

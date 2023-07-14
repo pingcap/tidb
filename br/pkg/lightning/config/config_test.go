@@ -628,20 +628,18 @@ func TestMaxErrorUnmarshal(t *testing.T) {
 		{
 			TOMLStr: `max-error = 123`,
 			ExpectedValues: map[string]int64{
-				"syntax":   0,
-				"charset":  math.MaxInt64,
-				"type":     123,
-				"conflict": -1,
+				"syntax":  0,
+				"charset": math.MaxInt64,
+				"type":    123,
 			},
 			CaseName: "Normal_Int",
 		},
 		{
 			TOMLStr: `max-error = -123`,
 			ExpectedValues: map[string]int64{
-				"syntax":   0,
-				"charset":  math.MaxInt64,
-				"type":     0,
-				"conflict": -1,
+				"syntax":  0,
+				"charset": math.MaxInt64,
+				"type":    0,
 			},
 			CaseName: "Abnormal_Negative_Int",
 		},
@@ -655,70 +653,61 @@ func TestMaxErrorUnmarshal(t *testing.T) {
 syntax = 1
 charset = 2
 type = 3
-conflict = 4
 `,
 			ExpectedValues: map[string]int64{
-				"syntax":   0,
-				"charset":  math.MaxInt64,
-				"type":     3,
-				"conflict": 4,
+				"syntax":  0,
+				"charset": math.MaxInt64,
+				"type":    3,
 			},
 			CaseName: "Normal_Map_All_Set",
 		},
 		{
 			TOMLStr: `[max-error]
-conflict = 1000
+type = 1000
 `,
 			ExpectedValues: map[string]int64{
-				"syntax":   0,
-				"charset":  math.MaxInt64,
-				"type":     0,
-				"conflict": 1000,
+				"syntax":  0,
+				"charset": math.MaxInt64,
+				"type":    1000,
 			},
 			CaseName: "Normal_Map_Partial_Set",
 		},
 		{
-			TOMLStr: `max-error = { conflict = 1000, type = 123 }`,
+			TOMLStr: `max-error = { type = 123 }`,
 			ExpectedValues: map[string]int64{
-				"syntax":   0,
-				"charset":  math.MaxInt64,
-				"type":     123,
-				"conflict": 1000,
+				"syntax":  0,
+				"charset": math.MaxInt64,
+				"type":    123,
 			},
 			CaseName: "Normal_OneLineMap_Partial_Set",
 		},
 		{
 			TOMLStr: `[max-error]
-conflict = 1000
 not_exist = 123
 `,
 			ExpectedValues: map[string]int64{
-				"syntax":   0,
-				"charset":  math.MaxInt64,
-				"type":     0,
-				"conflict": 1000,
+				"syntax":  0,
+				"charset": math.MaxInt64,
+				"type":    0,
 			},
 			CaseName: "Normal_Map_Partial_Set_Invalid_Key",
 		},
 		{
 			TOMLStr: `[max-error]
-conflict = 1000
 type = -123
 `,
 			ExpectedValues: map[string]int64{
-				"syntax":   0,
-				"charset":  math.MaxInt64,
-				"type":     0,
-				"conflict": 1000,
+				"syntax":  0,
+				"charset": math.MaxInt64,
+				"type":    0,
 			},
 			CaseName: "Normal_Map_Partial_Set_Invalid_Value",
 		},
 		{
 			TOMLStr: `[max-error]
-conflict = 1000
 type = abc
 `,
-			ExpectErrStr: `toml: line 3 (last key "max-error.type"): expected value but found "abc" instead`,
+			ExpectErrStr: `toml: line 2 (last key "max-error.type"): expected value but found "abc" instead`,
 			CaseName:     "Normal_Map_Partial_Set_Invalid_ValueType",
 		},
 	} {
@@ -732,7 +721,6 @@ type = abc
 			require.Equalf(t, tc.ExpectedValues["syntax"], targetLightningCfg.MaxError.Syntax.Load(), "test case: %s", tc.CaseName)
 			require.Equalf(t, tc.ExpectedValues["charset"], targetLightningCfg.MaxError.Charset.Load(), "test case: %s", tc.CaseName)
 			require.Equalf(t, tc.ExpectedValues["type"], targetLightningCfg.MaxError.Type.Load(), "test case: %s", tc.CaseName)
-			require.Equalf(t, tc.ExpectedValues["conflict"], targetLightningCfg.MaxError.Conflict.Load(), "test case: %s", tc.CaseName)
 		}
 	}
 }
@@ -1012,10 +1000,11 @@ func TestAdjustConflictStrategy(t *testing.T) {
 }
 
 func TestAdjustMaxRecordRows(t *testing.T) {
+	ctx := context.Background()
+
 	cfg := NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.Conflict.Threshold = 9999
-	ctx := context.Background()
 
 	cfg.Conflict.MaxRecordRows = -1
 	require.NoError(t, cfg.Adjust(ctx))

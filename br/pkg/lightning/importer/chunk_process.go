@@ -422,7 +422,7 @@ func (cr *chunkProcessor) encodeLoop(
 					lastOffset := curOffset
 					curOffset = newOffset
 
-					if rc.errorMgr.RemainRecord() <= 0 {
+					if rc.errorMgr.ConflictRecordsRemain() <= 0 {
 						continue
 					}
 

@@ -351,6 +351,9 @@ br_unit_test_in_verify_ci: tools/bin/gotestsum
 br_integration_test: br_bins build_br build_for_br_integration_test
 	@cd br && tests/run.sh
 
+br_integration_test_debug:
+	@cd br && tests/run.sh --no-tiflash
+
 br_compatibility_test_prepare:
 	@cd br && tests/run_compatible.sh prepare
 
