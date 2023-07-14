@@ -108,6 +108,16 @@ type MinimalTask interface {
 	fmt.Stringer
 }
 
+type MockMinimalTask struct {
+}
+
+func (m MockMinimalTask) IsMinimalTask() {
+}
+
+func (m MockMinimalTask) String()string {
+	return ""
+}
+
 const (
 	// TaskTypeExample is TaskType of Example.
 	TaskTypeExample = "Example"
