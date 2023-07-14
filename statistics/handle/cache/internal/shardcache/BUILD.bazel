@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "shardcache",
+    srcs = [
+        "sharding_map_cache.go",
+        "table_cache.go",
+    ],
+    importpath = "github.com/pingcap/tidb/statistics/handle/cache/internal/shardcache",
+    visibility = ["//statistics/handle/cache:__subpackages__"],
+    deps = [
+        "//statistics",
+        "//statistics/handle/cache/internal",
+    ],
+)
