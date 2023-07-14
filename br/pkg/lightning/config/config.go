@@ -745,6 +745,15 @@ func NewConfig() *Config {
 			Checksum:          OpLevelRequired,
 			Analyze:           OpLevelOptional,
 			PostProcessAtLast: true,
+<<<<<<< HEAD
+=======
+			ChecksumViaSQL:    false,
+		},
+		Conflict: Conflict{
+			Strategy:      "",
+			Threshold:     -1,
+			MaxRecordRows: -1,
+>>>>>>> fe5625ec74f (lightning:set default value of checksum-via-sql to false (#45369))
 		},
 	}
 }
