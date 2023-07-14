@@ -29,6 +29,7 @@ import (
 	tidbconfig "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -404,6 +405,9 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 		parser.buf = nil
 		if err := parser.readBlock(); err != nil || len(parser.buf) == 0 {
 			if err == nil {
+				parser.Logger.Warn("read block returns nothing, but no error",
+					zap.Int64("pos", parser.pos),
+				)
 				err = io.EOF
 			}
 			parser.pos += int64(len(buf))
