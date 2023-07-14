@@ -288,9 +288,11 @@ func (parser *blockParser) readBlock() error {
 	startTime := time.Now()
 
 	n, err := parser.reader.ReadFull(parser.blockBuf)
-	parser.Logger.Info("read full return error",
-		zap.Int64("pos", parser.pos), zap.Int("block buf len", len(parser.blockBuf)), zap.Int("n", n),
-		zap.Error(errors.Trace(err)))
+	if err != nil {
+		parser.Logger.Info("read full return error",
+			zap.Int64("pos", parser.pos), zap.Int("block buf len", len(parser.blockBuf)), zap.Int("n", n),
+			zap.Error(errors.Trace(err)))
+	}
 
 	switch err {
 	case io.ErrUnexpectedEOF, io.EOF:
