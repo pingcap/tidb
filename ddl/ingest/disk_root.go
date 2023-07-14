@@ -65,7 +65,8 @@ func (d *diskRootImpl) UpdateUsage() {
 	var capacity, used uint64
 	sz, err := lcom.GetStorageSize(d.path)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrGetStorageQuota, zap.Error(err))
+		logutil.BgLogger().Error(LitErrGetStorageQuota,
+			zap.String("category", "ddl-ingest"), zap.Error(err))
 	} else {
 		capacity, used = sz.Capacity, sz.Capacity-sz.Available
 	}
