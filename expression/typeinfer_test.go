@@ -216,6 +216,7 @@ func (s *InferTypeSuite) createTestCase4Cast() []typeInferTestCase {
 		{"CAST(c_int_d AS TIME)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"CAST(c_int_d AS UNSIGNED)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 22, 0},         // TODO: flen should be 11.
 		{"CAST(c_int_d AS UNSIGNED INTEGER)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 22, 0}, // TODO: flen should be 11.
+		// We need to test WrapCast*, however this function is only called when function arguement needs to be converted.
 		{"c_int_not_null + 1.1", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 12, 1},
 		{"c_int_not_null + 1.1E0", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, -1, -1},
 	}
