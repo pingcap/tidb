@@ -86,11 +86,6 @@ const (
 	MetaKVBatchSize = 64 * 1024 * 1024
 )
 
-type BackupItem struct {
-	File  *backuppb.File
-	Range *backuppb.BackupRange
-}
-
 // Client sends requests to restore files.
 type Client struct {
 	pdClient      pd.Client

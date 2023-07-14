@@ -159,14 +159,15 @@ func DefaultOutputTableChan() chan *CreatedTable {
 // TableWithRange is a CreatedTable that has been bind to some of key ranges.
 type TableWithRange struct {
 	CreatedTable
+	TableID int64
 
-	Ranges rtree.Ranges
+	Ranges *metautil.RestoreRanges
 }
 
 type TableIDWithRange struct {
 	TableID int64
 
-	Ranges rtree.Ranges
+	Ranges *metautil.RestoreRanges
 }
 
 // Exhaust drains all remaining errors in the channel, into a slice of errors.

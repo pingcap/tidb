@@ -29,8 +29,9 @@ func zapTableIDWithRange(rg []TableIDWithRange) zap.Field {
 
 func (rg zapTableIDWithFilesMarshaler) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
 	for _, r := range rg {
-		for _, f := range r.Ranges {
-			encoder.AddInt64("table-id", r.TableID)
+		encoder.AddInt64("table-id", r.TableID)
+		encoder.AddInt64("range-type", int64(r.Ranges.Typ))
+		for _, f := range r.Ranges.Ranges {
 			if err := logutil.MarshalLogObjectForFiles(f.Files, encoder); err != nil {
 				return errors.Trace(err)
 			}

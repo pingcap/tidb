@@ -315,70 +315,46 @@ func GoValidateFileRanges(
 						items = append(items, itemsOfTable[partition.ID]...)
 					}
 				}
-				for _, item := range items {
-					if item.File != nil {
-						err := ValidateFileRewriteRule(item.File, t.RewriteRule)
-						if err != nil {
-							errCh <- err
-							return
-						}
-					}
-					if item.Range != nil {
-						for _, f := range item.Range.Files {
-							err := ValidateFileRewriteRule(f, t.RewriteRule)
-							if err != nil {
-								errCh <- err
-								return
-							}
-						}
-					}
+				// Need a transform to invode such ValidateRules/ToRestoreRanges methods
+				backupItems := metautil.BackupItems(items)
+				checkFn := func(file *backuppb.File) error {
+					return ValidateFileRewriteRule(file, t.RewriteRule)
 				}
-				// for now we cannot have originFiles and originRanges at same time
-				// but we need consider whether we will support both in future.
-				rgs := metautil.BackupItems(items).GetOriginRanges()
-				brgs := make([]rtree.Range, 0, len(rgs))
-				for _, rg := range rgs {
-					brgs = append(brgs, rtree.Range{
-						StartKey: rg.StartKey,
-						EndKey:   rg.EndKey,
-						Files:    rg.Files,
-					})
-				}
-				tableWithRange := TableWithRange{
-					CreatedTable: t,
-					Ranges:       brgs,
-				}
-				outCh <- tableWithRange
-
-				files := metautil.BackupItems(items).GetOriginFiles()
-				// Merge small ranges to reduce split and scatter regions.
-				ranges, stat, err := MergeFileRanges(
-					files, splitSizeBytes, splitKeyCount)
+				err := backupItems.ValidateRules(checkFn)
 				if err != nil {
 					errCh <- err
 					return
 				}
-				log.Info("merge and validate file",
-					zap.Stringer("database", t.OldTable.DB.Name),
-					zap.Stringer("table", t.Table.Name),
-					zap.Int("Files(total)", stat.TotalFiles),
-					zap.Int("File(write)", stat.TotalWriteCFFile),
-					zap.Int("File(default)", stat.TotalDefaultCFFile),
-					zap.Int("Region(total)", stat.TotalRegions),
-					zap.Int("Regoin(keys avg)", stat.RegionKeysAvg),
-					zap.Int("Region(bytes avg)", stat.RegionBytesAvg),
-					zap.Int("Merged(regions)", stat.MergedRegions),
-					zap.Int("Merged(keys avg)", stat.MergedRegionKeysAvg),
-					zap.Int("Merged(bytes avg)", stat.MergedRegionBytesAvg))
-
-				tableWithRange = TableWithRange{
+				// Merge small ranges to reduce split and scatter regions.
+				mergeFn := func(files []*backuppb.File) []rtree.Range {
+					ranges, stat, err := MergeFileRanges(
+						files, splitSizeBytes, splitKeyCount)
+					if err != nil {
+						errCh <- err
+						return nil
+					}
+					log.Info("merge and validate file",
+						zap.Stringer("database", t.OldTable.DB.Name),
+						zap.Stringer("table", t.Table.Name),
+						zap.Int("Files(total)", stat.TotalFiles),
+						zap.Int("File(write)", stat.TotalWriteCFFile),
+						zap.Int("File(default)", stat.TotalDefaultCFFile),
+						zap.Int("Region(total)", stat.TotalRegions),
+						zap.Int("Regoin(keys avg)", stat.RegionKeysAvg),
+						zap.Int("Region(bytes avg)", stat.RegionBytesAvg),
+						zap.Int("Merged(regions)", stat.MergedRegions),
+						zap.Int("Merged(keys avg)", stat.MergedRegionKeysAvg),
+						zap.Int("Merged(bytes avg)", stat.MergedRegionBytesAvg))
+					return ranges
+				}
+				rgs := backupItems.ToRestoreRanges(mergeFn)
+				tableWithRange := TableWithRange{
 					CreatedTable: t,
-					Ranges:       ranges,
+					TableID:      t.Table.ID,
+					Ranges:       &rgs,
 				}
 				log.Debug("sending range info",
 					zap.Stringer("table", t.Table.Name),
-					zap.Int("files", len(files)),
-					zap.Int("range size", len(ranges)),
 					zap.Int("output channel size", len(outCh)))
 				outCh <- tableWithRange
 			}

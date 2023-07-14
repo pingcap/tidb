@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/parser/model"
@@ -56,6 +57,20 @@ const (
 	MetaV2
 )
 
+// RestoreType repesents types of different backup modes.
+// For now. it should be one of scan backup and file-copy backup.
+type RestoreTyp int
+
+const (
+	// MergedFile represents scan backup generated files.
+	// it merged small files into one range in #GoValidateFileRanges.
+	MergedFile RestoreTyp = 1
+	// OriginalFile represents file-copy backup generated files.
+	// it only represents region related SST Files.
+	// normally 12 total files for write + default CF for one region.
+	OriginalFile RestoreTyp = 2
+)
+
 type BackupItem struct {
 	// File represents the backup file generated with scan entries.
 	File *backuppb.File
@@ -63,6 +78,13 @@ type BackupItem struct {
 	Range *backuppb.BackupRange
 }
 type BackupItems []*BackupItem
+
+type RestoreRanges struct {
+	Typ RestoreTyp
+	// Ranges represent all related SST Files in a batch.
+	// normally these ranges belong to one TiDB Table.
+	Ranges []rtree.Range
+}
 
 func (i *BackupItem) Size() uint64 {
 	if i.File != nil {
@@ -114,6 +136,77 @@ func (i *BackupItem) GetName() string {
 	}
 	log.Panic("BackupItem not supported in GetName() ", zap.Any("item", i))
 	return ""
+}
+
+// ValidateFileRewriteRule transform RackupItems to RestoreRanges
+// FIXME: use closure as parameter to avoid cycle import
+func (is BackupItems) ValidateRules(checkFn func(*backuppb.File) error) error {
+	for _, i := range is {
+		if i.File != nil {
+			err := checkFn(i.File)
+			if err != nil {
+				return err
+			}
+		}
+		if i.Range != nil {
+			for _, f := range i.Range.Files {
+				err := checkFn(f)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// ToRestoreRanges transform RackupItems to RestoreRanges
+// FIXME: use closure as parameter to avoid cycle import
+func (is BackupItems) ToRestoreRanges(mergeFilesFn func([]*backuppb.File) []rtree.Range) RestoreRanges {
+	var (
+		typ    int
+		files  []*backuppb.File
+		ranges []rtree.Range
+		r      RestoreRanges
+	)
+
+	if len(is) == 0 {
+		log.Warn("BackupItems don't have any items")
+		return r
+	}
+	if is[0].File != nil {
+		typ = 1
+		files = make([]*backuppb.File, 0, len(is))
+	}
+	if is[0].Range != nil {
+		typ = 2
+		ranges = make([]rtree.Range, 0, len(is))
+	}
+	if typ >= 1 && typ <= 2 {
+		// translate backupItem to rtree.Range
+		for _, i := range is {
+			if i.File != nil {
+				files = append(files, i.File)
+			}
+			if i.Range != nil {
+				ranges = append(ranges, rtree.Range{
+					StartKey: i.Range.StartKey,
+					EndKey:   i.Range.EndKey,
+					Files:    i.Range.Files,
+				})
+			}
+		}
+		if typ == 1 {
+			r.Ranges = mergeFilesFn(files)
+		}
+		if typ == 2 {
+			r.Ranges = ranges
+		}
+		r.Typ = RestoreTyp(typ)
+		return r
+	}
+	log.Panic("not support mixed files and ranges for now")
+	return r
 }
 
 // GetOriginFiles return the backuppb.File, usually these files were generate by scan kv entries.

@@ -20,14 +20,6 @@ type Range struct {
 
 type Ranges []Range
 
-func (rgs Ranges) AllFiles() []*backuppb.File {
-	files := make([]*backuppb.File, 0, len(rgs)*6)
-	for _, rg := range rgs {
-		files = append(files, rg.Files...)
-	}
-	return files
-}
-
 // BytesAndKeys returns total bytes and keys in a range.
 func (rg *Range) BytesAndKeys() (bytes, keys uint64) {
 	for _, f := range rg.Files {

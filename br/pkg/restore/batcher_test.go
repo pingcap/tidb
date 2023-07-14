@@ -163,7 +163,7 @@ func fakeTableWithRange(id int64, rngs []rtree.Range) restore.TableWithRange {
 			Table:       tbl.Info,
 			OldTable:    tbl,
 		},
-		Range: rngs,
+		Range: &metautil.RestoreRanges{Typ: metautil.MergedFile, Ranges: rngs},
 	}
 	return tblWithRng
 }

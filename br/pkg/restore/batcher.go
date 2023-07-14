@@ -12,6 +12,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"go.uber.org/zap"
@@ -231,6 +232,7 @@ type DrainResult struct {
 	Ranges               rtree.Ranges
 	// Record which part of ranges belongs to the table
 	TableEndOffsetInRanges []int
+	RestoreTyp             metautil.RestoreTyp
 }
 
 // RestoreRanges returns all ranges of this drain result.
@@ -243,7 +245,10 @@ func (result DrainResult) RestoreRanges() []TableIDWithRange {
 
 		tableIDWithRange = append(tableIDWithRange, TableIDWithRange{
 			TableID: tableID,
-			Ranges:  ranges,
+			Ranges: &metautil.RestoreRanges{
+				Typ:    result.RestoreTyp,
+				Ranges: ranges,
+			},
 		})
 
 		// update start offset
@@ -322,7 +327,7 @@ func (b *Batcher) drainRanges() DrainResult {
 
 	for offset, thisTable := range b.cachedTables {
 		t, exists := b.checkpointSetWithTableID[thisTable.Table.ID]
-		thisTableLen := len(thisTable.Ranges)
+		thisTableLen := len(thisTable.Ranges.Ranges)
 		collected := len(result.Ranges)
 
 		result.RewriteRules.Append(*thisTable.RewriteRule)
@@ -336,7 +341,7 @@ func (b *Batcher) drainRanges() DrainResult {
 			thisTableRanges := thisTable.Ranges
 
 			var drained []rtree.Range
-			drained, b.cachedTables[offset].Ranges = thisTableRanges[:drainSize], thisTableRanges[drainSize:]
+			drained, b.cachedTables[offset].Ranges.Ranges = thisTableRanges.Ranges[:drainSize], thisTableRanges.Ranges[drainSize:]
 			log.Debug("draining partial table to batch",
 				zap.Stringer("db", thisTable.OldTable.DB.Name),
 				zap.Stringer("table", thisTable.Table.Name),
@@ -349,6 +354,7 @@ func (b *Batcher) drainRanges() DrainResult {
 			if exists {
 				drained = b.filterOutRanges(t, drained)
 			}
+			result.RestoreTyp = thisTable.Ranges.Typ
 			result.Ranges = append(result.Ranges, drained...)
 			result.TableEndOffsetInRanges = append(result.TableEndOffsetInRanges, len(result.Ranges))
 			b.cachedTables = b.cachedTables[offset:]
@@ -357,16 +363,16 @@ func (b *Batcher) drainRanges() DrainResult {
 
 		result.BlankTablesAfterSend = append(result.BlankTablesAfterSend, thisTable.CreatedTable)
 		// Firstly calculated the batcher size, and then filter out ranges by checkpoint.
-		atomic.AddInt32(&b.size, -int32(len(thisTable.Ranges)))
+		atomic.AddInt32(&b.size, -int32(len(thisTable.Ranges.Ranges)))
 		// let's 'drain' the ranges of current table. This op must not make the batch full.
 		if exists {
-			result.Ranges = append(result.Ranges, b.filterOutRanges(t, thisTable.Ranges)...)
+			result.Ranges = append(result.Ranges, b.filterOutRanges(t, thisTable.Ranges.Ranges)...)
 		} else {
-			result.Ranges = append(result.Ranges, thisTable.Ranges...)
+			result.Ranges = append(result.Ranges, thisTable.Ranges.Ranges...)
 		}
 		result.TableEndOffsetInRanges = append(result.TableEndOffsetInRanges, len(result.Ranges))
 		// clear the table length.
-		b.cachedTables[offset].Ranges = []rtree.Range{}
+		b.cachedTables[offset].Ranges = &metautil.RestoreRanges{Ranges: []rtree.Range{}}
 		log.Debug("draining table to batch",
 			zap.Stringer("db", thisTable.OldTable.DB.Name),
 			zap.Stringer("table", thisTable.Table.Name),
@@ -415,12 +421,13 @@ func (b *Batcher) Add(tbs TableWithRange) {
 		zap.Stringer("table", tbs.Table.Name),
 		zap.Int64("old id", tbs.OldTable.Info.ID),
 		zap.Int64("new id", tbs.Table.ID),
-		zap.Int("table size", len(tbs.Ranges)),
+		zap.Int("range type", int(tbs.Ranges.Typ)),
+		zap.Int("table size", len(tbs.Ranges.Ranges)),
 		zap.Int("batch size", b.Len()),
 	)
 	b.cachedTables = append(b.cachedTables, tbs)
 	b.rewriteRules.Append(*tbs.RewriteRule)
-	atomic.AddInt32(&b.size, int32(len(tbs.Ranges)))
+	atomic.AddInt32(&b.size, int32(len(tbs.Ranges.Ranges)))
 	b.cachedTablesMu.Unlock()
 
 	b.sendIfFull()
