@@ -50,6 +50,7 @@ func InitGlobalLightningEnv() {
 	globalCfg := config.GetGlobalConfig()
 	if globalCfg.Store != "tikv" {
 		logutil.BgLogger().Warn(LitWarnEnvInitFail,
+			zap.String("category", "ddl-ingest"),
 			zap.String("storage limitation", "only support TiKV storage"),
 			zap.String("current storage", globalCfg.Store),
 			zap.Bool("lightning is initialized", LitInitialized))
@@ -57,8 +58,9 @@ func InitGlobalLightningEnv() {
 	}
 	sPath, err := genLightningDataDir()
 	if err != nil {
-		logutil.BgLogger().Warn(LitWarnEnvInitFail, zap.Error(err),
-			zap.Bool("lightning is initialized", LitInitialized))
+		logutil.BgLogger().Warn(LitWarnEnvInitFail,
+			zap.String("category", "ddl-ingest"),
+			zap.Error(err), zap.Bool("lightning is initialized", LitInitialized))
 		return
 	}
 	LitSortPath = sPath
@@ -66,6 +68,7 @@ func InitGlobalLightningEnv() {
 	LitRLimit = util.GenRLimit("ddl-ingest")
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
+		zap.String("category", "ddl-ingest"),
 		zap.Uint64("memory limitation", maxMemoryQuota),
 		zap.String("disk usage info", LitDiskRoot.UsageInfo()),
 		zap.Uint64("max open file number", LitRLimit),
@@ -78,16 +81,22 @@ func genLightningDataDir() (string, error) {
 	sortPath := ConfigSortPath()
 	if _, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
-			logutil.BgLogger().Error(LitErrStatDirFail, zap.String("sort path", sortPath), zap.Error(err))
+			logutil.BgLogger().Error(LitErrStatDirFail,
+				zap.String("category", "ddl-ingest"),
+				zap.String("sort path", sortPath), zap.Error(err))
 			return "", err
 		}
 	}
 	err := os.MkdirAll(sortPath, 0o700)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCreateDirFail, zap.String("sort path", sortPath), zap.Error(err))
+		logutil.BgLogger().Error(LitErrCreateDirFail,
+			zap.String("category", "ddl-ingest"),
+			zap.String("sort path", sortPath), zap.Error(err))
 		return "", err
 	}
-	logutil.BgLogger().Info(LitInfoSortDir, zap.String("data path:", sortPath))
+	logutil.BgLogger().Info(LitInfoSortDir,
+		zap.String("category", "ddl-ingest"),
+		zap.String("data path:", sortPath))
 	return sortPath, nil
 }
 

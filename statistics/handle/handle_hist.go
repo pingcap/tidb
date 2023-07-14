@@ -100,7 +100,7 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 }
 
 // SyncWaitStatsLoad sync waits loading of neededColumns and return false if timeout
-func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
+func (*Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	if len(sc.StatsLoad.NeededItems) <= 0 {
 		return nil
 	}
@@ -145,7 +145,7 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []mode
 	statsCache := h.statsCache.Load()
 	remainedItems := make([]model.TableItemID, 0, len(neededItems))
 	for _, item := range neededItems {
-		tbl, ok := statsCache.Get(item.TableID)
+		tbl, ok := statsCache.GetFromInternal(item.TableID)
 		if !ok {
 			continue
 		}
@@ -238,7 +238,7 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
 	item := result.Item
 	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.Get(item.TableID)
+	tbl, ok := oldCache.GetFromInternal(item.TableID)
 	if !ok {
 		h.writeToResultChan(task.ResultCh, result)
 		return nil, nil
@@ -315,7 +315,7 @@ func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec
 }
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
-func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statistics.StatsReader) (*statsWrapper, error) {
+func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statistics.StatsReader) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
@@ -442,7 +442,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededItemTask, error) {
 }
 
 // writeToTimeoutChan writes in a nonblocking way, and if the channel queue is full, it's ok to drop the task.
-func (h *Handle) writeToTimeoutChan(taskCh chan *NeededItemTask, task *NeededItemTask) {
+func (*Handle) writeToTimeoutChan(taskCh chan *NeededItemTask, task *NeededItemTask) {
 	select {
 	case taskCh <- task:
 	default:
@@ -450,7 +450,7 @@ func (h *Handle) writeToTimeoutChan(taskCh chan *NeededItemTask, task *NeededIte
 }
 
 // writeToChanWithTimeout writes a task to a channel and blocks until timeout.
-func (h *Handle) writeToChanWithTimeout(taskCh chan *NeededItemTask, task *NeededItemTask, timeout time.Duration) error {
+func (*Handle) writeToChanWithTimeout(taskCh chan *NeededItemTask, task *NeededItemTask, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
@@ -462,7 +462,7 @@ func (h *Handle) writeToChanWithTimeout(taskCh chan *NeededItemTask, task *Neede
 }
 
 // writeToResultChan safe-writes with panic-recover so one write-fail will not have big impact.
-func (h *Handle) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, rs stmtctx.StatsLoadResult) {
+func (*Handle) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, rs stmtctx.StatsLoadResult) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("writeToResultChan panicked", zap.Any("error", r), zap.Stack("stack"))
@@ -481,7 +481,7 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.Get(item.TableID)
+	tbl, ok := oldCache.GetFromInternal(item.TableID)
 	if !ok {
 		return true
 	}
@@ -500,7 +500,7 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 		tbl = tbl.Copy()
 		tbl.Indices[item.ID] = idxHist
 	}
-	return h.updateStatsCache(oldCache.Update([]*statistics.Table{tbl}, nil, oldCache.Version(), cache.WithTableStatsByQuery()))
+	return h.updateStatsCache(oldCache.CopyAndUpdate([]*statistics.Table{tbl}, nil, cache.WithTableStatsByQuery()))
 }
 
 func (h *Handle) setWorking(item model.TableItemID, resultCh chan stmtctx.StatsLoadResult) bool {

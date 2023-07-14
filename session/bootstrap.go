@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
+	timertable "github.com/pingcap/tidb/timer/tablestore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -651,6 +652,9 @@ const (
 		KEY (status));`
 )
 
+// CreateTimers is a table to store all timers for tidb
+var CreateTimers = timertable.CreateTimerTableSQL("mysql", "tidb_timers")
+
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
 	startTime := time.Now()
@@ -942,11 +946,12 @@ const (
 	version167 = 167
 	version168 = 168
 	version169 = 169
+	version170 = 170
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version169
+var currentBootstrapVersion int64 = version170
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1084,6 +1089,7 @@ var (
 		upgradeToVer167,
 		upgradeToVer168,
 		upgradeToVer169,
+		upgradeToVer170,
 	}
 )
 
@@ -1238,7 +1244,7 @@ func syncUpgradeState(s Session) {
 			logutil.BgLogger().Fatal("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
 		}
 		if i%10 == 0 {
-			logutil.BgLogger().Warn("[upgrading] get owner op failed", zap.Stringer("state", op), zap.Error(err))
+			logutil.BgLogger().Warn("get owner op failed", zap.String("category", "upgrading"), zap.Stringer("state", op), zap.Error(err))
 		}
 		time.Sleep(interval)
 	}
@@ -1264,10 +1270,10 @@ func syncUpgradeState(s Session) {
 		if i == retryTimes-1 {
 			logutil.BgLogger().Fatal("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
 		}
-		logutil.BgLogger().Warn("[upgrading] pause all jobs failed", zap.Strings("errs", jobErrStrs), zap.Error(err))
+		logutil.BgLogger().Warn("pause all jobs failed", zap.String("category", "upgrading"), zap.Strings("errs", jobErrStrs), zap.Error(err))
 		time.Sleep(interval)
 	}
-	logutil.BgLogger().Info("[upgrading] update global state to upgrading", zap.String("state", syncer.StateUpgrading))
+	logutil.BgLogger().Info("update global state to upgrading", zap.String("category", "upgrading"), zap.String("state", syncer.StateUpgrading))
 }
 
 func syncNormalRunning(s Session) {
@@ -1282,10 +1288,10 @@ func syncNormalRunning(s Session) {
 
 	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
 	if err != nil {
-		logutil.BgLogger().Warn("[upgrading] resume all paused jobs failed", zap.Error(err))
+		logutil.BgLogger().Warn("resume all paused jobs failed", zap.String("category", "upgrading"), zap.Error(err))
 	}
 	for _, e := range jobErrs {
-		logutil.BgLogger().Warn("[upgrading] resume the job failed ", zap.Error(e))
+		logutil.BgLogger().Warn("resume the job failed ", zap.String("category", "upgrading"), zap.Error(e))
 	}
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1295,7 +1301,7 @@ func syncNormalRunning(s Session) {
 	if err != nil {
 		logutil.BgLogger().Fatal("[upgrading] update global state to normal failed", zap.Error(err))
 	}
-	logutil.BgLogger().Info("[upgrading] update global state to normal running finished")
+	logutil.BgLogger().Info("update global state to normal running finished", zap.String("category", "upgrading"))
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
@@ -2731,6 +2737,13 @@ func upgradeToVer169(s Session, ver int64) {
 	mustExecute(s, CreateRunawayTable)
 }
 
+func upgradeToVer170(s Session, ver int64) {
+	if ver >= version170 {
+		return
+	}
+	mustExecute(s, CreateTimers)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2851,6 +2864,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateRunawayQuarantineWatchTable)
 	// create runaway_queries
 	mustExecute(s, CreateRunawayTable)
+	// create tidb_timers
+	mustExecute(s, CreateTimers)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
