@@ -58,12 +58,11 @@ These fields are included for each record:
 
 #### Option1: persist in log file
 
-Runaway query records are stored in a dedicated, auto rotated, run-away log file, quite like slow log file. And the records can be also viewed by the admin table INFORMATION_SCHEMA.RUNAWAY_QUERIES which is a mapping to the run-away log file.
+Runaway query records are stored in a dedicated, auto rotated, run-away log file, quite like slow log file. And the records can be also viewed by the admin table `mysql.TIDB_RUNAWAY_QUERIES` which is a mapping to the run-away log file.
 
 #### Option2: persist in kv data (chosen)
 
-Print runaway query records in tidb log file, and also persist the records in KV data by the admin table `INFORMATION_SCHEMA.RUNAWAY_QUERIES`. The logs are persisted in batch with a flush interval config `runaway_queries_history_flush_interval`. Queries on the table `INFORMATION_SCHEMA.RUNAWAY_QUERIES` would return the results combining both in-memory and on-disk data.
-And an owner is elected among TiDBs to help clean the history records. The oldest record would be reserved for `runaway_queries_history_max_days`.
+Print runaway query records in tidb log file, and also persist the records in KV data by the admin table `mysql.TIDB_RUNAWAY_QUERIES`.
 
 ## How to handle run-away queries?
 
@@ -73,7 +72,7 @@ As you can see from the SQL interface, the actions are of three types:
 Only detect and record but do nothing
 
 - COOLDOWN:
-Once regarded as a run-away query, the later coprocessor requests will be deprioritized by setting requests context with the lowest priority. On TiKV side, the priority of the request would override the setting of the resource group. Note, we can't deprioritize for the already executing coprocessor requests for simplicity. As coprocessor paging is enabled by default, it won't affect too much. As for batch_coprocess which doesn't support paging, it would be a problem. But it's enabled by default, so let's ignore it currently.
+Once regarded as a run-away query, the later coprocessor requests will be deprioritized by setting requests context with the lowest priority. On TiKV side, the priority of the request would override the setting of the resource group. Note, we can't deprioritize for the already executing coprocessor requests for simplicity. As coprocessor paging is enabled by default, it won't affect too much. As for batch_coprocessor which doesn't support paging, it would be a problem. But it's enabled by default, so let's ignore it currently.
 The override priority is passed in the resource control context of requests.
 
     ```protobuf
@@ -97,9 +96,9 @@ If `WATCH` clause is set, we will try to match the signature of the queries that
 - `WATCH SIMILAR`: match the statements by normalized SQL.
 - `DURATION <#>`:  When the very first SQL query is treated as "runaway", we will mark matches SQL as "runaway" in the coming N seconds.
 
-For the later quarantined query, reject with the error `quarantined plan used` and logs in `mysql.RUNAWAY_QUERIES` as well.
+For the later quarantined query, reject with the error `quarantined plan used` and logs in `mysql.TIDB_RUNAWAY_QUERIES` as well.
 
-Meanwhile, we need to provide an admin table `mysql.QURANTINE_WATCH` to let users know which watches are now active for quarantining queries.
+Meanwhile, we need to provide an admin table `mysql.TIDB_RUNAWAY_QUARANTINED_WATCH` to let users know which watches are now active for quarantining queries.
 
 These fields are included for each record:  
 
