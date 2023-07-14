@@ -3507,7 +3507,7 @@
           "11"
         ],
         "Plan": [
-          "Projection 1.00 root  Column#5",
+          "Projection 1.00 root  Column#5->Column#6",
           "└─Sort 1.00 root  test_partition.t1.id, test_partition.t1.a",
           "  └─StreamAgg 1.00 root  funcs:count(Column#10)->Column#5, funcs:firstrow(Column#11)->test_partition.t1.id, funcs:firstrow(Column#12)->test_partition.t1.a",
           "    └─TableReader 1.00 root partition:all data:StreamAgg",
@@ -3515,7 +3515,7 @@
           "        └─TableFullScan 11.00 cop[tikv] table:t1 keep order:false"
         ],
         "IndexPlan": [
-          "Projection 1.00 root  Column#5",
+          "Projection 1.00 root  Column#5->Column#6",
           "└─Sort 1.00 root  test_partition_1.t1.id, test_partition_1.t1.a",
           "  └─StreamAgg 1.00 root  funcs:count(Column#13)->Column#5, funcs:firstrow(Column#14)->test_partition_1.t1.id, funcs:firstrow(Column#15)->test_partition_1.t1.a",
           "    └─IndexReader 1.00 root partition:all index:StreamAgg",

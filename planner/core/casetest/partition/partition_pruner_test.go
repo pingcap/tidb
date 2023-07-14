@@ -209,7 +209,7 @@ func TestListDefaultPartitionPruner(t *testing.T) {
 		Result []string
 		Plan   []string
 	}
-	partitionPrunerData := GetPartitionPrunerData()
+	partitionPrunerData := getPartitionPrunerData()
 	partitionPrunerData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -434,7 +434,7 @@ func TestListColumnsDefaultPartitionPruner(t *testing.T) {
 		Plan      []string
 		IndexPlan []string
 	}
-	partitionPrunerData := GetPartitionPrunerData()
+	partitionPrunerData := getPartitionPrunerData()
 	partitionPrunerData.LoadTestCases(t, &input, &output)
 	valid := false
 	for i, tt := range input {
