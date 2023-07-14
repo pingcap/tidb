@@ -38,7 +38,7 @@ import (
 )
 
 const (
-	maxFileSize = 512 * 1024
+	maxLogLength = 512 * 1024
 )
 
 // ExtraHandleColumnInfo is the column info of extra handle column.
@@ -99,11 +99,11 @@ func (row RowArrayMarshaller) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 				return err
 			}
 		}
-		if len(str) > maxFileSize {
+		if len(str) > maxLogLength {
 			str = str[0:1024] + " (truncated)"
 		}
 		totalLength += len(str)
-		if totalLength >= maxFileSize {
+		if totalLength >= maxLogLength {
 			encoder.AppendString("The row has been truncated, and the log has exited early.")
 			return nil
 		}
@@ -320,7 +320,7 @@ func (e *BaseKVEncoder) LogKVConvertFailed(row []types.Datum, j int, colInfo *mo
 		log.ShortError(err),
 	)
 
-	if len(original.GetString()) >= maxFileSize {
+	if len(original.GetString()) >= maxLogLength {
 		originalPrefix := original.GetString()[0:1024] + " (truncated)"
 		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", originalPrefix),
 			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
