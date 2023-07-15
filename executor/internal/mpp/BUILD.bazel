@@ -36,6 +36,7 @@ go_test(
     srcs = ["local_mpp_coordinator_test.go"],
     embed = [":mpp"],
     flaky = True,
+    race = "on",
     deps = [
         "//planner/core",
         "@com_github_pingcap_tipb//go-tipb",
