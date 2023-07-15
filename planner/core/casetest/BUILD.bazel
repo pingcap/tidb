@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "casetest_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = [
         "expression_rewriter_test.go",
         "integration_test.go",
