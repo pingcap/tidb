@@ -1,10 +1,7 @@
 aliases:
   sig-critical-approvers-tidb-server:
     - yudongusa
-    - bb7133
-    - XuHuaiyu
-    - xurui
-    - morgo
+    - easonn7
   sig-critical-approvers-tidb-lightning:
     - niubell
     - D3Hunter
