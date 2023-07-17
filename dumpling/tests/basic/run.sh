@@ -177,6 +177,9 @@ run_dumpling -B "test_db" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
 set -e
 cnt=$(grep -w "dump data successfully" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
 [ "$cnt" -ge 1 ]
+cnt=$(grep -w "(.*)" ${DUMPLING_OUTPUT_DIR}/test_db.test_table.000000000.sql|wc -l)
+echo "records count is ${cnt}"
+[ "$cnt" -eq 8 ]
 
 export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile=5*return"
 rm ${DUMPLING_OUTPUT_DIR}/dumpling.log
