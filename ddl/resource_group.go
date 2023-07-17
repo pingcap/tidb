@@ -16,16 +16,26 @@ package ddl
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain/infosync"
+	rg "github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+)
+
+const (
+	defaultInfosyncTimeout = 5 * time.Second
+
+	// FIXME: this is a workaround for the compatibility, format the error code.
+	alreadyExists = "already exists"
 )
 
 func onCreateResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -52,10 +62,17 @@ func onCreateResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = infosync.AddResourceGroup(context.TODO(), protoGroup)
+
+		ctx, cancel := context.WithTimeout(d.ctx, defaultInfosyncTimeout)
+		defer cancel()
+		err = infosync.AddResourceGroup(ctx, protoGroup)
 		if err != nil {
-			logutil.BgLogger().Warn("create resource group failed", zap.Error(err))
-			return ver, errors.Trace(err)
+			logutil.BgLogger().Warn("create resource group failed", zap.String("group-name", groupInfo.Name.L), zap.Error(err))
+			// TiDB will add the group to the resource manager when it bootstraps.
+			// here order to compatible with keyspace mode TiDB to skip the exist error with default group.
+			if !strings.Contains(err.Error(), alreadyExists) || groupInfo.Name.L != rg.DefaultResourceGroupName {
+				return ver, errors.Trace(err)
+			}
 		}
 		job.SchemaID = groupInfo.ID
 		ver, err = updateSchemaVersion(d, t, job)

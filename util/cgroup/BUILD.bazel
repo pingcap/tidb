@@ -16,7 +16,51 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
-    ],
+    ] + select({
+        "@io_bazel_rules_go//go/platform:aix": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:android": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:darwin": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:dragonfly": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:freebsd": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:illumos": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:ios": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:js": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:linux": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:netbsd": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:openbsd": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:plan9": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:solaris": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:windows": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 go_test(

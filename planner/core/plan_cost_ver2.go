@@ -35,9 +35,15 @@ func GetPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOpt
 	return getPlanCost(p, taskType, option)
 }
 
+// GenPlanCostTrace define a hook function to customize the cost calculation.
+var GenPlanCostTrace func(p PhysicalPlan, costV *costVer2, taskType property.TaskType, option *PlanCostOption)
+
 func getPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOption) (float64, error) {
 	if p.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 		planCost, err := p.getPlanCostVer2(taskType, option)
+		if traceCost(option) && GenPlanCostTrace != nil {
+			GenPlanCostTrace(p, &planCost, taskType, option)
+		}
 		return planCost.cost, err
 	}
 	return p.getPlanCostVer1(taskType, option)
@@ -98,6 +104,9 @@ func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option 
 	inputRows := getCardinality(p.children[0], option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	concurrency := float64(p.ctx.GetSessionVars().ProjectionConcurrency())
+	if concurrency == 0 {
+		concurrency = 1 // un-parallel execution
+	}
 
 	projCost := filterCostVer2(option, inputRows, p.Exprs, cpuFactor)
 
@@ -386,15 +395,15 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	}
 
 	rows := getCardinality(p.children[0], option.CostFlag)
-	N := math.Max(1, float64(p.Count+p.Offset))
+	n := math.Max(1, float64(p.Count+p.Offset))
 	rowSize := getAvgRowSize(p.statsInfo(), p.Schema().Columns)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 
-	topNCPUCost := orderCostVer2(option, rows, N, p.ByItems, cpuFactor)
+	topNCPUCost := orderCostVer2(option, rows, n, p.ByItems, cpuFactor)
 	topNMemCost := newCostVer2(option, memFactor,
-		N*rowSize*memFactor.Value,
-		func() string { return fmt.Sprintf("topMem(%v*%v*%v)", N, rowSize, memFactor) })
+		n*rowSize*memFactor.Value,
+		func() string { return fmt.Sprintf("topMem(%v*%v*%v)", n, rowSize, memFactor) })
 
 	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
@@ -748,6 +757,21 @@ func (p *BatchPointGetPlan) getPlanCostVer2(taskType property.TaskType, option *
 	return p.planCostVer2, nil
 }
 
+func (p *PhysicalCTE) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCostVer2, nil
+	}
+
+	inputRows := getCardinality(p, option.CostFlag)
+	cpuFactor := getTaskCPUFactorVer2(p, taskType)
+
+	projCost := filterCostVer2(option, inputRows, expression.Column2Exprs(p.schema.Columns), cpuFactor)
+
+	p.planCostVer2 = projCost
+	p.planCostInit = true
+	return p.planCostVer2, nil
+}
+
 func scanCostVer2(option *PlanCostOption, rows, rowSize float64, scanFactor costVer2Factor) costVer2 {
 	if rowSize < 1 {
 		rowSize = 1
@@ -797,7 +821,7 @@ func numFunctions(exprs []expression.Expression) float64 {
 	return num
 }
 
-func orderCostVer2(option *PlanCostOption, rows, N float64, byItems []*util.ByItems, cpuFactor costVer2Factor) costVer2 {
+func orderCostVer2(option *PlanCostOption, rows, n float64, byItems []*util.ByItems, cpuFactor costVer2Factor) costVer2 {
 	numFuncs := 0
 	for _, byItem := range byItems {
 		if _, ok := byItem.Expr.(*expression.ScalarFunction); ok {
@@ -808,8 +832,8 @@ func orderCostVer2(option *PlanCostOption, rows, N float64, byItems []*util.ByIt
 		rows*float64(numFuncs)*cpuFactor.Value,
 		func() string { return fmt.Sprintf("exprCPU(%v*%v*%v)", rows, numFuncs, cpuFactor) })
 	orderCost := newCostVer2(option, cpuFactor,
-		rows*math.Log2(N)*cpuFactor.Value,
-		func() string { return fmt.Sprintf("orderCPU(%v*log(%v)*%v)", rows, N, cpuFactor) })
+		rows*math.Log2(n)*cpuFactor.Value,
+		func() string { return fmt.Sprintf("orderCPU(%v*log(%v)*%v)", rows, n, cpuFactor) })
 	return sumCostVer2(exprCost, orderCost)
 }
 
@@ -896,7 +920,7 @@ var defaultVer2Factors = costVer2Factors{
 	TiDBRequest:   costVer2Factor{"tidb_request_factor", 6000000.00},
 }
 
-func getTaskCPUFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2Factor {
+func getTaskCPUFactorVer2(_ PhysicalPlan, taskType property.TaskType) costVer2Factor {
 	switch taskType {
 	case property.RootTaskType: // TiDB
 		return defaultVer2Factors.TiDBCPU
@@ -907,7 +931,7 @@ func getTaskCPUFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2Fa
 	}
 }
 
-func getTaskMemFactorVer2(p PhysicalPlan, taskType property.TaskType) costVer2Factor {
+func getTaskMemFactorVer2(_ PhysicalPlan, taskType property.TaskType) costVer2Factor {
 	switch taskType {
 	case property.RootTaskType: // TiDB
 		return defaultVer2Factors.TiDBMem
@@ -1040,10 +1064,10 @@ func sumCostVer2(costs ...costVer2) (ret costVer2) {
 	if len(costs) == 0 {
 		return
 	}
-	for i, c := range costs {
+	for _, c := range costs {
 		ret.cost += c.cost
 		if c.trace != nil {
-			if i == 0 { // init
+			if ret.trace == nil { // init
 				ret.trace = &costTrace{make(map[string]float64), ""}
 			}
 			for factor, factorCost := range c.trace.factorCosts {

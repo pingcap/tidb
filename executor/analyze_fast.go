@@ -116,7 +116,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	var historyRowCount uint64
 	hasBeenAnalyzed := len(rows) != 0 && rows[0].GetInt64(0) == statistics.AnalyzeFlag
 	if hasBeenAnalyzed {
-		historyRowCount = uint64(domain.GetDomain(e.ctx).StatsHandle().GetPartitionStats(e.tblInfo, e.tableID.GetStatisticsID()).Count)
+		historyRowCount = uint64(domain.GetDomain(e.ctx).StatsHandle().GetPartitionStats(e.tblInfo, e.tableID.GetStatisticsID()).RealtimeCount)
 	} else {
 		dbInfo, ok := domain.GetDomain(e.ctx).InfoSchema().SchemaByTable(e.tblInfo)
 		if !ok {
@@ -171,17 +171,16 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
-		if kv.ErrInvalidTxn.Equal(err) {
-			_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			rollbackFn = func() error {
-				_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
-				return err
-			}
-		} else {
+		if !kv.ErrInvalidTxn.Equal(err) {
 			return nil, errors.Trace(err)
+		}
+		_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rollbackFn = func() error {
+			_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
+			return err
 		}
 	}
 	txn.SetOption(kv.Priority, kv.PriorityLow)
@@ -386,7 +385,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, er
 	return
 }
 
-func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err error) {
+func (e *AnalyzeFastExec) handleScanTasks(*tikv.Backoffer) (keysSize int, err error) {
 	var snapshot kv.Snapshot
 	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
 		snapshot = e.ctx.GetStore().GetSnapshot(kv.NewVersion(e.snapshot))
@@ -463,7 +462,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	}
 }
 
-func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.SampleCollector, tp *types.FieldType, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, *statistics.TopN, *statistics.FMSketch, error) {
+func (e *AnalyzeFastExec) buildColumnStats(id int64, collector *statistics.SampleCollector, tp *types.FieldType, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, *statistics.TopN, *statistics.FMSketch, error) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	data := make([][]byte, 0, len(collector.Samples))
 	fmSketch := statistics.NewFMSketch(maxSketchSize)
@@ -489,7 +488,7 @@ func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.Sampl
 	cmSketch, topN, ndv, scaleRatio := statistics.NewCMSketchAndTopN(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]), data, uint32(e.opts[ast.AnalyzeOptNumTopN]), uint64(rowCount))
 	// Build Histogram.
 	collector.Samples = notNullSamples
-	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), ID, collector, tp, rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
+	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), id, collector, tp, rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
 	return hist, cmSketch, topN, fmSketch, err
 }
 
@@ -561,10 +560,10 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	stats := domain.GetDomain(e.ctx).StatsHandle()
-	var rowCount int64 = 0
+	var rowCount int64
 	if stats.Lease() > 0 {
 		if t := stats.GetPartitionStats(e.tblInfo, e.tableID.GetStatisticsID()); !t.Pseudo {
-			rowCount = t.Count
+			rowCount = t.RealtimeCount
 		}
 	}
 	hists, cms, topNs, fms := make([]*statistics.Histogram, length), make([]*statistics.CMSketch, length), make([]*statistics.TopN, length), make([]*statistics.FMSketch, length)

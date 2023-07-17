@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
@@ -93,7 +94,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
-			logutil.BgLogger().Error("[ddl] init domain failed",
+			logutil.BgLogger().Error("init domain failed", zap.String("category", "ddl"),
 				zap.Error(err1))
 		}
 		return true, err1
@@ -284,7 +285,7 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 			logutil.BgLogger().Info("rollbackTxn called due to ddl/autocommit failure")
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)
-		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
+		} else if se.txn.Valid() && se.txn.IsPessimistic() && exeerrors.ErrDeadlock.Equal(meetsErr) {
 			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)
@@ -338,7 +339,7 @@ func GetHistory(ctx sessionctx.Context) *StmtHistory {
 }
 
 // GetRows4Test gets all the rows from a RecordSet, only used for test.
-func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
+func GetRows4Test(ctx context.Context, _ sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}

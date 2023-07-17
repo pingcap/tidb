@@ -44,7 +44,7 @@ go_library(
 
 go_test(
     name = "bindinfo_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "bind_cache_test.go",
         "bind_test.go",

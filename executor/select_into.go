@@ -23,16 +23,19 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 // SelectIntoExec represents a SelectInto executor.
 type SelectIntoExec struct {
-	baseExecutor
+	exec.BaseExecutor
 	intoOpt *ast.SelectIntoOption
+	core.LineFieldsInfo
 
 	lineBuf   []byte
 	realBuf   []byte
@@ -60,17 +63,17 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 	s.started = true
 	s.dstFile = f
 	s.writer = bufio.NewWriter(s.dstFile)
-	s.chk = tryNewCacheChunk(s.children[0])
+	s.chk = tryNewCacheChunk(s.Children(0))
 	s.lineBuf = make([]byte, 0, 1024)
 	s.fieldBuf = make([]byte, 0, 64)
 	s.escapeBuf = make([]byte, 0, 64)
-	return s.baseExecutor.Open(ctx)
+	return s.BaseExecutor.Open(ctx)
 }
 
 // Next implements the Executor Next interface.
 func (s *SelectIntoExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for {
-		if err := Next(ctx, s.children[0], s.chk); err != nil {
+		if err := Next(ctx, s.Children(0), s.chk); err != nil {
 			return err
 		}
 		if s.chk.NumRows() == 0 {
@@ -90,7 +93,7 @@ func (s *SelectIntoExec) considerEncloseOpt(et types.EvalType) bool {
 }
 
 func (s *SelectIntoExec) escapeField(f []byte) []byte {
-	if s.intoOpt.FieldsInfo.Escaped == nil {
+	if len(s.FieldsEscapedBy) == 0 {
 		return f
 	}
 	s.escapeBuf = s.escapeBuf[:0]
@@ -101,18 +104,17 @@ func (s *SelectIntoExec) escapeField(f []byte) []byte {
 			// we always escape 0
 			escape = true
 			b = '0'
-		case (s.intoOpt.FieldsInfo.Escaped != nil && b == *s.intoOpt.FieldsInfo.Escaped) ||
-			(s.intoOpt.FieldsInfo.Enclosed != nil && b == *s.intoOpt.FieldsInfo.Enclosed):
+		case b == s.FieldsEscapedBy[0] || (len(s.FieldsEnclosedBy) > 0 && b == s.FieldsEnclosedBy[0]):
 			escape = true
-		case !s.enclosed && len(s.intoOpt.FieldsInfo.Terminated) > 0 && b == s.intoOpt.FieldsInfo.Terminated[0]:
+		case !s.enclosed && len(s.FieldsTerminatedBy) > 0 && b == s.FieldsTerminatedBy[0]:
 			// if field is enclosed, we only escape line terminator, otherwise both field and line terminator will be escaped
 			escape = true
-		case len(s.intoOpt.LinesInfo.Terminated) > 0 && b == s.intoOpt.LinesInfo.Terminated[0]:
+		case len(s.LinesTerminatedBy) > 0 && b == s.LinesTerminatedBy[0]:
 			// we always escape line terminator
 			escape = true
 		}
-		if escape && s.intoOpt.FieldsInfo.Escaped != nil {
-			s.escapeBuf = append(s.escapeBuf, *s.intoOpt.FieldsInfo.Escaped)
+		if escape {
+			s.escapeBuf = append(s.escapeBuf, s.FieldsEscapedBy[0])
 		}
 		s.escapeBuf = append(s.escapeBuf, b)
 	}
@@ -120,36 +122,28 @@ func (s *SelectIntoExec) escapeField(f []byte) []byte {
 }
 
 func (s *SelectIntoExec) dumpToOutfile() error {
-	lineTerm := "\n"
-	if s.intoOpt.LinesInfo.Terminated != "" {
-		lineTerm = s.intoOpt.LinesInfo.Terminated
-	}
-	fieldTerm := "\t"
-	if s.intoOpt.FieldsInfo.Terminated != "" {
-		fieldTerm = s.intoOpt.FieldsInfo.Terminated
-	}
 	encloseFlag := false
 	var encloseByte byte
 	encloseOpt := false
-	if s.intoOpt.FieldsInfo.Enclosed != nil {
-		encloseByte = *s.intoOpt.FieldsInfo.Enclosed
+	if len(s.FieldsEnclosedBy) > 0 {
+		encloseByte = s.FieldsEnclosedBy[0]
 		encloseFlag = true
-		encloseOpt = s.intoOpt.FieldsInfo.OptEnclosed
+		encloseOpt = s.FieldsOptEnclosed
 	}
 	nullTerm := []byte("\\N")
-	if s.intoOpt.FieldsInfo.Escaped != nil {
-		nullTerm[0] = *s.intoOpt.FieldsInfo.Escaped
+	if len(s.FieldsEscapedBy) > 0 {
+		nullTerm[0] = s.FieldsEscapedBy[0]
 	} else {
 		nullTerm = []byte("NULL")
 	}
 
-	cols := s.children[0].Schema().Columns
+	cols := s.Children(0).Schema().Columns
 	for i := 0; i < s.chk.NumRows(); i++ {
 		row := s.chk.GetRow(i)
 		s.lineBuf = s.lineBuf[:0]
 		for j, col := range cols {
 			if j != 0 {
-				s.lineBuf = append(s.lineBuf, fieldTerm...)
+				s.lineBuf = append(s.lineBuf, s.FieldsTerminatedBy...)
 			}
 			if row.IsNull(j) {
 				s.lineBuf = append(s.lineBuf, nullTerm...)
@@ -208,12 +202,12 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				s.lineBuf = append(s.lineBuf, encloseByte)
 			}
 		}
-		s.lineBuf = append(s.lineBuf, lineTerm...)
+		s.lineBuf = append(s.lineBuf, s.LinesTerminatedBy...)
 		if _, err := s.writer.Write(s.lineBuf); err != nil {
 			return errors.Trace(err)
 		}
 	}
-	s.ctx.GetSessionVars().StmtCtx.AddAffectedRows(uint64(s.chk.NumRows()))
+	s.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(uint64(s.chk.NumRows()))
 	return nil
 }
 
@@ -224,7 +218,7 @@ func (s *SelectIntoExec) Close() error {
 	}
 	err1 := s.writer.Flush()
 	err2 := s.dstFile.Close()
-	err3 := s.baseExecutor.Close()
+	err3 := s.BaseExecutor.Close()
 	if err1 != nil {
 		return errors.Trace(err1)
 	} else if err2 != nil {

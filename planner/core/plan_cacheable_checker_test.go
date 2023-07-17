@@ -15,6 +15,8 @@
 package core_test
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/expression"
@@ -30,6 +32,62 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestFixControl44823(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	var va []string
+	for i := 0; i < 201; i++ {
+		tk.MustExec(fmt.Sprintf(`set @a%v = %v`, i, i))
+		va = append(va, fmt.Sprintf("@a%v", i))
+	}
+
+	// prepared plan cache
+	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from t where a in (%v?)'`, strings.Repeat("?,", 200)))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip prepared plan-cache: too many values in in-list`))
+	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
+	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "44823:250"`)
+	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from t where a in (%v?)'`, strings.Repeat("?,", 200)))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
+	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can hit
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "44823:0"`)
+	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from t where a in (%v?)'`, strings.Repeat("?,", 200)))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
+	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// non prepared plan cache
+	values := make([]string, 0, 201)
+	for i := 0; i < 201; i++ {
+		values = append(values, fmt.Sprintf("%v", i))
+	}
+	query := fmt.Sprintf("select * from t where a in (%v)", strings.Join(values, ","))
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	tk.MustExec(`set @@tidb_opt_fix_control = ""`)
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "44823:250"`)
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "44823:0"`)
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
 
 func TestCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -52,6 +110,9 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.LoadDataStmt{}
 	require.False(t, core.Cacheable(stmt, is))
 
+	stmt = &ast.ImportIntoStmt{}
+	require.False(t, core.Cacheable(stmt, is))
+
 	// test SetOprStmt
 	stmt = &ast.SetOprStmt{}
 	require.True(t, core.Cacheable(stmt, is))
@@ -59,7 +120,7 @@ func TestCacheable(t *testing.T) {
 	tableRefsClause := &ast.TableRefsClause{TableRefs: &ast.Join{Left: &ast.TableSource{Source: tbl}}}
 	// test InsertStmt
 	stmt = &ast.InsertStmt{Table: tableRefsClause} // insert-values-stmt
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 	stmt = &ast.InsertStmt{Table: tableRefsClause, Select: &ast.SelectStmt{}} // insert-select-stmt
 	require.True(t, core.Cacheable(stmt, is))
 
@@ -298,6 +359,20 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t where a in (1, 2) and b < 15",
 		"select * from test.t where a between 1 and 10",
 		"select * from test.t where a between 1 and 10 and b < 15",
+		"select * from test.t where a+b=13",      // '+'
+		"select * from test.t where mod(a, 3)=1", // mod
+		"select * from test.t where d>now()",     // now
+		"select a+1 from test.t where a<13",
+		"select mod(a, 10) from test.t where a<13",
+		"select * from test.t limit 1", // limit
+
+		// 2-way joins
+		"select * from test.t inner join test.t3 on test.t.a=test.t3.a",
+		"select * from test.t inner join test.t3 on test.t.a=test.t3.a where test.t.a<10",
+		"select * from test.t, test.t3",
+		"select * from test.t, test.t3 where test.t.a=test.t3.a",
+		"select * from test.t, test.t3 where test.t.a=test.t3.a and test.t.b=t3.b",
+		"select * from test.t, test.t3 where test.t.a=test.t3.a and test.t.a<10",
 	}
 
 	unsupported := []string{
@@ -305,9 +380,7 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select distinct a from test.t1 where a > 1 and b < 2",                                  // distinct
 		"select count(*) from test.t1 where a > 1 and b < 2 group by a",                         // group by
 		"select a, sum(b) as c from test.t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
-		"select * from test.t1 limit 1",                                                         // limit
 		"select * from test.t1 order by a",                                                      // order by
-		"select * from test.t1, test.t2",                                                        // join
 		"select * from (select * from test.t1) t",                                               // sub-query
 		"insert into test.t1 values(1, 1)",                                                      // insert
 		"insert into t1(a, b) select a, b from test.t1",                                         // insert into select
@@ -316,22 +389,21 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t1 for update",                                                      // lock
 		"select * from test.t1 where a in (select a from t)",                                    // uncorrelated sub-query
 		"select * from test.t1 where a in (select a from test.t where a > t1.a)",                // correlated sub-query
-
-		"select * from test.t where a+b=13",      // '+'
-		"select * from test.t where mod(a, 3)=1", // mod
-		"select * from test.t where d>now()",     // now
 	}
 
+	sctx := tk.Session()
 	for _, q := range unsupported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		require.False(t, core.NonPreparedPlanCacheable(stmt, is))
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		require.False(t, ok)
 	}
 
 	for _, q := range supported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		require.True(t, core.NonPreparedPlanCacheable(stmt, is))
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		require.True(t, ok)
 	}
 }
 
@@ -351,7 +423,7 @@ func BenchmarkNonPreparedPlanCacheableChecker(b *testing.B) {
 	sctx := tk.Session()
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 
-	core.NonPreparedPlanCacheable(stmt, is)
+	core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

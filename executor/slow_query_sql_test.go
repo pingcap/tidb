@@ -117,8 +117,8 @@ func TestSlowQueryNonPrepared(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
 	tk.MustQuery(`select prepared, plan_from_cache, query from information_schema.slow_query where query like '%select * from t where a%' order by query`).Check(testkit.Rows(
-		`0 0 select * from t where a<1 [arguments: 1];`,
-		`0 1 select * from t where a<2 [arguments: 2];`,
+		`0 0 select * from t where a<1;`,
+		`0 1 select * from t where a<2;`,
 		`0 0 select * from t where a<3;`))
 }
 
@@ -266,7 +266,7 @@ func TestIssue37066(t *testing.T) {
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	tk.MustExec("set tidb_slow_log_threshold=0;")
 	defer func() {

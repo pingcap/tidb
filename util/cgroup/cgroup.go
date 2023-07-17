@@ -142,6 +142,33 @@ func readFile(filepath string) (res []byte, err error) {
 	return res, err
 }
 
+// The field in /proc/self/cgroup and /proc/self/meminfo may appear as "cpuacct,cpu" or "rw,cpuacct,cpu"
+// while the input controller is "cpu,cpuacct"
+func controllerMatch(field string, controller string) bool {
+	if field == controller {
+		return true
+	}
+
+	fs := strings.Split(field, ",")
+	if len(fs) < 2 {
+		return false
+	}
+	cs := strings.Split(controller, ",")
+	if len(fs) < len(cs) {
+		return false
+	}
+	fmap := make(map[string]struct{}, len(fs))
+	for _, f := range fs {
+		fmap[f] = struct{}{}
+	}
+	for _, c := range cs {
+		if _, ok := fmap[c]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // The controller is defined via either type `memory` for cgroup v1 or via empty type for cgroup v2,
 // where the type is the second field in /proc/[pid]/cgroup file
 func detectControlPath(cgroupFilePath string, controller string) (string, error) {
@@ -161,7 +188,7 @@ func detectControlPath(cgroupFilePath string, controller string) (string, error)
 	var unifiedPathIfFound string
 	for scanner.Scan() {
 		fields := bytes.Split(scanner.Bytes(), []byte{':'})
-		if len(fields) != 3 {
+		if len(fields) < 3 {
 			// The lines should always have three fields, there's something fishy here.
 			continue
 		}
@@ -172,8 +199,15 @@ func detectControlPath(cgroupFilePath string, controller string) (string, error)
 		// but no known container solutions support it.
 		if f0 == "0" && f1 == "" {
 			unifiedPathIfFound = string(fields[2])
-		} else if f1 == controller {
-			return string(fields[2]), nil
+		} else if controllerMatch(f1, controller) {
+			var result []byte
+			// In some case, the cgroup path contains `:`. We need to join them back.
+			if len(fields) > 3 {
+				result = bytes.Join(fields[2:], []byte(":"))
+			} else {
+				result = fields[2]
+			}
+			return string(result), nil
 		}
 	}
 
@@ -181,11 +215,11 @@ func detectControlPath(cgroupFilePath string, controller string) (string, error)
 }
 
 // See http://man7.org/linux/man-pages/man5/proc.5.html for `mountinfo` format.
-func getCgroupDetails(mountInfoPath string, cRoot string, controller string) (string, int, error) {
+func getCgroupDetails(mountInfoPath string, cRoot string, controller string) (mount []string, version []int, err error) {
 	//nolint:gosec
 	info, err := os.Open(mountInfoPath)
 	if err != nil {
-		return "", 0, errors.Wrapf(err, "failed to read mounts info from file: %s", mountInfoPath)
+		return nil, nil, errors.Wrapf(err, "failed to read mounts info from file: %s", mountInfoPath)
 	}
 	defer func() {
 		err := info.Close()
@@ -193,6 +227,8 @@ func getCgroupDetails(mountInfoPath string, cRoot string, controller string) (st
 			log.Error("close mountInfoPath", zap.Error(err))
 		}
 	}()
+	var foundVer1, foundVer2 = false, false
+	var mountPointVer1, mountPointVer2 string
 
 	scanner := bufio.NewScanner(info)
 	for scanner.Scan() {
@@ -205,7 +241,9 @@ func getCgroupDetails(mountInfoPath string, cRoot string, controller string) (st
 		if ok {
 			mountPoint := string(fields[4])
 			if ver == 2 {
-				return mountPoint, ver, nil
+				foundVer2 = true
+				mountPointVer2 = mountPoint
+				continue
 			}
 			// It is possible that the controller mount and the cgroup path are not the same (both are relative to the NS root).
 			// So start with the mount and construct the relative path of the cgroup.
@@ -221,13 +259,23 @@ func getCgroupDetails(mountInfoPath string, cRoot string, controller string) (st
 				// the best action is to ignore the line and hope that the rest of the lines
 				// will allow us to extract a valid path.
 				if relPath, err := filepath.Rel(nsRelativePath, cRoot); err == nil {
-					return filepath.Join(mountPoint, relPath), ver, nil
+					mountPointVer1 = filepath.Join(mountPoint, relPath)
+					foundVer1 = true
 				}
 			}
 		}
 	}
+	if foundVer1 && foundVer2 {
+		return []string{mountPointVer1, mountPointVer2}, []int{1, 2}, nil
+	}
+	if foundVer1 {
+		return []string{mountPointVer1}, []int{1}, nil
+	}
+	if foundVer2 {
+		return []string{mountPointVer2}, []int{2}, nil
+	}
 
-	return "", 0, fmt.Errorf("failed to detect cgroup root mount and version")
+	return nil, nil, fmt.Errorf("failed to detect cgroup root mount and version")
 }
 
 func cgroupFileToUint64(filepath, desc string) (res uint64, err error) {
@@ -280,7 +328,7 @@ func detectCgroupVersion(fields [][]byte, controller string) (_ int, found bool)
 
 	// Check for controller specifically in cgroup v1 (it is listed in super
 	// options field), as the value can't be found if it is not enforced.
-	if bytes.Equal(fields[pos], []byte("cgroup")) && bytes.Contains(fields[pos+2], []byte(controller)) {
+	if bytes.Equal(fields[pos], []byte("cgroup")) && controllerMatch(string(fields[pos+2]), controller) {
 		return 1, true
 	} else if bytes.Equal(fields[pos], []byte("cgroup2")) {
 		return 2, true

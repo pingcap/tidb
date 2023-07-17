@@ -86,6 +86,8 @@ const (
 	DefDDLSlowOprThreshold = 300
 	// DefExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	DefExpensiveQueryTimeThreshold = 60
+	// DefExpensiveTxnTimeThreshold indicates the time threshold of expensive txn.
+	DefExpensiveTxnTimeThreshold = 600
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 	DefMemoryUsageAlarmRatio = 0.8
 	// DefTempDir is the default temporary directory path for TiDB.
@@ -295,8 +297,7 @@ type Config struct {
 	TiFlashComputeAutoScalerAddr string `toml:"autoscaler-addr" json:"autoscaler-addr"`
 	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
 	AutoScalerClusterID          string `toml:"autoscaler-cluster-id" json:"autoscaler-cluster-id"`
-	// todo: remove this after AutoScaler is stable.
-	UseAutoScaler bool `toml:"use-autoscaler" json:"use-autoscaler"`
+	UseAutoScaler                bool   `toml:"use-autoscaler" json:"use-autoscaler"`
 
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
@@ -304,6 +305,11 @@ type Config struct {
 	TiDBMaxReuseColumn uint32 `toml:"tidb-max-reuse-column" json:"tidb-max-reuse-column"`
 	// TiDBEnableExitCheck indicates whether exit-checking in domain for background process
 	TiDBEnableExitCheck bool `toml:"tidb-enable-exit-check" json:"tidb-enable-exit-check"`
+
+	// InMemSlowQueryTopNNum indicates the number of TopN slow queries stored in memory.
+	InMemSlowQueryTopNNum int `toml:"in-mem-slow-query-topn-num" json:"in-mem-slow-query-topn-num"`
+	// InMemSlowQueryRecentNum indicates the number of recent slow queries stored in memory.
+	InMemSlowQueryRecentNum int `toml:"in-mem-slow-query-recent-num" json:"in-mem-slow-query-recent-num"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -488,6 +494,9 @@ type Log struct {
 	EnableSlowLog       AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+
+	// Make tidb panic if write log operation hang in `Timeout` seconds
+	Timeout int `toml:"timeout" json:"timeout"`
 }
 
 // Instance is the section of instance scope system variables.
@@ -502,6 +511,8 @@ type Instance struct {
 	DDLSlowOprThreshold uint32 `toml:"ddl_slow_threshold" json:"ddl_slow_threshold"`
 	// ExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	ExpensiveQueryTimeThreshold uint64 `toml:"tidb_expensive_query_time_threshold" json:"tidb_expensive_query_time_threshold"`
+	// ExpensiveTxnTimeThreshold indicates the time threshold of expensive transaction.
+	ExpensiveTxnTimeThreshold uint64 `toml:"tidb_expensive_txn_time_threshold" json:"tidb_expensive_txn_time_threshold"`
 	// StmtSummaryEnablePersistent indicates whether to enable file persistence for stmtsummary.
 	StmtSummaryEnablePersistent bool `toml:"tidb_stmt_summary_enable_persistent" json:"tidb_stmt_summary_enable_persistent"`
 	// StmtSummaryFilename indicates the file name written by stmtsummary
@@ -715,6 +726,13 @@ type Performance struct {
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
 
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
+
+	LiteInitStats bool `toml:"lite-init-stats" json:"lite-init-stats"`
+
+	// If ForceInitStats is true, when tidb starts up, it doesn't provide service until init stats is finished.
+	// If ForceInitStats is false, tidb can provide service before init stats is finished. Note that during the period
+	// of init stats the optimizer may make bad decisions due to pseudo stats.
+	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -919,6 +937,7 @@ var defaultConf = Config{
 		EnablePProfSQLCPU:           false,
 		DDLSlowOprThreshold:         DefDDLSlowOprThreshold,
 		ExpensiveQueryTimeThreshold: DefExpensiveQueryTimeThreshold,
+		ExpensiveTxnTimeThreshold:   DefExpensiveTxnTimeThreshold,
 		StmtSummaryEnablePersistent: false,
 		StmtSummaryFilename:         "tidb-statements.log",
 		StmtSummaryFileMaxDays:      3,
@@ -980,6 +999,8 @@ var defaultConf = Config{
 		EnableStatsCacheMemQuota:          false,
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
+		LiteInitStats:                     true,
+		ForceInitStats:                    true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -1039,10 +1060,12 @@ var defaultConf = Config{
 	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
 	IsTiFlashComputeFixedPool:            false,
 	AutoScalerClusterID:                  "",
-	UseAutoScaler:                        true,
+	UseAutoScaler:                        false,
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 	TiDBEnableExitCheck:                  false,
+	InMemSlowQueryTopNNum:                30,
+	InMemSlowQueryRecentNum:              500,
 }
 
 var (
@@ -1069,26 +1092,6 @@ func StoreGlobalConfig(config *Config) {
 	defer TikvConfigLock.Unlock()
 	cfg := *config.GetTiKVConfig()
 	tikvcfg.StoreGlobalConfig(&cfg)
-}
-
-// GetAutoScalerClusterID returns KeyspaceName or AutoScalerClusterID.
-func GetAutoScalerClusterID() (string, error) {
-	c := GetGlobalConfig()
-	keyspaceName := c.KeyspaceName
-	clusterID := c.AutoScalerClusterID
-
-	if keyspaceName != "" && clusterID != "" {
-		return "", errors.Errorf("config.KeyspaceName(%s) and config.AutoScalerClusterID(%s) are not empty both", keyspaceName, clusterID)
-	}
-	if keyspaceName == "" && clusterID == "" {
-		return "", errors.Errorf("config.KeyspaceName and config.AutoScalerClusterID are both empty")
-	}
-
-	res := keyspaceName
-	if res == "" {
-		res = clusterID
-	}
-	return res, nil
 }
 
 // removedConfig contains items that are no longer supported.
@@ -1423,7 +1426,10 @@ var TableLockDelayClean = func() uint64 {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(), func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() })
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(),
+		func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() },
+		func(config *zaplog.Config) { config.Timeout = l.Timeout },
+	)
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.
@@ -1495,17 +1501,14 @@ func GetJSONConfig() (string, error) {
 			if i == len(s)-1 {
 				delete(curValue, key)
 			}
-
-			if curValue[key] != nil {
-				mapValue, ok := curValue[key].(map[string]interface{})
-				if !ok {
-					break
-				}
-
-				curValue = mapValue
-			} else {
+			if curValue[key] == nil {
 				break
 			}
+			mapValue, ok := curValue[key].(map[string]interface{})
+			if !ok {
+				break
+			}
+			curValue = mapValue
 		}
 	}
 

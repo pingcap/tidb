@@ -165,7 +165,7 @@ func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) 
 			case columnType.GetType() == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
 				if constant.Value.GetInt64() < 0 {
 					if MaybeOverOptimized4PlanCache(ctx, args) {
-						ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: Bit Column in (%v)", constant.Value.GetInt64()))
+						ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("Bit Column in (%v)", constant.Value.GetInt64()))
 					}
 					continue
 				}
@@ -1478,7 +1478,7 @@ func (b *builtinGetParamStringSig) evalString(row chunk.Row) (string, bool, erro
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	v := sessionVars.PreparedParams[idx]
+	v := sessionVars.PlanCacheParams.GetParamValue(int(idx))
 
 	str, err := v.ToString()
 	if err != nil {

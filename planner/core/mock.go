@@ -270,9 +270,9 @@ func MockSignedTable() *model.TableInfo {
 
 // MockUnsignedTable is only used for plan related tests.
 func MockUnsignedTable() *model.TableInfo {
-	// column: a, b
+	// column: a, b, c
 	// PK: a
-	// indeices: b
+	// indeices: b, b_c
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("b"),
@@ -325,7 +325,7 @@ func MockUnsignedTable() *model.TableInfo {
 		ID:        3,
 	}
 	pkColumn.SetFlag(mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag)
-	// Column 'b', 'c', 'd', 'f', 'g' is not null.
+	// Column 'b' is not null.
 	col0.SetFlag(mysql.NotNullFlag)
 	col1.SetFlag(mysql.UnsignedFlag)
 	table := &model.TableInfo{

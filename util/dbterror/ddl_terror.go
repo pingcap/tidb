@@ -32,6 +32,8 @@ var (
 	ErrInvalidDDLJob = ClassDDL.NewStd(mysql.ErrInvalidDDLJob)
 	// ErrCancelledDDLJob means the DDL job is cancelled.
 	ErrCancelledDDLJob = ClassDDL.NewStd(mysql.ErrCancelledDDLJob)
+	// ErrPausedDDLJob returns when the DDL job cannot be paused.
+	ErrPausedDDLJob = ClassDDL.NewStd(mysql.ErrPausedDDLJob)
 	// ErrRunMultiSchemaChanges means we run multi schema changes.
 	ErrRunMultiSchemaChanges = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change for %s"), nil))
 	// ErrOperateSameColumn means we change the same columns multiple times in a DDL.
@@ -49,6 +51,8 @@ var (
 	ErrCantDropColWithIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop column with index"), nil))
 	// ErrCantDropColWithAutoInc means can't drop column with auto_increment
 	ErrCantDropColWithAutoInc = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "can't remove column with auto_increment when @@tidb_allow_remove_auto_inc disabled"), nil))
+	// ErrCantDropColWithCheckConstraint means can't drop column with check constraint
+	ErrCantDropColWithCheckConstraint = ClassDDL.NewStd(mysql.ErrDependentByCheckConstraint)
 	// ErrUnsupportedAddColumn means add columns is unsupported
 	ErrUnsupportedAddColumn = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add column"), nil))
 	// ErrUnsupportedModifyColumn means modify columns is unsupoorted
@@ -391,7 +395,11 @@ var (
 	ErrCancelFinishedDDLJob = ClassDDL.NewStd(mysql.ErrCancelFinishedDDLJob)
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
 	ErrCannotCancelDDLJob = ClassDDL.NewStd(mysql.ErrCannotCancelDDLJob)
-	// ErrDDLSetting returns when failing to enable/disable DDL
+	// ErrCannotPauseDDLJob returns when the State is not qualified to be paused.
+	ErrCannotPauseDDLJob = ClassDDL.NewStd(mysql.ErrCannotPauseDDLJob)
+	// ErrCannotResumeDDLJob returns  when the State is not qualified to be resumed.
+	ErrCannotResumeDDLJob = ClassDDL.NewStd(mysql.ErrCannotResumeDDLJob)
+	// ErrDDLSetting returns when failing to enable/disable DDL.
 	ErrDDLSetting = ClassDDL.NewStd(mysql.ErrDDLSetting)
 	// ErrIngestFailed returns when the DDL ingest job is failed.
 	ErrIngestFailed = ClassDDL.NewStd(mysql.ErrIngestFailed)
@@ -436,4 +444,46 @@ var (
 
 	// ErrNotSupportedYet returns when tidb does not support this feature.
 	ErrNotSupportedYet = ClassDDL.NewStd(mysql.ErrNotSupportedYet)
+
+	// ErrColumnCheckConstraintReferOther is returned when create column check constraint referring other column.
+	ErrColumnCheckConstraintReferOther = ClassDDL.NewStd(mysql.ErrColumnCheckConstraintReferencesOtherColumn)
+	// ErrTableCheckConstraintReferUnknown is returned when create table check constraint referring non-existing column.
+	ErrTableCheckConstraintReferUnknown = ClassDDL.NewStd(mysql.ErrTableCheckConstraintReferUnknown)
+	// ErrConstraintNotFound is returned for dropping a non-existent constraint.
+	ErrConstraintNotFound = ClassDDL.NewStd(mysql.ErrConstraintNotFound)
+	// ErrCheckConstraintIsViolated is returned for violating an existent check constraint.
+	ErrCheckConstraintIsViolated = ClassDDL.NewStd(mysql.ErrCheckConstraintViolated)
+	// ErrCheckConstraintNamedFuncIsNotAllowed is returned for not allowed function with name.
+	ErrCheckConstraintNamedFuncIsNotAllowed = ClassDDL.NewStd(mysql.ErrCheckConstraintNamedFunctionIsNotAllowed)
+	// ErrCheckConstraintFuncIsNotAllowed is returned for not allowed function.
+	ErrCheckConstraintFuncIsNotAllowed = ClassDDL.NewStd(mysql.ErrCheckConstraintFunctionIsNotAllowed)
+	// ErrCheckConstraintVariables is returned for referring user or system variables.
+	ErrCheckConstraintVariables = ClassDDL.NewStd(mysql.ErrCheckConstraintVariables)
+	// ErrCheckConstraintRefersAutoIncrementColumn is returned for referring auto-increment columns.
+	ErrCheckConstraintRefersAutoIncrementColumn = ClassDDL.NewStd(mysql.ErrCheckConstraintRefersAutoIncrementColumn)
+	// ErrCheckConstraintUsingFKReferActionColumn is returned for referring foreign key columns.
+	ErrCheckConstraintUsingFKReferActionColumn = ClassDDL.NewStd(mysql.ErrCheckConstraintClauseUsingFKReferActionColumn)
+	// ErrNonBooleanExprForCheckConstraint is returned for non bool expression.
+	ErrNonBooleanExprForCheckConstraint = ClassDDL.NewStd(mysql.ErrNonBooleanExprForCheckConstraint)
 )
+
+// ReorgRetryableErrCodes is the error codes that are retryable for reorganization.
+var ReorgRetryableErrCodes = map[uint16]struct{}{
+	mysql.ErrPDServerTimeout:           {},
+	mysql.ErrTiKVServerTimeout:         {},
+	mysql.ErrTiKVServerBusy:            {},
+	mysql.ErrResolveLockTimeout:        {},
+	mysql.ErrRegionUnavailable:         {},
+	mysql.ErrGCTooEarly:                {},
+	mysql.ErrWriteConflict:             {},
+	mysql.ErrTiKVStoreLimit:            {},
+	mysql.ErrTiKVStaleCommand:          {},
+	mysql.ErrTiKVMaxTimestampNotSynced: {},
+	mysql.ErrTiFlashServerTimeout:      {},
+	mysql.ErrTiFlashServerBusy:         {},
+	mysql.ErrInfoSchemaExpired:         {},
+	mysql.ErrInfoSchemaChanged:         {},
+	mysql.ErrWriteConflictInTiDB:       {},
+	mysql.ErrTxnRetryable:              {},
+	mysql.ErrNotOwner:                  {},
+}

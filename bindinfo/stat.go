@@ -23,12 +23,12 @@ var (
 )
 
 // GetScope gets the status variables scope.
-func (h *BindHandle) GetScope(status string) variable.ScopeFlag {
+func (*BindHandle) GetScope(_ string) variable.ScopeFlag {
 	return variable.ScopeSession
 }
 
 // Stats returns the server statistics.
-func (h *BindHandle) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+func (h *BindHandle) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
 	h.bindInfo.Lock()
 	defer func() {
 		h.bindInfo.Unlock()

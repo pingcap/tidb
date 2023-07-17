@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "cbotest_test",
+    timeout = "short",
+    srcs = [
+        "cbo_test.go",
+        "main_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    race = "on",
+    shard_count = 17,
+    deps = [
+        "//domain",
+        "//executor",
+        "//parser/model",
+        "//planner",
+        "//planner/core",
+        "//session",
+        "//sessionctx/variable",
+        "//statistics",
+        "//statistics/handle",
+        "//testkit",
+        "//testkit/testdata",
+        "//testkit/testmain",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

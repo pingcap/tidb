@@ -28,7 +28,8 @@ type ExecutorBuilder struct {
 
 	oldTable *metautil.Table
 
-	concurrency uint
+	concurrency   uint
+	backoffWeight int
 
 	oldKeyspace []byte
 	newKeyspace []byte
@@ -56,6 +57,12 @@ func (builder *ExecutorBuilder) SetConcurrency(conc uint) *ExecutorBuilder {
 	return builder
 }
 
+// SetBackoffWeight set the backoffWeight of the checksum executing.
+func (builder *ExecutorBuilder) SetBackoffWeight(backoffWeight int) *ExecutorBuilder {
+	builder.backoffWeight = backoffWeight
+	return builder
+}
+
 func (builder *ExecutorBuilder) SetOldKeyspace(keyspace []byte) *ExecutorBuilder {
 	builder.oldKeyspace = keyspace
 	return builder
@@ -79,7 +86,7 @@ func (builder *ExecutorBuilder) Build() (*Executor, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &Executor{reqs: reqs}, nil
+	return &Executor{reqs: reqs, backoffWeight: builder.backoffWeight}, nil
 }
 
 func buildChecksumRequest(
@@ -229,8 +236,10 @@ func buildIndexRequest(
 	var rule *tipb.ChecksumRewriteRule
 	if oldIndexInfo != nil {
 		rule = &tipb.ChecksumRewriteRule{
-			OldPrefix: append(append([]byte{}, oldKeyspace...), tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)...),
-			NewPrefix: append(append([]byte{}, newKeyspace...), tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)...),
+			OldPrefix: append(append([]byte{}, oldKeyspace...),
+				tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)...),
+			NewPrefix: append(append([]byte{}, newKeyspace...),
+				tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)...),
 		}
 	}
 	checksum := &tipb.ChecksumRequest{
@@ -292,7 +301,8 @@ func updateChecksumResponse(resp, update *tipb.ChecksumResponse) {
 
 // Executor is a checksum executor.
 type Executor struct {
-	reqs []*kv.Request
+	reqs          []*kv.Request
+	backoffWeight int
 }
 
 // Len returns the total number of checksum requests.
@@ -332,7 +342,8 @@ func (exec *Executor) Execute(
 	updateFn func(),
 ) (*tipb.ChecksumResponse, error) {
 	checksumResp := &tipb.ChecksumResponse{}
-	checksumBackoffer := utils.InitialRetryState(utils.ChecksumRetryTime, utils.ChecksumWaitInterval, utils.ChecksumMaxWaitInterval)
+	checksumBackoffer := utils.InitialRetryState(utils.ChecksumRetryTime,
+		utils.ChecksumWaitInterval, utils.ChecksumMaxWaitInterval)
 	for _, req := range exec.reqs {
 		// Pointer to SessionVars.Killed
 		// Killed is a flag to indicate that this query is killed.
@@ -344,7 +355,11 @@ func (exec *Executor) Execute(
 			err  error
 		)
 		err = utils.WithRetry(ctx, func() error {
-			resp, err = sendChecksumRequest(ctx, client, req, kv.NewVariables(&killed))
+			vars := kv.NewVariables(&killed)
+			if exec.backoffWeight > 0 {
+				vars.BackOffWeight = exec.backoffWeight
+			}
+			resp, err = sendChecksumRequest(ctx, client, req, vars)
 			failpoint.Inject("checksumRetryErr", func(val failpoint.Value) {
 				// first time reach here. return error
 				if val.(bool) {
@@ -362,5 +377,16 @@ func (exec *Executor) Execute(
 		updateChecksumResponse(checksumResp, resp)
 		updateFn()
 	}
-	return checksumResp, nil
+	return checksumResp, checkContextDone(ctx)
+}
+
+// The coprocessor won't return the error if the context is done,
+// so sometimes BR would get the incomplete result.
+// checkContextDone makes sure the result is not affected by CONTEXT DONE.
+func checkContextDone(ctx context.Context) error {
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return errors.Annotate(ctxErr, "context is cancelled by other error")
+	}
+	return nil
 }

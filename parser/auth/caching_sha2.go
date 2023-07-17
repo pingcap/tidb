@@ -74,14 +74,14 @@ func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) 
 
 	// 1, 2, 3
 	bufA := bytes.NewBuffer(make([]byte, 0, 4096))
-	bufA.Write([]byte(plaintext))
+	bufA.WriteString(plaintext)
 	bufA.Write(salt)
 
 	// 4, 5, 6, 7, 8
 	bufB := bytes.NewBuffer(make([]byte, 0, 4096))
-	bufB.Write([]byte(plaintext))
+	bufB.WriteString(plaintext)
 	bufB.Write(salt)
-	bufB.Write([]byte(plaintext))
+	bufB.WriteString(plaintext)
 	sumB := hash(bufB.Bytes())
 	bufB.Reset()
 
@@ -95,7 +95,7 @@ func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) 
 	// 11
 	for i = len(plaintext); i > 0; i >>= 1 {
 		if i%2 == 0 {
-			bufA.Write([]byte(plaintext))
+			bufA.WriteString(plaintext)
 		} else {
 			bufA.Write(sumB[:])
 		}
@@ -108,7 +108,7 @@ func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) 
 	// 13, 14, 15
 	bufDP := bufA
 	for range []byte(plaintext) {
-		bufDP.Write([]byte(plaintext))
+		bufDP.WriteString(plaintext)
 	}
 	sumDP := hash(bufDP.Bytes())
 	bufDP.Reset()
@@ -169,8 +169,8 @@ func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) 
 	// 22
 	buf := bytes.NewBuffer(make([]byte, 0, 100))
 	buf.Write([]byte{'$', 'A', '$'})
-	rounds := fmt.Sprintf("%03d", iterations/ITERATION_MULTIPLIER)
-	buf.Write([]byte(rounds))
+	rounds := fmt.Sprintf("%03X", iterations/ITERATION_MULTIPLIER)
+	buf.WriteString(rounds)
 	buf.Write([]byte{'$'})
 	buf.Write(salt)
 
@@ -201,7 +201,7 @@ func CheckHashingPassword(pwhash []byte, password string, hash string) (bool, er
 		return false, errors.New("digest type is incompatible")
 	}
 
-	iterations, err := strconv.Atoi(string(pwhashParts[2]))
+	iterations, err := strconv.ParseInt(string(pwhashParts[2]), 16, 64)
 	if err != nil {
 		return false, errors.New("failed to decode iterations")
 	}
@@ -211,9 +211,9 @@ func CheckHashingPassword(pwhash []byte, password string, hash string) (bool, er
 	var newHash string
 	switch hash {
 	case mysql.AuthCachingSha2Password:
-		newHash = hashCrypt(password, salt, iterations, Sha256Hash)
+		newHash = hashCrypt(password, salt, int(iterations), Sha256Hash)
 	case mysql.AuthTiDBSM3Password:
-		newHash = hashCrypt(password, salt, iterations, Sm3Hash)
+		newHash = hashCrypt(password, salt, int(iterations), Sm3Hash)
 	}
 
 	return bytes.Equal(pwhash, []byte(newHash)), nil

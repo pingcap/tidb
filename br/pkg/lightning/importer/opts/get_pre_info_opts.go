@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// opts contains all kinds of options definitions that can affect the behavior of restore & get infos.
+// Package opts contains all kinds of options definitions that can affect the behavior of restore & get infos.
 package opts
 
 // GetPreInfoConfig stores some configs to affect behavior to get pre restore infos.

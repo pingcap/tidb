@@ -34,15 +34,16 @@ var (
 
 // metrics labels.
 const (
-	LabelSession   = "session"
-	LabelDomain    = "domain"
-	LabelDDLOwner  = "ddl-owner"
-	LabelDDL       = "ddl"
-	LabelDDLWorker = "ddl-worker"
-	LabelDistReorg = "dist-reorg"
-	LabelDDLSyncer = "ddl-syncer"
-	LabelGCWorker  = "gcworker"
-	LabelAnalyze   = "analyze"
+	LabelSession    = "session"
+	LabelDomain     = "domain"
+	LabelDDLOwner   = "ddl-owner"
+	LabelDDL        = "ddl"
+	LabelDDLWorker  = "ddl-worker"
+	LabelDistReorg  = "dist-reorg"
+	LabelDDLSyncer  = "ddl-syncer"
+	LabelGCWorker   = "gcworker"
+	LabelAnalyze    = "analyze"
+	LabelWorkerPool = "worker-pool"
 
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"
@@ -184,6 +185,9 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StmtNodeCounter)
 	prometheus.MustRegister(DbStmtNodeCounter)
 	prometheus.MustRegister(ExecPhaseDuration)
+	prometheus.MustRegister(OngoingTxnDurationHistogram)
+	prometheus.MustRegister(MppCoordinatorStats)
+	prometheus.MustRegister(MppCoordinatorLatency)
 	prometheus.MustRegister(StoreQueryFeedbackCounter)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionDuration)
@@ -203,6 +207,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TotalQueryProcHistogram)
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
+	prometheus.MustRegister(CopMVCCRatioHistogram)
 	prometheus.MustRegister(HandleSchemaValidate)
 	prometheus.MustRegister(MaxProcs)
 	prometheus.MustRegister(GOGC)
@@ -241,7 +246,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(AutoIDReqDuration)
 	prometheus.MustRegister(RegionCheckpointSubscriptionEvent)
 	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
-	prometheus.MustRegister(AggressiveLockingUsageCount)
+	prometheus.MustRegister(FairLockingUsageCount)
 
 	prometheus.MustRegister(TTLQueryDuration)
 	prometheus.MustRegister(TTLProcessedExpiredRowsCounter)
@@ -249,6 +254,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLTaskStatus)
 	prometheus.MustRegister(TTLPhaseTime)
 	prometheus.MustRegister(TTLInsertRowsCount)
+	prometheus.MustRegister(TTLWatermarkDelay)
 
 	prometheus.MustRegister(EMACPUUsageGauge)
 	prometheus.MustRegister(PoolConcurrencyCounter)

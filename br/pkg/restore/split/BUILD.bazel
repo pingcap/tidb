@@ -43,10 +43,17 @@ go_library(
 go_test(
     name = "split_test",
     timeout = "short",
-    srcs = ["sum_sorted_test.go"],
+    srcs = [
+        "split_test.go",
+        "sum_sorted_test.go",
+    ],
     flaky = True,
+    shard_count = 4,
     deps = [
         ":split",
+        "//br/pkg/errors",
+        "//br/pkg/utils",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )

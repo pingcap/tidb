@@ -19,10 +19,84 @@ import (
 	"io"
 	"strconv"
 	"testing"
+	"unsafe"
 
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLoadStaticRegisteredPlugin(t *testing.T) {
+	StaticPlugins.Clear()
+	defer StaticPlugins.Clear()
+
+	// error should return when plugin not found
+	_, err := loadOne("/fake/path", "tpluginstatic-1")
+	require.EqualError(t, err, `plugin.Open("/fake/path/tpluginstatic-1.so"): realpath failed`)
+
+	m := &AuditManifest{
+		Manifest: Manifest{
+			Kind:    Authentication,
+			Name:    "tpluginstatic",
+			Version: 1,
+			OnInit: func(ctx context.Context, manifest *Manifest) error {
+				return nil
+			},
+			OnShutdown: func(ctx context.Context, manifest *Manifest) error {
+				return nil
+			},
+			Validate: func(ctx context.Context, manifest *Manifest) error {
+				return nil
+			},
+		},
+		OnGeneralEvent: func(ctx context.Context, sctx *variable.SessionVars, event GeneralEvent, cmd string) {
+		},
+	}
+
+	require.NoError(t, StaticPlugins.Add(m.Name, func() *Manifest {
+		return ExportManifest(m)
+	}))
+
+	// static plugin can be load
+	plugin, err := loadOne("/fake/path", "tpluginstatic-1")
+	require.NoError(t, err)
+	require.NotNil(t, plugin)
+	require.Equal(t, uintptr(unsafe.Pointer(m)), uintptr(unsafe.Pointer(plugin.Manifest)))
+
+	// static plugin do not check version
+	plugin, err = loadOne("/fake/path", "tpluginstatic-2")
+	require.NoError(t, err)
+	require.NotNil(t, plugin)
+	require.Equal(t, uintptr(unsafe.Pointer(m)), uintptr(unsafe.Pointer(plugin.Manifest)))
+
+	// static plugins has a higher priority
+	SetTestHook(func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
+		return func() *Manifest {
+			m2 := &AuditManifest{
+				Manifest: Manifest{
+					Kind:    Authentication,
+					Name:    m.Name,
+					Version: 1,
+					OnInit: func(ctx context.Context, manifest *Manifest) error {
+						return nil
+					},
+					OnShutdown: func(ctx context.Context, manifest *Manifest) error {
+						return nil
+					},
+					Validate: func(ctx context.Context, manifest *Manifest) error {
+						return nil
+					},
+				},
+				OnGeneralEvent: func(ctx context.Context, sctx *variable.SessionVars, event GeneralEvent, cmd string) {
+				},
+			}
+			return ExportManifest(m2)
+		}, nil
+	})
+	plugin, err = loadOne("/fake/path", "tpluginstatic-1")
+	require.NoError(t, err)
+	require.NotNil(t, plugin)
+	require.Equal(t, uintptr(unsafe.Pointer(m)), uintptr(unsafe.Pointer(plugin.Manifest)))
+}
 
 func TestLoadPluginSuccess(t *testing.T) {
 	ctx := context.Background()

@@ -26,8 +26,10 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -77,6 +79,12 @@ func TestConfigDefaultValue(t *testing.T) {
 // Fix issue#22540. Change tidb_dml_batch_size,
 // then check if load data into table with auto random column works properly.
 func TestLoadDataAutoRandom(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/executor/BeforeCommitWork", "sleep(1000)")
+	require.NoError(t, err)
+	defer func() {
+		//nolint:errcheck
+		_ = failpoint.Disable("github.com/pingcap/tidb/executor/BeforeCommitWork")
+	}()
 	ts := createTidbTestSuite(t)
 
 	ts.runTestLoadDataAutoRandom(t)
@@ -95,7 +103,7 @@ func TestExplainFor(t *testing.T) {
 }
 
 func TestStmtCount(t *testing.T) {
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 0
@@ -124,7 +132,7 @@ func TestLoadDataListPartition(t *testing.T) {
 func TestInvalidTLS(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	cfg.Security = config.Security{
@@ -144,7 +152,7 @@ func TestTLSAuto(t *testing.T) {
 		config.TLSConfig = "skip-verify"
 	}
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
@@ -153,6 +161,7 @@ func TestTLSAuto(t *testing.T) {
 	require.NoError(t, err)
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -189,7 +198,7 @@ func TestTLSBasic(t *testing.T) {
 		config.TLSConfig = "skip-verify"
 	}
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -198,6 +207,7 @@ func TestTLSBasic(t *testing.T) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -250,7 +260,7 @@ func TestTLSVerify(t *testing.T) {
 
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Socket = dir + "/tidbtest.sock"
 	cfg.Status.ReportStatus = false
@@ -261,6 +271,7 @@ func TestTLSVerify(t *testing.T) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	defer server.Close()
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
@@ -345,7 +356,7 @@ func TestErrorNoRollback(t *testing.T) {
 	}()
 
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
@@ -365,6 +376,7 @@ func TestErrorNoRollback(t *testing.T) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -499,7 +511,7 @@ func TestReloadTLS(t *testing.T) {
 
 	// try old cert used in startup configuration.
 	cli := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util2.NewTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -509,6 +521,7 @@ func TestReloadTLS(t *testing.T) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.domain)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()

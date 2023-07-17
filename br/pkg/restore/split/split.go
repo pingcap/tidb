@@ -9,15 +9,18 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"go.uber.org/zap"
 )
 
 var (
-	ScanRegionAttemptTimes = 128
+	WaitRegionOnlineAttemptTimes = config.DefaultRegionCheckBackoffLimit
 )
 
 // Constants for split retry machinery.
@@ -50,18 +53,28 @@ func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 	}
 
 	if bytes.Compare(regions[0].Region.StartKey, startKey) > 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "first region's startKey > startKey, startKey: %s, regionStartKey: %s",
-			redact.Key(startKey), redact.Key(regions[0].Region.StartKey))
-	} else if len(regions[len(regions)-1].Region.EndKey) != 0 && bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "last region's endKey < endKey, endKey: %s, regionEndKey: %s",
-			redact.Key(endKey), redact.Key(regions[len(regions)-1].Region.EndKey))
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+			"first region %d's startKey(%s) > startKey(%s), region epoch: %s",
+			regions[0].Region.Id,
+			redact.Key(regions[0].Region.StartKey), redact.Key(startKey),
+			regions[0].Region.RegionEpoch.String())
+	} else if len(regions[len(regions)-1].Region.EndKey) != 0 &&
+		bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+			"last region %d's endKey(%s) < endKey(%s), region epoch: %s",
+			regions[len(regions)-1].Region.Id,
+			redact.Key(regions[len(regions)-1].Region.EndKey), redact.Key(endKey),
+			regions[len(regions)-1].Region.RegionEpoch.String())
 	}
 
 	cur := regions[0]
 	for _, r := range regions[1:] {
 		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
-			return errors.Annotatef(berrors.ErrPDBatchScanRegion, "region endKey not equal to next region startKey, endKey: %s, startKey: %s",
-				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey))
+			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+				"region %d's endKey not equal to next region %d's startKey, endKey: %s, startKey: %s, region epoch: %s %s",
+				cur.Region.Id, r.Region.Id,
+				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey),
+				cur.Region.RegionEpoch.String(), r.Region.RegionEpoch.String())
 		}
 		cur = r
 	}
@@ -80,15 +93,13 @@ func PaginateScanRegion(
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 	}
 
-	var regions []*RegionInfo
-	var err error
-	// we don't need to return multierr. since there only 3 times retry.
-	// in most case 3 times retry have the same error. so we just return the last error.
-	// actually we'd better remove all multierr in br/lightning.
-	// because it's not easy to check multierr equals normal error.
-	// see https://github.com/pingcap/tidb/issues/33419.
+	var (
+		lastRegions []*RegionInfo
+		err         error
+		backoffer   = NewWaitRegionOnlineBackoffer().(*WaitRegionOnlineBackoffer)
+	)
 	_ = utils.WithRetry(ctx, func() error {
-		regions = []*RegionInfo{}
+		regions := make([]*RegionInfo, 0, 16)
 		scanStartKey := startKey
 		for {
 			var batch []*RegionInfo
@@ -110,33 +121,45 @@ func PaginateScanRegion(
 				break
 			}
 		}
+		// if the number of regions changed, we can infer TiKV side really
+		// made some progress so don't increase the retry times.
+		if len(regions) != len(lastRegions) {
+			backoffer.Stat.ReduceRetry()
+		}
+		lastRegions = regions
+
 		if err = CheckRegionConsistency(startKey, endKey, regions); err != nil {
-			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
+			log.Warn("failed to scan region, retrying",
+				logutil.ShortError(err),
+				zap.Int("regionLength", len(regions)))
 			return err
 		}
 		return nil
-	}, newScanRegionBackoffer())
+	}, backoffer)
 
-	return regions, err
+	return lastRegions, err
 }
 
 // CheckPartRegionConsistency only checks the continuity of regions and the first region consistency.
 func CheckPartRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endKey: %s",
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+			"scan region return empty result, startKey: %s, endKey: %s",
 			redact.Key(startKey), redact.Key(endKey))
 	}
 
 	if bytes.Compare(regions[0].Region.StartKey, startKey) > 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "first region's startKey > startKey, startKey: %s, regionStartKey: %s",
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+			"first region's startKey > startKey, startKey: %s, regionStartKey: %s",
 			redact.Key(startKey), redact.Key(regions[0].Region.StartKey))
 	}
 
 	cur := regions[0]
 	for _, r := range regions[1:] {
 		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
-			return errors.Annotatef(berrors.ErrPDBatchScanRegion, "region endKey not equal to next region startKey, endKey: %s, startKey: %s",
+			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+				"region endKey not equal to next region startKey, endKey: %s, startKey: %s",
 				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey))
 		}
 		cur = r
@@ -174,33 +197,44 @@ func ScanRegionsWithRetry(
 		}
 
 		return nil
-	}, newScanRegionBackoffer())
+	}, NewWaitRegionOnlineBackoffer())
 
 	return regions, err
 }
 
-type scanRegionBackoffer struct {
-	attempt int
+type WaitRegionOnlineBackoffer struct {
+	Stat utils.RetryState
 }
 
-func newScanRegionBackoffer() utils.Backoffer {
-	return &scanRegionBackoffer{
-		attempt: ScanRegionAttemptTimes,
+// NewWaitRegionOnlineBackoffer create a backoff to wait region online.
+func NewWaitRegionOnlineBackoffer() utils.Backoffer {
+	return &WaitRegionOnlineBackoffer{
+		Stat: utils.InitialRetryState(
+			WaitRegionOnlineAttemptTimes,
+			time.Millisecond*10,
+			time.Second*2,
+		),
 	}
 }
 
 // NextBackoff returns a duration to wait before retrying again
-func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
+func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
 	if berrors.ErrPDBatchScanRegion.Equal(err) {
-		// 1s * 60 could be enough for splitting remain regions in the hole.
-		b.attempt--
-		return time.Second
+		// it needs more time to wait splitting the regions that contains data in PITR.
+		// 2s * 150
+		delayTime := b.Stat.ExponentialBackoff()
+		failpoint.Inject("hint-scan-region-backoff", func(val failpoint.Value) {
+			if val.(bool) {
+				delayTime = time.Microsecond
+			}
+		})
+		return delayTime
 	}
-	b.attempt = 0
+	b.Stat.StopRetry()
 	return 0
 }
 
 // Attempt returns the remain attempt times
-func (b *scanRegionBackoffer) Attempt() int {
-	return b.attempt
+func (b *WaitRegionOnlineBackoffer) Attempt() int {
+	return b.Stat.Attempt()
 }

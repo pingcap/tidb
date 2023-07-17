@@ -46,6 +46,7 @@ message TableCheckpointModel {
     uint64 kv_bytes = 10;
     uint64 kv_kvs = 11;
     fixed64 kv_checksum = 12;
+    bytes table_info = 13;
 }
 
 message EngineCheckpointModel {

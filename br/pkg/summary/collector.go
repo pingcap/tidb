@@ -28,6 +28,10 @@ const (
 	BackupDataSize = "backup data size(after compressed)"
 	// RestoreDataSize is a field we collection after restore finish
 	RestoreDataSize = "restore data size(after compressed)"
+	// SkippedKVCountByCheckpoint is a field we skip during backup/restore
+	SkippedKVCountByCheckpoint = "skipped kv count by checkpoint"
+	// SkippedBytesByCheckpoint is a field we skip during backup/restore
+	SkippedBytesByCheckpoint = "skipped bytes by checkpoint"
 )
 
 // LogCollector collects infos into summary log.
@@ -231,8 +235,13 @@ func (tc *logCollector) Summary(name string) {
 				zap.String("average-speed", units.HumanSize(float64(data)/totalDureTime.Seconds())+"/s"))
 			continue
 		}
+		if name == SkippedBytesByCheckpoint {
+			logFields = append(logFields,
+				zap.String("skipped-kv-size-by-checkpoint", units.HumanSize(float64(data))))
+			continue
+		}
 		if name == BackupDataSize {
-			if tc.failureUnitCount+tc.successUnitCount == 0 {
+			if tc.failureUnitCount+tc.successUnitCount == 0 && !tc.successStatus {
 				logFields = append(logFields, zap.String("Result", "Nothing to bakcup"))
 			} else {
 				logFields = append(logFields,
@@ -241,7 +250,7 @@ func (tc *logCollector) Summary(name string) {
 			continue
 		}
 		if name == RestoreDataSize {
-			if tc.failureUnitCount+tc.successUnitCount == 0 {
+			if tc.failureUnitCount+tc.successUnitCount == 0 && !tc.successStatus {
 				logFields = append(logFields, zap.String("Result", "Nothing to restore"))
 			} else {
 				logFields = append(logFields,

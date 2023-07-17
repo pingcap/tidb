@@ -152,10 +152,6 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.infoSchema
 }
 
-func (p *baseTxnContextProvider) SetTxnInfoSchema(is infoschema.InfoSchema) {
-	p.infoSchema = is
-}
-
 // GetTxnScope returns the current txn scope
 func (p *baseTxnContextProvider) GetTxnScope() string {
 	return p.sctx.GetSessionVars().TxnCtx.TxnScope
@@ -222,6 +218,7 @@ func (p *baseTxnContextProvider) OnPessimisticStmtEnd(_ context.Context, _ bool)
 // OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	p.ctx = ctx
+	p.sctx.GetSessionVars().TxnCtx.CurrentStmtPessimisticLockCache = nil
 	return nil
 }
 
@@ -288,7 +285,9 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	}
 
 	sessVars := p.sctx.GetSessionVars()
+	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
+	sessVars.TxnCtxMu.Unlock()
 	if sessVars.MemDBFootprint != nil {
 		sessVars.MemDBFootprint.Detach()
 	}
@@ -520,11 +519,11 @@ func (p *basePessimisticTxnContextProvider) OnPessimisticStmtStart(ctx context.C
 	if err := p.baseTxnContextProvider.OnPessimisticStmtStart(ctx); err != nil {
 		return err
 	}
-	if p.sctx.GetSessionVars().PessimisticTransactionAggressiveLocking &&
+	if p.sctx.GetSessionVars().PessimisticTransactionFairLocking &&
 		p.txn != nil &&
 		p.sctx.GetSessionVars().ConnectionID != 0 &&
 		!p.sctx.GetSessionVars().InRestrictedSQL {
-		if err := p.txn.StartAggressiveLocking(); err != nil {
+		if err := p.txn.StartFairLocking(); err != nil {
 			return err
 		}
 	}
@@ -537,32 +536,38 @@ func (p *basePessimisticTxnContextProvider) OnPessimisticStmtEnd(ctx context.Con
 	if err := p.baseTxnContextProvider.OnPessimisticStmtEnd(ctx, isSuccessful); err != nil {
 		return err
 	}
-	if p.txn != nil && p.txn.IsInAggressiveLockingMode() {
+	if p.txn != nil && p.txn.IsInFairLockingMode() {
 		if isSuccessful {
-			if err := p.txn.DoneAggressiveLocking(ctx); err != nil {
+			if err := p.txn.DoneFairLocking(ctx); err != nil {
 				return err
 			}
 		} else {
-			if err := p.txn.CancelAggressiveLocking(ctx); err != nil {
+			if err := p.txn.CancelFairLocking(ctx); err != nil {
 				return err
 			}
 		}
 	}
+
+	if isSuccessful {
+		p.sctx.GetSessionVars().TxnCtx.FlushStmtPessimisticLockCache()
+	} else {
+		p.sctx.GetSessionVars().TxnCtx.CurrentStmtPessimisticLockCache = nil
+	}
 	return nil
 }
 
-func (p *basePessimisticTxnContextProvider) retryAggressiveLockingIfNeeded(ctx context.Context) error {
-	if p.txn != nil && p.txn.IsInAggressiveLockingMode() {
-		if err := p.txn.RetryAggressiveLocking(ctx); err != nil {
+func (p *basePessimisticTxnContextProvider) retryFairLockingIfNeeded(ctx context.Context) error {
+	if p.txn != nil && p.txn.IsInFairLockingMode() {
+		if err := p.txn.RetryFairLocking(ctx); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (p *basePessimisticTxnContextProvider) cancelAggressiveLockingIfNeeded(ctx context.Context) error {
-	if p.txn != nil && p.txn.IsInAggressiveLockingMode() {
-		if err := p.txn.CancelAggressiveLocking(ctx); err != nil {
+func (p *basePessimisticTxnContextProvider) cancelFairLockingIfNeeded(ctx context.Context) error {
+	if p.txn != nil && p.txn.IsInFairLockingMode() {
+		if err := p.txn.CancelFairLocking(ctx); err != nil {
 			return err
 		}
 	}

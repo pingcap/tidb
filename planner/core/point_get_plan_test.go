@@ -37,6 +37,7 @@ import (
 func TestPointGetPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect hit counter in this ut
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

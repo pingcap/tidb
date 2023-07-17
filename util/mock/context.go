@@ -248,8 +248,8 @@ func (*Context) SetGlobalSysVar(_ sessionctx.Context, name string, value string)
 	return nil
 }
 
-// GetPlanCache implements the sessionctx.Context interface.
-func (c *Context) GetPlanCache(_ bool) sessionctx.PlanCache {
+// GetSessionPlanCache implements the sessionctx.Context interface.
+func (c *Context) GetSessionPlanCache() sessionctx.PlanCache {
 	return c.pcache
 }
 
@@ -411,6 +411,11 @@ func (*Context) GetStmtStats() *stmtstats.StatementStats {
 // GetAdvisoryLock acquires an advisory lock
 func (*Context) GetAdvisoryLock(_ string, _ int64) error {
 	return nil
+}
+
+// IsUsedAdvisoryLock check if a lock name is in use
+func (*Context) IsUsedAdvisoryLock(_ string) uint64 {
+	return 0
 }
 
 // ReleaseAdvisoryLock releases an advisory lock

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/importer/mock"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/stretchr/testify/suite"
@@ -34,8 +35,8 @@ import (
 type precheckImplSuite struct {
 	suite.Suite
 	cfg           *config.Config
-	mockSrc       *mock.MockImportSource
-	mockTarget    *mock.MockTargetInfo
+	mockSrc       *mock.ImportSource
+	mockTarget    *mock.TargetInfo
 	preInfoGetter PreImportInfoGetter
 }
 
@@ -52,15 +53,15 @@ func (s *precheckImplSuite) SetupSuite() {
 func (s *precheckImplSuite) SetupTest() {
 	var err error
 	s.Require().NoError(err)
-	s.mockTarget = mock.NewMockTargetInfo()
+	s.mockTarget = mock.NewTargetInfo()
 	s.cfg = config.NewConfig()
 	s.cfg.TikvImporter.Backend = config.BackendLocal
 	s.Require().NoError(s.setMockImportData(nil))
 }
 
-func (s *precheckImplSuite) setMockImportData(mockDataMap map[string]*mock.MockDBSourceData) error {
+func (s *precheckImplSuite) setMockImportData(mockDataMap map[string]*mock.DBSourceData) error {
 	var err error
-	s.mockSrc, err = mock.NewMockImportSource(mockDataMap)
+	s.mockSrc, err = mock.NewImportSource(mockDataMap)
 	if err != nil {
 		return err
 	}
@@ -77,27 +78,27 @@ func (s *precheckImplSuite) generateMockData(
 	eachTableFileCount int,
 	createSchemaSQLFunc func(dbName string, tblName string) string,
 	sizeAndDataAndSuffixFunc func(dbID int, tblID int, fileID int) ([]byte, int, string),
-) map[string]*mock.MockDBSourceData {
-	result := make(map[string]*mock.MockDBSourceData)
+) map[string]*mock.DBSourceData {
+	result := make(map[string]*mock.DBSourceData)
 	for dbID := 0; dbID < dbCount; dbID++ {
 		dbName := fmt.Sprintf("db%d", dbID+1)
-		tables := make(map[string]*mock.MockTableSourceData)
+		tables := make(map[string]*mock.TableSourceData)
 		for tblID := 0; tblID < eachDBTableCount; tblID++ {
 			tblName := fmt.Sprintf("tbl%d", tblID+1)
-			files := []*mock.MockSourceFile{}
+			files := []*mock.SourceFile{}
 			for fileID := 0; fileID < eachTableFileCount; fileID++ {
 				fileData, totalSize, suffix := sizeAndDataAndSuffixFunc(dbID, tblID, fileID)
-				mockSrcFile := &mock.MockSourceFile{
+				mockSrcFile := &mock.SourceFile{
 					FileName:  fmt.Sprintf("/%s/%s/data.%d.%s", dbName, tblName, fileID+1, suffix),
 					Data:      fileData,
 					TotalSize: totalSize,
 				}
 				files = append(files, mockSrcFile)
 			}
-			mockTblSrcData := &mock.MockTableSourceData{
+			mockTblSrcData := &mock.TableSourceData{
 				DBName:    dbName,
 				TableName: tblName,
-				SchemaFile: &mock.MockSourceFile{
+				SchemaFile: &mock.SourceFile{
 					FileName: fmt.Sprintf("/%s/%s/%s.schema.sql", dbName, tblName, tblName),
 					Data:     []byte(createSchemaSQLFunc(dbName, tblName)),
 				},
@@ -105,7 +106,7 @@ func (s *precheckImplSuite) generateMockData(
 			}
 			tables[tblName] = mockTblSrcData
 		}
-		mockDBSrcData := &mock.MockDBSourceData{
+		mockDBSrcData := &mock.DBSourceData{
 			Name:   dbName,
 			Tables: tables,
 		}
@@ -117,19 +118,19 @@ func (s *precheckImplSuite) generateMockData(
 func (s *precheckImplSuite) TestClusterResourceCheckBasic() {
 	var (
 		err    error
-		ci     PrecheckItem
-		result *CheckResult
+		ci     precheck.Checker
+		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ci = NewClusterResourceCheckItem(s.preInfoGetter)
-	s.Require().Equal(CheckTargetClusterSize, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckTargetClusterSize, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
 	s.T().Logf("check result message: %s", result.Message)
-	s.Require().Equal(Warn, result.Severity)
+	s.Require().Equal(precheck.Warn, result.Severity)
 	s.Require().True(result.Passed)
 
 	testMockSrcData := s.generateMockData(1, 1, 1,
@@ -142,12 +143,12 @@ func (s *precheckImplSuite) TestClusterResourceCheckBasic() {
 	)
 	s.Require().NoError(s.setMockImportData(testMockSrcData))
 	ci = NewClusterResourceCheckItem(s.preInfoGetter)
-	s.Require().Equal(CheckTargetClusterSize, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckTargetClusterSize, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Warn, result.Severity)
+	s.Require().Equal(precheck.Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 
@@ -159,8 +160,8 @@ func (s *precheckImplSuite) TestClusterResourceCheckBasic() {
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
-	s.Require().Equal(CheckTargetClusterSize, result.Item)
-	s.Require().Equal(Warn, result.Severity)
+	s.Require().Equal(precheck.CheckTargetClusterSize, result.Item)
+	s.Require().Equal(precheck.Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 }
@@ -168,19 +169,19 @@ func (s *precheckImplSuite) TestClusterResourceCheckBasic() {
 func (s *precheckImplSuite) TestClusterVersionCheckBasic() {
 	var (
 		err    error
-		ci     PrecheckItem
-		result *CheckResult
+		ci     precheck.Checker
+		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	ci = NewClusterVersionCheckItem(s.preInfoGetter, s.mockSrc.GetAllDBFileMetas())
-	s.Require().Equal(CheckTargetClusterVersion, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckTargetClusterVersion, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 }
@@ -188,19 +189,19 @@ func (s *precheckImplSuite) TestClusterVersionCheckBasic() {
 func (s *precheckImplSuite) TestEmptyRegionCheckBasic() {
 	var (
 		err    error
-		ci     PrecheckItem
-		result *CheckResult
+		ci     precheck.Checker
+		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	ci = NewEmptyRegionCheckItem(s.preInfoGetter, s.mockSrc.GetAllDBFileMetas())
-	s.Require().Equal(CheckTargetClusterEmptyRegion, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckTargetClusterEmptyRegion, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Warn, result.Severity)
+	s.Require().Equal(precheck.Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -222,8 +223,8 @@ func (s *precheckImplSuite) TestEmptyRegionCheckBasic() {
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
-	s.Require().Equal(CheckTargetClusterEmptyRegion, result.Item)
-	s.Require().Equal(Warn, result.Severity)
+	s.Require().Equal(precheck.CheckTargetClusterEmptyRegion, result.Item)
+	s.Require().Equal(precheck.Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -231,19 +232,19 @@ func (s *precheckImplSuite) TestEmptyRegionCheckBasic() {
 func (s *precheckImplSuite) TestRegionDistributionCheckBasic() {
 	var (
 		err    error
-		ci     PrecheckItem
-		result *CheckResult
+		ci     precheck.Checker
+		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	ci = NewRegionDistributionCheckItem(s.preInfoGetter, s.mockSrc.GetAllDBFileMetas())
-	s.Require().Equal(CheckTargetClusterRegionDist, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckTargetClusterRegionDist, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -264,8 +265,8 @@ func (s *precheckImplSuite) TestRegionDistributionCheckBasic() {
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
-	s.Require().Equal(CheckTargetClusterRegionDist, result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.CheckTargetClusterRegionDist, result.Item)
+	s.Require().Equal(precheck.Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -273,20 +274,20 @@ func (s *precheckImplSuite) TestRegionDistributionCheckBasic() {
 func (s *precheckImplSuite) TestStoragePermissionCheckBasic() {
 	var (
 		err    error
-		ci     PrecheckItem
-		result *CheckResult
+		ci     precheck.Checker
+		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	s.cfg.Mydumper.SourceDir = "file:///tmp"
 	ci = NewStoragePermissionCheckItem(s.cfg)
-	s.Require().Equal(CheckSourcePermission, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckSourcePermission, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -294,8 +295,8 @@ func (s *precheckImplSuite) TestStoragePermissionCheckBasic() {
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
-	s.Require().Equal(CheckSourcePermission, result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.CheckSourcePermission, result.Item)
+	s.Require().Equal(precheck.Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -303,19 +304,19 @@ func (s *precheckImplSuite) TestStoragePermissionCheckBasic() {
 func (s *precheckImplSuite) TestLargeFileCheckBasic() {
 	var (
 		err    error
-		ci     PrecheckItem
-		result *CheckResult
+		ci     precheck.Checker
+		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	ci = NewLargeFileCheckItem(s.cfg, s.mockSrc.GetAllDBFileMetas())
-	s.Require().Equal(CheckLargeDataFile, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckLargeDataFile, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Warn, result.Severity)
+	s.Require().Equal(precheck.Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -329,12 +330,12 @@ func (s *precheckImplSuite) TestLargeFileCheckBasic() {
 	)
 	s.Require().NoError(s.setMockImportData(testMockSrcData))
 	ci = NewLargeFileCheckItem(s.cfg, s.mockSrc.GetAllDBFileMetas())
-	s.Require().Equal(CheckLargeDataFile, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckLargeDataFile, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Warn, result.Severity)
+	s.Require().Equal(precheck.Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -342,8 +343,8 @@ func (s *precheckImplSuite) TestLargeFileCheckBasic() {
 func (s *precheckImplSuite) TestLocalDiskPlacementCheckBasic() {
 	var (
 		err    error
-		ci     PrecheckItem
-		result *CheckResult
+		ci     precheck.Checker
+		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -351,12 +352,12 @@ func (s *precheckImplSuite) TestLocalDiskPlacementCheckBasic() {
 	s.cfg.Mydumper.SourceDir = "file:///dev/"
 	s.cfg.TikvImporter.SortedKVDir = "/tmp/"
 	ci = NewLocalDiskPlacementCheckItem(s.cfg)
-	s.Require().Equal(CheckLocalDiskPlacement, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckLocalDiskPlacement, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Warn, result.Severity)
+	s.Require().Equal(precheck.Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -365,8 +366,8 @@ func (s *precheckImplSuite) TestLocalDiskPlacementCheckBasic() {
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
-	s.Require().Equal(CheckLocalDiskPlacement, result.Item)
-	s.Require().Equal(Warn, result.Severity)
+	s.Require().Equal(precheck.CheckLocalDiskPlacement, result.Item)
+	s.Require().Equal(precheck.Warn, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -374,20 +375,20 @@ func (s *precheckImplSuite) TestLocalDiskPlacementCheckBasic() {
 func (s *precheckImplSuite) TestLocalTempKVDirCheckBasic() {
 	var (
 		err    error
-		ci     PrecheckItem
-		result *CheckResult
+		ci     precheck.Checker
+		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	s.cfg.TikvImporter.SortedKVDir = "/tmp/"
 	ci = NewLocalTempKVDirCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas())
-	s.Require().Equal(CheckLocalTempKVDir, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckLocalTempKVDir, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -401,12 +402,12 @@ func (s *precheckImplSuite) TestLocalTempKVDirCheckBasic() {
 	)
 	s.Require().NoError(s.setMockImportData(testMockSrcData))
 	ci = NewLocalTempKVDirCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas())
-	s.Require().Equal(CheckLocalTempKVDir, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckLocalTempKVDir, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -414,8 +415,8 @@ func (s *precheckImplSuite) TestLocalTempKVDirCheckBasic() {
 func (s *precheckImplSuite) TestCheckpointCheckBasic() {
 	var (
 		err    error
-		ci     PrecheckItem
-		result *CheckResult
+		ci     precheck.Checker
+		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -423,12 +424,12 @@ func (s *precheckImplSuite) TestCheckpointCheckBasic() {
 	cpdb := checkpoints.NewNullCheckpointsDB()
 	s.cfg.Checkpoint.Enable = true
 	ci = NewCheckpointCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas(), cpdb)
-	s.Require().Equal(CheckCheckpoints, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckCheckpoints, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 }
@@ -436,8 +437,8 @@ func (s *precheckImplSuite) TestCheckpointCheckBasic() {
 func (s *precheckImplSuite) TestSchemaCheckBasic() {
 	var (
 		err    error
-		ci     PrecheckItem
-		result *CheckResult
+		ci     precheck.Checker
+		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -461,12 +462,12 @@ func (s *precheckImplSuite) TestSchemaCheckBasic() {
 	)
 	s.Require().NoError(s.setMockImportData(testMockSrcData))
 	ci = NewSchemaCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas(), nil)
-	s.Require().Equal(CheckSourceSchemaValid, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckSourceSchemaValid, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -480,12 +481,12 @@ func (s *precheckImplSuite) TestSchemaCheckBasic() {
 	)
 	s.Require().NoError(s.setMockImportData(testMockSrcData))
 	ci = NewSchemaCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas(), nil)
-	s.Require().Equal(CheckSourceSchemaValid, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckSourceSchemaValid, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -493,8 +494,8 @@ func (s *precheckImplSuite) TestSchemaCheckBasic() {
 func (s *precheckImplSuite) TestCSVHeaderCheckBasic() {
 	var (
 		err    error
-		ci     PrecheckItem
-		result *CheckResult
+		ci     precheck.Checker
+		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -517,12 +518,12 @@ func (s *precheckImplSuite) TestCSVHeaderCheckBasic() {
 	)
 	s.Require().NoError(s.setMockImportData(testMockSrcData))
 	ci = NewCSVHeaderCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas())
-	s.Require().Equal(CheckCSVHeader, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckCSVHeader, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
@@ -536,12 +537,12 @@ func (s *precheckImplSuite) TestCSVHeaderCheckBasic() {
 	)
 	s.Require().NoError(s.setMockImportData(testMockSrcData))
 	ci = NewCSVHeaderCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas())
-	s.Require().Equal(CheckCSVHeader, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckCSVHeader, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -549,8 +550,8 @@ func (s *precheckImplSuite) TestCSVHeaderCheckBasic() {
 func (s *precheckImplSuite) TestTableEmptyCheckBasic() {
 	var (
 		err    error
-		ci     PrecheckItem
-		result *CheckResult
+		ci     precheck.Checker
+		result *precheck.CheckResult
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -565,23 +566,23 @@ func (s *precheckImplSuite) TestTableEmptyCheckBasic() {
 	)
 	s.Require().NoError(s.setMockImportData(testMockSrcData))
 	ci = NewTableEmptyCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas(), nil)
-	s.Require().Equal(CheckTargetTableEmpty, ci.GetCheckItemID())
+	s.Require().Equal(precheck.CheckTargetTableEmpty, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().True(result.Passed)
 
-	s.mockTarget.SetTableInfo("db1", "tbl1", &mock.MockTableInfo{
+	s.mockTarget.SetTableInfo("db1", "tbl1", &mock.TableInfo{
 		RowCount: 100,
 	})
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
-	s.Require().Equal(CheckTargetTableEmpty, result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.CheckTargetTableEmpty, result.Item)
+	s.Require().Equal(precheck.Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
 }
@@ -604,7 +605,7 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	s.Require().NoError(err)
 	s.Require().NotNil(result)
 	s.Require().Equal(ci.GetCheckItemID(), result.Item)
-	s.Require().Equal(Critical, result.Severity)
+	s.Require().Equal(precheck.Critical, result.Severity)
 	s.Require().True(result.Passed)
 	s.Require().Equal("no CDC or PiTR task found", result.Message)
 

@@ -799,6 +799,8 @@ var funcs = map[string]functionClass{
 	ast.UUIDToBin:       &uuidToBinFunctionClass{baseFunctionClass{ast.UUIDToBin, 1, 2}},
 	ast.BinToUUID:       &binToUUIDFunctionClass{baseFunctionClass{ast.BinToUUID, 1, 2}},
 	ast.TiDBShard:       &tidbShardFunctionClass{baseFunctionClass{ast.TiDBShard, 1, 1}},
+	ast.TiDBRowChecksum: &tidbRowChecksumFunctionClass{baseFunctionClass{ast.TiDBRowChecksum, 0, 0}},
+	ast.Grouping:        &groupingImplFunctionClass{baseFunctionClass{ast.Grouping, 1, 1}},
 
 	ast.GetLock:     &lockFunctionClass{baseFunctionClass{ast.GetLock, 2, 2}},
 	ast.ReleaseLock: &releaseLockFunctionClass{baseFunctionClass{ast.ReleaseLock, 1, 1}},
@@ -832,6 +834,7 @@ var funcs = map[string]functionClass{
 	ast.IsTruthWithNull:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithNull, 1, 1}, opcode.IsTruth, true},
 	ast.IsFalsity:          &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity, false},
 	ast.Like:               &likeFunctionClass{baseFunctionClass{ast.Like, 3, 3}},
+	ast.Ilike:              &ilikeFunctionClass{baseFunctionClass{ast.Ilike, 3, 3}},
 	ast.Regexp:             &regexpLikeFunctionClass{baseFunctionClass{ast.Regexp, 2, 2}},
 	ast.RegexpLike:         &regexpLikeFunctionClass{baseFunctionClass{ast.RegexpLike, 2, 3}},
 	ast.RegexpSubstr:       &regexpSubstrFunctionClass{baseFunctionClass{ast.RegexpSubstr, 2, 5}},
@@ -901,6 +904,7 @@ var funcs = map[string]functionClass{
 	ast.TiDBDecodePlan:       &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
 	ast.TiDBDecodeBinaryPlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodeBinaryPlan, 1, 1}},
 	ast.TiDBDecodeSQLDigests: &tidbDecodeSQLDigestsFunctionClass{baseFunctionClass{ast.TiDBDecodeSQLDigests, 1, 2}},
+	ast.TiDBEncodeSQLDigest:  &tidbEncodeSQLDigestFunctionClass{baseFunctionClass{ast.TiDBEncodeSQLDigest, 1, 1}},
 
 	// TiDB Sequence function.
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},

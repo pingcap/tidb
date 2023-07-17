@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -655,7 +656,8 @@ engines = ["tikv", "tiflash", "tidb"]
 
 	for _, test := range configTest {
 		conf := new(Config)
-		configFile := "config.toml"
+		storeDir := t.TempDir()
+		configFile := filepath.Join(storeDir, "config.toml")
 		f, err := os.Create(configFile)
 		require.NoError(t, err)
 		// Write the sample config file
@@ -690,7 +692,8 @@ func TestConfig(t *testing.T) {
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
 	conf.Instance.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
-	configFile := "config.toml"
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func(configFile string) {
@@ -741,6 +744,8 @@ txn-total-size-limit=2000
 tcp-no-delay = false
 enable-load-fmsketch = true
 plan-replayer-dump-worker-concurrency = 1
+lite-init-stats = false
+force-init-stats = false
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -748,6 +753,7 @@ region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
 resolve-lock-lite-threshold = 16
+copr-req-timeout = "120s"
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
@@ -804,6 +810,7 @@ max_connections = 200
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
+	require.Equal(t, 120*time.Second, conf.TiKVClient.CoprReqTimeout)
 	require.Equal(t, uint32(200), conf.Instance.MaxConnections)
 	require.Equal(t, uint32(10), conf.TiDBMaxReuseChunk)
 	require.Equal(t, uint32(20), conf.TiDBMaxReuseColumn)
@@ -832,6 +839,8 @@ max_connections = 200
 	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
 	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
 	require.True(t, conf.Performance.EnableLoadFMSketch)
+	require.False(t, conf.Performance.LiteInitStats)
+	require.False(t, conf.Performance.ForceInitStats)
 
 	err = f.Truncate(0)
 	require.NoError(t, err)
@@ -1017,7 +1026,8 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 func TestConflictInstanceConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)
-	configFile := "config.toml"
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
@@ -1073,7 +1083,8 @@ func TestConflictInstanceConfig(t *testing.T) {
 func TestDeprecatedConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)
-	configFile := "config.toml"
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
@@ -1306,5 +1317,22 @@ func TestGetGlobalKeyspaceName(t *testing.T) {
 
 	UpdateGlobal(func(conf *Config) {
 		conf.KeyspaceName = ""
+	})
+}
+
+func TestAutoScalerConfig(t *testing.T) {
+	conf := NewConfig()
+	require.False(t, conf.UseAutoScaler)
+
+	conf = GetGlobalConfig()
+	require.False(t, conf.UseAutoScaler)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.UseAutoScaler = true
+	})
+	require.True(t, GetGlobalConfig().UseAutoScaler)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.UseAutoScaler = false
 	})
 }

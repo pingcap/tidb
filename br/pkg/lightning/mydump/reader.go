@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/spkg/bom"
 	"go.uber.org/zap"
+	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
@@ -63,6 +64,19 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 			return nil, errInvalidSchemaEncoding
 		}
 		data = decoded
+	case "latin1":
+		// use Windows1252 (not ISO 8859-1) to decode Latin1
+		// https://dev.mysql.com/doc/refman/8.0/en/charset-we-sets.html
+		decoded, err := charmap.Windows1252.NewDecoder().Bytes(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// > Each byte that cannot be transcoded will be represented in the
+		// > output by the UTF-8 encoding of '\uFFFD'
+		if bytes.ContainsRune(decoded, '\ufffd') {
+			return nil, errInvalidSchemaEncoding
+		}
+		data = decoded
 	default:
 		return nil, errors.Errorf("Unsupported encoding %s", characterSet)
 	}
@@ -70,7 +84,8 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 }
 
 // ExportStatement exports the SQL statement in the schema file.
-func ExportStatement(ctx context.Context, store storage.ExternalStorage, sqlFile FileInfo, characterSet string) ([]byte, error) {
+func ExportStatement(ctx context.Context, store storage.ExternalStorage,
+	sqlFile FileInfo, characterSet string) ([]byte, error) {
 	if sqlFile.FileMeta.Compression != CompressionNone {
 		compressType, err := ToStorageCompressType(sqlFile.FileMeta.Compression)
 		if err != nil {

@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
@@ -164,7 +164,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	// During the period, the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("addIdxNotOwnerErr")`))
 	// TODO: Remove this check after "err" isn't nil in runReorgJobAndHandleErr.
-	if variable.DDLEnableDistributeReorg.Load() {
+	if variable.EnableDistTask.Load() {
 		err = tk.ExecToErr("alter table t1 add index idx2(c1)")
 		require.EqualError(t, err, "[ddl:8201]TiDB server is not a DDL owner")
 	} else {
@@ -852,7 +852,7 @@ func TestModifyColumnTypeWithWarnings(t *testing.T) {
 // TestModifyColumnTypeWhenInterception is to test modifying column type with warnings intercepted by
 // reorg timeout, not owner error and so on.
 func TestModifyColumnTypeWhenInterception(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -879,4 +879,14 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 	}()
 	tk.MustExec("alter table t modify column b decimal(3,1)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 4096 warnings with this error code, first warning: Truncated incorrect DECIMAL value: '11.22'"))
+}
+
+func TestModifyColumnAutoIncrementWithDefaultValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a bigint auto_increment primary key)")
+
+	tk.MustGetErrMsg("alter table t modify column a bigint auto_increment default 3", "[ddl:1067]Invalid default value for 'a'")
 }

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/version/build"
@@ -35,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	tmock "github.com/pingcap/tidb/util/mock"
 	router "github.com/pingcap/tidb/util/table-router"
@@ -148,15 +146,6 @@ func TestVerifyCheckpoint(t *testing.T) {
 		"mydumper.data-source-dir": func(cfg *config.Config) {
 			cfg.Mydumper.SourceDir = "/tmp/test"
 		},
-		"tidb.host": func(cfg *config.Config) {
-			cfg.TiDB.Host = "192.168.0.1"
-		},
-		"tidb.port": func(cfg *config.Config) {
-			cfg.TiDB.Port = 5000
-		},
-		"tidb.pd-addr": func(cfg *config.Config) {
-			cfg.TiDB.PdAddr = "127.0.0.1:3379"
-		},
 		"version": func(cfg *config.Config) {
 			build.ReleaseVersion = "some newer version"
 		},
@@ -177,6 +166,12 @@ func TestVerifyCheckpoint(t *testing.T) {
 			require.Regexp(t, fmt.Sprintf("config '%s' value '.*' different from checkpoint value .*", conf), err.Error())
 		}
 	}
+
+	// changing TiDB IP is OK
+	cfg := newCfg()
+	cfg.TiDB.Host = "192.168.0.1"
+	err = verifyCheckpoint(cfg, taskCp)
+	require.NoError(t, err)
 
 	for conf, fn := range adjustFuncs {
 		if conf == "tikv-importer.backend" {
@@ -214,11 +209,10 @@ func TestPreCheckFailed(t *testing.T) {
 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	g := glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 
 	targetInfoGetter := &TargetInfoGetterImpl{
-		cfg:          cfg,
-		targetDBGlue: g,
+		cfg: cfg,
+		db:  db,
 	}
 	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:              cfg,
@@ -233,17 +227,15 @@ func TestPreCheckFailed(t *testing.T) {
 		checkpointsDB:       cpdb,
 		metaMgrBuilder:      failMetaMgrBuilder{},
 		checkTemplate:       NewSimpleTemplate(),
-		tidbGlue:            g,
+		db:                  db,
 		errorMgr:            errormanager.New(nil, cfg, log.L()),
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: theCheckBuilder,
 	}
 
-	mock.ExpectBegin()
 	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
 		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
 			AddRow("tidb_row_format_version", "2"))
-	mock.ExpectCommit()
 	// precheck failed, will not do init checkpoint.
 	err = ctl.Run(context.Background())
 	require.Regexp(t, ".*mock init meta failure", err.Error())
@@ -251,11 +243,9 @@ func TestPreCheckFailed(t *testing.T) {
 
 	// clear the sys variable cache
 	preInfoGetter.sysVarsCache = nil
-	mock.ExpectBegin()
 	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
 		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
 			AddRow("tidb_row_format_version", "2"))
-	mock.ExpectCommit()
 	ctl.saveCpCh = make(chan saveCp)
 	// precheck failed, will not do init checkpoint.
 	err1 := ctl.Run(context.Background())
@@ -335,7 +325,7 @@ func TestFilterColumns(t *testing.T) {
 		columnNames    []string
 		extendData     mydump.ExtendColumnData
 		ignoreColsMap  map[string]struct{}
-		createTableSql string
+		createTableSQL string
 
 		expectedFilteredColumns []string
 		expectedExtendValues    []string
@@ -362,7 +352,7 @@ func TestFilterColumns(t *testing.T) {
 				Columns: []string{"c_source", "c_schema", "c_table"},
 				Values:  []string{"01", "1", "1"},
 			},
-			createTableSql:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			createTableSQL:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
 			expectedFilteredColumns: []string{"a", "b", "c_source", "c_schema", "c_table"},
 			expectedExtendValues:    []string{"01", "1", "1"},
 		},
@@ -372,7 +362,7 @@ func TestFilterColumns(t *testing.T) {
 				Columns: []string{"c_source", "c_schema", "c_table"},
 				Values:  []string{"01", "1", "1"},
 			},
-			createTableSql:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			createTableSQL:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
 			expectedFilteredColumns: []string{"a", "b", "c_source", "c_schema", "c_table"},
 			expectedExtendValues:    []string{"01", "1", "1"},
 		},
@@ -399,14 +389,14 @@ func TestFilterColumns(t *testing.T) {
 				Values:  []string{"01", "1", "1"},
 			},
 			ignoreColsMap:           map[string]struct{}{"a": {}},
-			createTableSql:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			createTableSQL:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
 			expectedFilteredColumns: []string{"b", "c_source", "c_schema", "c_table"},
 			expectedExtendValues:    []string{"01", "1", "1"},
 		},
 	}
 	for i, tc := range testCases {
 		t.Logf("test case #%d", i)
-		node, err := p.ParseOneStmt(tc.createTableSql, "utf8mb4", "utf8mb4_bin")
+		node, err := p.ParseOneStmt(tc.createTableSQL, "utf8mb4", "utf8mb4_bin")
 		require.NoError(t, err)
 		tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(i+1))
 		require.NoError(t, err)

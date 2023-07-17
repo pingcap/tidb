@@ -21,13 +21,13 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/internal/column"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
-func createColumnByTypeAndLen(tp byte, cl uint32) *ColumnInfo {
-	return &ColumnInfo{
+func createColumnByTypeAndLen(tp byte, cl uint32) *column.Info {
+	return &column.Info{
 		Schema:       "test",
 		Table:        "dual",
 		OrgTable:     "",
@@ -57,7 +57,7 @@ func TestConvertColumnInfo(t *testing.T) {
 		TableAsName:  model.NewCIStr("dual"),
 		DBName:       model.NewCIStr("test"),
 	}
-	colInfo := convertColumnInfo(&resultField)
+	colInfo := column.ConvertColumnInfo(&resultField)
 	require.Equal(t, createColumnByTypeAndLen(mysql.TypeBit, 1), colInfo)
 
 	// Test "mysql.TypeTiny", for: https://github.com/pingcap/tidb/issues/5405.
@@ -75,7 +75,7 @@ func TestConvertColumnInfo(t *testing.T) {
 		TableAsName:  model.NewCIStr("dual"),
 		DBName:       model.NewCIStr("test"),
 	}
-	colInfo = convertColumnInfo(&resultField)
+	colInfo = column.ConvertColumnInfo(&resultField)
 	require.Equal(t, createColumnByTypeAndLen(mysql.TypeTiny, 1), colInfo)
 
 	ftpb1 := types.NewFieldTypeBuilder()
@@ -92,30 +92,6 @@ func TestConvertColumnInfo(t *testing.T) {
 		TableAsName:  model.NewCIStr("dual"),
 		DBName:       model.NewCIStr("test"),
 	}
-	colInfo = convertColumnInfo(&resultField)
+	colInfo = column.ConvertColumnInfo(&resultField)
 	require.Equal(t, uint32(4), colInfo.ColumnLength)
-}
-
-func TestRSWithHooks(t *testing.T) {
-	closeCount := 0
-	rs := &rsWithHooks{
-		ResultSet: &tidbResultSet{recordSet: new(sqlexec.SimpleRecordSet)},
-		onClosed:  func() { closeCount++ },
-	}
-	require.Equal(t, 0, closeCount)
-	rs.Close()
-	require.Equal(t, 1, closeCount)
-	rs.Close()
-	require.Equal(t, 1, closeCount)
-}
-
-func TestUnwrapRS(t *testing.T) {
-	var nilRS ResultSet
-	require.Nil(t, unwrapResultSet(nilRS))
-	rs0 := new(tidbResultSet)
-	rs1 := &rsWithHooks{ResultSet: rs0}
-	rs2 := &rsWithHooks{ResultSet: rs1}
-	for _, rs := range []ResultSet{rs0, rs1, rs2} {
-		require.Equal(t, rs0, unwrapResultSet(rs))
-	}
 }

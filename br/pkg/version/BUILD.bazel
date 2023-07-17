@@ -26,6 +26,7 @@ go_test(
     srcs = ["version_test.go"],
     embed = [":version"],
     flaky = True,
+    shard_count = 9,
     deps = [
         "//br/pkg/version/build",
         "@com_github_coreos_go_semver//semver",

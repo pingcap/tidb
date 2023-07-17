@@ -6,6 +6,8 @@ import (
 	"bytes"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/logutil"
+	"go.uber.org/zap"
 )
 
 // RegionInfo includes a region and the leader of the region.
@@ -22,4 +24,12 @@ func (region *RegionInfo) ContainsInterior(key []byte) bool {
 	return bytes.Compare(key, region.Region.GetStartKey()) > 0 &&
 		(len(region.Region.GetEndKey()) == 0 ||
 			bytes.Compare(key, region.Region.GetEndKey()) < 0)
+}
+
+// ToZapFields returns zap fields for the RegionInfo. It can handle nil RegionInfo.
+func (region *RegionInfo) ToZapFields() zap.Field {
+	if region == nil {
+		return zap.Skip()
+	}
+	return logutil.Region(region.Region)
 }

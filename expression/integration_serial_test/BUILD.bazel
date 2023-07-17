@@ -11,6 +11,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//config",
+        "//expression",
         "//parser/mysql",
         "//parser/terror",
         "//planner/core",

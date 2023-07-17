@@ -29,7 +29,7 @@ import (
 
 var (
 	// LitBackCtxMgr is the entry for the lightning backfill process.
-	LitBackCtxMgr backendCtxManager
+	LitBackCtxMgr BackendCtxMgr
 	// LitMemRoot is used to track the memory usage of the lightning backfill process.
 	LitMemRoot MemRoot
 	// LitDiskRoot is used to track the disk usage of the lightning backfill process.
@@ -50,6 +50,7 @@ func InitGlobalLightningEnv() {
 	globalCfg := config.GetGlobalConfig()
 	if globalCfg.Store != "tikv" {
 		logutil.BgLogger().Warn(LitWarnEnvInitFail,
+			zap.String("category", "ddl-ingest"),
 			zap.String("storage limitation", "only support TiKV storage"),
 			zap.String("current storage", globalCfg.Store),
 			zap.Bool("lightning is initialized", LitInitialized))
@@ -57,25 +58,19 @@ func InitGlobalLightningEnv() {
 	}
 	sPath, err := genLightningDataDir()
 	if err != nil {
-		logutil.BgLogger().Warn(LitWarnEnvInitFail, zap.Error(err),
-			zap.Bool("lightning is initialized", LitInitialized))
+		logutil.BgLogger().Warn(LitWarnEnvInitFail,
+			zap.String("category", "ddl-ingest"),
+			zap.Error(err), zap.Bool("lightning is initialized", LitInitialized))
 		return
 	}
 	LitSortPath = sPath
-	LitMemRoot = NewMemRootImpl(int64(maxMemoryQuota), &LitBackCtxMgr)
-	LitDiskRoot = NewDiskRootImpl(LitSortPath, &LitBackCtxMgr)
-	err = LitDiskRoot.UpdateUsageAndQuota()
-	if err != nil {
-		logutil.BgLogger().Warn(LitErrUpdateDiskStats, zap.Error(err),
-			zap.Bool("lightning is initialized", LitInitialized))
-		return
-	}
-	LitBackCtxMgr.init(LitMemRoot, LitDiskRoot)
-	LitRLimit = util.GenRLimit()
+	LitBackCtxMgr = newLitBackendCtxMgr(LitSortPath, maxMemoryQuota)
+	LitRLimit = util.GenRLimit("ddl-ingest")
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
+		zap.String("category", "ddl-ingest"),
 		zap.Uint64("memory limitation", maxMemoryQuota),
-		zap.Uint64("sort path disk quota", LitDiskRoot.MaxQuota()),
+		zap.String("disk usage info", LitDiskRoot.UsageInfo()),
 		zap.Uint64("max open file number", LitRLimit),
 		zap.Bool("lightning is initialized", LitInitialized))
 }
@@ -83,31 +78,34 @@ func InitGlobalLightningEnv() {
 // Generate lightning local store dir in TiDB data dir.
 // it will append -port to be tmp_ddl suffix.
 func genLightningDataDir() (string, error) {
+	sortPath := ConfigSortPath()
+	if _, err := os.Stat(sortPath); err != nil {
+		if !os.IsNotExist(err) {
+			logutil.BgLogger().Error(LitErrStatDirFail,
+				zap.String("category", "ddl-ingest"),
+				zap.String("sort path", sortPath), zap.Error(err))
+			return "", err
+		}
+	}
+	err := os.MkdirAll(sortPath, 0o700)
+	if err != nil {
+		logutil.BgLogger().Error(LitErrCreateDirFail,
+			zap.String("category", "ddl-ingest"),
+			zap.String("sort path", sortPath), zap.Error(err))
+		return "", err
+	}
+	logutil.BgLogger().Info(LitInfoSortDir,
+		zap.String("category", "ddl-ingest"),
+		zap.String("data path:", sortPath))
+	return sortPath, nil
+}
+
+// ConfigSortPath returns the sort path for lightning.
+func ConfigSortPath() string {
 	tidbCfg := config.GetGlobalConfig()
 	sortPathSuffix := "/tmp_ddl-" + strconv.Itoa(int(tidbCfg.Port))
 	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
-
-	if info, err := os.Stat(sortPath); err != nil {
-		if !os.IsNotExist(err) {
-			logutil.BgLogger().Error(LitErrStatDirFail, zap.String("sort path", sortPath), zap.Error(err))
-			return "", err
-		}
-	} else if info.IsDir() {
-		// Currently remove all dir to clean garbage data.
-		// TODO: when do checkpoint should change follow logic.
-		err := os.RemoveAll(sortPath)
-		if err != nil {
-			logutil.BgLogger().Error(LitErrDeleteDirFail, zap.String("sort path", sortPath), zap.Error(err))
-		}
-	}
-
-	err := os.MkdirAll(sortPath, 0o700)
-	if err != nil {
-		logutil.BgLogger().Error(LitErrCreateDirFail, zap.String("sort path", sortPath), zap.Error(err))
-		return "", err
-	}
-	logutil.BgLogger().Info(LitInfoSortDir, zap.String("data path:", sortPath))
-	return sortPath, nil
+	return sortPath
 }
 
 // GenLightningDataDirForTest is only used for test.

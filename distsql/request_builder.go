@@ -306,9 +306,11 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	}
 	builder.RequestSource.RequestSourceInternal = sv.InRestrictedSQL
 	builder.RequestSource.RequestSourceType = sv.RequestSourceType
+	builder.RequestSource.ExplicitRequestSourceType = sv.ExplicitRequestSourceType
 	builder.StoreBatchSize = sv.StoreBatchSize
 	builder.Request.ResourceGroupName = sv.ResourceGroupName
 	builder.Request.StoreBusyThreshold = sv.LoadBasedReplicaReadThreshold
+	builder.Request.RunawayChecker = sv.StmtCtx.RunawayChecker
 	return builder
 }
 
@@ -354,6 +356,12 @@ func (builder *RequestBuilder) SetResourceGroupTagger(tagger tikvrpc.ResourceGro
 // SetResourceGroupName sets the request resource group name.
 func (builder *RequestBuilder) SetResourceGroupName(name string) *RequestBuilder {
 	builder.Request.ResourceGroupName = name
+	return builder
+}
+
+// SetExplicitRequestSourceType sets the explicit request source type.
+func (builder *RequestBuilder) SetExplicitRequestSourceType(sourceType string) *RequestBuilder {
+	builder.RequestSource.ExplicitRequestSourceType = sourceType
 	return builder
 }
 
@@ -416,6 +424,12 @@ func (builder *RequestBuilder) SetIsStaleness(is bool) *RequestBuilder {
 // SetClosestReplicaReadAdjuster sets request CoprRequestAdjuster
 func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprRequestAdjuster) *RequestBuilder {
 	builder.ClosestReplicaReadAdjuster = chkFn
+	return builder
+}
+
+// SetConnID sets connection id for the builder.
+func (builder *RequestBuilder) SetConnID(connID uint64) *RequestBuilder {
+	builder.ConnID = connID
 	return builder
 }
 

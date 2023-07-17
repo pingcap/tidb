@@ -132,7 +132,6 @@ import (
 	"go/scanner"
 	"go/token"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"runtime"
@@ -299,7 +298,7 @@ func main1(in string) (err error) {
 
 	var xerrors []byte
 	if nm := *oXErrors; nm != "" {
-		b, err1 := ioutil.ReadFile(nm)
+		b, err1 := os.ReadFile(nm)
 		if err1 != nil {
 			return err1
 		}
@@ -511,7 +510,8 @@ type %[1]sXError struct {
 		mustFormat(f, "},\n")
 	}
 	mustFormat(f, "%u}\n")
-	fmt.Fprintf(os.Stderr, "Parse table entries: %d of %d, x %d bits == %d bytes\n", nCells, len(p.Table)*len(msu), tbits, nCells*tbits/8)
+	fmt.Fprintf(os.Stderr, "Parse table entries: %d of %d, x %d bits == %d bytes\n",
+		nCells, len(p.Table)*len(msu), tbits, nCells*tbits/8)
 	if n := p.ConflictsSR; n != 0 {
 		fmt.Fprintf(os.Stderr, "conflicts: %d shift/reduce\n", n)
 	}

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -20,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/golang/mock/gomock"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	. "github.com/pingcap/tidb/br/pkg/storage"
@@ -211,6 +213,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: true,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "ceph",
 			},
 		},
 		{
@@ -225,6 +228,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: false,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "alibaba",
 			},
 		},
 		{
@@ -239,6 +243,7 @@ func TestApplyUpdate(t *testing.T) {
 				ForcePathStyle: false,
 				Bucket:         "bucket",
 				Prefix:         "prefix",
+				Provider:       "netease",
 			},
 		},
 		{
@@ -1216,4 +1221,122 @@ func TestObjectLock(t *testing.T) {
 		}, nil,
 	)
 	require.Equal(t, true, s.storage.IsObjectLockEnabled())
+}
+
+func TestS3StorageBucketRegion(t *testing.T) {
+	type testcase struct {
+		name         string
+		expectRegion string
+		s3           *backuppb.S3
+	}
+
+	require.NoError(t, os.Setenv("AWS_ACCESS_KEY_ID", "ab"))
+	require.NoError(t, os.Setenv("AWS_SECRET_ACCESS_KEY", "cd"))
+	require.NoError(t, os.Setenv("AWS_SESSION_TOKEN", "ef"))
+
+	cases := []testcase{
+		{
+			"empty region from aws",
+			"us-east-1",
+			&backuppb.S3{
+				Region:   "",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "aws",
+			},
+		},
+		{
+			"region from different provider",
+			"sdg",
+			&backuppb.S3{
+				Region:   "sdg",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "ovh",
+			},
+		},
+		{
+			"empty region from different provider",
+			"",
+			&backuppb.S3{
+				Region:   "",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "ovh",
+			},
+		},
+		{
+			"region from aws",
+			"us-west-2",
+			&backuppb.S3{
+				Region:   "us-west-2",
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+				Provider: "aws",
+			},
+		},
+	}
+	for _, ca := range cases {
+		func(name string, region string, s3 *backuppb.S3) {
+			s := createGetBucketRegionServer(region, 200, true)
+			defer s.Close()
+			s3.ForcePathStyle = true
+			s3.Endpoint = s.URL
+
+			t.Log(name)
+			es, err := New(context.Background(),
+				&backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}},
+				&ExternalStorageOptions{})
+			require.NoError(t, err)
+			ss, ok := es.(*S3Storage)
+			require.True(t, ok)
+			require.Equal(t, region, ss.GetOptions().Region)
+		}(ca.name, ca.expectRegion, ca.s3)
+	}
+}
+
+func TestRetryError(t *testing.T) {
+	var count int32 = 0
+	var errString string = "read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer"
+	var lock sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" {
+			var curCnt int32
+			t.Log(r.URL)
+			lock.Lock()
+			count += 1
+			curCnt = count
+			lock.Unlock()
+			if curCnt < 2 {
+				// write an cannot-retry error, but we modify the error to specific error, so client would retry.
+				w.WriteHeader(403)
+				return
+			}
+		}
+
+		w.WriteHeader(200)
+	}))
+
+	defer server.Close()
+	t.Log(server.URL)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/replace-error-to-connection-reset-by-peer", "return(true)"))
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/br/pkg/storage/replace-error-to-connection-reset-by-peer")
+	}()
+
+	ctx := context.Background()
+	s, err := NewS3Storage(ctx, &backuppb.S3{
+		Endpoint:        server.URL,
+		Bucket:          "test",
+		Prefix:          "retry",
+		AccessKey:       "none",
+		SecretAccessKey: "none",
+		Provider:        "skip check region",
+		ForcePathStyle:  true,
+	}, &ExternalStorageOptions{})
+	require.NoError(t, err)
+	err = s.WriteFile(ctx, "reset", []byte(errString))
+	require.NoError(t, err)
+	require.Equal(t, count, int32(2))
 }

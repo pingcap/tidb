@@ -292,7 +292,21 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	switch argTp {
 	case types.ETInt:
 		if bf.tp.GetFlen() == types.UnspecifiedLength {
-			bf.tp.SetFlen(args[0].GetType().GetFlen())
+			// check https://github.com/pingcap/tidb/issues/44786
+			// set flen from integers may truncate integers, e.g. char(1) can not display -1[int(1)]
+			switch args[0].GetType().GetType() {
+			case mysql.TypeTiny:
+				bf.tp.SetFlen(4)
+			case mysql.TypeShort:
+				bf.tp.SetFlen(6)
+			case mysql.TypeInt24:
+				bf.tp.SetFlen(9)
+			case mysql.TypeLong:
+				// set it to 11 as mysql
+				bf.tp.SetFlen(11)
+			default:
+				bf.tp.SetFlen(args[0].GetType().GetFlen())
+			}
 		}
 		sig = &builtinCastIntAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsString)
@@ -433,7 +447,7 @@ func (c *castAsArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	arrayType := c.tp.ArrayType()
 	switch arrayType.GetType() {
-	case mysql.TypeYear, mysql.TypeJSON, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeNewDecimal:
+	case mysql.TypeYear, mysql.TypeJSON, mysql.TypeFloat, mysql.TypeNewDecimal:
 		return nil, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAST-ing data to array of %s", arrayType.String()))
 	}
 	if arrayType.EvalType() == types.ETString && arrayType.GetCharset() != charset.CharsetUTF8MB4 && arrayType.GetCharset() != charset.CharsetBin {
@@ -526,6 +540,13 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 				return uint64(jsonToInt), err
 			}
 			return jsonToInt, err
+		}
+	case types.ETReal:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+			if item.TypeCode != types.JSONTypeCodeFloat64 && item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			return types.ConvertJSONToFloat(sc, item)
 		}
 	case types.ETDatetime:
 		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
@@ -2036,11 +2057,10 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 	}
 	tp := expr.GetType().Clone()
 	if expr.GetType().Hybrid() {
-		if enumOrSetRealTypeIsStr {
-			tp = types.NewFieldType(mysql.TypeVarString)
-		} else {
+		if !enumOrSetRealTypeIsStr {
 			return expr
 		}
+		tp = types.NewFieldType(mysql.TypeVarString)
 	} else if ec.Charset == charset.CharsetBin {
 		// When cast character string to binary string, if we still use fixed length representation,
 		// then 0 padding will be used, which can affect later execution.
@@ -2129,7 +2149,7 @@ func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
 	tp.SetFlen(expr.GetType().GetFlen())
 	tp.SetDecimal(0)
 	types.SetBinChsClnFlag(tp)
-	tp.AddFlag(expr.GetType().GetFlag() & mysql.UnsignedFlag)
+	tp.AddFlag(expr.GetType().GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
 	return BuildCastFunction(ctx, expr, tp)
 }
 
@@ -2143,7 +2163,7 @@ func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
 	tp.SetFlen(mysql.MaxRealWidth)
 	tp.SetDecimal(types.UnspecifiedLength)
 	types.SetBinChsClnFlag(tp)
-	tp.AddFlag(expr.GetType().GetFlag() & mysql.UnsignedFlag)
+	tp.AddFlag(expr.GetType().GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
 	return BuildCastFunction(ctx, expr, tp)
 }
 
@@ -2184,7 +2204,7 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 		tp.SetFlen(mysql.MaxDecimalWidth)
 	}
 	types.SetBinChsClnFlag(tp)
-	tp.AddFlag(expr.GetType().GetFlag() & mysql.UnsignedFlag)
+	tp.AddFlag(expr.GetType().GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
 	castExpr := BuildCastFunction(ctx, expr, tp)
 	// For const item, we can use find-grained precision and scale by the result.
 	if castExpr.ConstItem(ctx.GetSessionVars().StmtCtx) {

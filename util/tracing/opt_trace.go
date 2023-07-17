@@ -98,7 +98,8 @@ type LogicalRuleOptimizeTracer struct {
 }
 
 // buildLogicalRuleOptimizeTracerBeforeOptimize build rule tracer before rule optimize
-func buildLogicalRuleOptimizeTracerBeforeOptimize(index int, name string, before *PlanTrace) *LogicalRuleOptimizeTracer {
+func buildLogicalRuleOptimizeTracerBeforeOptimize(
+	index int, name string, before *PlanTrace) *LogicalRuleOptimizeTracer {
 	return &LogicalRuleOptimizeTracer{
 		Index:    index,
 		Before:   toFlattenPlanTrace(before),
@@ -173,8 +174,8 @@ func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
 
 // PhysicalOptimizeTracer indicates the trace for the whole physicalOptimize processing
 type PhysicalOptimizeTracer struct {
-	PhysicalPlanCostDetails map[int]*PhysicalPlanCostDetail `json:"costs"`
-	Candidates              map[int]*CandidatePlanTrace     `json:"candidates"`
+	PhysicalPlanCostDetails map[string]*PhysicalPlanCostDetail `json:"costs"`
+	Candidates              map[int]*CandidatePlanTrace        `json:"candidates"`
 	// final indicates the final physical plan trace
 	Final []*PlanTrace `json:"final"`
 }
@@ -252,6 +253,16 @@ type PhysicalPlanCostDetail struct {
 	TP     string                 `json:"type"`
 	Desc   string                 `json:"desc"`
 	ID     int                    `json:"id"`
+	Cost   float64                `json:"cost"`
+}
+
+// PhysicalPlanCostParam indicates cost params
+type PhysicalPlanCostParam struct {
+	Params map[string]interface{} `json:"params"`
+	Name   string                 `json:"name"`
+	Desc   string                 `json:"desc"`
+	ID     int                    `json:"id"`
+	Cost   float64                `json:"cost"`
 }
 
 // NewPhysicalPlanCostDetail creates a cost detail

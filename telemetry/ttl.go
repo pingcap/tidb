@@ -109,7 +109,7 @@ func (c *ttlUsageCounter) UpdateTableHistWithDelayTime(tblCnt int, hours int64) 
 func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttlUsageCounter) {
 	counter = &ttlUsageCounter{
 		TTLJobEnabled: variable.EnableTTLJob.Load(),
-		TTLHistDate:   time.Now().Add(-24 * time.Hour).Format("2006-01-02"),
+		TTLHistDate:   time.Now().Add(-24 * time.Hour).Format(time.DateOnly),
 		TableHistWithDeleteRows: []*ttlHistItem{
 			{
 				LessThan: int64Pointer(10 * 1000),

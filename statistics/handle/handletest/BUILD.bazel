@@ -8,6 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//config",
@@ -17,6 +18,7 @@ go_test(
         "//sessionctx/variable",
         "//statistics",
         "//statistics/handle",
+        "//statistics/handle/cache",
         "//statistics/handle/internal",
         "//testkit",
         "//testkit/testsetup",

@@ -43,6 +43,7 @@ var (
 	TotalQueryProcHistogramGeneral  prometheus.Observer
 	TotalCopProcHistogramGeneral    prometheus.Observer
 	TotalCopWaitHistogramGeneral    prometheus.Observer
+	CopMVCCRatioHistogramGeneral    prometheus.Observer
 	TotalQueryProcHistogramInternal prometheus.Observer
 	TotalCopProcHistogramInternal   prometheus.Observer
 	TotalCopWaitHistogramInternal   prometheus.Observer
@@ -52,16 +53,16 @@ var (
 	DmlFirstAttemptDuration             prometheus.Observer
 	DmlRetryDuration                    prometheus.Observer
 
-	// AggressiveLockingTxnUsedCount counts transactions where at least one statement has aggressive locking enabled.
-	AggressiveLockingTxnUsedCount prometheus.Counter
-	// AggressiveLockingStmtUsedCount counts statements that have aggressive locking enabled.
-	AggressiveLockingStmtUsedCount prometheus.Counter
-	// AggressiveLockingTxnUsedCount counts transactions where at least one statement has aggressive locking enabled,
+	// FairLockingTxnUsedCount counts transactions where at least one statement has fair locking enabled.
+	FairLockingTxnUsedCount prometheus.Counter
+	// FairLockingStmtUsedCount counts statements that have fair locking enabled.
+	FairLockingStmtUsedCount prometheus.Counter
+	// FairLockingTxnEffectiveCount counts transactions where at least one statement has fair locking enabled,
 	// and it takes effect (which is determined according to whether lock-with-conflict has occurred during execution).
-	AggressiveLockingTxnEffectiveCount prometheus.Counter
-	// AggressiveLockingTxnUsedCount counts statements where at least one statement has aggressive locking enabled,
+	FairLockingTxnEffectiveCount prometheus.Counter
+	// FairLockingStmtEffectiveCount counts statements where at least one statement has fair locking enabled,
 	// and it takes effect (which is determined according to whether lock-with-conflict has occurred during execution).
-	AggressiveLockingStmtEffectiveCount prometheus.Counter
+	FairLockingStmtEffectiveCount prometheus.Counter
 
 	FastAnalyzeHistogramSample        prometheus.Observer
 	FastAnalyzeHistogramAccessRegions prometheus.Observer
@@ -125,6 +126,13 @@ var (
 
 	PhaseDurationObserverMap         map[string]prometheus.Observer
 	PhaseDurationObserverMapInternal map[string]prometheus.Observer
+
+	MppCoordinatorStatsTotalRegisteredNumber prometheus.Gauge
+	MppCoordinatorStatsActiveNumber          prometheus.Gauge
+	MppCoordinatorStatsOverTimeNumber        prometheus.Gauge
+	MppCoordinatorStatsReportNotReceived     prometheus.Gauge
+
+	MppCoordinatorLatencyRcvReport prometheus.Observer
 )
 
 func init() {
@@ -137,6 +145,7 @@ func InitMetricsVars() {
 	TotalQueryProcHistogramGeneral = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblGeneral)
 	TotalCopProcHistogramGeneral = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblGeneral)
 	TotalCopWaitHistogramGeneral = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblGeneral)
+	CopMVCCRatioHistogramGeneral = metrics.CopMVCCRatioHistogram.WithLabelValues(metrics.LblGeneral)
 	TotalQueryProcHistogramInternal = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblInternal)
 	TotalCopProcHistogramInternal = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblInternal)
 	TotalCopWaitHistogramInternal = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal)
@@ -146,10 +155,10 @@ func InitMetricsVars() {
 	DmlFirstAttemptDuration = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("dml", "first-attempt")
 	DmlRetryDuration = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("dml", "retry")
 
-	AggressiveLockingTxnUsedCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingTxnUsed)
-	AggressiveLockingStmtUsedCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingStmtUsed)
-	AggressiveLockingTxnEffectiveCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingTxnEffective)
-	AggressiveLockingStmtEffectiveCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingStmtEffective)
+	FairLockingTxnUsedCount = metrics.FairLockingUsageCount.WithLabelValues(metrics.LblFairLockingTxnUsed)
+	FairLockingStmtUsedCount = metrics.FairLockingUsageCount.WithLabelValues(metrics.LblFairLockingStmtUsed)
+	FairLockingTxnEffectiveCount = metrics.FairLockingUsageCount.WithLabelValues(metrics.LblFairLockingTxnEffective)
+	FairLockingStmtEffectiveCount = metrics.FairLockingUsageCount.WithLabelValues(metrics.LblFairLockingStmtEffective)
 
 	FastAnalyzeHistogramSample = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "sample")
 	FastAnalyzeHistogramAccessRegions = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "access_regions")
@@ -208,6 +217,13 @@ func InitMetricsVars() {
 	TransactionDurationPessimisticRollbackGeneral = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback, metrics.LblGeneral)
 	TransactionDurationOptimisticRollbackInternal = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback, metrics.LblInternal)
 	TransactionDurationOptimisticRollbackGeneral = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback, metrics.LblGeneral)
+
+	MppCoordinatorStatsTotalRegisteredNumber = metrics.MppCoordinatorStats.WithLabelValues("total")
+	MppCoordinatorStatsActiveNumber = metrics.MppCoordinatorStats.WithLabelValues("active")
+	MppCoordinatorStatsOverTimeNumber = metrics.MppCoordinatorStats.WithLabelValues("overTime")
+	MppCoordinatorStatsReportNotReceived = metrics.MppCoordinatorStats.WithLabelValues("reportNotRcv")
+
+	MppCoordinatorLatencyRcvReport = metrics.MppCoordinatorLatency.WithLabelValues("rcvReports")
 }
 
 // InitPhaseDurationObserverMap init observer map

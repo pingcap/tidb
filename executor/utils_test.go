@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
@@ -97,15 +97,6 @@ func TestBatchRetrieverHelper(t *testing.T) {
 	require.Equal(t, rangeEnds, []int{10})
 }
 
-func TestGetMsgFromBRError(t *testing.T) {
-	var berr error = berrors.ErrStorageInvalidConfig
-	require.Equal(t, "[BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
-	require.Equal(t, "invalid external storage config", getMsgFromBRError(berr))
-	berr = errors.Annotatef(berr, "some message about error reason")
-	require.Equal(t, "some message about error reason: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
-	require.Equal(t, "some message about error reason", getMsgFromBRError(berr))
-}
-
 func TestEqualDatumsAsBinary(t *testing.T) {
 	tests := []struct {
 		a    []interface{}
@@ -129,8 +120,8 @@ func TestEqualDatumsAsBinary(t *testing.T) {
 		{[]interface{}{1}, []interface{}{1, 1}, false},
 		{[]interface{}{nil}, []interface{}{1}, false},
 	}
-
-	e := &InsertValues{baseExecutor: baseExecutor{ctx: core.MockContext()}}
+	base := exec.NewBaseExecutor(core.MockContext(), nil, 0)
+	e := &InsertValues{BaseExecutor: base}
 	for _, tt := range tests {
 		res, err := e.equalDatumsAsBinary(types.MakeDatums(tt.a...), types.MakeDatums(tt.b...))
 		require.NoError(t, err)

@@ -40,8 +40,8 @@ func TestExplainFor(t *testing.T) {
 	tkRoot.MustExec("create table t1(c1 int, c2 int)")
 	tkRoot.MustExec("create table t2(c1 int, c2 int)")
 	tkRoot.MustExec("create user tu@'%'")
-	tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
-	tkUser.Session().Auth(&auth.UserIdentity{Username: "tu", Hostname: "localhost", CurrentUser: true, AuthUsername: "tu", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
+	tkUser.Session().Auth(&auth.UserIdentity{Username: "tu", Hostname: "localhost", CurrentUser: true, AuthUsername: "tu", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tkRoot.MustQuery("select * from t1;")
@@ -74,7 +74,7 @@ func TestExplainFor(t *testing.T) {
 				buf.WriteString(fmt.Sprintf("%v", v))
 			}
 		}
-		require.Regexp(t, "TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task: {num:.*, max:.*, proc_keys:.* rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
+		require.Regexp(t, "TableReader_5 10000.00 0 root  time:.*, loops:1,( RU:.*,)? cop_task: {num:.*, max:.*, proc_keys:.* rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
 			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A",
 			buf.String())
 	}
@@ -441,7 +441,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tmp := testkit.NewTestKit(t, store)
 	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
 	tk := testkit.NewTestKit(t, store)
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -462,12 +462,11 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─MergeJoin_10 1.00 root  inner join, left key:test.t2.a, right key:test.t1.a`,
-		`  ├─TableReader_41(Build) 10.00 root  data:TableRangeScan_40`,
-		`  │ └─TableRangeScan_40 10.00 cop[tikv] table:t1 range:[1,1], keep order:true, stats:pseudo`,
-		`  └─Selection_39(Probe) 0.80 root  not(isnull(test.t2.a))`,
-		`    └─Point_Get_38 1.00 root table:t2, index:idx_a(a) `))
+		`Projection_9 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─HashJoin_11 10.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get_12(Build) 1.00 root table:t2, index:idx_a(a) `, // use idx_a
+		`  └─TableReader_14(Probe) 10.00 root  data:TableRangeScan_13`,
+		`    └─TableRangeScan_13 10.00 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo`))
 
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
@@ -477,12 +476,11 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─MergeJoin_10 1.00 root  inner join, left key:test.t2.a, right key:test.t1.a`,
-		`  ├─TableReader_41(Build) 10.00 root  data:TableRangeScan_40`,
-		`  │ └─TableRangeScan_40 10.00 cop[tikv] table:t1 range:[2,2], keep order:true, stats:pseudo`,
-		`  └─Selection_39(Probe) 0.80 root  not(isnull(test.t2.a))`,
-		`    └─Point_Get_38 1.00 root table:t2, index:idx_a(a) `))
+		`Projection_9 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─HashJoin_11 10.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get_12(Build) 1.00 root table:t2, index:idx_a(a) `,
+		`  └─TableReader_14(Probe) 10.00 root  data:TableRangeScan_13`,
+		`    └─TableRangeScan_13 10.00 cop[tikv] table:t1 range:[2,2], keep order:false, stats:pseudo`))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
@@ -1280,7 +1278,7 @@ func TestCTE4PlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt using @a, @b, @a").Sort().Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @a, @b, @a").Sort().Check(testkit.Rows("1", "2"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: PhysicalApply plan is un-cacheable"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: PhysicalApply plan is un-cacheable"))
 
 	tk.MustExec("prepare stmt from 'with recursive c(p) as (select ?), cte(a, b) as (select 1, 1 union select a+?, 1 from cte, c where a < ?)  select * from cte order by 1, 2;';")
 	tk.MustQuery("execute stmt using @a, @a, @e;").Check(testkit.Rows("1 1", "2 1", "3 1", "4 1", "5 1"))

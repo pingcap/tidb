@@ -311,7 +311,8 @@ func extractHintWarns(warns []error) []error {
 			parser.ErrWarnOptimizerHintInvalidToken.Equal(w) ||
 			parser.ErrWarnMemoryQuotaOverflow.Equal(w) ||
 			parser.ErrWarnOptimizerHintParseError.Equal(w) ||
-			parser.ErrWarnOptimizerHintInvalidInteger.Equal(w) {
+			parser.ErrWarnOptimizerHintInvalidInteger.Equal(w) ||
+			parser.ErrWarnOptimizerHintWrongPos.Equal(w) {
 			// Just one warning is enough, however we use a slice here to stop golint complaining
 			// "error should be the last type when returning multiple items" for `ParseHintsSet`.
 			return []error{w}

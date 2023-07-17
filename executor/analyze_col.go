@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -83,7 +84,7 @@ func (e *AnalyzeColumnsExec) toV2() *AnalyzeColumnsExecV2 {
 }
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
-	e.memTracker = memory.NewTracker(e.ctx.GetSessionVars().PlanID, -1)
+	e.memTracker = memory.NewTracker(int(e.ctx.GetSessionVars().PlanID.Load()), -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.resultHandler = &tableResultHandler{}
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, true, false, !hasPkHist(e.handleCols))
@@ -124,6 +125,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		SetConcurrency(e.concurrency).
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().ResourceGroupName).
+		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
 		Build()
 	if err != nil {
 		return nil, err
@@ -175,10 +177,10 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	for {
 		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
 			dom := domain.GetDomain(e.ctx)
-			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
+			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 		})
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-			return nil, nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+			return nil, nil, nil, nil, nil, errors.Trace(exeerrors.ErrQueryInterrupted)
 		}
 		failpoint.Inject("mockSlowAnalyzeV1", func() {
 			time.Sleep(1000 * time.Second)
@@ -323,7 +325,7 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 	}
 
 	if hasPkHist(e.handleCols) {
-		PKresult := &statistics.AnalyzeResult{
+		pkResult := &statistics.AnalyzeResult{
 			Hist:  hists[:1],
 			Cms:   cms[:1],
 			TopNs: topNs[:1],
@@ -337,11 +339,11 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 		}
 		return &statistics.AnalyzeResults{
 			TableID:  e.tableID,
-			Ars:      []*statistics.AnalyzeResult{PKresult, restResult},
+			Ars:      []*statistics.AnalyzeResult{pkResult, restResult},
 			ExtStats: extStats,
 			Job:      e.job,
 			StatsVer: e.StatsVersion,
-			Count:    int64(PKresult.Hist[0].TotalRowCount()),
+			Count:    int64(pkResult.Hist[0].TotalRowCount()),
 			Snapshot: e.snapshot,
 		}
 	}
