@@ -84,6 +84,13 @@ type RestoreRanges struct {
 	// Ranges represent all related SST Files in a batch.
 	// normally these ranges belong to one TiDB Table.
 	Ranges []rtree.Range
+
+	// one import task will have many restore ranges.
+	// (ImportedRangeIndex, ImportedFileIndex) will locate the files index of an iterator.
+	// used to record the range index of import files.
+	ImportedRangeIndex int
+	// used to record the file index of a range.
+	ImportedFileIndex int
 }
 
 func (i *BackupItem) Size() uint64 {
@@ -285,6 +292,79 @@ func (is BackupItems) GetTableMap() map[int64][]*BackupItem {
 		result[tableID] = append(result[tableID], item)
 	}
 	return result
+}
+
+// when RestoreType is MergedFile. then download files one by one and merge different cf files into one ingest per region.
+// when RestoreType is OriginalFile. then merge download files and merge all cf files into one ingest per region.
+func (rr *RestoreRanges) NextFiles() []*backuppb.File {
+	if rr.ImportedRangeIndex >= len(rr.Ranges) {
+		// this restore ranges has been imported completed.
+		return nil
+	}
+	if rr.Typ == MergedFile {
+		// import one range or partial files at a time, depends on file range.
+		for rr.ImportedRangeIndex < len(rr.Ranges) {
+			// locate the range first.
+			rg := rr.Ranges[rr.ImportedRangeIndex]
+			idx := getFilesRangeIndex(rr.ImportedFileIndex, rg.Files)
+			if idx == 0 {
+				// no files of this range, try next range next time
+				rr.ImportedRangeIndex += 1
+				rr.ImportedFileIndex = 0
+				continue
+			}
+			// update ImportedFileIndex
+			rr.ImportedFileIndex = idx
+			return rg.Files[:idx]
+		}
+		// reach the end of this RestoreRanges.
+		return nil
+	} else if rr.Typ == OriginalFile {
+		// import one range at a time, because one range represents one region.
+		for idx, r := range rr.Ranges {
+			if rr.ImportedRangeIndex <= idx {
+				rr.ImportedRangeIndex += 1
+				return r.Files
+			}
+		}
+		// reach the end of this RestoreRanges.
+		return nil
+	} else {
+		// [unreachable] this should be checked in #ToRestoreRanges.
+		log.Panic("not support type NextFiles", zap.Any("range", rr))
+	}
+	return nil
+}
+
+// isFilesBelongToSameRange check whether two files are belong to the same range with different cf.
+func isFilesBelongToSameRange(f1, f2 string) bool {
+	return GetFileRangeKey(f1) == GetFileRangeKey(f2)
+}
+
+func GetFileRangeKey(f string) string {
+	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
+	// so we need to compare with out the `_{cf}.sst` suffix
+	idx := strings.LastIndex(f, "_")
+	if idx < 0 {
+		panic(fmt.Sprintf("invalid backup data file name: '%s'", f))
+	}
+
+	return f[:idx]
+}
+
+func getFilesRangeIndex(startIdx int, files []*backuppb.File) int {
+	if len(files) <= startIdx {
+		return 0
+	}
+	idx := startIdx + 1
+	for idx < len(files) {
+		if !isFilesBelongToSameRange(files[idx-1].Name, files[idx].Name) {
+			break
+		}
+		idx++
+	}
+
+	return idx
 }
 
 // PitrIDMapsFilename is filename that used to save id maps in pitr.

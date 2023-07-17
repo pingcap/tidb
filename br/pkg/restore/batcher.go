@@ -246,8 +246,10 @@ func (result DrainResult) RestoreRanges() []TableIDWithRange {
 		tableIDWithRange = append(tableIDWithRange, TableIDWithRange{
 			TableID: tableID,
 			Ranges: &metautil.RestoreRanges{
-				Typ:    result.RestoreTyp,
-				Ranges: ranges,
+				Typ:                result.RestoreTyp,
+				Ranges:             ranges,
+				ImportedRangeIndex: 0,
+				ImportedFileIndex:  0,
 			},
 		})
 
@@ -276,7 +278,7 @@ func (b *Batcher) filterOutRanges(checkpointSet map[string]struct{}, drained []r
 	for i, rg := range drained {
 		newFiles := make([]*backuppb.File, 0, len(rg.Files))
 		for _, f := range rg.Files {
-			rangeKey := getFileRangeKey(f.Name)
+			rangeKey := metautil.GetFileRangeKey(f.Name)
 			if _, exists := checkpointSet[rangeKey]; exists {
 				// the range has been import done, so skip it and
 				// update the summary information

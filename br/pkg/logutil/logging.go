@@ -213,6 +213,15 @@ func SSTMetas(sstMetas []*import_sstpb.SSTMeta) zap.Field {
 	return zap.Array("sstMetas", zapSSTMetasMarshaler(sstMetas))
 }
 
+// SSTMetaMap make the zap fields for SST metas map.
+func SSTMetaMap(sstMetas map[string]*import_sstpb.SSTMeta) zap.Field {
+	metas := make([]*import_sstpb.SSTMeta, 0, len(sstMetas))
+	for _, m := range sstMetas {
+		metas = append(metas, m)
+	}
+	return zap.Array("sstMetas", zapSSTMetasMarshaler(metas))
+}
+
 type zapKeysMarshaler [][]byte
 
 func (keys zapKeysMarshaler) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
