@@ -182,25 +182,26 @@ func (is BackupItems) ToRestoreRanges(mergeFilesFn func([]*backuppb.File) []rtre
 		return r
 	}
 	if is[0].File != nil {
-		typ = 1
+		typ += 1
 		files = make([]*backuppb.File, 0, len(is))
 	}
 	if is[0].Range != nil {
-		typ = 2
+		typ += 2
 		ranges = make([]rtree.Range, 0, len(is))
 	}
 	if typ >= 1 && typ <= 2 {
 		// translate backupItem to rtree.Range
 		for _, i := range is {
-			if i.File != nil {
+			if typ == 1 && i.File != nil && i.Range == nil {
 				files = append(files, i.File)
-			}
-			if i.Range != nil {
+			} else if typ == 2 && i.Range != nil && i.File == nil {
 				ranges = append(ranges, rtree.Range{
 					StartKey: i.Range.StartKey,
 					EndKey:   i.Range.EndKey,
 					Files:    i.Range.Files,
 				})
+			} else {
+				log.Panic("not support mixed files and ranges for now")
 			}
 		}
 		if typ == 1 {
@@ -314,8 +315,9 @@ func (rr *RestoreRanges) NextFiles() []*backuppb.File {
 				continue
 			}
 			// update ImportedFileIndex
+			files := rg.Files[rr.ImportedFileIndex:idx]
 			rr.ImportedFileIndex = idx
-			return rg.Files[:idx]
+			return files
 		}
 		// reach the end of this RestoreRanges.
 		return nil

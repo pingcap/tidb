@@ -1371,8 +1371,12 @@ func (rc *Client) RestoreSSTFiles(
 LOOPFORTABLE:
 	for _, withRange := range tableIDWithRange {
 		tableID := withRange.TableID
-		// import files
-		for files := withRange.Ranges.NextFiles(); len(files) != 0; {
+		for {
+			files := withRange.Ranges.NextFiles()
+			if len(files) == 0 {
+				// this ranges have been imported completed
+				break
+			}
 			filesReplica := files
 			restoreTyp := withRange.Ranges.Typ
 			fileCount += len(filesReplica)
