@@ -5,7 +5,4 @@ filters:
   "(sysvar|session|tidb_vars)\\.go$":
     approvers:
       - sig-critical-approvers-tidb-server
-  ".*":
-    approvers:
-      - sig-critical-approvers-tidb-server
 
