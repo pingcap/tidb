@@ -8,6 +8,7 @@ go_library(
         "mocksessionmanager.go",
         "mockstore.go",
         "result.go",
+        "skip.go",
         "stepped.go",
         "testkit.go",
     ],
