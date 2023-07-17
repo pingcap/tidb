@@ -98,6 +98,7 @@ type MPPTask struct {
 	Meta       MPPTaskMeta // on which store this task will execute
 	ID         int64       // mppTaskID
 	StartTs    uint64
+	GatherID   uint64
 	MppQueryID MPPQueryID
 	TableID    int64      // physical table id
 	MppVersion MppVersion // mpp version
@@ -110,6 +111,7 @@ type MPPTask struct {
 func (t *MPPTask) ToPB() *mpp.TaskMeta {
 	meta := &mpp.TaskMeta{
 		StartTs:      t.StartTs,
+		GatherId:     t.GatherID,
 		QueryTs:      t.MppQueryID.QueryTs,
 		LocalQueryId: t.MppQueryID.LocalQueryID,
 		ServerId:     t.MppQueryID.ServerID,

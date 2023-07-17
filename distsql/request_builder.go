@@ -306,6 +306,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	}
 	builder.RequestSource.RequestSourceInternal = sv.InRestrictedSQL
 	builder.RequestSource.RequestSourceType = sv.RequestSourceType
+	builder.RequestSource.ExplicitRequestSourceType = sv.ExplicitRequestSourceType
 	builder.StoreBatchSize = sv.StoreBatchSize
 	builder.Request.ResourceGroupName = sv.ResourceGroupName
 	builder.Request.StoreBusyThreshold = sv.LoadBasedReplicaReadThreshold
@@ -355,6 +356,12 @@ func (builder *RequestBuilder) SetResourceGroupTagger(tagger tikvrpc.ResourceGro
 // SetResourceGroupName sets the request resource group name.
 func (builder *RequestBuilder) SetResourceGroupName(name string) *RequestBuilder {
 	builder.Request.ResourceGroupName = name
+	return builder
+}
+
+// SetExplicitRequestSourceType sets the explicit request source type.
+func (builder *RequestBuilder) SetExplicitRequestSourceType(sourceType string) *RequestBuilder {
+	builder.RequestSource.ExplicitRequestSourceType = sourceType
 	return builder
 }
 
