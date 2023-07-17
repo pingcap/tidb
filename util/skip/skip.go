@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package testkit
+package skip
 
 import "testing"
 
-// SkipUnderShort skips the test if the -short flag is set.
-func SkipUnderShort(t *testing.T, args ...interface{}) {
+// UnderShort skips the test if the -short flag is set.
+func UnderShort(t *testing.T, args ...interface{}) {
 	t.Helper()
 	if testing.Short() {
 		t.Skip(append([]interface{}{"disabled under -short"}, args...))
