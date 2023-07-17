@@ -3834,6 +3834,12 @@ func (n *CalibrateResourceStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CalibrateResourceStmt)
+	for _, val := range n.DynamicCalibrateResourceOptionList {
+		_, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+	}
 	return v.Leave(n)
 }
 
@@ -3847,9 +3853,11 @@ const (
 )
 
 type DynamicCalibrateResourceOption struct {
+	stmtNode
 	Tp       DynamicCalibrateType
-	Ts       ExprNode
 	StrValue string
+	Ts       ExprNode
+	Unit     TimeUnitType
 }
 
 func (n *DynamicCalibrateResourceOption) Restore(ctx *format.RestoreCtx) error {
@@ -3866,9 +3874,35 @@ func (n *DynamicCalibrateResourceOption) Restore(ctx *format.RestoreCtx) error {
 		}
 	case CalibrateDuration:
 		ctx.WriteKeyWord("DURATION ")
-		ctx.WriteString(n.StrValue)
+		if len(n.StrValue) > 0 {
+			ctx.WriteString(n.StrValue)
+		} else {
+			ctx.WriteKeyWord("INTERVAL ")
+			if err := n.Ts.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore DynamicCalibrateResourceOption DURATION TS")
+			}
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord(n.Unit.String())
+		}
 	default:
 		return errors.Errorf("invalid DynamicCalibrateResourceOption: %d", n.Tp)
 	}
 	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DynamicCalibrateResourceOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DynamicCalibrateResourceOption)
+	if n.Ts != nil {
+		node, ok := n.Ts.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Ts = node.(ExprNode)
+	}
+	return v.Leave(n)
 }

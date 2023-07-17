@@ -99,7 +99,7 @@ func (c *copReqSender) run() {
 	}, false)
 	sessCtx, err := p.sessPool.Get()
 	if err != nil {
-		logutil.BgLogger().Error("copReqSender get session from pool failed", zap.String("category", "ddl-ingest"), zap.Error(err))
+		logutil.Logger(p.ctx).Error("copReqSender get session from pool failed", zap.Error(err))
 		p.chunkSender.AddTask(idxRecResult{err: err})
 		return
 	}
@@ -114,7 +114,7 @@ func (c *copReqSender) run() {
 			return
 		}
 		if p.checkpointMgr != nil && p.checkpointMgr.IsComplete(task.endKey) {
-			logutil.BgLogger().Info("checkpoint detected, skip a cop-request task", zap.String("category", "ddl-ingest"),
+			logutil.Logger(p.ctx).Info("checkpoint detected, skip a cop-request task",
 				zap.Int("task ID", task.id),
 				zap.String("task end key", hex.EncodeToString(task.endKey)))
 			continue
@@ -128,7 +128,7 @@ func (c *copReqSender) run() {
 }
 
 func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
-	logutil.BgLogger().Info("start a cop-request task", zap.String("category", "ddl-ingest"),
+	logutil.Logger(p.ctx).Info("start a cop-request task",
 		zap.Int("id", task.id), zap.String("task", task.String()))
 
 	return wrapInBeginRollback(se, func(startTS uint64) error {
@@ -227,7 +227,7 @@ func (c *copReqSenderPool) close(force bool) {
 	if c.closed {
 		return
 	}
-	logutil.BgLogger().Info("close cop-request sender pool", zap.String("category", "ddl-ingest"))
+	logutil.Logger(c.ctx).Info("close cop-request sender pool", zap.Bool("force", force))
 	if force {
 		for _, w := range c.senders {
 			w.cancel()
