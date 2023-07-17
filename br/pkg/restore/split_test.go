@@ -648,7 +648,7 @@ func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, tableIDWithRange []r
 		if int64(i) != rg.TableID {
 			f.tableIDIsInsequence = false
 		}
-		for _, rgFile := range rg.Range {
+		for _, rgFile := range rg.Ranges.Ranges {
 			f.restoredFiles = append(f.restoredFiles, rgFile.Files...)
 		}
 	}

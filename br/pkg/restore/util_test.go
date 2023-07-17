@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	recover_data "github.com/pingcap/kvproto/pkg/recoverdatapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/store/pdtypes"
@@ -61,38 +62,47 @@ func TestGetSSTMetaFromFile(t *testing.T) {
 }
 
 func TestMapTableToFiles(t *testing.T) {
-	filesOfTable1 := []*backuppb.File{
+	filesOfTable1 := []*metautil.BackupItem{
 		{
-			Name:     "table1-1.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
+			File: &backuppb.File{
+				Name:     "table1-1.sst",
+				StartKey: tablecodec.EncodeTablePrefix(1),
+				EndKey:   tablecodec.EncodeTablePrefix(1),
+			},
 		},
 		{
-			Name:     "table1-2.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
+			File: &backuppb.File{
+				Name:     "table1-2.sst",
+				StartKey: tablecodec.EncodeTablePrefix(1),
+				EndKey:   tablecodec.EncodeTablePrefix(1),
+			},
 		},
 		{
-			Name:     "table1-3.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
-		},
-	}
-	filesOfTable2 := []*backuppb.File{
-		{
-			Name:     "table2-1.sst",
-			StartKey: tablecodec.EncodeTablePrefix(2),
-			EndKey:   tablecodec.EncodeTablePrefix(2),
-		},
-		{
-			Name:     "table2-2.sst",
-			StartKey: tablecodec.EncodeTablePrefix(2),
-			EndKey:   tablecodec.EncodeTablePrefix(2),
+			File: &backuppb.File{
+				Name:     "table1-3.sst",
+				StartKey: tablecodec.EncodeTablePrefix(1),
+				EndKey:   tablecodec.EncodeTablePrefix(1),
+			},
 		},
 	}
-
-	result := restore.MapTableToFiles(append(filesOfTable2, filesOfTable1...))
-
+	filesOfTable2 := []*metautil.BackupItem{
+		{
+			File: &backuppb.File{
+				Name:     "table2-1.sst",
+				StartKey: tablecodec.EncodeTablePrefix(2),
+				EndKey:   tablecodec.EncodeTablePrefix(2),
+			},
+		},
+		{
+			File: &backuppb.File{
+				Name:     "table2-2.sst",
+				StartKey: tablecodec.EncodeTablePrefix(2),
+				EndKey:   tablecodec.EncodeTablePrefix(2),
+			},
+		},
+	}
+	items := append(filesOfTable2, filesOfTable1...)
+	result := metautil.BackupItems(items).GetTableMap()
 	require.Equal(t, filesOfTable1, result[1])
 	require.Equal(t, filesOfTable2, result[2])
 }
