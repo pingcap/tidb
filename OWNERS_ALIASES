@@ -3,9 +3,8 @@ aliases:
     - yudongusa
     - easonn7
   sig-critical-approvers-tidb-lightning:
-    - niubell
-    - D3Hunter
-    - frank945946
+    - yudongusa
+    - easonn7
   sig-critical-approvers-parser:
     - yudongusa
     - easonn7
