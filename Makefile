@@ -450,9 +450,10 @@ bazel_prepare:
 	bazel run \
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
-	bazel run  //cmd/mirror -- --mirror> tmp.txt
-	cp tmp.txt DEPS.bzl
-	rm tmp.txt
+	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
+	bazel run  //cmd/mirror -- --mirror> "$($@TMP_OUT)"/tmp.txt
+	cp "$($@TMP_OUT)"/tmp.txt DEPS.bzl
+	rm -rf "$($@TMP_OUT)"
 
 bazel_ci_prepare_rbe:
 	bazel run //:gazelle
