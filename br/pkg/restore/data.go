@@ -263,6 +263,8 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 		if err := ectx.Err(); err != nil {
 			break
 		}
+		storeId := storeId
+		plan := plan
 
 		workers.ApplyOnErrorGroup(eg, func() error {
 			return recovery.RecoverRegionOfStore(ectx, storeId, plan)
