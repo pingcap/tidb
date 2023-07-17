@@ -271,29 +271,29 @@ func (h *flowHandle) ProcessNormalFlow(ctx context.Context, handle dispatcher.Ta
 	}
 }
 
-func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErr [][]byte) ([]byte, error) {
+func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
 		zap.String("step", stepStr(gTask.Step)),
 	)
-	logger.Info("process error flow", zap.ByteStrings("error-message", receiveErr))
+	logger.Info("process error flow", zap.Errors("errors", receiveErrs))
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
 		return nil, err
 	}
-	errStrs := make([]string, 0, len(receiveErr))
-	for _, errStr := range receiveErr {
-		errStrs = append(errStrs, string(errStr))
+	errStrs := make([]string, 0, len(receiveErrs))
+	for _, receiveErr := range receiveErrs {
+		errStrs = append(errStrs, receiveErr.Error())
 	}
 	if err = h.failJob(ctx, handle, gTask, taskMeta, logger, strings.Join(errStrs, "; ")); err != nil {
 		return nil, err
 	}
 
-	gTask.Error = receiveErr[0]
+	gTask.Error = receiveErrs[0]
 
-	errStr := string(receiveErr[0])
+	errStr := receiveErrs[0].Error()
 	// do nothing if the error is resumable
 	if isResumableErr(errStr) {
 		return nil, nil
@@ -303,7 +303,7 @@ func (h *flowHandle) ProcessErrFlow(ctx context.Context, handle dispatcher.TaskH
 		err = rollback(ctx, handle, gTask, logger)
 		if err != nil {
 			// TODO: add error code according to spec.
-			gTask.Error = []byte(errStr + ", " + err.Error())
+			gTask.Error = errors.New(errStr + ", " + err.Error())
 		}
 	}
 	return nil, err
