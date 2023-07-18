@@ -987,7 +987,7 @@ func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hash.HashConte
 	// 1: write the row data of join key to hashVals. (normal EQ key should ignore the null values.) null-EQ for Except statement is an exception.
 	for keyIdx, i := range hCtx.KeyColIdx() {
 		ignoreNull := len(w.hashJoinCtx.isNullEQ) > keyIdx && w.hashJoinCtx.isNullEQ[keyIdx]
-		err = codec.HashChunkSelected(w.rowContainerForProbe.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
+		err = codec.HashChunkSelected(w.rowContainerForProbe.StatementContext(), hCtx.HashVals(), probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -997,7 +997,7 @@ func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hash.HashConte
 	isNAAJ := hCtx.NaKeyColIdxLength() > 0
 	for keyIdx, i := range hCtx.NaKeyColIdx() {
 		// NAAJ won't ignore any null values, but collect them up to probe.
-		err = codec.HashChunkSelected(w.rowContainerForProbe.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, false)
+		err = codec.HashChunkSelected(w.rowContainerForProbe.StatementContext(), hCtx.HashVals(), probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, false)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -1052,7 +1052,7 @@ func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hash.HashConte
 			if !selected[i] || hCtx.hasNull[i] { // process unmatched probe side rows
 				w.joiner.onMissMatch(false, probeSideChk.GetRow(i), joinResult.chk)
 			} else { // process matched probe side rows
-				probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
+				probeKey, probeRow := hCtx.GetHashVals(i).Sum64(), probeSideChk.GetRow(i)
 				ok, joinResult = w.joinMatchedProbeSideRow2Chunk(probeKey, probeRow, hCtx, joinResult)
 				if !ok {
 					return false, joinResult
@@ -1074,7 +1074,7 @@ func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hash.HashConte
 func (w *probeWorker) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hCtx *hash.HashContext, joinResult *hashjoinWorkerResult) (ok bool, _ *hashjoinWorkerResult) {
 	hCtx.InitHash(probeSideChk.NumRows())
 	for keyIdx, i := range hCtx.KeyColIdx() {
-		err := codec.HashChunkColumns(w.rowContainerForProbe.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull)
+		err := codec.HashChunkColumns(w.rowContainerForProbe.StatementContext(), hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -1091,7 +1091,7 @@ func (w *probeWorker) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hCtx
 			joinResult.err = exeerrors.ErrQueryInterrupted
 			return false, joinResult
 		}
-		probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
+		probeKey, probeRow := hCtx.GetHashVals(i).Sum64(), probeSideChk.GetRow(i)
 		ok, joinResult = w.joinMatchedProbeSideRow2ChunkForOuterHashJoin(probeKey, probeRow, hCtx, joinResult)
 		if !ok {
 			return false, joinResult
@@ -1217,7 +1217,7 @@ func (w *buildWorker) buildHashTableForList(buildSideResultCh <-chan *chunk.Chun
 		actionSpill := rowContainer.ActionSpill()
 		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
 			if val.(bool) {
-				actionSpill = rowContainer.rowContainer.ActionSpillForTest()
+				actionSpill = rowContainer.RowContainer().ActionSpillForTest()
 				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
 			}
 		})
@@ -1522,7 +1522,7 @@ type joinRuntimeStats struct {
 	applyCache  bool
 	cache       cacheInfo
 	hasHashStat bool
-	hashStat    hash.hashStatistic
+	hashStat    hash.HashStatistic
 }
 
 func newJoinRuntimeStats() *joinRuntimeStats {
@@ -1575,7 +1575,7 @@ func (e *joinRuntimeStats) Clone() execdetails.RuntimeStats {
 
 type hashJoinRuntimeStats struct {
 	fetchAndBuildHashTable time.Duration
-	hashStat               hash.hashStatistic
+	hashStat               hash.HashStatistic
 	fetchAndProbe          int64
 	probe                  int64
 	concurrent             int
@@ -1605,9 +1605,9 @@ func (e *hashJoinRuntimeStats) String() string {
 		buf.WriteString("build_hash_table:{total:")
 		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable))
 		buf.WriteString(", fetch:")
-		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable - e.hashStat.buildTableElapse))
+		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable - e.hashStat.BuildTableElapse()))
 		buf.WriteString(", build:")
-		buf.WriteString(execdetails.FormatDuration(e.hashStat.buildTableElapse))
+		buf.WriteString(execdetails.FormatDuration(e.hashStat.BuildTableElapse()))
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {
@@ -1621,9 +1621,9 @@ func (e *hashJoinRuntimeStats) String() string {
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
 		buf.WriteString(", fetch:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.probe)))
-		if e.hashStat.probeCollision > 0 {
+		if e.hashStat.ProbeCollision() > 0 {
 			buf.WriteString(", probe_collision:")
-			buf.WriteString(strconv.FormatInt(e.hashStat.probeCollision, 10))
+			buf.WriteString(strconv.FormatInt(e.hashStat.ProbeCollision(), 10))
 		}
 		buf.WriteString("}")
 	}

@@ -54,6 +54,14 @@ func NewHashContext(allTypes []*types.FieldType, keyColIdx []int, naKeyColIdx []
 	}
 }
 
+func (hc *HashContext) GetHashVals(idx int) hash.Hash64 {
+	return hc.hashVals[idx]
+}
+
+func (hc *HashContext) HashVals() []hash.Hash64 {
+	return hc.hashVals
+}
+
 func (hc *HashContext) KeyColIdx() []int {
 	return hc.keyColIdx
 }
@@ -100,29 +108,29 @@ func (hc *HashContext) InitHash(rows int) {
 	}
 }
 
-type hashStatistic struct {
+type HashStatistic struct {
 	// NOTE: probeCollision may be accessed from multiple goroutines concurrently.
 	probeCollision   int64
 	buildTableElapse time.Duration
 }
 
-func (s *hashStatistic) ProbeCollision() int64 {
+func (s *HashStatistic) ProbeCollision() int64 {
 	return s.probeCollision
 }
 
-func (s *hashStatistic) BuildTableElapse() time.Duration {
+func (s *HashStatistic) BuildTableElapse() time.Duration {
 	return s.buildTableElapse
 }
 
-func (s *hashStatistic) MergeProbeCollision(probeCollision int64) {
+func (s *HashStatistic) MergeProbeCollision(probeCollision int64) {
 	s.probeCollision += probeCollision
 }
 
-func (s *hashStatistic) MergeBuildTableElapse(buildTableElapse time.Duration) {
+func (s *HashStatistic) MergeBuildTableElapse(buildTableElapse time.Duration) {
 	s.buildTableElapse += buildTableElapse
 }
 
-func (s *hashStatistic) String() string {
+func (s *HashStatistic) String() string {
 	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDuration(s.buildTableElapse))
 }
 
@@ -136,7 +144,7 @@ type hashNANullBucket struct {
 type HashRowContainer struct {
 	sc   *stmtctx.StatementContext
 	hCtx *HashContext
-	stat *hashStatistic
+	stat *HashStatistic
 
 	// hashTable stores the map of hashKey and RowPtr
 	hashTable baseHashTable
@@ -158,7 +166,7 @@ func NewHashRowContainer(sCtx sessionctx.Context, hCtx *HashContext, allTypes []
 	c := &HashRowContainer{
 		sc:           sCtx.GetSessionVars().StmtCtx,
 		hCtx:         hCtx,
-		stat:         new(hashStatistic),
+		stat:         new(HashStatistic),
 		hashTable:    newConcurrentMapHashTable(),
 		rowContainer: rc,
 		memTracker:   memory.NewTracker(memory.LabelForRowContainer, -1),
@@ -170,7 +178,15 @@ func NewHashRowContainer(sCtx sessionctx.Context, hCtx *HashContext, allTypes []
 	return c
 }
 
-func (c *HashRowContainer) Statistic() *hashStatistic {
+func (c *HashRowContainer) RowContainer() *chunk.RowContainer {
+	return c.rowContainer
+}
+
+func (c *HashRowContainer) StatementContext() *stmtctx.StatementContext {
+	return c.sc
+}
+
+func (c *HashRowContainer) Statistic() *HashStatistic {
 	return c.stat
 }
 
