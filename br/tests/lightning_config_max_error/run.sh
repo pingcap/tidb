@@ -91,12 +91,14 @@ check_contains "row_data: ('5','bbb05')"
 
 # Check max-error-record can limit the size of duplicate_records table
 run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
-run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep "\`lightning_task_info\`.\`duplicate_records\`" | grep -q "15"
+run_sql 'DROP DATABASE IF EXISTS mytest'
+run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep "\`lightning_task_info\`.\`duplicate_records\`" | grep -q "5"
 run_sql 'SELECT COUNT(*) FROM lightning_task_info.duplicate_records'
 check_contains "COUNT(*): 1"
 
 # Check conflict.threshold
 run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
 run_sql 'DROP DATABASE IF EXISTS mytest'
-sed -i.bak "s/conflict.threshold = 5/conflict.threshold = 4/g" "${mydir}/tidb-limit-record.toml"
-run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep -q "The number of conflict errors exceeds the threshold"
+cp "${mydir}/tidb-limit-record.toml" "${TEST_DIR}/tidb-limit-record.toml"
+sed -i.bak "s/threshold = 5/threshold = 4/g" "${TEST_DIR}/tidb-limit-record.toml"
+run_lightning --backend tidb --config "${TEST_DIR}/tidb-limit-record.toml" 2>&1 | grep -q "The number of conflict errors exceeds the threshold"
