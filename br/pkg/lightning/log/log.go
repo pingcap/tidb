@@ -16,6 +16,7 @@ package log
 
 import (
 	"context"
+	"os"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -80,7 +81,8 @@ func InitLogger(cfg *Config, _ string) error {
 	tidbLogCfg := logutil.LogConfig{}
 	// Disable annoying TiDB Log.
 	// TODO: some error logs outputs randomly, we need to fix them in TiDB.
-	tidbLogCfg.Level = "fatal"
+	tidbLogCfg.Level = "info"
+	_ = os.Setenv("GRPC_DEBUG", "true")
 	err := logutil.InitLogger(&tidbLogCfg)
 	if err != nil {
 		return errors.Trace(err)
