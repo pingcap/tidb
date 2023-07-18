@@ -49,7 +49,6 @@ go_test(
     timeout = "short",
     srcs = [
         "base_test.go",
-        "kv2sql_test.go",
         "session_internal_test.go",
         "session_test.go",
         "sql2kv_test.go",
@@ -57,7 +56,7 @@ go_test(
     embed = [":kv"],
     flaky = True,
     race = "on",
-    shard_count = 19,
+    shard_count = 17,
     deps = [
         "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/common",
