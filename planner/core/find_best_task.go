@@ -1318,14 +1318,17 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if remainingFilters != nil {
 		cop.rootTaskConds = remainingFilters
 	}
-	_, pureTableScan := ts.(*PhysicalTableScan)
-	if prop.TaskTp != property.RootTaskType && (len(remainingFilters) > 0 || !pureTableScan) {
+	if prop.TaskTp != property.RootTaskType && len(remainingFilters) > 0 {
 		return invalidTask, nil
 	}
 	if prop.TaskTp == property.RootTaskType {
 		cop.indexPlanFinished = true
 		task = cop.convertToRootTask(ds.ctx)
 	} else {
+		_, pureTableScan := ts.(*PhysicalTableScan)
+		if !pureTableScan {
+			cop.indexPlanFinished = true
+		}
 		task = cop
 	}
 	return task, nil

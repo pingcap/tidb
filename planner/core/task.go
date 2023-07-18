@@ -1134,6 +1134,17 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	return attachPlan2Task(p, rootTask)
 }
 
+func (p *PhysicalExpand) attach2Task(tasks ...task) task {
+	t := tasks[0].copy()
+	// current expand can only be run in MPP TiFlash mode.
+	if mpp, ok := t.(*mppTask); ok {
+		p.SetChildren(mpp.p)
+		mpp.p = p
+		return mpp
+	}
+	return invalidTask
+}
+
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
