@@ -7,6 +7,7 @@ go_test(
         "hint_test.go",
         "main_test.go",
     ],
+    data = glob(["testdata/**"]),
     flaky = True,
     shard_count = 15,
     deps = [
