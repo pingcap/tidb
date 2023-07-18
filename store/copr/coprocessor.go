@@ -1125,9 +1125,6 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			remainTasks = remainTasks[1:]
 		}
 	}
-	if worker.store.coprCache != nil && worker.store.coprCache.cache.Metrics != nil {
-		copr_metrics.CoprCacheCounterEvict.Add(float64(worker.store.coprCache.cache.Metrics.KeysEvicted()))
-	}
 }
 
 // handleTaskOnce handles single copTask, successful results are send to channel.
