@@ -1014,6 +1014,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 // getServerInfo gets self tidb server information.
 func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 	cfg := config.GetGlobalConfig()
+	checkAndResetTiDBRoleLabel(cfg.Labels)
 	info := &ServerInfo{
 		ID:             id,
 		IP:             cfg.AdvertiseAddress,
@@ -1311,4 +1312,16 @@ func SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) err
 		return errors.Trace(err)
 	}
 	return is.scheduleManager.SetPDScheduleConfig(ctx, config)
+}
+
+// checkAndResetTiDBRoleLabel only works for tidb_role.
+// Currently we only support ddl_worker role.
+func checkAndResetTiDBRoleLabel(labels map[string]string) {
+	if v, ok := labels["tidb_role"]; ok {
+		if v != "ddl_worker" {
+			labels["tidb_role"] = ""
+		}
+	} else {
+		labels["tidb_role"] = ""
+	}
 }

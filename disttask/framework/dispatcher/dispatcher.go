@@ -468,12 +468,33 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 	if len(serverInfos) == 0 {
 		return nil, errors.New("not found instance")
 	}
+	serverNodes := FilterNodesByLabels(serverInfos)
+	logutil.BgLogger().Debug("generate scheduler nodes", zap.Int("len", len(serverNodes)))
+	return serverNodes, nil
+}
 
+// FilterNodesByLabels filter eligible instance by label:tidb_role.
+// Currently, only dist_worker can be selected as eligile instances.
+func FilterNodesByLabels(serverInfos map[string]*infosync.ServerInfo) []*infosync.ServerInfo {
 	serverNodes := make([]*infosync.ServerInfo, 0, len(serverInfos))
 	for _, serverInfo := range serverInfos {
-		serverNodes = append(serverNodes, serverInfo)
+		// check server label.
+		if v, ok := serverInfo.Labels["tidb_role"]; ok {
+			if v == "dist_worker" {
+				serverNodes = append(serverNodes, serverInfo)
+			}
+		} else {
+			serverNodes = append(serverNodes, serverInfo)
+		}
 	}
-	return serverNodes, nil
+	// All serverNodes not setting the label or setting the wrong label, back to previous strategy.
+	if len(serverNodes) == 0 {
+		for _, serverInfo := range serverInfos {
+			serverNodes = append(serverNodes, serverInfo)
+		}
+	}
+
+	return serverNodes
 }
 
 // GetAllSchedulerIDs gets all the scheduler IDs.

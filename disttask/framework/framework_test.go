@@ -54,16 +54,15 @@ func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle
 	return nil, nil
 }
 
+var nodeNum = 0
+
 func generateSchedulerNodes4Test() ([]*infosync.ServerInfo, error) {
 	serverInfos := infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
 	if len(serverInfos) == 0 {
 		return nil, errors.New("not found instance")
 	}
-
-	serverNodes := make([]*infosync.ServerInfo, 0, len(serverInfos))
-	for _, serverInfo := range serverInfos {
-		serverNodes = append(serverNodes, serverInfo)
-	}
+	serverNodes := dispatcher.FilterNodesByLabels(serverInfos)
+	nodeNum = len(serverNodes)
 	return serverNodes, nil
 }
 
@@ -295,5 +294,53 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
 	}()
 	DispatchTaskAndCheckFail("key1", t, &v)
+	distContext.Close()
+}
+
+func TestFrameworkLabel(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+	distContext := testkit.NewDistExecutionContext(t, 4)
+
+	// 1. all server not setting labels.
+	DispatchTaskAndCheckSuccess("😄", t, &v)
+	require.Equal(t, 4, nodeNum)
+	nodeNum = 0
+
+	// 2. set 1 server label.
+	infosync.MockGlobalServerInfoManagerEntry.SetServerLabels(0, map[string]string{"tidb_role": "dist_worker"})
+	DispatchTaskAndCheckSuccess("🐶", t, &v)
+	require.Equal(t, 1, nodeNum)
+	nodeNum = 0
+
+	// 3. set all server label.
+	infosync.MockGlobalServerInfoManagerEntry.SetServerLabels(1, map[string]string{"tidb_role": "dist_worker"})
+	infosync.MockGlobalServerInfoManagerEntry.SetServerLabels(2, map[string]string{"tidb_role": "dist_worker"})
+	infosync.MockGlobalServerInfoManagerEntry.SetServerLabels(3, map[string]string{"tidb_role": "dist_worker"})
+	DispatchTaskAndCheckSuccess("key1", t, &v)
+	require.Equal(t, 4, nodeNum)
+	nodeNum = 0
+
+	// 4. set one eligible instance.
+	infosync.MockGlobalServerInfoManagerEntry.SetServerLabels(0, map[string]string{"tidb_role": "dist_worker"})
+	infosync.MockGlobalServerInfoManagerEntry.SetServerLabels(1, map[string]string{"tidb_role": "_worker"})
+	infosync.MockGlobalServerInfoManagerEntry.SetServerLabels(2, map[string]string{"tidb_role": "_worker"})
+	infosync.MockGlobalServerInfoManagerEntry.SetServerLabels(3, map[string]string{"tidb_role": "_worker"})
+	DispatchTaskAndCheckSuccess("key2", t, &v)
+	require.Equal(t, 1, nodeNum)
+	nodeNum = 0
+
+	// 5. fall back to select all instances.
+	infosync.MockGlobalServerInfoManagerEntry.SetServerLabels(0, map[string]string{"tidb_role": "_worker"})
+	infosync.MockGlobalServerInfoManagerEntry.SetServerLabels(1, map[string]string{"tidb_role": "_worker"})
+	infosync.MockGlobalServerInfoManagerEntry.SetServerLabels(2, map[string]string{"tidb_role": "_worker"})
+	infosync.MockGlobalServerInfoManagerEntry.SetServerLabels(3, map[string]string{"tidb_role": "_worker"})
+	DispatchTaskAndCheckSuccess("key3", t, &v)
+	require.Equal(t, 4, nodeNum)
+	nodeNum = 0
+
 	distContext.Close()
 }

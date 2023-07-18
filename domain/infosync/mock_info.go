@@ -66,6 +66,15 @@ func (m *MockGlobalServerInfoManager) GetAllServerInfo() map[string]*ServerInfo 
 	return allInfo
 }
 
+// SetServerLabels set labels for server by idx.
+func (m *MockGlobalServerInfoManager) SetServerLabels(idx int, labels map[string]string) error {
+	if idx >= len(m.infos) || idx < 0 {
+		return errors.New("server idx out of bound")
+	}
+	m.infos[idx].Labels = labels
+	return nil
+}
+
 // getServerInfo gets self tidb server information.
 func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 	cfg := config.GetGlobalConfig()
