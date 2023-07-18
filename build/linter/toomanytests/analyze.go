@@ -21,9 +21,10 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
+// Analyzer is the analyzer struct of toomanytests
 var Analyzer = &analysis.Analyzer{
-	Name: "toomuchtest",
-	Doc:  "too much test in the package",
+	Name: "toomanytests",
+	Doc:  "too many tests in the package",
 	Run: func(pass *analysis.Pass) (any, error) {
 		cnt := 0
 
