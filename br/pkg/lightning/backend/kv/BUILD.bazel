@@ -48,11 +48,8 @@ go_test(
     name = "kv_test",
     timeout = "short",
     srcs = [
-<<<<<<< HEAD
-=======
         "base_test.go",
         "kv2sql_test.go",
->>>>>>> de99f81e580 (lightning: fix lightning failed to log encoding error (#45241))
         "session_internal_test.go",
         "session_test.go",
         "sql2kv_test.go",
@@ -60,11 +57,7 @@ go_test(
     embed = [":kv"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 16,
-=======
     shard_count = 19,
->>>>>>> de99f81e580 (lightning: fix lightning failed to log encoding error (#45241))
     deps = [
         "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/common",
