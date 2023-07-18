@@ -599,7 +599,7 @@
     "only_files": {
       "disttask/": "disttask code",
       "timer/": "timer code",
-      "util/": "util code",
+      "util/": "util code"
     }
   },
   "unconvert": {
