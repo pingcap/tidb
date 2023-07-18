@@ -1718,6 +1718,9 @@ func (c *unhexFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	default:
 		return nil, errors.Errorf("Unhex invalid args, need int or string but get %s", argType)
 	}
+	if argType.GetFlen() == types.UnspecifiedLength {
+		retFlen = types.UnspecifiedLength
+	}
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
 	if err != nil {
