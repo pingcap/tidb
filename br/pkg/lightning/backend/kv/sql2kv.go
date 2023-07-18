@@ -257,17 +257,24 @@ func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *mo
 		row = row[j : j+1]
 	}
 
-	logger.Error("kv convert failed",
-		zap.Array("original", RowArrayMarshaler(row)),
+	e.logger.Error("kv convert failed",
+		zap.Array("original", RowArrayMarshaller(row)),
 		zap.Int("originalCol", j),
 		zap.String("colName", colInfo.Name.O),
 		zap.Stringer("colType", &colInfo.FieldType),
 		log.ShortError(err),
 	)
 
-	logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
-		zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
-		zap.Int("columnID", j+1))
+	if len(original.GetString()) >= maxLogLength {
+		originalPrefix := original.GetString()[0:1024] + " (truncated)"
+		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", originalPrefix),
+			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
+			zap.Int("columnID", j+1))
+	} else {
+		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
+			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
+			zap.Int("columnID", j+1))
+	}
 	return errors.Annotatef(
 		err,
 		"failed to cast value as %s for column `%s` (#%d)", &colInfo.FieldType, colInfo.Name.O, j+1,
