@@ -71,32 +71,6 @@ test_full_txnkv() {
     fi
 }
 
-test_full_rawkv() {
-    check_range_start=00
-    check_range_end=ff
-
-    rm -rf $BACKUP_FULL
-
-    checksum_full=$(checksum $check_range_start $check_range_end)
-    # backup current state of key-values
-    run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
-
-    clean $check_range_start $check_range_end
-    # Ensure the data is deleted
-    checksum_new=$(checksum $check_range_start $check_range_end)
-    if [ "$checksum_new" == "$checksum_full" ];then
-        echo "failed to delete data in range"
-        fail_and_exit
-    fi
-
-    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
-    checksum_new=$(checksum $check_range_start $check_range_end)
-    if [ "$checksum_new" != "$checksum_full" ];then
-        echo "failed to restore"
-        fail_and_exit
-    fi
-}
-
 checksum_empty=$(checksum 31 3130303030303030)
 
 run_test() {
@@ -164,7 +138,6 @@ run_test() {
     fi
 
     test_full_rawkv
-    test_full_txnkv
 
     # delete data in range[start-key, end-key)
     clean 31 3130303030303030

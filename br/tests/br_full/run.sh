@@ -73,6 +73,15 @@ if [ "$size_lz4" -le "$size_zstd" ]; then
   exit -1
 fi
 
+# backup txn
+echo "backup txn start..."
+run_br --pd $PD_ADDR backup txn -s "local://$TEST_DIR/$DB-txn" 
+
+for i in $(seq $DB_COUNT); do
+      run_sql "DROP DATABASE $DB${i};"
+  done
+run_br --pd $PD_ADDR restore txn -s "local://$TEST_DIR/$DB-txn"
+
 for ct in limit lz4 zstd; do
   for i in $(seq $DB_COUNT); do
       run_sql "DROP DATABASE $DB${i};"
@@ -107,3 +116,4 @@ done
 for i in $(seq $DB_COUNT); do
     run_sql "DROP DATABASE $DB${i};"
 done
+
