@@ -286,7 +286,7 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 
 	var v atomic.Int64
 	RegisterTaskMeta(&v)
-	distContext := testkit.NewDistExecutionContext(t, 4)
+	distContext := testkit.NewDistExecutionContext(t, 1)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockExecSubtaskInitEnvErr", "return()"))
 	defer func() {
