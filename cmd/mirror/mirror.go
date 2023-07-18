@@ -351,6 +351,9 @@ func dumpNewDepsBzl(
 	}
 	g, ctx := errgroup.WithContext(ctx)
 
+	// This uses a lot of fmt.Println to output the generated configuration to stdout,
+	// and the mirror will only be used under "make bazel_prepare", so it won't output
+	// too much and affect development.
 	fmt.Println(`load("@bazel_gazelle//:deps.bzl", "go_repository")
 
 def go_deps():

@@ -451,9 +451,9 @@ bazel_prepare:
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
 	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
-	bazel run  //cmd/mirror -- --mirror> "$($@TMP_OUT)"/tmp.txt
-	cp "$($@TMP_OUT)"/tmp.txt DEPS.bzl
-	rm -rf "$($@TMP_OUT)"
+	bazel run  //cmd/mirror -- --mirror> $($@TMP_OUT)/tmp.txt
+	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
+	rm -rf $($@TMP_OUT)
 
 bazel_ci_prepare_rbe:
 	bazel run //:gazelle
@@ -564,9 +564,9 @@ docker-test:
 
 bazel_mirror:
 	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> "$($@TMP_OUT)"/tmp.txt
-	cp "$($@TMP_OUT)"/tmp.txt DEPS.bzl
-	rm -rf "$($@TMP_OUT)"
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> $($@TMP_OUT)/tmp.txt
+	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
+	rm -rf $($@TMP_OUT)
 
 bazel_sync:
 	bazel $(BAZEL_GLOBAL_CONFIG) sync $(BAZEL_SYNC_CONFIG)
