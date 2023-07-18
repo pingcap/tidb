@@ -30,19 +30,12 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
-
-	testDataMap.LoadTestSuiteData("testdata", "integration_partition_suite")
 	testDataMap.LoadTestSuiteData("testdata", "plan_normalized_suite")
 	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
-
 	testDataMap.LoadTestSuiteData("testdata", "point_get_plan")
 	testDataMap.LoadTestSuiteData("testdata", "expression_rewriter_suite")
-	testDataMap.LoadTestSuiteData("testdata", "partition_pruner")
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
-	testDataMap.LoadTestSuiteData("testdata", "window_push_down_suite")
-
 	testDataMap.LoadTestSuiteData("testdata", "json_plan_suite")
-
 	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification")
 
 	opts := []goleak.Option{
@@ -62,10 +55,6 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
-func GetIntegrationPartitionSuiteData() testdata.TestData {
-	return testDataMap["integration_partition_suite"]
-}
-
 func GetPlanNormalizedSuiteData() testdata.TestData {
 	return testDataMap["plan_normalized_suite"]
 }
@@ -82,16 +71,8 @@ func GetExpressionRewriterSuiteData() testdata.TestData {
 	return testDataMap["expression_rewriter_suite"]
 }
 
-func GetPartitionPrunerData() testdata.TestData {
-	return testDataMap["partition_pruner"]
-}
-
 func GetIntegrationSuiteData() testdata.TestData {
 	return testDataMap["integration_suite"]
-}
-
-func GetWindowPushDownSuiteData() testdata.TestData {
-	return testDataMap["window_push_down_suite"]
 }
 
 func GetJSONPlanSuiteData() testdata.TestData {

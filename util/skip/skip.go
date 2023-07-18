@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package skip
 
-import (
-	"time"
-)
+import "testing"
 
-// TSOToRoughTime translates tso to rough time that used to display
-func TSOToRoughTime(ts int64) time.Time {
-	t := time.Unix(ts>>18/1000, 0)
-	return t
+// UnderShort skips the test if the -short flag is set.
+func UnderShort(t *testing.T, args ...interface{}) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip(append([]interface{}{"disabled under -short"}, args...))
+	}
 }

@@ -2609,7 +2609,11 @@ func (d *ddl) createTableWithInfoPost(
 	schemaID int64,
 ) error {
 	var err error
-	d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
+	var partitions []model.PartitionDefinition
+	if pi := tbInfo.GetPartitionInfo(); pi != nil {
+		partitions = pi.Definitions
+	}
+	preSplitAndScatter(ctx, d.store, tbInfo, partitions)
 	if tbInfo.AutoIncID > 1 {
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
@@ -2819,11 +2823,11 @@ func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *mode
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
 // If `pi` is not nil, will only split region for `pi`, this is used when add partition.
-func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) {
+func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, parts []model.PartitionDefinition) {
 	if tbInfo.TempTableType != model.TempTableNone {
 		return
 	}
-	sp, ok := d.store.(kv.SplittableStore)
+	sp, ok := store.(kv.SplittableStore)
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
 		return
 	}
@@ -2837,8 +2841,8 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 	} else {
 		scatterRegion = variable.TiDBOptOn(val)
 	}
-	if pi != nil {
-		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, pi, scatterRegion) }
+	if len(parts) > 0 {
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterRegion) }
 	} else {
 		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
 	}
@@ -4162,9 +4166,6 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	if err == nil {
-		d.preSplitAndScatter(ctx, meta, partInfo)
-	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
@@ -4494,11 +4495,6 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	err = d.callHookOnChanged(job, err)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if _, tb, err := d.getSchemaAndTableByIdent(ctx, ident); err == nil {
-		if p, err := getTruncatedParts(tb.Meta().GetPartitionInfo()); err == nil {
-			d.preSplitAndScatter(ctx, tb.Meta(), p)
-		}
 	}
 	return nil
 }
@@ -6544,9 +6540,6 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
 		}
 		return errors.Trace(err)
-	}
-	if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
-		d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
 	}
 
 	if !config.TableLockEnabled() {

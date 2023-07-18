@@ -208,15 +208,15 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("alter user usr3 resource group `DeFault`")
 	tk.MustQuery("select user_attributes from mysql.user where user = 'usr3'").Check(testkit.Rows(`{"resource_group": "default"}`))
 
-	tk.MustExec("alter resource group default ru_per_sec = 1000, priority = medium, background = (task_names = 'lightning, BR');")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM YES <nil> TASK_NAMES='lightning,br'"))
-	tk.MustQuery("show create resource group default").Check(testkit.Rows("default CREATE RESOURCE GROUP `default` RU_PER_SEC=1000, PRIORITY=MEDIUM, BURSTABLE, BACKGROUND=(TASK_NAMES='lightning,br')"))
+	tk.MustExec("alter resource group default ru_per_sec = 1000, priority = medium, background = (task_types = 'lightning, BR');")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM YES <nil> TASK_TYPES='lightning,br'"))
+	tk.MustQuery("show create resource group default").Check(testkit.Rows("default CREATE RESOURCE GROUP `default` RU_PER_SEC=1000, PRIORITY=MEDIUM, BURSTABLE, BACKGROUND=(TASK_TYPES='lightning,br')"))
 	g = testResourceGroupNameFromIS(t, tk.Session(), "default")
 	require.EqualValues(t, g.Background.JobTypes, []string{"lightning", "br"})
 
-	tk.MustContainErrMsg("create resource group bg ru_per_sec = 1000 background = (task_names = 'lightning')", "unsupported operation")
-	tk.MustContainErrMsg("alter resource group x background=(task_names='')", "unsupported operation")
-	tk.MustGetErrCode("alter resource group default background=(task_names='a,b,c')", mysql.ErrResourceGroupInvalidBackgroundTaskName)
+	tk.MustContainErrMsg("create resource group bg ru_per_sec = 1000 background = (task_types = 'lightning')", "unsupported operation")
+	tk.MustContainErrMsg("alter resource group x background=(task_types='')", "unsupported operation")
+	tk.MustGetErrCode("alter resource group default background=(task_types='a,b,c')", mysql.ErrResourceGroupInvalidBackgroundTaskName)
 }
 
 func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {
