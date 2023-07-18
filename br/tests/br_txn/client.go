@@ -78,8 +78,6 @@ func main() {
 		err = checksum(client, startKey, endKey)
 	case "delete":
 		err = deleteRange(client, startKey, endKey)
-	case "put":
-		err = put(client, *putDataStr)
 	}
 
 	if err != nil {
