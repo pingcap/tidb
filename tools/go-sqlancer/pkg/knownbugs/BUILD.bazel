@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "knownbugs",
+    srcs = [
+        "dustbin.go",
+        "issue16788.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tools/go-sqlancer/pkg/knownbugs",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/ast",
+        "//parser/mysql",
+        "//parser/opcode",
+        "//tools/go-sqlancer/pkg/connection",
+        "@com_github_juju_errors//:errors",
+        "@com_github_pingcap_log//:log",
+    ],
+)
+
+go_test(
+    name = "knownbugs_test",
+    timeout = "short",
+    srcs = ["issue16788_test.go"],
+    embed = [":knownbugs"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//parser",
+        "//parser/ast",
+        "//parser/mysql",
+        "//types",
+        "@com_github_stretchr_testify//require",
+    ],
+)

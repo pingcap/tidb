@@ -1,0 +1,48 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "executor",
+    srcs = [
+        "ast.go",
+        "connection.go",
+        "executor.go",
+        "generate.go",
+        "generate_data_item.go",
+        "schema.go",
+        "util.go",
+        "walk.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tools/go-sqlancer/pkg/executor",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/ast",
+        "//parser/format",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/types",
+        "//tools/go-sqlancer/pkg/connection",
+        "//tools/go-sqlancer/pkg/types",
+        "//tools/go-sqlancer/pkg/util",
+        "//types",
+        "//types/parser_driver",
+        "@com_github_juju_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_satori_go_uuid//:go_uuid",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "executor_test",
+    timeout = "short",
+    srcs = [
+        "generate_data_item_test.go",
+        "schema_test.go",
+    ],
+    embed = [":executor"],
+    flaky = True,
+    deps = [
+        "//tools/go-sqlancer/pkg/types",
+        "@com_github_stretchr_testify//assert",
+    ],
+)

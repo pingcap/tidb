@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "connection",
+    srcs = [
+        "connection.go",
+        "exec.go",
+        "log.go",
+        "schema.go",
+        "sqls.go",
+        "types.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tools/go-sqlancer/pkg/connection",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//tools/go-sqlancer/pkg/logger",
+        "//tools/go-sqlancer/pkg/mysql",
+        "//tools/go-sqlancer/pkg/types",
+        "//tools/go-sqlancer/pkg/util",
+        "@com_github_juju_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)

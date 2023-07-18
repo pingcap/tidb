@@ -61,6 +61,7 @@ require (
 	github.com/jellydator/ttlcache/v3 v3.0.1
 	github.com/jingyugao/rowserrcheck v1.1.1
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
+	github.com/juju/errors v0.0.0-20181118221551-089d3ea4e4d5
 	github.com/kisielk/errcheck v1.6.3
 	github.com/klauspost/compress v1.16.5
 	github.com/kyoh86/exportloopref v0.1.11
@@ -87,6 +88,7 @@ require (
 	github.com/prometheus/common v0.44.0
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
 	github.com/sasha-s/go-deadlock v0.2.0
+	github.com/satori/go.uuid v1.2.0
 	github.com/shirou/gopsutil/v3 v3.23.5
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
