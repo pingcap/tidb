@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
@@ -3422,30 +3423,40 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
+// if the url is not a valid url, return the original string.
+func RedactURL(str string) string {
+	// FIXME: this solution is not scalable, and duplicates some logic from BR.
+	u, err := url.Parse(str)
+	if err != nil {
+		return str
+	}
+	scheme := u.Scheme
+	failpoint.Inject("forceRedactURL", func() {
+		scheme = "s3"
+	})
+	if strings.ToLower(scheme) == "s3" {
+		values := u.Query()
+		for k := range values {
+			// see below on why we normalize key
+			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
+			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
+			if normalizedKey == "access-key" || normalizedKey == "secret-access-key" {
+				values[k] = []string{"xxxxxx"}
+			}
+		}
+		u.RawQuery = values.Encode()
+	}
+	return u.String()
+}
+
 // SecureText implements SensitiveStmtNode
 func (n *BRIEStmt) SecureText() string {
-	// FIXME: this solution is not scalable, and duplicates some logic from BR.
-	redactedStorage := n.Storage
-	u, err := url.Parse(n.Storage)
-	if err == nil {
-		if u.Scheme == "s3" {
-			query := u.Query()
-			for key := range query {
-				switch strings.ToLower(strings.ReplaceAll(key, "_", "-")) {
-				case "access-key", "secret-access-key":
-					query[key] = []string{"xxxxxx"}
-				}
-			}
-			u.RawQuery = query.Encode()
-			redactedStorage = u.String()
-		}
-	}
-
 	redactedStmt := &BRIEStmt{
 		Kind:    n.Kind,
 		Schemas: n.Schemas,
 		Tables:  n.Tables,
-		Storage: redactedStorage,
+		Storage: RedactURL(n.Storage),
 		Options: n.Options,
 	}
 
@@ -3489,6 +3500,35 @@ func (n *LoadDataActionStmt) Restore(ctx *format.RestoreCtx) error {
 	default:
 		return errors.Errorf("invalid load data action type: %d", n.Tp)
 	}
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
+type ImportIntoActionTp string
+
+const (
+	ImportIntoCancel ImportIntoActionTp = "cancel"
+)
+
+// ImportIntoActionStmt represent CANCEL IMPORT INTO JOB statement.
+// will support pause/resume/drop later.
+type ImportIntoActionStmt struct {
+	stmtNode
+
+	Tp    ImportIntoActionTp
+	JobID int64
+}
+
+func (n *ImportIntoActionStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
+	if n.Tp != ImportIntoCancel {
+		return errors.Errorf("invalid IMPORT INTO action type: %s", n.Tp)
+	}
+	ctx.WriteKeyWord("CANCEL IMPORT JOB ")
 	ctx.WritePlainf("%d", n.JobID)
 	return nil
 }
@@ -3794,6 +3834,12 @@ func (n *CalibrateResourceStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CalibrateResourceStmt)
+	for _, val := range n.DynamicCalibrateResourceOptionList {
+		_, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+	}
 	return v.Leave(n)
 }
 
@@ -3807,9 +3853,11 @@ const (
 )
 
 type DynamicCalibrateResourceOption struct {
+	stmtNode
 	Tp       DynamicCalibrateType
-	Ts       ExprNode
 	StrValue string
+	Ts       ExprNode
+	Unit     TimeUnitType
 }
 
 func (n *DynamicCalibrateResourceOption) Restore(ctx *format.RestoreCtx) error {
@@ -3826,9 +3874,35 @@ func (n *DynamicCalibrateResourceOption) Restore(ctx *format.RestoreCtx) error {
 		}
 	case CalibrateDuration:
 		ctx.WriteKeyWord("DURATION ")
-		ctx.WriteString(n.StrValue)
+		if len(n.StrValue) > 0 {
+			ctx.WriteString(n.StrValue)
+		} else {
+			ctx.WriteKeyWord("INTERVAL ")
+			if err := n.Ts.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore DynamicCalibrateResourceOption DURATION TS")
+			}
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord(n.Unit.String())
+		}
 	default:
 		return errors.Errorf("invalid DynamicCalibrateResourceOption: %d", n.Tp)
 	}
 	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DynamicCalibrateResourceOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DynamicCalibrateResourceOption)
+	if n.Ts != nil {
+		node, ok := n.Ts.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Ts = node.(ExprNode)
+	}
+	return v.Leave(n)
 }

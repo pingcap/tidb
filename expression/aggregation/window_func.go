@@ -131,7 +131,8 @@ func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx sessionctx.Context) bool {
 	}
 	// window functions
 	switch s.Name {
-	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncLead, ast.WindowFuncLag:
+	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncLead, ast.WindowFuncLag,
+		ast.WindowFuncFirstValue, ast.WindowFuncLastValue:
 		return true
 		// TODO: support aggregate functions
 		//case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin:

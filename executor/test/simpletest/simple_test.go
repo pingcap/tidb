@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -1133,4 +1134,20 @@ func TestAlterUserWithLDAP(t *testing.T) {
 	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com'")
 	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=People,dc=example,dc=com'")
 	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com'")
+}
+
+func TestIssue44098(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set global validate_password.enable = 1")
+	tk.MustExec("create user u1 identified with 'tidb_auth_token'")
+	tk.MustExec("create user u2 identified with 'auth_socket'")
+	tk.MustExec("create user u3 identified with 'authentication_ldap_simple'")
+	tk.MustExec("create user u4 identified with 'authentication_ldap_sasl'")
+	tk.MustGetErrCode("create user u5 identified with 'mysql_native_password'", errno.ErrNotValidPassword)
+	tk.MustGetErrCode("create user u5 identified with 'caching_sha2_password'", errno.ErrNotValidPassword)
+	tk.MustGetErrCode("create user u5 identified with 'tidb_sm3_password'", errno.ErrNotValidPassword)
+	tk.MustGetErrCode("create user u5 identified with 'mysql_clear_password'", errno.ErrPluginIsNotLoaded)
+	tk.MustGetErrCode("create user u5 identified with 'tidb_session_token'", errno.ErrPluginIsNotLoaded)
 }

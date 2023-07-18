@@ -20,9 +20,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -235,5 +237,89 @@ func TestIngestPartitionRowCount(t *testing.T) {
 	//nolint: forcetypeassert
 	rowCount := rows[0][7].(string)
 	require.Equal(t, "3", rowCount)
+	tk.MustExec("admin check table t;")
+}
+
+func TestAddIndexIngestClientError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer injectMockBackendMgr(t, store)()
+
+	tk.MustExec("CREATE TABLE t1 (f1 json);")
+	tk.MustExec(`insert into t1(f1) values (cast("null" as json));`)
+	tk.MustGetErrCode("create index i1 on t1((cast(f1 as unsigned array)));", errno.ErrInvalidJSONValueForFuncIndex)
+}
+
+func TestAddIndexCancelOnNoneState(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tkCancel := testkit.NewTestKit(t, store)
+	defer injectMockBackendMgr(t, store)()
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
+	tk.MustExec("insert into t values(1, 1, 1);")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	first := true
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState == model.StateNone && first {
+			_, err := tkCancel.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
+			assert.NoError(t, err)
+			first = false
+		}
+	}
+	dom.DDL().SetHook(hook.Clone())
+	tk.MustGetErrCode("alter table t add index idx1(c1)", errno.ErrCancelledDDLJob)
+	available, err := ingest.LitBackCtxMgr.CheckAvailable()
+	require.NoError(t, err)
+	require.True(t, available)
+}
+
+func TestAddIndexIngestRecoverPartition(t *testing.T) {
+	port := config.GetGlobalConfig().Port
+	tc := testkit.NewDistExecutionContext(t, 3)
+	defer tc.Close()
+	defer injectMockBackendMgr(t, tc.Store)()
+	tk := testkit.NewTestKit(t, tc.Store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 8;")
+	tk.MustExec("insert into t values (2, 3), (3, 3), (5, 5);")
+
+	partCnt := 0
+	changeOwner0To1 := func(job *model.Job, _ int64) {
+		partCnt++
+		if partCnt == 3 {
+			tc.SetOwner(1)
+			// TODO(tangenta): mock multiple backends in a better way.
+			//nolint: forcetypeassert
+			ingest.LitBackCtxMgr.(*ingest.MockBackendCtxMgr).ResetSessCtx()
+			bc, _ := ingest.LitBackCtxMgr.Load(job.ID)
+			bc.GetCheckpointManager().Close()
+			bc.AttachCheckpointManager(nil)
+			config.GetGlobalConfig().Port = port + 1
+		}
+	}
+	changeOwner1To2 := func(job *model.Job, _ int64) {
+		partCnt++
+		if partCnt == 6 {
+			tc.SetOwner(2)
+			//nolint: forcetypeassert
+			ingest.LitBackCtxMgr.(*ingest.MockBackendCtxMgr).ResetSessCtx()
+			bc, _ := ingest.LitBackCtxMgr.Load(job.ID)
+			bc.GetCheckpointManager().Close()
+			bc.AttachCheckpointManager(nil)
+			config.GetGlobalConfig().Port = port + 2
+		}
+	}
+	tc.SetOwner(0)
+	hook0 := &callback.TestDDLCallback{}
+	hook0.OnUpdateReorgInfoExported = changeOwner0To1
+	hook1 := &callback.TestDDLCallback{}
+	hook1.OnUpdateReorgInfoExported = changeOwner1To2
+	tc.GetDomain(0).DDL().SetHook(hook0)
+	tc.GetDomain(1).DDL().SetHook(hook1)
+	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
 }

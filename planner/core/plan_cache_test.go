@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/stretchr/testify/require"
@@ -48,6 +50,18 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 
 	lru := plannercore.NewLRUPlanCache(uint(sessionVar.PreparedPlanCacheSize), 0, 0, tk.Session(), false)
 	require.NotNil(t, lru)
+}
+
+func TestIssue45086(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL)`)
+	tk.MustExec(`INSERT INTO t VALUES (1, current_date())`)
+
+	tk.MustExec(`PREPARE stmt FROM 'SELECT * FROM t WHERE b=current_date()'`)
+	require.Equal(t, len(tk.MustQuery(`EXECUTE stmt`).Rows()), 1)
 }
 
 func TestIssue43311(t *testing.T) {
@@ -68,6 +82,72 @@ func TestIssue43311(t *testing.T) {
 	tk.MustExec(`set @a=54, @b=28`)
 	tk.MustQuery(`execute st using @a, @b`).Check(testkit.Rows()) // empty
 	tk.MustQuery(`execute st using @a, @b`).Check(testkit.Rows()) // empty
+}
+
+func TestIssue44830(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_opt_fix_control = "44830:ON"`)
+	tk.MustExec(`create table t (a int, primary key(a))`)
+	tk.MustExec(`create table t1 (a int, b int, primary key(a, b))`) // multiple-column primary key
+	tk.MustExec(`insert into t values (1), (2), (3)`)
+	tk.MustExec(`insert into t1 values (1, 1), (2, 2), (3, 3)`)
+	tk.MustExec(`set @a=1, @b=2, @c=3`)
+
+	// single-column primary key cases
+	tk.MustExec(`prepare st from 'select * from t where 1=1 and a in (?, ?, ?)'`)
+	tk.MustQuery(`execute st using @a, @b, @c`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(`execute st using @a, @b, @c`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute st using @a, @b, @b`).Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // range length changed
+	tk.MustQuery(`execute st using @b, @b, @b`).Sort().Check(testkit.Rows("2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // range length changed
+	tk.MustQuery(`execute st using @a, @b, @c`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(`execute st using @a, @b, @b`).Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery(`execute st using @a, @b, @b`).Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // contain duplicated values in the in-list
+
+	// multi-column primary key cases
+	tk.MustExec(`prepare st from 'select * from t1 where 1=1 and (a, b) in ((?, ?), (?, ?), (?, ?))'`)
+	tk.MustQuery(`execute st using @a, @a, @b, @b, @c, @c`).Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk.MustQuery(`execute st using @a, @a, @b, @b, @c, @c`).Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute st using @a, @a, @b, @b, @b, @b`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // range length changed
+	tk.MustQuery(`execute st using @b, @b, @b, @b, @b, @b`).Sort().Check(testkit.Rows("2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // range length changed
+	tk.MustQuery(`execute st using @b, @b, @b, @b, @c, @c`).Sort().Check(testkit.Rows("2 2", "3 3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // range length changed
+	tk.MustQuery(`execute st using @a, @a, @a, @a, @a, @a`).Sort().Check(testkit.Rows("1 1"))
+	tk.MustQuery(`execute st using @a, @a, @a, @a, @a, @a`).Sort().Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // contain duplicated values in the in-list
+	tk.MustQuery(`execute st using @a, @a, @b, @b, @b, @b`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`execute st using @a, @a, @b, @b, @b, @b`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // contain duplicated values in the in-list
+}
+
+func TestIssue44830NonPrep(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`set @@tidb_opt_fix_control = "44830:ON"`)
+	tk.MustExec(`create table t1 (a int, b int, primary key(a, b))`) // multiple-column primary key
+	tk.MustExec(`insert into t1 values (1, 1), (2, 2), (3, 3)`)
+	tk.MustExec(`set @a=1, @b=2, @c=3`)
+
+	tk.MustQuery(`select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (3, 3))`).Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk.MustQuery(`select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (3, 3))`).Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (2, 2))`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select * from t1 where 1=1 and (a, b) in ((2, 2), (2, 2), (2, 2))`).Sort().Check(testkit.Rows("2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select * from t1 where 1=1 and (a, b) in ((1, 1), (1, 1), (1, 1))`).Sort().Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select * from t1 where 1=1 and (a, b) in ((1, 1), (1, 1), (1, 1))`).Sort().Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
 func TestPlanCacheSizeSwitch(t *testing.T) {
@@ -636,24 +716,25 @@ func TestPreparedPlanCacheLongInList(t *testing.T) {
 		return "(" + strings.Join(elements, ",") + ")"
 	}
 
-	tk.MustExec(fmt.Sprintf(`prepare st_99 from 'select * from t where a in %v'`, genInList(99)))
-	tk.MustExec(`execute st_99`)
-	tk.MustExec(`execute st_99`)
+	// the limitation is 200
+	tk.MustExec(fmt.Sprintf(`prepare st_199 from 'select * from t where a in %v'`, genInList(199)))
+	tk.MustExec(`execute st_199`)
+	tk.MustExec(`execute st_199`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
-	tk.MustExec(fmt.Sprintf(`prepare st_101 from 'select * from t where a in %v'`, genInList(101)))
-	tk.MustExec(`execute st_101`)
-	tk.MustExec(`execute st_101`)
+	tk.MustExec(fmt.Sprintf(`prepare st_201 from 'select * from t where a in %v'`, genInList(201)))
+	tk.MustExec(`execute st_201`)
+	tk.MustExec(`execute st_201`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
-	tk.MustExec(fmt.Sprintf(`prepare st_49_50 from 'select * from t where a in %v and b in %v'`, genInList(49), genInList(50)))
-	tk.MustExec(`execute st_49_50`)
-	tk.MustExec(`execute st_49_50`)
+	tk.MustExec(fmt.Sprintf(`prepare st_99_100 from 'select * from t where a in %v and b in %v'`, genInList(99), genInList(100)))
+	tk.MustExec(`execute st_99_100`)
+	tk.MustExec(`execute st_99_100`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
-	tk.MustExec(fmt.Sprintf(`prepare st_49_52 from 'select * from t where a in %v and b in %v'`, genInList(49), genInList(52)))
-	tk.MustExec(`execute st_49_52`)
-	tk.MustExec(`execute st_49_52`)
+	tk.MustExec(fmt.Sprintf(`prepare st_100_101 from 'select * from t where a in %v and b in %v'`, genInList(100), genInList(101)))
+	tk.MustExec(`execute st_100_101`)
+	tk.MustExec(`execute st_100_101`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
@@ -875,6 +956,18 @@ func TestNonPreparedPlanParameterType(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`explain format = 'plan_cache' select * from t where a='1'`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: '1' may be converted to INT`))
+}
+
+func TestIssue43852(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t6 (a date, b date, key(a))`)
+	tk.MustExec(`insert into t6 values ('2023-01-21', '2023-01-05')`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustQuery(`select * from t6 where a in (2015, '8')`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t6 where a in (2009, '2023-01-21')`).Check(testkit.Rows(`2023-01-21 2023-01-05`))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestNonPreparedPlanTypeRandomly(t *testing.T) {
@@ -1196,7 +1289,7 @@ func TestLongInsertStmt(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
 	tk.MustExec(`prepare inert201 from 'insert into t values (1)` + strings.Repeat(", (1)", 200) + "'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: too many values (more than 200) in the insert statement"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: too many values in the insert statement"))
 	tk.MustExec(`execute inert201`)
 	tk.MustExec(`execute inert201`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
@@ -1982,7 +2075,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have generated columns are not supported",
 		"skip non-prepared plan-cache: queries that access views are not supported",
 		"skip non-prepared plan-cache: query has null constants",
-		"skip non-prepared plan-cache: get a TableDual plan",
+		"skip non-prepared plan-cache: some parameters may be overwritten when constant propagation",
 	}
 
 	all := append(supported, unsupported...)
@@ -2276,6 +2369,68 @@ func TestNonPreparedPlanCacheAutoStmtRetry(t *testing.T) {
 	require.NoError(t, err)
 	wg.Wait()
 	require.ErrorContains(t, tk2Err, "Duplicate entry")
+}
+
+func TestIssue43667Concurrency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cycle (pk int key, val int)")
+	var wg sync.WaitGroup
+	concurrency := 30
+	for i := 0; i < concurrency; i++ {
+		tk.MustExec(fmt.Sprintf("insert into cycle values (%v,%v)", i, i))
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
+			query := fmt.Sprintf("select (val) from cycle where pk = %v", id)
+			for j := 0; j < 5000; j++ {
+				tk.MustQuery(query).Check(testkit.Rows(fmt.Sprintf("%v", id)))
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+func TestIssue43667(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`create table cycle (pk int not null primary key, sk int not null, val int)`)
+	tk.MustExec(`insert into cycle values (4, 4, 4)`)
+	tk.MustExec(`insert into cycle values (7, 7, 7)`)
+
+	tk.MustQuery(`select (val) from cycle where pk = 4`).Check(testkit.Rows("4"))
+	tk.MustQuery(`select (val) from cycle where pk = 7`).Check(testkit.Rows("7"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	updateAST := func(stmt ast.StmtNode) {
+		v := stmt.(*ast.SelectStmt).Where.(*ast.BinaryOperationExpr).R.(*driver.ValueExpr)
+		v.Datum.SetInt64(7)
+	}
+
+	tctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestIssue43667, updateAST)
+	tk.MustQueryWithContext(tctx, `select (val) from cycle where pk = 4`).Check(testkit.Rows("4"))
+}
+
+func TestIssue45253(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`CREATE TABLE t1 (c1 INT)`)
+	tk.MustExec(`INSERT INTO t1 VALUES (1)`)
+
+	tk.MustQuery(`SELECT c1 FROM t1 WHERE TO_BASE64('牵')`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT c1 FROM t1 WHERE TO_BASE64('牵')`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT c1 FROM t1 WHERE TO_BASE64('哈')`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT c1 FROM t1 WHERE TO_BASE64('')`).Check(testkit.Rows())
 }
 
 func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {

@@ -76,7 +76,8 @@ func TestInferType(t *testing.T) {
 		c_set set('a', 'b', 'c'),
 		c_enum enum('a', 'b', 'c'),
 		c_json JSON,
-		c_year year
+		c_year year,
+		c_int_not_null int not null
 	)`
 	testKit.MustExec(sql)
 	testKit.MustExec(`set tidb_enable_noop_functions=1;`)
@@ -215,6 +216,9 @@ func (s *InferTypeSuite) createTestCase4Cast() []typeInferTestCase {
 		{"CAST(c_int_d AS TIME)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"CAST(c_int_d AS UNSIGNED)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 22, 0},         // TODO: flen should be 11.
 		{"CAST(c_int_d AS UNSIGNED INTEGER)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 22, 0}, // TODO: flen should be 11.
+		// We need to test WrapCast*, however this function is only called when function argument needs to be converted.
+		{"c_int_not_null + 1.1", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 12, 1},
+		{"c_int_not_null + 1.1E0", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, -1, -1},
 	}
 }
 
@@ -2999,7 +3003,7 @@ func (s *InferTypeSuite) createTestCase4JSONFuncs() []typeInferTestCase {
 		{"json_contains(c_json, 'a')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"json_contains_path(c_json, 'one', '$.a')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"json_quote('k')", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.BinaryFlag | mysql.NotNullFlag, 8, types.UnspecifiedLength},
-		{"json_valid(c_json)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
+		{"json_valid(c_json)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag, mysql.MaxIntWidth, 0},
 		{`json_search(c_json, 'one', '"a"')`, mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
 		{`json_depth(c_json)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{`json_length(c_json)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},

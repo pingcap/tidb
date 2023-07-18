@@ -451,6 +451,16 @@ func TestMiscellaneousBuiltin(t *testing.T) {
 	result = tk.MustQuery(`SELECT GET_LOCK('test_lock2', 10);`)
 	result.Check(testkit.Rows("1"))
 
+	result = tk.MustQuery(`SELECT IS_USED_LOCK('test_lock1') = CONNECTION_ID();`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`SELECT IS_USED_LOCK('foobar');`)
+	result.Check(testkit.Rows("<nil>"))
+
+	result = tk.MustQuery(`SELECT IS_FREE_LOCK('test_lock1');`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`SELECT IS_FREE_LOCK('foobar');`)
+	result.Check(testkit.Rows("1"))
+
 	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock2');`)
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock1');`)
@@ -3782,13 +3792,10 @@ func TestShardIndexOnTiFlash(t *testing.T) {
 	}
 	tk.MustExec("set @@session.tidb_enforce_mpp = 0")
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
-	rows = tk.MustQuery("explain select max(b) from t").Rows()
-	for _, row := range rows {
-		line := fmt.Sprintf("%v", row)
-		if strings.Contains(line, "TableFullScan") {
-			require.NotContains(t, line, "mpp[tiflash]")
-		}
-	}
+	// when we isolated the read engine as 'tiflash' and banned TiDB opening allow-mpp, no suitable plan is generated.
+	_, err := tk.Exec("explain select max(b) from t")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1815]Internal : Can't find a proper physical plan for this query")
 }
 
 func TestExprPushdownBlacklist(t *testing.T) {
@@ -3799,6 +3806,7 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int , b date)")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -7932,4 +7940,17 @@ func TestAesDecryptionVecEvalWithZeroChunk(t *testing.T) {
 	tk.MustExec("create table test (name1 blob,name2 blob)")
 	tk.MustExec("insert into test values(aes_encrypt('a', 'x'), aes_encrypt('b', 'x'))")
 	tk.MustQuery("SELECT * FROM test WHERE CAST(AES_DECRYPT(name1, 'x') AS CHAR) = '00' AND CAST(AES_DECRYPT(name2, 'x') AS CHAR) = '1'").Check(testkit.Rows())
+}
+
+func TestIfFunctionWithNull(t *testing.T) {
+	// issue 43805
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ordres;")
+	tk.MustExec("CREATE TABLE orders (id bigint(20) unsigned NOT NULL ,account_id bigint(20) unsigned NOT NULL DEFAULT '0' ,loan bigint(20) unsigned NOT NULL DEFAULT '0' ,stage_num int(20) unsigned NOT NULL DEFAULT '0' ,apply_time bigint(20) unsigned NOT NULL DEFAULT '0' ,PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,KEY idx_orders_account_id (account_id),KEY idx_orders_apply_time (apply_time));")
+	tk.MustExec("insert into orders values (20, 210802010000721168, 20000 , 2 , 1682484268727), (22, 210802010000721168, 35100 , 4 , 1650885615002);")
+	tk.MustQuery("select min(if(apply_to_now_days <= 30,loan,null)) as min, max(if(apply_to_now_days <= 720,loan,null)) as max from (select loan, datediff(from_unixtime(unix_timestamp('2023-05-18 18:43:43') + 18000), from_unixtime(apply_time/1000 + 18000)) as apply_to_now_days from orders) t1;").Sort().Check(
+		testkit.Rows("20000 35100"))
 }

@@ -388,16 +388,16 @@ func (t *Table) ColumnByName(colName string) *Column {
 }
 
 // GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
-func (t *Table) GetStatsInfo(ID int64, isIndex bool) (*Histogram, *CMSketch, *TopN, *FMSketch, bool) {
+func (t *Table) GetStatsInfo(id int64, isIndex bool) (*Histogram, *CMSketch, *TopN, *FMSketch, bool) {
 	if isIndex {
-		if idxStatsInfo, ok := t.Indices[ID]; ok {
+		if idxStatsInfo, ok := t.Indices[id]; ok {
 			return idxStatsInfo.Histogram.Copy(),
 				idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy(), true
 		}
 		// newly added index which is not analyzed yet
 		return nil, nil, nil, nil, false
 	}
-	if colStatsInfo, ok := t.Columns[ID]; ok {
+	if colStatsInfo, ok := t.Columns[id]; ok {
 		return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(),
 			colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy(), true
 	}
@@ -408,12 +408,12 @@ func (t *Table) GetStatsInfo(ID int64, isIndex bool) (*Histogram, *CMSketch, *To
 // GetColRowCount tries to get the row count of the a column if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (t *Table) GetColRowCount() float64 {
-	IDs := make([]int64, 0, len(t.Columns))
+	ids := make([]int64, 0, len(t.Columns))
 	for id := range t.Columns {
-		IDs = append(IDs, id)
+		ids = append(ids, id)
 	}
-	slices.Sort(IDs)
-	for _, id := range IDs {
+	slices.Sort(ids)
+	for _, id := range ids {
 		col := t.Columns[id]
 		if col != nil && col.IsFullLoad() {
 			return col.TotalRowCount()
@@ -712,19 +712,19 @@ func CETraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ran
 	}
 	expr, err := ranger.RangesToString(sc, ranges, colNames)
 	if err != nil {
-		logutil.BgLogger().Debug("[OptimizerTrace] Failed to trace CE of ranges", zap.Error(err))
+		logutil.BgLogger().Debug("Failed to trace CE of ranges", zap.String("category", "OptimizerTrace"), zap.Error(err))
 	}
 	// We don't need to record meaningless expressions.
 	if expr == "" || expr == "true" || expr == "false" {
 		return
 	}
-	CERecord := tracing.CETraceRecord{
+	ceRecord := tracing.CETraceRecord{
 		TableID:  tableID,
 		Type:     tp,
 		Expr:     expr,
 		RowCount: rowCount,
 	}
-	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &CERecord)
+	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &ceRecord)
 }
 
 func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID int64) (isIndex bool, idx int64) {
@@ -939,18 +939,12 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 }
 
 // GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxIDs and IdxID2ColIDs is built from the given parameter.
-func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) *HistColl {
+func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
 	colInfoID2UniqueID := make(map[int64]int64, len(columns))
-	colNames2UniqueID := make(map[string]int64)
+	idxID2idxInfo := make(map[int64]*model.IndexInfo)
 	for _, col := range columns {
 		colInfoID2UniqueID[col.ID] = col.UniqueID
-	}
-	for _, colInfo := range infos {
-		uniqueID, ok := colInfoID2UniqueID[colInfo.ID]
-		if ok {
-			colNames2UniqueID[colInfo.Name.L] = uniqueID
-		}
 	}
 	for id, colHist := range coll.Columns {
 		uniqueID, ok := colInfoID2UniqueID[id]
@@ -959,13 +953,20 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 			newColHistMap[uniqueID] = colHist
 		}
 	}
+	for _, idxInfo := range tblInfo.Indices {
+		idxID2idxInfo[idxInfo.ID] = idxInfo
+	}
 	newIdxHistMap := make(map[int64]*Index)
 	idx2Columns := make(map[int64][]int64)
 	colID2IdxIDs := make(map[int64][]int64)
-	for _, idxHist := range coll.Indices {
-		ids := make([]int64, 0, len(idxHist.Info.Columns))
-		for _, idxCol := range idxHist.Info.Columns {
-			uniqueID, ok := colNames2UniqueID[idxCol.Name.L]
+	for id, idxHist := range coll.Indices {
+		idxInfo := idxID2idxInfo[id]
+		if idxInfo == nil {
+			continue
+		}
+		ids := make([]int64, 0, len(idxInfo.Columns))
+		for _, idxCol := range idxInfo.Columns {
+			uniqueID, ok := colInfoID2UniqueID[tblInfo.Columns[idxCol.Offset].ID]
 			if !ok {
 				break
 			}

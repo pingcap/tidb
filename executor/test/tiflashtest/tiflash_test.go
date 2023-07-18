@@ -279,7 +279,7 @@ func TestMppExecution(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(3)`)
 	// all the data is related to one store, so there are three tasks.
 	tk.MustQuery("select avg(t.a) from t join t t1 on t.a = t1.a").Check(testkit.Rows("2.0000"))
-	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
+	failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 decimal(8, 5) not null, c2 decimal(9, 5), c3 decimal(9, 4) , c4 decimal(8, 4) not null)")
@@ -486,11 +486,12 @@ func TestPartitionTable(t *testing.T) {
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(2)`)
+	failpoint.Enable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks", `return(2)`)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
-	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
+	failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks")
 	tk.MustExec("set @@session.tidb_partition_prune_mode='static-only'")
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(false)`)
+	// when we lift the restriction of partition table can not take MPP path, here should `return(true)`
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(true)`)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
 	tk.MustExec("set @@session.tidb_partition_prune_mode='dynamic-only'")
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(true)`)
@@ -508,12 +509,12 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	// test if it is really work.
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(4)`)
+	failpoint.Enable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks", `return(4)`)
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("4"))
 	// test partition prune
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a and t1.a < 2 and t.a < 2").Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a and t1.a < -1 and t.a < 2").Check(testkit.Rows("0"))
-	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
+	failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks")
 	// test multi-way join
 	tk.MustExec("create table t2(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t2 set tiflash replica 2")
@@ -526,9 +527,9 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustExec("insert into t2 values(3,0)")
 	tk.MustExec("insert into t2 values(4,0)")
 	// test with no partition table
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(5)`)
+	failpoint.Enable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks", `return(5)`)
 	tk.MustQuery("select count(*) from t1 , t, t2 where t1.a = t.a and t2.a = t.a").Check(testkit.Rows("4"))
-	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
+	failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks")
 
 	tk.MustExec(`create table t3(a int not null, b int not null) PARTITION BY RANGE (b) (
 		PARTITION p0 VALUES LESS THAN (1),
@@ -546,12 +547,12 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustExec("insert into t3 values(3,4)")
 	tk.MustExec("insert into t3 values(4,6)")
 
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(4)`)
+	failpoint.Enable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks", `return(4)`)
 	tk.MustQuery("select count(*) from t, t3 where t3.a = t.a and t3.b <= 4").Check(testkit.Rows("3"))
-	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(3)`)
+	failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks")
+	failpoint.Enable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks", `return(3)`)
 	tk.MustQuery("select count(*) from t, t3 where t3.a = t.a and t3.b > 10").Check(testkit.Rows("0"))
-	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
+	failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks")
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkUseMPP")
 }
 
@@ -707,7 +708,7 @@ func TestCancelMppTasks(t *testing.T) {
 // all goroutines exit if one goroutine hangs but another return errors
 func TestMppGoroutinesExitFromErrors(t *testing.T) {
 	// mock non-root tasks return error
-	var mppNonRootTaskError = "github.com/pingcap/tidb/store/copr/mppNonRootTaskError"
+	var mppNonRootTaskError = "github.com/pingcap/tidb/executor/internal/mpp/mppNonRootTaskError"
 	// mock root tasks hang
 	var hang = "github.com/pingcap/tidb/store/mockstore/unistore/mppRecvHang"
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
@@ -786,9 +787,9 @@ func TestMppUnionAll(t *testing.T) {
 	// test union all join union all
 	tk.MustQuery("select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b").Check(testkit.Rows("29"))
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count=100000")
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(6)`)
+	failpoint.Enable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks", `return(6)`)
 	tk.MustQuery("select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b").Check(testkit.Rows("29"))
-	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
+	failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/checkTotalMPPTasks")
 
 	tk.MustExec("drop table if exists x4")
 	tk.MustExec("create table x4(a int not null, b int not null);")
@@ -1178,6 +1179,7 @@ func TestTiflashPartitionTableScan(t *testing.T) {
 	tk.MustExec("insert into t values(1),(11),(21),(31),(41);")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 	// MPP
 	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
 	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))
@@ -1343,7 +1345,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 
 	err = tk.ExecToErr("select * from t;")
 	// Expect error, because TestAutoScaler return empty topo.
-	require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
+	require.Contains(t, err.Error(), "Cannot find proper topo to dispatch MPPTask: topo from AutoScaler is empty")
 
 	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
@@ -1421,15 +1423,15 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustQuery("explain select * from t1 where c1 < 2").Check(testkit.Rows(
 		"PartitionUnion_10 9970.00 root  ",
-		"├─TableReader_15 3323.33 root  MppVersion: 1, data:ExchangeSender_14",
+		"├─TableReader_15 3323.33 root  MppVersion: 2, data:ExchangeSender_14",
 		"│ └─ExchangeSender_14 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_13 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
 		"│     └─TableFullScan_12 10000.00 mpp[tiflash] table:t1, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
-		"├─TableReader_19 3323.33 root  MppVersion: 1, data:ExchangeSender_18",
+		"├─TableReader_19 3323.33 root  MppVersion: 2, data:ExchangeSender_18",
 		"│ └─ExchangeSender_18 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_17 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
 		"│     └─TableFullScan_16 10000.00 mpp[tiflash] table:t1, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo",
-		"└─TableReader_23 3323.33 root  MppVersion: 1, data:ExchangeSender_22",
+		"└─TableReader_23 3323.33 root  MppVersion: 2, data:ExchangeSender_22",
 		"  └─ExchangeSender_22 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Selection_21 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
 		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 pushed down filter:empty, keep order:false, stats:pseudo"))
@@ -1449,9 +1451,9 @@ func TestMPPMemoryTracker(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set tidb_enforce_mpp = on;")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/testMPPOOMPanic", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/internal/mpp/testMPPOOMPanic", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/testMPPOOMPanic"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/internal/mpp/testMPPOOMPanic"))
 	}()
 	err = tk.QueryToErr("select * from t")
 	require.NotNil(t, err)
@@ -1521,7 +1523,7 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 			err = tk1.ExecToErr("select * from t;")
 			if useAS {
 				// Expect error, because TestAutoScaler return empty topo.
-				require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
+				require.Contains(t, err.Error(), "Cannot find proper topo to dispatch MPPTask: topo from AutoScaler is empty")
 			} else {
 				// This error message means we use PD instead of AutoScaler.
 				require.Contains(t, err.Error(), "tiflash_compute node is unavailable")
@@ -1708,4 +1710,105 @@ func TestMppStoreCntWithErrors(t *testing.T) {
 	require.Nil(t, failpoint.Disable(mppStoreCountSetLastUpdateTime))
 	require.Nil(t, failpoint.Disable(mppStoreCountSetLastUpdateTimeP2))
 	require.Nil(t, failpoint.Disable(mppStoreCountPDError))
+}
+
+func TestUnionScan(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_allow_mpp=1")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=off")
+
+	for x := 0; x < 2; x++ {
+		tk.MustExec("drop table if exists t")
+		if x == 0 {
+			// Test cache table.
+			tk.MustExec("create table t(a int not null primary key, b int not null)")
+			tk.MustExec("alter table t set tiflash replica 1")
+			tb := external.GetTableByName(t, tk, "test", "t")
+			err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+			require.NoError(t, err)
+			tk.MustExec("alter table t cache")
+		} else {
+			// Test dirty transaction.
+			tk.MustExec("create table t(a int not null primary key, b int not null) partition by hash(a) partitions 2")
+			tk.MustExec("alter table t set tiflash replica 1")
+			tb := external.GetTableByName(t, tk, "test", "t")
+			err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+			require.NoError(t, err)
+		}
+
+		insertStr := "insert into t values(0, 0)"
+		for i := 1; i < 10; i++ {
+			insertStr += fmt.Sprintf(",(%d, %d)", i, i)
+		}
+		tk.MustExec(insertStr)
+
+		if x != 0 {
+			// Test dirty transaction.
+			tk.MustExec("begin")
+		}
+
+		// Test Basic.
+		sql := "select /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("10"))
+
+		// Test Delete.
+		tk.MustExec("delete from t where a = 0")
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("9"))
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9"))
+
+		// Test Insert.
+		tk.MustExec("insert into t values(100, 100)")
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("10"))
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1, 2"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9", "100 100"))
+
+		// Test Update
+		tk.MustExec("update t set b = 200 where a = 100")
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("10"))
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1, 2"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9", "100 200"))
+
+		if x != 0 {
+			// Test dirty transaction.
+			tk.MustExec("commit")
+		}
+
+		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
+		checkMPPInExplain(t, tk, "explain "+sql)
+		tk.MustQuery(sql).Check(testkit.Rows("10"))
+
+		if x == 0 {
+			tk.MustExec("alter table t nocache")
+		}
+	}
+}
+
+func checkMPPInExplain(t *testing.T, tk *testkit.TestKit, sql string) {
+	rows := tk.MustQuery(sql).Rows()
+	resBuff := bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res := resBuff.String()
+	require.Contains(t, res, "mpp[tiflash]")
 }

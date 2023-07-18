@@ -94,7 +94,7 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 		}
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
-	logutil.BgLogger().Info("[autoid client] connect to leader", zap.String("addr", addr))
+	logutil.BgLogger().Info("connect to leader", zap.String("category", "autoid client"), zap.String("addr", addr))
 	grpcConn, err := grpc.Dial(addr, opt)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -156,7 +156,7 @@ retry:
 const backoffDuration = 200 * time.Millisecond
 
 func (sp *singlePointAlloc) resetConn(reason error) {
-	logutil.BgLogger().Info("[autoid client] reset grpc connection",
+	logutil.BgLogger().Info("reset grpc connection", zap.String("category", "autoid client"),
 		zap.String("reason", reason.Error()))
 	var grpcConn *grpc.ClientConn
 	sp.mu.Lock()
@@ -168,7 +168,7 @@ func (sp *singlePointAlloc) resetConn(reason error) {
 	if grpcConn != nil {
 		err := grpcConn.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("[autoid client] close grpc connection error", zap.Error(err))
+			logutil.BgLogger().Warn("close grpc connection error", zap.String("category", "autoid client"), zap.Error(err))
 		}
 	}
 }

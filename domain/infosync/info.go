@@ -30,16 +30,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -51,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -121,7 +119,7 @@ type InfoSyncer struct {
 	placementManager      PlacementManager
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
-	resourceGroupManager  pd.ResourceManagerClient
+	resourceManagerClient pd.ResourceManagerClient
 }
 
 // ServerInfo is server static information.
@@ -213,7 +211,7 @@ func GlobalInfoSyncerInit(
 	is.placementManager = initPlacementManager(etcdCli)
 	is.scheduleManager = initScheduleManager(etcdCli)
 	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli, codec)
-	is.resourceGroupManager = initResourceGroupManager(pdCli)
+	is.resourceManagerClient = initResourceManagerClient(pdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -258,16 +256,16 @@ func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
 	return &PDPlacementManager{etcdCli: etcdCli}
 }
 
-func initResourceGroupManager(pdCli pd.Client) (cli pd.ResourceManagerClient) {
+func initResourceManagerClient(pdCli pd.Client) (cli pd.ResourceManagerClient) {
 	cli = pdCli
 	if pdCli == nil {
-		cli = NewMockResourceGroupManager()
+		cli = NewMockResourceManagerClient()
 	}
 	failpoint.Inject("managerAlreadyCreateSomeGroups", func(val failpoint.Value) {
 		if val.(bool) {
 			_, err := cli.AddResourceGroup(context.TODO(),
 				&rmpb.ResourceGroup{
-					Name: "default",
+					Name: resourcegroup.DefaultResourceGroupName,
 					Mode: rmpb.GroupMode_RUMode,
 					RUSettings: &rmpb.GroupRequestUnitSettings{
 						RU: &rmpb.TokenBucket{
@@ -509,44 +507,6 @@ func removeVAndHash(v string) string {
 	return strings.TrimPrefix(v, "v")
 }
 
-// CheckTiKVVersion is used to check the tikv version.
-func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
-	if store, ok := store.(kv.StorageWithPD); ok {
-		pdClient := store.GetPDClient()
-		var stores []*metapb.Store
-		var err error
-		// Wait at most 3 second to make sure pd has updated the store information.
-		for i := 0; i < 60; i++ {
-			stores, err = pdClient.GetAllStores(context.Background(), pd.WithExcludeTombstone())
-			if err == nil {
-				break
-			}
-			time.Sleep(time.Millisecond * 50)
-		}
-
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		for _, s := range stores {
-			// empty version means the store is a mock store. Don't require tiflash version either.
-			if s.Version == "" || engine.IsTiFlash(s) {
-				continue
-			}
-			ver, err := semver.NewVersion(removeVAndHash(s.Version))
-			if err != nil {
-				return errors.Trace(errors.Annotate(err, "invalid TiKV version"))
-			}
-			v := ver.Compare(minVersion)
-			if v < 0 {
-				return errors.New("TiKV version must greater than or equal to " + minVersion.String())
-			}
-		}
-	}
-
-	return nil
-}
-
 func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {
 	fpEnabled := false
 	failpoint.Inject("FailPlacement", func(val failpoint.Value) {
@@ -629,7 +589,7 @@ func GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, er
 		return nil, err
 	}
 
-	return is.resourceGroupManager.GetResourceGroup(ctx, name)
+	return is.resourceManagerClient.GetResourceGroup(ctx, name)
 }
 
 // ListResourceGroups is used to get all resource groups from resource manager.
@@ -639,7 +599,7 @@ func ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
 		return nil, err
 	}
 
-	return is.resourceGroupManager.ListResourceGroups(ctx)
+	return is.resourceManagerClient.ListResourceGroups(ctx)
 }
 
 // AddResourceGroup is used to create one specific resource group to resource manager.
@@ -648,7 +608,7 @@ func AddResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
 	if err != nil {
 		return err
 	}
-	_, err = is.resourceGroupManager.AddResourceGroup(ctx, group)
+	_, err = is.resourceManagerClient.AddResourceGroup(ctx, group)
 	return err
 }
 
@@ -658,7 +618,7 @@ func ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
 	if err != nil {
 		return err
 	}
-	_, err = is.resourceGroupManager.ModifyResourceGroup(ctx, group)
+	_, err = is.resourceManagerClient.ModifyResourceGroup(ctx, group)
 	return err
 }
 
@@ -668,7 +628,7 @@ func DeleteResourceGroup(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	_, err = is.resourceGroupManager.DeleteResourceGroup(ctx, name)
+	_, err = is.resourceManagerClient.DeleteResourceGroup(ctx, name)
 	return err
 }
 
@@ -1219,16 +1179,6 @@ func GetTiFlashGroupRules(ctx context.Context, group string) ([]placement.TiFlas
 		return nil, errors.Trace(err)
 	}
 	return is.tiflashReplicaManager.GetGroupRules(ctx, group)
-}
-
-// PostTiFlashAccelerateSchedule sends `regions/accelerate-schedule` request.
-func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	logutil.BgLogger().Info("PostTiFlashAccelerateSchedule", zap.Int64("tableID", tableID))
-	return is.tiflashReplicaManager.PostAccelerateSchedule(ctx, tableID)
 }
 
 // GetTiFlashRegionCountFromPD is a helper function calling `/stats/region`.

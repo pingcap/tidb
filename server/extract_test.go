@@ -26,6 +26,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -41,7 +42,7 @@ func TestExtractHandler(t *testing.T) {
 
 	driver := NewTiDBDriver(store)
 	client := newTestServerClient()
-	cfg := newTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true
@@ -49,6 +50,10 @@ func TestExtractHandler(t *testing.T) {
 	server, err := NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
+
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
 
 	client.port = getPortFromTCPAddr(server.listener.Addr())
 	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
@@ -62,8 +67,6 @@ func TestExtractHandler(t *testing.T) {
 	prepareData4ExtractPlanTask(t, client)
 	time.Sleep(time.Second)
 	endTime := time.Now()
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
 	eh := &ExtractTaskServeHandler{extractHandler: dom.GetExtractHandle()}
 	router := mux.NewRouter()
 	router.Handle("/extract_task/dump", eh)

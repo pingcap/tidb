@@ -822,11 +822,11 @@ const (
 	ErrMustChangePasswordLogin                               = 1862
 	ErrRowInWrongPartition                                   = 1863
 	ErrErrorLast                                             = 1863
-	ErrMaxExecTimeExceeded                                   = 1907
 	ErrForeignKeyCascadeDepthExceeded                        = 3008
 	ErrInvalidFieldSize                                      = 3013
 	ErrPasswordExpireAnonymousUser                           = 3016
 	ErrInvalidArgumentForLogarithm                           = 3020
+	ErrMaxExecTimeExceeded                                   = 3024
 	ErrAggregateOrderNonAggQuery                             = 3029
 	ErrUserLockWrongName                                     = 3057
 	ErrUserLockDeadlock                                      = 3058
@@ -890,6 +890,8 @@ const (
 	ErrWindowNoGroupOrderUnused                              = 3597
 	ErrWindowExplainJSON                                     = 3598
 	ErrWindowFunctionIgnoresFrame                            = 3599
+	ErrInvalidNumberOfArgs                                   = 3601
+	ErrFieldInGroupingNotGroupBy                             = 3602
 	ErrIllegalPrivilegeLevel                                 = 3619
 	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
@@ -913,6 +915,16 @@ const (
 	ErrDefValGeneratedNamedFunctionIsNotAllowed              = 3770
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
+	ErrNonBooleanExprForCheckConstraint                      = 3812
+	ErrColumnCheckConstraintReferencesOtherColumn            = 3813
+	ErrCheckConstraintNamedFunctionIsNotAllowed              = 3814
+	ErrCheckConstraintFunctionIsNotAllowed                   = 3815
+	ErrCheckConstraintVariables                              = 3816
+	ErrCheckConstraintRefersAutoIncrementColumn              = 3818
+	ErrCheckConstraintViolated                               = 3819
+	ErrTableCheckConstraintReferUnknown                      = 3820
+	ErrCheckConstraintDupName                                = 3822
+	ErrCheckConstraintClauseUsingFKReferActionColumn         = 3823
 	ErrDependentByFunctionalIndex                            = 3837
 	ErrCannotConvertString                                   = 3854
 	ErrDependentByPartitionFunctional                        = 3855
@@ -921,7 +933,9 @@ const (
 	ErrFunctionalIndexDataIsTooLong                          = 3907
 	ErrFunctionalIndexNotApplicable                          = 3909
 	ErrDynamicPrivilegeNotRegistered                         = 3929
+	ErrConstraintNotFound                                    = 3940
 	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
+	ErrDependentByCheckConstraint                            = 3959
 	ErrJSONInBooleanContext                                  = 3986
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
@@ -1119,11 +1133,14 @@ const (
 	ErrPausedDDLJob       = 8262
 
 	// Resource group errors.
-	ErrResourceGroupExists            = 8248
-	ErrResourceGroupNotExists         = 8249
-	ErrResourceGroupSupportDisabled   = 8250
-	ErrResourceGroupConfigUnavailable = 8251
-	ErrResourceGroupThrottled         = 8252
+	ErrResourceGroupExists                    = 8248
+	ErrResourceGroupNotExists                 = 8249
+	ErrResourceGroupSupportDisabled           = 8250
+	ErrResourceGroupConfigUnavailable         = 8251
+	ErrResourceGroupThrottled                 = 8252
+	ErrResourceGroupQueryRunawayInterrupted   = 8253
+	ErrResourceGroupQueryRunawayQuarantine    = 8254
+	ErrResourceGroupInvalidBackgroundTaskName = 8255
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

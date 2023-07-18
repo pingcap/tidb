@@ -336,6 +336,10 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), val)
 
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBExpensiveTxnTimeThreshold)
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveTxnTimeThreshold)), val)
+
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBMemoryUsageAlarmRatio)
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), val)
@@ -450,6 +454,17 @@ func TestLastInsertID(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), LastInsertID)
 	require.NoError(t, err)
 	require.Equal(t, val, "21")
+
+	vars.StmtCtx.PrevLastInsertID = 9223372036854775809
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), LastInsertID)
+	require.NoError(t, err)
+	require.Equal(t, val, "9223372036854775809")
+
+	f := GetSysVar("last_insert_id")
+	d, valType, flag := f.GetNativeValType(val)
+	require.Equal(t, valType, mysql.TypeLonglong)
+	require.Equal(t, flag, mysql.BinaryFlag|mysql.UnsignedFlag)
+	require.Equal(t, d.GetUint64(), uint64(9223372036854775809))
 }
 
 func TestTimestamp(t *testing.T) {
@@ -1237,4 +1252,40 @@ func TestTiDBEnableRowLevelChecksum(t *testing.T) {
 	val, err = mock.GetGlobalSysVar(TiDBEnableRowLevelChecksum)
 	require.NoError(t, err)
 	require.Equal(t, Off, val)
+}
+
+func TestTiDBTiFlashReplicaRead(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	tidbTiFlashReplicaRead := GetSysVar(TiFlashReplicaRead)
+	// Check default value
+	require.Equal(t, DefTiFlashReplicaRead, tidbTiFlashReplicaRead.Value)
+
+	err := mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, "all_replicas")
+	require.NoError(t, err)
+	val, err := mock.GetGlobalSysVar(TiFlashReplicaRead)
+	require.NoError(t, err)
+	require.Equal(t, "all_replicas", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, "closest_adaptive")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiFlashReplicaRead)
+	require.NoError(t, err)
+	require.Equal(t, "closest_adaptive", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, "closest_replicas")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiFlashReplicaRead)
+	require.NoError(t, err)
+	require.Equal(t, "closest_replicas", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, DefTiFlashReplicaRead)
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, "random")
+	require.Error(t, err)
+	val, err = mock.GetGlobalSysVar(TiFlashReplicaRead)
+	require.NoError(t, err)
+	require.Equal(t, DefTiFlashReplicaRead, val)
 }

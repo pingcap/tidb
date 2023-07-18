@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -82,6 +83,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		if err != nil {
 			return errors.Trace(err)
 		}
+		cache.TableRowStatsCache.Invalidate(physicalID)
 	}
 	tbl, ok := h.getTableByPhysicalID(is, physicalID)
 	if !ok {
@@ -157,7 +159,7 @@ func (h *Handle) ClearOutdatedHistoryStats() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	sql := "select count(*) from mysql.stats_meta_history where NOW() - create_time >= %?"
+	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
 	rs, err := exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 	if err != nil {
 		return err
@@ -172,12 +174,12 @@ func (h *Handle) ClearOutdatedHistoryStats() error {
 	}
 	count := rows[0].GetInt64(0)
 	if count > 0 {
-		sql = "delete from mysql.stats_meta_history where NOW() - create_time >= %?"
+		sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
 		_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 		if err != nil {
 			return err
 		}
-		sql = "delete from mysql.stats_history where NOW() - create_time >= %? "
+		sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
 		_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 		logutil.BgLogger().Info("clear outdated historical stats")
 		return err

@@ -32,6 +32,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
@@ -56,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -74,6 +76,10 @@ var (
 	// in regions that contains tikv server to avoid read traffic skew.
 	enableAdaptiveReplicaRead uint32 = 1
 )
+
+// ConnStatusShutdown indicates that the connection status is closed by server.
+// This code is put here because of package imports, and this value is the original server.connStatusShutdown.
+const ConnStatusShutdown int32 = 2
 
 // SetEnableAdaptiveReplicaRead set `enableAdaptiveReplicaRead` with given value.
 // return true if the value is changed.
@@ -834,6 +840,11 @@ type SessionVars struct {
 	// Value set to `false` means never use mpp.
 	allowMPPExecution bool
 
+	// allowTiFlashCop means if we must use mpp way to execute query.
+	// Default value is `false`, means to be determined by the optimizer.
+	// Value set to `true` means we may fall back to TiFlash cop if possible.
+	allowTiFlashCop bool
+
 	// HashExchangeWithNewCollation means if we support hash exchange when new collation is enabled.
 	// Default value is `true`, means support hash exchange when new collation is enabled.
 	// Value set to `false` means not use hash exchange when new collation is enabled.
@@ -867,6 +878,11 @@ type SessionVars struct {
 	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
 	// not limit and spill will never happen
 	TiFlashMaxBytesBeforeExternalSort int64
+
+	// TiFlashEnablePipelineMode means if we should use pipeline model to execute query or not in tiflash.
+	// Default value is `false`, means never use pipeline model in tiflash.
+	// Value set to `true` means try to execute query with pipeline model in tiflash.
+	TiFlashEnablePipelineMode bool
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
@@ -1051,6 +1067,9 @@ type SessionVars struct {
 
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
+
+	// ConnectionStatus indicates current connection status.
+	ConnectionStatus int32
 
 	// ConnectionInfo indicates current connection info used by current session.
 	ConnectionInfo *ConnectionInfo
@@ -1305,6 +1324,8 @@ type SessionVars struct {
 
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
+	// ExplicitRequestSourceType is the type of origin external request.
+	ExplicitRequestSourceType string
 
 	// MemoryDebugModeMinHeapInUse indicated the minimum heapInUse threshold that triggers the memoryDebugMode.
 	MemoryDebugModeMinHeapInUse int64
@@ -1468,8 +1489,42 @@ type SessionVars struct {
 	// use the ExpectedCnt to adjust the estimated row count for index scan.
 	OptOrderingIdxSelThresh float64
 
+	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
+	EnableMPPSharedCTEExecution bool
+
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
+
+	// FastCheckTable is used to control whether fast check table is enabled.
+	FastCheckTable bool
+
+	// HypoIndexes are for the Index Advisor.
+	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+
+	// TiFlashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
+	TiFlashReplicaRead tiflash.ReplicaRead
+
+	// HypoTiFlashReplicas are for the Index Advisor.
+	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
+
+	// Runtime Filter Group
+	// Runtime filter type: only support IN or MIN_MAX now.
+	// Runtime filter type can take multiple values at the same time.
+	runtimeFilterTypes []RuntimeFilterType
+	// Runtime filter mode: only support OFF, LOCAL now
+	runtimeFilterMode RuntimeFilterMode
+
+	// Whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
+	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
+	LockUnchangedKeys bool
+
+	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	AnalyzeSkipColumnTypes map[string]struct{}
+}
+
+// GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlMap() map[uint64]string {
+	return s.OptimizerFixControl
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1598,6 +1653,11 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 // IsMPPAllowed returns whether mpp execution is allowed.
 func (s *SessionVars) IsMPPAllowed() bool {
 	return s.allowMPPExecution
+}
+
+// IsTiFlashCopBanned returns whether cop execution is allowed.
+func (s *SessionVars) IsTiFlashCopBanned() bool {
+	return !s.allowTiFlashCop
 }
 
 // IsMPPEnforced returns whether mpp execution is enforced.
@@ -1790,6 +1850,8 @@ type ConnectionInfo struct {
 	SSLVersion        string
 	PID               int
 	DB                string
+	AuthMethod        string
+	Attributes        map[string]string
 }
 
 const (
@@ -1919,6 +1981,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		mppVersion:                    kv.MppVersionUnspecified,
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
+		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1957,6 +2020,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxBytesBeforeExternalJoin = DefTiFlashMaxBytesBeforeExternalJoin
 	vars.TiFlashMaxBytesBeforeExternalGroupBy = DefTiFlashMaxBytesBeforeExternalGroupBy
 	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
+	vars.TiFlashEnablePipelineMode = DefTiDBEnableTiFlashPipelineMode
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
@@ -2534,6 +2598,8 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
 	sessionStates.ResourceGroupName = s.ResourceGroupName
+	sessionStates.HypoIndexes = s.HypoIndexes
+	sessionStates.HypoTiFlashReplicas = s.HypoTiFlashReplicas
 
 	// Encode StatementContext. We encode it here to avoid circle dependency.
 	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
@@ -2568,6 +2634,8 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
 	s.ResourceGroupName = sessionStates.ResourceGroupName
+	s.HypoIndexes = sessionStates.HypoIndexes
+	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
 	// Decode StatementContext.
 	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
@@ -3400,4 +3468,121 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
+}
+
+// IsRuntimeFilterEnabled return runtime filter mode whether OFF
+func (s *SessionVars) IsRuntimeFilterEnabled() bool {
+	return s.runtimeFilterMode != RFOff
+}
+
+// GetRuntimeFilterTypes return the session variable runtimeFilterTypes
+func (s *SessionVars) GetRuntimeFilterTypes() []RuntimeFilterType {
+	return s.runtimeFilterTypes
+}
+
+// GetRuntimeFilterMode return the session variable runtimeFilterMode
+func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
+	return s.runtimeFilterMode
+}
+
+// RuntimeFilterType type of runtime filter "IN"
+type RuntimeFilterType int64
+
+// In type of runtime filter, like "t.k1 in (?)"
+// MinMax type of runtime filter, like "t.k1 < ? and t.k1 > ?"
+const (
+	In RuntimeFilterType = iota
+	MinMax
+	// todo BloomFilter, bf/in
+)
+
+// String convert Runtime Filter Type to String name
+func (rfType RuntimeFilterType) String() string {
+	switch rfType {
+	case In:
+		return "IN"
+	case MinMax:
+		return "MIN_MAX"
+	default:
+		return ""
+	}
+}
+
+// RuntimeFilterTypeStringToType convert RuntimeFilterTypeNameString to RuntimeFilterType
+// If name is legal, it will return Runtime Filter Type and true
+// Else, it will return -1 and false
+// The second param means the convert is ok or not. Ture is ok, false means it is illegal name
+// At present, we only support two names: "IN" and "MIN_MAX"
+func RuntimeFilterTypeStringToType(name string) (RuntimeFilterType, bool) {
+	switch name {
+	case "IN":
+		return In, true
+	case "MIN_MAX":
+		return MinMax, true
+	default:
+		return -1, false
+	}
+}
+
+// ToRuntimeFilterType convert session var value to RuntimeFilterType list
+// If sessionVarValue is legal, it will return RuntimeFilterType list and true
+// The second param means the convert is ok or not. Ture is ok, false means it is illegal value
+// The legal value should be comma-separated, eg: "IN,MIN_MAX"
+func ToRuntimeFilterType(sessionVarValue string) ([]RuntimeFilterType, bool) {
+	typeNameList := strings.Split(sessionVarValue, ",")
+	rfTypeMap := make(map[RuntimeFilterType]bool)
+	for _, typeName := range typeNameList {
+		rfType, ok := RuntimeFilterTypeStringToType(strings.ToUpper(typeName))
+		if !ok {
+			return nil, ok
+		}
+		rfTypeMap[rfType] = true
+	}
+	rfTypeList := make([]RuntimeFilterType, 0, len(rfTypeMap))
+	for rfType := range rfTypeMap {
+		rfTypeList = append(rfTypeList, rfType)
+	}
+	return rfTypeList, true
+}
+
+// RuntimeFilterMode the mode of runtime filter "OFF", "LOCAL"
+type RuntimeFilterMode int64
+
+// RFOff disable runtime filter
+// RFLocal enable local runtime filter
+// RFGlobal enable local and global runtime filter
+const (
+	RFOff RuntimeFilterMode = iota + 1
+	RFLocal
+	RFGlobal
+)
+
+// String convert Runtime Filter Mode to String name
+func (rfMode RuntimeFilterMode) String() string {
+	switch rfMode {
+	case RFOff:
+		return "OFF"
+	case RFLocal:
+		return "LOCAL"
+	case RFGlobal:
+		return "GLOBAL"
+	default:
+		return ""
+	}
+}
+
+// RuntimeFilterModeStringToMode convert RuntimeFilterModeString to RuntimeFilterMode
+// If name is legal, it will return Runtime Filter Mode and true
+// Else, it will return -1 and false
+// The second param means the convert is ok or not. Ture is ok, false means it is illegal name
+// At present, we only support one name: "OFF", "LOCAL"
+func RuntimeFilterModeStringToMode(name string) (RuntimeFilterMode, bool) {
+	switch name {
+	case "OFF":
+		return RFOff, true
+	case "LOCAL":
+		return RFLocal, true
+	default:
+		return -1, false
+	}
 }

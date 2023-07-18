@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/internal"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -1327,7 +1328,7 @@ func TestMultipleTableUpdate(t *testing.T) {
 func TestDelete(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	fillData(tk, "delete_test")
+	internal.FillData(tk, "delete_test")
 
 	tk.MustExec(`update delete_test set name = "abc" where id = 2;`)
 	tk.CheckExecResult(1, 0)
@@ -1465,7 +1466,7 @@ func checkCases(
 			nil)
 		require.NoError(t, err)
 
-		err = ld.TestLoad(parser)
+		err = ld.TestLoadLocal(parser)
 		require.NoError(t, err)
 		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), tt.expected)
 		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))
@@ -3128,7 +3129,7 @@ func TestUpdate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	fillData(tk, "update_test")
+	internal.FillData(tk, "update_test")
 
 	updateStr := `UPDATE update_test SET name = "abc" where id > 0;`
 	tk.MustExec(updateStr)
@@ -3423,9 +3424,8 @@ func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
 		tk.MustExec("update t set a='bbb' where a = 'aaa'")
 		tk.MustExec("admin check table t")
 		tk.MustQuery("select a from t order by a").Check(testkit.Rows("abc", "acd", "bbb"))
-		// TODO: fix below test.
-		//tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("abc", "acd"))
-		//tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb"))
+		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("abc", "acd"))
+		tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb"))
 		tk.MustQuery("select * from t where a = 'bbb' order by a").Check(testkit.Rows("bbb b"))
 		// Test insert meet duplicate error.
 		err := tk.ExecToErr("insert into t (a) values  ('abc')")
@@ -3434,9 +3434,8 @@ func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
 		tk.MustExec("insert into t (a) values ('abc') on duplicate key update a='bbc'")
 		tk.MustQuery("select a from t order by a").Check(testkit.Rows("acd", "bbb", "bbc"))
 		tk.MustQuery("select * from t where a = 'bbc'").Check(testkit.Rows("bbc b"))
-		// TODO: fix below test.
-		//tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("acd"))
-		//tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb", "bbc"))
+		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("acd"))
+		tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb", "bbc"))
 	}
 }
 
@@ -3550,4 +3549,15 @@ func TestMutipleReplaceAndInsertInOneSession(t *testing.T) {
 	tk2.MustExec(`INSERT INTO t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type)`)
 
 	tk2.MustQuery("select * from t_securities").Sort().Check(testkit.Rows("1 1 2 7", "2 7 1 7", "3 8 1 7", "8 9 1 7"))
+}
+
+func TestHandleColumnWithOnUpdateCurrentTimestamp(t *testing.T) {
+	// Test https://github.com/pingcap/tidb/issues/44565
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a timestamp on update current_timestamp(0), b int, primary key (a) clustered, key idx (a))")
+	tk.MustExec("insert into t values ('2023-06-11 10:00:00', 1)")
+	tk.MustExec("update t force index(primary) set b = 10 where a = '2023-06-11 10:00:00'")
+	tk.MustExec("admin check table t")
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/internal"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -348,7 +349,7 @@ func TestUpdatePartition(t *testing.T) {
 		}
 		// assert WithGetTableStatsByQuery get the same result
 		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID, handle.WithTableStatsByQuery())
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID, cache.WithTableStatsByQuery())
 			require.Equal(t, int64(3), statsTbl.ModifyCount)
 			require.Equal(t, int64(0), statsTbl.RealtimeCount)
 			require.Equal(t, int64(0), statsTbl.Columns[bColID].TotColSize)
@@ -446,6 +447,8 @@ func TestAutoUpdate(t *testing.T) {
 		tableInfo = tbl.Meta()
 		h.HandleAutoAnalyze(is)
 		require.NoError(t, h.Update(is))
+		testKit.MustExec("explain select * from t where a > 'a'")
+		require.NoError(t, h.LoadNeededHistograms())
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(8), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
@@ -1968,13 +1971,7 @@ func BenchmarkHandleAutoAnalyze(b *testing.B) {
 // subtraction parses the number for counter and returns new - old.
 // string for counter will be `label:<name:"type" value:"ok" > counter:<value:0 > `
 func subtraction(newMetric *dto.Metric, oldMetric *dto.Metric) int {
-	newStr := newMetric.String()
-	oldStr := oldMetric.String()
-	newIdx := strings.LastIndex(newStr, ":")
-	newNum, _ := strconv.Atoi(newStr[newIdx+1 : len(newStr)-3])
-	oldIdx := strings.LastIndex(oldStr, ":")
-	oldNum, _ := strconv.Atoi(oldStr[oldIdx+1 : len(oldStr)-3])
-	return newNum - oldNum
+	return int(*(newMetric.Counter.Value) - *(oldMetric.Counter.Value))
 }
 
 func TestDisableFeedback(t *testing.T) {
