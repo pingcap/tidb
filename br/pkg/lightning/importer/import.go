@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	tidbconfig "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -1538,6 +1539,15 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			if rc.taskMgr != nil {
 				rc.taskMgr.Close()
 			}
+		}
+
+		securityConfig := rc.tls.ToTiKVSecurityConfig()
+		if securityConfig.ClusterSSLCA != "" {
+			conf := tidbconfig.GetGlobalConfig()
+			conf.Security.ClusterSSLCA = securityConfig.ClusterSSLCA
+			conf.Security.ClusterSSLCert = securityConfig.ClusterSSLCert
+			conf.Security.ClusterSSLKey = securityConfig.ClusterSSLKey
+			tidbconfig.StoreGlobalConfig(conf)
 		}
 
 		// Disable GC because TiDB enables GC already.
