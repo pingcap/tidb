@@ -2,7 +2,6 @@ load("@bazel_gazelle//:def.bzl", "gazelle")
 
 exports_files([
     "DEPS.bzl",
-    "TEAMS.yaml",
     "WORKSPACE",
     "go.mod",
     "go.sum",

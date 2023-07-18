@@ -563,9 +563,10 @@ docker-test:
 	docker buildx build --platform linux/amd64,linux/arm64 --push -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile .
 
 bazel_mirror:
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> tmp.txt
-	cp tmp.txt DEPS.bzl
-	rm tmp.txt
+	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> "$($@TMP_OUT)"/tmp.txt
+	cp "$($@TMP_OUT)"/tmp.txt DEPS.bzl
+	rm -rf "$($@TMP_OUT)"
 
 bazel_sync:
 	bazel $(BAZEL_GLOBAL_CONFIG) sync $(BAZEL_SYNC_CONFIG)
