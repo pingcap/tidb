@@ -32,7 +32,7 @@ type AdminPluginsExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *AdminPluginsExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *AdminPluginsExec) Next(context.Context, *chunk.Chunk) error {
 	switch e.Action {
 	case core.Enable:
 		return e.changeDisableFlagAndFlush(false)

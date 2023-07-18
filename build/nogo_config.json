@@ -500,7 +500,7 @@
       "bindinfo/": "bindinfo",
       "br/pkg/lightning/": "br/pkg/lightning/",
       "executor/aggregate.go": "executor/aggregate.go",
-      "executor/analyze": "executor/analyze",
+      "executor/a": "executor/a",
       "executor/change.go": "executor/change.go",
       "executor/concurrent_map.go": "executor/concurrent_map.go",
       "executor/internal/": "executor/internal/",
