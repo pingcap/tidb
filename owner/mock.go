@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
@@ -44,6 +45,8 @@ type mockManager struct {
 	resignDone   chan struct{}
 }
 
+var mockOwnerOpValue atomic.Pointer[OpType]
+
 // NewMockManager creates a new mock Manager.
 func NewMockManager(ctx context.Context, id string, store kv.Storage, ownerKey string) Manager {
 	cancelCtx, cancelFunc := context.WithCancel(ctx)
@@ -51,6 +54,10 @@ func NewMockManager(ctx context.Context, id string, store kv.Storage, ownerKey s
 	if store != nil {
 		storeID = store.UUID()
 	}
+
+	// Make sure the mockOwnerOpValue is initialized before GetOwnerOpValue in bootstrap.
+	op := OpNone
+	mockOwnerOpValue.Store(&op)
 	return &mockManager{
 		id:           id,
 		storeID:      storeID,
@@ -106,9 +113,12 @@ func (m *mockManager) GetOwnerID(_ context.Context) (string, error) {
 	return "", errors.New("no owner")
 }
 
-var mockOwnerOpValue atomic.Pointer[OpType]
-
 func (*mockManager) SetOwnerOpValue(_ context.Context, op OpType) error {
+	failpoint.Inject("MockNotSetOwnerOp", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil)
+		}
+	})
 	mockOwnerOpValue.Store(&op)
 	return nil
 }
