@@ -45,15 +45,15 @@ clean() {
     --mode delete --start-key $1 --end-key $2
 }
 
-test_full_txnkv() {
+test_full_rawkv() {
     check_range_start=00
     check_range_end=ff
 
-    rm -rf $BACKUP_TXN_FULL
+    rm -rf $BACKUP_FULL
 
     checksum_full=$(checksum $check_range_start $check_range_end)
     # backup current state of key-values
-    run_br --pd $PD_ADDR backup txn -s "local://$BACKUP_TXN_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
+    run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
 
     clean $check_range_start $check_range_end
     # Ensure the data is deleted
@@ -63,7 +63,7 @@ test_full_txnkv() {
         fail_and_exit
     fi
 
-    run_br --pd $PD_ADDR restore txn -s "local://$BACKUP_TXN_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
+    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
     checksum_new=$(checksum $check_range_start $check_range_end)
     if [ "$checksum_new" != "$checksum_full" ];then
         echo "failed to restore"
