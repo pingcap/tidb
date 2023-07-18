@@ -138,5 +138,4 @@ run_test() {
     export GO_FAILPOINTS=""
 }
 
-
 run_test ""
