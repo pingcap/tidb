@@ -22,7 +22,6 @@ start_services --no-tiflash
 
 BACKUP_DIR=$TEST_DIR/"raw_backup"
 BACKUP_FULL=$TEST_DIR/"rawkv-full"
-BACKUP_TXN_FULL=$TEST_DIR/"txnkv-full"
 
 checksum() {
     bin/rawkv --pd $PD_ADDR \
