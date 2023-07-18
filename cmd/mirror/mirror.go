@@ -64,10 +64,6 @@ func init() {
 	flag.BoolVar(&isUpload, "upload", false, "enable upload mode")
 }
 
-func canMirror() bool {
-	return isMirror
-}
-
 func formatSubURL(path, version string) string {
 	return fmt.Sprintf("gomod/%s/%s-%s.zip", path, modulePathToBazelRepoName(path), version)
 }
@@ -334,7 +330,7 @@ func dumpNewDepsBzl(
 
 	ctx := context.Background()
 	var client *storage.Client
-	if canMirror() && isUpload {
+	if isMirror && isUpload {
 		var err error
 		client, err = storage.NewClient(ctx)
 		if err != nil {
@@ -392,7 +388,7 @@ def go_deps():
 			"%s",
         ],
 `, oldMirror.Sha256, replaced.Path, replaced.Version, expectedPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
-		} else if canMirror() {
+		} else if isMirror {
 			// We'll have to mirror our copy of the zip ourselves.
 			d := downloaded[replaced.Path]
 			sha, err := getSha256OfFile(d.Zip)
