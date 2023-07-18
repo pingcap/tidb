@@ -45,6 +45,10 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+const (
+	maxLogLength = 512 * 1024
+)
+
 var ExtraHandleColumnInfo = model.NewExtraHandleColInfo()
 
 type genCol struct {
@@ -223,6 +227,7 @@ var kindStr = [...]string{
 // MarshalLogArray implements the zapcore.ArrayMarshaler interface
 func (row RowArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 	for _, datum := range row {
+		var totalLength = 0
 		kind := datum.Kind()
 		var str string
 		var err error
@@ -239,6 +244,14 @@ func (row RowArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error
 				return err
 			}
 		}
+		if len(str) > maxLogLength {
+			str = str[0:1024] + " (truncated)"
+		}
+		totalLength += len(str)
+		if totalLength >= maxLogLength {
+			encoder.AppendString("The row has been truncated, and the log has exited early.")
+			return nil
+		}
 		if err := encoder.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
 			enc.AddString("kind", kindStr[kind])
 			enc.AddString("val", redact.String(str))
@@ -250,15 +263,15 @@ func (row RowArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error
 	return nil
 }
 
-func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *model.ColumnInfo, err error) error {
+func LogKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *model.ColumnInfo, err error) error {
 	var original types.Datum
 	if 0 <= j && j < len(row) {
 		original = row[j]
 		row = row[j : j+1]
 	}
 
-	e.logger.Error("kv convert failed",
-		zap.Array("original", RowArrayMarshaller(row)),
+	logger.Error("kv convert failed",
+		zap.Array("original", RowArrayMarshaler(row)),
 		zap.Int("originalCol", j),
 		zap.String("colName", colInfo.Name.O),
 		zap.Stringer("colType", &colInfo.FieldType),
@@ -267,11 +280,11 @@ func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *mo
 
 	if len(original.GetString()) >= maxLogLength {
 		originalPrefix := original.GetString()[0:1024] + " (truncated)"
-		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", originalPrefix),
+		logger.Error("failed to convert kv value", logutil.RedactAny("origVal", originalPrefix),
 			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
 			zap.Int("columnID", j+1))
 	} else {
-		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
+		logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
 			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
 			zap.Int("columnID", j+1))
 	}
@@ -388,7 +401,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		}
 		value, err = kvcodec.getActualDatum(rowID, i, theDatum)
 		if err != nil {
-			return nil, logKVConvertFailed(logger, row, j, col.ToInfo(), err)
+			return nil, LogKVConvertFailed(logger, row, j, col.ToInfo(), err)
 		}
 
 		record = append(record, value)
@@ -419,7 +432,7 @@ func (kvcodec *tableKVEncoder) Encode(
 			value, err = types.NewIntDatum(rowID), nil
 		}
 		if err != nil {
-			return nil, logKVConvertFailed(logger, row, j, ExtraHandleColumnInfo, err)
+			return nil, LogKVConvertFailed(logger, row, j, ExtraHandleColumnInfo, err)
 		}
 		record = append(record, value)
 		alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.RowIDAllocType)
