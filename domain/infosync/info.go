@@ -1315,10 +1315,10 @@ func SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) err
 }
 
 // checkAndResetTiDBRoleLabel only works for tidb_role.
-// Currently we only support ddl_worker role.
+// Currently we only support dist_worker role.
 func checkAndResetTiDBRoleLabel(labels map[string]string) {
 	if v, ok := labels["tidb_role"]; ok {
-		if v != "ddl_worker" {
+		if v != "dist_worker" {
 			labels["tidb_role"] = ""
 		}
 	} else {
