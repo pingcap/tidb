@@ -21,6 +21,9 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
+var blackList []string{
+	"util/chunk"
+}
 // Analyzer is the analyzer struct of toomanytests
 var Analyzer = &analysis.Analyzer{
 	Name: "toomanytests",
@@ -30,6 +33,7 @@ var Analyzer = &analysis.Analyzer{
 
 		for _, f := range pass.Files {
 			for _, n := range f.Decls {
+
 				funcDecl, ok := n.(*ast.FuncDecl)
 				if ok {
 					if strings.HasPrefix(funcDecl.Name.Name, "Test") && funcDecl.Recv == nil &&
