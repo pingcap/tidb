@@ -217,7 +217,6 @@ go_test(
         "//util/replayer",
         "//util/resourcegrouptag",
         "//util/rowcodec",
-        "//util/skip",
         "//util/stmtsummary/v2:stmtsummary",
         "//util/syncutil",
         "//util/topsql",
