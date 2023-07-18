@@ -68,10 +68,6 @@ func canMirror() bool {
 	return isMirror
 }
 
-func canMirrorByName(name string) bool {
-	return true
-}
-
 func formatSubURL(path, version string) string {
 	return fmt.Sprintf("gomod/%s/%s-%s.zip", path, modulePathToBazelRepoName(path), version)
 }
@@ -316,10 +312,6 @@ func buildFileProtoModeForRepo(repoName string) string {
 	return "disable_global"
 }
 
-func dumpBuildDirectivesForRepo(_ string) {
-
-}
-
 func dumpBuildNamingConventionArgsForRepo(repoName string) {
 	if repoName == "com_github_grpc_ecosystem_grpc_gateway" {
 		fmt.Printf("        build_naming_convention = \"go_default_library\",\n")
@@ -373,7 +365,6 @@ def go_deps():
 		fmt.Printf(`    go_repository(
         name = "%s",
 `, repoName)
-		dumpBuildDirectivesForRepo(repoName)
 		fmt.Printf(`        build_file_proto_mode = "%s",
 `, buildFileProtoModeForRepo(repoName))
 		dumpBuildNamingConventionArgsForRepo(repoName)
@@ -401,7 +392,7 @@ def go_deps():
 			"%s",
         ],
 `, oldMirror.Sha256, replaced.Path, replaced.Version, expectedPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
-		} else if canMirror() && canMirrorByName(repoName) {
+		} else if canMirror() {
 			// We'll have to mirror our copy of the zip ourselves.
 			d := downloaded[replaced.Path]
 			sha, err := getSha256OfFile(d.Zip)
