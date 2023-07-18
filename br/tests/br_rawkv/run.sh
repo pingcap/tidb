@@ -22,6 +22,7 @@ start_services --no-tiflash
 
 BACKUP_DIR=$TEST_DIR/"raw_backup"
 BACKUP_FULL=$TEST_DIR/"rawkv-full"
+BACKUP_TXN_FULL=$TEST_DIR/"txnkv-full"
 
 checksum() {
     bin/rawkv --pd $PD_ADDR \
@@ -42,6 +43,32 @@ clean() {
     --cert "$TEST_DIR/certs/br.pem" \
     --key "$TEST_DIR/certs/br.key" \
     --mode delete --start-key $1 --end-key $2
+}
+
+test_full_txnkv() {
+    check_range_start=00
+    check_range_end=ff
+
+    rm -rf $BACKUP_TXN_FULL
+
+    checksum_full=$(checksum $check_range_start $check_range_end)
+    # backup current state of key-values
+    run_br --pd $PD_ADDR backup txn -s "local://$BACKUP_TXN_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
+
+    clean $check_range_start $check_range_end
+    # Ensure the data is deleted
+    checksum_new=$(checksum $check_range_start $check_range_end)
+    if [ "$checksum_new" == "$checksum_full" ];then
+        echo "failed to delete data in range"
+        fail_and_exit
+    fi
+
+    run_br --pd $PD_ADDR restore txn -s "local://$BACKUP_TXN_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
+    checksum_new=$(checksum $check_range_start $check_range_end)
+    if [ "$checksum_new" != "$checksum_full" ];then
+        echo "failed to restore"
+        fail_and_exit
+    fi
 }
 
 test_full_rawkv() {
@@ -137,6 +164,7 @@ run_test() {
     fi
 
     test_full_rawkv
+    test_full_txnkv
 
     # delete data in range[start-key, end-key)
     clean 31 3130303030303030
