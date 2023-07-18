@@ -50,8 +50,8 @@ type TTLJobTrace struct {
 
 // TTLJobAdapter is used to submit TTL job and trace job status
 type TTLJobAdapter interface {
-	// ShouldSubmitJob returns whether a new job can be created for the specified table
-	ShouldSubmitJob(tableID, physicalID int64) bool
+	// CanSubmitJob returns whether a new job can be created for the specified table
+	CanSubmitJob(tableID, physicalID int64) bool
 	// SubmitJob submits a new job
 	SubmitJob(ctx context.Context, tableID, physicalID int64, requestID string, watermark time.Time) (*TTLJobTrace, error)
 	// GetJob returns the job to trace
@@ -113,7 +113,7 @@ func (t *ttlTimerHook) OnPreSchedEvent(_ context.Context, event timerapi.TimerSh
 		return
 	}
 
-	if !t.adapter.ShouldSubmitJob(data.TableID, data.PhysicalID) {
+	if !t.adapter.CanSubmitJob(data.TableID, data.PhysicalID) {
 		r.Delay = time.Minute
 		return
 	}
@@ -149,7 +149,7 @@ func (t *ttlTimerHook) OnSchedEvent(ctx context.Context, event timerapi.TimerShe
 
 	if job == nil {
 		cancel := false
-		if !timer.Enable || !t.adapter.ShouldSubmitJob(data.TableID, data.PhysicalID) {
+		if !timer.Enable || !t.adapter.CanSubmitJob(data.TableID, data.PhysicalID) {
 			cancel = true
 			logger.Warn("cancel current TTL timer event because table's ttl is not enabled")
 		}

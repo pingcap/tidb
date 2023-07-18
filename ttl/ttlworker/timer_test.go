@@ -34,7 +34,7 @@ type mockJobAdapter struct {
 	mock.Mock
 }
 
-func (a *mockJobAdapter) ShouldSubmitJob(tableID, physicalID int64) bool {
+func (a *mockJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
 	args := a.Called(tableID, physicalID)
 	return args.Bool(0)
 }
@@ -182,7 +182,7 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 	hook := newTTLTimerHook(adapter, cli)
 
 	// normal
-	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).Return(true).Once()
+	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).Return(true).Once()
 	r, err := hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{}, r)
@@ -216,7 +216,7 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 
 	// in window
 	clearTTLWindowAndEnable()
-	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).Return(true).Once()
+	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).Return(true).Once()
 	variable.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 15, 9, 0, 0, time.UTC))
 	variable.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 15, 11, 0, 0, time.UTC))
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
@@ -224,9 +224,9 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 	require.Equal(t, timerapi.PreSchedEventResult{}, r)
 	adapter.AssertExpectations(t)
 
-	// ShouldSubmitJob returns false
+	// CanSubmitJob returns false
 	clearTTLWindowAndEnable()
-	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).Return(false).Once()
+	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).Return(false).Once()
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{Delay: time.Minute}, r)
@@ -261,7 +261,7 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(nil, nil).
 		Once()
-	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).
+	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).
 		Return(true).
 		Once()
 	adapter.On("SubmitJob", ctx, data.TableID, data.PhysicalID, timer.EventID, timer.EventStart).
@@ -296,7 +296,7 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(nil, nil).
 		Once()
-	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).
+	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).
 		Return(true).
 		Once()
 	adapter.On("SubmitJob", ctx, data.TableID, data.PhysicalID, timer.EventID, timer.EventStart).
@@ -344,7 +344,7 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(nil, nil).
 		Once()
-	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).
+	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).
 		Return(false).
 		Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
@@ -388,7 +388,7 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(nil, nil).
 		Once()
-	adapter.On("ShouldSubmitJob", data.TableID, data.PhysicalID).
+	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).
 		Return(true).
 		Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
