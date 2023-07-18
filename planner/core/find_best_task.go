@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -1351,12 +1352,7 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 	}
 	if matchProp {
 		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			is.Columns = append(is.Columns, model.NewExtraPhysTblIDColInfo())
-			is.schema.Append(&expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-				ID:       model.ExtraPhysTblID,
-			})
+			is.Columns, is.schema, _ = AddExtraPhysTblIDColumn(is.ctx, is.Columns, is.schema)
 		}
 		// Add sort items for index scan for merge-sort operation between partitions.
 		byItems := make([]*util.ByItems, 0, len(prop.SortItems))
@@ -1405,12 +1401,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	}
 	if matchProp {
 		if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			ts.Columns = append(ts.Columns, model.NewExtraPhysTblIDColInfo())
-			ts.schema.Append(&expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-				ID:       model.ExtraPhysTblID,
-			})
+			ts.Columns, ts.schema, _ = AddExtraPhysTblIDColumn(ts.ctx, ts.Columns, ts.schema)
 		}
 		// Add sort items for index scan for merge-sort operation between partitions.
 		byItems := make([]*util.ByItems, 0, len(prop.SortItems))
@@ -1471,7 +1462,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 	sessVars := ds.ctx.GetSessionVars()
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
-		Columns:         tidbutil.ShallowCloneSlice(ds.Columns),
+		Columns:         slices.Clone(ds.Columns),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
@@ -1523,6 +1514,8 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 	if !matchProp {
 		return ts, nil, false, nil
 	}
+
+	// Add the primary key into the schema.
 	columnAdded := false
 	if ts.Table.PKIsHandle {
 		pk := ts.Table.GetPkColInfo()
@@ -1542,12 +1535,17 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 				ts.Columns = append(ts.Columns, col.ToInfo())
 			}
 		}
-	} else {
-		if !ts.schema.Contains(ts.HandleCols.GetCol(0)) {
-			ts.schema.Append(ts.HandleCols.GetCol(0))
-			ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
-			columnAdded = true
-		}
+	} else if !ts.schema.Contains(ts.HandleCols.GetCol(0)) {
+		ts.schema.Append(ts.HandleCols.GetCol(0))
+		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+		columnAdded = true
+	}
+
+	// For the global index of the partitioned table, we also need the PhysicalTblID to indentify the rows from each partition.
+	if ts.Table.GetPartitionInfo() != nil && ts.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		var newColAdded bool
+		ts.Columns, ts.schema, newColAdded = AddExtraPhysTblIDColumn(ts.ctx, ts.Columns, ts.schema)
+		columnAdded = columnAdded || newColAdded
 	}
 	return ts, nil, columnAdded, nil
 }
@@ -2638,7 +2636,7 @@ func (ts *PhysicalTableScan) getScanRowSize() float64 {
 func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64) {
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
-		Columns:         tidbutil.ShallowCloneSlice(ds.Columns),
+		Columns:         slices.Clone(ds.Columns),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
@@ -2651,7 +2649,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		tblColHists:     ds.TblColHists,
 		constColsByCond: path.ConstCols,
 		prop:            prop,
-		filterCondition: tidbutil.ShallowCloneSlice(path.TableFilters),
+		filterCondition: slices.Clone(path.TableFilters),
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
