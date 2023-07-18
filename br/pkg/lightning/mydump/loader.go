@@ -510,19 +510,25 @@ func (s *mdLoaderSetup) route() error {
 	}
 
 	knownDBNames := make(map[string]*dbInfo)
-	for _, info := range s.dbSchemas {
+	for _, info := range s.tableSchemas {
 		knownDBNames[info.TableName.Schema] = &dbInfo{
 			fileMeta: info.FileMeta,
 			count:    1,
 		}
-	}
-	for _, info := range s.tableSchemas {
 		knownDBNames[info.TableName.Schema].count++
 	}
 	for _, info := range s.viewSchemas {
+		knownDBNames[info.TableName.Schema] = &dbInfo{
+			fileMeta: info.FileMeta,
+			count:    1,
+		}
 		knownDBNames[info.TableName.Schema].count++
 	}
 	for _, info := range s.tableDatas {
+		knownDBNames[info.TableName.Schema] = &dbInfo{
+			fileMeta: info.FileMeta,
+			count:    1,
+		}
 		knownDBNames[info.TableName.Schema].count++
 	}
 
