@@ -613,9 +613,78 @@ c6 datetime);`)
 	b.StopTimer()
 }
 
+func BenchmarkUnionScanIndexReadDescRead(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int, b int, c int, primary key(a), index k(b))`)
+	tk.MustExec(`begin;`)
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
+	}
+
+	tk.HasPlan("select b from t use index(k) where b > 50 order by b desc", "IndexReader")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// indexReader
+		tk.MustExec("select b from t use index(k) where b > 50 order by b desc")
+	}
+	b.StopTimer()
+}
+
+func BenchmarkUnionScanTableReadDescRead(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int, b int, c int, primary key(a), index k(b))`)
+	tk.MustExec(`begin;`)
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
+	}
+
+	tk.HasPlan("select * from t where a > 50 order by a desc", "TableReader")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// tableReader
+		tk.MustExec("select * from t where a > 50 order by a desc")
+	}
+	b.StopTimer()
+}
+
+func BenchmarkUnionScanIndexLookUpDescRead(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int, b int, c int, primary key(a), index k(b))`)
+	tk.MustExec(`begin;`)
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
+	}
+
+	tk.HasPlan("select * from t use index(k) where b > 50 order by b desc", "IndexLookUp")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// indexLookUp
+		tk.MustExec("select * from t use index(k) where b > 50 order by b desc")
+	}
+	b.StopTimer()
+}
+
 func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		executor.BenchmarkReadLastLinesOfHugeLine,
 		BenchmarkUnionScanRead,
+		BenchmarkUnionScanIndexReadDescRead,
+		BenchmarkUnionScanTableReadDescRead,
+		BenchmarkUnionScanIndexLookUpDescRead,
 	)
 }

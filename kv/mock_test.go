@@ -52,7 +52,7 @@ func TestInterface(t *testing.T) {
 		assert.Nil(t, err)
 		_, err = transaction.Iter(Key("lock"), nil)
 		assert.Nil(t, err)
-		_, err = transaction.IterReverse(Key("lock"))
+		_, err = transaction.IterReverse(Key("lock"), nil)
 		assert.Nil(t, err)
 	}
 	_ = transaction.Commit(context.Background())

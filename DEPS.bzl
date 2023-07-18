@@ -3863,8 +3863,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:wRqy8mHs5IocLn4pDvqrwGs4lc3wKhdDXxFyLi8kNbQ=",
-        version = "v2.0.8-0.20230711075855-e540aa3b9657",
+        sum = "h1:88oApJuTK/WiBnBw9cV+AgA20pNZVtVIyeh8fTm2ymo=",
+        version = "v2.0.8-0.20230714023607-2f119351bd5c",
     )
 
     go_repository(

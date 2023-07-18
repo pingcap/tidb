@@ -85,7 +85,7 @@ func (s *mockMap) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
 func (s *mockMap) Iter(Key, Key) (Iterator, error) {
 	return nil, nil
 }
-func (s *mockMap) IterReverse(Key) (Iterator, error) {
+func (s *mockMap) IterReverse(Key, Key) (Iterator, error) {
 	return nil, nil
 }
 

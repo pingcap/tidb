@@ -838,7 +838,7 @@ func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix k
 	}
 	snap.SetOption(kv.RequestSourceInternal, true)
 	snap.SetOption(kv.RequestSourceType, ctx.ddlJobSourceType())
-	it, err := snap.IterReverse(endKey.Next())
+	it, err := snap.IterReverse(endKey.Next(), nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
