@@ -219,9 +219,12 @@ func (m *globalMetadata) writeGlobalMetaData() error {
 	if err != nil {
 		return err
 	}
-	defer tearDown(m.tctx)
-
-	return write(m.tctx, fileWriter, m.String())
+	err = write(m.tctx, fileWriter, m.String())
+	tearDownErr := tearDown(m.tctx)
+	if err == nil {
+		return tearDownErr
+	}
+	return err
 }
 
 func getValidStr(str []string, idx int) string {
