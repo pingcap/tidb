@@ -737,7 +737,6 @@ func TestLogKVConvertFailed(t *testing.T) {
 	_, err = tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
 
-	logger := log.Logger{Logger: zap.NewNop()}
 	var newString strings.Builder
 	for i := 0; i < 100000; i++ {
 		newString.WriteString("test_test_test_test_")
@@ -747,7 +746,7 @@ func TestLogKVConvertFailed(t *testing.T) {
 	for i := 0; i <= 10; i++ {
 		rows = append(rows, newDatum)
 	}
-	err = lkv.LogKVConvertFailed(logger, rows, 6, c1, err)
+	err = lkv.LogKVConvertFailed(log.L(), rows, 6, c1, err)
 	require.NoError(t, err)
 
 	var content []byte
