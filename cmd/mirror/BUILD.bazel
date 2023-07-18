@@ -4,7 +4,7 @@ go_library(
     name = "mirror_lib",
     srcs = [
         "mirror.go",
-        "starlarkutil.go",
+        "skylarkutil.go",
     ],
     importpath = "github.com/pingcap/tidb/cmd/mirror",
     visibility = ["//visibility:private"],
