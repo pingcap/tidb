@@ -1771,6 +1771,15 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		}
 	}
 
+	// global index not tested, could delete '!is.Index.Global' after test
+	if !is.Index.Global && FindColumnInfoByID(is.Columns, model.ExtraPhysTblID) != nil {
+		indexCols = append(indexCols, &expression.Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			ID:       model.ExtraPhysTblID,
+			UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+		})
+	}
+
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 

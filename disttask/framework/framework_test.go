@@ -50,7 +50,7 @@ func (*testFlowHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.TaskHan
 	return nil, nil
 }
 
-func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ [][]byte) (meta []byte, err error) {
+func (*testFlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return nil, nil
 }
 
@@ -158,29 +158,12 @@ func DispatchTaskAndCheckSuccess(taskKey string, t *testing.T, v *atomic.Int64) 
 }
 
 func DispatchAndCancelTask(taskKey string, t *testing.T, v *atomic.Int64) {
-	mgr, err := storage.GetTaskManager()
-	require.NoError(t, err)
-	taskID, err := mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil)
-	require.NoError(t, err)
-	start := time.Now()
-	mgr.CancelGlobalTask(taskID)
-	var task *proto.Task
-	for {
-		if time.Since(start) > 2*time.Minute {
-			require.FailNow(t, "timeout")
-		}
-
-		time.Sleep(time.Second)
-		task, err = mgr.GetGlobalTaskByID(taskID)
-		require.NoError(t, err)
-		require.NotNil(t, task)
-		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
-			break
-		}
-	}
-
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunCancel", "1*return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunCancel"))
+	}()
+	task := DispatchTask(taskKey, t)
 	require.Equal(t, proto.TaskStateReverted, task.State)
-	require.Equal(t, int64(0), v.Load())
 	v.Store(0)
 }
 
@@ -297,7 +280,7 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	distContext.Close()
 }
 
-func TestFrameworkLabel(t *testing.T) {
+func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 	defer dispatcher.ClearTaskFlowHandle()
 	defer scheduler.ClearSchedulers()
 
@@ -305,6 +288,21 @@ func TestFrameworkLabel(t *testing.T) {
 	RegisterTaskMeta(&v)
 	distContext := testkit.NewDistExecutionContext(t, 4)
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/mockExecSubtaskInitEnvErr", "return()"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockExecSubtaskInitEnvErr"))
+	}()
+	DispatchTaskAndCheckFail("key1", t, &v)
+	distContext.Close()
+}
+
+func TestFrameworkLabel(t *testing.T) {
+	defer dispatcher.ClearTaskFlowHandle()
+	defer scheduler.ClearSchedulers()
+
+	var v atomic.Int64
+	RegisterTaskMeta(&v)
+	distContext := testkit.NewDistExecutionContext(t, 4)
 	// 1. all server not setting labels.
 	DispatchTaskAndCheckSuccess("😄", t, &v)
 	require.Equal(t, 4, nodeNum)
@@ -341,6 +339,5 @@ func TestFrameworkLabel(t *testing.T) {
 	DispatchTaskAndCheckSuccess("key3", t, &v)
 	require.Equal(t, 4, nodeNum)
 	nodeNum = 0
-
 	distContext.Close()
 }

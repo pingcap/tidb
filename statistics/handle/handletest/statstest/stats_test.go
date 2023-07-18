@@ -15,6 +15,7 @@
 package statstest
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -155,6 +156,45 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, int64(recordCount), statsTbl2.RealtimeCount)
 	internal.AssertTableEqual(t, statsTbl1, statsTbl2)
+}
+
+func testInitStatsMemTrace(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t1 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	tk.MustExec("analyze table t1")
+	for i := 2; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("create table t%v (a int, b int, c int, primary key(a), key idx(b))", i))
+		tk.MustExec(fmt.Sprintf("insert into t%v select * from t1", i))
+		tk.MustExec(fmt.Sprintf("analyze table t%v", i))
+	}
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	h.Clear()
+	require.NoError(t, h.InitStats(is))
+
+	var memCostTot int64
+	for i := 1; i < 10; i++ {
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
+		require.NoError(t, err)
+		tStats := h.GetTableStats(tbl.Meta())
+		memCostTot += tStats.MemoryUsage().TotalMemUsage
+	}
+
+	require.Equal(t, h.GetMemConsumed(), memCostTot)
+}
+
+func TestInitStatsMemTrace(t *testing.T) {
+	originValue := config.GetGlobalConfig().Performance.LiteInitStats
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = originValue
+	}()
+	for _, v := range []bool{false, true} {
+		config.GetGlobalConfig().Performance.LiteInitStats = v
+		testInitStatsMemTrace(t)
+	}
 }
 
 func TestInitStats(t *testing.T) {

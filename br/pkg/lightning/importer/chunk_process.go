@@ -422,7 +422,7 @@ func (cr *chunkProcessor) encodeLoop(
 					lastOffset := curOffset
 					curOffset = newOffset
 
-					if rc.errorMgr.RemainRecord() <= 0 {
+					if rc.errorMgr.ConflictRecordsRemain() <= 0 {
 						continue
 					}
 
@@ -435,7 +435,7 @@ func (cr *chunkProcessor) encodeLoop(
 						logger,
 					)
 					rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
-					err = rc.errorMgr.RecordConflictErrorV2(
+					err = rc.errorMgr.RecordDuplicate(
 						ctx,
 						logger,
 						t.tableName,

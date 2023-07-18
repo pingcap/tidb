@@ -999,7 +999,7 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 512},
 	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 	{name: "REMAINING_SECONDS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
-	{name: "PROGRESS", tp: mysql.TypeVarchar, size: 20},
+	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "ESTIMATED_TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 }
 
@@ -1603,6 +1603,7 @@ var tableResourceGroupsCols = []columnInfo{
 	{name: "PRIORITY", tp: mysql.TypeVarchar, size: 6},
 	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 3},
 	{name: "QUERY_LIMIT", tp: mysql.TypeVarchar, size: 256},
+	{name: "BACKGROUND", tp: mysql.TypeVarchar, size: 256},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1770,7 +1771,7 @@ func FormatTiDBVersion(TiDBVersion string, isDefaultVersion bool) string {
 		if len(nodeVersion) > 0 && nodeVersion[0] == 'v' {
 			nodeVersion = nodeVersion[1:]
 		}
-		nodeVersions := strings.Split(nodeVersion, "-")
+		nodeVersions := strings.SplitN(nodeVersion, "-", 2)
 		if len(nodeVersions) == 1 {
 			version = nodeVersions[0]
 		} else if len(nodeVersions) >= 2 {

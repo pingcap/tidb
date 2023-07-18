@@ -255,12 +255,12 @@ type endEstimateRangeInfo struct {
 func debugTraceEndEstimateRange(
 	s sessionctx.Context,
 	count float64,
-	AddType debugTraceAddRowCountType,
+	addType debugTraceAddRowCountType,
 ) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := &endEstimateRangeInfo{
 		RowCount: count,
-		Type:     AddType,
+		Type:     addType,
 	}
 	root.AppendStepWithNameToCurrentContext(traceInfo, "End estimate range")
 }
