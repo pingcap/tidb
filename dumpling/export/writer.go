@@ -237,9 +237,12 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 	for {
 		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType)
 		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter, w.metrics)
-		tearDown(tctx)
+		tearDownErr := tearDown(tctx)
 		if err != nil {
 			return err
+		}
+		if tearDownErr != nil {
+			return tearDownErr
 		}
 
 		if w, ok := fileWriter.(*InterceptFileWriter); ok && !w.SomethingIsWritten {
@@ -275,6 +278,7 @@ func writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, s storage.E
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	defer tearDown(tctx)
 
 	return WriteMeta(tctx, &metaData{
@@ -283,7 +287,18 @@ func writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, s storage.E
 		specCmts: []string{
 			"/*!40101 SET NAMES binary*/;",
 		},
+=======
+	err = WriteMeta(tctx, &metaData{
+		target:   target,
+		metaSQL:  metaSQL,
+		specCmts: getSpecialComments(w.conf.ServerInfo.ServerType),
+>>>>>>> aca44298814 (dumpling: fix dumpling ignore file writer close error (#45374))
 	}, fileWriter)
+	tearDownErr := tearDown(tctx)
+	if err == nil {
+		return tearDownErr
+	}
+	return err
 }
 
 type outputFileNamer struct {

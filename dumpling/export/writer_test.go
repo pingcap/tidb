@@ -12,6 +12,11 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/version"
+>>>>>>> aca44298814 (dumpling: fix dumpling ignore file writer close error (#45374))
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/util/promutil"
 	"github.com/stretchr/testify/require"
@@ -70,7 +75,17 @@ func TestWriteTableMeta(t *testing.T) {
 	require.NoError(t, err)
 	bytes, err := ioutil.ReadFile(p)
 	require.NoError(t, err)
+<<<<<<< HEAD
 	require.Equal(t, "/*!40101 SET NAMES binary*/;\nCREATE TABLE t (a INT);\n", string(bytes))
+=======
+	require.Equal(t, "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n/*!40101 SET NAMES binary*/;\nCREATE TABLE t (a INT);\n", string(bytes))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/dumpling/export/FailToCloseMetaFile", "return(true)"))
+	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/FailToCloseMetaFile=return(true)")
+
+	err = writer.WriteTableMeta("test", "t", "CREATE TABLE t (a INT)")
+	require.ErrorContains(t, err, "injected error: fail to close meta file")
+>>>>>>> aca44298814 (dumpling: fix dumpling ignore file writer close error (#45374))
 }
 
 func TestWriteViewMeta(t *testing.T) {
@@ -137,6 +152,13 @@ func TestWriteTableData(t *testing.T) {
 		"(3,'male','john@mail.com','020-1256','healthy'),\n" +
 		"(4,'female','sarah@mail.com','020-1235','healthy');\n"
 	require.Equal(t, expected, string(bytes))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile", "return(true)"))
+	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile=return(true)")
+
+	tableIR = newMockTableIR("test", "employee", data, specCmts, colTypes)
+	err = writer.WriteTableData(tableIR, tableIR, 0)
+	require.ErrorContains(t, err, "injected error: fail to close data file")
 }
 
 func TestWriteTableDataWithFileSize(t *testing.T) {
