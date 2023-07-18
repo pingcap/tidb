@@ -595,6 +595,11 @@
       ".*test_/testmain\\.go$": "ignore generated code",
       ".*failpoint_binding__.go$": "ignore generated code",
       "util/chunk": "ignore util/chunk"
+    },
+    "only_files": {
+      "disttask/": "disttask code",
+      "timer/": "timer code",
+      "util/": "util code",
     }
   },
   "unconvert": {
