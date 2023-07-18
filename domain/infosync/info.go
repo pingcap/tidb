@@ -196,6 +196,8 @@ func GlobalInfoSyncerInit(
 	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
 ) (*InfoSyncer, error) {
+	checkAndResetTiDBRoleLabel(config.GetGlobalConfig().Labels)
+
 	is := &InfoSyncer{
 		etcdCli:           etcdCli,
 		unprefixedEtcdCli: unprefixedEtcdCli,
@@ -1014,7 +1016,6 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 // getServerInfo gets self tidb server information.
 func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 	cfg := config.GetGlobalConfig()
-	checkAndResetTiDBRoleLabel(cfg.Labels)
 	info := &ServerInfo{
 		ID:             id,
 		IP:             cfg.AdvertiseAddress,
