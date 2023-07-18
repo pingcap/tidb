@@ -128,19 +128,6 @@ run_dumpling --consistency lock -B "$DB_NAME" -L ${DUMPLING_OUTPUT_DIR}/dumpling
 cnt=$(grep -w "$DB_NAME" ${DUMPLING_OUTPUT_DIR}/${DB_NAME}-schema-create.sql|wc -l)
 echo "records count is ${cnt}"
 [ "$cnt" = 1 ]
-<<<<<<< HEAD
-=======
-
-echo "Test for recording network usage."
-run_sql "drop database if exists test_db;"
-run_sql "create database test_db;"
-run_sql "create table test_db.test_table (a int primary key);"
-run_sql "insert into test_db.test_table values (1),(2),(3),(4),(5),(6),(7),(8);"
-
-export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/SetIOTotalBytes=return(1)"
-run_dumpling -B "test_db" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
-cnt=$(grep "IOTotalBytes=" ${DUMPLING_OUTPUT_DIR}/dumpling.log | grep -v "IOTotalBytes=0" | wc -l)
-[ "$cnt" -ge 1 ]
 
 echo "Test for failing to close meta/data file"
 export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/FailToCloseMetaFile=1*return"
@@ -175,11 +162,3 @@ run_dumpling -B "test_db" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
 set -e
 cnt=$(grep -w "dump failed error stack info" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
 [ "$cnt" -ge 1 ]
-
-echo "Test for empty query result, should success."
-run_sql "drop database if exists test_db;"
-run_sql "create database test_db;"
-run_sql "create table test_db.test_table (a int primary key);"
-export GO_FAILPOINTS=""
-run_dumpling --sql "select * from test_db.test_table" --filetype csv > ${DUMPLING_OUTPUT_DIR}/dumpling.log
->>>>>>> aca44298814 (dumpling: fix dumpling ignore file writer close error (#45374))
