@@ -35,8 +35,8 @@ func (c cacheItem) copy() cacheItem {
 }
 
 type tableCache struct {
-	mu   sync.RWMutex
 	Item map[int64]cacheItem
+	mu   sync.RWMutex
 }
 
 func newTableCache() *tableCache {
