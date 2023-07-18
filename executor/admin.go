@@ -317,7 +317,7 @@ type backfillResult struct {
 
 func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (totalAddedCnt, totalScanCnt int64, err error) {
 	var (
-		currentHandle kv.Handle = nil
+		currentHandle kv.Handle
 		lastLogCnt    int64
 		result        backfillResult
 	)
@@ -886,6 +886,6 @@ func (e *CleanupIndexExec) constructLimitPB() *tipb.Executor {
 }
 
 // Close implements the Executor Close interface.
-func (e *CleanupIndexExec) Close() error {
+func (*CleanupIndexExec) Close() error {
 	return nil
 }
