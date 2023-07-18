@@ -21,19 +21,14 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
-var blackList []string{
-	"util/chunk"
-}
 // Analyzer is the analyzer struct of toomanytests
 var Analyzer = &analysis.Analyzer{
 	Name: "toomanytests",
 	Doc:  "too many tests in the package",
 	Run: func(pass *analysis.Pass) (any, error) {
 		cnt := 0
-
 		for _, f := range pass.Files {
 			for _, n := range f.Decls {
-
 				funcDecl, ok := n.(*ast.FuncDecl)
 				if ok {
 					if strings.HasPrefix(funcDecl.Name.Name, "Test") && funcDecl.Recv == nil &&
@@ -44,7 +39,7 @@ var Analyzer = &analysis.Analyzer{
 			}
 			if cnt > 50 {
 				pass.Reportf(f.Pos(), "%s: Too many test cases in one package", pass.Pkg.Name())
-				return nil,nil
+				return nil, nil
 			}
 		}
 		return nil, nil
