@@ -621,7 +621,7 @@ rowLoop:
 				if err = be.WriteRowsToDB(ctx, tableName, columnNames, r); err != nil {
 					// If the error is not nil, it means we reach the max error count in the non-batch mode.
 					// For now, we will treat like maxErrorCount is always 0. So we will just return if any error occurs.
-					return errors.Annotatef(err, "[%s] write rows reach max error count %d", tableName, 0)
+					return errors.Annotatef(err, "[%s] write rows exceed conflict threshold", tableName)
 				}
 				continue rowLoop
 			default:
