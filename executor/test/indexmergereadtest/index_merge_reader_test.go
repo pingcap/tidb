@@ -1164,3 +1164,53 @@ func TestProcessInfoRaceWithIndexScan(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, index idx(a, c), index idx2(b, c), index idx3(a, b, c))")
+	valsInsert := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", rand.Intn(100), rand.Intn(100), rand.Intn(100)))
+	}
+	tk.MustExec("analyze table t")
+	tk.MustExec("insert into t values " + strings.Join(valsInsert, ","))
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceIndexMergeKeepOrder", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceIndexMergeKeepOrder")
+	for i := 0; i < 100; i++ {
+		valA, valB, valC, offset := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1
+		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d) t", valA, valB, valC, offset)).Rows()[0][0]
+		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, offset)
+		queryWithNormalIndex := fmt.Sprintf("select * from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, offset)
+		require.True(t, tk.HasPlan(queryWithIndexMerge, "IndexMerge"))
+		require.True(t, tk.HasPlan(queryWithIndexMerge, "Limit"))
+		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
+		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
+	}
+	for i := 0; i < 100; i++ {
+		valA, valB, valC, limit, offset := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1, rand.Intn(20)
+		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d offset %d) t", valA, valB, valC, limit, offset)).Rows()[0][0]
+		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ c from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
+		queryWithNormalIndex := fmt.Sprintf("select c from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
+		require.True(t, tk.HasPlan(queryWithIndexMerge, "IndexMerge"))
+		require.True(t, tk.HasPlan(queryWithIndexMerge, "Limit"))
+		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
+		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
+	}
+}
+
+func TestIndexMergeNoOrderLimitPushed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, index idx(a, c), index idx2(b, c))")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2)")
+	sql := "select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1"
+	require.True(t, tk.HasPlan(sql, "IndexMerge"))
+	require.True(t, tk.HasPlan(sql, "Limit"))
+	// 6 means that IndexMerge(embedded limit){Limit->PartialIndexScan, Limit->PartialIndexScan, FinalTableScan}
+	require.Equal(t, 6, len(tk.MustQuery("explain "+sql).Rows()))
+	// The result is not stable. So we just check that it can run successfully.
+	tk.MustQuery(sql)
+}

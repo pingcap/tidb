@@ -8606,6 +8606,19 @@
         "Warning": null
       },
       {
+        "SQL": "select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by b limit 2",
+        "Plan": [
+          "TopN 0.06 root  test.t.b, offset:0, count:2",
+          "└─IndexMerge 0.06 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a, c) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx2(b, c) range:[2,2], keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 0.06 cop[tikv]  test.t.b, offset:0, count:2",
+          "    └─Selection 0.06 cop[tikv]  in(test.t.c, 1, 2, 3)",
+          "      └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
         "SQL": "select * from tcommon where a = 1 or b = 1 order by c limit 2",
         "Plan": [
           "IndexMerge 2.00 root  type: union, limit embedded(offset:0, count:2)",

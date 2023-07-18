@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -1274,9 +1275,13 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
-	if candidate.isMatchProp && len(candidate.path.TableFilters) > 0 {
-		return invalidTask, nil
-	}
+	failpoint.Inject("forceIndexMergeKeepOrder", func(_ failpoint.Value) {
+		if len(candidate.path.PartialIndexPaths) > 0 && !candidate.path.IndexMergeIsIntersection {
+			if prop.IsSortItemEmpty() {
+				failpoint.Return(invalidTask, nil)
+			}
+		}
+	})
 	path := candidate.path
 	scans := make([]PhysicalPlan, 0, len(path.PartialIndexPaths))
 	cop := &copTask{
@@ -1306,6 +1311,9 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if err != nil {
 		return invalidTask, err
 	}
+	if prop.TaskTp != property.RootTaskType && len(remainingFilters) > 0 {
+		return invalidTask, nil
+	}
 	cop.keepOrder = candidate.isMatchProp
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
@@ -1317,9 +1325,6 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	}
 	if remainingFilters != nil {
 		cop.rootTaskConds = remainingFilters
-	}
-	if prop.TaskTp != property.RootTaskType && len(remainingFilters) > 0 {
-		return invalidTask, nil
 	}
 	if prop.TaskTp == property.RootTaskType {
 		cop.indexPlanFinished = true
@@ -1495,6 +1500,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 	if ds.statisticTable.Pseudo {
 		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
+	var currentTopPlan PhysicalPlan = ts
 	if len(tableFilters) > 0 {
 		pushedFilters, remainingFilters := extractFiltersForIndexMerge(sessVars.StmtCtx, ds.ctx.GetClient(), tableFilters)
 		pushedFilters1, remainingFilters1 := SplitSelCondsWithVirtualColumn(pushedFilters)
@@ -1508,14 +1514,15 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 			}
 			sel := PhysicalSelection{Conditions: pushedFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
 			sel.SetChildren(ts)
-			return sel, remainingFilters, false, nil
+			currentTopPlan = sel
 		}
-		return ts, remainingFilters, false, nil
+		if len(remainingFilters) > 0 {
+			return currentTopPlan, remainingFilters, false, nil
+		}
 	}
-	// If there's filters on table side, the limit cannot be pushed to index side.
-	// So we just need to check whether the prop is matched after checking the table filters.
+	// If we don't need to use ordered scan, we don't need do the following codes for adding new columns.
 	if !matchProp {
-		return ts, nil, false, nil
+		return currentTopPlan, nil, false, nil
 	}
 
 	// Add the primary key into the schema.
@@ -1550,7 +1557,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 		ts.Columns, ts.schema, newColAdded = AddExtraPhysTblIDColumn(ts.ctx, ts.Columns, ts.schema)
 		columnAdded = columnAdded || newColAdded
 	}
-	return ts, nil, columnAdded, nil
+	return currentTopPlan, nil, columnAdded, nil
 }
 
 // extractFiltersForIndexMerge returns:
