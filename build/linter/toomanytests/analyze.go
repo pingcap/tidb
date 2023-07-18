@@ -44,6 +44,7 @@ var Analyzer = &analysis.Analyzer{
 			}
 			if cnt > 50 {
 				pass.Reportf(f.Pos(), "%s: Too many test cases in one package", pass.Pkg.Name())
+				return nil,nil
 			}
 		}
 		return nil, nil
