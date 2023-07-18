@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	hash2 "github.com/pingcap/tidb/executor/internal/hash"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
@@ -108,7 +109,7 @@ type indexHashJoinResult struct {
 type indexHashJoinTask struct {
 	*lookUpJoinTask
 	outerRowStatus [][]outerRowStatusFlag
-	lookupMap      baseHashTable
+	lookupMap      hash2.baseHashTable
 	err            error
 	keepOuterOrder bool
 	// resultCh is only used when the outer order needs to be promised.
@@ -559,7 +560,7 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 		}()
 	}
 	buf, numChks := make([]byte, 1), task.outerResult.NumChunks()
-	task.lookupMap = newUnsafeHashTable(task.outerResult.Len())
+	task.lookupMap = hash2.newUnsafeHashTable(task.outerResult.Len())
 	for chkIdx := 0; chkIdx < numChks; chkIdx++ {
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()

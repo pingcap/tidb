@@ -1,0 +1,46 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "hash",
+    srcs = [
+        "concurrent_map.go",
+        "hash_table.go",
+    ],
+    importpath = "github.com/pingcap/tidb/executor/internal/hash",
+    visibility = ["//executor:__subpackages__"],
+    deps = [
+        "//sessionctx",
+        "//sessionctx/stmtctx",
+        "//types",
+        "//util/bitmap",
+        "//util/chunk",
+        "//util/codec",
+        "//util/disk",
+        "//util/execdetails",
+        "//util/hack",
+        "//util/memory",
+        "//util/syncutil",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "hash_test",
+    timeout = "short",
+    srcs = [
+        "concurrent_map_test.go",
+        "hash_table_test.go",
+    ],
+    embed = [":hash"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//parser/mysql",
+        "//types",
+        "//util/chunk",
+        "//util/hack",
+        "//util/memory",
+        "//util/mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

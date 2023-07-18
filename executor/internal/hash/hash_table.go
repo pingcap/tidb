@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package hash
 
 import (
 	"fmt"
@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
-// hashContext keeps the needed hash context of a db table in hash join.
-type hashContext struct {
+// HashContext keeps the needed hash context of a db table in hash join.
+type HashContext struct {
 	// allTypes one-to-one correspondence with keyColIdx
 	allTypes        []*types.FieldType
 	keyColIdx       []int
@@ -48,7 +48,25 @@ type hashContext struct {
 	naColNullBitMap []*bitmap.ConcurrentBitmap
 }
 
-func (hc *hashContext) initHash(rows int) {
+func NewHashContext(allTypes []*types.FieldType, keyColIdx []int, naKeyColIdx []int) *HashContext {
+	return &HashContext{
+		allTypes: allTypes, keyColIdx: keyColIdx, naKeyColIdx: naKeyColIdx,
+	}
+}
+
+func (hc *HashContext) KeyColIdx() []int {
+	return hc.keyColIdx
+}
+
+func (hc *HashContext) NaKeyColIdx() []int {
+	return hc.naKeyColIdx
+}
+
+func (hc *HashContext) NaKeyColIdxLength() int {
+	return len(hc.naKeyColIdx)
+}
+
+func (hc *HashContext) InitHash(rows int) {
 	if hc.buf == nil {
 		hc.buf = make([]byte, 1)
 	}
@@ -88,6 +106,22 @@ type hashStatistic struct {
 	buildTableElapse time.Duration
 }
 
+func (s *hashStatistic) ProbeCollision() int64 {
+	return s.probeCollision
+}
+
+func (s *hashStatistic) BuildTableElapse() time.Duration {
+	return s.buildTableElapse
+}
+
+func (s *hashStatistic) MergeProbeCollision(probeCollision int64) {
+	s.probeCollision += probeCollision
+}
+
+func (s *hashStatistic) MergeBuildTableElapse(buildTableElapse time.Duration) {
+	s.buildTableElapse += buildTableElapse
+}
+
 func (s *hashStatistic) String() string {
 	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDuration(s.buildTableElapse))
 }
@@ -96,12 +130,12 @@ type hashNANullBucket struct {
 	entries []*naEntry
 }
 
-// hashRowContainer handles the rows and the hash map of a table.
-// NOTE: a hashRowContainer may be shallow copied by the invoker, define all the
+// HashRowContainer handles the rows and the hash map of a table.
+// NOTE: a HashRowContainer may be shallow copied by the invoker, define all the
 // member attributes as pointer type to avoid unexpected problems.
-type hashRowContainer struct {
+type HashRowContainer struct {
 	sc   *stmtctx.StatementContext
-	hCtx *hashContext
+	hCtx *HashContext
 	stat *hashStatistic
 
 	// hashTable stores the map of hashKey and RowPtr
@@ -118,10 +152,10 @@ type hashRowContainer struct {
 	chkBufSizeForOneProbe int64
 }
 
-func newHashRowContainer(sCtx sessionctx.Context, hCtx *hashContext, allTypes []*types.FieldType) *hashRowContainer {
+func NewHashRowContainer(sCtx sessionctx.Context, hCtx *HashContext, allTypes []*types.FieldType) *HashRowContainer {
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
 	rc := chunk.NewRowContainer(allTypes, maxChunkSize)
-	c := &hashRowContainer{
+	c := &HashRowContainer{
 		sc:           sCtx.GetSessionVars().StmtCtx,
 		hCtx:         hCtx,
 		stat:         new(hashStatistic),
@@ -136,10 +170,14 @@ func newHashRowContainer(sCtx sessionctx.Context, hCtx *hashContext, allTypes []
 	return c
 }
 
-func (c *hashRowContainer) ShallowCopy() *hashRowContainer {
+func (c *HashRowContainer) Statistic() *hashStatistic {
+	return c.stat
+}
+
+func (c *HashRowContainer) ShallowCopy() *HashRowContainer {
 	newHRC := *c
 	newHRC.rowContainer = c.rowContainer.ShallowCopyWithNewMutex()
-	// multi hashRowContainer ref to one single NA-NULL bucket slice.
+	// multi HashRowContainer ref to one single NA-NULL bucket slice.
 	// newHRC.hashNANullBucket = c.hashNANullBucket
 	return &newHRC
 }
@@ -147,12 +185,12 @@ func (c *hashRowContainer) ShallowCopy() *hashRowContainer {
 // GetMatchedRows get matched rows from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, matched []chunk.Row) ([]chunk.Row, error) {
+func (c *HashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, hCtx *HashContext, matched []chunk.Row) ([]chunk.Row, error) {
 	matchedRows, _, err := c.GetMatchedRowsAndPtrs(probeKey, probeRow, hCtx, matched, nil, false)
 	return matchedRows, err
 }
 
-func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRow chunk.Row,
+func (c *HashRowContainer) GetAllMatchedRows(probeHCtx *HashContext, probeSideRow chunk.Row,
 	probeKeyNullBits *bitmap.ConcurrentBitmap, matched []chunk.Row, needCheckBuildColPos, needCheckProbeColPos []int, needCheckBuildTypes, needCheckProbeTypes []*types.FieldType) ([]chunk.Row, error) {
 	// for NAAJ probe row with null, we should match them with all build rows.
 	var (
@@ -230,7 +268,7 @@ const rowPtrSize = int64(unsafe.Sizeof(chunk.RowPtr{}))
 // GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, matched []chunk.Row, matchedPtrs []chunk.RowPtr, needPtr bool) ([]chunk.Row, []chunk.RowPtr, error) {
+func (c *HashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *HashContext, matched []chunk.Row, matchedPtrs []chunk.RowPtr, needPtr bool) ([]chunk.Row, []chunk.RowPtr, error) {
 	var err error
 	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
@@ -290,7 +328,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 	return matched, matchedPtrs, err
 }
 
-func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRow chunk.Row,
+func (c *HashRowContainer) GetNullBucketRows(probeHCtx *HashContext, probeSideRow chunk.Row,
 	probeKeyNullBits *bitmap.ConcurrentBitmap, matched []chunk.Row, needCheckBuildColPos, needCheckProbeColPos []int, needCheckBuildTypes, needCheckProbeTypes []*types.FieldType) ([]chunk.Row, error) {
 	var (
 		ok            bool
@@ -375,7 +413,7 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 }
 
 // matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
-func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx *hashContext) (ok bool, err error) {
+func (c *HashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx *HashContext) (ok bool, err error) {
 	if len(c.hCtx.naKeyColIdx) > 0 {
 		return codec.EqualChunkRow(c.sc,
 			buildRow, c.hCtx.allTypes, c.hCtx.naKeyColIdx,
@@ -388,21 +426,21 @@ func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 
 // alreadySpilledSafeForTest indicates that records have spilled out into disk. It's thread-safe.
 // nolint: unused
-func (c *hashRowContainer) alreadySpilledSafeForTest() bool {
+func (c *HashRowContainer) alreadySpilledSafeForTest() bool {
 	return c.rowContainer.AlreadySpilledSafeForTest()
 }
 
-// PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
+// PutChunk puts a chunk into HashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunk(chk *chunk.Chunk, ignoreNulls []bool) error {
+func (c *HashRowContainer) PutChunk(chk *chunk.Chunk, ignoreNulls []bool) error {
 	return c.PutChunkSelected(chk, nil, ignoreNulls)
 }
 
-// PutChunkSelected selectively puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
+// PutChunkSelected selectively puts a chunk into HashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNulls []bool) error {
+func (c *HashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNulls []bool) error {
 	start := time.Now()
 	defer func() { c.stat.buildTableElapse += time.Since(start) }()
 
@@ -412,7 +450,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 		return err
 	}
 	numRows := chk.NumRows()
-	c.hCtx.initHash(numRows)
+	c.hCtx.InitHash(numRows)
 
 	hCtx := c.hCtx
 	// By now, the combination of 1 and 2 can't take a run at same time.
@@ -476,44 +514,44 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 }
 
 // NumChunks returns the number of chunks in the rowContainer
-func (c *hashRowContainer) NumChunks() int {
+func (c *HashRowContainer) NumChunks() int {
 	return c.rowContainer.NumChunks()
 }
 
 // NumRowsOfChunk returns the number of rows of a chunk
-func (c *hashRowContainer) NumRowsOfChunk(chkID int) int {
+func (c *HashRowContainer) NumRowsOfChunk(chkID int) int {
 	return c.rowContainer.NumRowsOfChunk(chkID)
 }
 
 // GetChunk returns chkIdx th chunk of in memory records, only works if rowContainer is not spilled
-func (c *hashRowContainer) GetChunk(chkIdx int) (*chunk.Chunk, error) {
+func (c *HashRowContainer) GetChunk(chkIdx int) (*chunk.Chunk, error) {
 	return c.rowContainer.GetChunk(chkIdx)
 }
 
 // GetRow returns the row the ptr pointed to in the rowContainer
-func (c *hashRowContainer) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
+func (c *HashRowContainer) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
 	return c.rowContainer.GetRow(ptr)
 }
 
 // Len returns number of records in the hash table.
-func (c *hashRowContainer) Len() uint64 {
+func (c *HashRowContainer) Len() uint64 {
 	return c.hashTable.Len()
 }
 
-func (c *hashRowContainer) Close() error {
+func (c *HashRowContainer) Close() error {
 	defer c.memTracker.Detach()
 	c.chkBuf = nil
 	return c.rowContainer.Close()
 }
 
-// GetMemTracker returns the underlying memory usage tracker in hashRowContainer.
-func (c *hashRowContainer) GetMemTracker() *memory.Tracker { return c.memTracker }
+// GetMemTracker returns the underlying memory usage tracker in HashRowContainer.
+func (c *HashRowContainer) GetMemTracker() *memory.Tracker { return c.memTracker }
 
-// GetDiskTracker returns the underlying disk usage tracker in hashRowContainer.
-func (c *hashRowContainer) GetDiskTracker() *disk.Tracker { return c.rowContainer.GetDiskTracker() }
+// GetDiskTracker returns the underlying disk usage tracker in HashRowContainer.
+func (c *HashRowContainer) GetDiskTracker() *disk.Tracker { return c.rowContainer.GetDiskTracker() }
 
 // ActionSpill returns a memory.ActionOnExceed for spilling over to disk.
-func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {
+func (c *HashRowContainer) ActionSpill() memory.ActionOnExceed {
 	return c.rowContainer.ActionSpill()
 }
 
