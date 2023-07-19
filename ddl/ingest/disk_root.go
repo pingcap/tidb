@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	lcom "github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -116,18 +117,21 @@ func (d *diskRootImpl) usageInfo() string {
 
 // PreCheckUsage implements DiskRoot interface.
 func (d *diskRootImpl) PreCheckUsage() error {
+	failpoint.Inject("mockIngestCheckEnvFailed", func(_ failpoint.Value) {
+		failpoint.Return(dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock error"))
+	})
 	err := os.MkdirAll(d.path, 0700)
 	if err != nil {
-		return dbterror.ErrIngestFailed.FastGenByArgs(err.Error())
+		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
 	}
 	sz, err := lcom.GetStorageSize(d.path)
 	if err != nil {
-		return dbterror.ErrIngestFailed.FastGenByArgs(err.Error())
+		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
 	}
 	if RiskOfDiskFull(sz.Available, sz.Capacity) {
 		sortPath := ConfigSortPath()
 		msg := fmt.Sprintf("sort path: %s, %s, please clean up the disk and retry", sortPath, d.UsageInfo())
-		return dbterror.ErrIngestFailed.FastGenByArgs(msg)
+		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(msg)
 	}
 	return nil
 }

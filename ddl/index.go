@@ -626,6 +626,12 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		var reorgTp model.ReorgType
 		reorgTp, err = pickBackfillType(w.ctx, job, indexInfo.Unique, d)
 		if err != nil {
+			if !errorIsRetryable(err, job) {
+				logutil.BgLogger().Warn("pick backfill type failed, convert job to rollback",
+					zap.String("category", "ddl"),
+					zap.String("job", job.String()), zap.Error(err))
+				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tblInfo, indexInfo, err)
+			}
 			break
 		}
 		if reorgTp.NeedMergeProcess() {
