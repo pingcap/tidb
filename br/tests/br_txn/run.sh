@@ -28,7 +28,7 @@ checksum() {
         --ca "$TEST_DIR/certs/ca.pem" \
         --cert "$TEST_DIR/certs/br.pem" \
         --key "$TEST_DIR/certs/br.key" \
-        --mode checksum --start-key $1 --end-key $2 | grep result | awk '{print $3}'
+        --mode checksum --start-key $1 --end-key $2 | grep result | tail -n 1 | awk '{print $3}'
 }
 
 fail_and_exit() {
