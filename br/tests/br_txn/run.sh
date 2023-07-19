@@ -58,7 +58,7 @@ test_full_txnkv_encryption() {
     # Ensure the data is deleted
     checksum_new=$(checksum $check_range_start $check_range_end)
     if [ "$checksum_new" == "$checksum_full" ];then
-        echo "failed to delete data in range"
+        echo "failed to delete data in range in encryption"
         fail_and_exit
     fi
 
@@ -102,7 +102,7 @@ run_test() {
     checksum_new=$(checksum "hello" "world")
 
     if [ "$checksum_new" != "$checksum_empty" ];then
-        echo "failed to delete data in range"
+        echo "failed to delete data in range after backup"
         fail_and_exit
     fi
 
@@ -132,4 +132,6 @@ run_test() {
     export GO_FAILPOINTS=""
 }
 
+# delete data in range[start-key, end-key)
+clean "hello" "world" 
 run_test ""
