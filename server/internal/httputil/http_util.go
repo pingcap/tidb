@@ -9,12 +9,14 @@ import (
 	"github.com/pingcap/tidb/server/constvar"
 )
 
+// WriteError writes error to http response.
 func WriteError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
 	_, err = w.Write([]byte(err.Error()))
 	terror.Log(errors.Trace(err))
 }
 
+// WriteData writes data to http response.
 func WriteData(w http.ResponseWriter, data interface{}) {
 	js, err := json.MarshalIndent(data, "", " ")
 	if err != nil {
