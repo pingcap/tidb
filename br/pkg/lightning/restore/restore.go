@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	tidbconfig "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
@@ -63,6 +64,11 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
 	"github.com/pingcap/tidb/util/set"
+<<<<<<< HEAD:br/pkg/lightning/restore/restore.go
+=======
+	"github.com/prometheus/client_golang/prometheus"
+	tikvconfig "github.com/tikv/client-go/v2/config"
+>>>>>>> 5b8a14ad4dc (lightning: init client-go global cfg (#45464)):br/pkg/lightning/importer/import.go
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -353,7 +359,18 @@ func NewRestoreControllerWithPauser(
 			}
 		}
 
+<<<<<<< HEAD:br/pkg/lightning/restore/restore.go
 		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr)
+=======
+		initGlobalConfig(tls.ToTiKVSecurityConfig())
+
+		encodingBuilder = local.NewEncodingBuilder(ctx)
+		regionSizeGetter := &local.TableRegionSizeGetterImpl{
+			DB: db,
+		}
+		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName)
+		backendObj, err = local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
+>>>>>>> 5b8a14ad4dc (lightning: init client-go global cfg (#45464)):br/pkg/lightning/importer/import.go
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -2577,6 +2594,7 @@ func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ign
 	return filteredColumns, extendValueDatums
 }
 
+<<<<<<< HEAD:br/pkg/lightning/restore/restore.go
 //nolint:nakedret // TODO: refactor
 func (cr *chunkRestore) encodeLoop(
 	ctx context.Context,
@@ -2824,4 +2842,19 @@ func openReader(ctx context.Context, fileMeta mydump.SourceFileMeta, store stora
 		reader, err = store.Open(ctx, fileMeta.Path)
 	}
 	return
+=======
+// check store liveness of tikv client-go requires GlobalConfig to work correctly, so we need to init it,
+// else tikv will report SSL error when tls is enabled.
+// and the SSL error seems affects normal logic of newer TiKV version, and cause the error "tikv: region is unavailable"
+// during checksum.
+// todo: DM relay on lightning physical mode too, but client-go doesn't support passing TLS data as bytes,
+func initGlobalConfig(secCfg tikvconfig.Security) {
+	if secCfg.ClusterSSLCA != "" || secCfg.ClusterSSLCert != "" {
+		conf := tidbconfig.GetGlobalConfig()
+		conf.Security.ClusterSSLCA = secCfg.ClusterSSLCA
+		conf.Security.ClusterSSLCert = secCfg.ClusterSSLCert
+		conf.Security.ClusterSSLKey = secCfg.ClusterSSLKey
+		tidbconfig.StoreGlobalConfig(conf)
+	}
+>>>>>>> 5b8a14ad4dc (lightning: init client-go global cfg (#45464)):br/pkg/lightning/importer/import.go
 }
