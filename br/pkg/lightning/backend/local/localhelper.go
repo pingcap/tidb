@@ -118,6 +118,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 			zap.Int("retry", i),
 		)
 		err = nil
+        // wait time
 		if i > 0 {
 			select {
 			case <-time.After(waitTime):
@@ -130,6 +131,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 			}
 		}
 		var regions []*split.RegionInfo
+        //scan all regions
 		regions, err = split.PaginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
 		log.FromContext(ctx).Info("paginate scan regions", zap.Int("count", len(regions)),
 			logutil.Key("start", minKey), logutil.Key("end", maxKey))

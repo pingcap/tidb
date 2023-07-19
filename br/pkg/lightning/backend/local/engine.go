@@ -1242,7 +1242,7 @@ func newSSTWriter(path string) (*sstable.Writer, error) {
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			newRangePropertiesCollector,
 		},
-		BlockSize: 16 * 1024,
+		BlockSize: 128 * 1024,
 	})
 	return writer, nil
 }

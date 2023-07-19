@@ -768,6 +768,7 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 	opt.Levels = []pebble.LevelOptions{
 		{
 			TargetFileSize: 16 * units.GiB,
+            BlockSize: 64 * units.KiB,
 		},
 	}
 
