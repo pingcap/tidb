@@ -88,7 +88,7 @@ func (s *Server) listenStatusHTTPServer() error {
 		s.statusAddr = net.JoinHostPort(s.cfg.Status.StatusHost, strconv.Itoa(defaultStatusPort))
 	}
 
-	logutil.BgLogger().Info("for Status and metrics report", zap.String("listening on addr", s.statusAddr))
+	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
 	clusterSecurity := s.cfg.Security.ClusterSecurity()
 	tlsConfig, err := clusterSecurity.ToTLSConfig()
 	if err != nil {
@@ -197,7 +197,7 @@ func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) 
 func (s *Server) startHTTPServer() {
 	router := mux.NewRouter()
 
-	router.HandleFunc("/Status", s.handleStatus).Name("Status")
+	router.HandleFunc("/status", s.handleStatus).Name("Status")
 	// HTTP path for prometheus.
 	router.Handle("/metrics", promhttp.Handler()).Name("Metrics")
 
@@ -512,7 +512,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 
 	err := m.Serve()
 	if err != nil {
-		logutil.BgLogger().Error("start Status/rpc server error", zap.Error(err))
+		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
 	}
 }
 
