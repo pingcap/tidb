@@ -79,6 +79,7 @@ import (
 	"github.com/pingcap/tidb/server/internal/column"
 	"github.com/pingcap/tidb/server/internal/dump"
 	"github.com/pingcap/tidb/server/internal/handshake"
+	"github.com/pingcap/tidb/server/internal/info"
 	"github.com/pingcap/tidb/server/internal/parse"
 	"github.com/pingcap/tidb/server/internal/resultset"
 	util2 "github.com/pingcap/tidb/server/internal/util"
@@ -190,7 +191,7 @@ func (cc *clientConn) setCtx(ctx *TiDBContext) {
 
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
-	return fmt.Sprintf("id:%d, addr:%s status:%b, collation:%s, user:%s",
+	return fmt.Sprintf("id:%d, addr:%s Status:%b, collation:%s, user:%s",
 		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
 }
@@ -359,7 +360,7 @@ func (cc *clientConn) closeWithoutLock() error {
 	return closeConn(cc, len(cc.server.clients))
 }
 
-// writeInitialHandshake sends server version, connection ID, server capability, collation, server status
+// writeInitialHandshake sends server version, connection ID, server capability, collation, server Status
 // and auth salt to the client.
 func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	data := make([]byte, 4, 128)
@@ -382,7 +383,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 		cc.collation = uint8(mysql.DefaultCollationID)
 	}
 	data = append(data, cc.collation)
-	// status
+	// Status
 	data = dump.Uint16(data, mysql.ServerStatusAutocommit)
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
@@ -971,10 +972,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 		close(cc.quit)
 	}()
 
-	// Usually, client connection status changes between [dispatching] <=> [reading].
+	// Usually, client connection Status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
-	// the status to special values, for example: kill or graceful shutdown.
-	// The client connection would detect the events when it fails to change status
+	// the Status to special values, for example: kill or graceful shutdown.
+	// The client connection would detect the events when it fails to change Status
 	// by CAS operation, it would then take some actions accordingly.
 	for {
 		// Close connection between txn when we are going to shutdown server.
@@ -1076,7 +1077,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				logutil.Logger(ctx).Info("command dispatched failed",
 					zap.String("connInfo", cc.String()),
 					zap.String("command", mysql.Command2Str[data[0]]),
-					zap.String("status", cc.SessionStatusToString()),
+					zap.String("Status", cc.SessionStatusToString()),
 					zap.Stringer("sql", getLastStmtInConn{cc}),
 					zap.String("txn_mode", txnMode),
 					zap.Uint64("timestamp", startTS),
@@ -1313,10 +1314,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 func (cc *clientConn) writeStats(ctx context.Context) error {
 	var err error
 	var uptime int64
-	info := serverInfo{}
+	info := info.ServerInfo{}
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {
-		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))
+		logutil.BgLogger().Error("Failed to get ServerInfo for uptime Status", zap.Error(err))
 	} else {
 		uptime = int64(time.Since(time.Unix(info.ServerInfo.StartTimestamp, 0)).Seconds())
 	}
@@ -1800,7 +1801,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			if !allowTiFlashFallback {
 				break
 			}
-			// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
+			// When the TiFlash server seems down, we append a warning to remind the user to check the Status of the TiFlash
 			// server and fallback to TiKV.
 			warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
 			delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)

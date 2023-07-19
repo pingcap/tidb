@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package planreplayer
 
 import (
 	"bufio"
@@ -27,8 +27,10 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
+	server2 "github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/server/internal"
 	"github.com/pingcap/tidb/server/internal/util"
+	"github.com/pingcap/tidb/server/statshandler"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
@@ -41,14 +43,14 @@ import (
 func TestDumpOptimizeTraceAPI(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	driver := NewTiDBDriver(store)
+	driver := server2.NewTiDBDriver(store)
 	client := newTestServerClient()
 	cfg := util.NewTestConfig()
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true
 
-	server, err := NewServer(cfg, driver)
+	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
 
@@ -64,7 +66,7 @@ func TestDumpOptimizeTraceAPI(t *testing.T) {
 	}()
 	client.waitUntilServerOnline()
 
-	statsHandler := &StatsHandler{dom}
+	statsHandler := &statshandler.StatsHandler{dom}
 
 	otHandler := &OptimizeTraceHandler{}
 	filename := prepareData4OptimizeTrace(t, client, statsHandler)
@@ -80,7 +82,7 @@ func TestDumpOptimizeTraceAPI(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp0.StatusCode)
 }
 
-func prepareData4OptimizeTrace(t *testing.T, client *testServerClient, statHandle *StatsHandler) string {
+func prepareData4OptimizeTrace(t *testing.T, client *testServerClient, statHandle *statshandler.StatsHandler) string {
 	db, err := sql.Open("mysql", client.getDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
@@ -112,21 +114,21 @@ func TestOptimizerDebugTrace(t *testing.T) {
 	}()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tidbdrv := NewTiDBDriver(store)
+	tidbdrv := server2.NewTiDBDriver(store)
 	cfg := util.NewTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
-	server, err := NewServer(cfg, tidbdrv)
+	server, err := server2.NewServer(cfg, tidbdrv)
 	require.NoError(t, err)
 	defer server.Close()
-	cc := &clientConn{
+	cc := &server2.clientConn{
 		server:     server,
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
 		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	ctx := context.Background()
-	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+	cc.setCtx(&server2.TiDBContext{Session: tk.Session(), stmts: make(map[int]*server2.TiDBStatement)})
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (col1 int, index i(col1))")
@@ -143,7 +145,7 @@ func TestOptimizerDebugTrace(t *testing.T) {
 		in  []string
 		out []interface{}
 	)
-	optSuiteData := testDataMap["optimizer_suite"]
+	optSuiteData := server2.testDataMap["optimizer_suite"]
 	optSuiteData.LoadTestCases(t, &in, &out)
 	for i, cmdString := range in {
 		require.NoError(t, cc.dispatch(ctx, []byte(cmdString)))

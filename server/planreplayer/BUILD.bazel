@@ -1,0 +1,59 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "planreplayer",
+    srcs = [
+        "optimize_trace.go",
+        "plan_replayer.go",
+    ],
+    importpath = "github.com/pingcap/tidb/server/planreplayer",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//domain",
+        "//domain/infosync",
+        "//infoschema",
+        "//parser/model",
+        "//server/constvar",
+        "//server/internal/httputil",
+        "//statistics/handle",
+        "//util",
+        "//util/logutil",
+        "//util/replayer",
+        "@com_github_burntsushi_toml//:toml",
+        "@com_github_gorilla_mux//:mux",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "planreplayer_test",
+    timeout = "short",
+    srcs = [
+        "optimize_trace_test.go",
+        "plan_replayer_test.go",
+    ],
+    embed = [":planreplayer"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//domain",
+        "//server",
+        "//server/internal",
+        "//server/internal/testutil",
+        "//server/internal/util",
+        "//server/statshandler",
+        "//session",
+        "//statistics/handle",
+        "//testkit",
+        "//testkit/testdata",
+        "//util/arena",
+        "//util/chunk",
+        "//util/replayer",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_gorilla_mux//:mux",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//slices",
+    ],
+)

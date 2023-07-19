@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/server/constvar"
+	"github.com/pingcap/tidb/server/internal/httputil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -56,7 +58,7 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	task, isDump, err := buildExtractTask(req)
 	if err != nil {
 		logutil.BgLogger().Error("build extract task failed", zap.Error(err))
-		writeError(w, err)
+		httputil.WriteError(w, err)
 		return
 	}
 	failpoint.Inject("extractTaskServeHandler", func(val failpoint.Value) {
@@ -64,7 +66,7 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			w.WriteHeader(http.StatusOK)
 			_, err = w.Write([]byte("mock"))
 			if err != nil {
-				writeError(w, err)
+				httputil.WriteError(w, err)
 			}
 			failpoint.Return()
 		}
@@ -73,7 +75,7 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	name, err := eh.extractHandler.ExtractTask(context.Background(), task)
 	if err != nil {
 		logutil.BgLogger().Error("extract task failed", zap.Error(err))
-		writeError(w, err)
+		httputil.WriteError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -87,12 +89,12 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	content, err := loadExtractResponse(name)
 	if err != nil {
 		logutil.BgLogger().Error("load extract task failed", zap.Error(err))
-		writeError(w, err)
+		httputil.WriteError(w, err)
 		return
 	}
 	_, err = w.Write(content)
 	if err != nil {
-		writeError(w, err)
+		httputil.WriteError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")
@@ -115,7 +117,7 @@ func loadExtractResponse(name string) ([]byte, error) {
 }
 
 func buildExtractTask(req *http.Request) (*domain.ExtractTask, bool, error) {
-	extractTaskType := req.URL.Query().Get(pType)
+	extractTaskType := req.URL.Query().Get(constvar.Type)
 	switch strings.ToLower(extractTaskType) {
 	case extractPlanTaskType:
 		return buildExtractPlanTask(req)
@@ -125,8 +127,8 @@ func buildExtractTask(req *http.Request) (*domain.ExtractTask, bool, error) {
 }
 
 func buildExtractPlanTask(req *http.Request) (*domain.ExtractTask, bool, error) {
-	beginStr := req.URL.Query().Get(pBegin)
-	endStr := req.URL.Query().Get(pEnd)
+	beginStr := req.URL.Query().Get(constvar.BeginParam)
+	endStr := req.URL.Query().Get(constvar.EndParam)
 	var begin time.Time
 	var err error
 	if len(beginStr) < 1 {
@@ -148,15 +150,15 @@ func buildExtractPlanTask(req *http.Request) (*domain.ExtractTask, bool, error) 
 			return nil, false, err
 		}
 	}
-	isDump := extractBoolParam(pIsDump, false, req)
+	isDump := extractBoolParam(constvar.IsDump, false, req)
 
 	return &domain.ExtractTask{
 		ExtractType:     domain.ExtractPlanType,
 		IsBackgroundJob: false,
 		Begin:           begin,
 		End:             end,
-		SkipStats:       extractBoolParam(pIsSkipStats, false, req),
-		UseHistoryView:  extractBoolParam(pIsHistoryView, true, req),
+		SkipStats:       extractBoolParam(constvar.IsSkipStats, false, req),
+		UseHistoryView:  extractBoolParam(constvar.IsHistoryView, true, req),
 	}, isDump, nil
 }
 

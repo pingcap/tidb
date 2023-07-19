@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package planreplayer
 
 import (
 	"archive/zip"
@@ -30,11 +30,12 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/server/constvar"
+	"github.com/pingcap/tidb/server/internal/httputil"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -51,27 +52,28 @@ type PlanReplayerHandler struct {
 	statusPort  uint
 }
 
-func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
-	cfg := config.GetGlobalConfig()
-	prh := &PlanReplayerHandler{
-		address:    cfg.AdvertiseAddress,
-		statusPort: cfg.Status.StatusPort,
+func NewPlanReplayerHandler(advertiseAddress string, statusPort uint) *PlanReplayerHandler {
+	return &PlanReplayerHandler{
+		address:    advertiseAddress,
+		statusPort: statusPort,
 	}
-	if s.dom != nil && s.dom.InfoSyncer() != nil {
-		prh.infoGetter = s.dom.InfoSyncer()
-	}
-	if s.dom != nil && s.dom.InfoSchema() != nil {
-		prh.is = s.dom.InfoSchema()
-	}
-	if s.dom != nil && s.dom.StatsHandle() != nil {
-		prh.statsHandle = s.dom.StatsHandle()
-	}
-	return prh
+}
+
+func (prh *PlanReplayerHandler) SetInfoGetter(infoGetter *infosync.InfoSyncer) {
+	prh.infoGetter = infoGetter
+}
+
+func (prh *PlanReplayerHandler) SetStatsHandle(statsHandle *handle.Handle) {
+	prh.statsHandle = statsHandle
+}
+
+func (prh *PlanReplayerHandler) SetInfoSchema(is infoschema.InfoSchema) {
+	prh.is = is
 }
 
 func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
-	name := params[pFileName]
+	name := params[constvar.FileNameParam]
 	handler := downloadFileHandler{
 		filePath:           filepath.Join(replayer.GetPlanReplayerDirName(), name),
 		fileName:           name,
@@ -89,42 +91,42 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 
 func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
-	name := params[pFileName]
+	name := params[constvar.FileNameParam]
 	path := handler.filePath
 	isForwarded := len(req.URL.Query().Get("forward")) > 0
 	localAddr := net.JoinHostPort(handler.address, strconv.Itoa(int(handler.statusPort)))
 	exist, err := isExists(path)
 	if err != nil {
-		writeError(w, err)
+		httputil.WriteError(w, err)
 		return
 	}
 	if exist {
 		//nolint: gosec
 		file, err := os.Open(path)
 		if err != nil {
-			writeError(w, err)
+			httputil.WriteError(w, err)
 			return
 		}
 		content, err := io.ReadAll(file)
 		if err != nil {
-			writeError(w, err)
+			httputil.WriteError(w, err)
 			return
 		}
 		err = file.Close()
 		if err != nil {
-			writeError(w, err)
+			httputil.WriteError(w, err)
 			return
 		}
 		if handler.downloadedFilename == "plan_replayer" {
 			content, err = handlePlanReplayerCaptureFile(content, path, handler)
 			if err != nil {
-				writeError(w, err)
+				httputil.WriteError(w, err)
 				return
 			}
 		}
 		_, err = w.Write(content)
 		if err != nil {
-			writeError(w, err)
+			httputil.WriteError(w, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/zip")
@@ -144,7 +146,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 	// If we didn't find file in origin request, try to broadcast the request to all remote tidb-servers
 	topos, err := handler.infoGetter.GetAllTiDBTopology(req.Context())
 	if err != nil {
-		writeError(w, err)
+		httputil.WriteError(w, err)
 		return
 	}
 	client := util.InternalHTTPClient()
@@ -168,17 +170,17 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 		}
 		content, err := io.ReadAll(resp.Body)
 		if err != nil {
-			writeError(w, err)
+			httputil.WriteError(w, err)
 			return
 		}
 		err = resp.Body.Close()
 		if err != nil {
-			writeError(w, err)
+			httputil.WriteError(w, err)
 			return
 		}
 		_, err = w.Write(content)
 		if err != nil {
-			writeError(w, err)
+			httputil.WriteError(w, err)
 			return
 		}
 		// find dump file in one remote tidb-server, return file directly
@@ -192,7 +194,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 	logutil.BgLogger().Info("can't find dump file in any remote server", zap.String("filename", name))
 	w.WriteHeader(http.StatusNotFound)
 	_, err = fmt.Fprintf(w, "can't find dump file %s in any remote server", name)
-	writeError(w, err)
+	httputil.WriteError(w, err)
 }
 
 type downloadFileHandler struct {

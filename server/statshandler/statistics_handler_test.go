@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package statshandler
 
 import (
 	"database/sql"
@@ -26,6 +26,8 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/parser/model"
+	server2 "github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/server/internal/testutil"
 	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -36,15 +38,15 @@ import (
 func TestDumpStatsAPI(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	driver := NewTiDBDriver(store)
-	client := newTestServerClient()
+	driver := server2.NewTiDBDriver(store)
+	client := testutil.NewTestServerClient()
 	cfg := util.NewTestConfig()
-	cfg.Port = client.port
-	cfg.Status.StatusPort = client.statusPort
+	cfg.Port = client.GetPort()
+	cfg.Status.StatusPort = client.GetStatusPort()
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
-	server, err := NewServer(cfg, driver)
+	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
 
@@ -52,13 +54,13 @@ func TestDumpStatsAPI(t *testing.T) {
 	require.NoError(t, err)
 	server.SetDomain(dom)
 
-	client.port = getPortFromTCPAddr(server.listener.Addr())
-	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+	client.SetPort(testutil.GetPortFromTCPAddr(server.listener.Addr()))
+	client.SetStatusPort(testutil.GetPortFromTCPAddr(server.statusListener.Addr()))
 	go func() {
 		err := server.Run()
 		require.NoError(t, err)
 	}()
-	client.waitUntilServerOnline()
+	client.WaitUntilServerOnline()
 
 	statsHandler := &StatsHandler{dom}
 
@@ -71,7 +73,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	router := mux.NewRouter()
 	router.Handle("/stats/dump/{db}/{table}", statsHandler)
 
-	resp0, err := client.fetchStatus("/stats/dump/tidb/test")
+	resp0, err := client.FetchStatus("/stats/dump/tidb/test")
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp0.Body.Close())
@@ -100,7 +102,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	prepare4DumpHistoryStats(t, client)
 
 	// test dump history stats
-	resp1, err := client.fetchStatus("/stats/dump/tidb/test")
+	resp1, err := client.FetchStatus("/stats/dump/tidb/test")
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp1.Body.Close())
@@ -118,7 +120,7 @@ func TestDumpStatsAPI(t *testing.T) {
 		require.NoError(t, os.Remove(path1))
 	}()
 
-	resp2, err := client.fetchStatus("/stats/dump/tidb/test/" + snapshot)
+	resp2, err := client.FetchStatus("/stats/dump/tidb/test/" + snapshot)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp2.Body.Close())
@@ -132,7 +134,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	testDumpPartitionTableStats(t, client, statsHandler)
 }
 
-func testDumpPartitionTableStats(t *testing.T, client *testServerClient, handler *StatsHandler) {
+func testDumpPartitionTableStats(t *testing.T, client *testutil.TestServerClient, handler *StatsHandler) {
 	preparePartitionData(t, client, handler)
 	check := func(dumpStats bool) {
 		expectedLen := 1
@@ -140,7 +142,7 @@ func testDumpPartitionTableStats(t *testing.T, client *testServerClient, handler
 			expectedLen = 2
 		}
 		url := fmt.Sprintf("/stats/dump/test/test2?dumpPartitionStats=%v", dumpStats)
-		resp0, err := client.fetchStatus(url)
+		resp0, err := client.FetchStatus(url)
 		require.NoError(t, err)
 		defer func() {
 			resp0.Body.Close()
@@ -157,8 +159,8 @@ func testDumpPartitionTableStats(t *testing.T, client *testServerClient, handler
 	check(true)
 }
 
-func prepareData(t *testing.T, client *testServerClient, statHandle *StatsHandler) {
-	db, err := sql.Open("mysql", client.getDSN())
+func prepareData(t *testing.T, client *testutil.TestServerClient, statHandle *StatsHandler) {
+	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
 		err := db.Close()
@@ -183,8 +185,8 @@ func prepareData(t *testing.T, client *testServerClient, statHandle *StatsHandle
 	require.NoError(t, h.Update(is))
 }
 
-func preparePartitionData(t *testing.T, client *testServerClient, statHandle *StatsHandler) {
-	db, err := sql.Open("mysql", client.getDSN())
+func preparePartitionData(t *testing.T, client *testutil.TestServerClient, statHandle *StatsHandler) {
+	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
 		err := db.Close()
@@ -200,8 +202,8 @@ func preparePartitionData(t *testing.T, client *testServerClient, statHandle *St
 	require.NoError(t, h.Update(is))
 }
 
-func prepare4DumpHistoryStats(t *testing.T, client *testServerClient) {
-	db, err := sql.Open("mysql", client.getDSN())
+func prepare4DumpHistoryStats(t *testing.T, client *testutil.TestServerClient) {
+	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
 		err := db.Close()
@@ -222,8 +224,8 @@ func prepare4DumpHistoryStats(t *testing.T, client *testServerClient) {
 	tk.MustExec("create table tidb.test (a int, b varchar(20))")
 }
 
-func checkCorrelation(t *testing.T, client *testServerClient) {
-	db, err := sql.Open("mysql", client.getDSN())
+func checkCorrelation(t *testing.T, client *testutil.TestServerClient) {
+	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
 	tk := testkit.NewDBTestKit(t, db)
 	defer func() {
@@ -255,8 +257,8 @@ func checkCorrelation(t *testing.T, client *testServerClient) {
 	require.NoError(t, rows.Close())
 }
 
-func checkData(t *testing.T, path string, client *testServerClient) {
-	db, err := sql.Open("mysql", client.getDSN(func(config *mysql.Config) {
+func checkData(t *testing.T, path string, client *testutil.TestServerClient) {
+	db, err := sql.Open("mysql", client.GetDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}))

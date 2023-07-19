@@ -88,7 +88,7 @@ func (s *Server) listenStatusHTTPServer() error {
 		s.statusAddr = net.JoinHostPort(s.cfg.Status.StatusHost, strconv.Itoa(defaultStatusPort))
 	}
 
-	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
+	logutil.BgLogger().Info("for Status and metrics report", zap.String("listening on addr", s.statusAddr))
 	clusterSecurity := s.cfg.Security.ClusterSecurity()
 	tlsConfig, err := clusterSecurity.ToTLSConfig()
 	if err != nil {
@@ -197,7 +197,7 @@ func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) 
 func (s *Server) startHTTPServer() {
 	router := mux.NewRouter()
 
-	router.HandleFunc("/status", s.handleStatus).Name("Status")
+	router.HandleFunc("/Status", s.handleStatus).Name("Status")
 	// HTTP path for prometheus.
 	router.Handle("/metrics", promhttp.Handler()).Name("Metrics")
 
@@ -210,7 +210,7 @@ func (s *Server) startHTTPServer() {
 
 	router.Handle("/optimize_trace/dump/{filename}", s.newOptimizeTraceHandler()).Name("OptimizeTraceDump")
 
-	tikvHandlerTool := s.newTikvHandlerTool()
+	tikvHandlerTool := s.NewTikvHandlerTool()
 	router.Handle("/settings", settingsHandler{tikvHandlerTool}).Name("Settings")
 	router.Handle("/binlog/recover", binlogRecover{}).Name("BinlogRecover")
 
@@ -512,7 +512,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 
 	err := m.Serve()
 	if err != nil {
-		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
+		logutil.BgLogger().Error("start Status/rpc server error", zap.Error(err))
 	}
 }
 
@@ -538,8 +538,8 @@ func (s *Server) setCNChecker(tlsConfig *tls.Config) *tls.Config {
 	return tlsConfig
 }
 
-// status of TiDB.
-type status struct {
+// Status of TiDB.
+type Status struct {
 	Connections int    `json:"connections"`
 	Version     string `json:"version"`
 	GitHash     string `json:"git_hash"`
@@ -547,14 +547,14 @@ type status struct {
 
 func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	// If the server is in the process of shutting down, return a non-200 status.
-	// It is important not to return status{} as acquiring the s.ConnectionCount()
+	// If the server is in the process of shutting down, return a non-200 Status.
+	// It is important not to return Status{} as acquiring the s.ConnectionCount()
 	// acquires a lock that may already be held by the shutdown process.
 	if !s.health.Load() {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	st := status{
+	st := Status{
 		Connections: s.ConnectionCount(),
 		Version:     mysql.ServerVersion,
 		GitHash:     versioninfo.TiDBGitHash,

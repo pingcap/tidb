@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package statshandler
 
 import (
 	"fmt"
@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server/constvar"
+	"github.com/pingcap/tidb/server/internal/httputil"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -38,16 +40,7 @@ type StatsHandler struct {
 	do *domain.Domain
 }
 
-func (s *Server) newStatsHandler() *StatsHandler {
-	store, ok := s.driver.(*TiDBDriver)
-	if !ok {
-		panic("Illegal driver")
-	}
-
-	do, err := session.GetDomain(store.store)
-	if err != nil {
-		panic("Failed to get domain")
-	}
+func NewStatsHandler(do *domain.Domain) *StatsHandler {
 	return &StatsHandler{do}
 }
 
@@ -60,23 +53,23 @@ func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	h := sh.do.StatsHandle()
 	var err error
 	dumpPartitionStats := true
-	dumpParams := req.URL.Query()[pDumpPartitionStats]
+	dumpParams := req.URL.Query()[constvar.DumpPartitionStatsParam]
 	if len(dumpParams) > 0 && len(dumpParams[0]) > 0 {
 		dumpPartitionStats, err = strconv.ParseBool(dumpParams[0])
 		if err != nil {
-			writeError(w, err)
+			httputil.WriteError(w, err)
 			return
 		}
 	}
-	tbl, err := is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
+	tbl, err := is.TableByName(model.NewCIStr(params[constvar.DBNameParam]), model.NewCIStr(params[constvar.TableNameParam]))
 	if err != nil {
-		writeError(w, err)
+		httputil.WriteError(w, err)
 	} else {
-		js, err := h.DumpStatsToJSON(params[pDBName], tbl.Meta(), nil, dumpPartitionStats)
+		js, err := h.DumpStatsToJSON(params[constvar.DBNameParam], tbl.Meta(), nil, dumpPartitionStats)
 		if err != nil {
-			writeError(w, err)
+			httputil.WriteError(w, err)
 		} else {
-			writeData(w, js)
+			httputil.WriteData(w, js)
 		}
 	}
 }
@@ -86,16 +79,8 @@ type StatsHistoryHandler struct {
 	do *domain.Domain
 }
 
-func (s *Server) newStatsHistoryHandler() *StatsHistoryHandler {
-	store, ok := s.driver.(*TiDBDriver)
-	if !ok {
-		panic("Illegal driver")
-	}
-
-	do, err := session.GetDomain(store.store)
-	if err != nil {
-		panic("Failed to get domain")
-	}
+// NewStatsHistoryHandler creates a new stats history handler.
+func NewStatsHistoryHandler(do *domain.Domain) *StatsHistoryHandler {
 	return &StatsHistoryHandler{do}
 }
 
@@ -105,49 +90,49 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	params := mux.Vars(req)
 	se, err := session.CreateSession(sh.do.Store())
 	if err != nil {
-		writeError(w, err)
+		httputil.WriteError(w, err)
 		return
 	}
 	defer se.Close()
 	enabeld, err := sh.do.StatsHandle().CheckHistoricalStatsEnable()
 	if err != nil {
-		writeError(w, err)
+		httputil.WriteError(w, err)
 		return
 	}
 	if !enabeld {
-		writeError(w, fmt.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats))
+		httputil.WriteError(w, fmt.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats))
 		return
 	}
 
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
-	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, params[pSnapshot], mysql.TypeTimestamp, 6, nil)
+	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, params[constvar.SnapshotParam], mysql.TypeTimestamp, 6, nil)
 	if err != nil {
-		writeError(w, err)
+		httputil.WriteError(w, err)
 		return
 	}
 	t1, err := t.GoTime(time.Local)
 	if err != nil {
-		writeError(w, err)
+		httputil.WriteError(w, err)
 		return
 	}
 	snapshot := oracle.GoTimeToTS(t1)
-	tbl, err := getSnapshotTableInfo(sh.do, snapshot, params[pDBName], params[pTableName])
+	tbl, err := getSnapshotTableInfo(sh.do, snapshot, params[constvar.DBNameParam], params[constvar.TableNameParam])
 	if err != nil {
 		logutil.BgLogger().Info("fail to get snapshot TableInfo in historical stats API, switch to use latest infoschema", zap.Error(err))
 		is := sh.do.InfoSchema()
-		tbl, err = is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
+		tbl, err = is.TableByName(model.NewCIStr(params[constvar.DBNameParam]), model.NewCIStr(params[constvar.TableNameParam]))
 		if err != nil {
-			writeError(w, err)
+			httputil.WriteError(w, err)
 			return
 		}
 	}
 
 	h := sh.do.StatsHandle()
-	js, err := h.DumpHistoricalStatsBySnapshot(params[pDBName], tbl.Meta(), snapshot)
+	js, err := h.DumpHistoricalStatsBySnapshot(params[constvar.DBNameParam], tbl.Meta(), snapshot)
 	if err != nil {
-		writeError(w, err)
+		httputil.WriteError(w, err)
 	} else {
-		writeData(w, js)
+		httputil.WriteData(w, js)
 	}
 }
 

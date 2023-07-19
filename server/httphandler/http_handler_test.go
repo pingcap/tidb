@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package httphandler
 
 import (
 	"bytes"
@@ -24,7 +24,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -43,13 +42,13 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/server/internal/util"
+	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/server/internal/testutil"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
@@ -61,21 +60,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
-
-type basicHTTPHandlerTestSuite struct {
-	*testServerClient
-	server  *Server
-	store   kv.Storage
-	domain  *domain.Domain
-	tidbdrv *TiDBDriver
-	sh      *StatsHandler
-}
-
-func createBasicHTTPHandlerTestSuite() *basicHTTPHandlerTestSuite {
-	ts := &basicHTTPHandlerTestSuite{}
-	ts.testServerClient = newTestServerClient()
-	return ts
-}
 
 func TestRegionIndexRange(t *testing.T) {
 	sTableID := int64(3)
@@ -217,17 +201,17 @@ func TestRegionIndexRangeWithStartNoLimit(t *testing.T) {
 }
 
 func TestRegionsAPI(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-	ts.prepareData(t)
-	resp, err := ts.fetchStatus("/tables/tidb/t/regions")
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	defer ts.StopServer(t)
+	ts.PrepareData(t)
+	resp, err := ts.FetchStatus("/tables/tidb/t/regions")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	decoder := json.NewDecoder(resp.Body)
 
-	var data TableRegions
+	var data server.TableRegions
 	err = decoder.Decode(&data)
 	require.NoError(t, err)
 	require.True(t, len(data.RecordRegions) > 0)
@@ -239,26 +223,26 @@ func TestRegionsAPI(t *testing.T) {
 }
 
 func TestRegionsAPIForClusterIndex(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-	ts.prepareData(t)
-	resp, err := ts.fetchStatus("/tables/tidb/t/regions")
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	defer ts.StopServer(t)
+	ts.PrepareData(t)
+	resp, err := ts.FetchStatus("/tables/tidb/t/regions")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	decoder := json.NewDecoder(resp.Body)
-	var data TableRegions
+	var data server.TableRegions
 	err = decoder.Decode(&data)
 	require.NoError(t, err)
 	require.True(t, len(data.RecordRegions) > 0)
 	// list region
 	for _, region := range data.RecordRegions {
-		resp, err := ts.fetchStatus(fmt.Sprintf("/regions/%d", region.ID))
+		resp, err := ts.FetchStatus(fmt.Sprintf("/regions/%d", region.ID))
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		decoder := json.NewDecoder(resp.Body)
-		var data RegionDetail
+		var data server.RegionDetail
 		err = decoder.Decode(&data)
 		require.NoError(t, err)
 		frameCnt := 0
@@ -274,17 +258,17 @@ func TestRegionsAPIForClusterIndex(t *testing.T) {
 }
 
 func TestRangesAPI(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-	ts.prepareData(t)
-	resp, err := ts.fetchStatus("/tables/tidb/t/ranges")
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	defer ts.StopServer(t)
+	ts.PrepareData(t)
+	resp, err := ts.FetchStatus("/tables/tidb/t/ranges")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	decoder := json.NewDecoder(resp.Body)
 
-	var data TableRanges
+	var data server.TableRanges
 	err = decoder.Decode(&data)
 	require.NoError(t, err)
 	require.Equal(t, "t", data.TableName)
@@ -295,65 +279,48 @@ func TestRangesAPI(t *testing.T) {
 	require.True(t, ok)
 }
 
-func (ts *basicHTTPHandlerTestSuite) regionContainsTable(t *testing.T, regionID uint64, tableID int64) bool {
-	resp, err := ts.fetchStatus(fmt.Sprintf("/regions/%d", regionID))
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	decoder := json.NewDecoder(resp.Body)
-	var data RegionDetail
-	err = decoder.Decode(&data)
-	require.NoError(t, err)
-	for _, index := range data.Frames {
-		if index.TableID == tableID {
-			return true
-		}
-	}
-	return false
-}
-
 func TestListTableRegions(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-	ts.prepareData(t)
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	defer ts.StopServer(t)
+	ts.PrepareData(t)
 	// Test list table regions with error
-	resp, err := ts.fetchStatus("/tables/fdsfds/aaa/regions")
+	resp, err := ts.FetchStatus("/tables/fdsfds/aaa/regions")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/tables/tidb/pt/regions")
+	resp, err = ts.FetchStatus("/tables/tidb/pt/regions")
 	require.NoError(t, err)
 
-	var data []*TableRegions
+	var data []*server.TableRegions
 	dec := json.NewDecoder(resp.Body)
 	err = dec.Decode(&data)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
 	region := data[1]
-	resp, err = ts.fetchStatus(fmt.Sprintf("/regions/%d", region.TableID))
+	resp, err = ts.FetchStatus(fmt.Sprintf("/regions/%d", region.TableID))
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 }
 
 func TestListTableRanges(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-	ts.prepareData(t)
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	defer ts.StopServer(t)
+	ts.PrepareData(t)
 	// Test list table regions with error
-	resp, err := ts.fetchStatus("/tables/fdsfds/aaa/ranges")
+	resp, err := ts.FetchStatus("/tables/fdsfds/aaa/ranges")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
-	resp, err = ts.fetchStatus("/tables/tidb/pt/ranges")
+	resp, err = ts.FetchStatus("/tables/tidb/pt/ranges")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 
-	var data []*TableRanges
+	var data []*server.TableRanges
 	dec := json.NewDecoder(resp.Body)
 	err = dec.Decode(&data)
 	require.NoError(t, err)
@@ -364,22 +331,22 @@ func TestListTableRanges(t *testing.T) {
 }
 
 func TestGetRegionByIDWithError(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-	resp, err := ts.fetchStatus("/regions/xxx")
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	defer ts.StopServer(t)
+	resp, err := ts.FetchStatus("/regions/xxx")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 }
 
 func TestBinlogRecover(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	defer ts.StopServer(t)
 	binloginfo.EnableSkipBinlogFlag()
 	require.Equal(t, true, binloginfo.IsBinlogSkipped())
-	resp, err := ts.fetchStatus("/binlog/recover")
+	resp, err := ts.FetchStatus("/binlog/recover")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -388,7 +355,7 @@ func TestBinlogRecover(t *testing.T) {
 	// Invalid operation will use the default operation.
 	binloginfo.EnableSkipBinlogFlag()
 	require.Equal(t, true, binloginfo.IsBinlogSkipped())
-	resp, err = ts.fetchStatus("/binlog/recover?op=abc")
+	resp, err = ts.FetchStatus("/binlog/recover?op=abc")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -396,7 +363,7 @@ func TestBinlogRecover(t *testing.T) {
 
 	binloginfo.EnableSkipBinlogFlag()
 	require.Equal(t, true, binloginfo.IsBinlogSkipped())
-	resp, err = ts.fetchStatus("/binlog/recover?op=abc&seconds=1")
+	resp, err = ts.FetchStatus("/binlog/recover?op=abc&seconds=1")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -405,7 +372,7 @@ func TestBinlogRecover(t *testing.T) {
 	binloginfo.EnableSkipBinlogFlag()
 	require.Equal(t, true, binloginfo.IsBinlogSkipped())
 	binloginfo.AddOneSkippedCommitter()
-	resp, err = ts.fetchStatus("/binlog/recover?op=abc&seconds=1")
+	resp, err = ts.FetchStatus("/binlog/recover?op=abc&seconds=1")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
@@ -414,14 +381,14 @@ func TestBinlogRecover(t *testing.T) {
 
 	binloginfo.AddOneSkippedCommitter()
 	require.Equal(t, int32(1), binloginfo.SkippedCommitterCount())
-	resp, err = ts.fetchStatus("/binlog/recover?op=reset")
+	resp, err = ts.FetchStatus("/binlog/recover?op=reset")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, int32(0), binloginfo.SkippedCommitterCount())
 
 	binloginfo.EnableSkipBinlogFlag()
-	resp, err = ts.fetchStatus("/binlog/recover?op=nowait")
+	resp, err = ts.FetchStatus("/binlog/recover?op=nowait")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -429,114 +396,16 @@ func TestBinlogRecover(t *testing.T) {
 
 	// Only the first should work.
 	binloginfo.EnableSkipBinlogFlag()
-	resp, err = ts.fetchStatus("/binlog/recover?op=nowait&op=reset")
+	resp, err = ts.FetchStatus("/binlog/recover?op=nowait&op=reset")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, false, binloginfo.IsBinlogSkipped())
 
-	resp, err = ts.fetchStatus("/binlog/recover?op=status")
+	resp, err = ts.FetchStatus("/binlog/recover?op=Status")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-}
-
-func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
-	var err error
-	ts.store, err = mockstore.NewMockStore()
-	require.NoError(t, err)
-	ts.domain, err = session.BootstrapSession(ts.store)
-	require.NoError(t, err)
-	ts.tidbdrv = NewTiDBDriver(ts.store)
-
-	cfg := util.NewTestConfig()
-	cfg.Store = "tikv"
-	cfg.Port = 0
-	cfg.Status.StatusPort = 0
-	cfg.Status.ReportStatus = true
-
-	server, err := NewServer(cfg, ts.tidbdrv)
-	require.NoError(t, err)
-	ts.port = getPortFromTCPAddr(server.listener.Addr())
-	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
-	ts.server = server
-	ts.server.SetDomain(ts.domain)
-	go func() {
-		err := server.Run()
-		require.NoError(t, err)
-	}()
-	ts.waitUntilServerOnline()
-
-	do, err := session.GetDomain(ts.store)
-	require.NoError(t, err)
-	ts.sh = &StatsHandler{do}
-}
-
-func getPortFromTCPAddr(addr net.Addr) uint {
-	return uint(addr.(*net.TCPAddr).Port)
-}
-
-func (ts *basicHTTPHandlerTestSuite) stopServer(t *testing.T) {
-	if ts.server != nil {
-		ts.server.Close()
-	}
-	if ts.domain != nil {
-		ts.domain.Close()
-	}
-	if ts.store != nil {
-		require.NoError(t, ts.store.Close())
-	}
-}
-
-func (ts *basicHTTPHandlerTestSuite) prepareData(t *testing.T) {
-	db, err := sql.Open("mysql", ts.getDSN())
-	require.NoError(t, err)
-	defer func() {
-		err := db.Close()
-		require.NoError(t, err)
-	}()
-	dbt := testkit.NewDBTestKit(t, db)
-
-	dbt.MustExec("create database tidb;")
-	dbt.MustExec("use tidb;")
-	dbt.MustExec("create table tidb.test (a int auto_increment primary key, b varchar(20));")
-	dbt.MustExec("insert tidb.test values (1, 1);")
-	txn1, err := dbt.GetDB().Begin()
-	require.NoError(t, err)
-	_, err = txn1.Exec("update tidb.test set b = b + 1 where a = 1;")
-	require.NoError(t, err)
-	_, err = txn1.Exec("insert tidb.test values (2, 2);")
-	require.NoError(t, err)
-	_, err = txn1.Exec("insert tidb.test (a) values (3);")
-	require.NoError(t, err)
-	_, err = txn1.Exec("insert tidb.test values (4, '');")
-	require.NoError(t, err)
-	err = txn1.Commit()
-	require.NoError(t, err)
-	dbt.MustExec("alter table tidb.test add index idx1 (a, b);")
-	dbt.MustExec("alter table tidb.test drop index idx1;")
-	dbt.MustExec("alter table tidb.test add index idx1 (a, b);")
-	dbt.MustExec("alter table tidb.test add unique index idx2 (a, b);")
-
-	dbt.MustExec(`create table tidb.pt (a int primary key, b varchar(20), key idx(a, b))
-partition by range (a)
-(partition p0 values less than (256),
- partition p1 values less than (512),
- partition p2 values less than (1024))`)
-
-	txn2, err := dbt.GetDB().Begin()
-	require.NoError(t, err)
-	_, err = txn2.Exec("insert into tidb.pt values (42, '123')")
-	require.NoError(t, err)
-	_, err = txn2.Exec("insert into tidb.pt values (256, 'b')")
-	require.NoError(t, err)
-	_, err = txn2.Exec("insert into tidb.pt values (666, 'def')")
-	require.NoError(t, err)
-	err = txn2.Commit()
-	require.NoError(t, err)
-	dbt.MustExec("drop table if exists t")
-	dbt.MustExec("create table t (a double, b varchar(20), c int, primary key(a,b) clustered, key idx(c))")
-	dbt.MustExec("insert into t values(1.1,'111',1),(2.2,'222',2)")
 }
 
 func decodeKeyMvcc(closer io.ReadCloser, t *testing.T, valid bool) {
@@ -555,12 +424,12 @@ func decodeKeyMvcc(closer io.ReadCloser, t *testing.T, valid bool) {
 }
 
 func TestGetTableMVCC(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	ts.prepareData(t)
-	defer ts.stopServer(t)
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	ts.PrepareData(t)
+	defer ts.StopServer(t)
 
-	resp, err := ts.fetchStatus("/mvcc/key/tidb/test/1")
+	resp, err := ts.FetchStatus("/mvcc/key/tidb/test/1")
 	require.NoError(t, err)
 	decoder := json.NewDecoder(resp.Body)
 	var data helper.MvccKV
@@ -583,7 +452,7 @@ func TestGetTableMVCC(t *testing.T) {
 		break
 	}
 
-	resp, err = ts.fetchStatus(fmt.Sprintf("/mvcc/txn/%d/tidb/test", startTs))
+	resp, err = ts.FetchStatus(fmt.Sprintf("/mvcc/txn/%d/tidb/test", startTs))
 	require.NoError(t, err)
 	var p2 helper.MvccKV
 	decoder = json.NewDecoder(resp.Body)
@@ -597,7 +466,7 @@ func TestGetTableMVCC(t *testing.T) {
 	}
 
 	hexKey := p2.Key
-	resp, err = ts.fetchStatus("/mvcc/hex/" + hexKey)
+	resp, err = ts.FetchStatus("/mvcc/hex/" + hexKey)
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	var data2 helper.MvccKV
@@ -606,7 +475,7 @@ func TestGetTableMVCC(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, data, data2)
 
-	resp, err = ts.fetchStatus("/mvcc/key/tidb/test/1?decode=true")
+	resp, err = ts.FetchStatus("/mvcc/key/tidb/test/1?decode=true")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	var data3 map[string]interface{}
@@ -618,7 +487,7 @@ func TestGetTableMVCC(t *testing.T) {
 	require.NotNil(t, data3["data"])
 	require.Nil(t, data3["decode_error"])
 
-	resp, err = ts.fetchStatus("/mvcc/key/tidb/pt(p0)/42?decode=true")
+	resp, err = ts.FetchStatus("/mvcc/key/tidb/pt(p0)/42?decode=true")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	var data4 map[string]interface{}
@@ -631,15 +500,15 @@ func TestGetTableMVCC(t *testing.T) {
 	require.Nil(t, data4["decode_error"])
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/mvcc/key/tidb/t/42")
+	resp, err = ts.FetchStatus("/mvcc/key/tidb/t/42")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	resp, err = ts.fetchStatus("/mvcc/key/tidb/t?a=1.1")
+	resp, err = ts.FetchStatus("/mvcc/key/tidb/t?a=1.1")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	resp, err = ts.fetchStatus("/mvcc/key/tidb/t?a=1.1&b=111&decode=1")
+	resp, err = ts.FetchStatus("/mvcc/key/tidb/t?a=1.1&b=111&decode=1")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	var data5 map[string]interface{}
@@ -653,11 +522,11 @@ func TestGetTableMVCC(t *testing.T) {
 }
 
 func TestGetMVCCNotFound(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	ts.prepareData(t)
-	defer ts.stopServer(t)
-	resp, err := ts.fetchStatus("/mvcc/key/tidb/test/1234")
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	ts.PrepareData(t)
+	defer ts.StopServer(t)
+	resp, err := ts.FetchStatus("/mvcc/key/tidb/test/1234")
 	require.NoError(t, err)
 	decoder := json.NewDecoder(resp.Body)
 	var data helper.MvccKV
@@ -670,10 +539,10 @@ func TestGetMVCCNotFound(t *testing.T) {
 }
 
 func TestDecodeColumnValue(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	ts.prepareData(t)
-	defer ts.stopServer(t)
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	ts.PrepareData(t)
+	defer ts.StopServer(t)
 
 	// column is a structure used for test
 	type column struct {
@@ -706,16 +575,16 @@ func TestDecodeColumnValue(t *testing.T) {
 
 	unitTest := func(col *column) {
 		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.GetType(), col.tp.GetFlag(), col.tp.GetFlen(), bin)
-		resp, err := ts.fetchStatus(path)
-		require.NoErrorf(t, err, "url: %v", ts.statusURL(path))
+		resp, err := ts.FetchStatus(path)
+		require.NoErrorf(t, err, "url: %v", ts.StatusURL(path))
 		decoder := json.NewDecoder(resp.Body)
 		var data interface{}
 		err = decoder.Decode(&data)
-		require.NoErrorf(t, err, "url: %v\ndata: %v", ts.statusURL(path), data)
+		require.NoErrorf(t, err, "url: %v\ndata: %v", ts.StatusURL(path), data)
 		require.NoError(t, resp.Body.Close())
 		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]}, false)
 		require.NoError(t, err)
-		require.Equalf(t, colVal, data, "url: %v", ts.statusURL(path))
+		require.Equalf(t, colVal, data, "url: %v", ts.StatusURL(path))
 	}
 
 	for _, col := range cols {
@@ -736,62 +605,62 @@ func TestDecodeColumnValue(t *testing.T) {
 }
 
 func TestGetIndexMVCC(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	ts.prepareData(t)
-	defer ts.stopServer(t)
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	ts.PrepareData(t)
+	defer ts.StopServer(t)
 
 	// tests for normal index key
-	resp, err := ts.fetchStatus("/mvcc/index/tidb/test/idx1/1?a=1&b=2")
+	resp, err := ts.FetchStatus("/mvcc/index/tidb/test/idx1/1?a=1&b=2")
 	require.NoError(t, err)
 	decodeKeyMvcc(resp.Body, t, true)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx2/1?a=1&b=2")
+	resp, err = ts.FetchStatus("/mvcc/index/tidb/test/idx2/1?a=1&b=2")
 	require.NoError(t, err)
 	decodeKeyMvcc(resp.Body, t, true)
 	require.NoError(t, resp.Body.Close())
 
 	// tests for index key which includes null
-	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx1/3?a=3&b")
+	resp, err = ts.FetchStatus("/mvcc/index/tidb/test/idx1/3?a=3&b")
 	require.NoError(t, err)
 	decodeKeyMvcc(resp.Body, t, true)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx2/3?a=3&b")
+	resp, err = ts.FetchStatus("/mvcc/index/tidb/test/idx2/3?a=3&b")
 	require.NoError(t, err)
 	decodeKeyMvcc(resp.Body, t, true)
 	require.NoError(t, resp.Body.Close())
 
 	// tests for index key which includes empty string
-	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx1/4?a=4&b=")
+	resp, err = ts.FetchStatus("/mvcc/index/tidb/test/idx1/4?a=4&b=")
 	require.NoError(t, err)
 	decodeKeyMvcc(resp.Body, t, true)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx2/3?a=4&b=")
+	resp, err = ts.FetchStatus("/mvcc/index/tidb/test/idx2/3?a=4&b=")
 	require.NoError(t, err)
 	decodeKeyMvcc(resp.Body, t, true)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/mvcc/index/tidb/t/idx?a=1.1&b=111&c=1")
+	resp, err = ts.FetchStatus("/mvcc/index/tidb/t/idx?a=1.1&b=111&c=1")
 	require.NoError(t, err)
 	decodeKeyMvcc(resp.Body, t, true)
 	require.NoError(t, resp.Body.Close())
 
 	// tests for wrong key
-	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx1/5?a=5&b=1")
+	resp, err = ts.FetchStatus("/mvcc/index/tidb/test/idx1/5?a=5&b=1")
 	require.NoError(t, err)
 	decodeKeyMvcc(resp.Body, t, false)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx2/5?a=5&b=1")
+	resp, err = ts.FetchStatus("/mvcc/index/tidb/test/idx2/5?a=5&b=1")
 	require.NoError(t, err)
 	decodeKeyMvcc(resp.Body, t, false)
 	require.NoError(t, resp.Body.Close())
 
 	// tests for missing column value
-	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx1/1?a=1")
+	resp, err = ts.FetchStatus("/mvcc/index/tidb/test/idx1/1?a=1")
 	require.NoError(t, err)
 	decoder := json.NewDecoder(resp.Body)
 	var data1 helper.MvccKV
@@ -799,7 +668,7 @@ func TestGetIndexMVCC(t *testing.T) {
 	require.Error(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx2/1?a=1")
+	resp, err = ts.FetchStatus("/mvcc/index/tidb/test/idx2/1?a=1")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	var data2 helper.MvccKV
@@ -807,18 +676,18 @@ func TestGetIndexMVCC(t *testing.T) {
 	require.Error(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/mvcc/index/tidb/pt(p2)/idx/666?a=666&b=def")
+	resp, err = ts.FetchStatus("/mvcc/index/tidb/pt(p2)/idx/666?a=666&b=def")
 	require.NoError(t, err)
 	decodeKeyMvcc(resp.Body, t, true)
 	require.NoError(t, resp.Body.Close())
 }
 
 func TestGetSettings(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	ts.prepareData(t)
-	defer ts.stopServer(t)
-	resp, err := ts.fetchStatus("/settings")
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	ts.PrepareData(t)
+	defer ts.StopServer(t)
+	resp, err := ts.FetchStatus("/settings")
 	require.NoError(t, err)
 	decoder := json.NewDecoder(resp.Body)
 	var settings *config.Config
@@ -835,11 +704,11 @@ func TestGetSettings(t *testing.T) {
 }
 
 func TestGetSchema(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	ts.prepareData(t)
-	defer ts.stopServer(t)
-	resp, err := ts.fetchStatus("/schema")
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	ts.PrepareData(t)
+	defer ts.StopServer(t)
+	resp, err := ts.FetchStatus("/schema")
 	require.NoError(t, err)
 	decoder := json.NewDecoder(resp.Body)
 	var dbs []*model.DBInfo
@@ -857,7 +726,7 @@ func TestGetSchema(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	userTbl := external.GetTableByName(t, tk, "mysql", "user")
-	resp, err = ts.fetchStatus(fmt.Sprintf("/schema?table_id=%d", userTbl.Meta().ID))
+	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_id=%d", userTbl.Meta().ID))
 	require.NoError(t, err)
 	var ti *model.TableInfo
 	decoder = json.NewDecoder(resp.Body)
@@ -866,19 +735,19 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "user", ti.Name.L)
 
-	resp, err = ts.fetchStatus("/schema?table_id=a")
+	resp, err = ts.FetchStatus("/schema?table_id=a")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/schema?table_id=1")
+	resp, err = ts.FetchStatus("/schema?table_id=1")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/schema?table_id=-1")
+	resp, err = ts.FetchStatus("/schema?table_id=-1")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/schema/tidb")
+	resp, err = ts.FetchStatus("/schema/tidb")
 	require.NoError(t, err)
 	var lt []*model.TableInfo
 	decoder = json.NewDecoder(resp.Body)
@@ -887,11 +756,11 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Greater(t, len(lt), 2)
 
-	resp, err = ts.fetchStatus("/schema/abc")
+	resp, err = ts.FetchStatus("/schema/abc")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/schema/tidb/test")
+	resp, err = ts.FetchStatus("/schema/tidb/test")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&ti)
@@ -899,13 +768,13 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "test", ti.Name.L)
 
-	resp, err = ts.fetchStatus("/schema/tidb/abc")
+	resp, err = ts.FetchStatus("/schema/tidb/abc")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus(fmt.Sprintf("/db-table/%d", userTbl.Meta().ID))
+	resp, err = ts.FetchStatus(fmt.Sprintf("/db-table/%d", userTbl.Meta().ID))
 	require.NoError(t, err)
-	var dbtbl *dbTableInfo
+	var dbtbl *server.dbTableInfo
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&dbtbl)
 	require.NoError(t, err)
@@ -916,7 +785,7 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.GetDomain(se.(sessionctx.Context)).InfoSchema().SchemaMetaVersion(), dbtbl.SchemaVersion)
 
-	db, err := sql.Open("mysql", ts.getDSN())
+	db, err := sql.Open("mysql", ts.GetDSN())
 	require.NoError(t, err)
 	defer func() {
 		err := db.Close()
@@ -933,7 +802,7 @@ func TestGetSchema(t *testing.T) {
 		PARTITION p2 VALUES LESS THAN (7),
 		PARTITION p3 VALUES LESS THAN (9))`)
 
-	resp, err = ts.fetchStatus("/schema/test/t1")
+	resp, err = ts.FetchStatus("/schema/test/t1")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&ti)
@@ -941,7 +810,7 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "t1", ti.Name.L)
 
-	resp, err = ts.fetchStatus(fmt.Sprintf("/db-table/%v", ti.GetPartitionInfo().Definitions[0].ID))
+	resp, err = ts.FetchStatus(fmt.Sprintf("/db-table/%v", ti.GetPartitionInfo().Definitions[0].ID))
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&dbtbl)
@@ -951,7 +820,7 @@ func TestGetSchema(t *testing.T) {
 	require.Equal(t, "test", dbtbl.DBInfo.Name.L)
 	require.Equal(t, ti, dbtbl.TableInfo)
 
-	resp, err = ts.fetchStatus(fmt.Sprintf("/schema?table_id=%v", ti.GetPartitionInfo().Definitions[0].ID))
+	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_id=%v", ti.GetPartitionInfo().Definitions[0].ID))
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&ti)
@@ -962,18 +831,18 @@ func TestGetSchema(t *testing.T) {
 }
 
 func TestAllHistory(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	ts.prepareData(t)
-	defer ts.stopServer(t)
-	resp, err := ts.fetchStatus("/ddl/history/?limit=3")
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	ts.PrepareData(t)
+	defer ts.StopServer(t)
+	resp, err := ts.FetchStatus("/ddl/history/?limit=3")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	resp, err = ts.fetchStatus("/ddl/history/?limit=-1")
+	resp, err = ts.FetchStatus("/ddl/history/?limit=-1")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/ddl/history")
+	resp, err = ts.FetchStatus("/ddl/history")
 	require.NoError(t, err)
 	decoder := json.NewDecoder(resp.Body)
 
@@ -999,11 +868,11 @@ func TestAllHistory(t *testing.T) {
 	}
 
 	// Cover the start_job_id parameter.
-	resp, err = ts.fetchStatus("/ddl/history?start_job_id=41")
+	resp, err = ts.FetchStatus("/ddl/history?start_job_id=41")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/ddl/history?start_job_id=41&limit=3")
+	resp, err = ts.FetchStatus("/ddl/history?start_job_id=41&limit=3")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&jobs)
@@ -1039,12 +908,12 @@ func dummyRecord() *deadlockhistory.DeadlockRecord {
 }
 
 func TestPprof(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	defer ts.StopServer(t)
 	retryTime := 100
 	for retry := 0; retry < retryTime; retry++ {
-		resp, err := ts.fetchStatus("/debug/pprof/heap")
+		resp, err := ts.FetchStatus("/debug/pprof/heap")
 		if err == nil {
 			_, err = io.ReadAll(resp.Body)
 			require.NoError(t, err)
@@ -1058,20 +927,20 @@ func TestPprof(t *testing.T) {
 }
 
 func TestHotRegionInfo(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-	resp, err := ts.fetchStatus("/regions/hot")
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	defer ts.StopServer(t)
+	resp, err := ts.FetchStatus("/regions/hot")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 func TestDebugZip(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-	resp, err := ts.fetchStatus("/debug/zip?seconds=1")
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
+	ts.StartServer(t)
+	defer ts.StopServer(t)
+	resp, err := ts.FetchStatus("/debug/zip?seconds=1")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err := httputil.DumpResponse(resp, true)
@@ -1081,7 +950,7 @@ func TestDebugZip(t *testing.T) {
 }
 
 func TestCheckCN(t *testing.T) {
-	s := &Server{cfg: &config.Config{Security: config.Security{ClusterVerifyCN: []string{"a ", "b", "c"}}}}
+	s := &server.Server{cfg: &config.Config{Security: config.Security{ClusterVerifyCN: []string{"a ", "b", "c"}}}}
 	tlsConfig := &tls.Config{}
 	s.setCNChecker(tlsConfig)
 	require.NotNil(t, tlsConfig.VerifyPeerCertificate)
@@ -1094,16 +963,16 @@ func TestCheckCN(t *testing.T) {
 }
 
 func TestDDLHookHandler(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
 
-	ts.startServer(t)
-	defer ts.stopServer(t)
-	resp, err := ts.fetchStatus("/test/ddl/hook")
+	ts.StartServer(t)
+	defer ts.StopServer(t)
+	resp, err := ts.FetchStatus("/test/ddl/hook")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=ctc_hook`)))
+	resp, err = ts.PostStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=ctc_hook`)))
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	body, err := io.ReadAll(resp.Body)
@@ -1112,7 +981,7 @@ func TestDDLHookHandler(t *testing.T) {
 	require.Equal(t, "\"success!\"", string(body))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=default_hook`)))
+	resp, err = ts.PostStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=default_hook`)))
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	body, err = io.ReadAll(resp.Body)
@@ -1128,7 +997,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	rc := httptest.NewRecorder()
 	tbs := info.SchemaTables(model.NewCIStr("test"))
 	require.Equal(t, 0, len(tbs))
-	writeDBTablesData(rc, tbs)
+	server.writeDBTablesData(rc, tbs)
 	var ti []*model.TableInfo
 	decoder := json.NewDecoder(rc.Body)
 	err := decoder.Decode(&ti)
@@ -1140,7 +1009,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	rc = httptest.NewRecorder()
 	tbs = info.SchemaTables(model.NewCIStr("test"))
 	require.Equal(t, 1, len(tbs))
-	writeDBTablesData(rc, tbs)
+	server.writeDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)
 	err = decoder.Decode(&ti)
 	require.NoError(t, err)
@@ -1153,7 +1022,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	rc = httptest.NewRecorder()
 	tbs = info.SchemaTables(model.NewCIStr("test"))
 	require.Equal(t, 2, len(tbs))
-	writeDBTablesData(rc, tbs)
+	server.writeDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)
 	err = decoder.Decode(&ti)
 	require.NoError(t, err)
@@ -1165,15 +1034,15 @@ func TestWriteDBTablesData(t *testing.T) {
 }
 
 func TestSetLabels(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
+	ts := testutil.CreateBasicHTTPHandlerTestSuite()
 
-	ts.startServer(t)
-	defer ts.stopServer(t)
+	ts.StartServer(t)
+	defer ts.StopServer(t)
 
 	testUpdateLabels := func(labels, expected map[string]string) {
 		buffer := bytes.NewBuffer([]byte{})
 		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
-		resp, err := ts.postStatus("/labels", "application/json", buffer)
+		resp, err := ts.PostStatus("/labels", "application/json", buffer)
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		defer func() {

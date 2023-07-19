@@ -1,0 +1,43 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "statshandler",
+    srcs = ["statistics_handler.go"],
+    importpath = "github.com/pingcap/tidb/server/statshandler",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//domain",
+        "//parser/model",
+        "//parser/mysql",
+        "//server/constvar",
+        "//server/internal/httputil",
+        "//session",
+        "//sessionctx/variable",
+        "//table",
+        "//types",
+        "//util/logutil",
+        "@com_github_gorilla_mux//:mux",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "statshandler_test",
+    timeout = "short",
+    srcs = ["statistics_handler_test.go"],
+    embed = [":statshandler"],
+    flaky = True,
+    deps = [
+        "//parser/model",
+        "//server",
+        "//server/internal/testutil",
+        "//server/internal/util",
+        "//session",
+        "//statistics/handle",
+        "//testkit",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_gorilla_mux//:mux",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/server/internal/info"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -36,7 +37,7 @@ var defaultStatus = map[string]*variable.StatusVal{
 	upTime:          {Scope: variable.ScopeGlobal, Value: 0},
 }
 
-// GetScope gets the status variables scope.
+// GetScope gets the Status variables scope.
 func (s *Server) GetScope(status string) variable.ScopeFlag {
 	return variable.DefaultStatusVarScopeFlag
 }
@@ -54,7 +55,7 @@ func (s *Server) Stats(vars *variable.SessionVars) (map[string]interface{}, erro
 		if len(tlsConfig.Certificates) == 1 {
 			pc, err := x509.ParseCertificate(tlsConfig.Certificates[0].Certificate[0])
 			if err != nil {
-				logutil.BgLogger().Error("Failed to parse TLS certficates to get server status", zap.Error(err))
+				logutil.BgLogger().Error("Failed to parse TLS certficates to get server Status", zap.Error(err))
 			} else {
 				m[serverNotAfter] = pc.NotAfter.Format("Jan _2 15:04:05 2006 MST")
 				m[serverNotBefore] = pc.NotBefore.Format("Jan _2 15:04:05 2006 MST")
@@ -63,10 +64,10 @@ func (s *Server) Stats(vars *variable.SessionVars) (map[string]interface{}, erro
 	}
 
 	var err error
-	info := serverInfo{}
+	info := info.ServerInfo{}
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {
-		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))
+		logutil.BgLogger().Error("Failed to get ServerInfo for uptime Status", zap.Error(err))
 	} else {
 		m[upTime] = int64(time.Since(time.Unix(info.ServerInfo.StartTimestamp, 0)).Seconds())
 	}

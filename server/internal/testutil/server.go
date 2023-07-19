@@ -47,51 +47,81 @@ import (
 )
 
 var (
-	regression = true
+	Regression = true
 )
 
 type configOverrider func(*mysql.Config)
 
-// testServerClient config server connect parameters and provider several
+// TestServerClient config server connect parameters and provider several
 // method to communicate with server and run tests
-type testServerClient struct {
+type TestServerClient struct {
 	port         uint
 	statusPort   uint
 	statusScheme string
 }
 
-// newTestServerClient return a testServerClient with unique address
-func newTestServerClient() *testServerClient {
+// GetPort returns the value of the port member variable in the TestServerClient struct
+func (t *TestServerClient) GetPort() uint {
+	return t.port
+}
+
+// SetPort sets the value of the port member variable in the TestServerClient struct
+func (t *TestServerClient) SetPort(port uint) {
+	t.port = port
+}
+
+// GetStatusPort returns the value of the statusPort member variable in the TestServerClient struct
+func (t *TestServerClient) GetStatusPort() uint {
+	return t.statusPort
+}
+
+// SetStatusPort sets the value of the statusPort member variable in the TestServerClient struct
+func (t *TestServerClient) SetStatusPort(statusPort uint) {
+	t.statusPort = statusPort
+}
+
+// GetStatusScheme returns the value of the statusScheme member variable in the TestServerClient struct
+func (t *TestServerClient) GetStatusScheme() string {
+	return t.statusScheme
+}
+
+// SetStatusScheme sets the value of the statusScheme member variable in the TestServerClient struct
+func (t *TestServerClient) SetStatusScheme(statusScheme string) {
+	t.statusScheme = statusScheme
+}
+
+// NewTestServerClient return a TestServerClient with unique address
+func NewTestServerClient() *TestServerClient {
 	testenv.SetGOMAXPROCSForTest()
-	return &testServerClient{
+	return &TestServerClient{
 		port:         0,
 		statusPort:   0,
 		statusScheme: "http",
 	}
 }
 
-// statusURL return the full URL of a status path
-func (cli *testServerClient) statusURL(path string) string {
+// StatusURL return the full URL of a status path
+func (cli *TestServerClient) StatusURL(path string) string {
 	return fmt.Sprintf("%s://localhost:%d%s", cli.statusScheme, cli.statusPort, path)
 }
 
-// fetchStatus exec http.Get to server status port
-func (cli *testServerClient) fetchStatus(path string) (*http.Response, error) {
-	return http.Get(cli.statusURL(path))
+// FetchStatus exec http.Get to server status port
+func (cli *TestServerClient) FetchStatus(path string) (*http.Response, error) {
+	return http.Get(cli.StatusURL(path))
 }
 
-// postStatus exec http.Port to server status port
-func (cli *testServerClient) postStatus(path, contentType string, body io.Reader) (*http.Response, error) {
-	return http.Post(cli.statusURL(path), contentType, body)
+// PostStatus exec http.Port to server status port
+func (cli *TestServerClient) PostStatus(path, contentType string, body io.Reader) (*http.Response, error) {
+	return http.Post(cli.StatusURL(path), contentType, body)
 }
 
-// formStatus post a form request to server status address
-func (cli *testServerClient) formStatus(path string, data url.Values) (*http.Response, error) {
-	return http.PostForm(cli.statusURL(path), data)
+// FormStatus post a form request to server status address
+func (cli *TestServerClient) FormStatus(path string, data url.Values) (*http.Response, error) {
+	return http.PostForm(cli.StatusURL(path), data)
 }
 
-// getDSN generates a DSN string for MySQL connection.
-func (cli *testServerClient) getDSN(overriders ...configOverrider) string {
+// GetDSN generates a DSN string for MySQL connection.
+func (cli *TestServerClient) GetDSN(overriders ...configOverrider) string {
 	config := mysql.NewConfig()
 	config.User = "root"
 	config.Net = "tcp"
@@ -106,9 +136,9 @@ func (cli *testServerClient) getDSN(overriders ...configOverrider) string {
 	return config.FormatDSN()
 }
 
-// runTests runs tests using the default database `test`.
-func (cli *testServerClient) runTests(t *testing.T, overrider configOverrider, tests ...func(dbt *testkit.DBTestKit)) {
-	db, err := sql.Open("mysql", cli.getDSN(overrider))
+// RunTests runs tests using the default database `test`.
+func (cli *TestServerClient) RunTests(t *testing.T, overrider configOverrider, tests ...func(dbt *testkit.DBTestKit)) {
+	db, err := sql.Open("mysql", cli.GetDSN(overrider))
 	require.NoError(t, err)
 	defer func() {
 		err := db.Close()
@@ -121,9 +151,9 @@ func (cli *testServerClient) runTests(t *testing.T, overrider configOverrider, t
 	}
 }
 
-// runTestsOnNewDB runs tests using a specified database which will be created before the test and destroyed after the test.
-func (cli *testServerClient) runTestsOnNewDB(t *testing.T, overrider configOverrider, dbName string, tests ...func(dbt *testkit.DBTestKit)) {
-	dsn := cli.getDSN(overrider, func(config *mysql.Config) {
+// RunTestsOnNewDB runs tests using a specified database which will be created before the test and destroyed after the test.
+func (cli *TestServerClient) RunTestsOnNewDB(t *testing.T, overrider configOverrider, dbName string, tests ...func(dbt *testkit.DBTestKit)) {
+	dsn := cli.GetDSN(overrider, func(config *mysql.Config) {
 		config.DBName = ""
 	})
 	db, err := sql.Open("mysql", dsn)
@@ -157,8 +187,8 @@ func (cli *testServerClient) runTestsOnNewDB(t *testing.T, overrider configOverr
 	}
 }
 
-func (cli *testServerClient) runTestRegression(t *testing.T, overrider configOverrider, dbName string) {
-	cli.runTestsOnNewDB(t, overrider, dbName, func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestRegression(t *testing.T, overrider configOverrider, dbName string) {
+	cli.RunTestsOnNewDB(t, overrider, dbName, func(dbt *testkit.DBTestKit) {
 		// Show the user
 		dbt.MustExec("select user()")
 
@@ -235,9 +265,9 @@ func (cli *testServerClient) runTestRegression(t *testing.T, overrider configOve
 	})
 }
 
-func (cli *testServerClient) runTestPrepareResultFieldType(t *testing.T) {
+func (cli *TestServerClient) RunTestPrepareResultFieldType(t *testing.T) {
 	var param int64 = 83
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		stmt, err := dbt.GetDB().Prepare(`SELECT ?`)
 		if err != nil {
 			t.Fatal(err)
@@ -258,8 +288,8 @@ func (cli *testServerClient) runTestPrepareResultFieldType(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestSpecialType(t *testing.T) {
-	cli.runTestsOnNewDB(t, nil, "SpecialType", func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestSpecialType(t *testing.T) {
+	cli.RunTestsOnNewDB(t, nil, "SpecialType", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("create table test (a decimal(10, 5), b datetime, c time, d bit(8))")
 		dbt.MustExec("insert test values (1.4, '2012-12-21 12:12:12', '4:23:34', b'1000')")
 		rows := dbt.MustQuery("select * from test where a > ?", 0)
@@ -277,8 +307,8 @@ func (cli *testServerClient) runTestSpecialType(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestClientWithCollation(t *testing.T) {
-	cli.runTests(t, func(config *mysql.Config) {
+func (cli *TestServerClient) RunTestClientWithCollation(t *testing.T) {
+	cli.RunTests(t, func(config *mysql.Config) {
 		config.Collation = "utf8mb4_general_ci"
 	}, func(dbt *testkit.DBTestKit) {
 		var name, charset, collation string
@@ -315,8 +345,8 @@ func (cli *testServerClient) runTestClientWithCollation(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestPreparedString(t *testing.T) {
-	cli.runTestsOnNewDB(t, nil, "PreparedString", func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestPreparedString(t *testing.T) {
+	cli.RunTestsOnNewDB(t, nil, "PreparedString", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("create table test (a char(10), b char(10))")
 		dbt.MustExec("insert test values (?, ?)", "abcdeabcde", "abcde")
 		rows := dbt.MustQuery("select * from test where 1 = ?", 1)
@@ -333,8 +363,8 @@ func (cli *testServerClient) runTestPreparedString(t *testing.T) {
 // runTestPreparedTimestamp does not really cover binary timestamp format, because MySQL driver in golang
 // does not use this format. MySQL driver in golang will convert the timestamp to a string.
 // This case guarantees it could work.
-func (cli *testServerClient) runTestPreparedTimestamp(t *testing.T) {
-	cli.runTestsOnNewDB(t, nil, "prepared_timestamp", func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestPreparedTimestamp(t *testing.T) {
+	cli.RunTestsOnNewDB(t, nil, "prepared_timestamp", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("create table test (a timestamp, b time)")
 		dbt.MustExec("set time_zone='+00:00'")
 		insertStmt := dbt.MustPrepare("insert test values (?, ?)")
@@ -355,8 +385,8 @@ func (cli *testServerClient) runTestPreparedTimestamp(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(t *testing.T, server *server.Server) {
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+func (cli *TestServerClient) RunTestLoadDataWithSelectIntoOutfile(t *testing.T, server *server.Server) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "SelectIntoOutfile", func(dbt *testkit.DBTestKit) {
@@ -402,7 +432,7 @@ func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(t *testing.T, 
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataForSlowLog(t *testing.T, server *server.Server) {
+func (cli *TestServerClient) RunTestLoadDataForSlowLog(t *testing.T, server *server.Server) {
 	t.Skip("unstable test")
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
@@ -422,7 +452,7 @@ func (cli *testServerClient) runTestLoadDataForSlowLog(t *testing.T, server *ser
 			"5	5\n")
 	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_slow_query", func(dbt *testkit.DBTestKit) {
@@ -464,7 +494,7 @@ func (cli *testServerClient) runTestLoadDataForSlowLog(t *testing.T, server *ser
 	})
 }
 
-func (cli *testServerClient) prepareLoadDataFile(t *testing.T, fp *os.File, rows ...string) {
+func (cli *TestServerClient) prepareLoadDataFile(t *testing.T, fp *os.File, rows ...string) {
 	err := fp.Truncate(0)
 	require.NoError(t, err)
 	_, err = fp.Seek(0, 0)
@@ -480,7 +510,7 @@ func (cli *testServerClient) prepareLoadDataFile(t *testing.T, fp *os.File, rows
 	require.NoError(t, fp.Sync())
 }
 
-func (cli *testServerClient) runTestLoadDataAutoRandom(t *testing.T) {
+func (cli *TestServerClient) RunTestLoadDataAutoRandom(t *testing.T) {
 	fp, err := os.CreateTemp("", "load_data_txn_error.csv")
 	require.NoError(t, err)
 	require.NotNil(t, fp)
@@ -516,7 +546,7 @@ func (cli *testServerClient) runTestLoadDataAutoRandom(t *testing.T) {
 	err = fp.Close()
 	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_batch_dml", func(dbt *testkit.DBTestKit) {
@@ -525,18 +555,18 @@ func (cli *testServerClient) runTestLoadDataAutoRandom(t *testing.T) {
 		dbt.MustExec("create table t(c1 bigint auto_random primary key, c2 bigint, c3 bigint)")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t (c2, c3) with batch_size = 128, thread=1", path))
 		rows := dbt.MustQuery("select count(*) from t")
-		cli.checkRows(t, rows, "50000")
+		cli.CheckRows(t, rows, "50000")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select bit_xor(c2), bit_xor(c3) from t")
 		res := strconv.Itoa(cksum1)
 		res = res + " "
 		res = res + strconv.Itoa(cksum2)
-		cli.checkRows(t, rows, res)
+		cli.CheckRows(t, rows, res)
 		require.NoError(t, rows.Close())
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(t *testing.T) {
+func (cli *TestServerClient) RunTestLoadDataAutoRandomWithSpecialTerm(t *testing.T) {
 	fp, err := os.CreateTemp("", "load_data_txn_error_term.csv")
 	require.NoError(t, err)
 	require.NotNil(t, fp)
@@ -573,7 +603,7 @@ func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(t *testing
 	err = fp.Close()
 	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params = map[string]string{"sql_mode": "''"}
 	}, "load_data_batch_dml", func(dbt *testkit.DBTestKit) {
@@ -582,22 +612,22 @@ func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(t *testing
 		dbt.MustExec("create table t1(c1 bigint auto_random primary key, c2 bigint, c3 bigint)")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t1 fields terminated by ',' enclosed by '\\'' lines terminated by '|' (c2, c3) with batch_size = 128, thread=1", path))
 		rows := dbt.MustQuery("select count(*) from t1")
-		cli.checkRows(t, rows, "50000")
+		cli.CheckRows(t, rows, "50000")
 		rows = dbt.MustQuery("select bit_xor(c2), bit_xor(c3) from t1")
 		res := strconv.Itoa(cksum1)
 		res = res + " "
 		res = res + strconv.Itoa(cksum2)
-		cli.checkRows(t, rows, res)
+		cli.CheckRows(t, rows, res)
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataForListPartition(t *testing.T) {
+func (cli *TestServerClient) RunTestLoadDataForListPartition(t *testing.T) {
 	f, err := os.CreateTemp("", "load_data_list_partition.csv")
 	require.NoError(t, err)
 	defer os.Remove(f.Name())
 	path := f.Name()
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
@@ -613,45 +643,45 @@ func (cli *testServerClient) runTestLoadDataForListPartition(t *testing.T) {
 		cli.prepareLoadDataFile(t, f, "1 a", "2 b")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t with thread=1", path))
 		rows := dbt.MustQuery("select * from t partition(p1) order by id")
-		cli.checkRows(t, rows, "1 a", "2 b")
+		cli.CheckRows(t, rows, "1 a", "2 b")
 		// Test load data into multi-partitions.
 		dbt.MustExec("delete from t")
 		cli.prepareLoadDataFile(t, f, "1 a", "3 c", "4 e")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t with thread=1", path))
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
-		cli.checkRows(t, rows, "1 a", "3 c", "4 e")
+		cli.CheckRows(t, rows, "1 a", "3 c", "4 e")
 		require.NoError(t, rows.Close())
 		// Test load data meet duplicate error.
 		cli.prepareLoadDataFile(t, f, "1 x", "2 b", "2 x", "7 a")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t with thread=1", path))
 		rows = dbt.MustQuery("show warnings")
-		cli.checkRows(t, rows,
+		cli.CheckRows(t, rows,
 			"Warning 1062 Duplicate entry '1' for key 't.idx'",
 			"Warning 1062 Duplicate entry '2' for key 't.idx'")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
-		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		cli.CheckRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
 		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(t, f, "5 a", "100 x")
 		_, err := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t with thread=1", path))
 		require.NoError(t, err)
 		rows = dbt.MustQuery("show warnings")
-		cli.checkRows(t, rows, "Warning 1526 Table has no partition for value 100")
+		cli.CheckRows(t, rows, "Warning 1526 Table has no partition for value 100")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
-		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
+		cli.CheckRows(t, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
 		require.NoError(t, rows.Close())
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataForListPartition2(t *testing.T) {
+func (cli *TestServerClient) RunTestLoadDataForListPartition2(t *testing.T) {
 	f, err := os.CreateTemp("", "load_data_list_partition.csv")
 	require.NoError(t, err)
 	defer os.Remove(f.Name())
 	path := f.Name()
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
@@ -667,46 +697,46 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(t *testing.T) {
 		cli.prepareLoadDataFile(t, f, "1 a", "2 b")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t (id,name) with thread=1", path))
 		rows := dbt.MustQuery("select id,name from t partition(p1) order by id")
-		cli.checkRows(t, rows, "1 a", "2 b")
+		cli.CheckRows(t, rows, "1 a", "2 b")
 		// Test load data into multi-partitions.
 		dbt.MustExec("delete from t")
 		cli.prepareLoadDataFile(t, f, "1 a", "3 c", "4 e")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t (id,name) with thread=1", path))
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select id,name from t order by id")
-		cli.checkRows(t, rows, "1 a", "3 c", "4 e")
+		cli.CheckRows(t, rows, "1 a", "3 c", "4 e")
 		// Test load data meet duplicate error.
 		cli.prepareLoadDataFile(t, f, "1 x", "2 b", "2 x", "7 a")
 		require.NoError(t, rows.Close())
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t (id,name) with thread=1", path))
 		rows = dbt.MustQuery("show warnings")
-		cli.checkRows(t, rows,
+		cli.CheckRows(t, rows,
 			"Warning 1062 Duplicate entry '1-2' for key 't.idx'",
 			"Warning 1062 Duplicate entry '2-2' for key 't.idx'")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select id,name from t order by id")
-		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		cli.CheckRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
 		require.NoError(t, rows.Close())
 		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(t, f, "5 a", "100 x")
 		_, err := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t (id,name) with thread=1", path))
 		require.NoError(t, err)
 		rows = dbt.MustQuery("show warnings")
-		cli.checkRows(t, rows, "Warning 1526 Table has no partition for value 100")
+		cli.CheckRows(t, rows, "Warning 1526 Table has no partition for value 100")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select id,name from t order by id")
-		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
+		cli.CheckRows(t, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
 		require.NoError(t, rows.Close())
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataForListColumnPartition(t *testing.T) {
+func (cli *TestServerClient) RunTestLoadDataForListColumnPartition(t *testing.T) {
 	f, err := os.CreateTemp("", "load_data_list_partition.csv")
 	require.NoError(t, err)
 	defer os.Remove(f.Name())
 	path := f.Name()
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
@@ -722,46 +752,46 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition(t *testing.T)
 		cli.prepareLoadDataFile(t, f, "1 a", "2 b")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t with thread=1", path))
 		rows := dbt.MustQuery("select * from t partition(p1) order by id")
-		cli.checkRows(t, rows, "1 a", "2 b")
+		cli.CheckRows(t, rows, "1 a", "2 b")
 		// Test load data into multi-partitions.
 		dbt.MustExec("delete from t")
 		cli.prepareLoadDataFile(t, f, "1 a", "3 c", "4 e")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t with thread=1", path))
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
-		cli.checkRows(t, rows, "1 a", "3 c", "4 e")
+		cli.CheckRows(t, rows, "1 a", "3 c", "4 e")
 		require.NoError(t, rows.Close())
 		// Test load data meet duplicate error.
 		cli.prepareLoadDataFile(t, f, "1 x", "2 b", "2 x", "7 a")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t with thread=1", path))
 		rows = dbt.MustQuery("show warnings")
-		cli.checkRows(t, rows,
+		cli.CheckRows(t, rows,
 			"Warning 1062 Duplicate entry '1' for key 't.idx'",
 			"Warning 1062 Duplicate entry '2' for key 't.idx'")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
-		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		cli.CheckRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
 		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(t, f, "5 a", "100 x")
 		_, err := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t with thread=1", path))
 		require.NoError(t, err)
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("show warnings")
-		cli.checkRows(t, rows, "Warning 1526 Table has no partition for value from column_list")
+		cli.CheckRows(t, rows, "Warning 1526 Table has no partition for value from column_list")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select id,name from t order by id")
-		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
+		cli.CheckRows(t, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
 		require.NoError(t, rows.Close())
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataForListColumnPartition2(t *testing.T) {
+func (cli *TestServerClient) RunTestLoadDataForListColumnPartition2(t *testing.T) {
 	f, err := os.CreateTemp("", "load_data_list_partition.csv")
 	require.NoError(t, err)
 	defer os.Remove(f.Name())
 	path := f.Name()
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
@@ -776,47 +806,47 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(t *testing.T
 		cli.prepareLoadDataFile(t, f, "w 1 1", "w 2 2")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t with thread=1", path))
 		rows := dbt.MustQuery("select * from t partition(p_west) order by id")
-		cli.checkRows(t, rows, "w 1 1", "w 2 2")
+		cli.CheckRows(t, rows, "w 1 1", "w 2 2")
 		// Test load data into multi-partitions.
 		dbt.MustExec("delete from t")
 		cli.prepareLoadDataFile(t, f, "w 1 1", "e 5 5", "n 9 9")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t with thread=1", path))
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
-		cli.checkRows(t, rows, "w 1 1", "e 5 5", "n 9 9")
+		cli.CheckRows(t, rows, "w 1 1", "e 5 5", "n 9 9")
 		// Test load data meet duplicate error.
 		cli.prepareLoadDataFile(t, f, "w 1 2", "w 2 2")
 		_, err := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t with thread=1", path))
 		require.NoError(t, err)
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("show warnings")
-		cli.checkRows(t, rows, "Warning 1062 Duplicate entry 'w-1' for key 't.idx'")
+		cli.CheckRows(t, rows, "Warning 1062 Duplicate entry 'w-1' for key 't.idx'")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
-		cli.checkRows(t, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
+		cli.CheckRows(t, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
 		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(t, f, "w 3 3", "w 5 5", "e 8 8")
 		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t with thread=1", path))
 		require.NoError(t, err)
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("show warnings")
-		cli.checkRows(t, rows, "Warning 1526 Table has no partition for value from column_list")
+		cli.CheckRows(t, rows, "Warning 1526 Table has no partition for value from column_list")
 		cli.prepareLoadDataFile(t, f, "x 1 1", "w 1 1")
 		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t with thread=1", path))
 		require.NoError(t, err)
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("show warnings")
-		cli.checkRows(t, rows,
+		cli.CheckRows(t, rows,
 			"Warning 1526 Table has no partition for value from column_list",
 			"Warning 1062 Duplicate entry 'w-1' for key 't.idx'")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
-		cli.checkRows(t, rows, "w 1 1", "w 2 2", "w 3 3", "e 5 5", "e 8 8", "n 9 9")
+		cli.CheckRows(t, rows, "w 1 1", "w 2 2", "w 3 3", "e 5 5", "e 8 8", "n 9 9")
 		require.NoError(t, rows.Close())
 	})
 }
 
-func (cli *testServerClient) Rows(t *testing.T, rows *sql.Rows) []string {
+func (cli *TestServerClient) Rows(t *testing.T, rows *sql.Rows) []string {
 	buf := bytes.NewBuffer(nil)
 	result := make([]string, 0, 2)
 	for rows.Next() {
@@ -846,12 +876,12 @@ func (cli *testServerClient) Rows(t *testing.T, rows *sql.Rows) []string {
 	return result
 }
 
-func (cli *testServerClient) checkRows(t *testing.T, rows *sql.Rows, expectedRows ...string) {
+func (cli *TestServerClient) CheckRows(t *testing.T, rows *sql.Rows, expectedRows ...string) {
 	result := cli.Rows(t, rows)
 	require.Equal(t, strings.Join(expectedRows, "\n"), strings.Join(result, "\n"))
 }
 
-func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *server.Server) {
+func (cli *TestServerClient) RunTestLoadDataWithColumnList(t *testing.T, _ *server.Server) {
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
 	path := fp.Name()
@@ -869,7 +899,7 @@ func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *serv
 		"\"1\",\"3\",\"a\",\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"\n" +
 		"\"1\",\"4\",\"a\",\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"")
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(db *testkit.DBTestKit) {
@@ -906,7 +936,7 @@ func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *serv
 	})
 
 	// Also test cases where column list only specifies partial columns
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(db *testkit.DBTestKit) {
@@ -943,7 +973,7 @@ func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *serv
 	})
 
 	// Also test for case-insensitivity
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(db *testkit.DBTestKit) {
@@ -981,7 +1011,7 @@ func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *serv
 	})
 
 	// Also test for name mismatches
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(db *testkit.DBTestKit) {
@@ -1001,7 +1031,7 @@ func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []strin
 	}
 }
 
-func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server) {
+func (cli *TestServerClient) RunTestLoadData(t *testing.T, server *server.Server) {
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
 	path := fp.Name()
@@ -1026,7 +1056,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server
 	defer func() { kv.TxnTotalSizeLimit.Store(originalTxnTotalSizeLimit) }()
 
 	// support ClientLocalFiles capability
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
@@ -1163,7 +1193,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server
 			"hig,\"789\",")
 	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
@@ -1211,7 +1241,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server
 			`2003-03-03, 20030303,030303,\N` + "\n")
 	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
@@ -1267,7 +1297,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server
 			`"a"b",c"d"e` + "\n")
 	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
@@ -1314,7 +1344,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server
 			`"1",2,"3"` + "\n")
 	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("create table test (id INT NOT NULL PRIMARY KEY,  b INT,  c varchar(10))")
@@ -1339,7 +1369,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server
 
 	// unsupport ClientLocalFiles capability
 	server.XORCapability(tmysql.ClientLocalFiles)
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
@@ -1364,7 +1394,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server
 			`3,4` + "\n")
 	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
@@ -1415,7 +1445,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server
 			`3,4` + "\n")
 	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
@@ -1458,7 +1488,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server
 			`4,5,6` + "\n")
 	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
@@ -1504,7 +1534,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server
 			`4,5,6` + "\n")
 	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
@@ -1536,7 +1566,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server
 	})
 
 	// Test with upper case variables.
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
@@ -1568,9 +1598,9 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server
 	})
 }
 
-func (cli *testServerClient) runTestConcurrentUpdate(t *testing.T) {
+func (cli *TestServerClient) RunTestConcurrentUpdate(t *testing.T) {
 	dbName := "Concurrent"
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.Params["sql_mode"] = "''"
 	}, dbName, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("drop table if exists test2")
@@ -1601,8 +1631,8 @@ func (cli *testServerClient) runTestConcurrentUpdate(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestExplainForConn(t *testing.T) {
-	cli.runTestsOnNewDB(t, nil, "explain_for_conn", func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestExplainForConn(t *testing.T) {
+	cli.RunTestsOnNewDB(t, nil, "explain_for_conn", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("drop table if exists t")
 		dbt.MustExec("create table t (a int key, b int)")
 		dbt.MustExec("insert t values (1, 1)")
@@ -1623,8 +1653,8 @@ func (cli *testServerClient) runTestExplainForConn(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestErrorCode(t *testing.T) {
-	cli.runTestsOnNewDB(t, nil, "ErrorCode", func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestErrorCode(t *testing.T) {
+	cli.RunTestsOnNewDB(t, nil, "ErrorCode", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("set @@tidb_txn_mode=''")
 		dbt.MustExec("create table test (c int PRIMARY KEY);")
 		dbt.MustExec("insert into test values (1);")
@@ -1696,22 +1726,22 @@ func checkErrorCode(t *testing.T, e error, codes ...uint16) {
 	require.Truef(t, isMatchCode, "got err %v, expected err codes %v", me, codes)
 }
 
-func (cli *testServerClient) runTestAuth(t *testing.T) {
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestAuth(t *testing.T) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`CREATE USER 'authtest'@'%' IDENTIFIED BY '123';`)
 		dbt.MustExec(`CREATE ROLE 'authtest_r1'@'%';`)
 		dbt.MustExec(`GRANT ALL on test.* to 'authtest'`)
 		dbt.MustExec(`GRANT authtest_r1 to 'authtest'`)
 		dbt.MustExec(`SET DEFAULT ROLE authtest_r1 TO authtest`)
 	})
-	cli.runTests(t, func(config *mysql.Config) {
+	cli.RunTests(t, func(config *mysql.Config) {
 		config.User = "authtest"
 		config.Passwd = "123"
 	}, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`USE information_schema;`)
 	})
 
-	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
 		config.User = "authtest"
 		config.Passwd = "456"
 	}))
@@ -1721,7 +1751,7 @@ func (cli *testServerClient) runTestAuth(t *testing.T) {
 	require.NoError(t, db.Close())
 
 	// Test for loading active roles.
-	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	db, err = sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
 		config.User = "authtest"
 		config.Passwd = "123"
 	}))
@@ -1738,11 +1768,11 @@ func (cli *testServerClient) runTestAuth(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test login use IP that not exists in mysql.user.
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`CREATE USER 'authtest2'@'localhost' IDENTIFIED BY '123';`)
 		dbt.MustExec(`GRANT ALL on test.* to 'authtest2'@'localhost'`)
 	})
-	cli.runTests(t, func(config *mysql.Config) {
+	cli.RunTests(t, func(config *mysql.Config) {
 		config.User = "authtest2"
 		config.Passwd = "123"
 	}, func(dbt *testkit.DBTestKit) {
@@ -1750,8 +1780,8 @@ func (cli *testServerClient) runTestAuth(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestIssue3662(t *testing.T) {
-	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+func (cli *TestServerClient) RunTestIssue3662(t *testing.T) {
+	db, err := sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
 		config.DBName = "non_existing_schema"
 	}))
 	require.NoError(t, err)
@@ -1768,8 +1798,8 @@ func (cli *testServerClient) runTestIssue3662(t *testing.T) {
 	require.Equal(t, "Error 1049 (42000): Unknown database 'non_existing_schema'", err.Error())
 }
 
-func (cli *testServerClient) runTestIssue3680(t *testing.T) {
-	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+func (cli *TestServerClient) RunTestIssue3680(t *testing.T) {
+	db, err := sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
 		config.User = "non_existing_user"
 	}))
 	require.NoError(t, err)
@@ -1786,8 +1816,8 @@ func (cli *testServerClient) runTestIssue3680(t *testing.T) {
 	require.Equal(t, "Error 1045 (28000): Access denied for user 'non_existing_user'@'127.0.0.1' (using password: NO)", err.Error())
 }
 
-func (cli *testServerClient) runTestIssue22646(t *testing.T) {
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestIssue22646(t *testing.T) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		now := time.Now()
 		dbt.MustExec(``)
 		if time.Since(now) > 30*time.Second {
@@ -1796,19 +1826,19 @@ func (cli *testServerClient) runTestIssue22646(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestIssue3682(t *testing.T) {
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestIssue3682(t *testing.T) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`CREATE USER 'issue3682'@'%' IDENTIFIED BY '123';`)
 		dbt.MustExec(`GRANT ALL on test.* to 'issue3682'`)
 		dbt.MustExec(`GRANT ALL on mysql.* to 'issue3682'`)
 	})
-	cli.runTests(t, func(config *mysql.Config) {
+	cli.RunTests(t, func(config *mysql.Config) {
 		config.User = "issue3682"
 		config.Passwd = "123"
 	}, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`USE mysql;`)
 	})
-	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
 		config.User = "issue3682"
 		config.Passwd = "wrong_password"
 		config.DBName = "non_existing_schema"
@@ -1823,19 +1853,19 @@ func (cli *testServerClient) runTestIssue3682(t *testing.T) {
 	require.Equal(t, "Error 1045 (28000): Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)", err.Error())
 }
 
-func (cli *testServerClient) runTestAccountLock(t *testing.T) {
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestAccountLock(t *testing.T) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`CREATE USER 'test1' ACCOUNT LOCK;`)
 		dbt.MustExec(`CREATE USER 'test2';`) // unlocked default
 		dbt.MustExec(`GRANT ALL on test.* to 'test1', 'test2'`)
 		dbt.MustExec(`GRANT ALL on mysql.* to 'test1', 'test2'`)
 	})
-	defer cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+	defer cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`DROP USER 'test1', 'test2';`)
 	})
 
 	// 1. test1 can not connect to server
-	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
 		config.User = "test1"
 	}))
 	require.NoError(t, err)
@@ -1845,10 +1875,10 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	require.NoError(t, db.Close())
 
 	// 2. test1 can connect after unlocked
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`ALTER USER 'test1' ACCOUNT UNLOCK;`)
 	})
-	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	db, err = sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
 		config.User = "test1"
 	}))
 	require.NoError(t, err)
@@ -1856,29 +1886,29 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	require.NoError(t, db.Close())
 
 	// 3. if multiple 'ACCOUNT (UN)LOCK' declared, the last declaration takes effect
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		rows := dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user LIKE 'test%' ORDER BY user;`)
-		cli.checkRows(t, rows, "test1 N", "test2 N")
+		cli.CheckRows(t, rows, "test1 N", "test2 N")
 		dbt.MustExec(`ALTER USER test1, test2 ACCOUNT UNLOCK ACCOUNT LOCK;`)
 		rows = dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user LIKE 'test%' ORDER BY user;`)
-		cli.checkRows(t, rows, "test1 Y", "test2 Y")
+		cli.CheckRows(t, rows, "test1 Y", "test2 Y")
 		dbt.MustExec(`ALTER USER test1, test2 ACCOUNT LOCK ACCOUNT UNLOCK;`)
 		rows = dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user LIKE 'test%' ORDER BY user;`)
-		cli.checkRows(t, rows, "test1 N", "test2 N")
+		cli.CheckRows(t, rows, "test1 N", "test2 N")
 		dbt.MustExec(`ALTER USER test1, test2;`) // if not specified, remain the same
 		rows = dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user LIKE 'test%' ORDER BY user;`)
-		cli.checkRows(t, rows, "test1 N", "test2 N")
+		cli.CheckRows(t, rows, "test1 N", "test2 N")
 	})
 
 	// 4. A role can be created default with account locked
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`CREATE ROLE role1;`)
 		dbt.MustExec(`GRANT ALL on test.* to 'role1'`)
 		rows := dbt.MustQuery(`SELECT user, account_locked, password_expired FROM mysql.user WHERE user = 'role1';`)
-		cli.checkRows(t, rows, "role1 Y Y")
+		cli.CheckRows(t, rows, "role1 Y Y")
 	})
 	// When created, the role is locked by default and cannot log in to TiDB
-	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	db, err = sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
 		config.User = "role1"
 	}))
 	require.NoError(t, err)
@@ -1887,16 +1917,16 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	require.Equal(t, "Error 3118 (HY000): Access denied for user 'role1'@'127.0.0.1'. Account is locked.", err.Error())
 	require.NoError(t, db.Close())
 	// After unlocked by the ALTER USER statement, the role can connect to server like a user
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`ALTER USER role1 ACCOUNT UNLOCK;`)
 		dbt.MustExec(`ALTER USER role1 IDENTIFIED BY ''`)
 		rows := dbt.MustQuery(`SELECT user, account_locked, password_expired FROM mysql.user WHERE user = 'role1';`)
-		cli.checkRows(t, rows, "role1 N N")
+		cli.CheckRows(t, rows, "role1 N N")
 	})
-	defer cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+	defer cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`DROP ROLE role1;`)
 	})
-	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	db, err = sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
 		config.User = "role1"
 	}))
 	require.NoError(t, err)
@@ -1904,29 +1934,29 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	require.NoError(t, db.Close())
 
 	// 5. The ability to use a view is not affected by locking the account.
-	cli.runTests(t, func(config *mysql.Config) {
+	cli.RunTests(t, func(config *mysql.Config) {
 		config.User = "test1"
 	}, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("CREATE TABLE IF NOT EXISTS t (id INT, name VARCHAR(16))")
 		dbt.MustExec("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')")
 	})
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`ALTER USER test1 ACCOUNT LOCK;`)
 		rows := dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user = 'test1';`)
-		cli.checkRows(t, rows, "test1 Y")
+		cli.CheckRows(t, rows, "test1 Y")
 		_ = dbt.MustExec("CREATE VIEW v AS SELECT name FROM t WHERE id = 2")
 		rows = dbt.MustQuery("SELECT definer, security_type FROM information_schema.views WHERE table_name = 'v'")
-		cli.checkRows(t, rows, "root@% DEFINER")
+		cli.CheckRows(t, rows, "root@% DEFINER")
 		rows = dbt.MustQuery(`SELECT * FROM v;`)
-		cli.checkRows(t, rows, "b")
+		cli.CheckRows(t, rows, "b")
 	})
 }
 
-func (cli *testServerClient) runTestDBNameEscape(t *testing.T) {
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestDBNameEscape(t *testing.T) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("CREATE DATABASE `aa-a`;")
 	})
-	cli.runTests(t, func(config *mysql.Config) {
+	cli.RunTests(t, func(config *mysql.Config) {
 		config.DBName = "aa-a"
 	}, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`USE mysql;`)
@@ -1934,8 +1964,8 @@ func (cli *testServerClient) runTestDBNameEscape(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestResultFieldTableIsNull(t *testing.T) {
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+func (cli *TestServerClient) RunTestResultFieldTableIsNull(t *testing.T) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.Params["sql_mode"] = "''"
 	}, "ResultFieldTableIsNull", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("drop table if exists test;")
@@ -1944,12 +1974,12 @@ func (cli *testServerClient) runTestResultFieldTableIsNull(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestStatusAPI(t *testing.T) {
-	resp, err := cli.fetchStatus("/status")
+func (cli *TestServerClient) RunTestStatusAPI(t *testing.T) {
+	resp, err := cli.FetchStatus("/status")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	decoder := json.NewDecoder(resp.Body)
-	var data status
+	var data server.Status
 	err = decoder.Decode(&data)
 	require.NoError(t, err)
 	require.Equal(t, tmysql.ServerVersion, data.Version)
@@ -1960,8 +1990,8 @@ func (cli *testServerClient) runTestStatusAPI(t *testing.T) {
 // disabled by default for security reasons. Lets ensure that the behavior
 // is correct.
 
-func (cli *testServerClient) runFailedTestMultiStatements(t *testing.T) {
-	cli.runTestsOnNewDB(t, nil, "FailedMultiStatements", func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunFailedTestMultiStatements(t *testing.T) {
+	cli.RunTestsOnNewDB(t, nil, "FailedMultiStatements", func(dbt *testkit.DBTestKit) {
 		// Default is now OFF in new installations.
 		// It is still WARN in upgrade installations (for now)
 		_, err := dbt.GetDB().Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
@@ -1979,7 +2009,7 @@ func (cli *testServerClient) runFailedTestMultiStatements(t *testing.T) {
 		require.NoErrorf(t, err, "res.RowsAffected() returned error")
 		require.Equal(t, int64(1), count)
 		rows := dbt.MustQuery("show warnings")
-		cli.checkRows(t, rows, "Warning 8130 client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
+		cli.CheckRows(t, rows, "Warning 8130 client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
 		var out int
 		rows = dbt.MustQuery("SELECT value FROM test WHERE id=1;")
 		if rows.Next() {
@@ -2021,8 +2051,8 @@ func (cli *testServerClient) runFailedTestMultiStatements(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestMultiStatements(t *testing.T) {
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+func (cli *TestServerClient) RunTestMultiStatements(t *testing.T) {
+	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
 		config.Params["multiStatements"] = "true"
 	}, "MultiStatements", func(dbt *testkit.DBTestKit) {
 		// Create Table
@@ -2076,8 +2106,8 @@ func (cli *testServerClient) runTestMultiStatements(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestStmtCount(t *testing.T) {
-	cli.runTestsOnNewDB(t, nil, "StatementCount", func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestStmtCount(t *testing.T) {
+	cli.RunTestsOnNewDB(t, nil, "StatementCount", func(dbt *testkit.DBTestKit) {
 		originStmtCnt := getStmtCnt(string(cli.getMetrics(t)))
 
 		dbt.MustExec("create table test (a int)")
@@ -2111,13 +2141,13 @@ func (cli *testServerClient) runTestStmtCount(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
+func (cli *TestServerClient) RunTestDBStmtCount(t *testing.T) {
 	// When run this test solely, the test can be stable.
 	// But if other tests run during this, the result can be unstable.
 	// Because the test collect some metrics before / after the test, and the metrics data are polluted.
 	t.Skip("unstable test")
 
-	cli.runTestsOnNewDB(t, nil, "DBStatementCount", func(dbt *testkit.DBTestKit) {
+	cli.RunTestsOnNewDB(t, nil, "DBStatementCount", func(dbt *testkit.DBTestKit) {
 		originStmtCnt := getDBStmtCnt(string(cli.getMetrics(t)), "DBStatementCount")
 
 		dbt.MustExec("create table test (a int)")
@@ -2172,8 +2202,8 @@ func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestTLSConnection(t *testing.T, overrider configOverrider) error {
-	dsn := cli.getDSN(overrider)
+func (cli *TestServerClient) RunTestTLSConnection(t *testing.T, overrider configOverrider) error {
+	dsn := cli.GetDSN(overrider)
 	db, err := sql.Open("mysql", dsn)
 	require.NoError(t, err)
 	defer func() {
@@ -2187,8 +2217,8 @@ func (cli *testServerClient) runTestTLSConnection(t *testing.T, overrider config
 	return err
 }
 
-func (cli *testServerClient) runTestEnableSecureTransport(t *testing.T, overrider configOverrider) error {
-	dsn := cli.getDSN(overrider)
+func (cli *TestServerClient) RunTestEnableSecureTransport(t *testing.T, overrider configOverrider) error {
+	dsn := cli.GetDSN(overrider)
 	db, err := sql.Open("mysql", dsn)
 	require.NoError(t, err)
 	defer func() {
@@ -2202,8 +2232,8 @@ func (cli *testServerClient) runTestEnableSecureTransport(t *testing.T, override
 	return err
 }
 
-func (cli *testServerClient) runReloadTLS(t *testing.T, overrider configOverrider, errorNoRollback bool) error {
-	db, err := sql.Open("mysql", cli.getDSN(overrider))
+func (cli *TestServerClient) RunReloadTLS(t *testing.T, overrider configOverrider, errorNoRollback bool) error {
+	db, err := sql.Open("mysql", cli.GetDSN(overrider))
 	require.NoError(t, err)
 	defer func() {
 		err := db.Close()
@@ -2217,8 +2247,8 @@ func (cli *testServerClient) runReloadTLS(t *testing.T, overrider configOverride
 	return err
 }
 
-func (cli *testServerClient) runTestSumAvg(t *testing.T) {
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestSumAvg(t *testing.T) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("create table sumavg (a int, b decimal, c double)")
 		dbt.MustExec("insert sumavg values (1, 1, 1)")
 		rows := dbt.MustQuery("select sum(a), sum(b), sum(c) from sumavg")
@@ -2239,8 +2269,8 @@ func (cli *testServerClient) runTestSumAvg(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) getMetrics(t *testing.T) []byte {
-	resp, err := cli.fetchStatus("/metrics")
+func (cli *TestServerClient) getMetrics(t *testing.T) []byte {
+	resp, err := cli.FetchStatus("/metrics")
 	require.NoError(t, err)
 	content, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -2273,10 +2303,10 @@ func getDBStmtCnt(content, dbName string) (stmtCnt map[string]int) {
 
 const retryTime = 100
 
-func (cli *testServerClient) waitUntilCustomServerCanConnect(overriders ...configOverrider) {
+func (cli *TestServerClient) WaitUntilCustomServerCanConnect(overriders ...configOverrider) {
 	// connect server
 	retry := 0
-	dsn := cli.getDSN(overriders...)
+	dsn := cli.GetDSN(overriders...)
 	for ; retry < retryTime; retry++ {
 		time.Sleep(time.Millisecond * 10)
 		db, err := sql.Open("mysql", dsn)
@@ -2295,18 +2325,18 @@ func (cli *testServerClient) waitUntilCustomServerCanConnect(overriders ...confi
 		log.Fatal("failed to connect DB in every 10 ms", zap.String("DSN", dsn), zap.Int("retryTime", retryTime))
 	}
 }
-func (cli *testServerClient) waitUntilServerCanConnect() {
-	cli.waitUntilCustomServerCanConnect(nil)
+func (cli *TestServerClient) WaitUntilServerCanConnect() {
+	cli.WaitUntilCustomServerCanConnect(nil)
 }
 
-func (cli *testServerClient) waitUntilServerOnline() {
+func (cli *TestServerClient) WaitUntilServerOnline() {
 	// connect server
-	cli.waitUntilServerCanConnect()
+	cli.WaitUntilServerCanConnect()
 
 	retry := 0
 	for ; retry < retryTime; retry++ {
 		// fetch http status
-		resp, err := cli.fetchStatus("/status")
+		resp, err := cli.FetchStatus("/status")
 		if err == nil {
 			_, err = io.ReadAll(resp.Body)
 			if err != nil {
@@ -2325,8 +2355,8 @@ func (cli *testServerClient) waitUntilServerOnline() {
 	}
 }
 
-func (cli *testServerClient) runTestInitConnect(t *testing.T) {
-	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestInitConnect(t *testing.T) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`SET GLOBAL init_connect="insert into test.ts VALUES (NOW());SET @a=1;"`)
 		dbt.MustExec(`CREATE USER init_nonsuper`)
 		dbt.MustExec(`CREATE USER init_super`)
@@ -2336,7 +2366,7 @@ func (cli *testServerClient) runTestInitConnect(t *testing.T) {
 	})
 
 	// test init_nonsuper
-	cli.runTests(t, func(config *mysql.Config) {
+	cli.RunTests(t, func(config *mysql.Config) {
 		config.User = "init_nonsuper"
 	}, func(dbt *testkit.DBTestKit) {
 		rows := dbt.MustQuery(`SELECT @a`)
@@ -2349,7 +2379,7 @@ func (cli *testServerClient) runTestInitConnect(t *testing.T) {
 	})
 
 	// test init_super
-	cli.runTests(t, func(config *mysql.Config) {
+	cli.RunTests(t, func(config *mysql.Config) {
 		config.User = "init_super"
 	}, func(dbt *testkit.DBTestKit) {
 		rows := dbt.MustQuery(`SELECT IFNULL(@a,"")`)
@@ -2361,14 +2391,14 @@ func (cli *testServerClient) runTestInitConnect(t *testing.T) {
 		require.NoError(t, rows.Close())
 	})
 	// set global init_connect to empty to avoid fail other tests
-	defer cli.runTests(t, func(config *mysql.Config) {
+	defer cli.RunTests(t, func(config *mysql.Config) {
 		config.User = "init_super"
 	}, func(dbt *testkit.DBTestKit) {
 		// set init_connect to empty to avoid fail other tests
 		dbt.MustExec(`SET GLOBAL init_connect=""`)
 	})
 
-	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
 		config.User = "init_nonsuper"
 	}))
 	require.NoError(t, err) // doesn't fail because of lazy loading
@@ -2377,8 +2407,8 @@ func (cli *testServerClient) runTestInitConnect(t *testing.T) {
 
 // Client errors are only incremented when using the TiDB Server protocol,
 // and not internal SQL statements. Thus, this test is in the server-test suite.
-func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
-	cli.runTestsOnNewDB(t, nil, "clientErrors", func(dbt *testkit.DBTestKit) {
+func (cli *TestServerClient) RunTestInfoschemaClientErrors(t *testing.T) {
+	cli.RunTestsOnNewDB(t, nil, "clientErrors", func(dbt *testkit.DBTestKit) {
 		clientErrors := []struct {
 			stmt              string
 			incrementWarnings bool

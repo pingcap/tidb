@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "httputil",
+    srcs = ["http_util.go"],
+    importpath = "github.com/pingcap/tidb/server/internal/httputil",
+    visibility = ["//server:__subpackages__"],
+    deps = [
+        "//parser/terror",
+        "//server/constvar",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

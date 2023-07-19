@@ -62,6 +62,8 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege/privileges"
 	servererr "github.com/pingcap/tidb/server/err"
+	"github.com/pingcap/tidb/server/planreplayer"
+	"github.com/pingcap/tidb/server/statshandler"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -134,6 +136,14 @@ type Server struct {
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
 	printMDLLogTime     time.Time
+}
+
+func (s *Server) ListenerAddr() net.Addr {
+	return s.listener.Addr()
+}
+
+func (s *Server) StatusListenerAddr() net.Addr {
+	return s.statusListener.Addr()
 }
 
 // GetStatusServerAddr gets statusServer address for MppCoordinatorManager usage
@@ -831,7 +841,7 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 	}
 
 	if !query {
-		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
+		// Mark the client connection Status as WaitShutdown, when clientConn.Run detect
 		// this, it will end the dispatch loop and exit.
 		conn.setStatus(connStatusWaitShutdown)
 	}
@@ -1053,4 +1063,54 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	for _, id := range connIDs {
 		s.Kill(id, false, false)
 	}
+}
+
+func (s *Server) newPlanReplayerHandler() *planreplayer.PlanReplayerHandler {
+	cfg := config.GetGlobalConfig()
+	prh := planreplayer.NewPlanReplayerHandler(cfg.AdvertiseAddress, cfg.Status.StatusPort)
+	if s.dom != nil && s.dom.InfoSyncer() != nil {
+		prh.SetInfoGetter(s.dom.InfoSyncer())
+	}
+	if s.dom != nil && s.dom.InfoSchema() != nil {
+		prh.SetInfoSchema(s.dom.InfoSchema())
+	}
+	if s.dom != nil && s.dom.StatsHandle() != nil {
+		prh.SetStatsHandle(s.dom.StatsHandle())
+	}
+	return prh
+}
+
+func (s Server) newStatsHandler() *statshandler.StatsHandler {
+	store, ok := s.driver.(*TiDBDriver)
+	if !ok {
+		panic("Illegal driver")
+	}
+
+	do, err := session.GetDomain(store.store)
+	if err != nil {
+		panic("Failed to get domain")
+	}
+	return statshandler.NewStatsHandler(do)
+}
+
+func (s *Server) newStatsHistoryHandler() *statshandler.StatsHistoryHandler {
+	store, ok := s.driver.(*TiDBDriver)
+	if !ok {
+		panic("Illegal driver")
+	}
+
+	do, err := session.GetDomain(store.store)
+	if err != nil {
+		panic("Failed to get domain")
+	}
+	return statshandler.NewStatsHistoryHandler(do)
+}
+
+func (s *Server) newOptimizeTraceHandler() *planreplayer.OptimizeTraceHandler {
+	cfg := config.GetGlobalConfig()
+	oth := planreplayer.NewOptimizeTraceHandler(cfg.AdvertiseAddress, cfg.Status.StatusPort)
+	if s.dom != nil && s.dom.InfoSyncer() != nil {
+		oth.SetInfoGetter(s.dom.InfoSyncer())
+	}
+	return oth
 }

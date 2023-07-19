@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package planreplayer
 
 import (
 	"fmt"
@@ -20,9 +20,9 @@ import (
 	"path/filepath"
 
 	"github.com/gorilla/mux"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/server/constvar"
 	"github.com/pingcap/tidb/util"
 )
 
@@ -33,21 +33,22 @@ type OptimizeTraceHandler struct {
 	statusPort uint
 }
 
-func (s *Server) newOptimizeTraceHandler() *OptimizeTraceHandler {
-	cfg := config.GetGlobalConfig()
-	oth := &OptimizeTraceHandler{
-		address:    cfg.AdvertiseAddress,
-		statusPort: cfg.Status.StatusPort,
+// NewOptimizeTraceHandler returns OptimizeTraceHandler
+func NewOptimizeTraceHandler(address string, statusPort uint) *OptimizeTraceHandler {
+	return &OptimizeTraceHandler{
+		address:    address,
+		statusPort: statusPort,
 	}
-	if s.dom != nil && s.dom.InfoSyncer() != nil {
-		oth.infoGetter = s.dom.InfoSyncer()
-	}
-	return oth
+}
+
+// SetInfoGetter set infoGetter
+func (oth *OptimizeTraceHandler) SetInfoGetter(infoGetter *infosync.InfoSyncer) {
+	oth.infoGetter = infoGetter
 }
 
 func (oth OptimizeTraceHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
-	name := params[pFileName]
+	name := params[constvar.FileNameParam]
 	handler := downloadFileHandler{
 		filePath:           filepath.Join(domain.GetOptimizerTraceDirName(), name),
 		fileName:           name,
