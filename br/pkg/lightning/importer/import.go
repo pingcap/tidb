@@ -52,11 +52,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/errno"
-=======
 	tidbconfig "github.com/pingcap/tidb/config"
->>>>>>> 5b8a14ad4dc (lightning: init client-go global cfg (#45464))
+	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
