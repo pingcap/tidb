@@ -618,18 +618,18 @@ const (
 		INDEX time_index(time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
-	// CreateRunawayQuarantineWatchTable stores the condition which is used to check whether query should be quarantined.
-	CreateRunawayQuarantineWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_quarantined_watch (
+	// CreateRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
+	CreateRunawayWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_watch (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		resource_group_name varchar(32) not null,
 		start_time TIMESTAMP NOT NULL,
 		end_time TIMESTAMP NOT NULL,
 		watch varchar(12) NOT NULL,
 		watch_text TEXT NOT NULL,
-		tidb_server varchar(64),
-		INDEX sql_index(watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
+		source varchar(64),
+		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
 		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
-
 	// CreateImportJobs is a table that IMPORT INTO uses.
 	CreateImportJobs = `CREATE TABLE IF NOT EXISTS mysql.tidb_import_jobs (
 		id bigint(64) NOT NULL AUTO_INCREMENT,
@@ -947,11 +947,12 @@ const (
 	version168 = 168
 	version169 = 169
 	version170 = 170
+	version171 = 171
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version170
+var currentBootstrapVersion int64 = version171
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1090,6 +1091,7 @@ var (
 		upgradeToVer168,
 		upgradeToVer169,
 		upgradeToVer170,
+		upgradeToVer171,
 	}
 )
 
@@ -2733,7 +2735,7 @@ func upgradeToVer169(s Session, ver int64) {
 	if ver >= version169 {
 		return
 	}
-	mustExecute(s, CreateRunawayQuarantineWatchTable)
+	mustExecute(s, CreateRunawayWatchTable)
 	mustExecute(s, CreateRunawayTable)
 }
 
@@ -2742,6 +2744,14 @@ func upgradeToVer170(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateTimers)
+}
+
+func upgradeToVer171(s Session, ver int64) {
+	if ver >= version171 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_quarantined_watch")
+	mustExecute(s, CreateRunawayWatchTable)
 }
 
 func writeOOMAction(s Session) {
@@ -2860,8 +2870,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateLoadDataJobs)
 	// Create tidb_import_jobs
 	mustExecute(s, CreateImportJobs)
-	// create quarantine_watch
-	mustExecute(s, CreateRunawayQuarantineWatchTable)
+	// create runaway_watch
+	mustExecute(s, CreateRunawayWatchTable)
 	// create runaway_queries
 	mustExecute(s, CreateRunawayTable)
 	// create tidb_timers
