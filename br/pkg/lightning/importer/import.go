@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	tidbconfig "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
@@ -61,6 +62,7 @@ import (
 	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/prometheus/client_golang/prometheus"
+	tikvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -352,6 +354,8 @@ func NewImportControllerWithPauser(
 				cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
 			}
 		}
+
+		initGlobalConfig(tls.ToTiKVSecurityConfig())
 
 		encodingBuilder = local.NewEncodingBuilder(ctx)
 		regionSizeGetter := &local.TableRegionSizeGetterImpl{
@@ -2226,4 +2230,19 @@ func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ign
 		extendValueDatums = append(extendValueDatums, types.NewStringDatum(extendVal))
 	}
 	return filteredColumns, extendValueDatums
+}
+
+// check store liveness of tikv client-go requires GlobalConfig to work correctly, so we need to init it,
+// else tikv will report SSL error when tls is enabled.
+// and the SSL error seems affects normal logic of newer TiKV version, and cause the error "tikv: region is unavailable"
+// during checksum.
+// todo: DM relay on lightning physical mode too, but client-go doesn't support passing TLS data as bytes,
+func initGlobalConfig(secCfg tikvconfig.Security) {
+	if secCfg.ClusterSSLCA != "" || secCfg.ClusterSSLCert != "" {
+		conf := tidbconfig.GetGlobalConfig()
+		conf.Security.ClusterSSLCA = secCfg.ClusterSSLCA
+		conf.Security.ClusterSSLCert = secCfg.ClusterSSLCert
+		conf.Security.ClusterSSLKey = secCfg.ClusterSSLKey
+		tidbconfig.StoreGlobalConfig(conf)
+	}
 }
