@@ -306,6 +306,7 @@ func NewTiDBBackend(
 	}
 	return &tidbBackend{
 		db:          db,
+		conflictCfg: conflict,
 		onDuplicate: onDuplicate,
 		errorMgr:    errorMgr,
 	}
@@ -621,7 +622,7 @@ rowLoop:
 				// retry next loop
 			case be.errorMgr.TypeErrorsRemain() > 0 ||
 				be.errorMgr.ConflictErrorsRemain() > 0 ||
-				!be.errorMgr.RecordErrorOnce():
+				(be.conflictCfg.Strategy == config.ErrorOnDup && !be.errorMgr.RecordErrorOnce()):
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
 				// we need to redo the writing row-by-row to find where the error locates (and skip it correctly in future).
 				if err = be.WriteRowsToDB(ctx, tableName, columnNames, r); err != nil {
