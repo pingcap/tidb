@@ -42,6 +42,7 @@ func TestLFUPutGetDel(t *testing.T) {
 	require.Nil(t, v)
 	lfu.wait()
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
+	require.Equal(t, 0, len(lfu.Values()))
 }
 
 func TestLFUFreshMemUsage(t *testing.T) {
@@ -158,4 +159,5 @@ func TestLFUCachePutGetWithManyConcurrency2(t *testing.T) {
 	wg.Wait()
 	lfu.wait()
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
+	require.Equal(t, 1000, len(lfu.Values()))
 }
