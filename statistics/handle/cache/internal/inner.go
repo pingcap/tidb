@@ -19,31 +19,28 @@ import (
 )
 
 // StatsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
+// TODO: this cache shouldn't be aware of *statistics.Table, e.g.
+//  1. change Put(int64, *stats.Table) to Put(k, v interface{}, vMem int64).
+//  2. remove remove the Version method.
 type StatsCacheInner interface {
-	// GetByQuery retrieves cache triggered by a query. Usually used in LRU.
-	GetByQuery(int64) (*statistics.Table, bool)
 	// Get gets the cache.
-	Get(int64) (*statistics.Table, bool)
-	// PutByQuery puts a cache triggered by a query. Usually used in LRU.
-	PutByQuery(int64, *statistics.Table)
+	Get(tid int64, moveFront bool) (*statistics.Table, bool)
 	// Put puts a cache.
-	Put(int64, *statistics.Table)
+	Put(tid int64, tbl *statistics.Table, moveLRUFront bool)
 	// Del deletes a cache.
 	Del(int64)
 	// Cost returns the memory usage of the cache.
 	Cost() int64
-	// Keys returns the keys of the cache.
-	Keys() []int64
 	// Values returns the values of the cache.
 	Values() []*statistics.Table
-	Map() map[int64]*statistics.Table
 	// Len returns the length of the cache.
 	Len() int
-	FreshMemUsage()
 	// Copy returns a copy of the cache
 	Copy() StatsCacheInner
 	// SetCapacity sets the capacity of the cache
 	SetCapacity(int64)
+
 	// Front returns the front element's owner tableID, only used for test
+	// TODO: this method is mainly for test, remove it in the future.
 	Front() int64
 }
