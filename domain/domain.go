@@ -1702,9 +1702,9 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		logutil.BgLogger().Info("dist task scheduler stopped")
 	}()
 
-	var dispatch dispatcher.Dispatch
+	var dispatcherPool *dispatcher.DispatcherPool
 	startDispatchIfNeeded := func() {
-		if dispatch != nil {
+		if dispatcherPool != nil {
 			return
 		}
 		newDispatcherPool, err := dispatcher.NewDispatcherPool(ctx, taskManager)
@@ -1712,14 +1712,14 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
 			return
 		}
-		dispatch = newDispatcherPool
-		dispatch.Start()
+		dispatcherPool = newDispatcherPool
+		dispatcherPool.Start()
 	}
 	stopDispatchIfNeeded := func() {
-		if dispatch != nil {
+		if dispatcherPool != nil {
 			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
-			dispatch.Stop()
-			dispatch = nil
+			dispatcherPool.Stop()
+			dispatcherPool = nil
 			logutil.BgLogger().Info("dist task dispatcher stopped", zap.String("id", do.ddl.GetID()))
 		}
 	}

@@ -70,34 +70,34 @@ type TaskHandle interface {
 	storage.SessionExecutor
 }
 
-func (d *dispatcherPool) getRunningGTaskCnt() int {
+func (d *Pool) getRunningGTaskCnt() int {
 	d.runningGTasks.RLock()
 	defer d.runningGTasks.RUnlock()
 	return len(d.runningGTasks.taskIDs)
 }
 
-func (d *dispatcherPool) setRunningGTask(gTask *proto.Task) {
+func (d *Pool) setRunningGTask(gTask *proto.Task) {
 	d.runningGTasks.Lock()
 	d.runningGTasks.taskIDs[gTask.ID] = struct{}{}
 	d.runningGTasks.Unlock()
 }
 
-func (d *dispatcherPool) isRunningGTask(globalTaskID int64) bool {
+func (d *Pool) isRunningGTask(globalTaskID int64) bool {
 	d.runningGTasks.Lock()
 	defer d.runningGTasks.Unlock()
 	_, ok := d.runningGTasks.taskIDs[globalTaskID]
 	return ok
 }
 
-func (d *dispatcherPool) delRunningGTask(globalTaskID int64) {
+func (d *Pool) delRunningGTask(globalTaskID int64) {
 	d.runningGTasks.Lock()
 	defer d.runningGTasks.Unlock()
 	delete(d.runningGTasks.taskIDs, globalTaskID)
 }
 
-// dispatcherPool dispatch and monitor tasks.
+// Pool dispatch and monitor tasks.
 // The monitoring task number is limited by size of gPool.
-type dispatcherPool struct {
+type Pool struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	taskMgr *storage.TaskManager
@@ -111,30 +111,30 @@ type dispatcherPool struct {
 	detectPendingGTaskCh chan *proto.Task
 }
 
-// NewDispatcherPool creates a dispatcherPool struct.
-func NewDispatcherPool(ctx context.Context, taskTable *storage.TaskManager) (Dispatch, error) {
-	dispatcherPool := &dispatcherPool{
+// NewPool creates a Pool struct.
+func NewPool(ctx context.Context, taskTable *storage.TaskManager) (*Pool, error) {
+	pool := &Pool{
 		taskMgr:              taskTable,
 		detectPendingGTaskCh: make(chan *proto.Task, DefaultDispatchConcurrency),
 	}
-	pool, err := spool.NewPool("dispatch_pool", int32(DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
+	gPool, err := spool.NewPool("dispatch_pool", int32(DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
 		return nil, err
 	}
-	dispatcherPool.gPool = pool
-	dispatcherPool.ctx, dispatcherPool.cancel = context.WithCancel(ctx)
-	dispatcherPool.runningGTasks.taskIDs = make(map[int64]struct{})
+	pool.gPool = gPool
+	pool.ctx, pool.cancel = context.WithCancel(ctx)
+	pool.runningGTasks.taskIDs = make(map[int64]struct{})
 
-	return dispatcherPool, nil
+	return pool, nil
 }
 
-// Start implements dispatcherPool.Start interface.
-func (d *dispatcherPool) Start() {
+// Start implements Pool.Start interface.
+func (d *Pool) Start() {
 	d.wg.Run(d.DispatchTaskLoop)
 }
 
-// Stop implements dispatcherPool.Stop interface.
-func (d *dispatcherPool) Stop() {
+// Stop implements Pool.Stop interface.
+func (d *Pool) Stop() {
 	d.cancel()
 	d.gPool.ReleaseAndWait()
 	d.wg.Wait()
@@ -144,7 +144,7 @@ func (d *dispatcherPool) Stop() {
 var MockOwnerChange func()
 
 // DispatchTaskLoop dispatches the global tasks.
-func (d *dispatcherPool) DispatchTaskLoop() {
+func (d *Pool) DispatchTaskLoop() {
 	logutil.BgLogger().Info("dispatch task loop start")
 	ticker := time.NewTicker(checkTaskRunningInterval)
 	defer ticker.Stop()
@@ -196,7 +196,7 @@ func (d *dispatcherPool) DispatchTaskLoop() {
 	}
 }
 
-func (d *dispatcherPool) submitTask(gTask *proto.Task) {
+func (d *Pool) submitTask(gTask *proto.Task) {
 	// Using the pool with block, so it wouldn't return an error.
 	_ = d.gPool.Run(func() {
 		logutil.BgLogger().Info("submit one task", zap.Int64("task ID", gTask.ID),
@@ -205,7 +205,7 @@ func (d *dispatcherPool) submitTask(gTask *proto.Task) {
 	})
 }
 
-func (d *dispatcherPool) monitorTask(taskID int64) (gTask *proto.Task, finished bool, subTaskErrs []error) {
+func (d *Pool) monitorTask(taskID int64) (gTask *proto.Task, finished bool, subTaskErrs []error) {
 	// TODO: Consider putting the following operations into a transaction.
 	gTask, err := d.taskMgr.GetGlobalTaskByID(taskID)
 	if err != nil {
@@ -241,7 +241,7 @@ func (d *dispatcherPool) monitorTask(taskID int64) (gTask *proto.Task, finished 
 	}
 }
 
-func (d *dispatcherPool) scheduleTask(taskID int64) {
+func (d *Pool) scheduleTask(taskID int64) {
 	ticker := time.NewTicker(checkTaskFinishedInterval)
 	defer ticker.Stop()
 	for {
@@ -292,7 +292,7 @@ func (d *dispatcherPool) scheduleTask(taskID int64) {
 	}
 }
 
-func (d *dispatcherPool) processFlow(gTask *proto.Task, errs []error) error {
+func (d *Pool) processFlow(gTask *proto.Task, errs []error) error {
 	if len(errs) > 0 {
 		// Found an error when task is running.
 		logutil.BgLogger().Info("process flow, handle an error", zap.Int64("task-id", gTask.ID), zap.Errors("err msg", errs))
@@ -309,7 +309,7 @@ func (d *dispatcherPool) processFlow(gTask *proto.Task, errs []error) error {
 	return d.processNormalFlow(gTask)
 }
 
-func (d *dispatcherPool) updateTask(gTask *proto.Task, gTaskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
+func (d *Pool) updateTask(gTask *proto.Task, gTaskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
 	prevState := gTask.State
 	gTask.State = gTaskState
 	for i := 0; i < retryTimes; i++ {
@@ -332,7 +332,7 @@ func (d *dispatcherPool) updateTask(gTask *proto.Task, gTaskState string, newSub
 	return err
 }
 
-func (d *dispatcherPool) processErrFlow(gTask *proto.Task, receiveErr []error) error {
+func (d *Pool) processErrFlow(gTask *proto.Task, receiveErr []error) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	handle := GetTaskFlowHandle(gTask.Type)
@@ -350,7 +350,7 @@ func (d *dispatcherPool) processErrFlow(gTask *proto.Task, receiveErr []error) e
 	return d.dispatchSubTask4Revert(gTask, handle, meta)
 }
 
-func (d *dispatcherPool) dispatchSubTask4Revert(gTask *proto.Task, handle TaskFlowHandle, meta []byte) error {
+func (d *Pool) dispatchSubTask4Revert(gTask *proto.Task, handle TaskFlowHandle, meta []byte) error {
 	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, handle, gTask)
 	if err != nil {
 		logutil.BgLogger().Warn("get global task's all instances failed", zap.Error(err))
@@ -368,7 +368,7 @@ func (d *dispatcherPool) dispatchSubTask4Revert(gTask *proto.Task, handle TaskFl
 	return d.updateTask(gTask, proto.TaskStateReverting, subTasks, retrySQLTimes)
 }
 
-func (d *dispatcherPool) processNormalFlow(gTask *proto.Task) error {
+func (d *Pool) processNormalFlow(gTask *proto.Task) error {
 	// 1. generate the needed global task meta and subTask meta (dist-plan).
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
@@ -392,7 +392,7 @@ func (d *dispatcherPool) processNormalFlow(gTask *proto.Task) error {
 	return d.dispatchSubTask(gTask, handle, metas)
 }
 
-func (d *dispatcherPool) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, metas [][]byte) error {
+func (d *Pool) dispatchSubTask(gTask *proto.Task, handle TaskFlowHandle, metas [][]byte) error {
 	// Adjust the global task's concurrency.
 	if gTask.Concurrency == 0 {
 		gTask.Concurrency = DefaultSubtaskConcurrency
@@ -463,7 +463,7 @@ func GenerateSchedulerNodes(ctx context.Context) ([]*infosync.ServerInfo, error)
 }
 
 // GetAllSchedulerIDs gets all the scheduler IDs.
-func (d *dispatcherPool) GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, gTask *proto.Task) ([]string, error) {
+func (d *Pool) GetAllSchedulerIDs(ctx context.Context, handle TaskFlowHandle, gTask *proto.Task) ([]string, error) {
 	serverInfos, err := handle.GetEligibleInstances(ctx, gTask)
 	if err != nil {
 		return nil, err
@@ -485,7 +485,8 @@ func (d *dispatcherPool) GetAllSchedulerIDs(ctx context.Context, handle TaskFlow
 	return ids, nil
 }
 
-func (d *dispatcherPool) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error) {
+// GetPreviousSubtaskMetas get subtask metas from specific step.
+func (d *Pool) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][]byte, error) {
 	previousSubtasks, err := d.taskMgr.GetSucceedSubtasksByStep(gTaskID, step)
 	if err != nil {
 		logutil.BgLogger().Warn("get previous succeed subtask failed", zap.Int64("ID", gTaskID), zap.Int64("step", step))
@@ -498,15 +499,17 @@ func (d *dispatcherPool) GetPreviousSubtaskMetas(gTaskID int64, step int64) ([][
 	return previousSubtaskMetas, nil
 }
 
-func (d *dispatcherPool) WithNewSession(fn func(se sessionctx.Context) error) error {
+// WithNewSession executes the function with a new session.
+func (d *Pool) WithNewSession(fn func(se sessionctx.Context) error) error {
 	return d.taskMgr.WithNewSession(fn)
 }
 
-func (d *dispatcherPool) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
+// WithNewTxn executes the fn in a new transaction.
+func (d *Pool) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	return d.taskMgr.WithNewTxn(ctx, fn)
 }
 
-func (*dispatcherPool) checkConcurrencyOverflow(cnt int) bool {
+func (*Pool) checkConcurrencyOverflow(cnt int) bool {
 	if cnt >= DefaultDispatchConcurrency {
 		logutil.BgLogger().Info("dispatch task loop, running GTask cnt is more than concurrency",
 			zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
