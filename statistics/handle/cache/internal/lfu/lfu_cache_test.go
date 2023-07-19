@@ -109,18 +109,17 @@ func TestCacheLen(t *testing.T) {
 
 func TestLFUCachePutGetWithManyConcurrency(t *testing.T) {
 	// to test DATA RACE
-	capacity := int64(12)
+	capacity := int64(100000000000)
 	lfu, err := NewLFU(capacity)
 	require.NoError(t, err)
 	var wg sync.WaitGroup
+	wg.Add(2000)
 	for i := 0; i < 1000; i++ {
-		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 			lfu.Put(int64(i), t1, true)
 		}(i)
-		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			lfu.Get(int64(i), true)
@@ -128,31 +127,32 @@ func TestLFUCachePutGetWithManyConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 	lfu.wait()
+	require.Equal(t, lfu.Len(), 1000)
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
+	require.Equal(t, 1000, len(lfu.Values()))
 }
 
 func TestLFUCachePutGetWithManyConcurrency2(t *testing.T) {
 	// to test DATA RACE
-	capacity := int64(12)
+	capacity := int64(100000000000)
 	lfu, err := NewLFU(capacity)
 	require.NoError(t, err)
 	var wg sync.WaitGroup
+	wg.Add(10)
 	for i := 0; i < 5; i++ {
-		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 1000; i++ {
+			for n := 0; n < 1000; n++ {
 				t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
-				lfu.Put(int64(i), t1, true)
+				lfu.Put(int64(n), t1, true)
 			}
 		}()
 	}
 	for i := 0; i < 5; i++ {
-		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 1000; i++ {
-				lfu.Get(int64(i), true)
+			for n := 0; n < 1000; n++ {
+				lfu.Get(int64(n), true)
 			}
 		}()
 	}

@@ -88,7 +88,7 @@ func (s *LFU) Values() []*statistics.Table {
 			result = append(result, value.(*statistics.Table))
 		}
 	}
-	return nil
+	return result
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
