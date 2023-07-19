@@ -16,6 +16,7 @@ package toomanytests
 
 import (
 	"go/ast"
+	"go/token"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -28,6 +29,10 @@ var Analyzer = &analysis.Analyzer{
 	Run: func(pass *analysis.Pass) (any, error) {
 		cnt := 0
 		for _, f := range pass.Files {
+			astFile := pass.Fset.File(f.Pos())
+			if !isTestFile(astFile) {
+				continue
+			}
 			for _, n := range f.Decls {
 				funcDecl, ok := n.(*ast.FuncDecl)
 				if ok {
@@ -44,4 +49,8 @@ var Analyzer = &analysis.Analyzer{
 		}
 		return nil, nil
 	},
+}
+
+func isTestFile(file *token.File) bool {
+	return strings.HasSuffix(file.Name(), "_test.go")
 }
