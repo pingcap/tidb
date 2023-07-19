@@ -355,6 +355,8 @@ func NewImportControllerWithPauser(
 			}
 		}
 
+		initGlobalConfig(tls.ToTiKVSecurityConfig())
+
 		encodingBuilder = local.NewEncodingBuilder(ctx)
 		regionSizeGetter := &local.TableRegionSizeGetterImpl{
 			DB: db,
@@ -1528,7 +1530,6 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			}
 		}
 
-		initGlobalConfig(rc.tls.ToTiKVSecurityConfig())
 		// Disable GC because TiDB enables GC already.
 		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
 			fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", rc.cfg.TiDB.PdAddr, rc.keyspaceName),
