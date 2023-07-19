@@ -25,6 +25,7 @@ type ClusterServerInfo struct {
 	AllServersInfo               map[string]*infosync.ServerInfo `json:"all_servers_info,omitempty"`
 }
 
+// TableFlashReplicaInfo is used to report the flash replica info of a table.
 type TableFlashReplicaInfo struct {
 	// Modifying the field name needs to negotiate with TiFlash colleague.
 	ID             int64    `json:"id"`
