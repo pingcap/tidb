@@ -198,6 +198,7 @@ func (tr *TableImporter) importTable(
 	}
 
 	// 2. Do duplicate detection if needed
+	// TODO(lance6716): deprecate the config
 	if isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.OnDuplicate != "" {
 		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
 		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)

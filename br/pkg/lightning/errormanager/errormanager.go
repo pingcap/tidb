@@ -152,6 +152,7 @@ type ErrorManager struct {
 	conflictV1Enabled     bool
 	conflictV2Enabled     bool
 	logger                log.Logger
+	recordErrorOnce       *atomic.Bool
 }
 
 // TypeErrorsRemain returns the number of type errors that can be recorded.
@@ -169,6 +170,12 @@ func (em *ErrorManager) ConflictRecordsRemain() int64 {
 	return em.conflictRecordsRemain.Load()
 }
 
+// RecordErrorOnce returns if RecordDuplicateOnce has been called. Not that this
+// method is not atomic with RecordDuplicateOnce.
+func (em *ErrorManager) RecordErrorOnce() bool {
+	return em.recordErrorOnce.Load()
+}
+
 // New creates a new error manager.
 func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 	conflictErrRemain := atomic.NewInt64(cfg.Conflict.Threshold)
@@ -182,10 +189,11 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 		conflictErrRemain:     conflictErrRemain,
 		conflictRecordsRemain: conflictRecordsRemain,
 		logger:                logger,
+		recordErrorOnce:       atomic.NewBool(false),
 	}
 	switch cfg.TikvImporter.Backend {
 	case config.BackendLocal:
-		if cfg.TikvImporter.OnDuplicate != "" {
+		if cfg.Conflict.Strategy != "" {
 			em.conflictV2Enabled = true
 		}
 	case config.BackendTiDB:
@@ -220,7 +228,7 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 	if em.conflictV1Enabled {
 		sqls = append(sqls, [2]string{"create conflict error v1 table", createConflictErrorTable})
 	}
-	if em.conflictV2Enabled && em.conflictErrRemain.Load() > 0 {
+	if em.conflictV2Enabled {
 		sqls = append(sqls, [2]string{"create duplicate records table", createDupRecordTable})
 	}
 
@@ -532,6 +540,19 @@ func (em *ErrorManager) RecordDuplicate(
 		return nil
 	}
 
+	return em.recordDuplicate(ctx, logger, tableName, path, offset, errMsg, rowID, rowData)
+}
+
+func (em *ErrorManager) recordDuplicate(
+	ctx context.Context,
+	logger log.Logger,
+	tableName string,
+	path string,
+	offset int64,
+	errMsg string,
+	rowID int64,
+	rowData string,
+) error {
 	exec := common.SQLWithRetry{
 		DB:           em.db,
 		Logger:       logger,
@@ -547,6 +568,30 @@ func (em *ErrorManager) RecordDuplicate(
 		rowID,
 		rowData,
 	)
+}
+
+// RecordDuplicateOnce records a "duplicate entry" error so user can query them later.
+// Currently the error will not be shared for multiple lightning instances.
+// Different from RecordDuplicate, this function is used when conflict.strategy
+// is "error" and will only write the first conflict error to the table.
+func (em *ErrorManager) RecordDuplicateOnce(
+	ctx context.Context,
+	logger log.Logger,
+	tableName string,
+	path string,
+	offset int64,
+	errMsg string,
+	rowID int64,
+	rowData string,
+) {
+	ok := em.recordErrorOnce.CompareAndSwap(false, true)
+	if !ok {
+		return
+	}
+	err := em.recordDuplicate(ctx, logger, tableName, path, offset, errMsg, rowID, rowData)
+	if err != nil {
+		logger.Warn("meet error when record duplicate entry error", zap.Error(err))
+	}
 }
 
 func (em *ErrorManager) errorCount(typeVal func(*config.MaxError) int64) int64 {
