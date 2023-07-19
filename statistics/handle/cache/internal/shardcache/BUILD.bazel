@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "shardcache",
@@ -11,5 +11,18 @@ go_library(
     deps = [
         "//statistics",
         "//statistics/handle/cache/internal",
+    ],
+)
+
+go_test(
+    name = "shardcache_test",
+    timeout = "short",
+    srcs = ["sharding_map_cache_test.go"],
+    embed = [":shardcache"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//statistics/handle/cache/internal/testutil",
+        "@com_github_stretchr_testify//require",
     ],
 )
