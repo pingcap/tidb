@@ -44,9 +44,9 @@ clean() {
     --mode delete --start-key $1 --end-key $2
 }
 
-test_full_txnkv() {
-    check_range_start=00
-    check_range_end=ff
+test_full_txnkv_encryption() {
+    check_range_start="hello"
+    check_range_end="world"
 
     rm -rf $BACKUP_TXN_FULL
 
@@ -70,7 +70,7 @@ test_full_txnkv() {
     fi
 }
 
-checksum_empty=$(checksum 31 3130303030303030)
+checksum_empty=$(checksum "hello" "world")
 
 run_test() {
     if [ -z "$1" ];then
@@ -81,25 +81,25 @@ run_test() {
     fi
 
     rm -rf $BACKUP_DIR
-    clean 31 3130303030303030
+    clean "hello" "world" 
 
     # generate txn kv randomly in range[start-key, end-key) in 10s
     bin/txnkv --pd $PD_ADDR \
         --ca "$TEST_DIR/certs/ca.pem" \
         --cert "$TEST_DIR/certs/br.pem" \
         --key "$TEST_DIR/certs/br.key" \
-        --mode rand-gen --start-key 31 --end-key 3130303030303030 --duration 10
+        --mode rand-gen --start-key "hello" --end-key "world" --duration 10
 
-    checksum_ori=$(checksum 31 3130303030303030)
+    checksum_ori=$(checksum "hello" "world")
 
     # backup txnkv
     echo "backup start..."
-    run_br --pd $PD_ADDR backup txn -s "local://$BACKUP_DIR" --start 31 --end 745f3132385f725f3134 
+    run_br --pd $PD_ADDR backup txn -s "local://$BACKUP_DIR" 
 
     # delete data in range[start-key, end-key)
-    clean 31 3130303030303030
+    clean "hello" "world" 
     # Ensure the data is deleted
-    checksum_new=$(checksum 31 3130303030303030)
+    checksum_new=$(checksum "hello" "world")
 
     if [ "$checksum_new" != "$checksum_empty" ];then
         echo "failed to delete data in range"
@@ -108,33 +108,27 @@ run_test() {
 
     # restore rawkv
     echo "restore start..."
-    run_br --pd $PD_ADDR restore txn -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 
+    run_br --pd $PD_ADDR restore txn -s "local://$BACKUP_DIR" 
 
-    checksum_new=$(checksum 31 3130303030303030)
+    checksum_new=$(checksum "hello" "world")
 
     if [ "$checksum_new" != "$checksum_ori" ];then
         echo "checksum failed after restore"
         fail_and_exit
     fi
 
-    test_full_txnkv
+    test_full_txnkv_encryption
 
     # delete data in range[start-key, end-key)
-    clean 31 3130303030303030
+    clean "hello" "world"
     # Ensure the data is deleted
-    checksum_new=$(checksum 31 3130303030303030)
+    checksum_new=$(checksum "hello" "world")
 
     if [ "$checksum_new" != "$checksum_empty" ];then
         echo "failed to delete data in range"
         fail_and_exit
     fi
 
-    checksum_new=$(checksum 31 3130303030303030)
-
-    if [ "$checksum_new" != "$checksum_partial" ];then
-        echo "checksum failed after restore"
-        fail_and_exit
-    fi
     export GO_FAILPOINTS=""
 }
 

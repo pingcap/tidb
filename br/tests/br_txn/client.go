@@ -22,14 +22,12 @@ var (
 	cert        = flag.String("cert", "", "certificate path for TLS connection")
 	key         = flag.String("key", "", "private key path for TLS connection")
 	pdAddr      = flag.String("pd", "127.0.0.1:2379", "Address of PD")
-	runMode     = flag.String("mode", "", "Mode. One of 'rand-gen', 'checksum', 'scan', 'delete' and 'put'")
+	runMode     = flag.String("mode", "", "Mode. One of 'rand-gen', 'checksum', 'scan', 'delete'")
 	startKeyStr = flag.String("start-key", "", "Start key in hex")
 	endKeyStr   = flag.String("end-key", "", "End key in hex")
 	keyMaxLen   = flag.Int("key-max-len", 32, "Max length of keys for rand-gen mode")
 	concurrency = flag.Int("concurrency", 32, "Concurrency to run rand-gen")
 	duration    = flag.Int("duration", 10, "duration(second) of rand-gen")
-	putDataStr  = flag.String("put-data", "", "Kv pairs to put to the cluster in hex. "+
-		"kv pairs are separated by commas, key and value in a pair are separated by a colon")
 )
 
 func createClient(addr string) (*txnkv.Client, error) {
@@ -48,16 +46,9 @@ func createClient(addr string) (*txnkv.Client, error) {
 func main() {
 	flag.Parse()
 
-	startKey, err := hex.DecodeString(*startKeyStr)
-	if err != nil {
-		log.Panic("Invalid startKey", zap.String("starkey", *startKeyStr), zap.Error(err))
-	}
-	endKey, err := hex.DecodeString(*endKeyStr)
-	if err != nil {
-		log.Panic("Invalid endKey: %v, err: %+v", zap.String("endkey", *endKeyStr), zap.Error(err))
-	}
-	// For "put" mode, the key range is not used. So no need to throw error here.
-	if len(endKey) == 0 && *runMode != "put" {
+	startKey := []byte(*startKeyStr)
+	endKey := []byte(*endKeyStr)
+	if len(endKey) == 0 {
 		log.Panic("Empty endKey is not supported yet")
 	}
 
@@ -119,17 +110,18 @@ func randGen(client *txnkv.Client, startKey, endKey []byte, maxLen int, concurre
 	const batchSize = 32
 
 	errCh := make(chan error, concurrency)
-	for i := 0; i < concurrency; i++ {
-		go func() {
+	for i := maxLen; i <= maxLen+concurrency; i++ {
+		go func(i int) {
 			for {
 				txn, err := client.Begin()
 				if err != nil {
 					errCh <- errors.Trace(err)
 				}
-				for i := 0; i < batchSize; i++ {
-					key := randKey(startKey, endKey, maxLen)
+				for j := 0; j < batchSize; j++ {
+					key := randKey(startKey, endKey, i)
+					// append index to avoid write conflict
+					key = appendIndex(key, i)
 					value := randValue()
-
 					txn.Set(key, value)
 				}
 				err = txn.Commit(context.TODO())
@@ -138,7 +130,7 @@ func randGen(client *txnkv.Client, startKey, endKey []byte, maxLen int, concurre
 				}
 
 			}
-		}()
+		}(i)
 	}
 
 	err := <-errCh
@@ -210,6 +202,11 @@ Retry:
 }
 
 //nolint:gosec
+func appendIndex(key []byte, i int) []byte {
+	return append(key, uint8(i))
+}
+
+//nolint:gosec
 func randValue() []byte {
 	result := make([]byte, 0, 512)
 	for i := 0; i < 512; i++ {
@@ -242,7 +239,7 @@ func checksum(client *txnkv.Client, startKey, endKey []byte) error {
 
 	var res uint64
 
-	for {
+	for iter.Valid() {
 		err := iter.Next()
 		if err != nil {
 			return errors.Trace(err)
@@ -254,6 +251,7 @@ func checksum(client *txnkv.Client, startKey, endKey []byte) error {
 		_, _ = digest.Write(iter.Value())
 		res ^= digest.Sum64()
 	}
+	_ = txn.Commit(context.TODO())
 
 	log.Info("Checksum result", zap.Uint64("checksum", res))
 	fmt.Printf("Checksum result: %016x\n", res)
