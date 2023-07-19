@@ -23,6 +23,7 @@ go_test(
     flaky = True,
     deps = [
         ":internal",
+        "//statistics/handle/cache/internal/lfu",
         "//statistics/handle/cache/internal/lru",
         "//statistics/handle/cache/internal/mapcache",
         "//statistics/handle/cache/internal/testutil",
