@@ -1080,7 +1080,7 @@ func (s *Server) newPlanReplayerHandler() *planreplayer.PlanReplayerHandler {
 	return prh
 }
 
-func (s Server) NewStatsHandler() *statshandler.StatsHandler {
+func (s *Server) NewStatsHandler() *statshandler.StatsHandler {
 	store, ok := s.driver.(*TiDBDriver)
 	if !ok {
 		panic("Illegal driver")
