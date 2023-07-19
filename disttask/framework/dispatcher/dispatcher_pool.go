@@ -178,7 +178,7 @@ func (d *Pool) DispatchTaskLoop() {
 				// the task is not in runningGTasks set when:
 				// owner changed or task is cancelled when status is pending.
 				if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting || gTask.State == proto.TaskStateCancelling {
-					d.submitTask(gTask)
+					d.executeTask(gTask)
 					d.setRunningGTask(gTask)
 					cnt++
 					continue
@@ -188,7 +188,7 @@ func (d *Pool) DispatchTaskLoop() {
 					break
 				}
 
-				d.submitTask(gTask)
+				d.executeTask(gTask)
 				d.setRunningGTask(gTask)
 				cnt++
 			}
@@ -196,7 +196,7 @@ func (d *Pool) DispatchTaskLoop() {
 	}
 }
 
-func (d *Pool) submitTask(gTask *proto.Task) {
+func (d *Pool) executeTask(gTask *proto.Task) {
 	// Using the pool with block, so it wouldn't return an error.
 	_ = d.gPool.Run(func() {
 		logutil.BgLogger().Info("submit one task", zap.Int64("task ID", gTask.ID),
@@ -205,6 +205,8 @@ func (d *Pool) submitTask(gTask *proto.Task) {
 	})
 }
 
+// monitorTask checks whether the current step of one task is finished,
+// and gather subTaskErrs to handle subTask fails.
 func (d *Pool) monitorTask(taskID int64) (gTask *proto.Task, finished bool, subTaskErrs []error) {
 	// TODO: Consider putting the following operations into a transaction.
 	gTask, err := d.taskMgr.GetGlobalTaskByID(taskID)
@@ -241,6 +243,7 @@ func (d *Pool) monitorTask(taskID int64) (gTask *proto.Task, finished bool, subT
 	}
 }
 
+// scheduleTask schedule the task execution step by step.
 func (d *Pool) scheduleTask(taskID int64) {
 	ticker := time.NewTicker(checkTaskFinishedInterval)
 	defer ticker.Stop()
