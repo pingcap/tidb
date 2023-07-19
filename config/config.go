@@ -44,6 +44,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// just a test line for verify scope change notify.
+
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
