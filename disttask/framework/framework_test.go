@@ -307,7 +307,6 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 	}()
 	DispatchTaskAndCheckFail("key1", t, &v)
 	distContext.Close()
-
 }
 
 func TestOwnerChange(t *testing.T) {
