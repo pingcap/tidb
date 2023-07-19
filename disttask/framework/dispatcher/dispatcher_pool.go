@@ -95,6 +95,8 @@ func (d *dispatcherPool) delRunningGTask(globalTaskID int64) {
 	delete(d.runningGTasks.taskIDs, globalTaskID)
 }
 
+// dispatcherPool dispatch and monitor tasks.
+// The monitoring task number is limited by size of gPool.
 type dispatcherPool struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -109,7 +111,7 @@ type dispatcherPool struct {
 	detectPendingGTaskCh chan *proto.Task
 }
 
-// NewdispatcherPool creates a dispatcherPool struct.
+// NewDispatcherPool creates a dispatcherPool struct.
 func NewDispatcherPool(ctx context.Context, taskTable *storage.TaskManager) (Dispatch, error) {
 	dispatcherPool := &dispatcherPool{
 		taskMgr:              taskTable,
@@ -239,23 +241,23 @@ func (d *dispatcherPool) monitorTask(taskID int64) (gTask *proto.Task, finished 
 func (d *dispatcherPool) scheduleTask(taskID int64) {
 	ticker := time.NewTicker(checkTaskFinishedInterval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-d.ctx.Done():
 			logutil.BgLogger().Info("schedule task exits", zap.Int64("task ID", taskID), zap.Error(d.ctx.Err()))
 			return
 		case <-ticker.C:
-			failpoint.Inject("cancelTaskBeforeProbe", func(val failpoint.Value) {
-				if val.(bool) {
+			// TODO: Consider actively obtaining information about task completion.
+			gTask, stepIsFinished, errs := d.monitorTask(taskID)
+
+			failpoint.Inject("cancelTaskAfterMonitorTask", func(val failpoint.Value) {
+				if val.(bool) && gTask.State == proto.TaskStateRunning {
 					err := d.taskMgr.CancelGlobalTask(taskID)
 					if err != nil {
 						logutil.BgLogger().Error("cancel global task failed", zap.Error(err))
 					}
 				}
 			})
-			// TODO: Consider actively obtaining information about task completion.
-			gTask, stepIsFinished, errs := d.monitorTask(taskID)
 			// The global task isn't finished and not failed.
 			if !stepIsFinished && len(errs) == 0 {
 				GetTaskFlowHandle(gTask.Type).OnTicker(d.ctx, gTask)

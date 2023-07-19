@@ -61,7 +61,7 @@ func MockDispatcher(t *testing.T, pool *pools.ResourcePool) (dispatcher.Dispatch
 	ctx := context.Background()
 	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
 	storage.SetTaskManager(mgr)
-	dsp, err := dispatcher.NewDispatcher(util.WithInternalSourceType(ctx, "dispatcher"), mgr)
+	dsp, err := dispatcher.NewDispatcherPool(util.WithInternalSourceType(ctx, "dispatcher"), mgr)
 	require.NoError(t, err)
 	dispatcher.RegisterTaskFlowHandle(proto.TaskTypeExample, &testFlowHandle{})
 	return dsp, mgr
@@ -189,6 +189,23 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		require.Equal(t, retCnt, taskCnt)
 	}
 
+	checkTaskRunningCnt := func() []*proto.Task {
+		var retCnt int
+		var tasks []*proto.Task
+		var err error
+		for i := 0; i < cnt; i++ {
+			tasks, err = mgr.GetGlobalTasksInStates(proto.TaskStateRunning)
+			require.NoError(t, err)
+			retCnt = len(tasks)
+			if retCnt == taskCnt {
+				break
+			}
+			time.Sleep(time.Millisecond * 50)
+		}
+		require.Equal(t, retCnt, taskCnt)
+		return tasks
+	}
+
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
 	for i := 0; i < taskCnt; i++ {
@@ -198,9 +215,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	}
 	// test normal flow
 	checkGetRunningGTaskCnt()
-	tasks, err := mgr.GetGlobalTasksInStates(proto.TaskStateRunning)
-	require.NoError(t, err)
-	require.Len(t, tasks, taskCnt)
+	tasks := checkTaskRunningCnt()
 	for i, taskID := range taskIDs {
 		require.Equal(t, int64(i+1), tasks[i].ID)
 		subtasks, err := mgr.GetSubtaskInStatesCnt(taskID, proto.TaskStatePending)
@@ -220,7 +235,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 	// test DetectTaskLoop
 	checkGetGTaskState := func(expectedState string) {
 		for i := 0; i < cnt; i++ {
-			tasks, err = mgr.GetGlobalTasksInStates(expectedState)
+			tasks, err := mgr.GetGlobalTasksInStates(expectedState)
 			require.NoError(t, err)
 			if len(tasks) == taskCnt {
 				break
@@ -229,6 +244,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		}
 	}
 	// Test all subtasks are successful.
+	var err error
 	if isSucc {
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
