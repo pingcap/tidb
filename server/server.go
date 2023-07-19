@@ -167,6 +167,14 @@ func (s *Server) getToken() *Token {
 	return tok
 }
 
+func (s *Server) XORCapability(capability uint32) {
+	s.capability ^= capability
+}
+
+func (s *Server) ORCapability(capability uint32) {
+	s.capability |= capability
+}
+
 func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
 	metrics.TokenGauge.Dec()

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package testutil
 
 import (
 	"bytes"
@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testenv"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -354,7 +355,7 @@ func (cli *testServerClient) runTestPreparedTimestamp(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(t *testing.T, server *Server) {
+func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(t *testing.T, server *server.Server) {
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
@@ -401,7 +402,7 @@ func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(t *testing.T, 
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataForSlowLog(t *testing.T, server *Server) {
+func (cli *testServerClient) runTestLoadDataForSlowLog(t *testing.T, server *server.Server) {
 	t.Skip("unstable test")
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
@@ -850,7 +851,7 @@ func (cli *testServerClient) checkRows(t *testing.T, rows *sql.Rows, expectedRow
 	require.Equal(t, strings.Join(expectedRows, "\n"), strings.Join(result, "\n"))
 }
 
-func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *Server) {
+func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *server.Server) {
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
 	path := fp.Name()
@@ -1000,7 +1001,7 @@ func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []strin
 	}
 }
 
-func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
+func (cli *testServerClient) runTestLoadData(t *testing.T, server *server.Server) {
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
 	path := fp.Name()
@@ -1337,7 +1338,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 	})
 
 	// unsupport ClientLocalFiles capability
-	server.capability ^= tmysql.ClientLocalFiles
+	server.XORCapability(tmysql.ClientLocalFiles)
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
@@ -1346,7 +1347,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		require.Error(t, err)
 		checkErrorCode(t, err, errno.ErrNotAllowedCommand)
 	})
-	server.capability |= tmysql.ClientLocalFiles
+	server.ORCapability(tmysql.ClientLocalFiles)
 
 	err = fp.Close()
 	require.NoError(t, err)

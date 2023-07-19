@@ -74,7 +74,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 
 	// 1. setup and prepare plan replayer files by manual command and capture
 	driver := NewTiDBDriver(store)
-	client := newTestServerClient()
+	client := testkit.NewTestServerClient()
 	cfg := util.NewTestConfig()
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
